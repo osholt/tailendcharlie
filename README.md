@@ -28,6 +28,9 @@ phones when mobile coverage disappears.
   hazard overlays, and detect sustained route deviation with stale-GPS handling.
 - Queue authenticated events for store-and-forward delivery over native Google
   Nearby Connections transports with reconnect, expiry, ACK, and replay safety.
+- Batch authenticated events through an optional HTTPS relay with durable
+  cursors, strict size/time limits, idempotent server acknowledgement, and
+  automatic bounded reconnect. It remains disabled until an endpoint is set.
 - Navigate between Ride, Map, and Awareness from an active ride.
 - Run analysis, tests, Android debug builds, and unsigned iOS builds in CI.
 
@@ -60,6 +63,11 @@ geometry works without a basemap; provider configuration and offline-caching
 licence gates are documented in
 [docs/maps-and-gpx.md](./docs/maps-and-gpx.md).
 
+The optional development internet relay and its server contract are documented
+in [docs/internet-relay.md](./docs/internet-relay.md). It has no default backend
+and sends no server traffic unless `RIDE_RELAY_API_BASE_URL` is supplied as an
+HTTPS `--dart-define`.
+
 Android requires JDK 17 and a current Android SDK. iOS requires Xcode. No Apple
 Developer signing identity is required for the development build:
 
@@ -74,9 +82,9 @@ signing and all private key material are intentionally absent from the repo.
 
 Do not use the current preview for real emergency coordination. See
 [SECURITY.md](./SECURITY.md) for vulnerability reporting. Location events are
-ride-scoped and locally persisted, but production identity, encryption, data
-compaction, retention/deletion enforcement, and server sync remain release
-gates.
+ride-scoped and locally persisted. The optional HTTPS sync client is an
+integration alpha; a production server, device identity, encryption, data
+compaction, and retention/deletion enforcement remain release gates.
 
 ## License
 

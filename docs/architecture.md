@@ -11,6 +11,9 @@ UI -> RideController -> local event journal
                             +-> NearbyRelayController -> durable relay queue
                                                            |
                                                            +-> PeerTransport
+                            |
+                            +-> InternetRelayController -> bounded HTTPS sync
+                                                           -> opaque cursor
 
 Flutter -> method channel -> Swift / Kotlin nearby transport adapters
 ```
@@ -32,10 +35,11 @@ The initial envelope contains:
 - ride-secret HMAC; and
 - local acknowledgement state.
 
-The HMAC prevents accidental or unauthorised mutation inside one ride, but it
-is not the final security design. Before external sync ships, each device will
-have an asymmetric identity and signed events; sensitive payloads will also use
-application-layer encryption.
+New events use one canonical ride-secret HMAC body. Verification retains
+read-compatibility with the earlier development-alpha body. Downloaded internet
+events are verified before storage. This group HMAC is not the final security
+design: device identity, key rotation, and application-layer encryption remain
+production gates.
 
 ## Relay transport
 
@@ -44,9 +48,17 @@ ACK-driven store-and-forward exchange. Its native adapter links Google Nearby
 Connections cluster transport on Android and iOS. Physical cross-platform
 offline validation is still a release gate; see `nearby-relay.md`.
 
-An HTTPS/WebSocket peer transport can be added later without changing the relay
-protocol or event journal. Peers exchange missing priority events, not an
-unbounded raw location history.
+The development-alpha HTTPS worker batches pending journal events and pulls
+missing events by opaque cursor. It is disabled unless an HTTPS endpoint is
+configured, and the server contract is documented in `internet-relay.md`.
+Retries are automatic, bounded, and jittered. Request, response, event, and
+timeout limits are enforced on the client.
+
+Server acknowledgement and nearby delivery are separate concerns. The journal
+acknowledgement currently represents server acceptance; nearby scans every ride
+event and relies on its own durable queue for per-peer ACK and deduplication.
+This allows an internet-connected phone to carry downloaded events back into an
+offline cluster.
 
 The event journal is the source of truth. Neither a WebSocket nor a nearby
 session is assumed to remain connected.

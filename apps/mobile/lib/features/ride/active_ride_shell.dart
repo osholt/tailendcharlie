@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import '../../controllers/foreground_location_controller.dart';
+import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
@@ -14,7 +16,11 @@ import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/ride_event.dart';
 import '../../domain/route_alert.dart';
+import '../../internet/internet_relay_client.dart';
+import '../../internet/internet_relay_worker.dart';
+import '../../internet/shared_preferences_internet_cursor_store.dart';
 import '../../relay/native_nearby_transport.dart';
+import '../../relay/nearby_event_source.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/device_location_source.dart';
@@ -53,7 +59,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   ForegroundLocationController? _locationController;
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
+  InternetRelayController? _internetRelayController;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
+  StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   Future<void> _publishChain = Future.value();
   String? _routeFingerprint;
   int _routeGeneration = 0;
@@ -101,6 +109,23 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       }
 
       final session = widget.rideController.session;
+      if (session != null) {
+        final internetRelayController = InternetRelayController(
+          InternetRelayWorker(
+            api: HttpInternetRelayClient(
+              configuration: InternetRelayConfiguration.fromEnvironment(),
+              client: http.Client(),
+            ),
+            eventStore: widget.eventStore,
+            cursorStore: SharedPreferencesInternetCursorStore(),
+          ),
+        );
+        _internetRelayController = internetRelayController;
+        _internetReceivedEventSubscription = internetRelayController
+            .receivedEvents
+            .listen(_onReceivedEvent);
+        await internetRelayController.start(session);
+      }
       if (session != null && session.inviteSecret.length >= 16) {
         final relayController = NearbyRelayController(
           RelayEngine(
@@ -344,10 +369,14 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }
 
   Future<void> _publishPendingEvents() async {
+    _internetRelayController?.wake();
     final relay = _relayController;
     final session = widget.rideController.session;
     if (!_relayConfigured || relay == null || session == null) return;
-    final events = await widget.eventStore.pendingEvents(session.rideId);
+    final events = await eventsEligibleForNearbyRelay(
+      widget.eventStore,
+      session.rideId,
+    );
     for (final event in events) {
       if (_publishedEventIds.contains(event.id)) continue;
       try {
@@ -366,6 +395,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         controller: widget.rideController,
         relayController: _relayController,
         markerAssistanceController: _markerAssistanceController,
+        internetRelayController: _internetRelayController,
         serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
       ),
       1 => RideMapFeature.fromEnvironment(
@@ -423,8 +453,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _markerAssistanceController?.dispose();
     _awarenessController?.dispose();
     unawaited(_receivedEventSubscription?.cancel());
+    unawaited(_internetReceivedEventSubscription?.cancel());
     _locationController?.dispose();
     unawaited(_relayController?.close());
+    unawaited(_internetRelayController?.close());
     _mapPosition.dispose();
     _mapOverlays.dispose();
     super.dispose();

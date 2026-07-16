@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
@@ -10,6 +11,7 @@ import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
 import '../../services/ride_summary_exporter.dart';
+import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
 import 'marker_assistance_widgets.dart';
 
@@ -19,6 +21,7 @@ class RideDashboard extends StatelessWidget {
     required this.controller,
     this.relayController,
     this.markerAssistanceController,
+    this.internetRelayController,
     this.serviceWarning,
     this.summarySharer,
   });
@@ -26,6 +29,7 @@ class RideDashboard extends StatelessWidget {
   final RideController controller;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
+  final InternetRelayController? internetRelayController;
   final String? serviceWarning;
   final RideSummarySharer? summarySharer;
 
@@ -70,6 +74,11 @@ class RideDashboard extends StatelessWidget {
                 if (relayController case final relayController?) ...[
                   const SizedBox(height: 14),
                   RelayStatusCard(controller: relayController),
+                ],
+                if (internetRelayController
+                    case final internetRelayController?) ...[
+                  const SizedBox(height: 14),
+                  InternetRelayStatusCard(controller: internetRelayController),
                 ],
                 if (serviceWarning case final warning?) ...[
                   const SizedBox(height: 14),

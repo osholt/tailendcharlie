@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'dart:math';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
@@ -14,6 +12,7 @@ import '../domain/ride_session.dart';
 import '../domain/session_store.dart';
 import '../services/nearby_bridge.dart';
 import '../services/marker_statistics.dart';
+import '../services/ride_event_authenticator.dart';
 import '../services/situation_event_factory.dart';
 
 typedef Clock = DateTime Function();
@@ -348,20 +347,7 @@ class RideController extends ChangeNotifier {
     final activeSession = _requireSession();
     final now = _clock();
     final id = _idFactory();
-    final unsignedBody = jsonEncode({
-      'id': id,
-      'rideId': activeSession.rideId,
-      'deviceId': activeSession.localRiderId,
-      'type': type.name,
-      'priority': priority.name,
-      'createdAt': now.toUtc().toIso8601String(),
-      'payload': payload,
-    });
-    final signature = Hmac(
-      sha256,
-      utf8.encode(activeSession.inviteSecret),
-    ).convert(utf8.encode(unsignedBody)).toString();
-    final event = RideEvent(
+    final unsignedEvent = RideEvent(
       id: id,
       rideId: activeSession.rideId,
       deviceId: activeSession.localRiderId,
@@ -370,7 +356,21 @@ class RideController extends ChangeNotifier {
       createdAt: now,
       expiresAt: expiresAt,
       payload: payload,
-      signature: signature,
+      signature: '',
+    );
+    final event = RideEvent(
+      id: unsignedEvent.id,
+      rideId: unsignedEvent.rideId,
+      deviceId: unsignedEvent.deviceId,
+      type: unsignedEvent.type,
+      priority: unsignedEvent.priority,
+      createdAt: unsignedEvent.createdAt,
+      expiresAt: unsignedEvent.expiresAt,
+      payload: unsignedEvent.payload,
+      signature: RideEventAuthenticator.sign(
+        unsignedEvent,
+        activeSession.inviteSecret,
+      ),
     );
     await _eventStore.append(event);
     _events = [..._events, event];
