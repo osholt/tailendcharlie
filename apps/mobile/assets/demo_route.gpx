@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Ride Relay" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Peak District demo loop</name>
+    <desc>A short development route near Castleton for exercising offline route display.</desc>
+  </metadata>
+  <wpt lat="53.3431" lon="-1.7769">
+    <name>Ride start</name>
+    <sym>Flag, Blue</sym>
+  </wpt>
+  <wpt lat="53.3496" lon="-1.8138">
+    <name>Junction marker</name>
+    <desc>Demo waypoint only; not a live hazard.</desc>
+    <sym>Waypoint</sym>
+  </wpt>
+  <trk>
+    <name>Winnats Pass demo</name>
+    <trkseg>
+      <trkpt lat="53.3431" lon="-1.7769"><ele>195</ele></trkpt>
+      <trkpt lat="53.3448" lon="-1.7852"><ele>214</ele></trkpt>
+      <trkpt lat="53.3474" lon="-1.7961"><ele>253</ele></trkpt>
+      <trkpt lat="53.3496" lon="-1.8138"><ele>352</ele></trkpt>
+      <trkpt lat="53.3445" lon="-1.8298"><ele>411</ele></trkpt>
+      <trkpt lat="53.3347" lon="-1.8319"><ele>368</ele></trkpt>
+      <trkpt lat="53.3265" lon="-1.8154"><ele>286</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
