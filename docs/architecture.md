@@ -72,7 +72,8 @@ another rider has received an event.
 ## Deliberately absent
 
 - No production server or cloud credentials.
-- No real location tracking or background modes.
+- No background location tracking or background relay modes; foreground
+  positioning is implemented and requires explicit permission.
 - No claim that the linked Nearby SDK has passed the physical-device matrix.
 - No distribution signing configuration.
 - No claim that an app force-quit by the user can continue relaying on iOS.

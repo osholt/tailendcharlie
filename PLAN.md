@@ -21,6 +21,12 @@ The repository now contains an integrated development alpha:
 - an authenticated, bounded, durable store-and-forward relay protocol with
   ACKs, expiry, deduplication, reconnect backoff, and native Google Nearby
   Connections implementations for Android and iOS;
+- a disabled-by-default HTTPS sync client with bounded idempotent batches,
+  opaque cursors, authenticated downloads, and automatic retry;
+- conservative marker suggestions requiring explicit confirmation,
+  authenticated unique-pass/TEC evidence, and marking-time summaries;
+- GPX sharing, documented Google Maps/Waze handoffs, share-sheet handoff for
+  Calimoto/MyRoute/Garmin/BMW, and CSV/text ride summaries;
 - an active-ride shell joining Ride, Map, and Awareness around the same event
   journal; and
 - CI definitions for analysis, tests, Android debug APKs, and unsigned iOS apps.
@@ -28,12 +34,12 @@ The repository now contains an integrated development alpha:
 The remaining P0 gates require evidence or external systems rather than more UI
 claims: physical Android/iPhone radio and background testing, foreground-route
 alert calibration, battery testing, production identity/encryption and
-retention, internet/server sync, automatic marker suggestion, and field-tested
-pass detection. A licensed basemap/traffic provider is not configured. Waze is
+retention, a provisioned production relay server, and field-tested marker/pass
+detection. A licensed basemap/traffic provider is not configured. Waze is
 explicitly unavailable as a general hazard-read source. Manual six-character
-joining cannot start authenticated nearby relay because it does not carry the
-high-entropy invitation secret; QR/deep-link joining is the supported alpha
-path.
+joining cannot start authenticated nearby or internet relay because it does not
+carry the high-entropy invitation secret; QR/deep-link joining is the supported
+alpha path.
 
 ## 1. Product summary
 

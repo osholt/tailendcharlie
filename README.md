@@ -19,8 +19,8 @@ phones when mobile coverage disappears.
 - Create a private ride or join with a six-character code.
 - Resume the active ride after restarting the app.
 - Store immutable, HMAC-tagged ride events in an idempotent SQLite journal.
-- Record roles, manual marker sessions, unique marker passes, and priority
-  quick messages.
+- Record roles, confirmation-based marker suggestions, authenticated unique
+  marker passes, marking-time statistics, and priority quick messages.
 - Generate and share a QR/deep-link invitation.
 - Import and persist GPX 1.1 routes, render them offline, and optionally cache a
   bounded map corridor when a licensed tile provider is configured.
@@ -31,6 +31,8 @@ phones when mobile coverage disappears.
 - Batch authenticated events through an optional HTTPS relay with durable
   cursors, strict size/time limits, idempotent server acknowledgement, and
   automatic bounded reconnect. It remains disabled until an endpoint is set.
+- Export GPX through the native share sheet, hand destinations/previews to
+  supported navigation apps, and share ride/marker summaries as text and CSV.
 - Navigate between Ride, Map, and Awareness from an active ride.
 - Run analysis, tests, Android debug builds, and unsigned iOS builds in CI.
 
@@ -62,6 +64,10 @@ After creating or joining a ride, use the bottom navigation to open **Map** or
 geometry works without a basemap; provider configuration and offline-caching
 licence gates are documented in
 [docs/maps-and-gpx.md](./docs/maps-and-gpx.md).
+
+Navigation handoff behavior is documented in
+[docs/navigation-export.md](./docs/navigation-export.md); exact GPX geometry is
+shared where a target does not provide a documented full-route link.
 
 The optional development internet relay and its server contract are documented
 in [docs/internet-relay.md](./docs/internet-relay.md). It has no default backend
