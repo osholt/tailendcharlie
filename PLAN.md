@@ -1,26 +1,39 @@
 # Offline Group Riding App — Product and Delivery Plan
 
-Status: initial planning baseline
+Status: development alpha implemented; physical-device and production gates open
 Working title: **Ride Relay** (placeholder; naming is not part of MVP)
 Initial market: UK motorcycle groups using the second-bike drop-off system
 Platforms: iOS and Android
 
 ## Implementation status
 
-The repository now contains the first development vertical slice:
+The repository now contains an integrated development alpha:
 
 - shared Flutter application plus native Swift and Kotlin shells;
 - persistent anonymous ride sessions;
 - an idempotent SQLite event journal and versioned event envelope;
 - HMAC-tagged ride, role, marker, and priority-message events;
 - QR/deep-link invitations and a gloves-oriented development UI;
-- native nearby-capability method channels, intentionally reporting the radio
-  SDK as unavailable until the Phase 0 test passes; and
+- GPX 1.1 import, persistent route geometry, offline route display, and a
+  provider/licence-gated map-corridor tile cache;
+- foreground position capture, group/hazard overlays, rider-created hazard
+  events, stale-GPS handling, and hysteresis-based route-deviation alerts;
+- an authenticated, bounded, durable store-and-forward relay protocol with
+  ACKs, expiry, deduplication, reconnect backoff, and native Google Nearby
+  Connections implementations for Android and iOS;
+- an active-ride shell joining Ride, Map, and Awareness around the same event
+  journal; and
 - CI definitions for analysis, tests, Android debug APKs, and unsigned iOS apps.
 
-This is foundation work, not completion of P0. Real peer exchange, server sync,
-location tracking, GPX/offline maps, automatic marker detection, and off-route
-alerts remain unimplemented and must not be implied by development screenshots.
+The remaining P0 gates require evidence or external systems rather than more UI
+claims: physical Android/iPhone radio and background testing, foreground-route
+alert calibration, battery testing, production identity/encryption and
+retention, internet/server sync, automatic marker suggestion, and field-tested
+pass detection. A licensed basemap/traffic provider is not configured. Waze is
+explicitly unavailable as a general hazard-read source. Manual six-character
+joining cannot start authenticated nearby relay because it does not carry the
+high-entropy invitation secret; QR/deep-link joining is the supported alpha
+path.
 
 ## 1. Product summary
 

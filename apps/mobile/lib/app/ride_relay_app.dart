@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../controllers/ride_controller.dart';
 import '../features/home/home_screen.dart';
-import '../features/ride/ride_dashboard.dart';
+import '../features/ride/active_ride_shell.dart';
 
 class RideRelayApp extends StatelessWidget {
-  const RideRelayApp({super.key, required this.controller});
+  const RideRelayApp({
+    super.key,
+    required this.controller,
+    this.enableNativeServices = true,
+  });
 
   final RideController controller;
+  final bool enableNativeServices;
 
   @override
   Widget build(BuildContext context) {
@@ -85,7 +90,12 @@ class RideRelayApp extends StatelessWidget {
       home: AnimatedBuilder(
         animation: controller,
         builder: (context, _) => controller.hasActiveRide
-            ? RideDashboard(controller: controller)
+            ? ActiveRideShell(
+                key: ValueKey(controller.session!.rideId),
+                rideController: controller,
+                eventStore: controller.eventStore,
+                enableNativeServices: enableNativeServices,
+              )
             : HomeScreen(controller: controller),
       ),
     );

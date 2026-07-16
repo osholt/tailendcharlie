@@ -4,14 +4,23 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/ride_controller.dart';
+import '../../controllers/nearby_relay_controller.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
+import '../nearby/relay_status_card.dart';
 
 class RideDashboard extends StatelessWidget {
-  const RideDashboard({super.key, required this.controller});
+  const RideDashboard({
+    super.key,
+    required this.controller,
+    this.relayController,
+    this.serviceWarning,
+  });
 
   final RideController controller;
+  final NearbyRelayController? relayController;
+  final String? serviceWarning;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +55,14 @@ class RideDashboard extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
                 _ConnectionCard(controller: controller),
+                if (relayController case final relayController?) ...[
+                  const SizedBox(height: 14),
+                  RelayStatusCard(controller: relayController),
+                ],
+                if (serviceWarning case final warning?) ...[
+                  const SizedBox(height: 14),
+                  _ServiceWarning(message: warning),
+                ],
                 const SizedBox(height: 14),
                 _MarkerCard(controller: controller),
                 const SizedBox(height: 22),
@@ -179,41 +196,35 @@ class _ConnectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final capabilities = controller.nearbyCapabilities;
-    final bridgeReady = capabilities.nativeBridgeReady;
-    final transportReady = capabilities.nearbyApiLinked;
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
-        child: Column(
-          children: [
-            _StatusRow(
-              icon: Icons.cloud_queue,
-              title: 'Internet relay',
-              detail: '${controller.pendingEventCount} events stored locally',
-              state: 'QUEUED',
-              stateColor: const Color(0xFFFFC857),
-            ),
-            const Divider(height: 26),
-            _StatusRow(
-              icon: Icons.bluetooth_searching,
-              title: 'Nearby relay',
-              detail: transportReady
-                  ? 'Peer transport ready on ${capabilities.platform}'
-                  : bridgeReady
-                  ? 'Native bridge ready; radio API is the Phase 0 spike'
-                  : 'Native bridge unavailable in this build',
-              state: transportReady ? 'READY' : 'PROTOTYPE',
-              stateColor: transportReady
-                  ? const Color(0xFF6ED89A)
-                  : const Color(0xFF8EA7C4),
-            ),
-          ],
+        child: _StatusRow(
+          icon: Icons.cloud_queue,
+          title: 'Durable event queue',
+          detail: '${controller.pendingEventCount} events stored locally',
+          state: 'OFFLINE SAFE',
+          stateColor: const Color(0xFFFFC857),
         ),
       ),
     );
   }
+}
+
+class _ServiceWarning extends StatelessWidget {
+  const _ServiceWarning({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    color: const Color(0xFF2B2115),
+    child: ListTile(
+      leading: const Icon(Icons.info_outline, color: Color(0xFFFFC857)),
+      title: const Text('Service limitation'),
+      subtitle: Text(message),
+    ),
+  );
 }
 
 class _StatusRow extends StatelessWidget {

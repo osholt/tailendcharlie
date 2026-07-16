@@ -8,7 +8,9 @@ import 'package:ride_relay/services/nearby_bridge.dart';
 void main() {
   testWidgets('home screen exposes the two ride entry points', (tester) async {
     final controller = await _controller();
-    await tester.pumpWidget(RideRelayApp(controller: controller));
+    await tester.pumpWidget(
+      RideRelayApp(controller: controller, enableNativeServices: false),
+    );
 
     expect(find.text('Create a ride'), findsOneWidget);
     expect(find.text('Join with a code'), findsOneWidget);
@@ -20,12 +22,22 @@ void main() {
   testWidgets('active ride shows coordination controls', (tester) async {
     final controller = await _controller();
     await controller.createRide('Oliver');
-    await tester.pumpWidget(RideRelayApp(controller: controller));
-    await tester.pump();
+    await tester.pumpWidget(
+      RideRelayApp(controller: controller, enableNativeServices: false),
+    );
+    await tester.pumpAndSettle();
 
     expect(find.text('Oliver'), findsOneWidget);
     expect(find.text('QUICK MESSAGES'), findsOneWidget);
     expect(find.text('Marker mode'), findsOneWidget);
+    expect(find.text('Map'), findsOneWidget);
+    expect(find.text('Awareness'), findsOneWidget);
+
+    await tester.tap(find.text('Awareness'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ride awareness'), findsOneWidget);
+    expect(find.text('ACTIVE HAZARDS'), findsOneWidget);
 
     controller.dispose();
   });

@@ -46,6 +46,7 @@ class RideController extends ChangeNotifier {
   RideRole? _roleBeforeMarker;
 
   RideSession? get session => _session;
+  EventStore get eventStore => _eventStore;
   List<RideEvent> get events => List.unmodifiable(_events);
   NearbyCapabilities get nearbyCapabilities => _nearbyCapabilities;
   bool get busy => _busy;
@@ -104,6 +105,15 @@ class RideController extends ChangeNotifier {
     if (activeSession != null) {
       _events = await _eventStore.eventsForRide(activeSession.rideId);
     }
+    notifyListeners();
+  }
+
+  Future<void> reloadEvents() async {
+    final activeSession = _session;
+    if (activeSession == null) {
+      return;
+    }
+    _events = await _eventStore.eventsForRide(activeSession.rideId);
     notifyListeners();
   }
 

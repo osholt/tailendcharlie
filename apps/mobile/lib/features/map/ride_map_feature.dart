@@ -25,6 +25,7 @@ class RideMapFeature extends StatefulWidget {
     super.key,
     this.currentPosition,
     this.overlayMarkers,
+    this.onRouteChanged,
     this.basemapConfiguration = const BasemapConfiguration(),
   });
 
@@ -32,15 +33,18 @@ class RideMapFeature extends StatefulWidget {
     Key? key,
     ValueListenable<GeoPoint?>? currentPosition,
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
+    ValueChanged<ImportedRoute?>? onRouteChanged,
   }) => RideMapFeature(
     key: key,
     currentPosition: currentPosition,
     overlayMarkers: overlayMarkers,
+    onRouteChanged: onRouteChanged,
     basemapConfiguration: BasemapConfiguration.fromEnvironment(),
   );
 
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
+  final ValueChanged<ImportedRoute?>? onRouteChanged;
   final BasemapConfiguration basemapConfiguration;
 
   @override
@@ -87,6 +91,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         disposeOfflineTileCache: true,
         currentPosition: widget.currentPosition,
         overlayMarkers: widget.overlayMarkers,
+        onRouteChanged: widget.onRouteChanged,
       );
     },
   );
@@ -108,6 +113,7 @@ class RideMapScreen extends StatefulWidget {
     required this.offlineTileCache,
     this.currentPosition,
     this.overlayMarkers,
+    this.onRouteChanged,
     this.demoRouteLoader,
     this.disposeOfflineTileCache = false,
   });
@@ -117,6 +123,7 @@ class RideMapScreen extends StatefulWidget {
   final OfflineTileCache offlineTileCache;
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
+  final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<ImportedRoute> Function()? demoRouteLoader;
   final bool disposeOfflineTileCache;
 
@@ -157,6 +164,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _route = route;
         _loading = false;
       });
+      widget.onRouteChanged?.call(route);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -416,6 +424,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     await widget.routeStore.saveActiveRoute(route);
     if (!mounted) return;
     setState(() => _route = route);
+    widget.onRouteChanged?.call(route);
     _showMessage(
       '${route.name}: ${route.pathPointCount} route points stored offline.',
     );
@@ -480,7 +489,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await _loadDemoRoute();
       case _MapAction.removeRoute:
         await widget.routeStore.clearActiveRoute();
-        if (mounted) setState(() => _route = null);
+        if (mounted) {
+          setState(() => _route = null);
+          widget.onRouteChanged?.call(null);
+        }
       case _MapAction.clearOfflineTiles:
         await widget.offlineTileCache.clear();
         _showMessage('Offline map tiles cleared.');

@@ -9,11 +9,10 @@ internet service with encrypted, store-and-forward exchange between nearby
 phones when mobile coverage disappears.
 
 > [!IMPORTANT]
-> This repository is an early development preview, not a safety product. The
-> local event journal and native platform bridges are implemented; actual
-> cross-platform Bluetooth/Wi-Fi exchange, background reliability, location
-> tracking, and off-route detection are still Phase 0/Phase 1 work. The app UI
-> labels those capabilities accordingly.
+> This repository is a development alpha, not a safety product. The app and
+> native nearby transports now compile, but mixed-device radio behaviour,
+> background reliability, route-alert calibration, and battery use still need
+> the physical-device field-test matrix before any reliability claim is made.
 
 ## Current vertical slice
 
@@ -23,7 +22,13 @@ phones when mobile coverage disappears.
 - Record roles, manual marker sessions, unique marker passes, and priority
   quick messages.
 - Generate and share a QR/deep-link invitation.
-- Compile native Android and iOS capability bridges.
+- Import and persist GPX 1.1 routes, render them offline, and optionally cache a
+  bounded map corridor when a licensed tile provider is configured.
+- Record foreground position, report/expire/deduplicate hazards, show rider and
+  hazard overlays, and detect sustained route deviation with stale-GPS handling.
+- Queue authenticated events for store-and-forward delivery over native Google
+  Nearby Connections transports with reconnect, expiry, ACK, and replay safety.
+- Navigate between Ride, Map, and Awareness from an active ride.
 - Run analysis, tests, Android debug builds, and unsigned iOS builds in CI.
 
 See [PLAN.md](./PLAN.md) for product requirements and delivery gates, and
@@ -49,6 +54,12 @@ flutter test
 flutter run
 ```
 
+After creating or joining a ride, use the bottom navigation to open **Map** or
+**Awareness**. The map includes a simulator-friendly demo route. GPX route
+geometry works without a basemap; provider configuration and offline-caching
+licence gates are documented in
+[docs/maps-and-gpx.md](./docs/maps-and-gpx.md).
+
 Android requires JDK 17 and a current Android SDK. iOS requires Xcode. No Apple
 Developer signing identity is required for the development build:
 
@@ -62,9 +73,10 @@ signing and all private key material are intentionally absent from the repo.
 ## Security and privacy
 
 Do not use the current preview for real emergency coordination. See
-[SECURITY.md](./SECURITY.md) for vulnerability reporting. Precise location data
-and server retention are not implemented yet; they must pass the privacy and
-deletion gates in the plan before public testing.
+[SECURITY.md](./SECURITY.md) for vulnerability reporting. Location events are
+ride-scoped and locally persisted, but production identity, encryption, data
+compaction, retention/deletion enforcement, and server sync remain release
+gates.
 
 ## License
 
