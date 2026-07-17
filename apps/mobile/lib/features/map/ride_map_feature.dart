@@ -252,6 +252,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   GeoPoint? _lastHandledCurrentPosition;
   DateTime? _lastCameraUpdateAt;
   DateTime? _lastProgressUpdateAt;
+  DateTime? _lastMapLibrePositionSyncAt;
   Duration _cameraTransitionDuration = const Duration(milliseconds: 450);
   bool _mapLibreSyncScheduled = false;
   bool _mapLibreSyncRunning = false;
@@ -802,16 +803,31 @@ class _RideMapScreenState extends State<RideMapScreen> {
         progressNow.difference(_lastProgressUpdateAt!) >=
             const Duration(milliseconds: 400);
     if (refreshProgress) _lastProgressUpdateAt = progressNow;
+    final refreshMapLibrePosition =
+        !_basemap.usesMapLibre ||
+        _lastMapLibrePositionSyncAt == null ||
+        progressNow.difference(_lastMapLibrePositionSyncAt!) >=
+            const Duration(milliseconds: 250);
+    if (refreshMapLibrePosition) _lastMapLibrePositionSyncAt = progressNow;
 
     if (!_isMoving) _autoFollowSuppressed = false;
     final autoFollow = _route != null && _isMoving && !_autoFollowSuppressed;
-    setState(() {
-      if (refreshProgress) {
-        _progressGeometry = _routeProgressTracker.update(_route, position);
-      }
-      if (autoFollow) _navigationMode = true;
-    });
-    _scheduleMapLibreSync(progress: refreshProgress, position: true);
+    final enableNavigationMode = autoFollow && !_navigationMode;
+    // MapLibre receives source updates directly. Avoid rebuilding a platform
+    // view for every synthetic 10 Hz GPS fix; progress still refreshes at 2.5
+    // Hz and the native position source at 4 Hz.
+    if (!_basemap.usesMapLibre || refreshProgress || enableNavigationMode) {
+      setState(() {
+        if (refreshProgress) {
+          _progressGeometry = _routeProgressTracker.update(_route, position);
+        }
+        if (autoFollow) _navigationMode = true;
+      });
+    }
+    _scheduleMapLibreSync(
+      progress: refreshProgress,
+      position: refreshMapLibrePosition,
+    );
     if (_navigationMode && position != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_followNavigationCamera());
@@ -907,13 +923,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!force &&
         previousCameraUpdate != null &&
         now.difference(previousCameraUpdate) <
-            const Duration(milliseconds: 180)) {
+            const Duration(milliseconds: 260)) {
       return;
     }
     if (previousCameraUpdate != null) {
       final elapsed = now.difference(previousCameraUpdate).inMilliseconds;
       _cameraTransitionDuration = Duration(
-        milliseconds: (elapsed * 1.08).round().clamp(180, 320),
+        milliseconds: (elapsed * 1.1).round().clamp(280, 420),
       );
     }
     _lastCameraUpdateAt = now;
@@ -1810,12 +1826,12 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     final elapsed = previous == null
         ? const Duration(seconds: 1)
         : DateTime.now().difference(previous);
-    if (elapsed >= const Duration(milliseconds: 500)) {
+    if (elapsed >= const Duration(milliseconds: 750)) {
       _lastRefreshAt = DateTime.now();
       unawaited(_refreshMap());
       return;
     }
-    _refreshTimer ??= Timer(const Duration(milliseconds: 500) - elapsed, () {
+    _refreshTimer ??= Timer(const Duration(milliseconds: 750) - elapsed, () {
       _refreshTimer = null;
       if (!mounted) return;
       _lastRefreshAt = DateTime.now();
@@ -1973,6 +1989,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       );
       _styleReady = true;
       await _refreshMap();
+      await _fitGroup();
     } on Object catch (error) {
       debugPrint('Could not prepare group mini-map: $error');
     }
@@ -1983,9 +2000,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     if (!_styleReady || controller == null || _refreshing) return;
     _refreshing = true;
     try {
-      await controller.setGeoJsonSource(_routeSource, _routeGeoJson());
       await controller.setGeoJsonSource(_riderSource, _riderGeoJson());
-      await _fitGroup();
     } on Object catch (error) {
       debugPrint('Could not refresh group mini-map: $error');
     } finally {

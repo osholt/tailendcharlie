@@ -88,7 +88,7 @@ void main() {
     addTearDown(smoothSimulation.dispose);
 
     expect(smoothSimulation.tickInterval, const Duration(milliseconds: 100));
-    expect(smoothSimulation.eventInterval, const Duration(milliseconds: 500));
+    expect(smoothSimulation.eventInterval, const Duration(milliseconds: 750));
   });
 
   test('switches between leader, follower and TEC perspectives', () {
@@ -164,6 +164,35 @@ void main() {
             ?.assessment
             .state,
         RouteTrackingState.onRoute,
+      );
+    },
+  );
+
+  test(
+    'off-route visual trail is local to the current simulation run',
+    () async {
+      simulation.setAlexOffRoute(true);
+      await simulation.advance(const Duration(seconds: 1));
+
+      final alex = simulation.riders.singleWhere(
+        (rider) => rider.id == RideSimulationController.offRouteRiderId,
+      );
+      expect(alex.offRouteTrail, hasLength(greaterThanOrEqualTo(2)));
+      expect(
+        alex.offRouteTrail.every(
+          (point) => point.latitude > 50 && point.latitude < 52,
+        ),
+        isTrue,
+      );
+
+      simulation.setAlexOffRoute(false);
+      expect(
+        simulation.riders
+            .singleWhere(
+              (rider) => rider.id == RideSimulationController.offRouteRiderId,
+            )
+            .offRouteTrail,
+        isEmpty,
       );
     },
   );

@@ -80,11 +80,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   StreamSubscription<RideEvent>? _receivedEventSubscription;
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   Timer? _stalenessTimer;
+  Timer? _simulationAwarenessTimer;
   Future<void> _publishChain = Future.value();
   String? _routeFingerprint;
   String? _simulationRouteFingerprint;
   int _routeGeneration = 0;
   int _selectedIndex = 0;
+  DateTime? _lastSimulationOverlayUpdateAt;
   bool _loading = true;
   bool _relayConfigured = false;
   bool _refreshingRideEvents = false;
@@ -348,10 +350,23 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   void _onSimulationVisualChanged() {
     if (!mounted || !_isSimulation) return;
-    _updateMapOverlays(updateDerivedState: false);
+    final now = DateTime.now();
+    final updateOverlayMarkers =
+        _lastSimulationOverlayUpdateAt == null ||
+        now.difference(_lastSimulationOverlayUpdateAt!) >=
+            const Duration(milliseconds: 250);
+    if (updateOverlayMarkers) _lastSimulationOverlayUpdateAt = now;
+    _updateMapOverlays(
+      updateDerivedState: false,
+      updateOverlayMarkers: updateOverlayMarkers,
+    );
   }
 
   void _onAwarenessChanged() {
+    if (_isSimulation) {
+      _scheduleSimulationAwarenessUpdate();
+      return;
+    }
     _updateMapOverlays();
     _schedulePublish();
     if (!_refreshingRideEvents) {
@@ -366,7 +381,28 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
   }
 
-  void _updateMapOverlays({bool updateDerivedState = true}) {
+  void _scheduleSimulationAwarenessUpdate() {
+    if (_simulationAwarenessTimer != null) return;
+    _simulationAwarenessTimer = Timer(const Duration(milliseconds: 250), () {
+      _simulationAwarenessTimer = null;
+      if (!mounted) return;
+      _updateMapOverlays();
+      if (_refreshingRideEvents) return;
+      _refreshingRideEvents = true;
+      unawaited(() async {
+        try {
+          await widget.rideController.reloadEvents();
+        } finally {
+          _refreshingRideEvents = false;
+        }
+      }());
+    });
+  }
+
+  void _updateMapOverlays({
+    bool updateDerivedState = true,
+    bool updateOverlayMarkers = true,
+  }) {
     final awareness = _awarenessController;
     if (awareness == null) return;
     final localLocation = awareness.localLocation;
@@ -405,7 +441,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           );
     _mapPosition.value = mapPoint;
 
-    if (updateDerivedState) _updateOffRouteTraces(awareness);
+    if (!updateOverlayMarkers) return;
+    if (_isSimulation) {
+      _updateSimulationOffRouteTraces(simulatedRiders ?? const []);
+    } else if (updateDerivedState) {
+      _updateOffRouteTraces(awareness);
+    }
 
     final overlays = <MapOverlayMarker>[
       ...awareness.activeHazards.map(
@@ -481,6 +522,28 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
               route: awareness.route,
             );
     }
+  }
+
+  void _updateSimulationOffRouteTraces(List<SimulatedRiderSnapshot> riders) {
+    _offRouteTraces.value = List.unmodifiable(
+      riders
+          .where((rider) => rider.isOffRoute && rider.offRouteTrail.length >= 2)
+          .map(
+            (rider) => MapOverlayTrace(
+              id: 'off-route-${rider.id}',
+              points: rider.offRouteTrail
+                  .map(
+                    (point) => route_domain.GeoPoint(
+                      latitude: point.latitude,
+                      longitude: point.longitude,
+                    ),
+                  )
+                  .toList(growable: false),
+              label: '${rider.displayName} off-route trace',
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 
   void _updateOffRouteTraces(SituationalAwarenessController awareness) {
@@ -585,6 +648,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (_rideEndHandled) return;
     _rideEndHandled = true;
     _stalenessTimer?.cancel();
+    _simulationAwarenessTimer?.cancel();
     _stalenessTimer = null;
     await _locationController?.stop();
   }

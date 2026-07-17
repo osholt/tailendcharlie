@@ -26,6 +26,7 @@ class SimulatedRiderSnapshot {
     required this.isOffRoute,
     required this.position,
     required this.headingDegrees,
+    required this.offRouteTrail,
   });
 
   final String id;
@@ -37,6 +38,11 @@ class SimulatedRiderSnapshot {
   final bool isOffRoute;
   final GeoPoint position;
   final double headingDegrees;
+
+  /// Ephemeral visual trace for the current simulation run. Keeping this out
+  /// of the durable awareness history prevents an older demo route from being
+  /// connected to the current one after the bundled route changes.
+  final List<GeoPoint> offRouteTrail;
 }
 
 /// Drives the production awareness pipeline with synthetic, authenticated GPS
@@ -48,7 +54,7 @@ class RideSimulationController extends ChangeNotifier {
     required RideSession session,
     required List<GeoPoint> route,
     this.tickInterval = const Duration(milliseconds: 100),
-    this.eventInterval = const Duration(milliseconds: 500),
+    this.eventInterval = const Duration(milliseconds: 750),
   }) : assert(session.isSimulation),
        assert(route.length >= 2),
        _session = session,
@@ -149,6 +155,7 @@ class RideSimulationController extends ChangeNotifier {
         isOffRoute: agent.isOffRoute,
         position: sampled.position,
         headingDegrees: sampled.headingDegrees,
+        offRouteTrail: List.unmodifiable(agent.offRouteTrail),
       );
     }),
   );
@@ -188,6 +195,8 @@ class RideSimulationController extends ChangeNotifier {
     final alex = _agent(offRouteRiderId);
     if (alex.isOffRoute == value) return;
     alex.isOffRoute = value;
+    alex.offRouteTrail.clear();
+    if (value) _recordOffRouteTrail(alex);
     notifyListeners();
   }
 
@@ -261,6 +270,7 @@ class RideSimulationController extends ChangeNotifier {
         routeDistanceMeters,
         agent.progressMeters + _speedFor(agent) * seconds,
       );
+      if (agent.isOffRoute) _recordOffRouteTrail(agent);
     }
     final completed = _agents.first.progressMeters >= routeDistanceMeters;
     if (completed) _state = RideSimulationState.completed;
@@ -326,7 +336,8 @@ class RideSimulationController extends ChangeNotifier {
         SituationEventFactory(
           session: remoteSession,
           clock: () => recordedAt,
-          idFactory: () => 'ride-lab-${agent.id}-${_eventSequence++}',
+          idFactory: () =>
+              'ride-lab-${agent.id}-${recordedAt.microsecondsSinceEpoch}-${_eventSequence++}',
         ).create(
           type: RideEventType.riderLocationUpdated,
           payload: {'location': location.toJson()},
@@ -346,6 +357,16 @@ class RideSimulationController extends ChangeNotifier {
 
   _SimulatedAgent _agent(String id) =>
       _agents.firstWhere((agent) => agent.id == id);
+
+  void _recordOffRouteTrail(_SimulatedAgent agent) {
+    final point = _sampleAgent(agent).position;
+    final trail = agent.offRouteTrail;
+    if (trail.isEmpty ||
+        GeoCalculations.distanceMeters(trail.last, point) >= 2) {
+      trail.add(point);
+      if (trail.length > 120) trail.removeRange(0, trail.length - 120);
+    }
+  }
 
   _SimulatedPosition _sampleAgent(_SimulatedAgent agent) {
     final sampled = _routeSampler.sampleAt(agent.progressMeters);
@@ -419,6 +440,7 @@ class _SimulatedAgent {
   final double speedFactor;
   final bool isLocal;
   bool isOffRoute = false;
+  final List<GeoPoint> offRouteTrail = [];
 }
 
 class _SimulatedPosition {
