@@ -51,9 +51,18 @@ class HomeScreen extends StatelessWidget {
                     icon: const Icon(Icons.group_add_outlined),
                     label: const Text('Join a ride'),
                   ),
+                  const SizedBox(height: 12),
+                  TextButton.icon(
+                    key: const Key('start-ride-simulator'),
+                    onPressed: controller.busy
+                        ? null
+                        : controller.createSimulationRide,
+                    icon: const Icon(Icons.science_outlined),
+                    label: const Text('Try a simulated ride'),
+                  ),
                   const SizedBox(height: 20),
                   const Text(
-                    'No account required · location is shared only during a ride',
+                    'No account required · the simulator never shares location',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Color(0xFF7F8A98), fontSize: 12),
                   ),

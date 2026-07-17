@@ -79,6 +79,12 @@ geometry works without a basemap; provider configuration and offline-caching
 licence gates are documented in
 [docs/maps-and-gpx.md](./docs/maps-and-gpx.md).
 
+Select **Try a simulated ride** on the start screen to run the complete map and
+situational-awareness flow with five virtual bikes. Ride Lab can accelerate
+time, delay the TEC, send a rider off course, and add a hazard without using
+device GPS or publishing synthetic data to the internet/nearby relays. See
+[docs/ride-simulator.md](./docs/ride-simulator.md).
+
 Navigation handoff behavior is documented in
 [docs/navigation-export.md](./docs/navigation-export.md); exact GPX geometry is
 shared where a target does not provide a documented full-route link.

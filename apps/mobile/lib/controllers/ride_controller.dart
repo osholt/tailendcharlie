@@ -163,25 +163,28 @@ class RideController extends ChangeNotifier {
 
   Future<void> createRide(String displayName) async {
     await _run(() async {
-      final now = _clock();
-      final session = RideSession(
-        rideId: _idFactory(),
-        rideCode: _generateCode(),
-        inviteSecret: _generateInviteSecret(),
-        localRiderId: _idFactory(),
-        displayName: _normaliseName(displayName),
-        role: RideRole.lead,
-        joinedAt: now,
-      );
-      _session = session;
-      await _sessionStore.save(session);
-      await _record(
-        type: RideEventType.rideCreated,
-        payload: {
-          'displayName': session.displayName,
-          'role': session.role.name,
-        },
-      );
+      await _createRide(displayName: displayName);
+    });
+  }
+
+  Future<void> createSimulationRide() async {
+    await _run(() async {
+      await _createRide(displayName: 'Demo Lead', isSimulation: true);
+    });
+  }
+
+  Future<void> restartSimulationRide() async {
+    await _run(() async {
+      final activeSession = _requireSession();
+      if (!activeSession.isSimulation) {
+        throw const FormatException('Only a simulated ride can be restarted.');
+      }
+      await _eventStore.deleteRide(activeSession.rideId);
+      await _sessionStore.clear();
+      _session = null;
+      _events = const [];
+      _roleBeforeMarker = null;
+      await _createRide(displayName: 'Demo Lead', isSimulation: true);
     });
   }
 
@@ -422,6 +425,33 @@ class RideController extends ChangeNotifier {
     );
     await _eventStore.append(event);
     _events = [..._events, event];
+  }
+
+  Future<void> _createRide({
+    required String displayName,
+    bool isSimulation = false,
+  }) async {
+    final now = _clock();
+    final session = RideSession(
+      rideId: _idFactory(),
+      rideCode: _generateCode(),
+      inviteSecret: _generateInviteSecret(),
+      localRiderId: _idFactory(),
+      displayName: _normaliseName(displayName),
+      role: RideRole.lead,
+      joinedAt: now,
+      isSimulation: isSimulation,
+    );
+    _session = session;
+    await _sessionStore.save(session);
+    await _record(
+      type: RideEventType.rideCreated,
+      payload: {
+        'displayName': session.displayName,
+        'role': session.role.name,
+        if (isSimulation) 'simulation': true,
+      },
+    );
   }
 
   Future<void> _run(Future<void> Function() operation) async {

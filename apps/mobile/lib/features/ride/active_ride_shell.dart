@@ -8,6 +8,7 @@ import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
 import '../../data/json_file_route_store.dart';
 import '../../domain/event_store.dart';
@@ -16,6 +17,7 @@ import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/ride_event.dart';
 import '../../domain/route_alert.dart';
+import '../../domain/route_store.dart';
 import '../../internet/internet_relay_client.dart';
 import '../../internet/internet_relay_worker.dart';
 import '../../internet/shared_preferences_internet_cursor_store.dart';
@@ -24,11 +26,13 @@ import '../../relay/nearby_event_source.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/device_location_source.dart';
+import '../../services/demo_route_loader.dart';
 import '../../services/external_hazard_provider.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../map/ride_map.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
+import '../simulation/ride_simulation_screen.dart';
 import 'ended_ride_screen.dart';
 import 'ride_dashboard.dart';
 
@@ -67,17 +71,22 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   NearbyRelayController? _relayController;
   InternetRelayController? _internetRelayController;
   SharedPreferencesInternetCursorStore? _internetCursorStore;
+  RideSimulationController? _simulationController;
+  InMemoryRouteStore? _simulationRouteStore;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   Timer? _stalenessTimer;
   Future<void> _publishChain = Future.value();
   String? _routeFingerprint;
+  String? _simulationRouteFingerprint;
   int _routeGeneration = 0;
   int _selectedIndex = 0;
   bool _loading = true;
   bool _relayConfigured = false;
   bool _refreshingRideEvents = false;
   bool _rideEndHandled = false;
+
+  bool get _isSimulation => widget.rideController.session?.isSimulation == true;
 
   @override
   void initState() {
@@ -88,7 +97,18 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   Future<void> _initialize() async {
     route_domain.ImportedRoute? route;
-    if (widget.enableNativeServices) {
+    if (_isSimulation) {
+      try {
+        route = await const BundledDemoRouteLoader().load();
+        _simulationRouteStore = InMemoryRouteStore(route);
+        _warnings.add(
+          'Ride Lab is isolated: device GPS, internet relay and nearby radios '
+          'are disabled.',
+        );
+      } on Object catch (error) {
+        _warnings.add('The simulation route could not be loaded: $error');
+      }
+    } else if (widget.enableNativeServices) {
       try {
         final routeStore = await JsonFileRouteStore.openDefault();
         route = await routeStore.loadActiveRoute();
@@ -98,9 +118,12 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
 
     await _replaceAwarenessController(route, notify: false);
+    if (_isSimulation) {
+      await _replaceSimulationController(route, notify: false);
+    }
     if (!mounted) return;
 
-    if (widget.enableNativeServices) {
+    if (widget.enableNativeServices && !_isSimulation) {
       _stalenessTimer = Timer.periodic(const Duration(seconds: 15), (_) {
         final awareness = _awarenessController;
         if (awareness != null) unawaited(awareness.refreshStaleness());
@@ -265,7 +288,55 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }
 
   void _onRouteChanged(route_domain.ImportedRoute? route) {
-    unawaited(_replaceAwarenessController(route));
+    unawaited(_handleRouteChanged(route));
+  }
+
+  Future<void> _handleRouteChanged(route_domain.ImportedRoute? route) async {
+    await _replaceAwarenessController(route);
+    if (_isSimulation) await _replaceSimulationController(route);
+  }
+
+  Future<void> _replaceSimulationController(
+    route_domain.ImportedRoute? route, {
+    bool notify = true,
+  }) async {
+    final fingerprint = route == null
+        ? 'none'
+        : '${route.id}:${route.importedAt.toUtc().toIso8601String()}:'
+              '${route.pathPointCount}';
+    if (_simulationController != null &&
+        fingerprint == _simulationRouteFingerprint) {
+      return;
+    }
+    final previous = _simulationController;
+    _simulationController = null;
+    _simulationRouteFingerprint = fingerprint;
+    previous?.dispose();
+
+    final awareness = _awarenessController;
+    final session = widget.rideController.session;
+    final simulationRoute = _markerRouteFor(route);
+    if (awareness == null ||
+        session == null ||
+        !session.isSimulation ||
+        simulationRoute.length < 2) {
+      if (notify && mounted) setState(() {});
+      return;
+    }
+
+    final controller = RideSimulationController(
+      awareness,
+      session: session,
+      route: simulationRoute,
+    );
+    _simulationController = controller;
+    await controller.initialize();
+    if (!mounted || _simulationController != controller) {
+      controller.dispose();
+      return;
+    }
+    controller.start();
+    if (notify) setState(() {});
   }
 
   void _onAwarenessChanged() {
@@ -505,18 +576,18 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         onRemoveRide: _removeEndedRide,
       );
     }
-    final body = switch (_selectedIndex) {
-      0 => _buildMap(),
-      1 => RideDashboard(
-        controller: widget.rideController,
-        onLeaveRide: _leaveRide,
-        relayController: _relayController,
-        markerAssistanceController: _markerAssistanceController,
-        internetRelayController: _internetRelayController,
-        serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
-      ),
-      _ => _buildAwareness(),
-    };
+    final body = _isSimulation
+        ? switch (_selectedIndex) {
+            0 => _buildMap(),
+            1 => _buildSimulation(),
+            2 => _buildDetails(),
+            _ => _buildAwareness(),
+          }
+        : switch (_selectedIndex) {
+            0 => _buildMap(),
+            1 => _buildDetails(),
+            _ => _buildAwareness(),
+          };
 
     return ValueListenableBuilder<MapNavigationPosition?>(
       valueListenable: _mapNavigationPosition,
@@ -524,7 +595,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         final landscape =
             MediaQuery.orientationOf(context) == Orientation.landscape;
         final hideWhileMoving =
-            _selectedIndex == 0 && navigationPosition?.isMoving == true;
+            !_isSimulation &&
+            _selectedIndex == 0 &&
+            navigationPosition?.isMoving == true;
         return Scaffold(
           body: body,
           bottomNavigationBar: hideWhileMoving
@@ -535,18 +608,24 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   selectedIndex: _selectedIndex,
                   onDestinationSelected: (index) =>
                       setState(() => _selectedIndex = index),
-                  destinations: const [
-                    NavigationDestination(
+                  destinations: [
+                    const NavigationDestination(
                       icon: Icon(Icons.map_outlined),
                       selectedIcon: Icon(Icons.map),
                       label: 'Map',
                     ),
-                    NavigationDestination(
+                    if (_isSimulation)
+                      const NavigationDestination(
+                        icon: Icon(Icons.science_outlined),
+                        selectedIcon: Icon(Icons.science),
+                        label: 'Ride Lab',
+                      ),
+                    const NavigationDestination(
                       icon: Icon(Icons.tune_outlined),
                       selectedIcon: Icon(Icons.tune),
                       label: 'Details',
                     ),
-                    NavigationDestination(
+                    const NavigationDestination(
                       icon: Icon(Icons.health_and_safety_outlined),
                       selectedIcon: Icon(Icons.health_and_safety),
                       label: 'Safety',
@@ -559,7 +638,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }
 
   Widget _buildMap() {
-    if (!widget.enableNativeServices) {
+    if (_isSimulation && (_loading || _simulationRouteStore == null)) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!widget.enableNativeServices && !_isSimulation) {
       return Scaffold(
         appBar: AppBar(title: const Text('Navigation')),
         body: const Center(child: Text('Navigation map')),
@@ -572,9 +654,38 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       offRouteTraces: _offRouteTraces,
       leaderStatus: _leaderStatus,
       onRouteChanged: _onRouteChanged,
-      acquireCurrentPosition: _acquireCurrentPosition,
+      acquireCurrentPosition: _isSimulation
+          ? () async => _mapPosition.value
+          : _acquireCurrentPosition,
+      routeStore: _simulationRouteStore,
     );
   }
+
+  Widget _buildSimulation() {
+    final controller = _simulationController;
+    if (_loading || controller == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    return RideSimulationScreen(
+      controller: controller,
+      onRestart: _restartSimulation,
+      onExit: _leaveRide,
+    );
+  }
+
+  Future<void> _restartSimulation() async {
+    _simulationController?.pause();
+    await widget.rideController.restartSimulationRide();
+  }
+
+  Widget _buildDetails() => RideDashboard(
+    controller: widget.rideController,
+    onLeaveRide: _leaveRide,
+    relayController: _relayController,
+    markerAssistanceController: _markerAssistanceController,
+    internetRelayController: _internetRelayController,
+    serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
+  );
 
   Future<route_domain.GeoPoint?> _acquireCurrentPosition() async {
     final existing = _mapPosition.value;
@@ -613,7 +724,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
     return SituationalAwarenessScreen(
       controller: awareness,
-      locationController: widget.enableNativeServices
+      locationController: widget.enableNativeServices && !_isSimulation
           ? _locationController
           : null,
     );
@@ -626,6 +737,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }
 
   Future<void> _leaveRide() async {
+    _simulationController?.pause();
     final rideId = widget.rideController.session?.rideId;
     if (rideId != null) await _internetCursorStore?.clear(rideId);
     await widget.rideController.leaveRide();
@@ -634,6 +746,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   @override
   void dispose() {
     widget.rideController.removeListener(_onRideControllerChanged);
+    _simulationController?.dispose();
     _awarenessController?.removeListener(_onAwarenessChanged);
     _markerAssistanceController?.dispose();
     _awarenessController?.dispose();

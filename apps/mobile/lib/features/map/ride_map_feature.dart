@@ -3,19 +3,17 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
-import 'package:uuid/uuid.dart';
 
 import '../../data/json_file_route_store.dart';
 import '../../domain/imported_route.dart';
 import '../../domain/route_store.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/demo_route_loader.dart';
 import '../../services/gpx_import_source.dart';
-import '../../services/gpx_parser.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
@@ -46,6 +44,7 @@ class RideMapFeature extends StatefulWidget {
     this.onRouteChanged,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
+    this.routeStore,
     this.basemapConfiguration = const BasemapConfiguration(),
   });
 
@@ -58,6 +57,7 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<LeaderRideStatus?>? leaderStatus,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
+    RouteStore? routeStore,
   }) => RideMapFeature(
     key: key,
     currentPosition: currentPosition,
@@ -67,6 +67,7 @@ class RideMapFeature extends StatefulWidget {
     leaderStatus: leaderStatus,
     onRouteChanged: onRouteChanged,
     acquireCurrentPosition: acquireCurrentPosition,
+    routeStore: routeStore,
     basemapConfiguration: BasemapConfiguration.fromEnvironment(),
   );
 
@@ -78,6 +79,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
+  final RouteStore? routeStore;
   final BasemapConfiguration basemapConfiguration;
 
   @override
@@ -99,7 +101,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
     );
     try {
       return _MapDependencies(
-        store: await JsonFileRouteStore.openDefault(),
+        store: widget.routeStore ?? await JsonFileRouteStore.openDefault(),
         cache: await OfflineTileCache.openDefault(widget.basemapConfiguration),
         mapLibreOfflineManager: MapLibreOfflineManager(
           configuration: widget.basemapConfiguration,
@@ -344,6 +346,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
     final hideChrome = _navigationMode && _isMoving;
+    final safeInsets = MediaQuery.paddingOf(context);
+    final overlayTop = hideChrome ? safeInsets.top : 0.0;
+    final overlayLeft = hideChrome ? safeInsets.left : 0.0;
+    final overlayRight = hideChrome ? safeInsets.right : 0.0;
+    final overlayBottom = hideChrome ? safeInsets.bottom : 0.0;
     final compactDensity = landscape ? VisualDensity.compact : null;
     return Scaffold(
       appBar: hideChrome
@@ -454,9 +461,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 Positioned.fill(child: _buildMap()),
                 if (_downloadProgress case final progress?)
                   Positioned(
-                    left: 12,
-                    right: 12,
-                    top: 12,
+                    left: overlayLeft + 12,
+                    right: overlayRight + 12,
+                    top: overlayTop + 12,
                     child: Card(
                       child: _DownloadProgress(
                         progress: progress,
@@ -466,9 +473,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ),
                 if (widget.leaderStatus != null)
                   Positioned(
-                    left: landscape ? 8 : 12,
-                    right: landscape ? 68 : 12,
-                    top: _downloadProgress == null ? 8 : 72,
+                    left: overlayLeft + (landscape ? 8 : 12),
+                    right: overlayRight + (landscape ? 68 : 12),
+                    top: overlayTop + (_downloadProgress == null ? 8 : 72),
                     child: ValueListenableBuilder<LeaderRideStatus?>(
                       valueListenable: widget.leaderStatus!,
                       builder: (context, status, _) => status == null
@@ -481,8 +488,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ),
                 if (_route != null)
                   Positioned(
-                    right: 12,
-                    bottom: 12,
+                    right: overlayRight + 12,
+                    bottom: overlayBottom + 12,
                     child: FloatingActionButton.small(
                       key: const Key('navigation-follow-button'),
                       tooltip: _navigationMode
@@ -1107,13 +1114,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<ImportedRoute> _loadBundledDemoRoute() async {
-    final data = await rootBundle.load('assets/demo_route.gpx');
-    return const GpxParser().parse(
-      data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-      routeId: const Uuid().v4(),
-      sourceFileName: 'demo_route.gpx',
-      importedAt: DateTime.now(),
-    );
+    return const BundledDemoRouteLoader().load();
   }
 
   Future<ImportedRoute> _activateRoute(ImportedRoute route) async {

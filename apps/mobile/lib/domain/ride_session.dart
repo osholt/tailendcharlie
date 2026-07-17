@@ -9,6 +9,7 @@ class RideSession {
     required this.displayName,
     required this.role,
     required this.joinedAt,
+    this.isSimulation = false,
   });
 
   final String rideId;
@@ -18,6 +19,7 @@ class RideSession {
   final String displayName;
   final RideRole role;
   final DateTime joinedAt;
+  final bool isSimulation;
 
   RideSession copyWith({RideRole? role}) => RideSession(
     rideId: rideId,
@@ -27,6 +29,7 @@ class RideSession {
     displayName: displayName,
     role: role ?? this.role,
     joinedAt: joinedAt,
+    isSimulation: isSimulation,
   );
 
   Map<String, Object?> toJson() => {
@@ -37,6 +40,7 @@ class RideSession {
     'displayName': displayName,
     'role': role.name,
     'joinedAt': joinedAt.toUtc().toIso8601String(),
+    if (isSimulation) 'isSimulation': true,
   };
 
   factory RideSession.fromJson(Map<String, Object?> json) => RideSession(
@@ -47,5 +51,6 @@ class RideSession {
     displayName: json['displayName']! as String,
     role: RideRole.values.byName(json['role']! as String),
     joinedAt: DateTime.parse(json['joinedAt']! as String).toLocal(),
+    isSimulation: json['isSimulation'] as bool? ?? false,
   );
 }

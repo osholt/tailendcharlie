@@ -5,6 +5,10 @@
 Determine what Ride Relay can honestly promise when iOS and Android phones move
 through a motorcycle group with locked screens and no mobile data.
 
+Ride Lab can rehearse route progress, TEC gaps, hazards and off-course alerts
+before this test, but synthetic rides are not evidence for radio, background,
+battery or real-GPS pass gates.
+
 ## Reference matrix
 
 Use at least:

@@ -15,6 +15,7 @@ void main() {
 
     expect(find.text('Create a ride'), findsOneWidget);
     expect(find.text('Join a ride'), findsOneWidget);
+    expect(find.text('Try a simulated ride'), findsOneWidget);
     expect(find.text('Ready to ride?'), findsOneWidget);
 
     controller.dispose();

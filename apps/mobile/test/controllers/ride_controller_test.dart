@@ -51,6 +51,21 @@ void main() {
     expect(restored?.rideId, controller.session?.rideId);
   });
 
+  test('simulation ride is explicitly tagged and restartable', () async {
+    await controller.createSimulationRide();
+
+    final firstRideId = controller.session!.rideId;
+    expect(controller.session?.isSimulation, isTrue);
+    expect(controller.session?.displayName, 'Demo Lead');
+    expect(controller.events.single.payload['simulation'], isTrue);
+
+    await controller.restartSimulationRide();
+
+    expect(controller.session?.isSimulation, isTrue);
+    expect(controller.session?.rideId, isNot(firstRideId));
+    expect(await eventStore.eventsForRide(firstRideId), isEmpty);
+  });
+
   test('invalid join code is rejected without creating a session', () async {
     await controller.joinRide('123', 'Oliver');
 
