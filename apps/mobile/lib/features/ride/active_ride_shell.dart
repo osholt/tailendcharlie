@@ -332,16 +332,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       if (notify && mounted) setState(() {});
       return;
     }
-    final waypointJunctions =
-        route?.waypoints
-            .map(
-              (waypoint) => awareness_geo.GeoPoint(
-                latitude: waypoint.point.latitude,
-                longitude: waypoint.point.longitude,
-              ),
-            )
-            .toList(growable: false) ??
-        const <awareness_geo.GeoPoint>[];
+    final markerJunctions = await _simulationJunctions(route);
     final derivedJunctions = const RouteDecisionPointExtractor()
         .extract(route: simulationRoute)
         .map((point) => point.position)
@@ -351,7 +342,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       awareness,
       session: session,
       route: simulationRoute,
-      markerJunctions: waypointJunctions,
+      markerJunctions: markerJunctions,
       fallbackJunctions: derivedJunctions,
     );
     _simulationController = controller;
@@ -364,6 +355,35 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     controller.start();
     _onSimulationVisualChanged();
     if (notify) setState(() {});
+  }
+
+  Future<List<awareness_geo.GeoPoint>> _simulationJunctions(
+    route_domain.ImportedRoute? route,
+  ) async {
+    if (route?.sourceFileName == 'demo_route.gpx') {
+      try {
+        return (await const BundledDemoRouteLoader().loadManeuvers())
+            .map(
+              (maneuver) => awareness_geo.GeoPoint(
+                latitude: maneuver.position.latitude,
+                longitude: maneuver.position.longitude,
+              ),
+            )
+            .toList(growable: false);
+      } on FormatException {
+        // Keep the demo usable if a local asset is damaged. GPX waypoints are
+        // a less detailed but still valid fallback for the simulation.
+      }
+    }
+    return route?.waypoints
+            .map(
+              (waypoint) => awareness_geo.GeoPoint(
+                latitude: waypoint.point.latitude,
+                longitude: waypoint.point.longitude,
+              ),
+            )
+            .toList(growable: false) ??
+        const <awareness_geo.GeoPoint>[];
   }
 
   void _onSimulationVisualChanged() {
@@ -864,7 +884,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   Future<void> _toggleSimulationMarker() async {
     final controller = _simulationController;
-    if (controller == null) return;
+    if (controller == null || controller.automaticMarkerActive) return;
     if (controller.markerMode) {
       await widget.rideController.endMarker();
       controller.setMarkerMode(false);
@@ -887,7 +907,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       return;
     }
     setState(() => _selectedIndex = 1);
-    if (!widget.rideController.markerActive) {
+    if (controller.automaticMarkerIsLocal &&
+        !widget.rideController.markerActive) {
       await widget.rideController.startMarker(mode: 'simulation-auto-junction');
     }
   }
@@ -895,7 +916,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   Future<void> _rideOffSimulationMarker() async {
     final controller = _simulationController;
     if (controller == null || !controller.canRideOff) return;
-    await widget.rideController.endMarker();
+    if (controller.automaticMarkerIsLocal &&
+        widget.rideController.markerActive) {
+      await widget.rideController.endMarker();
+    }
     controller.rideOff();
     if (mounted) setState(() => _selectedIndex = 0);
   }

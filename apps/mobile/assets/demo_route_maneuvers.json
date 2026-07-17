@@ -1,0 +1,35 @@
+{
+  "source": "OSRM navigation steps generated for King's Oak Academy to Cross Hands Hotel",
+  "maneuvers": [
+    {
+      "type": "end of road",
+      "modifier": "right",
+      "name": "High Street",
+      "ref": "A420",
+      "latitude": 51.457750,
+      "longitude": -2.462319
+    },
+    {
+      "type": "turn",
+      "modifier": "left",
+      "name": "Gorse Lane",
+      "latitude": 51.452344,
+      "longitude": -2.386091
+    },
+    {
+      "type": "end of road",
+      "modifier": "left",
+      "ref": "A46",
+      "latitude": 51.469563,
+      "longitude": -2.365986
+    },
+    {
+      "type": "rotary",
+      "modifier": "straight",
+      "name": "Bath Road",
+      "ref": "A46",
+      "latitude": 51.501168,
+      "longitude": -2.350268
+    }
+  ]
+}

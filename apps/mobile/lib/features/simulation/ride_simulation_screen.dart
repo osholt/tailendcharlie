@@ -355,6 +355,13 @@ class _AutomaticMarkerViewport extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
+          if (!controller.automaticMarkerIsLocal)
+            Text(
+              '${controller.automaticMarkerRiderName ?? 'Second bike'} is '
+              'marking this junction.',
+              style: const TextStyle(color: Color(0xFFB9C4D1), fontSize: 12),
+            ),
+          if (!controller.automaticMarkerIsLocal) const SizedBox(height: 6),
           Text(
             'Riders passed: ${controller.ridersPassedMarker}/'
             '${controller.ridersExpectedToPass}',
@@ -389,7 +396,12 @@ class _AutomaticMarkerViewport extends StatelessWidget {
               key: const Key('simulation-ride-off'),
               onPressed: () => unawaited(onRideOff()),
               icon: const Icon(Icons.play_arrow),
-              label: const Text('Ride off and return to navigation'),
+              label: Text(
+                controller.automaticMarkerIsLocal
+                    ? 'Ride off and return to navigation'
+                    : 'Send ${controller.automaticMarkerRiderName ?? 'second bike'} '
+                          'back to navigation',
+              ),
             ),
           ],
         ],

@@ -37,11 +37,65 @@ class RoadRouteResult {
     required this.points,
     required this.distanceMeters,
     required this.duration,
+    this.maneuvers = const [],
   });
 
   final List<GeoPoint> points;
   final double distanceMeters;
   final Duration duration;
+  final List<RoadRouteManeuver> maneuvers;
+}
+
+/// A decision reported by the routing engine rather than inferred from a
+/// bend in recorded GPS geometry. These are the points where a second rider
+/// may need to mark a junction.
+class RoadRouteManeuver {
+  const RoadRouteManeuver({
+    required this.position,
+    required this.type,
+    this.modifier,
+    this.name,
+    this.ref,
+  });
+
+  final GeoPoint position;
+  final String type;
+  final String? modifier;
+  final String? name;
+  final String? ref;
+
+  /// OSRM does not expose UK give-way signage, but these manoeuvres are the
+  /// routing decisions where the group leaves its current road or must
+  /// negotiate a junction. A traffic-sign data source can add further points.
+  bool get requiresSecondBikeDrop => const {
+    'turn',
+    'fork',
+    'end of road',
+    'roundabout',
+    'rotary',
+    'merge',
+    'on ramp',
+    'off ramp',
+  }.contains(type);
+
+  factory RoadRouteManeuver.fromJson(Map<String, Object?> json) {
+    final latitude = json['latitude'];
+    final longitude = json['longitude'];
+    final type = json['type'];
+    if (latitude is! num || longitude is! num || type is! String) {
+      throw const FormatException('Route manoeuvre is invalid.');
+    }
+    return RoadRouteManeuver(
+      position: GeoPoint(
+        latitude: latitude.toDouble(),
+        longitude: longitude.toDouble(),
+      ),
+      type: type,
+      modifier: json['modifier'] as String?,
+      name: json['name'] as String?,
+      ref: json['ref'] as String?,
+    );
+  }
 }
 
 abstract interface class RoadRoutingService {
@@ -81,7 +135,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
       queryParameters: const {
         'overview': 'full',
         'geometries': 'geojson',
-        'steps': 'false',
+        'steps': 'true',
       },
     );
     final response = await client
@@ -141,7 +195,45 @@ class OsrmRoadRoutingService implements RoadRoutingService {
       points: points,
       distanceMeters: distance.toDouble(),
       duration: Duration(milliseconds: (duration.toDouble() * 1000).round()),
+      maneuvers: _parseManeuvers(route['legs']),
     );
+  }
+
+  static List<RoadRouteManeuver> _parseManeuvers(Object? rawLegs) {
+    if (rawLegs is! List) return const [];
+    final maneuvers = <RoadRouteManeuver>[];
+    for (final rawLeg in rawLegs) {
+      if (rawLeg is! Map || rawLeg['steps'] is! List) continue;
+      for (final rawStep in rawLeg['steps'] as List) {
+        if (rawStep is! Map || rawStep['maneuver'] is! Map) continue;
+        final step = Map<String, Object?>.from(rawStep);
+        final rawManeuver = Map<String, Object?>.from(
+          rawStep['maneuver'] as Map,
+        );
+        final location = rawManeuver['location'];
+        final type = rawManeuver['type'];
+        if (location is! List ||
+            location.length < 2 ||
+            location[0] is! num ||
+            location[1] is! num ||
+            type is! String) {
+          continue;
+        }
+        maneuvers.add(
+          RoadRouteManeuver(
+            position: GeoPoint(
+              latitude: (location[1] as num).toDouble(),
+              longitude: (location[0] as num).toDouble(),
+            ),
+            type: type,
+            modifier: rawManeuver['modifier'] as String?,
+            name: step['name'] as String?,
+            ref: step['ref'] as String?,
+          ),
+        );
+      }
+    }
+    return List.unmodifiable(maneuvers);
   }
 }
 

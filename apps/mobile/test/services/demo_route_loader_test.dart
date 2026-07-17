@@ -19,4 +19,19 @@ void main() {
     expect(points.last.latitude, closeTo(51.528729, 0.00001));
     expect(points.last.longitude, closeTo(-2.342245, 0.00001));
   });
+
+  test(
+    'bundled demo includes map-derived second-bike-drop decisions',
+    () async {
+      final maneuvers = await const BundledDemoRouteLoader().loadManeuvers();
+
+      expect(maneuvers, hasLength(4));
+      expect(maneuvers.first.type, 'end of road');
+      expect(
+        maneuvers.map((maneuver) => maneuver.name),
+        contains('Gorse Lane'),
+      );
+      expect(maneuvers.map((maneuver) => maneuver.type), contains('rotary'));
+    },
+  );
 }

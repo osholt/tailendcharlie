@@ -13,6 +13,7 @@ void main() {
       expect(request.url.path, contains('/route/v1/driving/'));
       expect(request.url.queryParameters['geometries'], 'geojson');
       expect(request.url.queryParameters['overview'], 'full');
+      expect(request.url.queryParameters['steps'], 'true');
       expect(request.headers['User-Agent'], contains('RideRelay'));
       return http.Response(
         jsonEncode({
@@ -28,6 +29,27 @@ void main() {
                   [-1.01, 53.01],
                 ],
               },
+              'legs': [
+                {
+                  'steps': [
+                    {
+                      'name': 'Gorse Lane',
+                      'maneuver': {
+                        'type': 'turn',
+                        'modifier': 'left',
+                        'location': [-2.386091, 51.452344],
+                      },
+                    },
+                    {
+                      'name': 'London Road',
+                      'maneuver': {
+                        'type': 'new name',
+                        'location': [-2.35, 51.5],
+                      },
+                    },
+                  ],
+                },
+              ],
             },
           ],
         }),
@@ -48,6 +70,10 @@ void main() {
     expect(result.points, hasLength(3));
     expect(result.distanceMeters, 1250.5);
     expect(result.duration, const Duration(milliseconds: 92400));
+    expect(result.maneuvers, hasLength(2));
+    expect(result.maneuvers.first.requiresSecondBikeDrop, isTrue);
+    expect(result.maneuvers.first.name, 'Gorse Lane');
+    expect(result.maneuvers.last.requiresSecondBikeDrop, isFalse);
   });
 
   test(

@@ -207,6 +207,52 @@ void main() {
   );
 
   test(
+    'the simulated second bike marks a route decision from leader view',
+    () async {
+      final markerSimulation = RideSimulationController(
+        awareness,
+        session: RideSession(
+          rideId: 'sim-ride',
+          rideCode: 'SIM123',
+          inviteSecret: 'simulation-secret-that-is-long-enough',
+          localRiderId: 'lead',
+          displayName: 'Demo Lead',
+          role: RideRole.lead,
+          joinedAt: DateTime.utc(2026, 7, 17),
+          isSimulation: true,
+        ),
+        route: const [
+          GeoPoint(latitude: 51, longitude: -1),
+          GeoPoint(latitude: 51, longitude: -0.9),
+        ],
+        markerJunctions: const [GeoPoint(latitude: 51, longitude: -0.99)],
+        tickInterval: const Duration(days: 1),
+      );
+      addTearDown(markerSimulation.dispose);
+      await markerSimulation.initialize();
+
+      for (
+        var tick = 0;
+        tick < 20 && !markerSimulation.automaticMarkerActive;
+        tick += 1
+      ) {
+        await markerSimulation.advance(const Duration(seconds: 1));
+      }
+
+      final maya = markerSimulation.riders.singleWhere(
+        (rider) => rider.id == 'ride-lab-maya',
+      );
+      expect(markerSimulation.localRole, RideRole.lead);
+      expect(markerSimulation.automaticMarkerActive, isTrue);
+      expect(markerSimulation.automaticMarkerIsLocal, isFalse);
+      expect(markerSimulation.automaticMarkerRiderName, 'Maya');
+      expect(maya.role, RideRole.marker);
+      expect(maya.speedMetersPerSecond, 0);
+      expect(markerSimulation.markerInstruction, contains('Maya is holding'));
+    },
+  );
+
+  test(
     'off-route scenario drives real alert hysteresis and recovery',
     () async {
       simulation.setAlexOffRoute(true);

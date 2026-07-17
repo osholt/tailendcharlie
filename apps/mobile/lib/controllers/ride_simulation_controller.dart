@@ -169,6 +169,7 @@ class RideSimulationController extends ChangeNotifier {
   DateTime? _lastRecordedAt;
   int _nextMarkerJunctionIndex = 0;
   double? _activeMarkerProgressMeters;
+  String? _activeMarkerRiderId;
   Set<String> _ridersExpectedToPass = const {};
   SimulationMarkerPhase _markerPhase = SimulationMarkerPhase.riding;
   Duration _tecApproachElapsed = Duration.zero;
@@ -183,6 +184,12 @@ class RideSimulationController extends ChangeNotifier {
   bool get markerMode => _markerMode;
   SimulationMarkerPhase get markerPhase => _markerPhase;
   bool get automaticMarkerActive => _activeMarkerProgressMeters != null;
+  bool get automaticMarkerIsLocal =>
+      _activeMarkerRiderId == _session.localRiderId;
+  String? get automaticMarkerRiderName => switch (_activeMarkerRiderId) {
+    final String riderId => _agent(riderId).displayName,
+    null => null,
+  };
   bool get canRideOff =>
       _markerMode && _markerPhase == SimulationMarkerPhase.readyToRideOff;
   int get automaticMarkerActivation => _automaticMarkerActivation;
@@ -206,18 +213,19 @@ class RideSimulationController extends ChangeNotifier {
 
   String get markerInstruction => switch (_markerPhase) {
     SimulationMarkerPhase.riding =>
-      localRole == RideRole.rider
-          ? 'Follower mode will stop at the next demo junction.'
-          : 'Switch to Follower view to demonstrate an automatic bike drop.',
+      'The simulated second bike will stop at the next route decision.',
     SimulationMarkerPhase.waitingForRiders =>
       ridersPassedMarker < ridersExpectedToPass
-          ? 'Hold the junction while riders pass '
+          ? '${_markerRiderSubject()} is holding the junction while riders pass '
                 '($ridersPassedMarker/$ridersExpectedToPass).'
-          : 'Riders are through. Wait for Tail End Charlie.',
+          : 'Riders are through. ${_markerRiderSubject()} is waiting for '
+                'Tail End Charlie.',
     SimulationMarkerPhase.tecApproaching =>
-      'All riders are through. TEC is approaching — get ready to ride off.',
+      'All riders are through. TEC is approaching — '
+          '${_markerRiderSubject().toLowerCase()} should get ready to ride off.',
     SimulationMarkerPhase.readyToRideOff =>
-      'TEC has passed. It is safe to ride off and return to navigation.',
+      'TEC has passed. ${_markerRiderSubject()} can ride off and return to '
+          'navigation.',
   };
   bool get alexOffRoute => _agent(offRouteRiderId).isOffRoute;
   bool get isRunning => _state == RideSimulationState.running;
@@ -362,16 +370,29 @@ class RideSimulationController extends ChangeNotifier {
     _simulatedElapsed += simulatedDelta;
     final seconds =
         simulatedDelta.inMicroseconds / Duration.microsecondsPerSecond;
+    final secondBike = _secondBikeFollowingLead();
+    final lead = _leadAgent();
+    final projectedLeadProgress = _isStoppedAtMarker(lead)
+        ? lead.progressMeters
+        : math.min(
+            routeDistanceMeters,
+            lead.progressMeters + _speedFor(lead) * seconds,
+          );
     for (final agent in _agents) {
-      if (agent.isLocal && _markerMode) continue;
+      if (_isStoppedAtMarker(agent)) continue;
       final nextProgress = math.min(
         routeDistanceMeters,
         agent.progressMeters + _speedFor(agent) * seconds,
       );
-      if (agent.isLocal && _shouldStartAutomaticMarker(nextProgress)) {
+      if (agent.id == secondBike?.id &&
+          _shouldStartAutomaticMarker(
+            agent,
+            nextProgress,
+            projectedLeadProgress,
+          )) {
         agent.progressMeters =
             _markerJunctionProgresses[_nextMarkerJunctionIndex];
-        _startAutomaticMarker();
+        _startAutomaticMarker(agent);
         continue;
       }
       agent.progressMeters = nextProgress;
@@ -454,7 +475,7 @@ class RideSimulationController extends ChangeNotifier {
 
   double _speedFor(_SimulatedAgent agent) {
     if (_state == RideSimulationState.completed) return 0;
-    if (agent.isLocal && _markerMode) return 0;
+    if (_isStoppedAtMarker(agent)) return 0;
     if (agent.id == tecRiderId && _tecDelayed) {
       return _baseSpeedMetersPerSecond * 0.45;
     }
@@ -486,24 +507,33 @@ class RideSimulationController extends ChangeNotifier {
     }
   }
 
-  bool _shouldStartAutomaticMarker(double nextProgress) {
+  bool _shouldStartAutomaticMarker(
+    _SimulatedAgent candidate,
+    double nextProgress,
+    double projectedLeadProgress,
+  ) {
     if (_markerMode ||
-        _selectedLocalRole != RideRole.rider ||
         _nextMarkerJunctionIndex >= _markerJunctionProgresses.length) {
       return false;
     }
-    return nextProgress >= _markerJunctionProgresses[_nextMarkerJunctionIndex];
+    final markerProgress = _markerJunctionProgresses[_nextMarkerJunctionIndex];
+    return candidate.id != _leadAgent().id &&
+        projectedLeadProgress >= markerProgress + _leaderClearanceMeters &&
+        nextProgress >= markerProgress;
   }
 
-  void _startAutomaticMarker() {
+  void _startAutomaticMarker(_SimulatedAgent marker) {
     final markerProgress = _markerJunctionProgresses[_nextMarkerJunctionIndex];
+    final lead = _leadAgent();
     _markerMode = true;
     _activeMarkerProgressMeters = markerProgress;
+    _activeMarkerRiderId = marker.id;
     _markerPhase = SimulationMarkerPhase.waitingForRiders;
-    _agents.first.role = RideRole.marker;
+    marker.role = RideRole.marker;
     _ridersExpectedToPass = {
       for (final agent in _agents)
-        if (!agent.isLocal &&
+        if (agent.id != marker.id &&
+            agent.id != lead.id &&
             agent.id != tecRiderId &&
             agent.progressMeters <= markerProgress + _markerPassMeters)
           agent.id,
@@ -544,14 +574,23 @@ class RideSimulationController extends ChangeNotifier {
       _nextMarkerJunctionIndex += 1;
     }
     _activeMarkerProgressMeters = null;
+    _activeMarkerRiderId = null;
     _ridersExpectedToPass = const {};
     _markerPhase = SimulationMarkerPhase.riding;
     _tecApproachElapsed = Duration.zero;
   }
 
   void _positionFleetForPerspective() {
-    if (_selectedLocalRole != RideRole.rider) return;
     final local = _agents.first;
+    if (_selectedLocalRole == RideRole.tailEndCharlie) {
+      final lastRemoteProgress = _agents
+          .where((agent) => !agent.isLocal)
+          .map((agent) => agent.progressMeters)
+          .reduce(math.min);
+      local.progressMeters = math.max(0, lastRemoteProgress - 160);
+      return;
+    }
+    if (_selectedLocalRole != RideRole.rider) return;
     final maya = _agent('ride-lab-maya');
     maya.progressMeters = math.min(
       routeDistanceMeters,
@@ -592,6 +631,38 @@ class RideSimulationController extends ChangeNotifier {
 
   static const _markerPassMeters = 35.0;
   static const _tecApproachMeters = 260.0;
+  static const _leaderClearanceMeters = 18.0;
+
+  bool _isStoppedAtMarker(_SimulatedAgent agent) =>
+      _markerMode &&
+      (_activeMarkerRiderId == agent.id ||
+          (_activeMarkerRiderId == null && agent.isLocal));
+
+  _SimulatedAgent _leadAgent() => _agents.firstWhere(
+    (agent) => agent.role == RideRole.lead,
+    orElse: () => _agents.first,
+  );
+
+  _SimulatedAgent? _secondBikeFollowingLead() {
+    final lead = _leadAgent();
+    final following =
+        _agents
+            .where(
+              (agent) =>
+                  agent.id != lead.id &&
+                  agent.progressMeters <= lead.progressMeters,
+            )
+            .toList(growable: false)
+          ..sort(
+            (first, second) =>
+                second.progressMeters.compareTo(first.progressMeters),
+          );
+    return following.isEmpty ? null : following.first;
+  }
+
+  String _markerRiderSubject() => automaticMarkerIsLocal
+      ? 'You'
+      : (automaticMarkerRiderName ?? 'The rider');
 
   DateTime _nextRecordedAt() {
     final now = DateTime.now();
