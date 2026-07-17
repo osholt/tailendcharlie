@@ -122,8 +122,8 @@ void main() {
     await simulation.initialize();
     simulation.setLocalRole(RideRole.rider);
     await simulation.advance(const Duration(seconds: 4));
-    for (var tick = 0; tick < 18; tick += 1) {
-      await simulation.advance(const Duration(seconds: 1));
+    for (var tick = 0; tick < 180; tick += 1) {
+      await simulation.advance(const Duration(milliseconds: 100));
       if (simulation.markerPhase == SimulationMarkerPhase.tecApproaching) {
         break;
       }

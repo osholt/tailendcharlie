@@ -88,6 +88,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   int _routeGeneration = 0;
   int _selectedIndex = 0;
   int _handledAutomaticMarkerActivation = 0;
+  int _handledAutomaticMarkerRideOffActivation = 0;
   DateTime? _lastSimulationNavigationUpdateAt;
   DateTime? _lastSimulationOverlayUpdateAt;
   bool _loading = true;
@@ -327,6 +328,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _simulationController = null;
     _simulationRouteFingerprint = fingerprint;
     _handledAutomaticMarkerActivation = 0;
+    _handledAutomaticMarkerRideOffActivation = 0;
     _lastSimulationNavigationUpdateAt = null;
     previous?.removeListener(_onSimulationVisualChanged);
     previous?.dispose();
@@ -403,6 +405,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             _handledAutomaticMarkerActivation) {
       _handledAutomaticMarkerActivation = controller.automaticMarkerActivation;
       unawaited(_startAutomaticSimulationMarker(controller));
+    }
+    if (controller != null &&
+        controller.automaticMarkerRideOffActivation >
+            _handledAutomaticMarkerRideOffActivation) {
+      _handledAutomaticMarkerRideOffActivation =
+          controller.automaticMarkerRideOffActivation;
+      unawaited(_finishAutomaticSimulationMarker(controller));
     }
     final now = DateTime.now();
     final updateNavigationPosition =
@@ -532,6 +541,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                       (location) => (
                         riderId: location.riderId,
                         displayName: location.displayName,
+                        role: location.role,
                         point: route_domain.GeoPoint(
                           latitude: location.sample.position.latitude,
                           longitude: location.sample.position.longitude,
@@ -545,6 +555,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                       (rider) => (
                         riderId: rider.id,
                         displayName: rider.displayName,
+                        role: rider.role,
                         point: route_domain.GeoPoint(
                           latitude: rider.position.latitude,
                           longitude: rider.position.longitude,
@@ -557,15 +568,20 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                 alert != null &&
                 alert.assessment.alertLevel.index >=
                     RouteAlertLevel.urgent.index;
+            final isTec = location.role == RideRole.tailEndCharlie;
             return MapOverlayMarker(
               id: 'rider-${location.riderId}',
               point: location.point,
               label: needsAttention
                   ? '${location.displayName} · check route'
+                  : isTec
+                  ? '${location.displayName} · TEC'
                   : location.displayName,
-              icon: Icons.two_wheeler,
+              icon: isTec ? Icons.shield_outlined : Icons.two_wheeler,
               color: needsAttention
                   ? const Color(0xFFFF5D73)
+                  : isTec
+                  ? const Color(0xFF68A9FF)
                   : const Color(0xFF6ED89A),
             );
           }),
@@ -927,6 +943,25 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (controller.automaticMarkerIsLocal &&
         !widget.rideController.markerActive) {
       await widget.rideController.startMarker(mode: 'simulation-auto-junction');
+      if (mounted &&
+          _simulationController == controller &&
+          !controller.markerMode &&
+          widget.rideController.markerActive) {
+        await widget.rideController.endMarker();
+      }
+    }
+  }
+
+  Future<void> _finishAutomaticSimulationMarker(
+    RideSimulationController controller,
+  ) async {
+    if (!mounted || _simulationController != controller) return;
+    if (controller.lastAutomaticMarkerRideOffWasLocal &&
+        widget.rideController.markerActive) {
+      await widget.rideController.endMarker();
+    }
+    if (mounted && _simulationController == controller) {
+      setState(() => _selectedIndex = 0);
     }
   }
 

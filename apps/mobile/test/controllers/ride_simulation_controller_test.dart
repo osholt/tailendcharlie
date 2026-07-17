@@ -140,7 +140,7 @@ void main() {
   );
 
   test(
-    'follower automatically marks a junction until TEC has passed',
+    'follower automatically marks a junction and rides off before TEC arrives',
     () async {
       final markerSimulation = RideSimulationController(
         awareness,
@@ -181,22 +181,20 @@ void main() {
       expect(markerSimulation.ridersExpectedToPass, greaterThanOrEqualTo(1));
 
       var sawTecApproaching = false;
-      for (var tick = 0; tick < 18; tick += 1) {
-        await markerSimulation.advance(const Duration(seconds: 1));
+      for (
+        var tick = 0;
+        tick < 180 && markerSimulation.automaticMarkerRideOffActivation == 0;
+        tick += 1
+      ) {
+        await markerSimulation.advance(const Duration(milliseconds: 100));
         sawTecApproaching |=
             markerSimulation.markerPhase ==
             SimulationMarkerPhase.tecApproaching;
       }
 
       expect(sawTecApproaching, isTrue);
-      expect(
-        markerSimulation.markerPhase,
-        SimulationMarkerPhase.readyToRideOff,
-      );
-      expect(markerSimulation.canRideOff, isTrue);
-      expect(markerSimulation.markerInstruction, contains('TEC has passed'));
-
-      markerSimulation.rideOff();
+      expect(markerSimulation.automaticMarkerRideOffActivation, 1);
+      expect(markerSimulation.lastAutomaticMarkerRideOffWasLocal, isTrue);
       expect(markerSimulation.markerMode, isFalse);
       expect(markerSimulation.markerPhase, SimulationMarkerPhase.riding);
       expect(

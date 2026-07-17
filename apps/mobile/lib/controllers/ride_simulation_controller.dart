@@ -174,6 +174,8 @@ class RideSimulationController extends ChangeNotifier {
   SimulationMarkerPhase _markerPhase = SimulationMarkerPhase.riding;
   Duration _tecApproachElapsed = Duration.zero;
   int _automaticMarkerActivation = 0;
+  int _automaticMarkerRideOffActivation = 0;
+  bool _lastAutomaticMarkerRideOffWasLocal = false;
 
   RideSimulationState get state => _state;
   Duration get simulatedElapsed => _simulatedElapsed;
@@ -193,6 +195,9 @@ class RideSimulationController extends ChangeNotifier {
   bool get canRideOff =>
       _markerMode && _markerPhase == SimulationMarkerPhase.readyToRideOff;
   int get automaticMarkerActivation => _automaticMarkerActivation;
+  int get automaticMarkerRideOffActivation => _automaticMarkerRideOffActivation;
+  bool get lastAutomaticMarkerRideOffWasLocal =>
+      _lastAutomaticMarkerRideOffWasLocal;
   int get ridersExpectedToPass => _ridersExpectedToPass.length;
   int get ridersPassedMarker {
     final markerProgress = _activeMarkerProgressMeters;
@@ -221,7 +226,7 @@ class RideSimulationController extends ChangeNotifier {
           : 'Riders are through. ${_markerRiderSubject()} is waiting for '
                 'Tail End Charlie.',
     SimulationMarkerPhase.tecApproaching =>
-      'All riders are through. TEC is approaching — '
+      '${ridersPassedMarker < ridersExpectedToPass ? 'Traffic is still clearing. ' : 'All riders are through. '}TEC is approaching — '
           '${_markerRiderSubject().toLowerCase()} should get ready to ride off.',
     SimulationMarkerPhase.readyToRideOff =>
       'TEC has passed. ${_markerRiderSubject()} can ride off and return to '
@@ -538,30 +543,37 @@ class RideSimulationController extends ChangeNotifier {
             agent.progressMeters <= markerProgress + _markerPassMeters)
           agent.id,
     };
+    _lastAutomaticMarkerRideOffWasLocal = false;
     _automaticMarkerActivation += 1;
   }
 
   void _updateAutomaticMarkerPhase(Duration realElapsed) {
     final markerProgress = _activeMarkerProgressMeters;
     if (!_markerMode || markerProgress == null) return;
+    final tec = _agent(tecRiderId);
+    final distance = markerProgress - tec.progressMeters;
+    if (distance <= _tecRideOffMeters) {
+      _lastAutomaticMarkerRideOffWasLocal = automaticMarkerIsLocal;
+      _automaticMarkerRideOffActivation += 1;
+      setMarkerMode(false);
+      return;
+    }
+    if (distance <= _tecApproachMeters) {
+      _markerPhase = SimulationMarkerPhase.tecApproaching;
+      return;
+    }
     final ridersAreThrough = ridersPassedMarker >= ridersExpectedToPass;
     if (!ridersAreThrough) {
       _markerPhase = SimulationMarkerPhase.waitingForRiders;
       _tecApproachElapsed = Duration.zero;
       return;
     }
-    final tec = _agent(tecRiderId);
     if (tec.progressMeters >= markerProgress + _markerPassMeters) {
       _markerPhase = SimulationMarkerPhase.tecApproaching;
       _tecApproachElapsed += realElapsed;
       if (_tecApproachElapsed >= const Duration(seconds: 2)) {
         _markerPhase = SimulationMarkerPhase.readyToRideOff;
       }
-      return;
-    }
-    final distance = markerProgress - tec.progressMeters;
-    if (distance <= _tecApproachMeters) {
-      _markerPhase = SimulationMarkerPhase.tecApproaching;
       return;
     }
     _markerPhase = SimulationMarkerPhase.waitingForRiders;
@@ -631,6 +643,7 @@ class RideSimulationController extends ChangeNotifier {
 
   static const _markerPassMeters = 35.0;
   static const _tecApproachMeters = 260.0;
+  static const _tecRideOffMeters = 55.0;
   static const _leaderClearanceMeters = 18.0;
 
   bool _isStoppedAtMarker(_SimulatedAgent agent) =>
