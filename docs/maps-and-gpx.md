@@ -16,21 +16,22 @@ not bulk-download from the public OpenStreetMap tile servers.
 - Attempts to match sparse `<rte>` geometry, or waypoint-only GPX files, to the
   road network after an explicit import. If routing is unavailable, the original
   GPX remains usable and is stored unchanged.
-- Includes a valid 36.2 km Peak District GPX track following mapped roads.
+- Includes a valid 17.5 km, 484-point GPX track following roads from the King's
+  Oak Academy car park to the Cross Hands Hotel car park.
 
 ## Riding display
 
-The map uses foreground GPS speed and heading to enter a heading-up follow view
-while moving. The rider sits low enough in the viewport to expose more of the
-road ahead without disappearing below the landscape safe area. In that state
-the top and bottom navigation chrome is hidden; stationary landscape mode
-retains compact controls. Manual pan or zoom suspends camera following and
-shows a **Re-centre** action instead of snapping back on the next GPS update.
+The map uses foreground GPS speed, heading, and remaining route geometry to
+enter a heading-up follow view while moving. Landscape uses a wider zoom and a
+route-aware look-ahead point so bends and substantially more road ahead remain
+visible while the rider stays safely on screen. Landscape navigation menus use
+a narrow left rail. Manual pan or zoom suspends camera following and shows a
+**Re-centre** action instead of snapping back on the next GPS update.
 
 Landscape navigation also shows a compact group overview above the primary
-turn-by-turn map. It fits the latest known rider locations, distinguishes the
-local rider, and includes nearby route geometry without changing the main
-camera.
+turn-by-turn map. It uses a second, throttled view of the configured MapLibre
+style, fits the latest known rider locations, distinguishes the local rider,
+and includes route geometry without changing the main camera.
 
 The primary route is split at the rider's monotonic along-route progress. The
 completed section is solid orange and the route ahead is a translucent dotted

@@ -17,6 +17,7 @@ import '../../domain/geo_point.dart' as awareness_geo;
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/ride_event.dart';
+import '../../domain/ride_role.dart';
 import '../../domain/route_alert.dart';
 import '../../domain/route_store.dart';
 import '../../internet/internet_relay_client.dart';
@@ -314,6 +315,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final previous = _simulationController;
     _simulationController = null;
     _simulationRouteFingerprint = fingerprint;
+    previous?.removeListener(_onSimulationVisualChanged);
     previous?.dispose();
 
     final awareness = _awarenessController;
@@ -333,13 +335,20 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       route: simulationRoute,
     );
     _simulationController = controller;
+    controller.addListener(_onSimulationVisualChanged);
     await controller.initialize();
     if (!mounted || _simulationController != controller) {
       controller.dispose();
       return;
     }
     controller.start();
+    _onSimulationVisualChanged();
     if (notify) setState(() {});
+  }
+
+  void _onSimulationVisualChanged() {
+    if (!mounted || !_isSimulation) return;
+    _updateMapOverlays(updateDerivedState: false);
   }
 
   void _onAwarenessChanged() {
@@ -357,27 +366,46 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     }
   }
 
-  void _updateMapOverlays() {
+  void _updateMapOverlays({bool updateDerivedState = true}) {
     final awareness = _awarenessController;
     if (awareness == null) return;
     final localLocation = awareness.localLocation;
-    _mapPosition.value = localLocation == null
+    final simulatedRiders = _isSimulation
+        ? _simulationController?.riders
+        : null;
+    final simulatedLocal = simulatedRiders
+        ?.where((rider) => rider.isLocal)
+        .firstOrNull;
+    final mapPoint = simulatedLocal != null
+        ? route_domain.GeoPoint(
+            latitude: simulatedLocal.position.latitude,
+            longitude: simulatedLocal.position.longitude,
+          )
+        : localLocation == null
         ? null
         : route_domain.GeoPoint(
             latitude: localLocation.sample.position.latitude,
             longitude: localLocation.sample.position.longitude,
             recordedAt: localLocation.sample.recordedAt,
           );
-    _mapNavigationPosition.value = localLocation == null
+    final navigationRecordedAt = simulatedLocal == null
+        ? localLocation?.sample.recordedAt
+        : DateTime.now();
+    _mapNavigationPosition.value = mapPoint == null
         ? null
         : MapNavigationPosition(
-            point: _mapPosition.value!,
-            recordedAt: localLocation.sample.recordedAt,
-            speedMetersPerSecond: localLocation.sample.speedMetersPerSecond,
-            headingDegrees: localLocation.sample.headingDegrees,
+            point: mapPoint,
+            recordedAt: navigationRecordedAt!,
+            speedMetersPerSecond:
+                simulatedLocal?.speedMetersPerSecond ??
+                localLocation!.sample.speedMetersPerSecond,
+            headingDegrees:
+                simulatedLocal?.headingDegrees ??
+                localLocation!.sample.headingDegrees,
           );
+    _mapPosition.value = mapPoint;
 
-    _updateOffRouteTraces(awareness);
+    if (updateDerivedState) _updateOffRouteTraces(awareness);
 
     final overlays = <MapOverlayMarker>[
       ...awareness.activeHazards.map(
@@ -392,8 +420,34 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           color: _hazardColor(hazard.severity),
         ),
       ),
-      ...awareness.riderLocations
-          .where((location) => location.riderId != localLocation?.riderId)
+      ...(simulatedRiders == null
+              ? awareness.riderLocations
+                    .where(
+                      (location) => location.riderId != localLocation?.riderId,
+                    )
+                    .map(
+                      (location) => (
+                        riderId: location.riderId,
+                        displayName: location.displayName,
+                        point: route_domain.GeoPoint(
+                          latitude: location.sample.position.latitude,
+                          longitude: location.sample.position.longitude,
+                          recordedAt: location.sample.recordedAt,
+                        ),
+                      ),
+                    )
+              : simulatedRiders
+                    .where((rider) => !rider.isLocal)
+                    .map(
+                      (rider) => (
+                        riderId: rider.id,
+                        displayName: rider.displayName,
+                        point: route_domain.GeoPoint(
+                          latitude: rider.position.latitude,
+                          longitude: rider.position.longitude,
+                        ),
+                      ),
+                    ))
           .map((location) {
             final alert = awareness.alertFor(location.riderId);
             final needsAttention =
@@ -402,11 +456,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                     RouteAlertLevel.urgent.index;
             return MapOverlayMarker(
               id: 'rider-${location.riderId}',
-              point: route_domain.GeoPoint(
-                latitude: location.sample.position.latitude,
-                longitude: location.sample.position.longitude,
-                recordedAt: location.sample.recordedAt,
-              ),
+              point: location.point,
               label: needsAttention
                   ? '${location.displayName} · check route'
                   : location.displayName,
@@ -418,17 +468,19 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           }),
     ];
     _mapOverlays.value = List.unmodifiable(overlays);
-    final session = widget.rideController.session;
-    _leaderStatus.value = session == null
-        ? null
-        : const LeaderRideStatusCalculator().calculate(
-            localRole: session.role,
-            localRiderId: session.localRiderId,
-            localLocation: localLocation,
-            riderLocations: awareness.riderLocations,
-            routeAlerts: awareness.routeAlerts,
-            route: awareness.route,
-          );
+    if (updateDerivedState) {
+      final session = widget.rideController.session;
+      _leaderStatus.value = session == null
+          ? null
+          : const LeaderRideStatusCalculator().calculate(
+              localRole: session.role,
+              localRiderId: session.localRiderId,
+              localLocation: localLocation,
+              riderLocations: awareness.riderLocations,
+              routeAlerts: awareness.routeAlerts,
+              route: awareness.route,
+            );
+    }
   }
 
   void _updateOffRouteTraces(SituationalAwarenessController awareness) {
@@ -601,6 +653,59 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             !_isSimulation &&
             _selectedIndex == 0 &&
             navigationPosition?.isMoving == true;
+        final destinations = <NavigationDestination>[
+          const NavigationDestination(
+            icon: Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map),
+            label: 'Map',
+          ),
+          if (_isSimulation)
+            const NavigationDestination(
+              icon: Icon(Icons.science_outlined),
+              selectedIcon: Icon(Icons.science),
+              label: 'Ride Lab',
+            ),
+          const NavigationDestination(
+            icon: Icon(Icons.tune_outlined),
+            selectedIcon: Icon(Icons.tune),
+            label: 'Details',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.health_and_safety_outlined),
+            selectedIcon: Icon(Icons.health_and_safety),
+            label: 'Safety',
+          ),
+        ];
+        if (landscape && !hideWhileMoving) {
+          return Scaffold(
+            body: Row(
+              children: [
+                SafeArea(
+                  right: false,
+                  child: NavigationRail(
+                    key: const Key('landscape-navigation-rail'),
+                    minWidth: 56,
+                    groupAlignment: -0.7,
+                    labelType: NavigationRailLabelType.none,
+                    selectedIndex: _selectedIndex,
+                    onDestinationSelected: (index) =>
+                        setState(() => _selectedIndex = index),
+                    destinations: [
+                      for (final destination in destinations)
+                        NavigationRailDestination(
+                          icon: destination.icon,
+                          selectedIcon: destination.selectedIcon,
+                          label: Text(destination.label),
+                        ),
+                    ],
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(child: body),
+              ],
+            ),
+          );
+        }
         return Scaffold(
           body: body,
           bottomNavigationBar: hideWhileMoving
@@ -611,29 +716,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   selectedIndex: _selectedIndex,
                   onDestinationSelected: (index) =>
                       setState(() => _selectedIndex = index),
-                  destinations: [
-                    const NavigationDestination(
-                      icon: Icon(Icons.map_outlined),
-                      selectedIcon: Icon(Icons.map),
-                      label: 'Map',
-                    ),
-                    if (_isSimulation)
-                      const NavigationDestination(
-                        icon: Icon(Icons.science_outlined),
-                        selectedIcon: Icon(Icons.science),
-                        label: 'Ride Lab',
-                      ),
-                    const NavigationDestination(
-                      icon: Icon(Icons.tune_outlined),
-                      selectedIcon: Icon(Icons.tune),
-                      label: 'Details',
-                    ),
-                    const NavigationDestination(
-                      icon: Icon(Icons.health_and_safety_outlined),
-                      selectedIcon: Icon(Icons.health_and_safety),
-                      label: 'Safety',
-                    ),
-                  ],
+                  destinations: destinations,
                 ),
         );
       },
@@ -675,7 +758,34 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       distanceUnit: widget.distanceUnits.value,
       onRestart: _restartSimulation,
       onExit: _leaveRide,
+      onRoleChanged: _setSimulationRole,
+      onToggleMarker: _toggleSimulationMarker,
+      markerPassCount: widget.rideController.markerPassCount,
+      tecPassedMarker: widget.rideController.tecPassedCurrentMarker,
     );
+  }
+
+  Future<void> _setSimulationRole(RideRole role) async {
+    final controller = _simulationController;
+    if (controller == null || controller.markerMode) return;
+    controller.setLocalRole(role);
+    await widget.rideController.setRole(role);
+  }
+
+  Future<void> _toggleSimulationMarker() async {
+    final controller = _simulationController;
+    if (controller == null) return;
+    if (controller.markerMode) {
+      await widget.rideController.endMarker();
+      controller.setMarkerMode(false);
+      final restoredRole = widget.rideController.session?.role;
+      if (restoredRole != null && restoredRole != RideRole.marker) {
+        controller.setLocalRole(restoredRole);
+      }
+      return;
+    }
+    await widget.rideController.startMarker(mode: 'simulation');
+    controller.setMarkerMode(true);
   }
 
   Future<void> _restartSimulation() async {
@@ -752,6 +862,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   @override
   void dispose() {
     widget.rideController.removeListener(_onRideControllerChanged);
+    _simulationController?.removeListener(_onSimulationVisualChanged);
     _simulationController?.dispose();
     _awarenessController?.removeListener(_onAwarenessChanged);
     _markerAssistanceController?.dispose();

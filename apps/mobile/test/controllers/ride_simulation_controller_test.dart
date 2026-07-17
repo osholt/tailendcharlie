@@ -87,8 +87,57 @@ void main() {
     );
     addTearDown(smoothSimulation.dispose);
 
-    expect(smoothSimulation.tickInterval, const Duration(milliseconds: 500));
+    expect(smoothSimulation.tickInterval, const Duration(milliseconds: 100));
+    expect(smoothSimulation.eventInterval, const Duration(milliseconds: 500));
   });
+
+  test('switches between leader, follower and TEC perspectives', () {
+    simulation.setLocalRole(RideRole.rider);
+    expect(simulation.localRole, RideRole.rider);
+    expect(
+      simulation.riders
+          .singleWhere((rider) => rider.displayName == 'Maya')
+          .role,
+      RideRole.lead,
+    );
+
+    simulation.setLocalRole(RideRole.tailEndCharlie);
+    expect(simulation.localRole, RideRole.tailEndCharlie);
+    expect(
+      simulation.riders
+          .singleWhere(
+            (rider) => rider.id == RideSimulationController.tecRiderId,
+          )
+          .role,
+      RideRole.rider,
+    );
+  });
+
+  test(
+    'marker mode freezes the local bike while the group continues',
+    () async {
+      final localBefore = simulation.riders.singleWhere(
+        (rider) => rider.isLocal,
+      );
+      final mayaBefore = simulation.riders.singleWhere(
+        (rider) => rider.displayName == 'Maya',
+      );
+      simulation.setMarkerMode(true);
+
+      await simulation.advance(const Duration(seconds: 1));
+
+      final localAfter = simulation.riders.singleWhere(
+        (rider) => rider.isLocal,
+      );
+      final mayaAfter = simulation.riders.singleWhere(
+        (rider) => rider.displayName == 'Maya',
+      );
+      expect(localAfter.role, RideRole.marker);
+      expect(localAfter.progress, localBefore.progress);
+      expect(localAfter.speedMetersPerSecond, 0);
+      expect(mayaAfter.progress, greaterThan(mayaBefore.progress));
+    },
+  );
 
   test(
     'off-route scenario drives real alert hysteresis and recovery',
@@ -131,6 +180,12 @@ void main() {
 
     await simulation.reportRoadworks();
     expect(awareness.activeHazards.single.details, contains('Ride Lab'));
+    expect(
+      (awareness.activeHazards.single.position.longitude -
+              awareness.localLocation!.sample.position.longitude)
+          .abs(),
+      greaterThan(0.0001),
+    );
   });
 
   test('completion publishes stopped GPS fixes', () async {

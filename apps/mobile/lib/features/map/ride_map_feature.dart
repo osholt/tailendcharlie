@@ -250,8 +250,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
   GeoPoint? _lastHandledCurrentPosition;
-  DateTime? _previousCameraFixAt;
+  DateTime? _lastCameraUpdateAt;
+  DateTime? _lastProgressUpdateAt;
   Duration _cameraTransitionDuration = const Duration(milliseconds: 450);
+  bool _mapLibreSyncScheduled = false;
+  bool _mapLibreSyncRunning = false;
+  bool _mapLibreProgressDirty = false;
+  bool _mapLibrePositionDirty = false;
+  bool _mapLibreOverlaysDirty = false;
   RouteProgressGeometry _progressGeometry = const RouteProgressGeometry.empty();
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
@@ -532,6 +538,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       route: _route!.allPoints.toList(growable: false),
                       currentPosition: _effectivePosition,
                       riders: groupRiders,
+                      showTiles: _basemap.usesMapLibre,
+                      mapStyleString: widget.mapStyleString,
                     ),
                   ),
                 if (_route != null && !_navigationMode)
@@ -775,19 +783,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _lastHandledCurrentPosition = position;
       _lastHandledNavigationFix = null;
     }
-    final recordedAt = navigationFix?.recordedAt;
-    final previousFixAt = _previousCameraFixAt;
-    if (recordedAt != null) {
-      if (previousFixAt != null && recordedAt.isAfter(previousFixAt)) {
-        final updateMilliseconds = recordedAt
-            .difference(previousFixAt)
-            .inMilliseconds;
-        _cameraTransitionDuration = Duration(
-          milliseconds: (updateMilliseconds * 1.15).round().clamp(180, 900),
-        );
-      }
-      _previousCameraFixAt = recordedAt;
-    }
     final suppliedHeading = _navigationFix?.headingDegrees;
     if (suppliedHeading != null && suppliedHeading.isFinite) {
       _lastHeadingDegrees = suppliedHeading;
@@ -801,13 +796,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     _previousNavigationPoint = position;
 
+    final progressNow = navigationFix?.recordedAt ?? DateTime.now();
+    final refreshProgress =
+        _lastProgressUpdateAt == null ||
+        progressNow.difference(_lastProgressUpdateAt!) >=
+            const Duration(milliseconds: 400);
+    if (refreshProgress) _lastProgressUpdateAt = progressNow;
+
     if (!_isMoving) _autoFollowSuppressed = false;
     final autoFollow = _route != null && _isMoving && !_autoFollowSuppressed;
     setState(() {
-      _progressGeometry = _routeProgressTracker.update(_route, position);
+      if (refreshProgress) {
+        _progressGeometry = _routeProgressTracker.update(_route, position);
+      }
       if (autoFollow) _navigationMode = true;
     });
-    unawaited(_syncMapLibreSources());
+    _scheduleMapLibreSync(progress: refreshProgress, position: true);
     if (_navigationMode && position != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_followNavigationCamera());
@@ -818,7 +822,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _onOverlayDataChanged() {
     if (!mounted) return;
     setState(() {});
-    unawaited(_syncMapLibreSources());
+    _scheduleMapLibreSync(overlays: true);
   }
 
   void _onFlutterMapEvent(MapEvent event) {
@@ -878,7 +882,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _navigationMode = true;
       _autoFollowSuppressed = false;
     });
-    unawaited(_followNavigationCamera());
+    unawaited(_followNavigationCamera(force: true));
   }
 
   void _stopFollowing({required bool suppressAutomatic}) {
@@ -894,18 +898,35 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _fitRoute();
   }
 
-  Future<void> _followNavigationCamera() async {
+  Future<void> _followNavigationCamera({bool force = false}) async {
     if (!_navigationMode) return;
     final position = _effectivePosition;
     if (position == null) return;
+    final now = DateTime.now();
+    final previousCameraUpdate = _lastCameraUpdateAt;
+    if (!force &&
+        previousCameraUpdate != null &&
+        now.difference(previousCameraUpdate) <
+            const Duration(milliseconds: 180)) {
+      return;
+    }
+    if (previousCameraUpdate != null) {
+      final elapsed = now.difference(previousCameraUpdate).inMilliseconds;
+      _cameraTransitionDuration = Duration(
+        milliseconds: (elapsed * 1.08).round().clamp(180, 320),
+      );
+    }
+    _lastCameraUpdateAt = now;
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
-    final target = _pointAhead(
-      position,
-      _lastHeadingDegrees,
-      landscape ? 70 : 65,
-    );
-    final navigationZoom = landscape ? 15.8 : 16.1;
+    final speed = _navigationFix?.speedMetersPerSecond ?? 0;
+    final lookAheadMeters = landscape
+        ? (speed * 20).clamp(220, 500).toDouble()
+        : (speed * 14).clamp(140, 360).toDouble();
+    final target =
+        _pointAlongRemainingRoute(position, lookAheadMeters) ??
+        _pointAhead(position, _lastHeadingDegrees, lookAheadMeters);
+    final navigationZoom = landscape ? 14.65 : 15.2;
     if (_basemap.usesMapLibre) {
       final controller = _mapLibreController;
       if (controller == null) return;
@@ -1081,6 +1102,103 @@ class _RideMapScreenState extends State<RideMapScreen> {
     } on Object catch (error) {
       debugPrint('Could not refresh MapLibre ride layers: $error');
     }
+  }
+
+  void _scheduleMapLibreSync({
+    bool progress = false,
+    bool position = false,
+    bool overlays = false,
+  }) {
+    _mapLibreProgressDirty |= progress;
+    _mapLibrePositionDirty |= position;
+    _mapLibreOverlaysDirty |= overlays;
+    if (_mapLibreSyncScheduled || !mounted) return;
+    _mapLibreSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _mapLibreSyncScheduled = false;
+      if (mounted) unawaited(_flushScheduledMapLibreSync());
+    });
+  }
+
+  Future<void> _flushScheduledMapLibreSync() async {
+    if (_mapLibreSyncRunning) {
+      _scheduleMapLibreSync();
+      return;
+    }
+    final controller = _mapLibreController;
+    if (!_mapLibreStyleReady || controller == null) return;
+    final progress = _mapLibreProgressDirty;
+    final position = _mapLibrePositionDirty;
+    final overlays = _mapLibreOverlaysDirty;
+    _mapLibreProgressDirty = false;
+    _mapLibrePositionDirty = false;
+    _mapLibreOverlaysDirty = false;
+    _mapLibreSyncRunning = true;
+    try {
+      if (progress) {
+        await controller.setGeoJsonSource(
+          _remainingRouteSource,
+          _remainingRouteGeoJson(),
+        );
+        await controller.setGeoJsonSource(
+          _riddenRouteSource,
+          _riddenRouteGeoJson(),
+        );
+      }
+      if (position) {
+        await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
+      }
+      if (overlays) {
+        await controller.setGeoJsonSource(
+          _offRouteTraceSource,
+          _offRouteTraceGeoJson(),
+        );
+        await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
+      }
+    } on Object catch (error) {
+      debugPrint('Could not refresh scheduled MapLibre layers: $error');
+    } finally {
+      _mapLibreSyncRunning = false;
+    }
+    if (_mapLibreProgressDirty ||
+        _mapLibrePositionDirty ||
+        _mapLibreOverlaysDirty) {
+      _scheduleMapLibreSync();
+    }
+  }
+
+  GeoPoint? _pointAlongRemainingRoute(
+    GeoPoint currentPosition,
+    double distanceAheadMeters,
+  ) {
+    final paths = _progressGeometry.remainingPaths
+        .where((path) => path.length >= 2)
+        .toList(growable: false);
+    if (paths.isEmpty) return null;
+    final path = paths.reduce(
+      (current, candidate) =>
+          _mapDistanceMeters(currentPosition, current.first) <=
+              _mapDistanceMeters(currentPosition, candidate.first)
+          ? current
+          : candidate,
+    );
+    var remaining = distanceAheadMeters;
+    for (var index = 0; index < path.length - 1; index += 1) {
+      final start = path[index];
+      final end = path[index + 1];
+      final segmentLength = _mapDistanceMeters(start, end);
+      if (segmentLength <= 0) continue;
+      if (remaining <= segmentLength) {
+        final fraction = remaining / segmentLength;
+        return GeoPoint(
+          latitude: start.latitude + (end.latitude - start.latitude) * fraction,
+          longitude:
+              start.longitude + (end.longitude - start.longitude) * fraction,
+        );
+      }
+      remaining -= segmentLength;
+    }
+    return path.last;
   }
 
   Map<String, dynamic> _remainingRouteGeoJson() => MapGeoJson.lines(
@@ -1509,6 +1627,20 @@ double _bearingDegrees(GeoPoint from, GeoPoint to) {
   return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
 }
 
+double _mapDistanceMeters(GeoPoint first, GeoPoint second) {
+  const earthRadiusMeters = 6371008.8;
+  final latitude1 = first.latitude * math.pi / 180;
+  final latitude2 = second.latitude * math.pi / 180;
+  final latitudeDelta = latitude2 - latitude1;
+  final longitudeDelta = (second.longitude - first.longitude) * math.pi / 180;
+  final a =
+      math.pow(math.sin(latitudeDelta / 2), 2) +
+      math.cos(latitude1) *
+          math.cos(latitude2) *
+          math.pow(math.sin(longitudeDelta / 2), 2);
+  return earthRadiusMeters * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+}
+
 GeoPoint _pointAhead(GeoPoint from, double bearingDegrees, double meters) {
   const earthRadiusMeters = 6371008.8;
   final angularDistance = meters / earthRadiusMeters;
@@ -1623,25 +1755,81 @@ class _EmptyRoutePrompt extends StatelessWidget {
   );
 }
 
-class _GroupMiniMap extends StatelessWidget {
+class _GroupMiniMap extends StatefulWidget {
   const _GroupMiniMap({
     required this.width,
     required this.route,
     required this.currentPosition,
     required this.riders,
+    required this.showTiles,
+    required this.mapStyleString,
   });
 
   final double width;
   final List<GeoPoint> route;
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
+  final bool showTiles;
+  final String mapStyleString;
+
+  @override
+  State<_GroupMiniMap> createState() => _GroupMiniMapState();
+}
+
+class _GroupMiniMapState extends State<_GroupMiniMap> {
+  static const _routeSource = 'ride-relay-mini-route';
+  static const _riderSource = 'ride-relay-mini-riders';
+  ml.MapLibreMapController? _controller;
+  Timer? _refreshTimer;
+  DateTime? _lastRefreshAt;
+  bool _styleReady = false;
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleFit();
+  }
+
+  @override
+  void didUpdateWidget(_GroupMiniMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _scheduleRefresh();
+  }
+
+  void _scheduleFit() {
+    if (!widget.showTiles) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_fitGroup());
+    });
+  }
+
+  void _scheduleRefresh() {
+    if (!widget.showTiles) return;
+    final previous = _lastRefreshAt;
+    final elapsed = previous == null
+        ? const Duration(seconds: 1)
+        : DateTime.now().difference(previous);
+    if (elapsed >= const Duration(milliseconds: 500)) {
+      _lastRefreshAt = DateTime.now();
+      unawaited(_refreshMap());
+      return;
+    }
+    _refreshTimer ??= Timer(const Duration(milliseconds: 500) - elapsed, () {
+      _refreshTimer = null;
+      if (!mounted) return;
+      _lastRefreshAt = DateTime.now();
+      unawaited(_refreshMap());
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final riderCount = riders.length + (currentPosition == null ? 0 : 1);
+    final riderCount =
+        widget.riders.length + (widget.currentPosition == null ? 0 : 1);
     return Container(
       key: const Key('group-mini-map'),
-      width: width,
+      width: widget.width,
       height: 116,
       decoration: BoxDecoration(
         color: const Color(0xF2111820),
@@ -1656,13 +1844,15 @@ class _GroupMiniMap extends StatelessWidget {
         child: Stack(
           children: [
             Positioned.fill(
-              child: CustomPaint(
-                painter: _GroupMiniMapPainter(
-                  route: route,
-                  currentPosition: currentPosition,
-                  riders: riders,
-                ),
-              ),
+              child: widget.showTiles
+                  ? _buildTileMap()
+                  : CustomPaint(
+                      painter: _GroupMiniMapPainter(
+                        route: widget.route,
+                        currentPosition: widget.currentPosition,
+                        riders: widget.riders,
+                      ),
+                    ),
             ),
             Positioned(
               left: 7,
@@ -1689,10 +1879,172 @@ class _GroupMiniMap extends StatelessWidget {
                 ),
               ),
             ),
+            if (widget.showTiles)
+              const Positioned(
+                right: 3,
+                bottom: 2,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(color: Color(0xB3000000)),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                    child: Text(
+                      'OpenFreeMap · © OSM',
+                      style: TextStyle(color: Colors.white, fontSize: 6),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildTileMap() {
+    final groupPoints = <GeoPoint?>[
+      widget.currentPosition,
+      ...widget.riders.map((rider) => rider.point),
+    ].nonNulls.toList(growable: false);
+    final initial =
+        groupPoints.firstOrNull ??
+        const GeoPoint(latitude: 54.5, longitude: -3.2);
+    return ml.MapLibreMap(
+      key: const Key('group-mini-map-tiles'),
+      styleString: widget.mapStyleString,
+      initialCameraPosition: ml.CameraPosition(
+        target: ml.LatLng(initial.latitude, initial.longitude),
+        zoom: 13,
+      ),
+      onMapCreated: (controller) {
+        _controller = controller;
+        _scheduleFit();
+      },
+      onStyleLoadedCallback: () => unawaited(_prepareStyle()),
+      logoEnabled: false,
+      compassEnabled: false,
+      rotateGesturesEnabled: false,
+      scrollGesturesEnabled: false,
+      tiltGesturesEnabled: false,
+      zoomGesturesEnabled: false,
+      doubleClickZoomEnabled: false,
+      minMaxZoomPreference: const ml.MinMaxZoomPreference(5, 16),
+    );
+  }
+
+  Future<void> _prepareStyle() async {
+    final controller = _controller;
+    if (controller == null) return;
+    _styleReady = false;
+    try {
+      await controller.addGeoJsonSource(_routeSource, _routeGeoJson());
+      await controller.addLineLayer(
+        _routeSource,
+        'ride-relay-mini-route-border',
+        const ml.LineLayerProperties(
+          lineColor: '#10151C',
+          lineWidth: 5,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _routeSource,
+        'ride-relay-mini-route-line',
+        const ml.LineLayerProperties(
+          lineColor: '#FF7A1A',
+          lineWidth: 3,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addGeoJsonSource(_riderSource, _riderGeoJson());
+      await controller.addCircleLayer(
+        _riderSource,
+        'ride-relay-mini-rider-circles',
+        const ml.CircleLayerProperties(
+          circleRadius: 5,
+          circleColor: ['get', 'color'],
+          circleStrokeWidth: 1.5,
+          circleStrokeColor: '#FFFFFF',
+        ),
+        enableInteraction: false,
+      );
+      _styleReady = true;
+      await _refreshMap();
+    } on Object catch (error) {
+      debugPrint('Could not prepare group mini-map: $error');
+    }
+  }
+
+  Future<void> _refreshMap() async {
+    final controller = _controller;
+    if (!_styleReady || controller == null || _refreshing) return;
+    _refreshing = true;
+    try {
+      await controller.setGeoJsonSource(_routeSource, _routeGeoJson());
+      await controller.setGeoJsonSource(_riderSource, _riderGeoJson());
+      await _fitGroup();
+    } on Object catch (error) {
+      debugPrint('Could not refresh group mini-map: $error');
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Future<void> _fitGroup() async {
+    final controller = _controller;
+    if (controller == null) return;
+    final points = <GeoPoint?>[
+      widget.currentPosition,
+      ...widget.riders.map((rider) => rider.point),
+    ].nonNulls.toList(growable: false);
+    if (points.isEmpty) return;
+    if (points.length == 1) {
+      await controller.animateCamera(
+        ml.CameraUpdate.newLatLngZoom(
+          ml.LatLng(points.single.latitude, points.single.longitude),
+          14.5,
+        ),
+      );
+      return;
+    }
+    await controller.animateCamera(
+      ml.CameraUpdate.newLatLngBounds(
+        _mapLibreBounds(points),
+        left: 20,
+        top: 24,
+        right: 20,
+        bottom: 16,
+      ),
+    );
+  }
+
+  Map<String, dynamic> _routeGeoJson() => MapGeoJson.lines(
+    widget.route.length >= 2 ? [widget.route] : const [],
+    idPrefix: 'mini-route',
+  );
+
+  Map<String, dynamic> _riderGeoJson() => MapGeoJson.points([
+    for (final rider in widget.riders)
+      MapGeoJsonPoint(
+        id: rider.id,
+        point: rider.point,
+        properties: {'color': _hexColor(rider.color)},
+      ),
+    if (widget.currentPosition case final point?)
+      MapGeoJsonPoint(
+        id: 'mini-local-rider',
+        point: point,
+        properties: const {'color': '#FF7A1A'},
+      ),
+  ]);
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 }
 

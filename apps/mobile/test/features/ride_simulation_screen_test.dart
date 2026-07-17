@@ -54,6 +54,9 @@ void main() {
           controller: simulation,
           onRestart: () async {},
           onExit: () async {},
+          onRoleChanged: (role) async => simulation.setLocalRole(role),
+          onToggleMarker: () async =>
+              simulation.setMarkerMode(!simulation.markerMode),
         ),
       ),
     );
@@ -63,12 +66,25 @@ void main() {
     expect(find.text('Demo Lead'), findsOneWidget);
     expect(find.text('Charlie'), findsOneWidget);
     expect(find.byKey(const Key('simulation-off-route')), findsOneWidget);
+    expect(find.byKey(const Key('simulation-role')), findsOneWidget);
+    expect(find.text('Follower'), findsOneWidget);
+    expect(find.byKey(const Key('simulation-marker-mode')), findsOneWidget);
 
     await tester.ensureVisible(find.byKey(const Key('simulation-off-route')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('simulation-off-route')));
     await tester.pump();
     expect(simulation.alexOffRoute, isTrue);
+
+    await tester.ensureVisible(find.text('Follower'));
+    await tester.tap(find.text('Follower'));
+    await tester.pump();
+    expect(simulation.localRole, RideRole.rider);
+
+    await tester.ensureVisible(find.byKey(const Key('simulation-marker-mode')));
+    await tester.tap(find.byKey(const Key('simulation-marker-mode')));
+    await tester.pump();
+    expect(simulation.markerMode, isTrue);
     expect(tester.takeException(), isNull);
   });
 }

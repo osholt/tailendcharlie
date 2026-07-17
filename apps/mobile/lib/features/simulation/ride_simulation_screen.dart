@@ -14,12 +14,20 @@ class RideSimulationScreen extends StatelessWidget {
     this.distanceUnit = DistanceUnit.miles,
     required this.onRestart,
     required this.onExit,
+    required this.onRoleChanged,
+    required this.onToggleMarker,
+    this.markerPassCount = 0,
+    this.tecPassedMarker = false,
   });
 
   final RideSimulationController controller;
   final DistanceUnit distanceUnit;
   final Future<void> Function() onRestart;
   final Future<void> Function() onExit;
+  final Future<void> Function(RideRole role) onRoleChanged;
+  final Future<void> Function() onToggleMarker;
+  final int markerPassCount;
+  final bool tecPassedMarker;
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +56,13 @@ class RideSimulationScreen extends StatelessWidget {
         child: AnimatedBuilder(
           animation: controller,
           builder: (context, _) {
-            final controls = _SimulationControls(controller: controller);
+            final controls = _SimulationControls(
+              controller: controller,
+              onRoleChanged: onRoleChanged,
+              onToggleMarker: onToggleMarker,
+              markerPassCount: markerPassCount,
+              tecPassedMarker: tecPassedMarker,
+            );
             final fleet = _FleetCard(
               controller: controller,
               distanceUnit: distanceUnit,
@@ -78,9 +92,19 @@ class RideSimulationScreen extends StatelessWidget {
 }
 
 class _SimulationControls extends StatelessWidget {
-  const _SimulationControls({required this.controller});
+  const _SimulationControls({
+    required this.controller,
+    required this.onRoleChanged,
+    required this.onToggleMarker,
+    required this.markerPassCount,
+    required this.tecPassedMarker,
+  });
 
   final RideSimulationController controller;
+  final Future<void> Function(RideRole role) onRoleChanged;
+  final Future<void> Function() onToggleMarker;
+  final int markerPassCount;
+  final bool tecPassedMarker;
 
   @override
   Widget build(BuildContext context) {
@@ -119,6 +143,41 @@ class _SimulationControls extends StatelessWidget {
               'Five virtual bikes use the real navigation, TEC and off-course '
               'logic. Device GPS, internet relay and nearby radios are off.',
               style: TextStyle(color: Color(0xFFADB7C4), height: 1.35),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'YOUR VIEW',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: const Color(0xFF8F9BAA),
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.8,
+              ),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<RideRole>(
+              key: const Key('simulation-role'),
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: RideRole.lead,
+                  icon: Icon(Icons.flag_outlined),
+                  label: Text('Leader'),
+                ),
+                ButtonSegment(
+                  value: RideRole.rider,
+                  icon: Icon(Icons.two_wheeler),
+                  label: Text('Follower'),
+                ),
+                ButtonSegment(
+                  value: RideRole.tailEndCharlie,
+                  icon: Icon(Icons.safety_check_outlined),
+                  label: Text('TEC'),
+                ),
+              ],
+              selected: {controller.localRole},
+              onSelectionChanged: controller.markerMode
+                  ? null
+                  : (selection) => unawaited(onRoleChanged(selection.single)),
             ),
             const SizedBox(height: 14),
             LinearProgressIndicator(value: controller.progress),
@@ -188,8 +247,37 @@ class _SimulationControls extends StatelessWidget {
               key: const Key('simulation-hazard'),
               onPressed: () => unawaited(controller.reportRoadworks()),
               icon: const Icon(Icons.warning_amber_rounded),
-              label: const Text('Drop roadworks hazard'),
+              label: const Text('Drop roadworks 450 m ahead'),
             ),
+            const SizedBox(height: 8),
+            FilledButton.tonalIcon(
+              key: const Key('simulation-marker-mode'),
+              onPressed: () => unawaited(onToggleMarker()),
+              icon: Icon(
+                controller.markerMode ? Icons.stop_circle : Icons.pin_drop,
+              ),
+              label: Text(
+                controller.markerMode
+                    ? 'Finish marker mode'
+                    : 'Simulate marker mode',
+              ),
+            ),
+            if (controller.markerMode) ...[
+              const SizedBox(height: 8),
+              Text(
+                'MARKER ACTIVE · $markerPassCount passed · '
+                '${tecPassedMarker ? 'TEC passed' : 'waiting for TEC'}',
+                key: const Key('simulation-marker-status'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: tecPassedMarker
+                      ? const Color(0xFF6ED89A)
+                      : const Color(0xFFFFC857),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             const Text(
               'Open the Map tab to watch the production UI respond.',

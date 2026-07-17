@@ -87,30 +87,31 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('active ride uses compact navigation chrome in landscape', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(844, 390);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final controller = await _controller();
-    await controller.createRide('Oliver');
+  testWidgets(
+    'active ride moves navigation chrome to a left rail in landscape',
+    (tester) async {
+      tester.view.physicalSize = const Size(844, 390);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final controller = await _controller();
+      await controller.createRide('Oliver');
 
-    await tester.pumpWidget(_app(controller));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(_app(controller));
+      await tester.pumpAndSettle();
 
-    final navigationBar = tester.widget<NavigationBar>(
-      find.byType(NavigationBar),
-    );
-    expect(navigationBar.height, 48);
-    expect(
-      navigationBar.labelBehavior,
-      NavigationDestinationLabelBehavior.alwaysHide,
-    );
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(
+        find.byKey(const Key('landscape-navigation-rail')),
+        findsOneWidget,
+      );
+      final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
+      expect(rail.minWidth, 56);
+      expect(rail.labelType, NavigationRailLabelType.none);
 
-    controller.dispose();
-  });
+      controller.dispose();
+    },
+  );
 
   testWidgets('active ride can be left to choose another ride', (tester) async {
     final controller = await _controller();

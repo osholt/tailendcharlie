@@ -24,6 +24,8 @@ class SimulatedRiderSnapshot {
     required this.speedMetersPerSecond,
     required this.isLocal,
     required this.isOffRoute,
+    required this.position,
+    required this.headingDegrees,
   });
 
   final String id;
@@ -33,6 +35,8 @@ class SimulatedRiderSnapshot {
   final double speedMetersPerSecond;
   final bool isLocal;
   final bool isOffRoute;
+  final GeoPoint position;
+  final double headingDegrees;
 }
 
 /// Drives the production awareness pipeline with synthetic, authenticated GPS
@@ -43,17 +47,21 @@ class RideSimulationController extends ChangeNotifier {
     this._awarenessController, {
     required RideSession session,
     required List<GeoPoint> route,
-    this.tickInterval = const Duration(milliseconds: 500),
+    this.tickInterval = const Duration(milliseconds: 100),
+    this.eventInterval = const Duration(milliseconds: 500),
   }) : assert(session.isSimulation),
        assert(route.length >= 2),
        _session = session,
-       _routeSampler = _RouteSampler(route) {
+       _routeSampler = _RouteSampler(route),
+       _selectedLocalRole = session.role == RideRole.marker
+           ? RideRole.rider
+           : session.role {
     final leadStart = _routeSampler.totalDistanceMeters * 0.06;
     _agents = [
       _SimulatedAgent(
         id: session.localRiderId,
         displayName: session.displayName,
-        role: RideRole.lead,
+        role: _selectedLocalRole,
         progressMeters: leadStart,
         speedFactor: 1,
         isLocal: true,
@@ -61,7 +69,9 @@ class RideSimulationController extends ChangeNotifier {
       _SimulatedAgent(
         id: 'ride-lab-maya',
         displayName: 'Maya',
-        role: RideRole.rider,
+        role: _selectedLocalRole == RideRole.lead
+            ? RideRole.rider
+            : RideRole.lead,
         progressMeters: math.max(0, leadStart - 60),
         speedFactor: 1,
       ),
@@ -82,7 +92,9 @@ class RideSimulationController extends ChangeNotifier {
       _SimulatedAgent(
         id: tecRiderId,
         displayName: 'Charlie',
-        role: RideRole.tailEndCharlie,
+        role: _selectedLocalRole == RideRole.tailEndCharlie
+            ? RideRole.rider
+            : RideRole.tailEndCharlie,
         progressMeters: math.max(0, leadStart - 620),
         speedFactor: 0.96,
       ),
@@ -96,7 +108,9 @@ class RideSimulationController extends ChangeNotifier {
   final RideSession _session;
   final _RouteSampler _routeSampler;
   final Duration tickInterval;
+  final Duration eventInterval;
   late final List<_SimulatedAgent> _agents;
+  RideRole _selectedLocalRole;
   Timer? _timer;
   RideSimulationState _state = RideSimulationState.ready;
   Duration _simulatedElapsed = Duration.zero;
@@ -104,6 +118,8 @@ class RideSimulationController extends ChangeNotifier {
   double _baseSpeedMetersPerSecond = 13.4;
   bool _tecDelayed = false;
   bool _emitting = false;
+  bool _markerMode = false;
+  Duration _eventElapsed = Duration.zero;
   int _eventSequence = 0;
   DateTime? _lastRecordedAt;
 
@@ -112,6 +128,8 @@ class RideSimulationController extends ChangeNotifier {
   double get timeScale => _timeScale;
   double get baseSpeedMetersPerSecond => _baseSpeedMetersPerSecond;
   bool get tecDelayed => _tecDelayed;
+  RideRole get localRole => _selectedLocalRole;
+  bool get markerMode => _markerMode;
   bool get alexOffRoute => _agent(offRouteRiderId).isOffRoute;
   bool get isRunning => _state == RideSimulationState.running;
   double get routeDistanceMeters => _routeSampler.totalDistanceMeters;
@@ -119,8 +137,9 @@ class RideSimulationController extends ChangeNotifier {
       (_agents.first.progressMeters / routeDistanceMeters).clamp(0, 1);
 
   List<SimulatedRiderSnapshot> get riders => List.unmodifiable(
-    _agents.map(
-      (agent) => SimulatedRiderSnapshot(
+    _agents.map((agent) {
+      final sampled = _sampleAgent(agent);
+      return SimulatedRiderSnapshot(
         id: agent.id,
         displayName: agent.displayName,
         role: agent.role,
@@ -128,8 +147,10 @@ class RideSimulationController extends ChangeNotifier {
         speedMetersPerSecond: _speedFor(agent),
         isLocal: agent.isLocal,
         isOffRoute: agent.isOffRoute,
-      ),
-    ),
+        position: sampled.position,
+        headingDegrees: sampled.headingDegrees,
+      );
+    }),
   );
 
   Future<void> initialize() => _emitPositions();
@@ -138,7 +159,7 @@ class RideSimulationController extends ChangeNotifier {
     if (_state == RideSimulationState.completed || isRunning) return;
     _state = RideSimulationState.running;
     _timer ??= Timer.periodic(tickInterval, (_) {
-      if (isRunning) unawaited(advance(tickInterval));
+      if (isRunning) unawaited(_tick(tickInterval));
     });
     notifyListeners();
   }
@@ -176,18 +197,58 @@ class RideSimulationController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setLocalRole(RideRole role) {
+    if (role == RideRole.marker || role == _selectedLocalRole) return;
+    _selectedLocalRole = role;
+    if (!_markerMode) _assignPerspectiveRoles();
+    notifyListeners();
+  }
+
+  void setMarkerMode(bool value) {
+    if (_markerMode == value) return;
+    _markerMode = value;
+    if (value) {
+      _agents.first.role = RideRole.marker;
+    } else {
+      _assignPerspectiveRoles();
+    }
+    notifyListeners();
+  }
+
   Future<void> reportRoadworks() async {
+    final lead = _agents.first;
+    final hazardPoint = _routeSampler
+        .sampleAt(math.min(routeDistanceMeters, lead.progressMeters + 450))
+        .point;
     await _awarenessController.reportHazard(
       type: HazardType.roadworks,
       severity: HazardSeverity.caution,
+      position: hazardPoint,
       details: 'Synthetic Ride Lab hazard',
     );
+  }
+
+  Future<void> _tick(Duration realElapsed) async {
+    if (_state == RideSimulationState.completed) return;
+    _advanceMotion(realElapsed);
+    _eventElapsed += realElapsed;
+    notifyListeners();
+    if (_eventElapsed < eventInterval || _emitting) return;
+    _eventElapsed = Duration.zero;
+    await _emitPositions();
   }
 
   /// Advances virtual time and emits one GPS fix per rider. Public so tests and
   /// scripted demos can progress deterministically without waiting for timers.
   Future<void> advance(Duration realElapsed) async {
     if (_state == RideSimulationState.completed || _emitting) return;
+    _advanceMotion(realElapsed);
+    _eventElapsed = Duration.zero;
+    await _emitPositions();
+    notifyListeners();
+  }
+
+  void _advanceMotion(Duration realElapsed) {
     final simulatedMicroseconds = (realElapsed.inMicroseconds * _timeScale)
         .round();
     final simulatedDelta = Duration(microseconds: simulatedMicroseconds);
@@ -195,6 +256,7 @@ class RideSimulationController extends ChangeNotifier {
     final seconds =
         simulatedDelta.inMicroseconds / Duration.microsecondsPerSecond;
     for (final agent in _agents) {
+      if (agent.isLocal && _markerMode) continue;
       agent.progressMeters = math.min(
         routeDistanceMeters,
         agent.progressMeters + _speedFor(agent) * seconds,
@@ -202,12 +264,10 @@ class RideSimulationController extends ChangeNotifier {
     }
     final completed = _agents.first.progressMeters >= routeDistanceMeters;
     if (completed) _state = RideSimulationState.completed;
-    await _emitPositions();
     if (completed) {
       _timer?.cancel();
       _timer = null;
     }
-    notifyListeners();
   }
 
   Future<void> _emitPositions() async {
@@ -215,13 +275,15 @@ class RideSimulationController extends ChangeNotifier {
     _emitting = true;
     try {
       final recordedAt = _nextRecordedAt();
-      for (final agent in _agents) {
-        final sampled = _routeSampler.sampleAt(agent.progressMeters);
-        final position = agent.isOffRoute
-            ? _offsetPoint(sampled.point, sampled.headingDegrees, 220)
-            : sampled.point;
+      final samples = [
+        for (final agent in _agents)
+          (agent: agent, sampled: _sampleAgent(agent)),
+      ];
+      for (final entry in samples) {
+        final agent = entry.agent;
+        final sampled = entry.sampled;
         final sample = LocationSample(
-          position: position,
+          position: sampled.position,
           recordedAt: recordedAt,
           accuracyMeters: 4,
           speedMetersPerSecond: _speedFor(agent),
@@ -275,6 +337,7 @@ class RideSimulationController extends ChangeNotifier {
 
   double _speedFor(_SimulatedAgent agent) {
     if (_state == RideSimulationState.completed) return 0;
+    if (agent.isLocal && _markerMode) return 0;
     if (agent.id == tecRiderId && _tecDelayed) {
       return _baseSpeedMetersPerSecond * 0.45;
     }
@@ -283,6 +346,29 @@ class RideSimulationController extends ChangeNotifier {
 
   _SimulatedAgent _agent(String id) =>
       _agents.firstWhere((agent) => agent.id == id);
+
+  _SimulatedPosition _sampleAgent(_SimulatedAgent agent) {
+    final sampled = _routeSampler.sampleAt(agent.progressMeters);
+    return _SimulatedPosition(
+      position: agent.isOffRoute
+          ? _offsetPoint(sampled.point, sampled.headingDegrees, 220)
+          : sampled.point,
+      headingDegrees: sampled.headingDegrees,
+    );
+  }
+
+  void _assignPerspectiveRoles() {
+    for (final agent in _agents) {
+      agent.role = RideRole.rider;
+    }
+    _agents.first.role = _selectedLocalRole;
+    if (_selectedLocalRole != RideRole.lead) {
+      _agent('ride-lab-maya').role = RideRole.lead;
+    }
+    if (_selectedLocalRole != RideRole.tailEndCharlie) {
+      _agent(tecRiderId).role = RideRole.tailEndCharlie;
+    }
+  }
 
   DateTime _nextRecordedAt() {
     final now = DateTime.now();
@@ -328,11 +414,21 @@ class _SimulatedAgent {
 
   final String id;
   final String displayName;
-  final RideRole role;
+  RideRole role;
   double progressMeters;
   final double speedFactor;
   final bool isLocal;
   bool isOffRoute = false;
+}
+
+class _SimulatedPosition {
+  const _SimulatedPosition({
+    required this.position,
+    required this.headingDegrees,
+  });
+
+  final GeoPoint position;
+  final double headingDegrees;
 }
 
 class _RouteSampler {

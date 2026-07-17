@@ -34,9 +34,10 @@ phones when mobile coverage disappears.
 - Give the ride lead a compact along-route distance/ETA to Tail End Charlie and
   an immediate map alert for confirmed unacknowledged off-course riders.
 - Switch into a compact, heading-up follow camera while moving, with reduced
-  landscape chrome, a group overview mini-map, solid ridden route progress, a
-  faded dotted route ahead, and a contrasting trace for riders currently off
-  route. Manual pan/zoom pauses follow mode until **Re-centre** is pressed.
+  landscape chrome, a route-aware long look-ahead, a tile-backed group overview
+  mini-map, solid ridden route progress, a faded dotted route ahead, and a
+  contrasting trace for riders currently off route. Manual pan/zoom pauses
+  follow mode until **Re-centre** is pressed. Landscape menus use a left rail.
 - Default distance and speed units from the device locale (UK/US miles,
   kilometres elsewhere), with a persistent Settings override.
 - Queue authenticated events for store-and-forward delivery over native Google
@@ -94,8 +95,10 @@ licence gates are documented in
 
 Select **Try a simulated ride** on the start screen to run the complete map and
 situational-awareness flow with five virtual bikes. Ride Lab can accelerate
-time, delay the TEC, send a rider off course, and add a hazard without using
-device GPS or publishing synthetic data to the internet/nearby relays. See
+time, switch between leader/follower/TEC viewpoints, simulate a stationary
+marker session, delay the TEC, send a rider off course, and add a visible hazard
+ahead without using device GPS or publishing synthetic data to the
+internet/nearby relays. See
 [docs/ride-simulator.md](./docs/ride-simulator.md).
 
 Navigation handoff behavior is documented in

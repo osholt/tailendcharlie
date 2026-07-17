@@ -9,17 +9,25 @@ without requiring several phones or physical travel.
 2. Select **Try a simulated ride** on the start screen.
 3. Use **Map** to watch the ride or **Ride Lab** to control it.
 
-The bundled 36.2 km Peak District GPX is loaded automatically. Five synthetic
-bikes start as a moving group: a lead, three riders, and a Tail End Charlie.
-The default 8x time scale completes the loop in a few minutes.
+The bundled 17.5 km GPX from the King's Oak Academy car park to the Cross Hands
+Hotel car park is loaded automatically. Its 484-point track follows the routed
+roads through Kingswood, Pucklechurch and Old Sodbury. Five synthetic bikes
+start as a moving group: a lead, three riders, and a Tail End Charlie.
 
 Ride Lab can:
 
 - pause or resume movement and select a 1x, 4x, 8x, or 16x time scale;
+- switch the local viewpoint between leader, follower, and Tail End Charlie;
+- enter marker mode, stop the local bike, and exercise authenticated rider/TEC
+  passage counting as the virtual group passes;
 - send Alex 220 m off route, exercising alert hysteresis and the magenta
   off-route trail;
 - slow Tail End Charlie to exercise the leader distance/time display; and
-- inject a synthetic roadworks hazard at the lead bike's current position.
+- inject a synthetic roadworks hazard 450 m ahead so it is visible on the map.
+
+Visual positions advance at 10 Hz while signed, durable situational events are
+written at 2 Hz. This keeps map motion continuous without turning the event
+journal into a rendering loop.
 
 Restart creates a clean simulation ride and resets route progress, events,
 alerts, and trails.

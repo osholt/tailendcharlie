@@ -82,7 +82,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('Peak District demo loop'), findsOneWidget);
+    expect(
+      find.text("King's Oak Academy to Cross Hands Hotel"),
+      findsOneWidget,
+    );
     expect(find.byTooltip('Navigate or export route'), findsOneWidget);
     expect(find.textContaining('basemap configured'), findsNothing);
     expect(find.text('Download map for offline use'), findsNothing);
