@@ -35,6 +35,7 @@ class SimulatedRiderSnapshot {
     required this.position,
     required this.headingDegrees,
     required this.offRouteTrail,
+    required this.travelTrail,
   });
 
   final String id;
@@ -51,6 +52,10 @@ class SimulatedRiderSnapshot {
   /// of the durable awareness history prevents an older demo route from being
   /// connected to the current one after the bundled route changes.
   final List<GeoPoint> offRouteTrail;
+
+  /// Recent on-road positions, used to show the actual path ridden by the
+  /// current leader without altering the planned route geometry.
+  final List<GeoPoint> travelTrail;
 }
 
 /// Drives the production awareness pipeline with synthetic, authenticated GPS
@@ -252,11 +257,17 @@ class RideSimulationController extends ChangeNotifier {
         position: sampled.position,
         headingDegrees: sampled.headingDegrees,
         offRouteTrail: List.unmodifiable(agent.offRouteTrail),
+        travelTrail: List.unmodifiable(agent.travelTrail),
       );
     }),
   );
 
-  Future<void> initialize() => _emitPositions();
+  Future<void> initialize() async {
+    for (final agent in _agents) {
+      _recordTravelTrail(agent);
+    }
+    await _emitPositions();
+  }
 
   void start() {
     if (_state == RideSimulationState.completed || isRunning) return;
@@ -309,6 +320,10 @@ class RideSimulationController extends ChangeNotifier {
       _assignPerspectiveRoles();
       _positionFleetForPerspective();
       _skipJunctionsBehindLocalRider();
+      for (final agent in _agents) {
+        agent.travelTrail.clear();
+        _recordTravelTrail(agent);
+      }
     }
     notifyListeners();
   }
@@ -401,9 +416,12 @@ class RideSimulationController extends ChangeNotifier {
         continue;
       }
       agent.progressMeters = nextProgress;
-      if (agent.isOffRoute) _recordOffRouteTrail(agent);
     }
     _keepFollowerBehindLeader();
+    for (final agent in _agents) {
+      _recordTravelTrail(agent);
+      if (agent.isOffRoute) _recordOffRouteTrail(agent);
+    }
     _updateAutomaticMarkerPhase(realElapsed);
     final completed = _agents.first.progressMeters >= routeDistanceMeters;
     if (completed) _state = RideSimulationState.completed;
@@ -510,6 +528,16 @@ class RideSimulationController extends ChangeNotifier {
         GeoCalculations.distanceMeters(trail.last, point) >= 2) {
       trail.add(point);
       if (trail.length > 120) trail.removeRange(0, trail.length - 120);
+    }
+  }
+
+  void _recordTravelTrail(_SimulatedAgent agent) {
+    final point = _sampleAgent(agent).position;
+    final trail = agent.travelTrail;
+    if (trail.isEmpty ||
+        GeoCalculations.distanceMeters(trail.last, point) >= 2) {
+      trail.add(point);
+      if (trail.length > 180) trail.removeRange(0, trail.length - 180);
     }
   }
 
@@ -749,6 +777,7 @@ class _SimulatedAgent {
   final bool isLocal;
   bool isOffRoute = false;
   final List<GeoPoint> offRouteTrail = [];
+  final List<GeoPoint> travelTrail = [];
 }
 
 class _SimulatedPosition {

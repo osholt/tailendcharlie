@@ -8,6 +8,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../data/json_file_route_store.dart';
 import '../../domain/distance_unit.dart';
@@ -252,6 +253,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _exporting = false;
   bool _routing = false;
   bool _navigationMode = false;
+  bool _navigationCanvasActive = false;
   bool _markerOverviewVisible = false;
   bool _autoFollowSuppressed = false;
   double _lastHeadingDegrees = 0;
@@ -261,7 +263,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
   DateTime? _lastCameraUpdateAt;
   DateTime? _lastProgressUpdateAt;
   DateTime? _lastMapLibrePositionSyncAt;
+  DateTime? _lastMapUiRefreshAt;
   Duration _cameraTransitionDuration = const Duration(milliseconds: 450);
+  bool _cameraUpdateInFlight = false;
+  bool _cameraUpdateQueued = false;
+  bool _initialCameraPositioned = false;
+  bool _screenAwake = false;
   bool _mapLibreSyncScheduled = false;
   bool _mapLibreSyncRunning = false;
   bool _mapLibreProgressDirty = false;
@@ -347,6 +354,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _routingClient.close();
+    if (_screenAwake) unawaited(_setScreenAwake(false));
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
   }
@@ -362,8 +370,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _effectivePosition,
         );
         _navigationMode = route != null && _isMoving;
+        _navigationCanvasActive = _navigationMode;
+        _initialCameraPositioned = false;
         _loading = false;
       });
+      unawaited(_syncScreenAwake());
       widget.onRouteChanged?.call(route);
       if (_navigationMode) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -390,7 +401,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
         MediaQuery.orientationOf(context) == Orientation.landscape;
     final markerOverlay = widget.junctionMarkerOverlay?.value;
     final markerOverviewActive = markerOverlay != null;
-    final hideChrome = _route != null && (_isMoving || markerOverviewActive);
+    // Once navigation has started, retain the full map canvas through brief
+    // traffic-light or GPS speed dips. Switching the AppBar in and out changes
+    // the platform map's size and was the main source of visible flashing.
+    final hideChrome =
+        _route != null && (_navigationCanvasActive || markerOverviewActive);
     final safeInsets = MediaQuery.paddingOf(context);
     final overlayTop = hideChrome ? safeInsets.top : 0.0;
     final overlayLeft = hideChrome ? safeInsets.left : 0.0;
@@ -560,7 +575,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     top: statusTop,
                     child: _GroupMiniMap(
                       width: groupMiniMapWidth,
-                      route: _route!.allPoints.toList(growable: false),
+                      routePaths: _route!.paths
+                          .map((path) => path.points)
+                          .where((points) => points.length >= 2)
+                          .toList(growable: false),
                       currentPosition: _effectivePosition,
                       riders: groupRiders,
                       showTiles: _basemap.usesMapLibre,
@@ -801,6 +819,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _onMapLibreCreated(ml.MapLibreMapController controller) {
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapLibreController = controller;
+    _initialCameraPositioned = false;
     controller.onFeatureTapped.add(_onMapLibreFeatureTapped);
   }
 
@@ -853,17 +872,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!_isMoving) _autoFollowSuppressed = false;
     final autoFollow = _route != null && _isMoving && !_autoFollowSuppressed;
     final enableNavigationMode = autoFollow && !_navigationMode;
-    // MapLibre receives source updates directly. Avoid rebuilding a platform
-    // view for every synthetic 10 Hz GPS fix; progress still refreshes at 2.5
-    // Hz and the native position source at 4 Hz.
-    if (!_basemap.usesMapLibre || refreshProgress || enableNavigationMode) {
+    if (refreshProgress) {
+      _progressGeometry = _routeProgressTracker.update(_route, position);
+    }
+    // MapLibre receives sources directly. Keep its platform view mounted while
+    // the simulation is running; only FlutterMap needs a widget rebuild for
+    // fresh route-progress geometry.
+    if (!_basemap.usesMapLibre || enableNavigationMode) {
       setState(() {
-        if (refreshProgress) {
-          _progressGeometry = _routeProgressTracker.update(_route, position);
+        if (autoFollow) {
+          _navigationMode = true;
+          _navigationCanvasActive = true;
         }
-        if (autoFollow) _navigationMode = true;
       });
     }
+    if (enableNavigationMode) unawaited(_syncScreenAwake());
     _scheduleMapLibreSync(
       progress: refreshProgress,
       position: refreshMapLibrePosition,
@@ -877,7 +900,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _onOverlayDataChanged() {
     if (!mounted) return;
-    setState(() {});
+    // Native MapLibre layers refresh without rebuilding the platform view. A
+    // modest UI refresh keeps the mini-map current without re-layout flicker.
+    final now = DateTime.now();
+    if (!_basemap.usesMapLibre ||
+        _lastMapUiRefreshAt == null ||
+        now.difference(_lastMapUiRefreshAt!) >=
+            const Duration(milliseconds: 750)) {
+      _lastMapUiRefreshAt = now;
+      setState(() {});
+    }
     _scheduleMapLibreSync(overlays: true);
   }
 
@@ -890,11 +922,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
       if (visible) {
         _navigationMode = false;
         _autoFollowSuppressed = false;
+      } else if (_route != null && _effectivePosition != null) {
+        _navigationMode = true;
+        _navigationCanvasActive = true;
+        _autoFollowSuppressed = false;
       }
     });
+    unawaited(_syncScreenAwake());
     if (visible) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_showMarkerOverview());
+      });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_followNavigationCamera(force: true));
       });
     }
   }
@@ -954,8 +995,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     setState(() {
       _navigationMode = true;
+      _navigationCanvasActive = true;
       _autoFollowSuppressed = false;
     });
+    unawaited(_syncScreenAwake());
     unawaited(_followNavigationCamera(force: true));
   }
 
@@ -965,6 +1008,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _navigationMode = false;
       _autoFollowSuppressed = suppressAutomatic;
     });
+    unawaited(_syncScreenAwake());
+  }
+
+  Future<void> _syncScreenAwake() => _setScreenAwake(
+    _route != null && (_navigationMode || _markerOverviewVisible),
+  );
+
+  Future<void> _setScreenAwake(bool enabled) async {
+    if (_screenAwake == enabled) return;
+    _screenAwake = enabled;
+    try {
+      await WakelockPlus.toggle(enable: enabled);
+    } on Object catch (error) {
+      // The map remains usable in widget tests or on platforms without the
+      // plugin; the next navigation-state transition retries the request.
+      _screenAwake = !enabled;
+      debugPrint('Could not change navigation wake lock: $error');
+    }
   }
 
   void _showWholeRoute() {
@@ -990,6 +1051,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
         distinctPoints.add(point);
       }
     }
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    // The card lives in the lower-right corner. Reserve that area when fitting
+    // riders so no rider or route decision is hidden underneath it.
+    final rightPadding = landscape ? 400.0 : 32.0;
+    final bottomPadding = landscape ? 156.0 : 264.0;
     if (_basemap.usesMapLibre) {
       final controller = _mapLibreController;
       if (controller == null) return;
@@ -999,8 +1066,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
             _mapLibreBounds(distinctPoints),
             left: 36,
             top: 36,
-            right: 36,
-            bottom: 160,
+            right: rightPadding,
+            bottom: bottomPadding,
           ),
         );
       } else {
@@ -1028,7 +1095,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             bounds: LatLngBounds.fromPoints(
               distinctPoints.map(_latLng).toList(),
             ),
-            padding: const EdgeInsets.fromLTRB(36, 36, 36, 160),
+            padding: EdgeInsets.fromLTRB(36, 36, rightPadding, bottomPadding),
           ),
         );
       } else {
@@ -1052,21 +1119,26 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!_navigationMode) return;
     final position = _effectivePosition;
     if (position == null) return;
+    if (_cameraUpdateInFlight) {
+      _cameraUpdateQueued = true;
+      return;
+    }
     final now = DateTime.now();
     final previousCameraUpdate = _lastCameraUpdateAt;
     if (!force &&
         previousCameraUpdate != null &&
         now.difference(previousCameraUpdate) <
-            const Duration(milliseconds: 260)) {
+            const Duration(milliseconds: 400)) {
       return;
     }
     if (previousCameraUpdate != null) {
       final elapsed = now.difference(previousCameraUpdate).inMilliseconds;
       _cameraTransitionDuration = Duration(
-        milliseconds: (elapsed * 1.1).round().clamp(280, 420),
+        milliseconds: (elapsed * 1.1).round().clamp(360, 560),
       );
     }
     _lastCameraUpdateAt = now;
+    _cameraUpdateInFlight = true;
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
     final speed = _navigationFix?.speedMetersPerSecond ?? 0;
@@ -1077,24 +1149,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _pointAlongRemainingRoute(position, lookAheadMeters) ??
         _pointAhead(position, _lastHeadingDegrees, lookAheadMeters);
     final navigationZoom = landscape ? 13.85 : 14.45;
-    if (_basemap.usesMapLibre) {
-      final controller = _mapLibreController;
-      if (controller == null) return;
-      await controller.easeCamera(
-        ml.CameraUpdate.newCameraPosition(
-          ml.CameraPosition(
-            target: ml.LatLng(target.latitude, target.longitude),
-            zoom: navigationZoom,
-            tilt: landscape ? 58 : 52,
-            bearing: _lastHeadingDegrees,
-          ),
-        ),
-        duration: _cameraTransitionDuration,
-        interpolation: ml.CameraAnimationInterpolation.linear,
-      );
-      return;
-    }
     try {
+      if (_basemap.usesMapLibre) {
+        final controller = _mapLibreController;
+        if (controller == null) return;
+        await controller.easeCamera(
+          ml.CameraUpdate.newCameraPosition(
+            ml.CameraPosition(
+              target: ml.LatLng(target.latitude, target.longitude),
+              zoom: navigationZoom,
+              tilt: landscape ? 58 : 52,
+              bearing: _lastHeadingDegrees,
+            ),
+          ),
+          duration: _cameraTransitionDuration,
+          interpolation: ml.CameraAnimationInterpolation.linear,
+        );
+        return;
+      }
       _mapController.moveAndRotateAnimatedRaw(
         _latLng(target),
         navigationZoom,
@@ -1107,6 +1179,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
     } on StateError {
       // The first position may arrive before FlutterMap has attached.
+    } finally {
+      _cameraUpdateInFlight = false;
+      if (_cameraUpdateQueued) {
+        _cameraUpdateQueued = false;
+        if (mounted) unawaited(_followNavigationCamera(force: true));
+      }
     }
   }
 
@@ -1177,7 +1255,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _offRouteTraceSource,
         'ride-relay-off-route-line',
         const ml.LineLayerProperties(
-          lineColor: '#E244C7',
+          lineColor: ['get', 'color'],
           lineWidth: 5,
           lineCap: 'round',
           lineJoin: 'round',
@@ -1222,7 +1300,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await _syncMapLibreSources();
       if (_navigationMode) {
         await _followNavigationCamera();
-      } else {
+      } else if (!_initialCameraPositioned) {
         _fitRoute();
       }
     } on Object catch (error, stackTrace) {
@@ -1359,12 +1437,27 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Map<String, dynamic> _riddenRouteGeoJson() =>
       MapGeoJson.lines(_progressGeometry.riddenPaths, idPrefix: 'ridden-route');
 
-  Map<String, dynamic> _offRouteTraceGeoJson() => MapGeoJson.lines(
-    (widget.offRouteTraces?.value ?? const <MapOverlayTrace>[]).map(
-      (trace) => trace.points,
-    ),
-    idPrefix: 'off-route-trace',
-  );
+  Map<String, dynamic> _offRouteTraceGeoJson() {
+    final traces = widget.offRouteTraces?.value ?? const <MapOverlayTrace>[];
+    return {
+      'type': 'FeatureCollection',
+      'features': [
+        for (final trace in traces.where((trace) => trace.points.length >= 2))
+          {
+            'type': 'Feature',
+            'id': trace.id,
+            'properties': {'color': _hexColor(trace.color)},
+            'geometry': {
+              'type': 'LineString',
+              'coordinates': [
+                for (final point in trace.points)
+                  [point.longitude, point.latitude],
+              ],
+            },
+          },
+      ],
+    };
+  }
 
   Map<String, dynamic> _waypointGeoJson() => MapGeoJson.points(
     _route?.waypoints
@@ -1500,8 +1593,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
         activeRoute,
         _effectivePosition,
       );
-      if (_isMoving && !_autoFollowSuppressed) _navigationMode = true;
+      _initialCameraPositioned = false;
+      if (_isMoving && !_autoFollowSuppressed) {
+        _navigationMode = true;
+        _navigationCanvasActive = true;
+      }
     });
+    unawaited(_syncScreenAwake());
     await _syncMapLibreSources();
     _fitRoute();
     if (_navigationMode) unawaited(_followNavigationCamera());
@@ -1601,6 +1699,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (_basemap.usesMapLibre) {
       final controller = _mapLibreController;
       if (controller == null || routePoints.isEmpty) return;
+      _initialCameraPositioned = true;
       if (routePoints.length == 1) {
         unawaited(
           controller.animateCamera(
@@ -1631,6 +1730,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     final points = routePoints.map(_latLng).toList(growable: false);
     if (points.isEmpty) return;
+    _initialCameraPositioned = true;
     if (points.length == 1) {
       _mapController.move(points.single, 14);
     } else {
@@ -1659,7 +1759,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
             _route = null;
             _progressGeometry = const RouteProgressGeometry.empty();
             _navigationMode = false;
+            _navigationCanvasActive = false;
+            _initialCameraPositioned = false;
           });
+          await _syncScreenAwake();
           await _syncMapLibreSources();
           widget.onRouteChanged?.call(null);
         }
@@ -1935,7 +2038,7 @@ class _EmptyRoutePrompt extends StatelessWidget {
 class _GroupMiniMap extends StatefulWidget {
   const _GroupMiniMap({
     required this.width,
-    required this.route,
+    required this.routePaths,
     required this.currentPosition,
     required this.riders,
     required this.showTiles,
@@ -1943,7 +2046,7 @@ class _GroupMiniMap extends StatefulWidget {
   });
 
   final double width;
-  final List<GeoPoint> route;
+  final List<List<GeoPoint>> routePaths;
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
   final bool showTiles;
@@ -2025,7 +2128,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                   ? _buildTileMap()
                   : CustomPaint(
                       painter: _GroupMiniMapPainter(
-                        route: widget.route,
+                        routePaths: widget.routePaths,
                         currentPosition: widget.currentPosition,
                         riders: widget.riders,
                       ),
@@ -2198,7 +2301,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   }
 
   Map<String, dynamic> _routeGeoJson() => MapGeoJson.lines(
-    widget.route.length >= 2 ? [widget.route] : const [],
+    widget.routePaths.where((path) => path.length >= 2),
     idPrefix: 'mini-route',
   );
 
@@ -2226,12 +2329,12 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
 
 class _GroupMiniMapPainter extends CustomPainter {
   const _GroupMiniMapPainter({
-    required this.route,
+    required this.routePaths,
     required this.currentPosition,
     required this.riders,
   });
 
-  final List<GeoPoint> route;
+  final List<List<GeoPoint>> routePaths;
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
 
@@ -2285,7 +2388,7 @@ class _GroupMiniMapPainter extends CustomPainter {
       gridPaint,
     );
 
-    if (route.length >= 2) {
+    for (final route in routePaths.where((path) => path.length >= 2)) {
       final path = ui.Path()
         ..moveTo(project(route.first).dx, project(route.first).dy);
       final stride = math.max(1, route.length ~/ 1200);

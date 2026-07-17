@@ -91,6 +91,20 @@ void main() {
     expect(smoothSimulation.eventInterval, const Duration(seconds: 2));
   });
 
+  test('retains a recent trail for the simulated leader', () async {
+    final initialLeader = simulation.riders.singleWhere(
+      (rider) => rider.role == RideRole.lead,
+    );
+    expect(initialLeader.travelTrail, hasLength(1));
+
+    await simulation.advance(const Duration(seconds: 1));
+
+    final movingLeader = simulation.riders.singleWhere(
+      (rider) => rider.role == RideRole.lead,
+    );
+    expect(movingLeader.travelTrail.length, greaterThan(1));
+  });
+
   test('switches between leader, follower and TEC perspectives', () {
     simulation.setLocalRole(RideRole.rider);
     expect(simulation.localRole, RideRole.rider);

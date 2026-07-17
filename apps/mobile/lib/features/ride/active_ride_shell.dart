@@ -610,6 +610,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                 alert.assessment.alertLevel.index >=
                     RouteAlertLevel.urgent.index;
             final isTec = location.role == RideRole.tailEndCharlie;
+            final isLead = location.role == RideRole.lead;
             return MapOverlayMarker(
               id: 'rider-${location.riderId}',
               point: location.point,
@@ -617,12 +618,20 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   ? '${location.displayName} · check route'
                   : isTec
                   ? '${location.displayName} · TEC'
+                  : isLead
+                  ? '${location.displayName} · Lead'
                   : location.displayName,
-              icon: isTec ? Icons.shield_outlined : Icons.two_wheeler,
+              icon: isTec
+                  ? Icons.shield_outlined
+                  : isLead
+                  ? Icons.flag_rounded
+                  : Icons.two_wheeler,
               color: needsAttention
                   ? const Color(0xFFFF5D73)
                   : isTec
                   ? const Color(0xFF68A9FF)
+                  : isLead
+                  ? const Color(0xFFB58CFF)
                   : const Color(0xFF6ED89A),
             );
           }),
@@ -644,7 +653,28 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   }
 
   void _updateSimulationOffRouteTraces(List<SimulatedRiderSnapshot> riders) {
-    _offRouteTraces.value = List.unmodifiable(
+    final traces = <MapOverlayTrace>[];
+    final leader = riders
+        .where((rider) => rider.role == RideRole.lead)
+        .firstOrNull;
+    if (leader != null && leader.travelTrail.length >= 2) {
+      traces.add(
+        MapOverlayTrace(
+          id: 'leader-track-${leader.id}',
+          points: leader.travelTrail
+              .map(
+                (point) => route_domain.GeoPoint(
+                  latitude: point.latitude,
+                  longitude: point.longitude,
+                ),
+              )
+              .toList(growable: false),
+          label: '${leader.displayName} leader track',
+          color: const Color(0xFFB58CFF),
+        ),
+      );
+    }
+    traces.addAll(
       riders
           .where((rider) => rider.isOffRoute && rider.offRouteTrail.length >= 2)
           .map(
@@ -660,9 +690,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   .toList(growable: false),
               label: '${rider.displayName} off-route trace',
             ),
-          )
-          .toList(growable: false),
+          ),
     );
+    _offRouteTraces.value = List.unmodifiable(traces);
   }
 
   void _updateOffRouteTraces(SituationalAwarenessController awareness) {
