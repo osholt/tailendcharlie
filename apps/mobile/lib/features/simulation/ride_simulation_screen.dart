@@ -187,7 +187,10 @@ class _SimulationControls extends StatelessWidget {
                 ),
               ],
               selected: {controller.localRole},
-              onSelectionChanged: controller.markerMode
+              onSelectionChanged:
+                  controller.markerMode &&
+                      (!controller.automaticMarkerActive ||
+                          controller.automaticMarkerIsLocal)
                   ? null
                   : (selection) => unawaited(onRoleChanged(selection.single)),
             ),

@@ -517,6 +517,10 @@ void main() {
       waypoints: const [],
     );
     var toggles = 0;
+    final locationSharing = ValueNotifier(true);
+    addTearDown(locationSharing.dispose);
+    var locationToggles = 0;
+    var leaves = 0;
     var ends = 0;
 
     await tester.pumpWidget(
@@ -529,6 +533,9 @@ void main() {
           ridePaused: true,
           canToggleRidePause: true,
           onToggleRidePause: () async => toggles += 1,
+          locationSharing: locationSharing,
+          onToggleLocationSharing: () async => locationToggles += 1,
+          onLeaveRide: () async => leaves += 1,
           canEndRide: true,
           onEndRide: () async => ends += 1,
         ),
@@ -538,7 +545,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(find.text('GROUP RIDE PAUSED'), findsOneWidget);
-    expect(find.text('RESUME'), findsOneWidget);
+    expect(find.text('RESUME GROUP'), findsOneWidget);
+    expect(find.text('PAUSE GPS'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('location-pause-button')));
+    await tester.pump();
+    expect(locationToggles, 1);
+    await tester.tap(find.byKey(const Key('leave-ride-button')));
+    await tester.pump();
+    expect(leaves, 1);
     await tester.tap(find.byKey(const Key('ride-pause-button')));
     await tester.pump();
     expect(toggles, 1);

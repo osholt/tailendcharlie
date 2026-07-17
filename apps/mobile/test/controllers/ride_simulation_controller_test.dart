@@ -290,6 +290,15 @@ void main() {
       expect(maya.role, RideRole.marker);
       expect(maya.speedMetersPerSecond, 0);
       expect(markerSimulation.markerInstruction, contains('Maya is holding'));
+
+      markerSimulation.setLocalRole(RideRole.rider);
+      expect(markerSimulation.localRole, RideRole.rider);
+      expect(
+        markerSimulation.riders
+            .singleWhere((rider) => rider.id == maya.id)
+            .role,
+        RideRole.marker,
+      );
     },
   );
 

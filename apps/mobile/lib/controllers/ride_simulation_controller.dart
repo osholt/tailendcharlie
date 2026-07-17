@@ -330,15 +330,22 @@ class RideSimulationController extends ChangeNotifier {
 
   void setLocalRole(RideRole role) {
     if (role == RideRole.marker || role == _selectedLocalRole) return;
+    // The virtual viewpoint can safely change while another rider is holding a
+    // junction. It remains locked only when this device is the marker.
+    if (_markerMode &&
+        (_activeMarkerRiderId == null || automaticMarkerIsLocal)) {
+      return;
+    }
     _selectedLocalRole = role;
-    if (!_markerMode) {
-      _assignPerspectiveRoles();
-      _positionFleetForPerspective();
-      _skipJunctionsBehindLocalRider();
-      for (final agent in _agents) {
-        agent.travelTrail.clear();
-        _recordTravelTrail(agent);
-      }
+    _assignPerspectiveRoles();
+    if (_activeMarkerRiderId case final markerRiderId?) {
+      _agent(markerRiderId).role = RideRole.marker;
+    }
+    _positionFleetForPerspective();
+    _skipJunctionsBehindLocalRider();
+    for (final agent in _agents) {
+      agent.travelTrail.clear();
+      _recordTravelTrail(agent);
     }
     notifyListeners();
   }

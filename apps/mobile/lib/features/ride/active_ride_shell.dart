@@ -125,6 +125,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   final _offRouteTraces = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
   final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
+  final _locationSharing = ValueNotifier(false);
   final _riderTrails = <String, List<route_domain.GeoPoint>>{};
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -214,8 +215,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         },
       );
       _locationController = locationController;
+      locationController.addListener(_onLocationSharingChanged);
       try {
         await locationController.initialize();
+        _onLocationSharingChanged();
       } on Object catch (error) {
         _warnings.add('Location capability check failed: $error');
       }
@@ -468,6 +471,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   void _onSimulationVisualChanged() {
     if (!mounted || !_isSimulation) return;
     final controller = _simulationController;
+    _locationSharing.value = controller?.isRunning ?? false;
     if (controller != null) _updateJunctionMarkerOverlay(controller);
     if (controller != null &&
         controller.automaticMarkerActivation >
@@ -1112,8 +1116,13 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       onEmergencyAlert: _sendEmergencyMapAlert,
       onEmergencyIssue: _sendEmergencyMapIssue,
       ridePaused: widget.rideController.ridePaused,
-      canToggleRidePause: widget.rideController.session?.role == RideRole.lead,
+      canToggleRidePause:
+          !_isSimulation &&
+          widget.rideController.session?.role == RideRole.lead,
       onToggleRidePause: _toggleRidePause,
+      locationSharing: _locationSharing,
+      onToggleLocationSharing: _toggleMapLocationSharing,
+      onLeaveRide: _confirmLeaveRideFromMap,
       canEndRide: widget.rideController.session?.role == RideRole.lead,
       onEndRide: _confirmEndRideFromMap,
       onOpenRideMenu: _openRideMenu,
@@ -1176,6 +1185,59 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     } else {
       await widget.rideController.pauseRide();
     }
+  }
+
+  void _onLocationSharingChanged() {
+    _locationSharing.value = _locationController?.sharing ?? false;
+  }
+
+  Future<void> _toggleMapLocationSharing() async {
+    if (_isSimulation) {
+      final simulation = _simulationController;
+      if (simulation == null ||
+          simulation.state == RideSimulationState.completed) {
+        return;
+      }
+      if (simulation.isRunning) {
+        simulation.pause();
+      } else {
+        simulation.start();
+      }
+      _locationSharing.value = simulation.isRunning;
+      return;
+    }
+    final locationController = _locationController;
+    if (locationController == null) return;
+    if (locationController.sharing) {
+      await locationController.stop();
+    } else {
+      await locationController.requestAndStart();
+    }
+    _onLocationSharingChanged();
+  }
+
+  Future<void> _confirmLeaveRideFromMap() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Leave this ride?'),
+        content: const Text(
+          'Your location sharing will stop on this phone. The group ride will '
+          'continue for everyone else.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Leave ride'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) await _leaveRide();
   }
 
   Future<void> _confirmEndRideFromMap() async {
@@ -1385,6 +1447,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_internetReceivedEventSubscription?.cancel());
     _stalenessTimer?.cancel();
     _markerExitChromeTimer?.cancel();
+    _locationController?.removeListener(_onLocationSharingChanged);
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
@@ -1394,6 +1457,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _offRouteTraces.dispose();
     _leaderStatus.dispose();
     _junctionMarkerOverlay.dispose();
+    _locationSharing.dispose();
     super.dispose();
   }
 }
