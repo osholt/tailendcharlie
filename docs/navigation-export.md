@@ -4,6 +4,12 @@ The active route map exposes one `Navigate or export route` action. Ride Relay
 uses a documented universal link where a target supports one and otherwise
 shares a standards-based GPX 1.1 file through the native share sheet.
 
+The mobile code keeps these choices in one `navigationHandoffCapabilities`
+registry. Each entry declares whether it uses a documented direct link or a
+GPX share, how much route data Ride Relay can send, and the rider-facing
+limitation. Adding a provider requires a documented integration and a
+physical-device test; Ride Relay does not invent private URL schemes.
+
 The map also has an `Enter destination` action. It builds and saves a
 road-following route from the current location, then optionally continues
 straight into the Google Maps handoff or the Calimoto/MyRoute-app GPX share

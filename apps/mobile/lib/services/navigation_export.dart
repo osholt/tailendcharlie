@@ -18,36 +18,101 @@ enum NavigationTarget {
   bmwMotorrad,
 }
 
-extension NavigationTargetDetails on NavigationTarget {
-  String get label => switch (this) {
-    NavigationTarget.shareGpx => 'Share GPX file',
-    NavigationTarget.googleMaps => 'Google Maps',
-    NavigationTarget.waze => 'Waze',
-    NavigationTarget.calimoto => 'Calimoto',
-    NavigationTarget.myRouteApp => 'MyRoute-app',
-    NavigationTarget.garmin => 'Garmin',
-    NavigationTarget.bmwMotorrad => 'BMW Motorrad',
-  };
+/// The amount of route information Ride Relay can transfer to an external
+/// navigation target. A receiving app may still change a GPX route on import.
+enum NavigationRouteTransfer { fullGpx, sampledWaypoints, destinationOnly }
 
-  String get limitation => switch (this) {
-    NavigationTarget.shareGpx =>
-      'Choose any GPX-compatible app or save to Files',
-    NavigationTarget.googleMaps =>
-      'Route preview with up to 3 via points; Google recalculates it',
-    NavigationTarget.waze =>
-      'Opens motorcycle navigation to the final destination only',
-    NavigationTarget.calimoto =>
-      'Uses the GPX share sheet; choose Calimoto if installed',
-    NavigationTarget.myRouteApp =>
-      'Uses the GPX share sheet; choose MyRoute-app if installed',
-    NavigationTarget.garmin =>
-      'Uses the GPX share sheet for Garmin Drive, Tread or Explore',
-    NavigationTarget.bmwMotorrad =>
-      'Uses the GPX share sheet for the BMW Motorrad Connected app',
-  };
+enum NavigationHandoffTransport { directLink, gpxShare }
+
+typedef NavigationDirectLink = Uri? Function(ImportedRoute route);
+
+/// A single, explicit record of each supported handoff. New provider-specific
+/// integrations belong here only after their documented route is available and
+/// physically tested; unknown custom URL schemes are deliberately excluded.
+class NavigationHandoffCapability {
+  const NavigationHandoffCapability({
+    required this.target,
+    required this.label,
+    required this.transport,
+    required this.routeTransfer,
+    required this.limitation,
+    this.directLink,
+  });
+
+  final NavigationTarget target;
+  final String label;
+  final NavigationHandoffTransport transport;
+  final NavigationRouteTransfer routeTransfer;
+  final String limitation;
+  final NavigationDirectLink? directLink;
 
   bool get hasDocumentedDirectLink =>
-      this == NavigationTarget.googleMaps || this == NavigationTarget.waze;
+      transport == NavigationHandoffTransport.directLink && directLink != null;
+}
+
+const navigationHandoffCapabilities = <NavigationHandoffCapability>[
+  NavigationHandoffCapability(
+    target: NavigationTarget.googleMaps,
+    label: 'Google Maps',
+    transport: NavigationHandoffTransport.directLink,
+    routeTransfer: NavigationRouteTransfer.sampledWaypoints,
+    limitation: 'Route preview with up to 3 via points; Google recalculates it',
+    directLink: RouteNavigationLinks.googleMaps,
+  ),
+  NavigationHandoffCapability(
+    target: NavigationTarget.waze,
+    label: 'Waze',
+    transport: NavigationHandoffTransport.directLink,
+    routeTransfer: NavigationRouteTransfer.destinationOnly,
+    limitation: 'Opens motorcycle navigation to the final destination only',
+    directLink: RouteNavigationLinks.waze,
+  ),
+  NavigationHandoffCapability(
+    target: NavigationTarget.calimoto,
+    label: 'Calimoto',
+    transport: NavigationHandoffTransport.gpxShare,
+    routeTransfer: NavigationRouteTransfer.fullGpx,
+    limitation: 'Uses the GPX share sheet; choose Calimoto if installed',
+  ),
+  NavigationHandoffCapability(
+    target: NavigationTarget.myRouteApp,
+    label: 'MyRoute-app',
+    transport: NavigationHandoffTransport.gpxShare,
+    routeTransfer: NavigationRouteTransfer.fullGpx,
+    limitation: 'Uses the GPX share sheet; choose MyRoute-app if installed',
+  ),
+  NavigationHandoffCapability(
+    target: NavigationTarget.garmin,
+    label: 'Garmin',
+    transport: NavigationHandoffTransport.gpxShare,
+    routeTransfer: NavigationRouteTransfer.fullGpx,
+    limitation: 'Uses the GPX share sheet for Garmin Drive, Tread or Explore',
+  ),
+  NavigationHandoffCapability(
+    target: NavigationTarget.bmwMotorrad,
+    label: 'BMW Motorrad',
+    transport: NavigationHandoffTransport.gpxShare,
+    routeTransfer: NavigationRouteTransfer.fullGpx,
+    limitation: 'Uses the GPX share sheet for the BMW Motorrad Connected app',
+  ),
+  NavigationHandoffCapability(
+    target: NavigationTarget.shareGpx,
+    label: 'Share GPX file',
+    transport: NavigationHandoffTransport.gpxShare,
+    routeTransfer: NavigationRouteTransfer.fullGpx,
+    limitation: 'Choose any GPX-compatible app or save to Files',
+  ),
+];
+
+extension NavigationTargetDetails on NavigationTarget {
+  NavigationHandoffCapability get capability => navigationHandoffCapabilities
+      .firstWhere((capability) => capability.target == this);
+
+  String get label => capability.label;
+
+  String get limitation => capability.limitation;
+
+  bool get hasDocumentedDirectLink => capability.hasDocumentedDirectLink;
 }
 
 class NavigationExportResult {
@@ -135,11 +200,7 @@ class NavigationExportCoordinator {
     ImportedRoute route, {
     Rect? sharePositionOrigin,
   }) async {
-    final directUri = switch (target) {
-      NavigationTarget.googleMaps => RouteNavigationLinks.googleMaps(route),
-      NavigationTarget.waze => RouteNavigationLinks.waze(route),
-      _ => null,
-    };
+    final directUri = target.capability.directLink?.call(route);
     if (directUri != null) {
       try {
         if (await launcher.open(directUri)) {

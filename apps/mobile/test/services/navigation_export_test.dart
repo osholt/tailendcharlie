@@ -5,6 +5,38 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/navigation_export.dart';
 
 void main() {
+  test(
+    'capability registry is complete and makes transfer limits explicit',
+    () {
+      expect(
+        navigationHandoffCapabilities.map((capability) => capability.target),
+        unorderedEquals(NavigationTarget.values),
+      );
+
+      expect(
+        NavigationTarget.googleMaps.capability.routeTransfer,
+        NavigationRouteTransfer.sampledWaypoints,
+      );
+      expect(
+        NavigationTarget.waze.capability.routeTransfer,
+        NavigationRouteTransfer.destinationOnly,
+      );
+      for (final target in [
+        NavigationTarget.shareGpx,
+        NavigationTarget.calimoto,
+        NavigationTarget.myRouteApp,
+        NavigationTarget.garmin,
+        NavigationTarget.bmwMotorrad,
+      ]) {
+        expect(
+          target.capability.routeTransfer,
+          NavigationRouteTransfer.fullGpx,
+        );
+        expect(target.hasDocumentedDirectLink, isFalse);
+      }
+    },
+  );
+
   test('Google Maps link is bounded to three sampled via points', () {
     final uri = RouteNavigationLinks.googleMaps(_route(10))!;
 
