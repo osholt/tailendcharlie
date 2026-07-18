@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Tail End Charlie keeps motorcycle groups together, with a route, marker handoffs, and local relay when mobile coverage drops."
+    />
+    <meta name="theme-color" content="#2f126f" />
+    <meta
+      property="og:title"
+      content="Tail End Charlie | Nobody gets left behind."
+    />
+    <meta
+      property="og:description"
+      content="The offline-first group riding companion for the second-bike drop-off system."
+    />
+    <meta property="og:image" content="/assets/tail-end-charlie-icon.png" />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="/assets/tail-end-charlie-icon.png" />
+    <link rel="apple-touch-icon" href="/assets/tail-end-charlie-icon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>Tail End Charlie | Nobody gets left behind.</title>
+  </head>
+  <body>
+    <div class="page-glow page-glow-top" aria-hidden="true"></div>
+    <div class="page-glow page-glow-bottom" aria-hidden="true"></div>
+
+    <header class="site-header wrap">
+      <a class="brand" href="#top" aria-label="Tail End Charlie home">
+        <img
+          src="/assets/tail-end-charlie-icon.png"
+          alt=""
+          width="46"
+          height="46"
+        />
+        <span>Tail End Charlie</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#how-it-works">How it works</a>
+        <a href="#made-for-group-rides">Features</a>
+        <a href="#alpha">Alpha</a>
+        <a class="nav-link" href="https://github.com/osholt/ride-relay"
+          >GitHub</a
+        >
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero wrap">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> Offline-first group riding</p>
+          <h1>Nobody gets<br />left behind.</h1>
+          <p class="hero-intro">
+            Tail End Charlie keeps the drop-off system simple: one route, a
+            clear marker handoff, and a group view that keeps working when the
+            signal does not.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#how-it-works"
+              >See how it works</a
+            >
+            <a
+              class="button button-secondary"
+              href="https://github.com/osholt/ride-relay"
+            >
+              View the project <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+          <p class="alpha-note">Development alpha for iPhone and Android.</p>
+        </div>
+
+        <div class="hero-art" aria-label="Tail End Charlie group map">
+          <div class="route-spark route-spark-one" aria-hidden="true"></div>
+          <div class="route-spark route-spark-two" aria-hidden="true"></div>
+          <div class="device-frame hero-device">
+            <img
+              src="/assets/live-navigation-map.png"
+              alt="A Tail End Charlie route map showing the TEC gap and group mini-map."
+            />
+          </div>
+          <div class="tec-card">
+            <span class="tec-icon" aria-hidden="true">⌁</span>
+            <div>
+              <strong>TEC gap</strong>
+              <span>Charlie is with the group</span>
+            </div>
+            <span class="status-dot" aria-label="Connected"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="proof-strip wrap" aria-label="Key benefits">
+        <div>
+          <strong>One shared route</strong><span>on every rider’s phone</span>
+        </div>
+        <div>
+          <strong>Clear marker handoffs</strong
+          ><span>for second-bike drop-offs</span>
+        </div>
+        <div>
+          <strong>Local-first updates</strong
+          ><span>when coverage is patchy</span>
+        </div>
+      </section>
+
+      <section class="story wrap" id="how-it-works">
+        <div class="section-heading">
+          <p class="eyebrow"><span></span> Made for the real world</p>
+          <h2>The simple system you already use, made visible.</h2>
+          <p>
+            A rider marks the junction. The group passes. The TEC collects the
+            marker. Tail End Charlie keeps that shared picture in the
+            background, so the ride can keep flowing.
+          </p>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <span class="step-number">01</span>
+            <h3>Start together</h3>
+            <p>
+              Create a ride, share a six-digit code, and load the route before
+              you set off.
+            </p>
+          </li>
+          <li>
+            <span class="step-number">02</span>
+            <h3>Mark with confidence</h3>
+            <p>
+              The marker view records passing riders and shows when the TEC is
+              approaching.
+            </p>
+          </li>
+          <li>
+            <span class="step-number">03</span>
+            <h3>Keep the group in view</h3>
+            <p>
+              See group progress, hazards, and sustained off-route alerts on the
+              live map.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="feature-showcase" id="made-for-group-rides">
+        <div class="wrap feature-grid">
+          <article class="feature-card feature-card-large">
+            <div class="feature-copy">
+              <p class="eyebrow"><span></span> Group awareness</p>
+              <h2>See the route, the riders, and the ride ahead.</h2>
+              <p>
+                The map brings route progress, the lead, the TEC, and the rest
+                of the group into one calm, glanceable view.
+              </p>
+            </div>
+            <div class="device-frame">
+              <img
+                src="/assets/route-and-group-overview.png"
+                alt="A group overview map with riders spread across a road-following route."
+              />
+            </div>
+          </article>
+
+          <article class="feature-card feature-card-dark">
+            <div class="feature-copy">
+              <span class="feature-symbol" aria-hidden="true">↗</span>
+              <h3>Marker mode appears when you need it.</h3>
+              <p>
+                A focused overlay makes the handoff obvious, without losing the
+                map beneath it.
+              </p>
+            </div>
+            <img
+              class="feature-image"
+              src="/assets/junction-marker-handoff.png"
+              alt="The junction marker handoff view showing that the TEC has passed."
+            />
+          </article>
+
+          <article class="feature-card feature-card-alert">
+            <div class="feature-copy">
+              <span class="feature-symbol" aria-hidden="true">!</span>
+              <h3>Useful alerts, without the noise.</h3>
+              <p>
+                Riders can flag a problem, leaders can see a confirmed
+                off-course alert, and everyone has a simpler view of what needs
+                attention.
+              </p>
+            </div>
+            <img
+              class="feature-image"
+              src="/assets/ride-awareness-alerts.png"
+              alt="The Tail End Charlie awareness screen with a roadworks hazard and a coordinator alert."
+            />
+          </article>
+        </div>
+      </section>
+
+      <section class="principles wrap">
+        <div class="principles-art" aria-hidden="true">
+          <img src="/assets/tail-end-charlie-icon.png" alt="" />
+          <div class="principles-route"></div>
+        </div>
+        <div class="section-heading">
+          <p class="eyebrow"><span></span> Built around the ride</p>
+          <h2>Less screen time. More road time.</h2>
+          <p>
+            Heading-up navigation, automatic marker prompts, a big rider alert,
+            and a mini-map for the group are designed to be read at a glance and
+            left alone while moving.
+          </p>
+          <ul class="checklist">
+            <li>Road-following GPX routes and downloadable map areas</li>
+            <li>
+              Navigation handoffs for Calimoto, MyRoute-app, Google Maps, and
+              more
+            </li>
+            <li>Optional nearby relay alongside the online group service</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="alpha wrap" id="alpha">
+        <div>
+          <p class="eyebrow"><span></span> Early access</p>
+          <h2>Built in the open, tested on real rides.</h2>
+          <p>
+            Tail End Charlie is in active development. The current build is for
+            controlled testing, not emergency coordination. Field testing will
+            decide what reliability claims it earns.
+          </p>
+        </div>
+        <div class="alpha-actions">
+          <a
+            class="button button-primary"
+            href="https://github.com/osholt/ride-relay"
+          >
+            Follow development <span aria-hidden="true">↗</span>
+          </a>
+          <span>iOS TestFlight and Android testing are being prepared.</span>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer wrap">
+      <a class="brand" href="#top">
+        <img
+          src="/assets/tail-end-charlie-icon.png"
+          alt=""
+          width="36"
+          height="36"
+        />
+        <span>Tail End Charlie</span>
+      </a>
+      <p>Nobody gets left behind.</p>
+      <a href="https://github.com/osholt/ride-relay">GitHub</a>
+    </footer>
+  </body>
+</html>
