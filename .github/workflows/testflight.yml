@@ -22,7 +22,7 @@ env:
 jobs:
   upload:
     name: Build and upload iOS beta
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 40
     defaults:
       run:
