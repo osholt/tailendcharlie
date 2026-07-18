@@ -504,7 +504,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             const Duration(milliseconds: 250);
     if (updateOverlayMarkers) _lastSimulationOverlayUpdateAt = now;
     _updateMapOverlays(
-      updateDerivedState: false,
+      // The map status card is derived from the same authenticated synthetic
+      // fixes as the overlays. Without this, a restarted leader view could
+      // keep saying that Charlie's location was unavailable.
+      updateDerivedState: updateOverlayMarkers,
       updateOverlayMarkers: updateOverlayMarkers,
       updateNavigationPosition: updateNavigationPosition,
     );
@@ -590,7 +593,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       // Local marker actions update RideController directly, so reloading and
       // decoding the entire durable ride history here is unnecessary.
       _updateMapOverlays(
-        updateDerivedState: false,
+        updateDerivedState: true,
         updateNavigationPosition: false,
       );
     });

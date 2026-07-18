@@ -17,10 +17,10 @@ All screenshots are native iPhone Simulator landscape captures at 2622×1206.
 
 ## Video
 
-`video/ride-relay-simulation-demo.mp4` is a silent, 9.5-second H.264 portrait
+`video/ride-relay-simulation-demo.mp4` is a silent, 8.8-second H.264 portrait
 edit at native iPhone resolution (1206×2622). It uses only real Map-tab
-simulator footage, with concise captions for live navigation, the TEC gap and
-the road-focused route view.
+simulator footage, highlighting a five-rider group mini-map, the TEC distance
+and ETA, and the stable road-focused navigation canvas.
 
 The raw recordings, intermediate segments and caption overlays are ignored so
 the checked-in final media stays compact.

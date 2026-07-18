@@ -745,9 +745,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       valueListenable: widget.overlayMarkers!,
                       builder: (context, overlays, _) {
                         final groupRiders = overlays
-                            .where(
-                              (marker) => marker.id.startsWith('rider-'),
-                            )
+                            .where((marker) => marker.id.startsWith('rider-'))
                             .toList(growable: false);
                         final groupSize =
                             groupRiders.length +
@@ -2642,76 +2640,85 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     final riderCount =
         widget.riders.length + (widget.currentPosition == null ? 0 : 1);
     final visibleRoutePaths = _visibleRoutePaths();
-    return Container(
-      key: const Key('group-mini-map'),
-      width: widget.width,
-      height: widget.height,
-      decoration: BoxDecoration(
-        color: const Color(0xF2111820),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF566273), width: 1.5),
-        boxShadow: const [
-          BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(0, 2)),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: widget.showTiles
-                  ? _buildTileMap()
-                  : CustomPaint(
-                      painter: _GroupMiniMapPainter(
-                        routePaths: visibleRoutePaths,
-                        currentPosition: widget.currentPosition,
-                        riders: widget.riders,
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          key: const Key('group-mini-map'),
+          width: widget.width,
+          height: widget.height,
+          decoration: BoxDecoration(
+            color: const Color(0xF2111820),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF566273), width: 1.5),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black54,
+                blurRadius: 8,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: widget.showTiles
+                      ? _buildTileMap()
+                      : CustomPaint(
+                          painter: _GroupMiniMapPainter(
+                            routePaths: visibleRoutePaths,
+                            currentPosition: widget.currentPosition,
+                            riders: widget.riders,
+                          ),
+                        ),
+                ),
+                if (widget.showTiles)
+                  const Positioned(
+                    right: 3,
+                    bottom: 2,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(color: Color(0xB3000000)),
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 3,
+                          vertical: 1,
+                        ),
+                        child: Text(
+                          'OpenFreeMap · © OSM',
+                          style: TextStyle(color: Colors.white, fontSize: 6),
+                        ),
                       ),
                     ),
+                  ),
+              ],
             ),
-            Positioned(
-              left: 7,
-              top: 6,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: const Color(0xD90D1117),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 3,
-                  ),
-                  child: Text(
-                    '$riderCount RIDERS',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            if (widget.showTiles)
-              const Positioned(
-                right: 3,
-                bottom: 2,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(color: Color(0xB3000000)),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                    child: Text(
-                      'OpenFreeMap · © OSM',
-                      style: TextStyle(color: Colors.white, fontSize: 6),
-                    ),
-                  ),
-                ),
-              ),
-          ],
+          ),
         ),
-      ),
+        Positioned(
+          left: 7,
+          bottom: -22,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xD90D1117),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              child: Text(
+                '$riderCount RIDERS',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -2843,10 +2850,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     );
   }
 
-  Map<String, dynamic> _routeGeoJson() => MapGeoJson.lines(
-    _visibleRoutePaths(),
-    idPrefix: 'mini-route',
-  );
+  Map<String, dynamic> _routeGeoJson() =>
+      MapGeoJson.lines(_visibleRoutePaths(), idPrefix: 'mini-route');
 
   /// The mini-map follows the group, not the entire ride. Rendering a long
   /// route in a tight group viewport creates clipped, disconnected-looking
@@ -3004,8 +3009,7 @@ class _GroupMiniMapPainter extends CustomPainter {
       );
     }
 
-    void drawRider(GeoPoint point, Color color, double radius) {
-      final offset = project(point);
+    void drawRider(Offset offset, Color color, double radius) {
       canvas.drawCircle(offset, radius + 2, Paint()..color = Colors.black87);
       canvas.drawCircle(offset, radius, Paint()..color = color);
       canvas.drawCircle(
@@ -3018,11 +3022,33 @@ class _GroupMiniMapPainter extends CustomPainter {
       );
     }
 
-    for (final rider in riders) {
-      drawRider(rider.point, rider.color, 5);
-    }
-    if (currentPosition case final point?) {
-      drawRider(point, const Color(0xFFFF7A1A), 6);
+    final dots = <({GeoPoint point, Color color, double radius})>[
+      for (final rider in riders)
+        (point: rider.point, color: rider.color, radius: 5),
+      if (currentPosition case final point?)
+        (point: point, color: const Color(0xFFFF7A1A), radius: 6),
+    ];
+    final placedOffsets = <Offset>[];
+    for (var index = 0; index < dots.length; index++) {
+      final dot = dots[index];
+      var offset = project(dot.point);
+      // Riders can briefly share a synthetic GPS fix at a junction. Separate
+      // only overlapping dots in this compact overview so the group count is
+      // visible at a glance without changing their actual map positions.
+      final overlaps = placedOffsets
+          .where((placed) => (placed - offset).distance < 13)
+          .length;
+      if (overlaps > 0) {
+        final angle = (index * 2.4) + (overlaps * 0.8);
+        final spread = 10.0 + (overlaps * 3.0);
+        offset += Offset(math.cos(angle) * spread, math.sin(angle) * spread);
+      }
+      offset = Offset(
+        offset.dx.clamp(7.0, size.width - 7.0),
+        offset.dy.clamp(7.0, size.height - 7.0),
+      );
+      placedOffsets.add(offset);
+      drawRider(offset, dot.color, dot.radius);
     }
   }
 
