@@ -76,11 +76,7 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
-            archive \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            DEVELOPMENT_TEAM=UY4624PH6X \
-            PROVISIONING_PROFILE_SPECIFIER="Ride Relay CI App Store"
+            archive
           xcodebuild -exportArchive \
             -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
             -exportPath "$PWD/build/ios/ipa" \
