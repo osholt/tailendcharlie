@@ -65,11 +65,26 @@ jobs:
           BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
           RIDE_RELAY_API_BASE_URL: https://ride-relay.tail7b2c49.ts.net/api
         run: |
+          set -euo pipefail
           flutter pub get
-          flutter build ipa --release \
+          flutter build ios --release --no-codesign \
             --build-number="$BUILD_NUMBER" \
-            --dart-define=RIDE_RELAY_API_BASE_URL="$RIDE_RELAY_API_BASE_URL" \
-            --export-options-plist=ios/ExportOptions-TestFlight.plist
+            --dart-define=RIDE_RELAY_API_BASE_URL="$RIDE_RELAY_API_BASE_URL"
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
+            archive \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM=UY4624PH6X \
+            PROVISIONING_PROFILE_SPECIFIER="Ride Relay CI App Store"
+          xcodebuild -exportArchive \
+            -archivePath "$PWD/build/ios/archive/Runner.xcarchive" \
+            -exportPath "$PWD/build/ios/ipa" \
+            -exportOptionsPlist ios/ExportOptions-TestFlight.plist
       - name: Upload to TestFlight
         env:
           API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_API_KEY_ID }}
