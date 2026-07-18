@@ -1,6 +1,6 @@
-# Ride Relay server
+# Tail End Charlie server
 
-The online store-and-forward service for Ride Relay. It implements the mobile
+The online store-and-forward service for Tail End Charlie. It implements the mobile
 `events:sync` contract with automatic first-use ride claiming, encrypted event
 storage, authenticated opaque cursors, idempotent batches, bounded pagination,
 rate limits and automatic retention.

@@ -98,7 +98,7 @@ class SystemGpxShareGateway implements GpxShareGateway {
     await SharePlus.instance.share(
       ShareParams(
         title: 'Export ${route.name}',
-        subject: 'Ride Relay route: ${route.name}',
+        subject: 'Tail End Charlie route: ${route.name}',
         text: _shareInstruction(target),
         files: [
           XFile.fromData(
@@ -114,10 +114,11 @@ class SystemGpxShareGateway implements GpxShareGateway {
   }
 
   static String _shareInstruction(NavigationTarget target) => switch (target) {
-    NavigationTarget.shareGpx => 'GPX 1.1 route exported from Ride Relay.',
+    NavigationTarget.shareGpx =>
+      'GPX 1.1 route exported from Tail End Charlie.',
     _ =>
       'Choose ${target.label} in the share sheet if it is installed. '
-          'Ride Relay cannot preselect another app.',
+          'Tail End Charlie cannot preselect another app.',
   };
 }
 

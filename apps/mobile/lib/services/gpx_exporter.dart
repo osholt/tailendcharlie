@@ -12,7 +12,7 @@ class GpxExporter {
       'gpx',
       attributes: {
         'version': '1.1',
-        'creator': 'Ride Relay',
+        'creator': 'Tail End Charlie',
         'xmlns': 'http://www.topografix.com/GPX/1/1',
       },
       nest: () {

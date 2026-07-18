@@ -39,7 +39,7 @@ class MainActivity : FlutterActivity() {
     private val pendingPeers = mutableSetOf<String>()
     private var eventSink: EventChannel.EventSink? = null
     private var permissionResult: MethodChannel.Result? = null
-    private var endpointName = "Ride Relay"
+    private var endpointName = "Tail End Charlie"
     private var serviceId = "me.osholt.ride_relay.relay.v1"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -74,7 +74,7 @@ class MainActivity : FlutterActivity() {
                 )
                 "requestPermissions" -> requestNearbyPermissions(result)
                 "start" -> {
-                    endpointName = call.argument<String>("endpointName")?.take(32) ?: "Ride Relay"
+                    endpointName = call.argument<String>("endpointName")?.take(32) ?: "Tail End Charlie"
                     serviceId = call.argument<String>("serviceId") ?: serviceId
                     startNearby(result)
                 }

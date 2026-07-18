@@ -131,11 +131,11 @@ class _BrandMark extends StatelessWidget {
             color: Theme.of(context).colorScheme.primary,
             borderRadius: BorderRadius.circular(13),
           ),
-          child: const Icon(Icons.multiple_stop, color: Colors.black),
+          child: const Icon(Icons.flag_outlined, color: Colors.black),
         ),
         const SizedBox(width: 13),
         const Text(
-          'RIDE RELAY',
+          'TAIL END CHARLIE',
           style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
         ),
       ],

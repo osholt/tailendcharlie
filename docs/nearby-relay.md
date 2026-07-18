@@ -2,7 +2,7 @@
 
 ## What is implemented
 
-Ride Relay now has an application-layer relay that is independent of the radio
+Tail End Charlie now has an application-layer relay that is independent of the radio
 provider:
 
 ```text
@@ -54,7 +54,7 @@ encryption remain release security gates.
 
 The selected native route is Google Nearby Connections because Google's current
 documentation explicitly describes Android/iOS interoperability and the
-`cluster` strategy as an M:N topology for small mesh-like payloads. Ride Relay
+`cluster` strategy as an M:N topology for small mesh-like payloads. Tail End Charlie
 uses one service ID and strategy on both platforms:
 
 - service ID: `me.osholt.ride_relay.relay.v1`;

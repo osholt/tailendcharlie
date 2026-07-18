@@ -136,7 +136,7 @@ class RideSummaryExporter {
 
   String toPlainText(RideSummary summary) {
     final buffer = StringBuffer()
-      ..writeln('Ride Relay summary · ${summary.rideCode}')
+      ..writeln('Tail End Charlie summary · ${summary.rideCode}')
       ..writeln('Rider: ${summary.displayName}')
       ..writeln('Started: ${summary.startedAt.toLocal().toIso8601String()}')
       ..writeln(
@@ -263,7 +263,7 @@ class SystemRideSummarySharer implements RideSummarySharer {
     await SharePlus.instance.share(
       ShareParams(
         title: 'Ride summary ${summary.rideCode}',
-        subject: 'Ride Relay summary ${summary.rideCode}',
+        subject: 'Tail End Charlie summary ${summary.rideCode}',
         text: exporter.toPlainText(summary),
         files: [
           XFile.fromData(

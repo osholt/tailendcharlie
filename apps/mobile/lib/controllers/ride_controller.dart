@@ -145,7 +145,7 @@ class RideController extends ChangeNotifier {
 
   String get rideCodeShareText {
     final activeSession = _requireSession();
-    return 'Join my Ride Relay group. Enter ride code '
+    return 'Join my Tail End Charlie group. Enter ride code '
         '${activeSession.rideCode} in the app.';
   }
 

@@ -20,7 +20,7 @@ class MapStyleRepository {
        _ownsClient = client == null;
 
   static const fallbackStyle =
-      '{"version":8,"name":"Ride Relay offline fallback","sources":{},'
+      '{"version":8,"name":"Tail End Charlie offline fallback","sources":{},'
       '"layers":[{"id":"background","type":"background",'
       '"paint":{"background-color":"#111820"}}]}';
 

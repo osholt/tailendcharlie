@@ -29,7 +29,7 @@ void main() {
 
       final style = jsonDecode(await repository.resolve()) as Map;
 
-      expect(style['name'], 'Ride Relay offline fallback');
+      expect(style['name'], 'Tail End Charlie offline fallback');
       expect(style['sources'], isEmpty);
     },
   );

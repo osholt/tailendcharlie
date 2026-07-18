@@ -1,6 +1,6 @@
 # Internet relay
 
-Ride Relay includes a deployable FastAPI/PostgreSQL store-and-forward server in
+Tail End Charlie includes a deployable FastAPI/PostgreSQL store-and-forward server in
 `apps/server`. The mobile client remains disabled until an absolute HTTPS API
 base URL is compiled into the app:
 

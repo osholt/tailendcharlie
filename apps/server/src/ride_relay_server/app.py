@@ -79,7 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine.dispose()
 
     app = FastAPI(
-        title="Ride Relay Server",
+        title="Tail End Charlie Server",
         version="0.1.0",
         docs_url=None,
         redoc_url=None,

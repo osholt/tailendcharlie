@@ -1,6 +1,6 @@
-# Ride Relay
+# Tail End Charlie
 
-Ride Relay is an open-source, offline-first group motorcycle coordination app
+Tail End Charlie is an open-source, offline-first group motorcycle coordination app
 for iOS and Android.
 
 It is being designed for rural rides and the second-bike drop-off system. Every
@@ -27,7 +27,7 @@ phones when mobile coverage disappears.
 - Import and persist GPX 1.1 routes, render them with MapLibre on both platforms,
   match sparse route/waypoint files to roads when online, and download bounded
   native offline regions when an approved style is configured.
-- Enter a destination to generate a road-following route, keep it in Ride Relay,
+- Enter a destination to generate a road-following route, keep it in Tail End Charlie,
   or hand its GPX to Calimoto/MyRoute-app through the native share sheet.
 - Record foreground position, report/expire/deduplicate hazards, show rider and
   hazard overlays, and detect sustained route deviation with stale-GPS handling.
@@ -137,7 +137,7 @@ evidence remain release gates.
 
 ## License
 
-Ride Relay is source-available under the [PolyForm Noncommercial License
+Tail End Charlie is source-available under the [PolyForm Noncommercial License
 1.0.0](./LICENSE). You may use, modify, and distribute it for permitted
 noncommercial purposes. Commercial use requires separate permission from the
 copyright holder.

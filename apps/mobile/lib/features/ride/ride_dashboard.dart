@@ -45,7 +45,7 @@ class RideDashboard extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ride Relay'),
+        title: const Text('Tail End Charlie'),
         backgroundColor: Colors.transparent,
         actions: [
           IconButton(
@@ -563,7 +563,7 @@ class _RideCodeCard extends StatelessWidget {
                         onPressed: () => SharePlus.instance.share(
                           ShareParams(
                             text: controller.rideCodeShareText,
-                            subject: 'Join my Ride Relay group',
+                            subject: 'Join my Tail End Charlie group',
                           ),
                         ),
                         icon: const Icon(Icons.ios_share),

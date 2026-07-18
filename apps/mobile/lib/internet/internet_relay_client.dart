@@ -271,7 +271,7 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
     final error = configuration.configurationError;
     if (error != null) {
       throw const RideCodeDirectoryException(
-        'Joining by ride code needs the Ride Relay service to be connected.',
+        'Joining by ride code needs the Tail End Charlie service to be connected.',
       );
     }
   }

@@ -2,7 +2,7 @@
 
 ## Objective
 
-Determine what Ride Relay can honestly promise when iOS and Android phones move
+Determine what Tail End Charlie can honestly promise when iOS and Android phones move
 through a motorcycle group with locked screens and no mobile data.
 
 Ride Lab can rehearse route progress, TEC gaps, hazards and off-course alerts

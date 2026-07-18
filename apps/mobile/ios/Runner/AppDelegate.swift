@@ -161,7 +161,7 @@ extension AppDelegate: FlutterStreamHandler {
 extension AppDelegate: DiscovererDelegate {
   func discoverer(_ discoverer: Discoverer, didFind endpointID: EndpointID, with context: Data) {
     guard !connectedPeers.contains(endpointID), pendingPeers.insert(endpointID).inserted else { return }
-    discoverer.requestConnection(to: endpointID, using: Data("Ride Relay".utf8)) { [weak self] error in
+    discoverer.requestConnection(to: endpointID, using: Data("Tail End Charlie".utf8)) { [weak self] error in
       if let error {
         self?.pendingPeers.remove(endpointID)
         self?.emitStatus("searching", message: "Connection request failed: \(error.localizedDescription)")

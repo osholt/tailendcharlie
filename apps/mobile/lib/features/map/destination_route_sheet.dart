@@ -55,7 +55,7 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Enter a place, postcode, or latitude and longitude. Ride Relay '
+              'Enter a place, postcode, or latitude and longitude. Tail End Charlie '
               'will generate a road-following GPX route from your location.',
               style: TextStyle(color: Color(0xFF98A3B1)),
             ),
@@ -126,20 +126,21 @@ enum _DestinationHandoff { rideRelay, calimoto, myRouteApp, googleMaps }
 
 extension on _DestinationHandoff {
   String get label => switch (this) {
-    _DestinationHandoff.rideRelay => 'Ride Relay',
+    _DestinationHandoff.rideRelay => 'Tail End Charlie',
     _DestinationHandoff.calimoto => 'Calimoto',
     _DestinationHandoff.myRouteApp => 'MyRoute-app',
     _DestinationHandoff.googleMaps => 'Google Maps',
   };
 
   String get detail => switch (this) {
-    _DestinationHandoff.rideRelay => 'Show and save the route in Ride Relay.',
+    _DestinationHandoff.rideRelay =>
+      'Show and save the route in Tail End Charlie.',
     _DestinationHandoff.calimoto =>
       'Generate GPX, then choose Calimoto in the system share sheet.',
     _DestinationHandoff.myRouteApp =>
       'Generate GPX, then choose MyRoute-app in the system share sheet.',
     _DestinationHandoff.googleMaps =>
-      'Open a Google Maps route preview after saving it in Ride Relay.',
+      'Open a Google Maps route preview after saving it in Tail End Charlie.',
   };
 
   NavigationTarget? get target => switch (this) {

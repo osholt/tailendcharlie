@@ -24,7 +24,7 @@ class RideRelayApp extends StatelessWidget {
     const orange = Color(0xFFFF7A1A);
 
     return MaterialApp(
-      title: 'Ride Relay',
+      title: 'Tail End Charlie',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

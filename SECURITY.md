@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Ride Relay has not reached a public release. Only the latest `main` branch is
+Tail End Charlie has not reached a public release. Only the latest `main` branch is
 currently maintained.
 
 ## Reporting a vulnerability

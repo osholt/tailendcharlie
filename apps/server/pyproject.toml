@@ -1,7 +1,7 @@
 [project]
 name = "ride-relay-server"
 version = "0.1.0"
-description = "Privacy-bounded internet relay for Ride Relay"
+description = "Privacy-bounded internet relay for Tail End Charlie"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

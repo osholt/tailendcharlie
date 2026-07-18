@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Ride Relay</string>
+	<string>Tail End Charlie</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,17 +27,17 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Ride Relay uses nearby connections to exchange ride safety updates when mobile coverage is unavailable.</string>
+	<string>Tail End Charlie uses nearby connections to exchange ride safety updates when mobile coverage is unavailable.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_90AAE9C4995F._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Ride Relay uses nearby devices and local networks to keep your ride group coordinated.</string>
+	<string>Tail End Charlie uses nearby devices and local networks to keep your ride group coordinated.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Ride Relay uses your location during an active ride to share your position with your group, provide navigation, and warn about route deviations. You can pause or stop location sharing at any time.</string>
+	<string>Tail End Charlie uses your location during an active ride to share your position with your group, provide navigation, and warn about route deviations. You can pause or stop location sharing at any time.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Ride Relay uses your location while the ride screen is open to show your group position and warn about route deviations.</string>
+	<string>Tail End Charlie uses your location while the ride screen is open to show your group position and warn about route deviations.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>

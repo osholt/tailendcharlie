@@ -1400,7 +1400,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       Uri(
         scheme: 'sms',
         queryParameters: {
-          'body': 'Ride Relay: I have stopped and need assistance.',
+          'body': 'Tail End Charlie: I have stopped and need assistance.',
         },
       ),
       mode: LaunchMode.externalApplication,

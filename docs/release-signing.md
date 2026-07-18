@@ -22,7 +22,7 @@ produces an App Store Connect IPA. The `TestFlight` GitHub workflow is manual
 only, so normal commits and pull requests never send a build to Apple.
 
 Before the first upload, sign in to App Store Connect as an Account Holder,
-Admin, App Manager, or Developer; create the `Ride Relay` iOS app record using
+Admin, App Manager, or Developer; create the `Tail End Charlie` iOS app record using
 that bundle ID; and accept any outstanding agreements. Create a least-privilege
 App Store Connect API key and an App Store provisioning profile, then add these
 repository secrets:

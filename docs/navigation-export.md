@@ -1,6 +1,6 @@
 # Navigation and ride-summary export
 
-The active route map exposes one `Navigate or export route` action. Ride Relay
+The active route map exposes one `Navigate or export route` action. Tail End Charlie
 uses a documented universal link where a target supports one and otherwise
 shares a standards-based GPX 1.1 file through the native share sheet.
 
@@ -11,17 +11,17 @@ flow selected by the rider.
 
 ## Target behavior
 
-| Target | Ride Relay behavior | Limitation |
+| Target | Tail End Charlie behavior | Limitation |
 |---|---|---|
 | Google Maps | Opens the documented HTTPS Maps URL with start, finish and at most three sampled via points | Google recalculates the route. It is a preview/handoff, not the original GPX geometry. Mobile support is limited to three waypoints. |
 | Waze | Opens the documented HTTPS Waze deep link with motorcycle vehicle type | Waze accepts the final destination, not a complete GPX route. |
-| Calimoto | Shares the generated GPX file | The rider must choose Calimoto in the native share sheet. Ride Relay does not use an undocumented app scheme. |
+| Calimoto | Shares the generated GPX file | The rider must choose Calimoto in the native share sheet. Tail End Charlie does not use an undocumented app scheme. |
 | MyRoute-app | Shares the generated GPX file | The rider must choose MyRoute-app in the native share sheet. |
 | Garmin | Shares the generated GPX file | Choose a compatible installed app such as Garmin Drive, Tread or Explore. Device compatibility varies. |
 | BMW Motorrad | Shares the generated GPX file | Choose BMW Motorrad Connected if installed; ConnectedRide device sync remains BMW-managed. |
 | Generic GPX | Shares or saves the generated GPX file | The receiving app decides how to interpret tracks, routes and waypoints. |
 
-If a Google Maps or Waze universal link cannot be opened, Ride Relay falls back
+If a Google Maps or Waze universal link cannot be opened, Tail End Charlie falls back
 to GPX sharing so the route is not lost. A successful handoff still does not
 prove that the receiving app preserved the intended road sequence. Riders must
 check the calculated route before departure.

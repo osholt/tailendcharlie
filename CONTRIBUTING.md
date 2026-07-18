@@ -1,6 +1,6 @@
 # Contributing
 
-Ride Relay is at an early, safety-sensitive stage. Small, testable changes are
+Tail End Charlie is at an early, safety-sensitive stage. Small, testable changes are
 preferred over broad feature additions.
 
 ## Development workflow

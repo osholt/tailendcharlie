@@ -1,7 +1,7 @@
 # Offline Group Riding App — Product and Delivery Plan
 
 Status: development alpha implemented; physical-device and production gates open
-Working title: **Ride Relay** (placeholder; naming is not part of MVP)
+Brand: **Tail End Charlie**
 Initial market: UK motorcycle groups using the second-bike drop-off system
 Platforms: iOS and Android
 
@@ -47,7 +47,7 @@ remain open release work.
 
 ## 1. Product summary
 
-Ride Relay keeps a motorcycle group coordinated where mobile coverage is poor.
+Tail End Charlie keeps a motorcycle group coordinated where mobile coverage is poor.
 It combines an internet connection with direct phone-to-phone Bluetooth/Wi-Fi
 communication, automatically relays small ride events through nearby riders,
 works from a route/map downloaded before departure, and requires very little
