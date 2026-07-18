@@ -94,8 +94,8 @@ jobs:
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           printf '%s' "$API_PRIVATE_KEY_BASE64" | base64 -D > "$HOME/.appstoreconnect/private_keys/AuthKey_$API_KEY_ID.p8"
           xcrun altool --upload-package build/ios/ipa/ride_relay.ipa \
-            --api-key "$API_KEY_ID" \
-            --api-issuer "$API_ISSUER_ID"
+            --apiKey "$API_KEY_ID" \
+            --apiIssuer "$API_ISSUER_ID"
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
