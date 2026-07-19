@@ -15,7 +15,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "me.osholt.ride_relay"
+        applicationId = "app.tailendcharlie"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26
