@@ -6,11 +6,11 @@ shares a standards-based GPX 1.1 file through the native share sheet.
 
 The mobile code keeps these choices in one `navigationHandoffCapabilities`
 registry. Each entry declares whether it uses a documented direct link or a
-GPX share, how much route data Ride Relay can send, the supported mobile
+GPX share, how much route data Tail End Charlie can send, the supported mobile
 platforms, and the rider-facing limitation. The registry can be filtered by
 Android or iOS instead of assuming every future provider works identically on
 both. Adding a provider requires a documented integration and a physical-device
-test; Ride Relay does not invent private URL schemes. All current entries still
+test; Tail End Charlie does not invent private URL schemes. All current entries still
 require the physical-device evidence tracked in issue #5.
 
 The map also has an `Enter destination` action. It builds and saves a

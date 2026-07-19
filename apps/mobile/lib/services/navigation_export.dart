@@ -18,7 +18,7 @@ enum NavigationTarget {
   bmwMotorrad,
 }
 
-/// The amount of route information Ride Relay can transfer to an external
+/// The amount of route information Tail End Charlie can transfer to an external
 /// navigation target. A receiving app may still change a GPX route on import.
 enum NavigationRouteTransfer { fullGpx, sampledWaypoints, destinationOnly }
 
