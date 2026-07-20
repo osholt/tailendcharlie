@@ -1,3 +1,4 @@
+import CarPlay
 import Flutter
 import NearbyConnections
 import UIKit
@@ -14,6 +15,9 @@ import UIKit
   private var pendingPeers = Set<EndpointID>()
   private var gpxImportChannel: FlutterMethodChannel?
   private var pendingGpxImport: (data: Data, fileName: String)?
+  private var carPlayChannel: FlutterMethodChannel?
+  private var latestCarPlaySnapshot: [String: Any]?
+  weak var carPlayListTemplate: CPListTemplate?
 
   override func application(
     _ application: UIApplication,
@@ -104,6 +108,45 @@ import UIKit
       ])
     }
     gpxImportChannel = gpxChannel
+
+    let carPlayChannel = FlutterMethodChannel(
+      name: "me.osholt.ride_relay/carplay",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    carPlayChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "updateSnapshot" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard let snapshot = call.arguments as? [String: Any] else {
+        result(FlutterError(code: "invalid_arguments", message: "Snapshot must be a map", details: nil))
+        return
+      }
+      self?.latestCarPlaySnapshot = snapshot
+      if let template = self?.carPlayListTemplate {
+        CarPlayStatusTemplate.apply(snapshot: snapshot, to: template)
+      }
+      result(nil)
+    }
+    self.carPlayChannel = carPlayChannel
+  }
+
+  /// Called by CarPlaySceneDelegate once the CarPlay scene's list template is
+  /// ready. Applies whatever snapshot Dart already published - the CarPlay
+  /// scene can connect well after the ride screen's first publish.
+  func carPlayDidConnect(_ template: CPListTemplate) {
+    carPlayListTemplate = template
+    if let snapshot = latestCarPlaySnapshot {
+      CarPlayStatusTemplate.apply(snapshot: snapshot, to: template)
+    }
+  }
+
+  func carPlayDidDisconnect() {
+    carPlayListTemplate = nil
+  }
+
+  func triggerCarPlayEmergency() {
+    carPlayChannel?.invokeMethod("triggerEmergency", arguments: nil)
   }
 
   /// Called from SceneDelegate when the OS hands this app a file URL (Open

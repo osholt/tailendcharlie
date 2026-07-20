@@ -4,10 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
+import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
@@ -35,6 +37,7 @@ import '../../relay/nearby_event_source.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/device_location_source.dart';
+import '../../services/carplay_bridge.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/external_hazard_provider.dart';
 import '../../services/gpx_import_source.dart';
@@ -57,6 +60,7 @@ class ActiveRideShell extends StatefulWidget {
     super.key,
     required this.rideController,
     required this.distanceUnits,
+    required this.mapStyleMode,
     required this.eventStore,
     required this.enableNativeServices,
     required this.riderProfile,
@@ -65,6 +69,7 @@ class ActiveRideShell extends StatefulWidget {
 
   final RideController rideController;
   final DistanceUnitController distanceUnits;
+  final MapStyleModeController mapStyleMode;
   final EventStore eventStore;
   final bool enableNativeServices;
   final RiderProfileController riderProfile;
@@ -219,6 +224,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   final _rideCompletionDetector = RideCompletionDetector();
 
   SituationalAwarenessController? _awarenessController;
+  CarPlayBridge? _carPlayBridge;
   ForegroundLocationController? _locationController;
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
@@ -265,6 +271,27 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       _clearSharedRoutePending();
     }
     unawaited(_initialize());
+    unawaited(_setScreenAwake(true));
+    _carPlayBridge = CarPlayBridge(
+      onEmergencyTriggered: _sendEmergencyMapAlert,
+    );
+  }
+
+  /// The phone is normally mounted on the handlebars for the whole ride,
+  /// often with gloves on and a helmet visor down - if the screen locks, it
+  /// can't be unlocked safely while riding. Kept on for this widget's whole
+  /// lifetime (covering the ended-ride summary too) rather than tied to
+  /// navigation-mode/route-state: gaps in that narrower condition (no route
+  /// loaded, not yet detected as moving) were exactly what let the screen
+  /// sleep on a real ride.
+  Future<void> _setScreenAwake(bool enabled) async {
+    try {
+      await WakelockPlus.toggle(enable: enabled);
+    } on Object catch (error) {
+      // The ride remains usable in widget tests or on platforms without the
+      // plugin.
+      if (kDebugMode) debugPrint('Could not change ride wake lock: $error');
+    }
   }
 
   /// A GPX file can arrive (via the platform's "Open in..." delivery) while
@@ -850,6 +877,15 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           }),
     ];
     _mapOverlays.value = List.unmodifiable(overlays);
+    unawaited(
+      _carPlayBridge?.publish(
+            session: widget.rideController.session,
+            riderLocations: awareness.riderLocations,
+            routeAlerts: awareness.routeAlerts,
+            activeHazards: awareness.activeHazards,
+          ) ??
+          Future<void>.value(),
+    );
     if (updateDerivedState) {
       final session = widget.rideController.session;
       _leaderStatus.value = session == null
@@ -1126,6 +1162,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     if (widget.rideController.rideEnded) {
       return EndedRideScreen(
         controller: widget.rideController,
+        distanceUnits: widget.distanceUnits,
         nearbyRelayController: _relayController,
         internetRelayController: _internetRelayController,
         onRemoveRide: _removeEndedRide,
@@ -1260,6 +1297,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
           : _acquireCurrentPosition,
       routeStore: _simulationRouteStore,
       distanceUnit: widget.distanceUnits.value,
+      darkMapStyle: widget.mapStyleMode.resolveDark(
+        MediaQuery.platformBrightnessOf(context),
+      ),
       localMotorcycleStyle:
           widget.rideController.session?.motorcycleStyle ??
           motorcycleIconStyleDefault,
@@ -1571,6 +1611,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   Widget _buildDetails() => RideDashboard(
     controller: widget.rideController,
     distanceUnits: widget.distanceUnits,
+    mapStyleMode: widget.mapStyleMode,
     onLeaveRide: _leaveRide,
     relayController: _relayController,
     markerAssistanceController: _markerAssistanceController,
@@ -1656,6 +1697,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     _offRouteTraces.dispose();
     _leaderStatus.dispose();
     _junctionMarkerOverlay.dispose();
+    unawaited(_carPlayBridge?.dispose());
+    unawaited(_setScreenAwake(false));
     super.dispose();
   }
 }

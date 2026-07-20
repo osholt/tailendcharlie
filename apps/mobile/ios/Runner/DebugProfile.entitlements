@@ -4,5 +4,7 @@
 <dict>
 	<key>keychain-access-groups</key>
 	<array/>
+	<key>com.apple.developer.carplay-maps</key>
+	<true/>
 </dict>
 </plist>

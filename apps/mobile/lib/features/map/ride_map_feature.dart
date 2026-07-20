@@ -9,12 +9,13 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
 import '../../domain/quick_message.dart';
+import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/route_store.dart';
 import '../../services/basemap_configuration.dart';
@@ -93,6 +94,7 @@ class RideMapFeature extends StatefulWidget {
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
+    bool darkMapStyle = false,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
     Color localBadgeColor = const Color(0xFF2F80ED),
   }) => RideMapFeature(
@@ -116,7 +118,9 @@ class RideMapFeature extends StatefulWidget {
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
     distanceUnit: distanceUnit,
-    basemapConfiguration: BasemapConfiguration.fromEnvironment(),
+    basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
+      dark: darkMapStyle,
+    ),
     localMotorcycleStyle: localMotorcycleStyle,
     localBadgeColor: localBadgeColor,
   );
@@ -295,6 +299,7 @@ class RideMapScreen extends StatefulWidget {
     this.destinationRoutePlanner,
     this.routeGeometryEnricher,
     this.demoRouteLoader,
+    this.recordedRouteStore,
     this.distanceUnit = DistanceUnit.kilometres,
     this.disposeOfflineTileCache = false,
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
@@ -327,6 +332,7 @@ class RideMapScreen extends StatefulWidget {
   final DestinationRoutePlanner? destinationRoutePlanner;
   final RouteGeometryEnricher? routeGeometryEnricher;
   final Future<ImportedRoute> Function()? demoRouteLoader;
+  final RecordedRouteStore? recordedRouteStore;
   final DistanceUnit distanceUnit;
   final bool disposeOfflineTileCache;
   final MotorcycleIconStyle localMotorcycleStyle;
@@ -379,7 +385,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _cameraUpdateInFlight = false;
   bool _cameraUpdateQueued = false;
   bool _initialCameraPositioned = false;
-  bool _screenAwake = false;
   bool _mapLibreSyncScheduled = false;
   bool _mapLibreSyncRunning = false;
   bool _mapLibreProgressDirty = false;
@@ -470,7 +475,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _routingClient.close();
-    if (_screenAwake) unawaited(_setScreenAwake(false));
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
   }
@@ -493,7 +497,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _initialCameraPositioned = false;
         _loading = false;
       });
-      unawaited(_syncScreenAwake());
       widget.onRouteChanged?.call(route);
       if (_navigationMode) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1120,7 +1123,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         }
       });
     }
-    if (enableNavigationMode) unawaited(_syncScreenAwake());
     _scheduleMapLibreSync(
       progress: refreshProgress,
       position: refreshMapLibrePosition,
@@ -1160,7 +1162,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _autoFollowSuppressed = false;
       }
     });
-    unawaited(_syncScreenAwake());
     if (visible) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_showMarkerOverview());
@@ -1237,7 +1238,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _navigationCanvasActive = true;
       _autoFollowSuppressed = false;
     });
-    unawaited(_syncScreenAwake());
     unawaited(_followNavigationCamera(force: true));
   }
 
@@ -1247,26 +1247,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _navigationMode = false;
       _autoFollowSuppressed = suppressAutomatic;
     });
-    unawaited(_syncScreenAwake());
-  }
-
-  Future<void> _syncScreenAwake() => _setScreenAwake(
-    _route != null && (_navigationMode || _markerOverviewVisible),
-  );
-
-  Future<void> _setScreenAwake(bool enabled) async {
-    if (_screenAwake == enabled) return;
-    _screenAwake = enabled;
-    try {
-      await WakelockPlus.toggle(enable: enabled);
-    } on Object catch (error) {
-      // The map remains usable in widget tests or on platforms without the
-      // plugin; the next navigation-state transition retries the request.
-      _screenAwake = !enabled;
-      if (kDebugMode) {
-        debugPrint('Could not change navigation wake lock: $error');
-      }
-    }
   }
 
   Future<void> _triggerEmergencyAlert() async {
@@ -1938,6 +1918,47 @@ class _RideMapScreenState extends State<RideMapScreen> {
     return const BundledDemoRouteLoader().load();
   }
 
+  Future<void> _useRecordedRoute() async {
+    try {
+      final store =
+          widget.recordedRouteStore ??
+          await JsonFileRecordedRouteStore.openDefault();
+      final routes = await store.list();
+      if (!mounted) return;
+      if (routes.isEmpty) {
+        _showMessage(
+          'No recorded routes yet. Record one from the home screen first.',
+        );
+        return;
+      }
+      final selected = await showModalBottomSheet<ImportedRoute>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final route in routes)
+                ListTile(
+                  leading: const Icon(Icons.route_outlined),
+                  title: Text(route.name),
+                  subtitle: Text(
+                    '${route.pathPointCount} points · recorded '
+                    '${route.importedAt.toLocal().toString().split('.').first}',
+                  ),
+                  onTap: () => Navigator.of(sheetContext).pop(route),
+                ),
+            ],
+          ),
+        ),
+      );
+      if (selected == null || !mounted) return;
+      await _activateRoute(selected);
+    } catch (error) {
+      _showMessage('Could not load recorded routes: $error');
+    }
+  }
+
   Future<ImportedRoute> _activateRoute(ImportedRoute route) async {
     final enrichment = await _routeGeometryEnricher.enrich(route);
     final activeRoute = enrichment.route;
@@ -1956,7 +1977,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _navigationCanvasActive = true;
       }
     });
-    unawaited(_syncScreenAwake());
     await _syncMapLibreSources();
     _fitRoute();
     if (_navigationMode) unawaited(_followNavigationCamera());
@@ -2119,7 +2139,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
             _navigationCanvasActive = false;
             _initialCameraPositioned = false;
           });
-          await _syncScreenAwake();
           await _syncMapLibreSources();
           widget.onRouteChanged?.call(null);
         }
@@ -2212,6 +2231,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
               onTap: () {
                 Navigator.of(sheetContext).pop();
                 _loadDemoRoute();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.fiber_manual_record_outlined),
+              title: const Text('Use a recorded route'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _useRecordedRoute();
               },
             ),
             if (_route != null)
