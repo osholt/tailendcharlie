@@ -100,7 +100,7 @@ abstract interface class InternetRelayApi {
 abstract interface class RideCodeDirectory {
   Future<void> register(RideSession session);
 
-  Future<RideCodeCredentials> resolve(String rideCode);
+  Future<RideCodeCredentials> resolve(String rideCode, {String? joinToken});
 
   void close();
 }
@@ -110,11 +110,16 @@ class RideCodeCredentials {
     required this.rideId,
     required this.rideCode,
     required this.inviteSecret,
+    required this.joinToken,
   });
 
   final String rideId;
   final String rideCode;
   final String inviteSecret;
+
+  /// So a rider who joins can also re-share a fully hardened invite later,
+  /// not just the ride creator.
+  final String joinToken;
 }
 
 class RideCodeDirectoryException implements Exception {
@@ -163,6 +168,7 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
         ..body = jsonEncode({
           'rideId': session.rideId,
           'inviteSecret': session.inviteSecret,
+          'resolveToken': session.joinToken,
         }),
     );
     if (response.statusCode == 204) return;
@@ -170,13 +176,16 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
   }
 
   @override
-  Future<RideCodeCredentials> resolve(String rideCode) async {
+  Future<RideCodeCredentials> resolve(String rideCode, {String? joinToken}) async {
     _validateConfiguration();
     final normalizedCode = _normaliseCode(rideCode);
     final response = await _send(
       http.Request('GET', _joinCodeUri(normalizedCode))
         ..followRedirects = false
-        ..headers['accept'] = 'application/json',
+        ..headers['accept'] = 'application/json'
+        ..headers.addAll(
+          joinToken == null ? {} : {'x-ride-relay-join-token': joinToken},
+        ),
     );
     final body = await _readBoundedResponse(response);
     if (response.statusCode != 200) {
@@ -197,6 +206,7 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
       final rideId = json['rideId'];
       final returnedCode = json['rideCode'];
       final secret = json['inviteSecret'];
+      final returnedJoinToken = json['resolveToken'];
       if (rideId is! String ||
           rideId.isEmpty ||
           rideId.length > 128 ||
@@ -204,13 +214,17 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
           returnedCode != normalizedCode ||
           secret is! String ||
           secret.length < 16 ||
-          secret.length > 512) {
+          secret.length > 512 ||
+          returnedJoinToken is! String ||
+          returnedJoinToken.length < 16 ||
+          returnedJoinToken.length > 128) {
         throw const FormatException('Response fields are invalid.');
       }
       return RideCodeCredentials(
         rideId: rideId,
         rideCode: returnedCode,
         inviteSecret: secret,
+        joinToken: returnedJoinToken,
       );
     } on FormatException {
       throw const RideCodeDirectoryException(
@@ -280,7 +294,8 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
     _normaliseCode(session.rideCode);
     if (session.rideId.isEmpty ||
         session.rideId.length > 128 ||
-        session.inviteSecret.length < 16) {
+        session.inviteSecret.length < 16 ||
+        session.joinToken.length < 16) {
       throw const RideCodeDirectoryException(
         'This ride cannot be shared with a code.',
       );

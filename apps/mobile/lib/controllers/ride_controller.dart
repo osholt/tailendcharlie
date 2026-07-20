@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../domain/event_store.dart';
+import '../domain/join_invite.dart';
 import '../domain/marker_assistance.dart';
 import '../domain/quick_message.dart';
 import '../domain/ride_event.dart';
@@ -149,8 +150,9 @@ class RideController extends ChangeNotifier {
     final activeSession = _requireSession();
     final name = activeSession.rideName;
     final group = name == null ? 'my Tail End Charlie group' : '"$name"';
+    final invite = joinInviteText(activeSession.rideCode, activeSession.joinToken);
     return 'Join $group. Enter ride code ${activeSession.rideCode} in the '
-        'app.';
+        'app, or paste this invite: $invite.';
   }
 
   Future<void> initialize() async {
@@ -259,18 +261,23 @@ class RideController extends ChangeNotifier {
     String displayName, {
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
     RiderColor riderColor = riderColorDefault,
+    String? joinToken,
   }) async {
     await _run(() async {
       final normalisedCode = rideCode.trim();
       if (!RegExp(r'^\d{6}$').hasMatch(normalisedCode)) {
         throw const FormatException('Enter a valid six-digit ride code.');
       }
-      final credentials = await _rideCodeDirectory.resolve(normalisedCode);
+      final credentials = await _rideCodeDirectory.resolve(
+        normalisedCode,
+        joinToken: joinToken,
+      );
       final now = _clock();
       final session = RideSession(
         rideId: credentials.rideId,
         rideCode: credentials.rideCode,
         inviteSecret: credentials.inviteSecret,
+        joinToken: credentials.joinToken,
         localRiderId: _idFactory(),
         displayName: _normaliseName(displayName),
         role: RideRole.rider,
@@ -523,6 +530,7 @@ class RideController extends ChangeNotifier {
       rideId: _idFactory(),
       rideCode: _generateCode(),
       inviteSecret: _generateInviteSecret(),
+      joinToken: _generateJoinToken(),
       localRiderId: _idFactory(),
       displayName: _normaliseName(displayName),
       role: RideRole.lead,
@@ -606,6 +614,14 @@ class RideController extends ChangeNotifier {
   String _generateInviteSecret() => base64Url
       .encode(List<int>.generate(32, (_) => _random.nextInt(256)))
       .replaceAll('=', '');
+
+  static const _joinTokenAlphabet =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+  String _generateJoinToken() => List.generate(
+    24,
+    (_) => _joinTokenAlphabet[_random.nextInt(_joinTokenAlphabet.length)],
+  ).join();
 
   DateTime? get _rideEndedAt {
     for (final event in _events.reversed) {

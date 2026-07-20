@@ -181,6 +181,7 @@ void main() {
               'rideId': _session.rideId,
               'rideCode': '123456',
               'inviteSecret': _session.inviteSecret,
+              'resolveToken': _session.joinToken,
             }),
             200,
             headers: {'content-type': 'application/json'},
@@ -200,6 +201,7 @@ void main() {
         expect(resolved.rideId, _session.rideId);
         expect(resolved.rideCode, '123456');
         expect(resolved.inviteSecret, _session.inviteSecret);
+        expect(resolved.joinToken, _session.joinToken);
         expect(requests, hasLength(2));
         expect(requests.first.method, 'PUT');
         expect(requests.first.url.path, '/base/v1/join-codes/123456');
@@ -207,11 +209,44 @@ void main() {
         expect(jsonDecode(requests.first.body), {
           'rideId': _session.rideId,
           'inviteSecret': _session.inviteSecret,
+          'resolveToken': _session.joinToken,
         });
         expect(requests.last.method, 'GET');
+        expect(requests.last.headers.containsKey('x-ride-relay-join-token'), isFalse);
         directory.close();
       },
     );
+
+    test('sends the join token header only when one is supplied', () async {
+      final requests = <http.Request>[];
+      final transport = MockClient((request) async {
+        requests.add(request);
+        return http.Response(
+          jsonEncode({
+            'rideId': _session.rideId,
+            'rideCode': '123456',
+            'inviteSecret': _session.inviteSecret,
+            'resolveToken': _session.joinToken,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final directory = HttpRideCodeDirectory(
+        configuration: InternetRelayConfiguration(
+          baseUri: Uri.parse('https://relay.example/base'),
+        ),
+        client: transport,
+      );
+
+      await directory.resolve('123456', joinToken: 'pastedTokenValue123456');
+
+      expect(
+        requests.single.headers['x-ride-relay-join-token'],
+        'pastedTokenValue123456',
+      );
+      directory.close();
+    });
   });
 }
 
@@ -225,6 +260,7 @@ final _session = RideSession(
   rideId: 'ride/alpha',
   rideCode: 'ALPHA1',
   inviteSecret: '0123456789abcdef0123456789abcdef',
+  joinToken: 'aTokenWithPlentyOfEntropy',
   localRiderId: 'local-device',
   displayName: 'Oliver',
   role: RideRole.rider,

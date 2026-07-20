@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:math';
+
 import '../features/map/motorcycle_icon.dart';
 import 'ride_role.dart';
 import 'rider_color.dart';
@@ -11,6 +14,7 @@ class RideSession {
     required this.rideId,
     required this.rideCode,
     required this.inviteSecret,
+    required this.joinToken,
     required this.localRiderId,
     required this.displayName,
     required this.role,
@@ -29,6 +33,13 @@ class RideSession {
   final String rideId;
   final String rideCode;
   final String inviteSecret;
+
+  /// A high-entropy credential paired with [rideCode] on the internet relay.
+  /// The six-digit code alone is brute-forceable over the public internet;
+  /// resolving the invite secret from the relay requires this too. Only
+  /// carried in the "Share" text and a smart-paste, never displayed on its
+  /// own - the six digits remain what a rider reads or types.
+  final String joinToken;
   final String localRiderId;
   final String displayName;
   final RideRole role;
@@ -50,6 +61,7 @@ class RideSession {
     rideId: rideId,
     rideCode: rideCode ?? this.rideCode,
     inviteSecret: inviteSecret,
+    joinToken: joinToken,
     localRiderId: localRiderId,
     displayName: displayName,
     role: role ?? this.role,
@@ -65,6 +77,7 @@ class RideSession {
     'rideId': rideId,
     'rideCode': rideCode,
     'inviteSecret': inviteSecret,
+    'joinToken': joinToken,
     'localRiderId': localRiderId,
     'displayName': displayName,
     'role': role.name,
@@ -80,6 +93,7 @@ class RideSession {
     rideId: json['rideId']! as String,
     rideCode: json['rideCode']! as String,
     inviteSecret: json['inviteSecret']! as String,
+    joinToken: _joinTokenOrFallback(json['joinToken']),
     localRiderId: json['localRiderId']! as String,
     displayName: json['displayName']! as String,
     role: RideRole.values.byName(json['role']! as String),
@@ -98,5 +112,15 @@ class RideSession {
     return value
         .clamp(minimumSimulationRiderCount, maximumSimulationRiderCount)
         .toInt();
+  }
+
+  /// A ride session persisted before the join token existed has none stored.
+  /// Generating a fresh one keeps old local sessions loadable; a lead in
+  /// that state simply re-publishes its ride code with the new token.
+  static String _joinTokenOrFallback(Object? value) {
+    if (value is String && value.length >= 16) return value;
+    return base64Url
+        .encode(List<int>.generate(20, (_) => Random.secure().nextInt(256)))
+        .replaceAll('=', '');
   }
 }

@@ -7,6 +7,7 @@ void main() {
     rideId: 'ride',
     rideCode: 'SIM123',
     inviteSecret: 'secret',
+    joinToken: 'aTokenWithPlentyOfEntropy',
     localRiderId: 'lead',
     displayName: 'Demo Lead',
     role: RideRole.lead,
@@ -25,6 +26,7 @@ void main() {
         rideId: 'ride',
         rideCode: 'SIM123',
         inviteSecret: 'secret',
+        joinToken: 'aTokenWithPlentyOfEntropy',
         localRiderId: 'lead',
         displayName: 'Demo Lead',
         role: RideRole.lead,
@@ -49,4 +51,13 @@ void main() {
     final json = session.toJson()..remove('isSimulation');
     expect(RideSession.fromJson(json).isSimulation, isFalse);
   });
+
+  test(
+    'a session persisted before join tokens existed gets a fresh one instead of crashing',
+    () {
+      final json = session.toJson()..remove('joinToken');
+      final restored = RideSession.fromJson(json);
+      expect(restored.joinToken.length, greaterThanOrEqualTo(16));
+    },
+  );
 }

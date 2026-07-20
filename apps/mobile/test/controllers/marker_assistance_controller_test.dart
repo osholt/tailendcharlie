@@ -205,6 +205,7 @@ class _Fixture {
       rideId: localSession.rideId,
       rideCode: localSession.rideCode,
       inviteSecret: localSession.inviteSecret,
+      joinToken: 'test-join-token-0123456789',
       localRiderId: riderId,
       displayName: riderId,
       role: role,

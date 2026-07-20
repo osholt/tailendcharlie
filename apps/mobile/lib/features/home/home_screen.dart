@@ -7,6 +7,7 @@ import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
+import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/rider_color.dart';
 import '../map/motorcycle_icon.dart';
@@ -270,6 +271,11 @@ class _RideFormState extends State<_RideForm> {
   /// map - the moment a leader most needs it, with people waiting nearby.
   bool _showShareStep = false;
 
+  /// Captured when pasted text includes a join token alongside the six
+  /// digits - see [parseJoinInvite]. Typing the code by hand leaves this
+  /// null, which still works but only via the rate-limited fallback.
+  String? _pastedJoinToken;
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -487,6 +493,7 @@ class _RideFormState extends State<_RideForm> {
         name,
         motorcycleStyle: _selectedStyle,
         riderColor: _selectedColor,
+        joinToken: _pastedJoinToken,
       );
     }
     if (widget.controller.hasActiveRide && mounted) {
@@ -509,8 +516,11 @@ class _RideFormState extends State<_RideForm> {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text?.trim();
     if (text == null || text.isEmpty || !mounted) return;
-    _codeController.text = text;
-    _codeController.selection = TextSelection.collapsed(offset: text.length);
+    final invite = parseJoinInvite(text);
+    final code = invite.code ?? text;
+    _pastedJoinToken = invite.token;
+    _codeController.text = code;
+    _codeController.selection = TextSelection.collapsed(offset: code.length);
   }
 }
 

@@ -169,12 +169,19 @@ class RelayService:
         ride_id: str,
         invite_secret: str,
         bearer_token: str,
+        resolve_token: str,
         now: datetime | None = None,
     ) -> None:
         now = now or datetime.now(UTC)
         self._validate_join_code(ride_code)
         self._validate_join_credential(ride_id, invite_secret, bearer_token)
+        if not 16 <= len(resolve_token) <= 128:
+            raise RelayServiceError(400, "Invalid ride credential")
         credential_hash = token_hash(bearer_token)
+        secret_ciphertext = self._cipher.encrypt_json(
+            {"inviteSecret": invite_secret, "resolveToken": resolve_token},
+            associated_data=self._join_code_aad(ride_code),
+        )
         with session.begin():
             session.execute(delete(RideJoinCode).where(RideJoinCode.expires_at <= now))
             existing = session.get(RideJoinCode, ride_code)
@@ -182,6 +189,7 @@ class RelayService:
                 same_ride = existing.ride_id == ride_id
                 same_credential = hmac.compare_digest(existing.token_hash, credential_hash)
                 if same_ride and same_credential:
+                    existing.secret_ciphertext = secret_ciphertext
                     return
                 raise RelayServiceError(409, "Ride code is already in use")
             session.add(
@@ -189,10 +197,7 @@ class RelayService:
                     code=ride_code,
                     ride_id=ride_id,
                     token_hash=credential_hash,
-                    secret_ciphertext=self._cipher.encrypt_json(
-                        {"inviteSecret": invite_secret},
-                        associated_data=self._join_code_aad(ride_code),
-                    ),
+                    secret_ciphertext=secret_ciphertext,
                     created_at=now,
                     expires_at=now + timedelta(hours=self._settings.ride_retention_hours),
                 )
@@ -203,6 +208,7 @@ class RelayService:
         session: Session,
         *,
         ride_code: str,
+        resolve_token: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, str]:
         now = now or datetime.now(UTC)
@@ -221,12 +227,23 @@ class RelayService:
             except ValueError as error:
                 raise RelayServiceError(500, "Ride code record is invalid") from error
             secret = value.get("inviteSecret") if isinstance(value, dict) else None
+            stored_resolve_token = value.get("resolveToken") if isinstance(value, dict) else None
             if not isinstance(secret, str) or not 16 <= len(secret) <= 512:
                 raise RelayServiceError(500, "Ride code record is invalid")
+            valid_resolve_token = (
+                isinstance(stored_resolve_token, str) and 16 <= len(stored_resolve_token) <= 128
+            )
+            if not valid_resolve_token:
+                raise RelayServiceError(500, "Ride code record is invalid")
+            if resolve_token is not None and not hmac.compare_digest(
+                stored_resolve_token, resolve_token
+            ):
+                raise RelayServiceError(404, "Ride code is not active")
             return {
                 "rideId": record.ride_id,
                 "rideCode": record.code,
                 "inviteSecret": secret,
+                "resolveToken": stored_resolve_token,
             }
 
     @staticmethod

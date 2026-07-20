@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     join_code_lookup_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
     join_code_lookup_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    join_code_global_rate_limit_requests: int = Field(default=20, ge=1, le=1000)
     maximum_request_bytes: int = Field(default=64 * 1024, ge=1024, le=1024 * 1024)
     maximum_response_bytes: int = Field(default=128 * 1024, ge=4096, le=2 * 1024 * 1024)
     maximum_event_bytes: int = Field(default=8 * 1024, ge=1024, le=64 * 1024)

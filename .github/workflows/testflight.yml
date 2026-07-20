@@ -63,9 +63,13 @@ jobs:
       - name: Build App Store IPA
         env:
           BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
-          RIDE_RELAY_API_BASE_URL: https://ride-relay.tail7b2c49.ts.net/api
+          RIDE_RELAY_API_BASE_URL: ${{ vars.RIDE_RELAY_API_BASE_URL }}
         run: |
           set -euo pipefail
+          test -n "$RIDE_RELAY_API_BASE_URL" || {
+            echo "::error::Set the RIDE_RELAY_API_BASE_URL repository variable to the deployed relay's HTTPS base URL (see docs/server-runbook.md)." >&2
+            exit 1
+          }
           flutter pub get
           flutter build ios --release --no-codesign \
             --build-number="$BUILD_NUMBER" \

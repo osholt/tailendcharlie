@@ -552,6 +552,7 @@ class RideSimulationController extends ChangeNotifier {
       rideId: _session.rideId,
       rideCode: _session.rideCode,
       inviteSecret: _session.inviteSecret,
+      joinToken: _session.joinToken,
       localRiderId: agent.id,
       displayName: agent.displayName,
       role: agent.role,

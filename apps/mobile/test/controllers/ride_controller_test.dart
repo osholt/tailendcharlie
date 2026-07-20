@@ -132,6 +132,41 @@ void main() {
     follower.dispose();
   });
 
+  test('joining rider receives the ride join token for future re-sharing', () async {
+    await controller.createRide('Lead');
+    final leaderSession = controller.session!;
+    await controller.publishRideCode();
+
+    final follower = RideController(
+      InMemoryEventStore(),
+      InMemorySessionStore(),
+      const _FakeNearbyBridge(),
+      clock: () => DateTime.utc(2026, 7, 16, 12),
+      idFactory: () => 'follower-id',
+      random: Random(7),
+      rideCodeDirectory: rideCodes,
+    );
+    await follower.initialize();
+    await follower.joinRide(leaderSession.rideCode, 'Follower');
+
+    expect(follower.session?.joinToken, leaderSession.joinToken);
+    follower.dispose();
+  });
+
+  test('ride code share text carries the six digits and a paired invite', () async {
+    await controller.createRide('Lead');
+    final leaderSession = controller.session!;
+
+    expect(
+      controller.rideCodeShareText,
+      contains('ride code ${leaderSession.rideCode} in the'),
+    );
+    expect(
+      controller.rideCodeShareText,
+      contains('${leaderSession.rideCode}#${leaderSession.joinToken}'),
+    );
+  });
+
   test('non-numeric ride code is rejected before lookup', () async {
     await controller.joinRide('ABC234', 'Oliver');
 
@@ -383,6 +418,7 @@ Future<void> _appendLocationEvidence({
     rideId: session.rideId,
     rideCode: session.rideCode,
     inviteSecret: session.inviteSecret,
+    joinToken: session.joinToken,
     localRiderId: riderId,
     displayName: riderId,
     role: role,
@@ -440,11 +476,12 @@ class _InMemoryRideCodeDirectory implements RideCodeDirectory {
       rideId: session.rideId,
       rideCode: session.rideCode,
       inviteSecret: session.inviteSecret,
+      joinToken: session.joinToken,
     );
   }
 
   @override
-  Future<RideCodeCredentials> resolve(String rideCode) async {
+  Future<RideCodeCredentials> resolve(String rideCode, {String? joinToken}) async {
     final credentials = _credentials[rideCode];
     if (credentials == null) {
       throw const RideCodeDirectoryException('That ride code is not active.');

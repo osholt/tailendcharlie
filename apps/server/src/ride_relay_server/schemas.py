@@ -28,6 +28,7 @@ class RegisterJoinCodeRequest(BaseModel):
 
     rideId: str = Field(min_length=1, max_length=128)
     inviteSecret: str = Field(min_length=16, max_length=512)
+    resolveToken: str = Field(min_length=16, max_length=128)
 
 
 class JoinCodeResponse(BaseModel):
@@ -36,3 +37,4 @@ class JoinCodeResponse(BaseModel):
     rideId: str
     rideCode: str
     inviteSecret: str
+    resolveToken: str

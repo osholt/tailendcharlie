@@ -1,5 +1,39 @@
 # Server deployment runbook
 
+## Get a free host
+
+The whole stack (PostgreSQL, the API, cleanup, Caddy) is light enough for a
+free-tier VM. Oracle Cloud's Always Free tier is the best fit: genuinely free
+forever, no trial period, sized well past what this needs (as of mid-2026 the
+Always Free Ampere A1 allowance is 2 OCPU / 12 GB RAM total, reduced from an
+earlier 4 OCPU / 24 GB but still generous for this workload).
+
+1. Create an account at [oracle.com/cloud/free](https://www.oracle.com/cloud/free/)
+   (needs a card for identity verification; nothing is charged while you stay
+   inside the Always Free limits).
+2. Console -> Compute -> Instances -> Create instance. Choose an Ampere
+   (Arm-based) shape under "Always Free eligible", Canonical Ubuntu as the
+   image, and add your SSH key. If instance creation fails with an
+   out-of-capacity error, retry in a different availability domain or region -
+   this is a known, temporary Always Free capacity constraint, not a
+   configuration problem.
+3. In the instance's assigned VCN, open a public ingress security list rule
+   for TCP 80, TCP 443, and UDP 443 (source `0.0.0.0/0`). Oracle's Ubuntu
+   images also ship a restrictive host firewall (`iptables`/`netfilter`) on
+   top of the cloud security list - both layers must allow the traffic, or
+   connections will simply time out with the security list looking correct.
+4. SSH in and install Docker Engine plus the Compose plugin (see
+   [docs.docker.com/engine/install](https://docs.docker.com/engine/install/)
+   for the current Ubuntu steps), then clone this repository onto the host.
+5. At your domain's DNS provider, add an A record for a subdomain (for
+   example `relay.yourdomain.com`) pointing at the instance's public IPv4
+   address. Caddy (below) obtains its TLS certificate for whatever hostname
+   you put in `RIDE_RELAY_DOMAIN`, so the DNS name and that setting must
+   match exactly.
+
+With the host and DNS in place, continue with the ordinary deployment below -
+nothing past this point is free-tier-specific.
+
 ## Prepare
 
 Use a host with Docker Compose, a public DNS record, inbound TCP 80/443 and UDP
@@ -31,7 +65,12 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml exec -T server \
 
 Caddy obtains and renews TLS automatically. Compile
 `https://relay.example.com/api` into the field-test app only after both health
-checks pass. Run a two-phone ride claim/sync test before a field ride.
+checks pass. For TestFlight builds, set it once as the `RIDE_RELAY_API_BASE_URL`
+repository variable (`gh variable set RIDE_RELAY_API_BASE_URL --body
+"https://relay.example.com/api"`, or Settings -> Secrets and variables ->
+Actions -> Variables) rather than editing the workflow file; `testflight.yml`
+reads it from there and fails the build with a clear error if it is unset. Run
+a two-phone ride claim/sync test before a field ride.
 
 For maps, add a licence-approved archive and matching style as described in
 [maps-and-gpx.md](./maps-and-gpx.md), then add `--profile maps` to the Compose

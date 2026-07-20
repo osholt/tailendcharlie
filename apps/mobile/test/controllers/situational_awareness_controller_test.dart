@@ -261,6 +261,7 @@ final _session = RideSession(
   rideId: 'ride',
   rideCode: 'ABC123',
   inviteSecret: 'shared-secret',
+  joinToken: 'test-join-token-0123456789',
   localRiderId: 'local-rider',
   displayName: 'Oliver',
   role: RideRole.lead,

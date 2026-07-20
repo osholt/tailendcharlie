@@ -52,6 +52,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maximum_requests=settings.join_code_lookup_rate_limit_requests,
         window_seconds=settings.join_code_lookup_rate_limit_window_seconds,
     )
+    # A tighter, IP-independent cap on token-less lookups: the six-digit code
+    # alone is brute-forceable across many source IPs, so the global window
+    # bounds the whole keyspace's guess rate regardless of IP diversity.
+    # Requests carrying a valid resolve token skip this cap entirely - they
+    # are protected cryptographically rather than by rate.
+    join_code_global_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.join_code_global_rate_limit_requests,
+        window_seconds=settings.join_code_lookup_rate_limit_window_seconds,
+        maximum_keys=1,
+    )
     registry = CollectorRegistry()
     sync_requests = Counter(
         "ride_relay_sync_requests_total",
@@ -128,17 +138,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def metrics() -> Response:
         return Response(content=generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
 
-    def join_code_rate_limit(request: Request) -> Response | None:
-        client_ip = request.client.host if request.client is not None else "unknown"
-        retry_after = join_code_limiter.check(f"join-code-ip:{client_ip}")
-        if retry_after is None:
-            return None
+    def _join_code_rate_limit_response(retry_after: int) -> Response:
         join_code_requests.labels(outcome="rate_limited").inc()
         return JSONResponse(
             status_code=429,
             headers={"retry-after": str(min(retry_after, 300))},
             content={"error": "Ride-code lookup rate limit exceeded"},
         )
+
+    def join_code_rate_limit(request: Request) -> Response | None:
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = join_code_limiter.check(f"join-code-ip:{client_ip}")
+        if retry_after is None:
+            return None
+        return _join_code_rate_limit_response(retry_after)
 
     @app.put("/api/v1/join-codes/{ride_code}", include_in_schema=False)
     def register_join_code(
@@ -156,6 +169,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ride_id=payload.rideId,
             invite_secret=payload.inviteSecret,
             bearer_token=authorization[7:],
+            resolve_token=payload.resolveToken,
         )
         join_code_requests.labels(outcome="registered").inc()
         return Response(status_code=204)
@@ -172,9 +186,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Response:
         if len(ride_code) != 6 or not ride_code.isascii() or not ride_code.isdecimal():
             raise RelayServiceError(400, "Ride code must be six digits")
+        resolve_token = request.headers.get("x-ride-relay-join-token") or None
         if limited := join_code_rate_limit(request):
             return limited
-        result = service.resolve_join_code(session, ride_code=ride_code)
+        if resolve_token is None:
+            retry_after = join_code_global_limiter.check("join-code-global")
+            if retry_after is not None:
+                return _join_code_rate_limit_response(retry_after)
+        result = service.resolve_join_code(
+            session,
+            ride_code=ride_code,
+            resolve_token=resolve_token,
+        )
         join_code_requests.labels(outcome="resolved").inc()
         return JSONResponse(content=JoinCodeResponse.model_validate(result).model_dump())
 

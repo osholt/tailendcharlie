@@ -235,6 +235,7 @@ final _session = RideSession(
   rideId: 'ride-alpha',
   rideCode: 'ALPHA1',
   inviteSecret: '0123456789abcdef0123456789abcdef',
+  joinToken: 'test-join-token-0123456789',
   localRiderId: 'local-device',
   displayName: 'Oliver',
   role: RideRole.rider,

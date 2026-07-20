@@ -23,6 +23,7 @@ void main() {
         rideId: 'ride',
         rideCode: 'ABC123',
         inviteSecret: 'secret',
+        joinToken: 'test-join-token-0123456789',
         localRiderId: 'rider',
         displayName: 'Oliver',
         role: RideRole.lead,

@@ -65,28 +65,45 @@ Keychain or Android encrypted storage and is never sent on event-sync calls.
 
 ## Six-digit ride codes
 
-The lead shares only a six-digit numeric code. When creating a non-simulated
-ride, the app registers this short-lived lookup record with the configured
-relay:
+The lead shares a six-digit numeric code and a paired high-entropy join
+token, generated together at ride creation. When creating a non-simulated
+ride, the app registers both as one short-lived lookup record with the
+configured relay:
 
 ```text
 PUT {base}/v1/join-codes/{six-digit-code}
 Authorization: Bearer rr1_<derived-ride-token>
 ```
 
-The request contains the ride ID and its bootstrap secret. The relay encrypts
-that record at rest, expires it with the ride-retention window, and returns it
-only from `GET {base}/v1/join-codes/{six-digit-code}`. The code is therefore a
-group credential, not a public identifier: share it only with the intended
-group. Lookup attempts are deliberately rate limited. Joining needs a signal
-once; after that the ordinary authenticated internet and nearby relays work as
-before.
+The request contains the ride ID, its bootstrap secret, and the join token.
+The relay encrypts all three at rest and returns them only from
+`GET {base}/v1/join-codes/{six-digit-code}`. Six digits alone favour roadside
+usability - said aloud, texted, read off a screen - but are brute-forceable
+across enough source IPs, so the lookup accepts the join token as an optional
+header:
 
-Six digits intentionally favour roadside usability over high entropy. The
-current flow is suitable only for the private-tailnet development alpha. A
-public-internet release needs a stronger bootstrap mechanism (for example a
-second high-entropy secret or a time-limited QR credential) in addition to rate
-limiting.
+```text
+GET {base}/v1/join-codes/{six-digit-code}
+X-Ride-Relay-Join-Token: <join-token>
+```
+
+A request carrying the correct token is checked cryptographically and is
+exempt from the six-digit code's own rate limit. A request with no token
+still works - the code is still a valid, if weaker, bootstrap - but is bounded
+by a second, IP-independent global rate limit across every unauthenticated
+lookup on the server, so the entire keyspace cannot be enumerated quickly even
+by an attacker spreading guesses across many IPs. `Share` puts both the code
+and the token in one pasted invite (`123456#<token>`); the app's paste button
+recognises this shape and fills in the token silently, so a rider who shares
+or receives an invite through text gets the stronger path automatically.
+Reading or typing the six digits alone still joins, just under the weaker,
+rate-limited path. The code is a group credential either way, not a public
+identifier: share it only with the intended group.
+
+The resolved join token is also returned to whoever looked it up, so any
+rider who has joined - not only the ride's creator - can go on to re-share a
+fully hardened invite (the "Share ride code" action available from the ride
+dashboard, not just right after creation).
 
 ## Server behaviour
 
@@ -94,7 +111,8 @@ The first valid request atomically claims its high-entropy ride ID for the
 derived bearer token. Subsequent requests must use that credential. The server:
 
 - stores a SHA-256 token hash for event relay, and encrypts the temporary
-  bootstrap secret needed to resolve a six-digit ride code;
+  bootstrap secret and join token needed to resolve a six-digit ride code
+  together, comparing a supplied join token only after decrypting;
 - encrypts event and idempotency-response JSON with AES-256-GCM at rest;
 - signs opaque, ride-bound sequence cursors;
 - accepts a valid batch atomically or returns a bounded error;
@@ -102,7 +120,8 @@ derived bearer token. Subsequent requests must use that credential. The server:
 - expires locations after at most 30 minutes, hazards after 24 hours, most
   other events after 72 hours, and ended rides after the configured grace;
 - caps active rides and per-ride event/body storage before accepting more data;
-- rate-limits by client IP and ride credential; and
+- rate-limits by client IP and ride credential, plus a separate global limit
+  on token-less ride-code lookups; and
 - exposes liveness, readiness, and internal Prometheus metrics endpoints.
 
 This is group-scoped authentication, not individual rider identity or

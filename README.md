@@ -130,9 +130,12 @@ most 24 hours for final relay recovery, then its session, secure group secret,
 and event journal are deleted automatically; it can also be removed immediately
 from the app. The reference server encrypts retained event bodies and enforces
 bounded deletion, but group-scoped credentials are not per-device identity or
-end-to-end payload encryption. The six-digit join code is deliberately a
-rate-limited, private-tailnet development-alpha bootstrap credential, not a
-public-internet security boundary. Security/privacy review and physical-device
+end-to-end payload encryption. The six-digit join code is deliberately
+memorable for roadside sharing, so on its own it is rate-limited rather than
+high-entropy; sharing it as text (the "Share" action, or a paste) also carries
+a high-entropy join token that authenticates the resolve request
+cryptographically instead. See [internet-relay.md](./docs/internet-relay.md)
+for the exact bootstrap flow. Security/privacy review and physical-device
 evidence remain release gates.
 
 ## License
