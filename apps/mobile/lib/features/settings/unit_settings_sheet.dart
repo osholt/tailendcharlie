@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
@@ -124,10 +125,51 @@ class UnitSettingsSheet extends StatelessWidget {
             BasemapConfiguration.fromEnvironment().attribution,
             style: const TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
           ),
+          const SizedBox(height: 22),
+          Text(
+            'ABOUT',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF8D98A7),
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 4,
+              children: [
+                TextButton(
+                  key: const Key('open-privacy-policy'),
+                  onPressed: () =>
+                      unawaited(_openLegalPage(context, 'privacy.html')),
+                  child: const Text('Privacy Policy'),
+                ),
+                TextButton(
+                  key: const Key('open-terms-of-use'),
+                  onPressed: () =>
+                      unawaited(_openLegalPage(context, 'terms.html')),
+                  child: const Text('Terms of Use'),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     ),
   );
+}
+
+Future<void> _openLegalPage(BuildContext context, String page) async {
+  final opened = await launchUrl(
+    Uri.https('tailendcharlie.app', '/$page'),
+    mode: LaunchMode.externalApplication,
+  );
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Could not open the page.')));
+  }
 }
 
 String _mapAppearanceStatus(
