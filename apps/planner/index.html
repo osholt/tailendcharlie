@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tail End Charlie — Plan a route</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header wrap">
+      <a class="brand" href=".">
+        <span>Tail End Charlie</span>
+      </a>
+      <p class="tagline">Route planning</p>
+    </header>
+
+    <main class="wrap">
+      <p class="intro">
+        Upload a GPX file, clean it up, and generate a short code. Enter that
+        code in the app when you start the ride to load the route — this
+        page never creates or shares a live ride.
+      </p>
+
+      <section class="panel" aria-labelledby="upload-heading">
+        <h2 id="upload-heading">1. Upload a route</h2>
+        <div class="field-row">
+          <label class="file-picker" for="gpx-file">
+            <input type="file" id="gpx-file" accept=".gpx,application/gpx+xml" />
+            Choose GPX file
+          </label>
+          <span id="file-status" class="muted">No file chosen.</span>
+        </div>
+        <div class="field-row">
+          <label for="route-name">Name</label>
+          <input type="text" id="route-name" maxlength="200" placeholder="e.g. Sunday Lake District loop" />
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="edit-heading" id="edit-panel" hidden>
+        <h2 id="edit-heading">2. Check and edit</h2>
+        <p id="route-stats" class="muted"></p>
+        <div class="preview-wrap">
+          <svg id="preview" viewBox="0 0 600 400" role="img" aria-label="Route preview"></svg>
+        </div>
+        <p class="muted small">
+          Click a point to select it. Selected:
+          <span id="selected-label">none</span>
+        </p>
+        <div class="button-row">
+          <button type="button" id="btn-delete-point" disabled>Delete selected point</button>
+          <button type="button" id="btn-mark-start" disabled>Set trim start</button>
+          <button type="button" id="btn-mark-end" disabled>Set trim end</button>
+          <button type="button" id="btn-apply-trim" disabled>Trim to range</button>
+          <button type="button" id="btn-reverse">Reverse direction</button>
+          <button type="button" id="btn-reset">Reset to uploaded file</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="generate-heading" id="generate-panel" hidden>
+        <h2 id="generate-heading">3. Generate a plan code</h2>
+        <button type="button" id="btn-generate" class="button-primary">Generate code</button>
+        <p id="generate-status" role="status"></p>
+        <div id="code-result" hidden>
+          <p>
+            Plan code:
+            <code id="code-value"></code>
+            <button type="button" id="btn-copy-code">Copy</button>
+          </p>
+          <p class="muted small">Enter this code in the app's "Load a planned route" field when you start the ride. It expires in 30 days.</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="lookup-heading">
+        <h2 id="lookup-heading">Already have a code?</h2>
+        <div class="field-row">
+          <input type="text" id="lookup-code" placeholder="Plan code" maxlength="16" />
+          <button type="button" id="btn-lookup">Load</button>
+        </div>
+        <p id="lookup-status" role="status"></p>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
