@@ -84,8 +84,21 @@ cd apps/mobile
 flutter pub get
 flutter analyze
 flutter test
-flutter run
+cd ../..
+make ios-simulator
 ```
+
+`make ios-simulator` launches the first booted iOS Simulator with the deployed
+relay configured and spoofs its GPS to the bundled demo route's start near
+Bristol. Override either default when needed, for example:
+
+```bash
+make ios-simulator IOS_SIMULATOR_LOCATION=51.5074,-0.1278
+make ios-simulator RIDE_RELAY_API_BASE_URL=https://relay.example.com/api
+```
+
+The location override affects real-ride and route-recording flows. **Try a
+simulated ride** remains isolated from device GPS and uses the bundled route.
 
 After creating or joining a ride, use the bottom navigation to open **Map** or
 **Awareness**. The map includes a simulator-friendly demo route. GPX route

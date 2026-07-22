@@ -4,6 +4,7 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import 'app/ride_relay_app.dart';
 import 'controllers/distance_unit_controller.dart';
 import 'controllers/map_style_mode_controller.dart';
+import 'controllers/ride_code_preference_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/shared_route_controller.dart';
@@ -32,6 +33,7 @@ Future<void> main() async {
     locale: WidgetsBinding.instance.platformDispatcher.locale,
   );
   final mapStyleMode = await MapStyleModeController.load();
+  final rideCodePreference = await RideCodePreferenceController.load();
   final riderProfile = await RiderProfileController.load();
   final sharedRoutes = await SharedRouteController.load();
   final recordedRoutes = await JsonFileRecordedRouteStore.openDefault();
@@ -41,6 +43,7 @@ Future<void> main() async {
       controller: controller,
       distanceUnits: distanceUnits,
       mapStyleMode: mapStyleMode,
+      rideCodePreference: rideCodePreference,
       riderProfile: riderProfile,
       sharedRoutes: sharedRoutes,
       recordedRoutes: recordedRoutes,

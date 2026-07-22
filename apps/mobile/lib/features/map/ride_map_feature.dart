@@ -27,11 +27,13 @@ import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_export.dart';
+import '../../services/navigation_camera.dart';
 import '../../services/offline_tile_cache.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
 import '../../services/route_progress.dart';
+import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
@@ -346,9 +348,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _remainingRouteSource = 'ride-relay-route-remaining';
   static const _riddenRouteSource = 'ride-relay-route-ridden';
   static const _offRouteTraceSource = 'ride-relay-off-route-traces';
+  static const _trailDirectionArrowSource = 'ride-relay-trail-direction-arrows';
   static const _waypointSource = 'ride-relay-waypoints';
   static const _positionSource = 'ride-relay-position';
   static const _overlaySource = 'ride-relay-overlays';
+  static const _trailDirectionArrowImage = 'ride-relay-trail-direction-arrow';
+  static const _trailDirectionArrowSampler = TrailDirectionArrowSampler();
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
@@ -375,6 +380,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
   double _lastHeadingDegrees = 0;
+  double? _smoothedNavigationSpeedMetersPerSecond;
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
   GeoPoint? _lastHandledCurrentPosition;
@@ -787,12 +793,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     bottom: overlayBottom + 12,
                     child: FloatingActionButton.extended(
                       key: const Key('navigation-follow-button'),
-                      tooltip: 'Re-centre navigation',
+                      tooltip: 'Follow my location',
                       onPressed: _toggleNavigationMode,
                       backgroundColor: const Color(0xE6252E39),
                       foregroundColor: Colors.white,
-                      icon: const Icon(Icons.my_location),
-                      label: const Text('Re-centre'),
+                      icon: const Icon(Icons.navigation_outlined),
+                      label: const Text('Follow me'),
                     ),
                   ),
                 if (_route != null && widget.onEmergencyAlert != null)
@@ -929,6 +935,34 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     ),
                   ),
             ],
+          ),
+        if (route != null)
+          MarkerLayer(
+            key: const Key('trail-direction-arrow-layer'),
+            markers: _trailDirectionArrows()
+                .map(
+                  (item) => Marker(
+                    point: _latLng(item.arrow.point),
+                    width: 24,
+                    height: 24,
+                    child: Semantics(
+                      label: item.semanticLabel,
+                      child: Transform.rotate(
+                        angle: item.arrow.bearingDegrees * math.pi / 180,
+                        child: Icon(
+                          Icons.navigation_rounded,
+                          color: item.color,
+                          size: 18,
+                          shadows: const [
+                            Shadow(color: Color(0xFF10151C), blurRadius: 4),
+                            Shadow(color: Color(0xFF10151C), blurRadius: 4),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(growable: false),
           ),
         if (route != null && route.waypoints.isNotEmpty)
           MarkerLayer(
@@ -1082,6 +1116,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
     }
     _previousNavigationPoint = position;
+    if (navigationFix?.speedMetersPerSecond case final speed?
+        when speed.isFinite) {
+      final boundedSpeed = speed.clamp(0.0, 50.0);
+      final previousSpeed = _smoothedNavigationSpeedMetersPerSecond;
+      _smoothedNavigationSpeedMetersPerSecond = previousSpeed == null
+          ? boundedSpeed
+          : previousSpeed * 0.72 + boundedSpeed * 0.28;
+    }
 
     final progressNow = navigationFix?.recordedAt ?? DateTime.now();
     final refreshProgress =
@@ -1436,7 +1478,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // The tilt below still gives a forward-looking navigation feel through
     // perspective, without moving the geometric centre away from the rider.
     final target = position;
-    final navigationZoom = landscape ? 13.85 : 14.45;
+    final cameraPlan = NavigationCameraPlanner.plan(
+      speedMetersPerSecond:
+          _smoothedNavigationSpeedMetersPerSecond ??
+          _navigationFix?.speedMetersPerSecond,
+      landscape: landscape,
+    );
     final cameraDuration = transitionDuration ?? _cameraTransitionDuration;
     try {
       if (_basemap.usesMapLibre) {
@@ -1446,8 +1493,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ml.CameraUpdate.newCameraPosition(
             ml.CameraPosition(
               target: ml.LatLng(target.latitude, target.longitude),
-              zoom: navigationZoom,
-              tilt: landscape ? 58 : 52,
+              zoom: cameraPlan.zoom,
+              tilt: cameraPlan.tilt,
               bearing: _lastHeadingDegrees,
             ),
           ),
@@ -1460,7 +1507,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       }
       _mapController.moveAndRotateAnimatedRaw(
         _latLng(target),
-        navigationZoom,
+        cameraPlan.zoom,
         _lastHeadingDegrees,
         offset: Offset.zero,
         duration: cameraDuration,
@@ -1498,6 +1545,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     await controller.addImage(
       _hazardIconImage,
       await rasterizeIconGlyphPng(Icons.warning_amber_rounded),
+      true,
+    );
+    await controller.addImage(
+      _trailDirectionArrowImage,
+      await rasterizeIconGlyphPng(Icons.navigation_rounded),
       true,
     );
     _markerImagesRegistered = true;
@@ -1588,6 +1640,27 @@ class _RideMapScreenState extends State<RideMapScreen> {
           lineWidth: 5,
           lineCap: 'round',
           lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addGeoJsonSource(
+        _trailDirectionArrowSource,
+        _trailDirectionArrowGeoJson(),
+      );
+      await controller.addSymbolLayer(
+        _trailDirectionArrowSource,
+        'ride-relay-trail-direction-arrows',
+        const ml.SymbolLayerProperties(
+          iconImage: _trailDirectionArrowImage,
+          iconColor: ['get', 'color'],
+          iconHaloColor: '#10151C',
+          iconHaloWidth: 2,
+          iconSize: 0.15,
+          iconRotate: ['get', 'bearing'],
+          iconRotationAlignment: 'map',
+          iconPitchAlignment: 'map',
+          iconAllowOverlap: true,
+          iconIgnorePlacement: true,
         ),
         enableInteraction: false,
       );
@@ -1684,6 +1757,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _offRouteTraceSource,
         _offRouteTraceGeoJson(),
       );
+      await controller.setGeoJsonSource(
+        _trailDirectionArrowSource,
+        _trailDirectionArrowGeoJson(),
+      );
       await controller.setGeoJsonSource(_waypointSource, _waypointGeoJson());
       await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
       await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
@@ -1745,6 +1822,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
         );
         await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
       }
+      if (progress || overlays) {
+        await controller.setGeoJsonSource(
+          _trailDirectionArrowSource,
+          _trailDirectionArrowGeoJson(),
+        );
+      }
     } on Object catch (error) {
       if (kDebugMode) {
         debugPrint('Could not refresh scheduled MapLibre layers: $error');
@@ -1762,6 +1845,61 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Map<String, dynamic> _remainingRouteGeoJson() => MapGeoJson.lines(
     _progressGeometry.remainingPaths,
     idPrefix: 'remaining-route',
+  );
+
+  List<_StyledTrailDirectionArrow> _trailDirectionArrows() {
+    const maximumVisibleArrows = 240;
+    final items = <_StyledTrailDirectionArrow>[];
+
+    void addArrows({
+      required Iterable<List<GeoPoint>> paths,
+      required Color color,
+      required String idPrefix,
+      required String semanticLabel,
+    }) {
+      for (final arrow in _trailDirectionArrowSampler.sample(paths)) {
+        if (items.length >= maximumVisibleArrows) return;
+        items.add(
+          _StyledTrailDirectionArrow(
+            id: '$idPrefix-${items.length}',
+            arrow: arrow,
+            color: color,
+            semanticLabel: semanticLabel,
+          ),
+        );
+      }
+    }
+
+    addArrows(
+      paths: _progressGeometry.riddenPaths,
+      color: const Color(0xFFFF7A1A),
+      idPrefix: 'ridden',
+      semanticLabel: 'Travel direction',
+    );
+    for (final trace
+        in widget.offRouteTraces?.value ?? const <MapOverlayTrace>[]) {
+      addArrows(
+        paths: [trace.points],
+        color: trace.color,
+        idPrefix: trace.id,
+        semanticLabel: '${trace.label} direction',
+      );
+      if (items.length >= maximumVisibleArrows) break;
+    }
+    return items;
+  }
+
+  Map<String, dynamic> _trailDirectionArrowGeoJson() => MapGeoJson.points(
+    _trailDirectionArrows().map(
+      (item) => MapGeoJsonPoint(
+        id: item.id,
+        point: item.arrow.point,
+        properties: {
+          'bearing': item.arrow.bearingDegrees,
+          'color': _hexColor(item.color),
+        },
+      ),
+    ),
   );
 
   Map<String, dynamic> _riddenRouteGeoJson() =>
@@ -2370,6 +2508,20 @@ class MapOverlayTrace {
   final Color color;
 }
 
+class _StyledTrailDirectionArrow {
+  const _StyledTrailDirectionArrow({
+    required this.id,
+    required this.arrow,
+    required this.color,
+    required this.semanticLabel,
+  });
+
+  final String id;
+  final TrailDirectionArrow arrow;
+  final Color color;
+  final String semanticLabel;
+}
+
 class MapOverlayMarker {
   const MapOverlayMarker({
     required this.id,
@@ -2802,6 +2954,37 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                       ),
                     ),
                   ),
+                if (widget.currentPosition != null)
+                  const Positioned(
+                    left: 6,
+                    top: 6,
+                    child: _MiniMapBadge(
+                      key: Key('mini-map-you-legend'),
+                      label: 'YOU',
+                      dotColor: Color(0xFFFF7A1A),
+                    ),
+                  ),
+                if (!widget.showTiles)
+                  const Positioned(
+                    right: 6,
+                    top: 6,
+                    child: _MiniMapBadge(
+                      key: Key('mini-map-north-indicator'),
+                      label: 'N ↑',
+                    ),
+                  ),
+                if (!widget.showTiles)
+                  Positioned(
+                    left: 7,
+                    bottom: 6,
+                    child: _MiniMapScaleBar(
+                      width: widget.width,
+                      points: [
+                        ?widget.currentPosition,
+                        ...widget.riders.map((rider) => rider.point),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),
@@ -3040,6 +3223,143 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   void dispose() {
     _refreshTimer?.cancel();
     super.dispose();
+  }
+}
+
+class _MiniMapBadge extends StatelessWidget {
+  const _MiniMapBadge({super.key, required this.label, this.dotColor});
+
+  final String label;
+  final Color? dotColor;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: const Color(0xD90D1117),
+      borderRadius: BorderRadius.circular(7),
+      border: Border.all(color: const Color(0x80566273)),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (dotColor case final color?) ...[
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 0.8),
+              ),
+              child: const SizedBox.square(dimension: 7),
+            ),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 8,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _MiniMapScaleBar extends StatelessWidget {
+  const _MiniMapScaleBar({required this.width, required this.points});
+
+  final double width;
+  final List<GeoPoint> points;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = _scale();
+    return Semantics(
+      key: const Key('mini-map-scale'),
+      label: 'Map scale ${scale.label}',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xD90D1117),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(5, 2, 5, 3),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                scale.label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 7,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Container(
+                width: scale.width,
+                height: 2,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  border: Border.symmetric(
+                    vertical: BorderSide(color: Colors.white, width: 1),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  ({String label, double width}) _scale() {
+    if (points.isEmpty) return (label: '50 m', width: 32);
+    var south = points.first.latitude;
+    var north = south;
+    var west = points.first.longitude;
+    var east = west;
+    for (final point in points.skip(1)) {
+      south = math.min(south, point.latitude);
+      north = math.max(north, point.latitude);
+      west = math.min(west, point.longitude);
+      east = math.max(east, point.longitude);
+    }
+    final latitudeCenter = (north + south) / 2;
+    final longitudeCenter = (east + west) / 2;
+    final longitudeSpan = math.max(east - west, 0.0032) * 1.45;
+    west = longitudeCenter - longitudeSpan / 2;
+    east = longitudeCenter + longitudeSpan / 2;
+    final mapWidthMeters = _mapDistanceMeters(
+      GeoPoint(latitude: latitudeCenter, longitude: west),
+      GeoPoint(latitude: latitudeCenter, longitude: east),
+    );
+    const candidates = <double>[
+      10,
+      20,
+      50,
+      100,
+      200,
+      500,
+      1000,
+      2000,
+      5000,
+      10000,
+    ];
+    final maximumScaleMeters = mapWidthMeters * 0.32;
+    final scaleMeters = candidates.lastWhere(
+      (candidate) => candidate <= maximumScaleMeters,
+      orElse: () => candidates.first,
+    );
+    final barWidth = (width * scaleMeters / mapWidthMeters).clamp(18.0, 58.0);
+    final label = scaleMeters >= 1000
+        ? '${(scaleMeters / 1000).toStringAsFixed(scaleMeters % 1000 == 0 ? 0 : 1)} km'
+        : '${scaleMeters.round()} m';
+    return (label: label, width: barWidth);
   }
 }
 

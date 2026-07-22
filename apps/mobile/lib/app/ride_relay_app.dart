@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../controllers/distance_unit_controller.dart';
 import '../controllers/map_style_mode_controller.dart';
+import '../controllers/ride_code_preference_controller.dart';
 import '../controllers/ride_controller.dart';
 import '../controllers/rider_profile_controller.dart';
 import '../controllers/shared_route_controller.dart';
@@ -15,6 +16,7 @@ class RideRelayApp extends StatelessWidget {
     required this.controller,
     required this.distanceUnits,
     required this.mapStyleMode,
+    required this.rideCodePreference,
     required this.riderProfile,
     required this.sharedRoutes,
     required this.recordedRoutes,
@@ -24,6 +26,7 @@ class RideRelayApp extends StatelessWidget {
   final RideController controller;
   final DistanceUnitController distanceUnits;
   final MapStyleModeController mapStyleMode;
+  final RideCodePreferenceController rideCodePreference;
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
   final RecordedRouteStore recordedRoutes;
@@ -124,6 +127,7 @@ class RideRelayApp extends StatelessWidget {
                 controller: controller,
                 distanceUnits: distanceUnits,
                 mapStyleMode: mapStyleMode,
+                rideCodePreference: rideCodePreference,
                 riderProfile: riderProfile,
                 sharedRoutes: sharedRoutes,
                 recordedRoutes: recordedRoutes,
