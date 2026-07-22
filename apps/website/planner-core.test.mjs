@@ -10,6 +10,7 @@ import {
   formatDuration,
   gpxFileName,
   routeBendScore,
+  StateHistory,
 } from "./planner-core.mjs";
 
 test("buildGpx creates app-compatible GPX metadata, waypoints and track", () => {
@@ -66,6 +67,25 @@ test("Valhalla polyline6 route shapes decode to longitude and latitude", () => {
     [-120.95, 40.7],
     [-126.453, 43.252],
   ]);
+});
+
+test("route history supports bounded undo and redo without sharing state", () => {
+  const history = new StateHistory(2);
+  history.push({ stops: ["A"] });
+  history.push({ stops: ["A", "B"] });
+  history.push({ stops: ["A", "B", "C"] });
+
+  const firstUndo = history.undo({ stops: ["current"] });
+  assert.deepEqual(firstUndo, { stops: ["A", "B", "C"] });
+  firstUndo.stops.push("changed");
+  assert.deepEqual(history.undo({ stops: ["A", "B", "C"] }), {
+    stops: ["A", "B"],
+  });
+  assert.equal(history.canUndo, false);
+  assert.deepEqual(history.redo({ stops: ["A", "B"] }), {
+    stops: ["A", "B", "C"],
+  });
+  assert.equal(history.canRedo, true);
 });
 
 test("buildGpx requires a named, routed ride", () => {

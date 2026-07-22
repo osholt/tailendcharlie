@@ -5,6 +5,7 @@ import {
   formatDistance,
   formatDuration,
   gpxFileName,
+  StateHistory,
 } from "./planner-core.mjs";
 import {
   BIKER_PLACES,
@@ -38,9 +39,11 @@ const elements = {
   rideName: document.querySelector("#ride-name"),
   routeStyle: document.querySelector("#route-style"),
   resetAdjustments: document.querySelector("#reset-adjustments"),
+  redoRoute: document.querySelector("#redo-route"),
   searchResults: document.querySelector("#search-results"),
   status: document.querySelector("#route-status"),
   stopList: document.querySelector("#stop-list"),
+  undoRoute: document.querySelector("#undo-route"),
 };
 
 let stops = [];
@@ -58,6 +61,13 @@ let listDrag = null;
 let routeDrag = null;
 let suppressNextMapClick = false;
 let bikerPlacePopup = null;
+let routeAdjustmentPopup = null;
+let previewRouteRequest = null;
+let previewRouteTimer = null;
+let pendingPreviewControls = null;
+let previewRouteSequence = 0;
+let lastPreviewRouteAt = 0;
+const routeHistory = new StateHistory(50);
 
 const map = new maplibregl.Map({
   container: "map",
@@ -229,22 +239,47 @@ elements.stopList.addEventListener("click", handleStopAction);
 elements.stopList.addEventListener("pointerdown", beginListDrag);
 elements.clearRoute.addEventListener("click", clearRoute);
 elements.resetAdjustments.addEventListener("click", resetRouteAdjustments);
+elements.undoRoute.addEventListener("click", undoRouteChange);
+elements.redoRoute.addEventListener("click", redoRouteChange);
 elements.download.addEventListener("click", downloadGpx);
 elements.expand.addEventListener("click", toggleExpandedMap);
 elements.rideName.addEventListener("input", updateDownloadState);
-elements.routeStyle.addEventListener("change", routeStops);
-elements.avoidMotorways.addEventListener("change", routeStops);
+elements.routeStyle.addEventListener("focus", rememberPreferenceValue);
+elements.avoidMotorways.addEventListener("focus", rememberPreferenceValue);
+elements.routeStyle.addEventListener("change", changeRoutePreference);
+elements.avoidMotorways.addEventListener("change", changeRoutePreference);
+rememberPreferenceValue({ target: elements.routeStyle });
+rememberPreferenceValue({ target: elements.avoidMotorways });
 document.addEventListener("fullscreenchange", syncExpandedMapState);
 document.addEventListener("keydown", (event) => {
+  if (
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    !event.target.closest?.("input, textarea, select")
+  ) {
+    const key = event.key.toLowerCase();
+    if (key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redoRouteChange();
+      else undoRouteChange();
+      return;
+    }
+    if (key === "y") {
+      event.preventDefault();
+      redoRouteChange();
+      return;
+    }
+  }
   if (event.key === "Escape" && elements.mapShell.classList.contains("is-expanded")) {
     setExpandedMap(false);
   }
 });
 
 function addStop(
-  { longitude, latitude, name },
+  { id: requestedId, longitude, latitude, name },
   insertIndex = stops.length,
   shouldRoute = true,
+  shouldRecord = true,
 ) {
   if (stops.length >= MAX_STOPS) {
     setStatus(`A route can contain up to ${MAX_STOPS} stops.`, true);
@@ -255,7 +290,9 @@ function addStop(
     return;
   }
 
-  const id = ++stopSequence;
+  if (shouldRecord) recordRouteChange();
+  const id = Number.isInteger(requestedId) ? requestedId : ++stopSequence;
+  stopSequence = Math.max(stopSequence, id);
   const markerElement = document.createElement("button");
   markerElement.className = "route-marker";
   markerElement.type = "button";
@@ -271,6 +308,7 @@ function addStop(
   })
     .setLngLat([longitude, latitude])
     .addTo(map);
+  marker.on("dragstart", () => recordRouteChange());
   marker.on("dragend", () => {
     const stop = stops.find((item) => item.id === id);
     if (!stop) return;
@@ -278,7 +316,7 @@ function addStop(
     stop.longitude = position.lng;
     stop.latitude = position.lat;
     renderStops();
-    routeStops();
+    routeStops(false);
   });
 
   stops.splice(insertIndex, 0, {
@@ -290,7 +328,9 @@ function addStop(
   });
   renderStops();
   if (shouldRoute) routeStops();
-  if (stops.length === 1) map.flyTo({ center: [longitude, latitude], zoom: 11 });
+  if (shouldRoute && stops.length === 1) {
+    map.flyTo({ center: [longitude, latitude], zoom: 11 });
+  }
 }
 
 function renderStops() {
@@ -299,7 +339,7 @@ function renderStops() {
   elements.clearRoute.disabled = stops.length === 0;
   elements.resetAdjustments.hidden = shapingPoints.length === 0;
   elements.mapInstructions.textContent = stops.length
-    ? "Tap the route to insert a stop · drag it to reshape"
+    ? "Tap the route to insert a stop · drag it to reshape · drag purple handles again"
     : "Tap the map to add a route point";
 
   stops.forEach((stop, index) => {
@@ -339,6 +379,7 @@ function renderStops() {
   });
   updateMapLines();
   updateDownloadState();
+  updateHistoryButtons();
 }
 
 function editStop(event) {
@@ -347,6 +388,10 @@ function editStop(event) {
   if (!item || field !== "name") return;
   const stop = findStop(item);
   if (!stop) return;
+  if (event.target.dataset.historyRecorded !== "true") {
+    recordRouteChange();
+    event.target.dataset.historyRecorded = "true";
+  }
   stop.name = event.target.value;
   stop.marker
     .getElement()
@@ -356,7 +401,12 @@ function editStop(event) {
 function commitCoordinateEdit(event) {
   const item = event.target.closest("[data-stop-id]");
   const field = event.target.dataset.field;
-  if (!item || !["latitude", "longitude"].includes(field)) return;
+  if (!item) return;
+  if (field === "name") {
+    delete event.target.dataset.historyRecorded;
+    return;
+  }
+  if (!["latitude", "longitude"].includes(field)) return;
   const stop = findStop(item);
   if (!stop) return;
   const value = Number(event.target.value);
@@ -367,9 +417,11 @@ function commitCoordinateEdit(event) {
     setStatus("Latitude must be -90 to 90 and longitude -180 to 180.", true);
     return;
   }
+  if (value === stop[field]) return;
+  recordRouteChange();
   stop[field] = value;
   stop.marker.setLngLat([stop.longitude, stop.latitude]);
-  routeStops();
+  routeStops(false);
 }
 
 function handleStopAction(event) {
@@ -381,21 +433,24 @@ function handleStopAction(event) {
 
   switch (button.dataset.action) {
     case "up":
-      shapingPoints = [];
-      if (index > 0) [stops[index - 1], stops[index]] = [stops[index], stops[index - 1]];
+      if (index === 0) return;
+      recordRouteChange();
+      clearShapingPoints();
+      [stops[index - 1], stops[index]] = [stops[index], stops[index - 1]];
       break;
     case "down":
-      shapingPoints = [];
-      if (index < stops.length - 1) {
-        [stops[index], stops[index + 1]] = [stops[index + 1], stops[index]];
-      }
+      if (index === stops.length - 1) return;
+      recordRouteChange();
+      clearShapingPoints();
+      [stops[index], stops[index + 1]] = [stops[index + 1], stops[index]];
       break;
     case "locate":
       map.flyTo({ center: [stops[index].longitude, stops[index].latitude], zoom: 14 });
       focusStop(stops[index].id);
       return;
     case "remove":
-      shapingPoints = [];
+      recordRouteChange();
+      clearShapingPoints();
       stops[index].marker.remove();
       stops.splice(index, 1);
       break;
@@ -403,7 +458,7 @@ function handleStopAction(event) {
       return;
   }
   renderStops();
-  routeStops();
+  routeStops(false);
 }
 
 function beginListDrag(event) {
@@ -448,12 +503,13 @@ function finishListDrag(event) {
   const fromIndex = stops.findIndex((stop) => stop.id === stopId);
   let targetIndex = stops.findIndex((stop) => stop.id === targetId);
   if (fromIndex === -1 || targetIndex === -1) return;
+  recordRouteChange();
   const [moved] = stops.splice(fromIndex, 1);
   targetIndex = stops.findIndex((stop) => stop.id === targetId);
   stops.splice(targetIndex + (after ? 1 : 0), 0, moved);
-  shapingPoints = [];
+  clearShapingPoints();
   renderStops();
-  routeStops();
+  routeStops(false);
 }
 
 function cancelListDrag() {
@@ -475,10 +531,11 @@ function cleanupListDrag() {
 function clearRoute() {
   if (stops.length === 0) return;
   if (!window.confirm("Remove every stop from this route?")) return;
+  recordRouteChange();
   routeRequest?.abort();
   stops.forEach((stop) => stop.marker.remove());
   stops = [];
-  shapingPoints = [];
+  clearShapingPoints();
   routeCoordinates = [];
   routeLegGeometries = [];
   routedControls = [];
@@ -488,12 +545,107 @@ function clearRoute() {
 }
 
 function resetRouteAdjustments() {
-  shapingPoints = [];
+  if (shapingPoints.length === 0) return;
+  recordRouteChange();
+  clearShapingPoints();
   renderStops();
-  routeStops();
+  routeStops(false);
 }
 
-async function routeStops() {
+function routeStateSnapshot() {
+  return {
+    stops: stops.map(({ id, longitude, latitude, name }) => ({
+      id,
+      longitude,
+      latitude,
+      name,
+    })),
+    shapingPoints: shapingPoints.map(
+      ({ id, segmentStartId, longitude, latitude }) => ({
+        id,
+        segmentStartId,
+        longitude,
+        latitude,
+      }),
+    ),
+    routeStyle: elements.routeStyle.value,
+    avoidMotorways: elements.avoidMotorways.checked,
+  };
+}
+
+function recordRouteChange(snapshot = routeStateSnapshot()) {
+  routeHistory.push(snapshot);
+  updateHistoryButtons();
+}
+
+function undoRouteChange() {
+  const state = routeHistory.undo(routeStateSnapshot());
+  if (!state) return;
+  applyRouteState(state);
+}
+
+function redoRouteChange() {
+  const state = routeHistory.redo(routeStateSnapshot());
+  if (!state) return;
+  applyRouteState(state);
+}
+
+function applyRouteState(state) {
+  if (routeDrag) cleanupRouteDrag();
+  if (listDrag) cleanupListDrag();
+  routeRequest?.abort();
+  cancelRoutePreview();
+  stops.forEach((stop) => stop.marker.remove());
+  stops = [];
+  clearShapingPoints();
+  elements.routeStyle.value = state.routeStyle || "quickest";
+  elements.avoidMotorways.checked = Boolean(state.avoidMotorways);
+  rememberPreferenceValue({ target: elements.routeStyle });
+  rememberPreferenceValue({ target: elements.avoidMotorways });
+  for (const stop of state.stops || []) {
+    addStop(stop, stops.length, false, false);
+  }
+  for (const shape of state.shapingPoints || []) {
+    createShapingPoint(shape, shapingPoints.length);
+  }
+  renderStops();
+  routeStops(false);
+  updateHistoryButtons();
+}
+
+function updateHistoryButtons() {
+  elements.undoRoute.disabled = !routeHistory.canUndo;
+  elements.redoRoute.disabled = !routeHistory.canRedo;
+}
+
+function clearShapingPoints() {
+  routeAdjustmentPopup?.remove();
+  routeAdjustmentPopup = null;
+  for (const shape of shapingPoints) shape.marker?.remove();
+  shapingPoints = [];
+}
+
+function rememberPreferenceValue(event) {
+  event.target.dataset.previousValue =
+    event.target.type === "checkbox"
+      ? String(event.target.checked)
+      : event.target.value;
+}
+
+function changeRoutePreference(event) {
+  const previousState = routeStateSnapshot();
+  if (event.target.type === "checkbox") {
+    previousState.avoidMotorways = event.target.dataset.previousValue === "true";
+  } else {
+    previousState.routeStyle = event.target.dataset.previousValue || "quickest";
+  }
+  recordRouteChange(previousState);
+  rememberPreferenceValue(event);
+  routeStops(false);
+}
+
+async function routeStops(shouldFit = true) {
+  cancelRoutePreview();
   routeRequest?.abort();
   routeRequestSequence += 1;
   const requestSequence = routeRequestSequence;
@@ -512,21 +664,9 @@ async function routeStops() {
   routeRequest = new AbortController();
   setStatus("Joining your stops by road…");
   const controls = routingControls();
-  const coordinates = controls
-    .map((control) => `${control.longitude.toFixed(6)},${control.latitude.toFixed(6)}`)
-    .join(";");
-  const url = new URL(`/route/v1/driving/${coordinates}`, ROUTING_URL);
-  url.searchParams.set("overview", "full");
-  url.searchParams.set("geometries", "geojson");
-  url.searchParams.set("steps", "true");
-  if (elements.routeStyle.value === "twisty") {
-    url.searchParams.set("alternatives", "3");
-  }
 
   try {
-    const route = elements.avoidMotorways.checked
-      ? await fetchMotorcycleRoute(controls, routeRequest.signal)
-      : await fetchOsrmRoute(url, routeRequest.signal);
+    const route = await requestRoadRoute(controls, routeRequest.signal);
     if (requestSequence !== routeRequestSequence) return;
     routeCoordinates = route.geometry.coordinates;
     routedControls = controls;
@@ -547,7 +687,7 @@ async function routeStops() {
       ? ` ${preferenceNotes.join(" and ")} applied.`
       : "";
     setStatus(`Road route ready.${preferenceNote} You can keep editing or download the GPX file.`);
-    fitRoute();
+    if (shouldFit) fitRoute();
   } catch (error) {
     if (error.name === "AbortError") return;
     setStatus(
@@ -555,6 +695,23 @@ async function routeStops() {
       true,
     );
   }
+}
+
+function requestRoadRoute(controls, signal) {
+  if (elements.avoidMotorways.checked) {
+    return fetchMotorcycleRoute(controls, signal);
+  }
+  const coordinates = controls
+    .map((control) => `${control.longitude.toFixed(6)},${control.latitude.toFixed(6)}`)
+    .join(";");
+  const url = new URL(`/route/v1/driving/${coordinates}`, ROUTING_URL);
+  url.searchParams.set("overview", "full");
+  url.searchParams.set("geometries", "geojson");
+  url.searchParams.set("steps", "true");
+  if (elements.routeStyle.value === "twisty") {
+    url.searchParams.set("alternatives", "3");
+  }
+  return fetchOsrmRoute(url, signal);
 }
 
 async function fetchOsrmRoute(url, signal) {
@@ -611,9 +768,9 @@ async function fetchMotorcycleRoute(controls, signal) {
   };
 }
 
-function updateMapLines() {
+function updateMapLines(draftControls = routingControls()) {
   if (!map.getSource("route-draft") || !map.getSource("road-route")) return;
-  const draft = routingControls().map((control) => [control.longitude, control.latitude]);
+  const draft = draftControls.map((control) => [control.longitude, control.latitude]);
   map.getSource("route-draft")?.setData(lineData(draft));
   map.getSource("road-route")?.setData(lineData(routeCoordinates));
 }
@@ -997,6 +1154,10 @@ function installRouteDragging() {
       legIndex,
       moved: false,
       dragPanWasEnabled: map.dragPan.isEnabled(),
+      baseRouteCoordinates: routeCoordinates.map((coordinate) => [...coordinate]),
+      baseDistance: elements.distance.textContent,
+      baseDuration: elements.duration.textContent,
+      controlsAtStart: routedControls.map((control) => ({ ...control })),
     };
     canvas.setPointerCapture?.(event.pointerId);
     map.dragPan.disable();
@@ -1018,12 +1179,24 @@ function updateRouteDrag(event) {
   const canvas = map.getCanvas();
   const lngLat = map.unproject(mapEventPoint(event, canvas));
   showShapePreview(lngLat);
+  const startControl = routeDrag.controlsAtStart[routeDrag.legIndex];
+  const segmentStartId =
+    startControl.kind === "stop" ? startControl.id : startControl.segmentStartId;
+  const controls = routeDrag.controlsAtStart.map((control) => ({ ...control }));
+  controls.splice(routeDrag.legIndex + 1, 0, {
+    id: "preview",
+    kind: "shape",
+    segmentStartId,
+    longitude: lngLat.lng,
+    latitude: lngLat.lat,
+  });
+  queueRoutePreview(controls);
 }
 
 function finishRouteDrag(event) {
   if (!routeDrag || event.pointerId !== routeDrag.pointerId) return;
   const completedDrag = routeDrag;
-  cleanupRouteDrag();
+  cleanupRouteDrag(false);
   if (!completedDrag.moved) return;
   suppressNextMapClick = true;
   window.setTimeout(() => {
@@ -1037,12 +1210,20 @@ function cancelRouteDrag() {
   cleanupRouteDrag();
 }
 
-function cleanupRouteDrag() {
+function cleanupRouteDrag(restoreRoute = true) {
   if (!routeDrag) return;
+  const completedDrag = routeDrag;
   const canvas = map.getCanvas();
   canvas.releasePointerCapture?.(routeDrag.pointerId);
   if (routeDrag.dragPanWasEnabled) map.dragPan.enable();
   routeDrag = null;
+  cancelRoutePreview();
+  if (restoreRoute) {
+    routeCoordinates = completedDrag.baseRouteCoordinates;
+    elements.distance.textContent = completedDrag.baseDistance;
+    elements.duration.textContent = completedDrag.baseDuration;
+    updateMapLines();
+  }
   canvas.classList.remove("is-reshaping-route");
   document.querySelector(".route-shape-preview")?.remove();
   window.removeEventListener("pointermove", updateRouteDrag);
@@ -1053,25 +1234,156 @@ function cleanupRouteDrag() {
 function addShapingPoint(legIndex, lngLat) {
   const startControl = routedControls[legIndex];
   if (!startControl) return;
+  recordRouteChange();
   const segmentStartId =
     startControl.kind === "stop" ? startControl.id : startControl.segmentStartId;
-  const shape = {
-    id: ++shapeSequence,
-    segmentStartId,
-    longitude: lngLat.lng,
-    latitude: lngLat.lat,
-  };
+  let insertIndex;
   if (startControl.kind === "shape") {
-    const index = shapingPoints.findIndex((point) => point.id === startControl.id);
-    shapingPoints.splice(index + 1, 0, shape);
+    insertIndex = shapingPoints.findIndex((point) => point.id === startControl.id) + 1;
   } else {
     const index = shapingPoints.findIndex(
       (point) => point.segmentStartId === segmentStartId,
     );
-    shapingPoints.splice(index < 0 ? shapingPoints.length : index, 0, shape);
+    insertIndex = index < 0 ? shapingPoints.length : index;
   }
+  createShapingPoint(
+    {
+      segmentStartId,
+      longitude: lngLat.lng,
+      latitude: lngLat.lat,
+    },
+    insertIndex,
+  );
   renderStops();
-  routeStops();
+  routeStops(false);
+}
+
+function createShapingPoint(
+  { id: requestedId, segmentStartId, longitude, latitude },
+  insertIndex,
+) {
+  const id = Number.isInteger(requestedId) ? requestedId : ++shapeSequence;
+  shapeSequence = Math.max(shapeSequence, id);
+  const markerElement = document.createElement("button");
+  markerElement.className = "route-shape-marker";
+  markerElement.type = "button";
+  markerElement.title = "Drag to adjust this route shaping point";
+  markerElement.setAttribute("aria-label", "Route adjustment. Drag to move or press Delete to remove.");
+  const shape = {
+    id,
+    segmentStartId,
+    longitude,
+    latitude,
+    marker: null,
+  };
+  const marker = new maplibregl.Marker({
+    element: markerElement,
+    draggable: true,
+    anchor: "center",
+  })
+    .setLngLat([longitude, latitude])
+    .addTo(map);
+  shape.marker = marker;
+  markerElement.addEventListener("click", (event) => {
+    event.stopPropagation();
+    showRouteAdjustmentPopup(shape);
+  });
+  markerElement.addEventListener("keydown", (event) => {
+    if (!["Backspace", "Delete"].includes(event.key)) return;
+    event.preventDefault();
+    removeShapingPoint(shape.id);
+  });
+  marker.on("dragstart", () => {
+    recordRouteChange();
+    routeAdjustmentPopup?.remove();
+  });
+  marker.on("drag", () => {
+    const position = marker.getLngLat();
+    shape.longitude = position.lng;
+    shape.latitude = position.lat;
+    queueRoutePreview(routingControls());
+  });
+  marker.on("dragend", () => {
+    cancelRoutePreview();
+    routeStops(false);
+  });
+  shapingPoints.splice(insertIndex, 0, shape);
+  return shape;
+}
+
+function showRouteAdjustmentPopup(shape) {
+  routeAdjustmentPopup?.remove();
+  routeAdjustmentPopup = null;
+  const content = document.createElement("div");
+  content.className = "route-adjustment-popup-content";
+  const title = document.createElement("strong");
+  title.textContent = "Route adjustment";
+  const help = document.createElement("p");
+  help.textContent = "Drag the purple handle to reshape the route again.";
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.textContent = "Remove adjustment";
+  removeButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    removeShapingPoint(shape.id);
+  });
+  content.append(title, help, removeButton);
+  routeAdjustmentPopup = new maplibregl.Popup({
+    className: "route-adjustment-popup",
+    offset: 12,
+    maxWidth: "250px",
+  })
+    .setLngLat([shape.longitude, shape.latitude])
+    .setDOMContent(content)
+    .addTo(map);
+}
+
+function removeShapingPoint(id) {
+  const index = shapingPoints.findIndex((shape) => shape.id === id);
+  if (index < 0) return;
+  recordRouteChange();
+  routeAdjustmentPopup?.remove();
+  shapingPoints[index].marker.remove();
+  shapingPoints.splice(index, 1);
+  renderStops();
+  routeStops(false);
+}
+
+function queueRoutePreview(controls) {
+  pendingPreviewControls = controls.map((control) => ({ ...control }));
+  updateMapLines(pendingPreviewControls);
+  const delay = Math.max(0, 1000 - (Date.now() - lastPreviewRouteAt));
+  window.clearTimeout(previewRouteTimer);
+  previewRouteTimer = window.setTimeout(runRoutePreview, delay);
+}
+
+async function runRoutePreview() {
+  const controls = pendingPreviewControls;
+  if (!controls || controls.length < 2) return;
+  previewRouteRequest?.abort();
+  previewRouteRequest = new AbortController();
+  lastPreviewRouteAt = Date.now();
+  const sequence = ++previewRouteSequence;
+  try {
+    const route = await requestRoadRoute(controls, previewRouteRequest.signal);
+    if (sequence !== previewRouteSequence) return;
+    routeCoordinates = route.geometry.coordinates;
+    setSummary(route.distance, route.duration);
+    updateMapLines(controls);
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      // Keep the last valid preview while the pointer continues moving.
+    }
+  }
+}
+
+function cancelRoutePreview() {
+  previewRouteRequest?.abort();
+  previewRouteRequest = null;
+  window.clearTimeout(previewRouteTimer);
+  previewRouteTimer = null;
+  pendingPreviewControls = null;
+  previewRouteSequence += 1;
 }
 
 function showShapePreview(lngLat) {

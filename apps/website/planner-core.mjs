@@ -101,6 +101,42 @@ export function decodePolyline(encoded, precision = 6) {
   return coordinates;
 }
 
+export class StateHistory {
+  constructor(limit = 50) {
+    this.limit = limit;
+    this.past = [];
+    this.future = [];
+  }
+
+  get canUndo() {
+    return this.past.length > 0;
+  }
+
+  get canRedo() {
+    return this.future.length > 0;
+  }
+
+  push(state) {
+    const snapshot = cloneState(state);
+    if (statesMatch(this.past.at(-1), snapshot)) return;
+    this.past.push(snapshot);
+    if (this.past.length > this.limit) this.past.shift();
+    this.future = [];
+  }
+
+  undo(currentState) {
+    if (!this.canUndo) return null;
+    this.future.push(cloneState(currentState));
+    return cloneState(this.past.pop());
+  }
+
+  redo(currentState) {
+    if (!this.canRedo) return null;
+    this.past.push(cloneState(currentState));
+    return cloneState(this.future.pop());
+  }
+}
+
 export function buildGpx({ rideName, stops, routeCoordinates, createdAt }) {
   const safeName = String(rideName).trim();
   if (!safeName) throw new Error("Name the ride before downloading it.");
@@ -212,4 +248,12 @@ function decodePolylineValue(encoded, startIndex) {
     index,
     value: result & 1 ? ~(result >> 1) : result >> 1,
   };
+}
+
+function cloneState(state) {
+  return JSON.parse(JSON.stringify(state));
+}
+
+function statesMatch(first, second) {
+  return first != null && JSON.stringify(first) === JSON.stringify(second);
 }

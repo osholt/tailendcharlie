@@ -118,9 +118,29 @@
               <span class="section-kicker">Route points</span>
               <h2 id="route-stops-title">Your stops</h2>
             </div>
-            <button class="text-button" id="clear-route" type="button">
-              Clear
-            </button>
+            <div class="route-history-actions">
+              <button
+                class="text-button"
+                id="undo-route"
+                type="button"
+                aria-label="Undo last route edit"
+                disabled
+              >
+                Undo
+              </button>
+              <button
+                class="text-button"
+                id="redo-route"
+                type="button"
+                aria-label="Redo last route edit"
+                disabled
+              >
+                Redo
+              </button>
+              <button class="text-button" id="clear-route" type="button">
+                Clear
+              </button>
+            </div>
           </div>
           <button
             class="text-button reset-adjustments"

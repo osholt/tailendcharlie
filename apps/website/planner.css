@@ -333,6 +333,21 @@
   color: var(--peach);
 }
 
+.text-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.text-button:disabled:hover {
+  color: var(--muted);
+}
+
+.route-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .reset-adjustments {
   margin: -5px 0 10px;
   color: var(--teal);
@@ -727,7 +742,8 @@
   cursor: grabbing;
 }
 
-.biker-place-popup .maplibregl-popup-content {
+.biker-place-popup .maplibregl-popup-content,
+.route-adjustment-popup .maplibregl-popup-content {
   border: 1px solid rgba(253, 245, 240, 0.2);
   border-radius: 12px;
   padding: 14px;
@@ -736,34 +752,44 @@
   box-shadow: 0 14px 36px rgba(4, 5, 10, 0.42);
 }
 
-.biker-place-popup .maplibregl-popup-close-button {
+.biker-place-popup .maplibregl-popup-close-button,
+.route-adjustment-popup .maplibregl-popup-close-button {
   right: 5px;
   color: var(--muted);
   font-size: 1.2rem;
 }
 
-.biker-place-popup .maplibregl-popup-close-button:hover {
+.biker-place-popup .maplibregl-popup-close-button:hover,
+.route-adjustment-popup .maplibregl-popup-close-button:hover {
   color: var(--ink);
   background: transparent;
 }
 
 .biker-place-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
 .biker-place-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
-.biker-place-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+.biker-place-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip,
+.route-adjustment-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.route-adjustment-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.route-adjustment-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
   border-top-color: #171823;
 }
 
 .biker-place-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
 .biker-place-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
-.biker-place-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+.biker-place-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip,
+.route-adjustment-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.route-adjustment-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.route-adjustment-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
   border-bottom-color: #171823;
 }
 
-.biker-place-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+.biker-place-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip,
+.route-adjustment-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
   border-right-color: #171823;
 }
 
-.biker-place-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+.biker-place-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip,
+.route-adjustment-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
   border-left-color: #171823;
 }
 
@@ -807,6 +833,63 @@
 
 .biker-place-popup-content > button:hover {
   background: #82f0d8;
+}
+
+.route-adjustment-popup-content {
+  display: grid;
+  gap: 6px;
+  padding-right: 12px;
+}
+
+.route-adjustment-popup-content > strong {
+  color: var(--purple-bright);
+  font-size: 0.9rem;
+}
+
+.route-adjustment-popup-content > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.route-adjustment-popup-content > button {
+  margin-top: 5px;
+  border: 1px solid rgba(255, 173, 129, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--peach);
+  background: rgba(255, 173, 129, 0.08);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.route-adjustment-popup-content > button:hover {
+  border-color: var(--peach);
+  background: rgba(255, 173, 129, 0.14);
+}
+
+.route-shape-marker {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  padding: 0;
+  background: var(--purple-bright);
+  box-shadow: 0 3px 12px rgba(16, 7, 37, 0.55);
+  cursor: grab;
+  touch-action: none;
+}
+
+.route-shape-marker:active {
+  cursor: grabbing;
+}
+
+.route-shape-marker:focus-visible {
+  outline: 3px solid var(--teal);
+  outline-offset: 2px;
 }
 
 .maplibregl-canvas.is-reshaping-route {
