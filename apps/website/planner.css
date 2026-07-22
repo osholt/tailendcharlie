@@ -654,7 +654,7 @@
 
 .route-summary {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1px;
   overflow: hidden;
   margin-top: 24px;
@@ -671,6 +671,11 @@
 .route-summary span,
 .route-summary strong {
   display: block;
+}
+
+#route-twistiness {
+  font-size: 0.78rem;
+  line-height: 1.25;
 }
 
 .route-summary span {

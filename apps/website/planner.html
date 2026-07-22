@@ -82,7 +82,9 @@
           <label for="route-style">Routing style</label>
           <select id="route-style" name="route-style">
             <option value="quickest">Quickest route</option>
-            <option value="twisty">More bends (up to 50% longer)</option>
+            <option value="balanced">Flowing (up to 25% longer)</option>
+            <option value="twisty">Twisty (up to 50% longer)</option>
+            <option value="very-twisty">Very twisty (up to 75% longer)</option>
           </select>
           <label class="checkbox-field" for="avoid-motorways">
             <input id="avoid-motorways" type="checkbox" />
@@ -101,9 +103,9 @@
             <span>Avoid ferries</span>
           </label>
           <p class="field-help">
-            “More bends” chooses the curviest reasonable alternative offered
-            by the road router. “Avoid major roads” is the quieter-road option;
-            the other avoidances exclude only their named road or crossing type.
+            The bendier styles choose the highest bend score within the stated
+            time allowance. “Avoid major roads” is the quieter-road option; the
+            other avoidances exclude only their named road or crossing type.
           </p>
         </fieldset>
 
@@ -236,6 +238,10 @@
           <div>
             <span>Estimated time</span>
             <strong id="route-duration">—</strong>
+          </div>
+          <div>
+            <span>Bend score</span>
+            <strong id="route-twistiness">—</strong>
           </div>
         </section>
 

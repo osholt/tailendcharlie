@@ -23,6 +23,7 @@ const validDraft = {
   ],
   routeDistance: 24_000,
   routeDuration: 1_800,
+  routeBendScore: 28.4,
   routeStyle: "twisty",
   avoidMotorways: true,
   avoidMajorRoads: false,

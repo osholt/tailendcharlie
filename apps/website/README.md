@@ -12,11 +12,13 @@ My Maps export plus locally maintained common starts. Exported venues are
 retained only while they also appear on the event's current directory map, so
 withdrawn or stale entries are excluded. Routes can be reshaped with visible,
 reusable adjustment handles; the road route previews while a handle is dragged,
-and route edits can be undone or redone. Catalogue matching stays in the
-browser. Draft rides and preferences are retained in first-party browser
-storage for save-and-return, with an in-planner clear control and no cookies or
-tracking. Route coordinates and other place queries go only to the documented
-providers.
+and route edits can be undone or redone. Direction arrows follow the route,
+with larger arrows distinguishing each traversal near a self-crossing. Flowing,
+twisty and very-twisty choices use a reproducible bend score and explicit detour
+limits. Catalogue matching stays in the browser. Draft rides and preferences
+are retained in first-party browser storage for save-and-return, with an
+in-planner clear control and no cookies or tracking. Route coordinates and
+other place queries go only to the documented providers.
 Cloudflare Pages is connected directly to this repository and publishes the
 site automatically from `main`.
 

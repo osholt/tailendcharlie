@@ -4,8 +4,11 @@ import {
   decodePolyline,
   formatDistance,
   formatDuration,
+  formatRouteBendScore,
   gpxFileName,
   motorcycleCostingOptions,
+  routeBendScore,
+  routeSelfCrossingArrows,
   StateHistory,
 } from "./planner-core.mjs";
 import {
@@ -65,6 +68,7 @@ const elements = {
   searchResults: document.querySelector("#search-results"),
   status: document.querySelector("#route-status"),
   stopList: document.querySelector("#stop-list"),
+  twistiness: document.querySelector("#route-twistiness"),
   undoRoute: document.querySelector("#undo-route"),
 };
 
@@ -75,6 +79,8 @@ let routeLegGeometries = [];
 let routedControls = [];
 let routeDistance = null;
 let routeDuration = null;
+let routeBendScoreValue = null;
+let crossingArrowRoute = null;
 let routeRequest = null;
 let routeRequestSequence = 0;
 let searchRequest = null;
@@ -127,6 +133,12 @@ map.addControl(
 );
 
 map.on("load", () => {
+  map.addImage("route-direction-arrow", createRouteArrowImage("#ffffff"), {
+    pixelRatio: 2,
+  });
+  map.addImage("route-crossing-arrow", createRouteArrowImage("#ffad81"), {
+    pixelRatio: 2,
+  });
   map.addSource("route-draft", emptyLineSource());
   map.addLayer({
     id: "route-draft-line",
@@ -160,6 +172,40 @@ map.on("load", () => {
     paint: {
       "line-color": "#6d2ee8",
       "line-width": 6,
+    },
+  });
+  map.addLayer({
+    id: "road-route-arrows",
+    type: "symbol",
+    source: "road-route",
+    layout: {
+      "symbol-placement": "line",
+      "symbol-spacing": 105,
+      "icon-image": "route-direction-arrow",
+      "icon-size": 0.38,
+      "icon-rotation-alignment": "map",
+      "icon-pitch-alignment": "map",
+      "icon-keep-upright": false,
+      "icon-allow-overlap": true,
+    },
+    paint: { "icon-opacity": 0.96 },
+  });
+  map.addSource("route-crossing-arrows", {
+    type: "geojson",
+    data: pointData([]),
+  });
+  map.addLayer({
+    id: "road-route-crossing-arrows",
+    type: "symbol",
+    source: "route-crossing-arrows",
+    layout: {
+      "icon-image": "route-crossing-arrow",
+      "icon-size": 0.5,
+      "icon-rotate": ["-", ["get", "bearing"], 90],
+      "icon-rotation-alignment": "map",
+      "icon-pitch-alignment": "map",
+      "icon-allow-overlap": true,
+      "icon-ignore-placement": true,
     },
   });
   map.addLayer({
@@ -752,11 +798,16 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
     routeLegGeometries =
       route.legGeometries ||
       (Array.isArray(route.legs) ? route.legs.map(legGeometry) : []);
-    setSummary(route.distance, route.duration);
+    setSummary(route.distance, route.duration, routeBendScore(route));
     updateMapLines();
     updateDownloadState();
     const preferenceNotes = [];
-    if (elements.routeStyle.value === "twisty") preferenceNotes.push("Twisty-road bias");
+    const curvePreference = {
+      balanced: "Flowing-road bias",
+      twisty: "Twisty-road bias",
+      "very-twisty": "Very-twisty-road bias",
+    }[elements.routeStyle.value];
+    if (curvePreference) preferenceNotes.push(curvePreference);
     if (elements.avoidMotorways.checked) preferenceNotes.push("motorways excluded");
     if (elements.avoidMajorRoads.checked) preferenceNotes.push("major roads avoided");
     if (elements.avoidTolls.checked) preferenceNotes.push("tolls excluded");
@@ -795,7 +846,7 @@ function requestRoadRoute(controls, signal) {
   url.searchParams.set("overview", "full");
   url.searchParams.set("geometries", "geojson");
   url.searchParams.set("steps", "true");
-  if (elements.routeStyle.value === "twisty") {
+  if (elements.routeStyle.value !== "quickest") {
     url.searchParams.set("alternatives", "3");
   }
   return fetchOsrmRoute(url, signal);
@@ -863,13 +914,26 @@ function updateMapLines(draftControls = routingControls()) {
   const draft = draftControls.map((control) => [control.longitude, control.latitude]);
   map.getSource("route-draft")?.setData(lineData(draft));
   map.getSource("road-route")?.setData(lineData(routeCoordinates));
+  if (routeCoordinates !== crossingArrowRoute) {
+    crossingArrowRoute = routeCoordinates;
+    const crossingArrows = routeSelfCrossingArrows(routeCoordinates).map(
+      (arrow) => ({
+        coordinate: arrow.coordinate,
+        properties: { bearing: arrow.bearing },
+      }),
+    );
+    map.getSource("route-crossing-arrows")?.setData(pointData(crossingArrows));
+  }
 }
 
-function setSummary(distance, duration) {
+function setSummary(distance, duration, bendScore) {
   routeDistance = Number.isFinite(distance) && distance >= 0 ? distance : null;
   routeDuration = Number.isFinite(duration) && duration >= 0 ? duration : null;
+  routeBendScoreValue =
+    Number.isFinite(bendScore) && bendScore >= 0 ? bendScore : null;
   elements.distance.textContent = formatDistance(distance);
   elements.duration.textContent = formatDuration(duration);
+  elements.twistiness.textContent = formatRouteBendScore(bendScore);
   scheduleDraftSave();
 }
 
@@ -1283,6 +1347,7 @@ function savePlannerDraft() {
         routeCoordinates,
         routeDistance,
         routeDuration,
+        routeBendScore: routeBendScoreValue,
         bikerLayerVisible: elements.bikerLayerVisible.checked,
       }),
     );
@@ -1322,7 +1387,15 @@ function restorePlannerDraft() {
   routedControls = routingControls();
   routeDistance = draft.routeDistance;
   routeDuration = draft.routeDuration;
-  setSummary(routeDistance, routeDuration);
+  routeBendScoreValue =
+    draft.routeBendScore ??
+    (routeCoordinates.length > 1
+      ? routeBendScore({
+          geometry: { coordinates: routeCoordinates },
+          distance: routeDistance,
+        })
+      : null);
+  setSummary(routeDistance, routeDuration, routeBendScoreValue);
   updateBikerLayerVisibility();
   updateMapLines();
   updateDownloadState();
@@ -1534,6 +1607,8 @@ function installRouteDragging() {
       baseDuration: elements.duration.textContent,
       baseDistanceValue: routeDistance,
       baseDurationValue: routeDuration,
+      baseBendScoreValue: routeBendScoreValue,
+      baseBendScore: elements.twistiness.textContent,
       controlsAtStart: routedControls.map((control) => ({ ...control })),
     };
     canvas.setPointerCapture?.(event.pointerId);
@@ -1599,8 +1674,10 @@ function cleanupRouteDrag(restoreRoute = true) {
     routeCoordinates = completedDrag.baseRouteCoordinates;
     routeDistance = completedDrag.baseDistanceValue;
     routeDuration = completedDrag.baseDurationValue;
+    routeBendScoreValue = completedDrag.baseBendScoreValue;
     elements.distance.textContent = completedDrag.baseDistance;
     elements.duration.textContent = completedDrag.baseDuration;
+    elements.twistiness.textContent = completedDrag.baseBendScore;
     updateMapLines();
   }
   canvas.classList.remove("is-reshaping-route");
@@ -1747,7 +1824,7 @@ async function runRoutePreview() {
     const route = await requestRoadRoute(controls, previewRouteRequest.signal);
     if (sequence !== previewRouteSequence) return;
     routeCoordinates = route.geometry.coordinates;
-    setSummary(route.distance, route.duration);
+    setSummary(route.distance, route.duration, routeBendScore(route));
     updateMapLines(controls);
   } catch (error) {
     if (error.name !== "AbortError") {
@@ -1864,6 +1941,29 @@ function emptyLineSource() {
   return { type: "geojson", data: lineData([]) };
 }
 
+function createRouteArrowImage(colour) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d");
+  context.fillStyle = colour;
+  context.strokeStyle = "rgba(23, 24, 35, 0.9)";
+  context.lineWidth = 5;
+  context.lineJoin = "round";
+  context.beginPath();
+  context.moveTo(7, 23);
+  context.lineTo(34, 23);
+  context.lineTo(34, 11);
+  context.lineTo(57, 32);
+  context.lineTo(34, 53);
+  context.lineTo(34, 41);
+  context.lineTo(7, 41);
+  context.closePath();
+  context.stroke();
+  context.fill();
+  return context.getImageData(0, 0, canvas.width, canvas.height);
+}
+
 function lineData(coordinates) {
   return {
     type: "FeatureCollection",
@@ -1877,5 +1977,16 @@ function lineData(coordinates) {
               geometry: { type: "LineString", coordinates },
             },
           ],
+  };
+}
+
+function pointData(points) {
+  return {
+    type: "FeatureCollection",
+    features: points.map((point) => ({
+      type: "Feature",
+      properties: point.properties || {},
+      geometry: { type: "Point", coordinates: point.coordinate },
+    })),
   };
 }

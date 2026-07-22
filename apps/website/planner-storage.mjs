@@ -83,7 +83,10 @@ export function decodePlannerDraft(
       routeCoordinates,
       routeDistance: hasSavedRoute ? validSummaryValue(draft.routeDistance) : null,
       routeDuration: hasSavedRoute ? validSummaryValue(draft.routeDuration) : null,
-      routeStyle: draft.routeStyle === "twisty" ? "twisty" : "quickest",
+      routeBendScore: hasSavedRoute ? validSummaryValue(draft.routeBendScore) : null,
+      routeStyle: ["balanced", "twisty", "very-twisty"].includes(draft.routeStyle)
+        ? draft.routeStyle
+        : "quickest",
       avoidMotorways: Boolean(draft.avoidMotorways),
       avoidMajorRoads: Boolean(draft.avoidMajorRoads),
       avoidTolls: Boolean(draft.avoidTolls),
