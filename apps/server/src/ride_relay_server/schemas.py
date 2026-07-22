@@ -99,3 +99,27 @@ class DiscoveryModerationRequest(BaseModel):
 
     action: Literal["approve", "reject", "request_changes", "supersede"]
     reason: str = Field(min_length=3, max_length=500)
+
+
+class CreatePlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=200)
+    gpx: str = Field(min_length=1)
+
+
+class CreatePlanResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    expiresAt: str
+
+
+class GetPlanResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    name: str | None
+    gpx: str
+    createdAt: str
+    expiresAt: str

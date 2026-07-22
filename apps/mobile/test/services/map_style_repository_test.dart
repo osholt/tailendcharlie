@@ -104,9 +104,7 @@ void main() {
       final layers = (style['layers'] as List).cast<Map>();
       final background = layers.singleWhere((l) => l['id'] == 'background');
       final minor = layers.singleWhere((l) => l['id'] == 'highway_minor');
-      final unrelated = layers.singleWhere(
-        (l) => l['id'] == 'unrelated_layer',
-      );
+      final unrelated = layers.singleWhere((l) => l['id'] == 'unrelated_layer');
 
       expect(
         (background['paint'] as Map)['background-color'],

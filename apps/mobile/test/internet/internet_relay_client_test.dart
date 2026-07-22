@@ -212,7 +212,10 @@ void main() {
           'resolveToken': _session.joinToken,
         });
         expect(requests.last.method, 'GET');
-        expect(requests.last.headers.containsKey('x-ride-relay-join-token'), isFalse);
+        expect(
+          requests.last.headers.containsKey('x-ride-relay-join-token'),
+          isFalse,
+        );
         directory.close();
       },
     );

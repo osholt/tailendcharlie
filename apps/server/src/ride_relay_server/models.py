@@ -54,6 +54,24 @@ class RideJoinCode(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class RidePlan(Base):
+    """An encrypted, pre-ride GPX route behind a short lookup code.
+
+    Unrelated to the live ride/join-code tables: a plan never carries a ride
+    secret and a fetched plan never claims a ride. The phone that loads one
+    still runs its own unchanged create-ride flow.
+    """
+
+    __tablename__ = "ride_plans"
+    __table_args__ = (Index("ix_ride_plans_expiry", "expires_at"),)
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(200))
+    gpx_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class StoredEvent(Base):
     __tablename__ = "ride_events"
     __table_args__ = (

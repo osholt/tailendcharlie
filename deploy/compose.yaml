@@ -28,6 +28,9 @@ services:
       RIDE_RELAY_DATABASE_URL: postgresql+psycopg://ride_relay:${POSTGRES_PASSWORD}@db:5432/ride_relay
       RIDE_RELAY_DATA_ENCRYPTION_KEY: ${RIDE_RELAY_DATA_ENCRYPTION_KEY:?set RIDE_RELAY_DATA_ENCRYPTION_KEY}
       RIDE_RELAY_CURSOR_SIGNING_KEY: ${RIDE_RELAY_CURSOR_SIGNING_KEY:?set RIDE_RELAY_CURSOR_SIGNING_KEY}
+      RIDE_RELAY_DISCOVERY_ADMIN_TOKEN: ${RIDE_RELAY_DISCOVERY_ADMIN_TOKEN:-}
+      RIDE_RELAY_DISCOVERY_ADMIN_NAME: ${RIDE_RELAY_DISCOVERY_ADMIN_NAME:-discovery-admin}
+      RIDE_RELAY_DISCOVERY_ALLOWED_ORIGINS: '${RIDE_RELAY_DISCOVERY_ALLOWED_ORIGINS:-["https://tailendcharlie.app","https://www.tailendcharlie.app"]}'
       RIDE_RELAY_TRUSTED_HOSTS: '["${RIDE_RELAY_DOMAIN}","127.0.0.1","localhost"]'
       RIDE_RELAY_FORWARDED_ALLOW_IPS: '*'
       RIDE_RELAY_AUTO_CREATE_SCHEMA: 'false'
@@ -83,6 +86,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./maps/styles:/srv/maps/styles:ro
+      - ../apps/planner:/srv/planner:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

@@ -13,7 +13,9 @@ String joinInviteText(String rideCode, String joinToken) =>
 /// arbitrary pasted text - a bare code, a `code#token` invite, or a full
 /// shared sentence containing either one.
 ({String? code, String? token}) parseJoinInvite(String pastedText) {
-  final compound = RegExp('($_codePattern)#($_tokenPattern)').firstMatch(pastedText);
+  final compound = RegExp(
+    '($_codePattern)#($_tokenPattern)',
+  ).firstMatch(pastedText);
   if (compound != null) {
     return (code: compound.group(1), token: compound.group(2));
   }

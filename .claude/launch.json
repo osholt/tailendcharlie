@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "4173", "--directory", "apps/website"],
       "port": 4173
+    },
+    {
+      "name": "planner",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4174", "--directory", "apps/planner"],
+      "port": 4174
     }
   ]
 }

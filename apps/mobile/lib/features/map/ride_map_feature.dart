@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -18,6 +19,7 @@ import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/route_store.dart';
+import '../../internet/plan_directory.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_suggestion_queue.dart';
@@ -277,6 +279,7 @@ class RideMapScreen extends StatefulWidget {
     super.key,
     required this.routeStore,
     required this.routeImporter,
+    this.planDirectory,
     required this.offlineTileCache,
     this.mapLibreOfflineManager,
     this.mapStyleString = MapStyleRepository.fallbackStyle,
@@ -310,6 +313,7 @@ class RideMapScreen extends StatefulWidget {
 
   final RouteStore routeStore;
   final RouteImporter routeImporter;
+  final PlanDirectory? planDirectory;
   final OfflineTileCache offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String mapStyleString;
@@ -2052,6 +2056,68 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  /// Loads a route prepared on the web planner. The plan code has no
+  /// relationship to a live ride or its credentials - this only fetches a
+  /// GPX file through the same parse-and-activate pipeline as a manual
+  /// import, exactly like [_importGpx] and [_importSharedGpx] above.
+  Future<void> _loadPlannedRoute() async {
+    if (_importing) return;
+    final code = await _promptForPlanCode();
+    if (code == null || code.trim().isEmpty || !mounted) return;
+    setState(() => _importing = true);
+    try {
+      final directory =
+          widget.planDirectory ?? HttpPlanDirectory.fromEnvironment();
+      final plan = await directory.fetch(code);
+      final route = widget.routeImporter.importFromFile(
+        PickedGpxFile(
+          name: '${plan.name ?? 'planned-route'}.gpx',
+          bytes: Uint8List.fromList(utf8.encode(plan.gpx)),
+        ),
+      );
+      await _activateRoute(route);
+    } on PlanDirectoryException catch (error) {
+      _showMessage(error.message);
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+    } on Object catch (error) {
+      _showMessage('Could not load planned route: $error');
+    } finally {
+      if (mounted) setState(() => _importing = false);
+    }
+  }
+
+  Future<String?> _promptForPlanCode() {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Load a planned route'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          maxLength: 16,
+          decoration: const InputDecoration(
+            labelText: 'Plan code',
+            hintText: 'e.g. 7F3K9QRT',
+          ),
+          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Load'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _planDestination() async {
     if (_routing) return;
     final request = await DestinationRouteSheet.show(context);
@@ -2788,6 +2854,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
               onTap: () {
                 Navigator.of(sheetContext).pop();
                 _importGpx();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.qr_code),
+              title: const Text('Load a planned route'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                _loadPlannedRoute();
               },
             ),
             ListTile(

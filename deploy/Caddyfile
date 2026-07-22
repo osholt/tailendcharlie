@@ -4,6 +4,13 @@
 	@metrics path /metrics
 	respond @metrics 404
 
+	handle /api/v1/plans* {
+		request_body {
+			max_size 12MB
+		}
+		reverse_proxy server:8080
+	}
+
 	handle /api/* {
 		request_body {
 			max_size 64KB
@@ -26,6 +33,13 @@
 
 	handle_path /maps/tiles/* {
 		reverse_proxy martin:3000
+	}
+
+	handle_path /plan/* {
+		root * /srv/planner
+		header Content-Security-Policy "default-src 'self'"
+		header X-Content-Type-Options "nosniff"
+		file_server
 	}
 
 	respond 404

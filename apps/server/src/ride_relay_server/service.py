@@ -4,6 +4,7 @@ import hmac
 import json
 import math
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from .config import Settings
 from .crypto import CursorCodec, DataCipher, base64url, sha256, token_hash
-from .models import IdempotencyReplay, Ride, RideJoinCode, StoredEvent
+from .gpx import GpxValidationError, validate_gpx
+from .models import IdempotencyReplay, Ride, RideJoinCode, RidePlan, StoredEvent
 from .schemas import SyncRequest, SyncResponse
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -22,6 +24,9 @@ JOIN_CODE = re.compile(r"^\d{6}$")
 TOKEN = re.compile(r"^rr1_[A-Za-z0-9_-]{43}$")
 IDEMPOTENCY_KEY = re.compile(r"^rr1-[A-Za-z0-9_-]{43}$")
 SIGNATURE = re.compile(r"^[0-9a-f]{64}$")
+PLAN_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+PLAN_CODE_LENGTH = 8
+PLAN_CODE = re.compile(f"^[{PLAN_CODE_ALPHABET}]{{{PLAN_CODE_LENGTH}}}$")
 EVENT_TYPES = {
     "rideCreated",
     "riderJoined",
@@ -247,6 +252,93 @@ class RelayService:
                 "inviteSecret": secret,
                 "resolveToken": stored_resolve_token,
             }
+
+    def create_plan(
+        self,
+        session: Session,
+        *,
+        name: str | None,
+        gpx: str,
+        now: datetime | None = None,
+    ) -> dict[str, str]:
+        """A plan is unrelated to the live ride/join-code tables: it never
+        carries a ride secret, and fetching one never claims a ride. The
+        phone that loads it still runs its own unchanged create-ride flow.
+        """
+        now = now or datetime.now(UTC)
+        if name is not None and len(name) > 200:
+            raise RelayServiceError(400, "Plan name is too long")
+        try:
+            validate_gpx(
+                gpx,
+                maximum_bytes=self._settings.maximum_plan_bytes,
+                maximum_points=self._settings.maximum_plan_points,
+            )
+        except GpxValidationError as error:
+            raise RelayServiceError(400, str(error)) from error
+        expires_at = now + timedelta(days=self._settings.plan_retention_days)
+        with session.begin():
+            session.execute(delete(RidePlan).where(RidePlan.expires_at <= now))
+            for _ in range(8):
+                code = self._generate_plan_code()
+                ciphertext = self._cipher.encrypt_json(gpx, associated_data=self._plan_aad(code))
+                try:
+                    with session.begin_nested():
+                        session.add(
+                            RidePlan(
+                                code=code,
+                                name=name,
+                                gpx_ciphertext=ciphertext,
+                                created_at=now,
+                                expires_at=expires_at,
+                            )
+                        )
+                        session.flush()
+                    return {"code": code, "expiresAt": expires_at.isoformat()}
+                except IntegrityError:
+                    continue
+            raise RelayServiceError(500, "Could not allocate a plan code")
+
+    def get_plan(
+        self,
+        session: Session,
+        *,
+        code: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        now = now or datetime.now(UTC)
+        if not PLAN_CODE.fullmatch(code):
+            raise RelayServiceError(404, "Plan not found")
+        with session.begin():
+            record = session.get(RidePlan, code)
+            if record is None or self._as_utc(record.expires_at) <= now:
+                if record is not None:
+                    session.delete(record)
+                raise RelayServiceError(404, "Plan not found")
+            try:
+                gpx = self._cipher.decrypt_json(
+                    record.gpx_ciphertext,
+                    associated_data=self._plan_aad(code),
+                )
+            except ValueError as error:
+                raise RelayServiceError(500, "Plan record is invalid") from error
+            if not isinstance(gpx, str):
+                raise RelayServiceError(500, "Plan record is invalid")
+            return {
+                "code": record.code,
+                "name": record.name,
+                "gpx": gpx,
+                "createdAt": self._as_utc(record.created_at).isoformat(),
+                "expiresAt": self._as_utc(record.expires_at).isoformat(),
+            }
+
+    @staticmethod
+    def _generate_plan_code() -> str:
+        return "".join(secrets.choice(PLAN_CODE_ALPHABET) for _ in range(PLAN_CODE_LENGTH))
+
+    @staticmethod
+    def _plan_aad(code: str) -> bytes:
+        return f"plan:{code}".encode()
 
     @staticmethod
     def _validate_join_code(ride_code: str) -> None:
@@ -631,7 +723,7 @@ class RelayService:
         return f"replay:{ride_id}:{idempotency_key}".encode()
 
 
-def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, int, int, int]:
+def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, int, int, int, int]:
     now = now or datetime.now(UTC)
     with session.begin():
         events = session.execute(delete(StoredEvent).where(StoredEvent.expires_at <= now))
@@ -640,9 +732,11 @@ def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, i
         )
         rides = session.execute(delete(Ride).where(Ride.delete_after <= now))
         join_codes = session.execute(delete(RideJoinCode).where(RideJoinCode.expires_at <= now))
+        plans = session.execute(delete(RidePlan).where(RidePlan.expires_at <= now))
     return (
         events.rowcount or 0,
         replays.rowcount or 0,
         rides.rowcount or 0,
         join_codes.rowcount or 0,
+        plans.rowcount or 0,
     )

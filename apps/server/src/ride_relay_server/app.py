@@ -40,8 +40,11 @@ from .discovery import (
 )
 from .rate_limit import SlidingWindowRateLimiter
 from .schemas import (
+    CreatePlanRequest,
+    CreatePlanResponse,
     DiscoveryModerationRequest,
     DiscoverySuggestionRequest,
+    GetPlanResponse,
     JoinCodeResponse,
     RegisterJoinCodeRequest,
     SyncRequest,
@@ -81,6 +84,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maximum_requests=settings.discovery_suggestion_rate_limit_requests,
         window_seconds=settings.discovery_suggestion_rate_limit_window_seconds,
     )
+    plan_create_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.plan_create_rate_limit_requests,
+        window_seconds=settings.plan_create_rate_limit_window_seconds,
+    )
+    plan_lookup_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.plan_lookup_rate_limit_requests,
+        window_seconds=settings.plan_lookup_rate_limit_window_seconds,
+    )
     registry = CollectorRegistry()
     sync_requests = Counter(
         "ride_relay_sync_requests_total",
@@ -96,6 +107,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     join_code_requests = Counter(
         "ride_relay_join_code_requests_total",
         "Six-digit ride-code lookup requests",
+        ("outcome",),
+        registry=registry,
+    )
+    plan_requests = Counter(
+        "ride_relay_plan_requests_total",
+        "Pre-ride GPX plan requests",
         ("outcome",),
         registry=registry,
     )
@@ -330,6 +347,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         join_code_requests.labels(outcome="resolved").inc()
         return JSONResponse(content=JoinCodeResponse.model_validate(result).model_dump())
+
+    def _plan_rate_limit_response(retry_after: int) -> Response:
+        return JSONResponse(
+            status_code=429,
+            headers={"retry-after": str(min(retry_after, 300))},
+            content={"error": "Plan rate limit exceeded"},
+        )
+
+    @app.post("/api/v1/plans", include_in_schema=False)
+    async def create_plan(
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > settings.maximum_plan_bytes:
+                    raise RelayServiceError(413, "Plan upload exceeds size limit")
+            except ValueError as error:
+                raise RelayServiceError(400, "Invalid content length") from error
+        chunks = bytearray()
+        async for chunk in request.stream():
+            if len(chunks) + len(chunk) > settings.maximum_plan_bytes:
+                raise RelayServiceError(413, "Plan upload exceeds size limit")
+            chunks.extend(chunk)
+        body = bytes(chunks)
+        if "application/json" not in request.headers.get("content-type", "").lower():
+            raise RelayServiceError(400, "Content type must be application/json")
+
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = plan_create_limiter.check(f"ip:{client_ip}")
+        if retry_after is not None:
+            plan_requests.labels(outcome="rate_limited").inc()
+            return _plan_rate_limit_response(retry_after)
+
+        try:
+            parsed = CreatePlanRequest.model_validate_json(body)
+        except (ValidationError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise RelayServiceError(400, "Malformed plan request") from error
+
+        result = service.create_plan(session, name=parsed.name, gpx=parsed.gpx)
+        plan_requests.labels(outcome="created").inc()
+        return JSONResponse(content=CreatePlanResponse.model_validate(result).model_dump())
+
+    @app.get("/api/v1/plans/{code}", include_in_schema=False, response_model=None)
+    def get_plan(
+        code: str,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = plan_lookup_limiter.check(f"ip:{client_ip}")
+        if retry_after is not None:
+            plan_requests.labels(outcome="rate_limited").inc()
+            return _plan_rate_limit_response(retry_after)
+        result = service.get_plan(session, code=code)
+        plan_requests.labels(outcome="fetched").inc()
+        return JSONResponse(content=GetPlanResponse.model_validate(result).model_dump())
 
     @app.post("/api/v1/rides/{ride_id}/events:sync", include_in_schema=False)
     async def synchronize(

@@ -176,7 +176,10 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
   }
 
   @override
-  Future<RideCodeCredentials> resolve(String rideCode, {String? joinToken}) async {
+  Future<RideCodeCredentials> resolve(
+    String rideCode, {
+    String? joinToken,
+  }) async {
     _validateConfiguration();
     final normalizedCode = _normaliseCode(rideCode);
     final response = await _send(
