@@ -79,9 +79,22 @@
             <input id="avoid-motorways" type="checkbox" />
             <span>Avoid motorways</span>
           </label>
+          <label class="checkbox-field" for="avoid-major-roads">
+            <input id="avoid-major-roads" type="checkbox" />
+            <span>Avoid major roads</span>
+          </label>
+          <label class="checkbox-field" for="avoid-tolls">
+            <input id="avoid-tolls" type="checkbox" />
+            <span>Avoid toll roads</span>
+          </label>
+          <label class="checkbox-field" for="avoid-ferries">
+            <input id="avoid-ferries" type="checkbox" />
+            <span>Avoid ferries</span>
+          </label>
           <p class="field-help">
             “More bends” chooses the curviest reasonable alternative offered
-            by the road router; availability varies by area.
+            by the road router. “Avoid major roads” is the quieter-road option;
+            the other avoidances exclude only their named road or crossing type.
           </p>
         </fieldset>
 
@@ -103,7 +116,7 @@
             confidential information.
           </p>
           <button class="catalog-button" id="browse-biker-stops" type="button">
-            Browse 18 biker cafés &amp; start locations
+            Browse biker cafés &amp; start locations
           </button>
           <div
             class="search-results"
@@ -196,9 +209,13 @@
           <span aria-hidden="true">⛶</span>
           <span class="map-expand-label">Full screen</span>
         </button>
-        <div class="map-legend">
+        <div class="map-legend" aria-label="Map legend and layers">
           <span><i class="legend-stop"></i> Stops</span>
-          <span><i class="legend-poi"></i> Biker POIs</span>
+          <label class="map-layer-toggle" for="biker-layer-visible">
+            <input id="biker-layer-visible" type="checkbox" checked />
+            <i class="legend-poi"></i>
+            <span>Biker cafés</span>
+          </label>
           <span><i class="legend-route"></i> Road route</span>
         </div>
       </section>

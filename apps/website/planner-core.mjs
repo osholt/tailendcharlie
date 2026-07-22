@@ -101,6 +101,23 @@ export function decodePolyline(encoded, precision = 6) {
   return coordinates;
 }
 
+export function motorcycleCostingOptions({
+  routeStyle = "quickest",
+  avoidMajorRoads = false,
+  avoidMotorways = false,
+  avoidTolls = false,
+  avoidFerries = false,
+} = {}) {
+  return {
+    use_highways: avoidMajorRoads ? 0.08 : routeStyle === "twisty" ? 0.35 : 1,
+    use_tolls: avoidTolls ? 0 : 0.5,
+    use_ferry: avoidFerries ? 0 : 0.5,
+    exclude_highways: Boolean(avoidMotorways),
+    exclude_tolls: Boolean(avoidTolls),
+    exclude_ferries: Boolean(avoidFerries),
+  };
+}
+
 export class StateHistory {
   constructor(limit = 50) {
     this.limit = limit;

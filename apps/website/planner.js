@@ -5,6 +5,7 @@ import {
   formatDistance,
   formatDuration,
   gpxFileName,
+  motorcycleCostingOptions,
   StateHistory,
 } from "./planner-core.mjs";
 import {
@@ -24,7 +25,11 @@ const SEARCH_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
 const elements = {
   clearRoute: document.querySelector("#clear-route"),
+  avoidFerries: document.querySelector("#avoid-ferries"),
+  avoidMajorRoads: document.querySelector("#avoid-major-roads"),
   avoidMotorways: document.querySelector("#avoid-motorways"),
+  avoidTolls: document.querySelector("#avoid-tolls"),
+  bikerLayerVisible: document.querySelector("#biker-layer-visible"),
   browseBikerStops: document.querySelector("#browse-biker-stops"),
   distance: document.querySelector("#route-distance"),
   download: document.querySelector("#download-gpx"),
@@ -68,6 +73,16 @@ let pendingPreviewControls = null;
 let previewRouteSequence = 0;
 let lastPreviewRouteAt = 0;
 const routeHistory = new StateHistory(50);
+const routePreferenceElements = [
+  elements.routeStyle,
+  elements.avoidMotorways,
+  elements.avoidMajorRoads,
+  elements.avoidTolls,
+  elements.avoidFerries,
+];
+
+elements.browseBikerStops.textContent =
+  `Browse ${BIKER_PLACES.length} biker cafés & start locations`;
 
 const map = new maplibregl.Map({
   container: "map",
@@ -183,6 +198,7 @@ map.on("load", () => {
       map.getCanvas().style.cursor = "";
     });
   }
+  updateBikerLayerVisibility();
   updateMapLines();
   installRouteDragging();
 });
@@ -233,6 +249,7 @@ elements.browseBikerStops.addEventListener("click", () => {
   renderSearchResults(BIKER_PLACES.map((place) => ({ ...place, catalog: true })));
   fitBikerPlaces();
 });
+elements.bikerLayerVisible.addEventListener("change", updateBikerLayerVisibility);
 elements.stopList.addEventListener("input", editStop);
 elements.stopList.addEventListener("change", commitCoordinateEdit);
 elements.stopList.addEventListener("click", handleStopAction);
@@ -244,12 +261,11 @@ elements.redoRoute.addEventListener("click", redoRouteChange);
 elements.download.addEventListener("click", downloadGpx);
 elements.expand.addEventListener("click", toggleExpandedMap);
 elements.rideName.addEventListener("input", updateDownloadState);
-elements.routeStyle.addEventListener("focus", rememberPreferenceValue);
-elements.avoidMotorways.addEventListener("focus", rememberPreferenceValue);
-elements.routeStyle.addEventListener("change", changeRoutePreference);
-elements.avoidMotorways.addEventListener("change", changeRoutePreference);
-rememberPreferenceValue({ target: elements.routeStyle });
-rememberPreferenceValue({ target: elements.avoidMotorways });
+for (const preference of routePreferenceElements) {
+  preference.addEventListener("focus", rememberPreferenceValue);
+  preference.addEventListener("change", changeRoutePreference);
+  rememberPreferenceValue({ target: preference });
+}
 document.addEventListener("fullscreenchange", syncExpandedMapState);
 document.addEventListener("keydown", (event) => {
   if (
@@ -570,6 +586,9 @@ function routeStateSnapshot() {
     ),
     routeStyle: elements.routeStyle.value,
     avoidMotorways: elements.avoidMotorways.checked,
+    avoidMajorRoads: elements.avoidMajorRoads.checked,
+    avoidTolls: elements.avoidTolls.checked,
+    avoidFerries: elements.avoidFerries.checked,
   };
 }
 
@@ -600,8 +619,12 @@ function applyRouteState(state) {
   clearShapingPoints();
   elements.routeStyle.value = state.routeStyle || "quickest";
   elements.avoidMotorways.checked = Boolean(state.avoidMotorways);
-  rememberPreferenceValue({ target: elements.routeStyle });
-  rememberPreferenceValue({ target: elements.avoidMotorways });
+  elements.avoidMajorRoads.checked = Boolean(state.avoidMajorRoads);
+  elements.avoidTolls.checked = Boolean(state.avoidTolls);
+  elements.avoidFerries.checked = Boolean(state.avoidFerries);
+  for (const preference of routePreferenceElements) {
+    rememberPreferenceValue({ target: preference });
+  }
   for (const stop of state.stops || []) {
     addStop(stop, stops.length, false, false);
   }
@@ -634,14 +657,24 @@ function rememberPreferenceValue(event) {
 
 function changeRoutePreference(event) {
   const previousState = routeStateSnapshot();
-  if (event.target.type === "checkbox") {
-    previousState.avoidMotorways = event.target.dataset.previousValue === "true";
-  } else {
-    previousState.routeStyle = event.target.dataset.previousValue || "quickest";
-  }
+  const stateKey = routePreferenceStateKey(event.target);
+  previousState[stateKey] =
+    event.target.type === "checkbox"
+      ? event.target.dataset.previousValue === "true"
+      : event.target.dataset.previousValue || "quickest";
   recordRouteChange(previousState);
   rememberPreferenceValue(event);
   routeStops(false);
+}
+
+function routePreferenceStateKey(preference) {
+  return {
+    "route-style": "routeStyle",
+    "avoid-motorways": "avoidMotorways",
+    "avoid-major-roads": "avoidMajorRoads",
+    "avoid-tolls": "avoidTolls",
+    "avoid-ferries": "avoidFerries",
+  }[preference.id];
 }
 
 async function routeStops(shouldFit = true) {
@@ -678,27 +711,31 @@ async function routeStops(shouldFit = true) {
     updateDownloadState();
     const preferenceNotes = [];
     if (elements.routeStyle.value === "twisty") preferenceNotes.push("Twisty-road bias");
-    if (elements.avoidMotorways.checked) {
-      preferenceNotes.push(
-        preferenceNotes.length ? "motorway avoidance" : "Motorway avoidance",
-      );
-    }
+    if (elements.avoidMotorways.checked) preferenceNotes.push("motorways excluded");
+    if (elements.avoidMajorRoads.checked) preferenceNotes.push("major roads avoided");
+    if (elements.avoidTolls.checked) preferenceNotes.push("tolls excluded");
+    if (elements.avoidFerries.checked) preferenceNotes.push("ferries excluded");
     const preferenceNote = preferenceNotes.length
-      ? ` ${preferenceNotes.join(" and ")} applied.`
+      ? ` ${preferenceNotes.join(", ").replace(/^./, (letter) => letter.toUpperCase())} applied.`
       : "";
     setStatus(`Road route ready.${preferenceNote} You can keep editing or download the GPX file.`);
     if (shouldFit) fitRoute();
   } catch (error) {
     if (error.name === "AbortError") return;
     setStatus(
-      "The road route could not be generated. Move a stop nearer a road or try again.",
+      "The road route could not be generated. Move a stop nearer a road or turn off one of the avoidances and try again.",
       true,
     );
   }
 }
 
 function requestRoadRoute(controls, signal) {
-  if (elements.avoidMotorways.checked) {
+  if (
+    elements.avoidMotorways.checked ||
+    elements.avoidMajorRoads.checked ||
+    elements.avoidTolls.checked ||
+    elements.avoidFerries.checked
+  ) {
     return fetchMotorcycleRoute(controls, signal);
   }
   const coordinates = controls
@@ -729,6 +766,13 @@ async function fetchOsrmRoute(url, signal) {
 }
 
 async function fetchMotorcycleRoute(controls, signal) {
+  const costingOptions = motorcycleCostingOptions({
+    routeStyle: elements.routeStyle.value,
+    avoidMajorRoads: elements.avoidMajorRoads.checked,
+    avoidMotorways: elements.avoidMotorways.checked,
+    avoidTolls: elements.avoidTolls.checked,
+    avoidFerries: elements.avoidFerries.checked,
+  });
   const routingRequest = {
     locations: controls.map((control) => ({
       lat: control.latitude,
@@ -736,11 +780,7 @@ async function fetchMotorcycleRoute(controls, signal) {
       type: "break",
     })),
     costing: "motorcycle",
-    costing_options: {
-      motorcycle: {
-        use_highways: elements.routeStyle.value === "twisty" ? 0.02 : 0.08,
-      },
-    },
+    costing_options: { motorcycle: costingOptions },
     units: "kilometers",
     directions_options: { units: "kilometers" },
   };
@@ -891,7 +931,7 @@ function renderSearchResults(results) {
     button.append(title, address);
     if (result.catalog) {
       const badge = document.createElement("small");
-      badge.textContent = "Biker stop";
+      badge.textContent = bikerPlaceLabel(result);
       button.prepend(badge);
     }
     button.addEventListener("click", async () => {
@@ -968,7 +1008,7 @@ function showBikerPlacePopup(feature) {
   const content = document.createElement("div");
   content.className = "biker-place-popup-content";
   const label = document.createElement("span");
-  label.textContent = "Biker stop";
+  label.textContent = bikerPlaceLabel(place);
   const title = document.createElement("strong");
   title.textContent = place.name;
   const address = document.createElement("p");
@@ -981,7 +1021,16 @@ function showBikerPlacePopup(feature) {
     addStop(place);
     bikerPlacePopup?.remove();
   });
-  content.append(label, title, address, addButton);
+  content.append(label, title, address);
+  if (place.sourceUrl) {
+    const sourceLink = document.createElement("a");
+    sourceLink.href = place.sourceUrl;
+    sourceLink.target = "_blank";
+    sourceLink.rel = "noreferrer";
+    sourceLink.textContent = "Check venue details";
+    content.append(sourceLink);
+  }
+  content.append(addButton);
   bikerPlacePopup = new maplibregl.Popup({
     className: "biker-place-popup",
     offset: 12,
@@ -999,6 +1048,25 @@ function fitBikerPlaces() {
     new maplibregl.LngLatBounds(),
   );
   map.fitBounds(bounds, { padding: 60, maxZoom: 8, duration: 700 });
+}
+
+function updateBikerLayerVisibility() {
+  const visibility = elements.bikerLayerVisible.checked ? "visible" : "none";
+  for (const layerId of [
+    "biker-place-clusters",
+    "biker-place-cluster-count",
+    "biker-place-dots",
+  ]) {
+    if (map.getLayer(layerId)) map.setLayoutProperty(layerId, "visibility", visibility);
+  }
+  if (visibility === "none") bikerPlacePopup?.remove();
+}
+
+function bikerPlaceLabel(place) {
+  if (place.category === "start" || /car park/i.test(place.name)) return "Common start";
+  return place.passportNumber
+    ? `Bike + Brew #${place.passportNumber}`
+    : "Biker café";
 }
 
 function getCachedSearch(query) {

@@ -9,6 +9,7 @@ import {
   formatDistance,
   formatDuration,
   gpxFileName,
+  motorcycleCostingOptions,
   routeBendScore,
   StateHistory,
 } from "./planner-core.mjs";
@@ -67,6 +68,36 @@ test("Valhalla polyline6 route shapes decode to longitude and latitude", () => {
     [-120.95, 40.7],
     [-126.453, 43.252],
   ]);
+});
+
+test("motorcycle routing keeps motorway and major-road preferences separate", () => {
+  assert.deepEqual(
+    motorcycleCostingOptions({ avoidMotorways: true }),
+    {
+      use_highways: 1,
+      use_tolls: 0.5,
+      use_ferry: 0.5,
+      exclude_highways: true,
+      exclude_tolls: false,
+      exclude_ferries: false,
+    },
+  );
+  assert.deepEqual(
+    motorcycleCostingOptions({
+      routeStyle: "twisty",
+      avoidMajorRoads: true,
+      avoidTolls: true,
+      avoidFerries: true,
+    }),
+    {
+      use_highways: 0.08,
+      use_tolls: 0,
+      use_ferry: 0,
+      exclude_highways: false,
+      exclude_tolls: true,
+      exclude_ferries: true,
+    },
+  );
 });
 
 test("route history supports bounded undo and redo without sharing state", () => {

@@ -667,6 +667,21 @@
   gap: 5px;
 }
 
+.map-layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.map-layer-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0 1px 0 0;
+  accent-color: var(--peach);
+}
+
 .map-legend i {
   display: block;
 }
@@ -816,6 +831,14 @@
   margin: 0;
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.biker-place-popup-content > a {
+  width: max-content;
+  color: var(--teal);
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-decoration: underline;
 }
 
 .biker-place-popup-content > button {
