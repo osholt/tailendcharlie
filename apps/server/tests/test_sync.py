@@ -79,6 +79,30 @@ def test_ride_start_event_is_accepted_and_relayed(client, synchronize, make_even
     assert downloaded.json()["events"] == [started]
 
 
+def test_membership_and_route_events_are_accepted_and_relayed(
+    client, synchronize, make_event
+) -> None:
+    ride_id = "ride-group-state"
+    shared = [
+        make_event(ride_id, "event-left", event_type="riderLeft"),
+        make_event(ride_id, "event-route-chunk", event_type="routeRevisionChunk"),
+        make_event(
+            ride_id,
+            "event-route-published",
+            event_type="routeRevisionPublished",
+        ),
+        make_event(ride_id, "event-route-cleared", event_type="routeCleared"),
+    ]
+
+    uploaded = synchronize(client, ride_id=ride_id, secret=SECRET, events=shared)
+    assert uploaded.status_code == 200
+    assert uploaded.json()["acceptedEventIds"] == [event["id"] for event in shared]
+
+    downloaded = synchronize(client, ride_id=ride_id, secret=SECRET, device_id="device-b")
+    assert downloaded.status_code == 200
+    assert downloaded.json()["events"] == shared
+
+
 def test_wrong_credential_cannot_read_claimed_ride(client, synchronize) -> None:
     ride_id = "ride-private"
     assert synchronize(client, ride_id=ride_id, secret=SECRET).status_code == 200

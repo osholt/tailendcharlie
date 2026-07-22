@@ -8,6 +8,7 @@ import '../controllers/rider_profile_controller.dart';
 import '../controllers/shared_route_controller.dart';
 import '../domain/recorded_route_store.dart';
 import '../features/home/home_screen.dart';
+import '../features/onboarding/onboarding_screen.dart';
 import '../features/ride/active_ride_shell.dart';
 
 class RideRelayApp extends StatelessWidget {
@@ -111,27 +112,34 @@ class RideRelayApp extends StatelessWidget {
           distanceUnits,
           mapStyleMode,
           sharedRoutes,
+          riderProfile,
         ]),
-        builder: (context, _) => controller.hasActiveRide
-            ? ActiveRideShell(
-                key: ValueKey(controller.session!.rideId),
-                rideController: controller,
-                distanceUnits: distanceUnits,
-                mapStyleMode: mapStyleMode,
-                eventStore: controller.eventStore,
-                enableNativeServices: enableNativeServices,
-                riderProfile: riderProfile,
-                sharedRoutes: sharedRoutes,
-              )
-            : HomeScreen(
-                controller: controller,
-                distanceUnits: distanceUnits,
-                mapStyleMode: mapStyleMode,
-                rideCodePreference: rideCodePreference,
-                riderProfile: riderProfile,
-                sharedRoutes: sharedRoutes,
-                recordedRoutes: recordedRoutes,
-              ),
+        builder: (context, _) {
+          if (controller.hasActiveRide) {
+            return ActiveRideShell(
+              key: ValueKey(controller.session!.rideId),
+              rideController: controller,
+              distanceUnits: distanceUnits,
+              mapStyleMode: mapStyleMode,
+              eventStore: controller.eventStore,
+              enableNativeServices: enableNativeServices,
+              riderProfile: riderProfile,
+              sharedRoutes: sharedRoutes,
+            );
+          }
+          if (riderProfile.needsOnboarding) {
+            return OnboardingScreen(riderProfile: riderProfile);
+          }
+          return HomeScreen(
+            controller: controller,
+            distanceUnits: distanceUnits,
+            mapStyleMode: mapStyleMode,
+            rideCodePreference: rideCodePreference,
+            riderProfile: riderProfile,
+            sharedRoutes: sharedRoutes,
+            recordedRoutes: recordedRoutes,
+          );
+        },
       ),
     );
   }

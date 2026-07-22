@@ -20,6 +20,14 @@ void main() {
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
     _riderProfile = await RiderProfileController.load();
+    await _riderProfile.completeOnboarding(
+      displayName: 'Oliver',
+      motorcycleStyle: _riderProfile.motorcycleStyle,
+      riderColor: _riderProfile.riderColor,
+      educationSkipped: false,
+      rideChoice: OnboardingRideChoice.create,
+    );
+    _riderProfile.takePendingRideChoice();
     _sharedRoutes = await SharedRouteController.load();
     _mapStyleMode = await MapStyleModeController.load();
     _rideCodePreference = RideCodePreferenceController.memory();

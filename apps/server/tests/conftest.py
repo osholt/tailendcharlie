@@ -82,6 +82,9 @@ def sync_request(
     cursor: str | None = None,
     events: list[dict[str, Any]] | None = None,
     token: str | None = None,
+    client_protocol: int | None = None,
+    capabilities: list[str] | None = None,
+    platform: str | None = None,
 ):
     body = json.dumps(
         {
@@ -93,15 +96,22 @@ def sync_request(
         separators=(",", ":"),
     ).encode()
     digest = base64.urlsafe_b64encode(hashlib.sha256(body).digest()).decode().rstrip("=")
+    headers = {
+        "authorization": f"Bearer {token or ride_token(ride_id, secret)}",
+        "content-type": "application/json",
+        "idempotency-key": f"rr1-{digest}",
+        "x-ride-relay-device": device_id,
+    }
+    if client_protocol is not None:
+        headers["x-tailendcharlie-protocol"] = str(client_protocol)
+    if capabilities is not None:
+        headers["x-tailendcharlie-capabilities"] = ",".join(capabilities)
+    if platform is not None:
+        headers["x-tailendcharlie-platform"] = platform
     return client.post(
         f"/api/v1/rides/{ride_id}/events:sync",
         content=body,
-        headers={
-            "authorization": f"Bearer {token or ride_token(ride_id, secret)}",
-            "content-type": "application/json",
-            "idempotency-key": f"rr1-{digest}",
-            "x-ride-relay-device": device_id,
-        },
+        headers=headers,
     )
 
 

@@ -16,7 +16,7 @@ import '../ride/route_recorder_screen.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.controller,
@@ -37,6 +37,27 @@ class HomeScreen extends StatelessWidget {
   final RecordedRouteStore recordedRoutes;
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    final choice = widget.riderProfile.takePendingRideChoice();
+    if (choice != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _showRideSheet(
+            context,
+            creating: choice == OnboardingRideChoice.create,
+          );
+        }
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
@@ -52,10 +73,10 @@ class HomeScreen extends StatelessWidget {
                     children: [
                       const _BrandMark(),
                       const SizedBox(height: 56),
-                      if (sharedRoutes.pending case final file?) ...[
+                      if (widget.sharedRoutes.pending case final file?) ...[
                         _PendingSharedRouteBanner(
                           fileName: file.name,
-                          onDismiss: sharedRoutes.clearPending,
+                          onDismiss: widget.sharedRoutes.clearPending,
                         ),
                         const SizedBox(height: 20),
                       ],
@@ -74,7 +95,7 @@ class HomeScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 40),
                       FilledButton.icon(
-                        onPressed: controller.busy
+                        onPressed: widget.controller.busy
                             ? null
                             : () => _showRideSheet(context, creating: true),
                         icon: const Icon(Icons.add_road),
@@ -82,7 +103,7 @@ class HomeScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 12),
                       OutlinedButton.icon(
-                        onPressed: controller.busy
+                        onPressed: widget.controller.busy
                             ? null
                             : () => _showRideSheet(context, creating: false),
                         icon: const Icon(Icons.group_add_outlined),
@@ -91,16 +112,18 @@ class HomeScreen extends StatelessWidget {
                       const SizedBox(height: 12),
                       TextButton.icon(
                         key: const Key('start-ride-simulator'),
-                        onPressed: controller.busy
+                        onPressed: widget.controller.busy
                             ? null
-                            : controller.createSimulationRide,
+                            : widget.controller.createSimulationRide,
                         icon: const Icon(Icons.science_outlined),
                         label: const Text('Try a simulated ride'),
                       ),
                       TextButton.icon(
                         key: const Key('record-a-route-button'),
-                        onPressed: () =>
-                            RouteRecorderScreen.show(context, recordedRoutes),
+                        onPressed: () => RouteRecorderScreen.show(
+                          context,
+                          widget.recordedRoutes,
+                        ),
                         icon: const Icon(Icons.fiber_manual_record_outlined),
                         label: const Text('Record a route'),
                       ),
@@ -126,15 +149,16 @@ class HomeScreen extends StatelessWidget {
                   IconButton(
                     tooltip: 'Emergency info',
                     onPressed: () =>
-                        EmergencyInfoSheet.show(context, riderProfile),
+                        EmergencyInfoSheet.show(context, widget.riderProfile),
                     icon: const Icon(Icons.medical_information_outlined),
                   ),
                   IconButton(
                     tooltip: 'Settings',
                     onPressed: () => UnitSettingsSheet.show(
                       context,
-                      distanceUnits,
-                      mapStyleMode,
+                      widget.distanceUnits,
+                      widget.mapStyleMode,
+                      widget.riderProfile,
                     ),
                     icon: const Icon(Icons.settings_outlined),
                   ),
@@ -151,16 +175,16 @@ class HomeScreen extends StatelessWidget {
     BuildContext context, {
     required bool creating,
   }) async {
-    controller.clearError();
+    widget.controller.clearError();
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: const Color(0xFF171D25),
       builder: (sheetContext) => _RideForm(
-        controller: controller,
-        rideCodePreference: rideCodePreference,
-        riderProfile: riderProfile,
+        controller: widget.controller,
+        rideCodePreference: widget.rideCodePreference,
+        riderProfile: widget.riderProfile,
         creating: creating,
         onComplete: () => Navigator.of(sheetContext).pop(),
       ),

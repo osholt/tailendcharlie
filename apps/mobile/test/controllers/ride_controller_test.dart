@@ -7,6 +7,7 @@ import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/marker_assistance.dart';
 import 'package:ride_relay/domain/geo_point.dart';
+import 'package:ride_relay/domain/imported_route.dart' as route_domain;
 import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
@@ -86,6 +87,67 @@ void main() {
     expect(restored.rideStarted, isTrue);
     expect(restored.rideStartedAt, controller.rideStartedAt);
     restored.dispose();
+  });
+
+  test('leader route publish and clear are signed durable revisions', () async {
+    await controller.createRide('Oliver');
+    final route = route_domain.ImportedRoute(
+      id: 'route-a',
+      name: 'Coast route',
+      importedAt: DateTime.utc(2026, 7, 16),
+      sourceFileName: 'coast.gpx',
+      paths: const [
+        route_domain.RoutePath(
+          kind: route_domain.RoutePathKind.track,
+          points: [
+            route_domain.GeoPoint(latitude: 51.4, longitude: -2.6),
+            route_domain.GeoPoint(latitude: 51.5, longitude: -2.5),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    await controller.publishRoute(route);
+
+    expect(controller.authoritativeRoute?.name, 'Coast route');
+    expect(controller.authoritativeRouteState.revisionNumber, 1);
+    expect(controller.events.last.type, RideEventType.routeRevisionPublished);
+    expect(controller.events.last.signature, hasLength(64));
+
+    await controller.clearRoute();
+
+    expect(controller.authoritativeRouteState.hasDecision, isTrue);
+    expect(controller.authoritativeRoute, isNull);
+    expect(controller.authoritativeRouteState.revisionNumber, 2);
+    expect(controller.events.last.type, RideEventType.routeCleared);
+  });
+
+  test('a non-leader cannot publish or clear the group route', () async {
+    await controller.createRide('Oliver');
+    await controller.setRole(RideRole.rider);
+    final route = route_domain.ImportedRoute(
+      id: 'route-a',
+      name: 'Wrong route',
+      importedAt: DateTime.utc(2026, 7, 16),
+      sourceFileName: 'wrong.gpx',
+      paths: const [
+        route_domain.RoutePath(
+          kind: route_domain.RoutePathKind.track,
+          points: [route_domain.GeoPoint(latitude: 51.4, longitude: -2.6)],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    await controller.publishRoute(route);
+    expect(controller.authoritativeRoute, isNull);
+    expect(controller.errorMessage, contains('Only the ride leader'));
+
+    controller.clearError();
+    await controller.clearRoute();
+    expect(controller.authoritativeRouteState.hasDecision, isFalse);
+    expect(controller.errorMessage, contains('Only the ride leader'));
   });
 
   test('a non-leader cannot start the ride', () async {
@@ -518,16 +580,26 @@ void main() {
     reopened.dispose();
   });
 
-  test('leaving an active ride clears its local session and events', () async {
-    await controller.createRide('Oliver');
-    final rideId = controller.session!.rideId;
+  test(
+    'leaving records a signed departure before clearing the session',
+    () async {
+      await controller.createRide('Oliver');
+      final rideId = controller.session!.rideId;
+      RideEvent? published;
 
-    await controller.leaveRide();
+      await controller.leaveRide(
+        publishDeparture: (departure) async => published = departure,
+      );
 
-    expect(controller.hasActiveRide, isFalse);
-    expect(await sessionStore.load(), isNull);
-    expect(await eventStore.eventsForRide(rideId), isEmpty);
-  });
+      expect(controller.hasActiveRide, isFalse);
+      expect(await sessionStore.load(), isNull);
+      final retained = await eventStore.eventsForRide(rideId);
+      expect(retained.last.type, RideEventType.riderLeft);
+      expect(retained.last.payload['riderId'], retained.last.deviceId);
+      expect(published?.id, retained.last.id);
+      expect(published?.signature, hasLength(64));
+    },
+  );
 
   test('explicit ICE share carries no recipient filter', () async {
     await controller.createRide('Oliver');

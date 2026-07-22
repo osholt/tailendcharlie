@@ -25,6 +25,7 @@ SIGNATURE = re.compile(r"^[0-9a-f]{64}$")
 EVENT_TYPES = {
     "rideCreated",
     "riderJoined",
+    "riderLeft",
     "roleChanged",
     "rideStarted",
     "markerStarted",
@@ -36,6 +37,9 @@ EVENT_TYPES = {
     "hazardCleared",
     "routeDeviationChanged",
     "routeAlertAcknowledged",
+    "routeRevisionChunk",
+    "routeRevisionPublished",
+    "routeCleared",
     "ridePaused",
     "rideResumed",
     "rideEnded",

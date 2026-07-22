@@ -164,6 +164,105 @@ void main() {
       );
       client.close();
     });
+
+    test('negotiates current relay capabilities', () async {
+      final requests = <http.Request>[];
+      final client = HttpInternetRelayClient(
+        configuration: InternetRelayConfiguration(
+          baseUri: Uri.parse('https://relay.example/base'),
+        ),
+        client: MockClient((request) async {
+          requests.add(request);
+          return _compatibilityResponse();
+        }),
+        clientDescriptor: _clientDescriptor,
+        clock: () => DateTime.utc(2026, 7, 22),
+      );
+
+      final result = await client.checkCompatibility();
+
+      expect(result.disposition, RelayCompatibilityDisposition.compatible);
+      expect(result.capabilities, RelayProtocolCapabilities.current);
+      expect(requests.single.url.path, '/base/v1/compatibility');
+      expect(requests.single.headers['x-tailendcharlie-protocol'], '1');
+      expect(
+        requests.single.headers['x-tailendcharlie-capabilities'],
+        contains(RelayProtocolCapabilities.routeRevisions),
+      );
+      client.close();
+    });
+
+    test(
+      'uses a bounded legacy mode when compatibility is unavailable',
+      () async {
+        final client = HttpInternetRelayClient(
+          configuration: InternetRelayConfiguration(
+            baseUri: Uri.parse('https://relay.example'),
+          ),
+          client: MockClient((_) async => http.Response('', 404)),
+          clientDescriptor: _clientDescriptor,
+          clock: () => DateTime.utc(2026, 7, 22),
+        );
+
+        final result = await client.checkCompatibility();
+
+        expect(
+          result.disposition,
+          RelayCompatibilityDisposition.legacyCompatible,
+        );
+        expect(result.canSynchronize, isTrue);
+        expect(result.capabilities, isEmpty);
+        client.close();
+      },
+    );
+
+    test('requires an update below the server minimum protocol', () async {
+      final client = HttpInternetRelayClient(
+        configuration: InternetRelayConfiguration(
+          baseUri: Uri.parse('https://relay.example'),
+        ),
+        client: MockClient(
+          (_) async => _compatibilityResponse(minimumClientProtocol: 2),
+        ),
+        clientDescriptor: _clientDescriptor,
+        clock: () => DateTime.utc(2026, 7, 22),
+      );
+
+      final result = await client.checkCompatibility();
+
+      expect(result.disposition, RelayCompatibilityDisposition.updateRequired);
+      expect(result.canSynchronize, isFalse);
+      expect(result.updateUri, Uri.parse('https://tailendcharlie.app/update'));
+      client.close();
+    });
+
+    test('does not expose a failed relay hostname in diagnostics', () async {
+      final client = HttpInternetRelayClient(
+        configuration: InternetRelayConfiguration(
+          baseUri: Uri.parse('https://retired.internal.example'),
+        ),
+        client: MockClient(
+          (_) async => throw http.ClientException(
+            'Failed host lookup: retired.internal.example',
+          ),
+        ),
+        clientDescriptor: _clientDescriptor,
+      );
+
+      await expectLater(
+        client.checkCompatibility(),
+        throwsA(
+          isA<InternetRelayException>()
+              .having(
+                (error) => error.message,
+                'message',
+                isNot(contains('retired.internal.example')),
+              )
+              .having((error) => error.retryable, 'retryable', isTrue),
+        ),
+      );
+      client.close();
+    });
   });
 
   group('HttpRideCodeDirectory', () {
@@ -173,6 +272,9 @@ void main() {
         final requests = <http.Request>[];
         final transport = MockClient((request) async {
           requests.add(request);
+          if (request.url.path.endsWith('/v1/compatibility')) {
+            return _compatibilityResponse();
+          }
           if (request.method == 'PUT') {
             return http.Response('', 204);
           }
@@ -202,11 +304,12 @@ void main() {
         expect(resolved.rideCode, '123456');
         expect(resolved.inviteSecret, _session.inviteSecret);
         expect(resolved.joinToken, _session.joinToken);
-        expect(requests, hasLength(2));
-        expect(requests.first.method, 'PUT');
-        expect(requests.first.url.path, '/base/v1/join-codes/123456');
-        expect(requests.first.followRedirects, isFalse);
-        expect(jsonDecode(requests.first.body), {
+        expect(requests, hasLength(3));
+        expect(requests.first.url.path, '/base/v1/compatibility');
+        expect(requests[1].method, 'PUT');
+        expect(requests[1].url.path, '/base/v1/join-codes/123456');
+        expect(requests[1].followRedirects, isFalse);
+        expect(jsonDecode(requests[1].body), {
           'rideId': _session.rideId,
           'inviteSecret': _session.inviteSecret,
           'resolveToken': _session.joinToken,
@@ -224,6 +327,9 @@ void main() {
       final requests = <http.Request>[];
       final transport = MockClient((request) async {
         requests.add(request);
+        if (request.url.path.endsWith('/v1/compatibility')) {
+          return _compatibilityResponse();
+        }
         return http.Response(
           jsonEncode({
             'rideId': _session.rideId,
@@ -245,13 +351,40 @@ void main() {
       await directory.resolve('123456', joinToken: 'pastedTokenValue123456');
 
       expect(
-        requests.single.headers['x-ride-relay-join-token'],
+        requests.last.headers['x-ride-relay-join-token'],
         'pastedTokenValue123456',
       );
       directory.close();
     });
   });
 }
+
+const _clientDescriptor = RelayClientDescriptor(
+  protocolVersion: 1,
+  platform: 'iOS',
+  appVersion: '1.0.1',
+  appBuild: '22',
+  capabilities: RelayProtocolCapabilities.current,
+);
+
+http.Response _compatibilityResponse({int minimumClientProtocol = 1}) =>
+    http.Response(
+      jsonEncode({
+        'serverProtocol': 1,
+        'minimumClientProtocol': minimumClientProtocol,
+        'maximumClientProtocol': 1,
+        'capabilities': RelayProtocolCapabilities.current.toList(),
+        'requiredCapabilities': <String>[],
+        'cacheSeconds': 300,
+        'updateUrls': {
+          'default': 'https://tailendcharlie.app/update',
+          'iOS': 'https://tailendcharlie.app/update',
+          'android': 'https://tailendcharlie.app/update',
+        },
+      }),
+      200,
+      headers: {'content-type': 'application/json'},
+    );
 
 class _NeverRespondingClient extends http.BaseClient {
   @override

@@ -52,6 +52,7 @@ class RideLifecycleReducer {
             return RideLifecycle(startEvent: event);
           }
         case RideEventType.markerStarted:
+        case RideEventType.riderLeft:
         case RideEventType.markerPass:
         case RideEventType.markerEnded:
         case RideEventType.statusMessage:
@@ -60,6 +61,9 @@ class RideLifecycleReducer {
         case RideEventType.hazardCleared:
         case RideEventType.routeDeviationChanged:
         case RideEventType.routeAlertAcknowledged:
+        case RideEventType.routeRevisionChunk:
+        case RideEventType.routeRevisionPublished:
+        case RideEventType.routeCleared:
         case RideEventType.ridePaused:
         case RideEventType.rideResumed:
         case RideEventType.rideEnded:

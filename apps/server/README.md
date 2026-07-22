@@ -5,6 +5,14 @@ The online store-and-forward service for Tail End Charlie. It implements the mob
 storage, authenticated opaque cursors, idempotent batches, bounded pagination,
 rate limits and automatic retention.
 
+`GET /api/v1/compatibility` advertises the current protocol, supported and
+required capabilities, bounded cache lifetime and platform update URLs. Sync
+requests may also send `X-TailEndCharlie-Protocol` and
+`X-TailEndCharlie-Capabilities`; incompatible clients receive a structured 426
+`update_required` or 409 `server_upgrade_required` response before events are
+accepted. Missing headers remain compatible with the protocol-1 request body
+for staged rollout.
+
 The event store deliberately keeps only a hash of the ride bearer credential,
 leaving final event-HMAC verification to receiving phones. To support the
 six-digit numeric join flow, the server also holds an encrypted bootstrap

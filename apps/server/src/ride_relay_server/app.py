@@ -30,7 +30,12 @@ from .database import (
     session_dependency,
 )
 from .rate_limit import SlidingWindowRateLimiter
-from .schemas import JoinCodeResponse, RegisterJoinCodeRequest, SyncRequest
+from .schemas import (
+    CompatibilityResponse,
+    JoinCodeResponse,
+    RegisterJoinCodeRequest,
+    SyncRequest,
+)
 from .service import RelayService, RelayServiceError
 
 
@@ -138,6 +143,77 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def metrics() -> Response:
         return Response(content=generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
 
+    @app.get("/api/v1/compatibility", include_in_schema=False)
+    def compatibility() -> CompatibilityResponse:
+        return CompatibilityResponse(
+            serverProtocol=settings.protocol_version,
+            minimumClientProtocol=settings.minimum_client_protocol,
+            maximumClientProtocol=settings.protocol_version,
+            capabilities=sorted(set(settings.supported_capabilities)),
+            requiredCapabilities=sorted(set(settings.required_capabilities)),
+            cacheSeconds=settings.compatibility_cache_seconds,
+            updateUrls={
+                "default": settings.update_url,
+                "iOS": settings.ios_update_url,
+                "android": settings.android_update_url,
+            },
+        )
+
+    def client_compatibility_error(request: Request, protocol: int) -> Response | None:
+        platform = request.headers.get("x-tailendcharlie-platform", "")
+        capabilities = {
+            value.strip()
+            for value in request.headers.get("x-tailendcharlie-capabilities", "").split(",")
+            if value.strip()
+        }
+        update_url = (
+            settings.ios_update_url
+            if platform == "iOS"
+            else settings.android_update_url
+            if platform == "android"
+            else settings.update_url
+        )
+        if protocol < settings.minimum_client_protocol:
+            return JSONResponse(
+                status_code=426,
+                content={
+                    "code": "update_required",
+                    "message": "Update Tail End Charlie before joining or synchronizing.",
+                    "updateUrl": update_url,
+                    "minimumClientProtocol": settings.minimum_client_protocol,
+                },
+            )
+        if protocol > settings.protocol_version:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "code": "server_upgrade_required",
+                    "message": "This app is newer than the configured ride service.",
+                    "serverProtocol": settings.protocol_version,
+                },
+            )
+        missing = sorted(set(settings.required_capabilities) - capabilities)
+        if missing:
+            return JSONResponse(
+                status_code=426,
+                content={
+                    "code": "update_required",
+                    "message": "Update Tail End Charlie to continue safely.",
+                    "updateUrl": update_url,
+                    "requiredCapabilities": missing,
+                },
+            )
+        return None
+
+    def client_protocol(request: Request, fallback: int = 1) -> int:
+        raw = request.headers.get("x-tailendcharlie-protocol")
+        if raw is None:
+            return fallback
+        try:
+            return int(raw)
+        except ValueError as error:
+            raise RelayServiceError(400, "Client protocol header is invalid") from error
+
     def _join_code_rate_limit_response(retry_after: int) -> Response:
         join_code_requests.labels(outcome="rate_limited").inc()
         return JSONResponse(
@@ -160,6 +236,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         session: Session = Depends(database_session),
     ) -> Response:
+        if compatibility_error := client_compatibility_error(request, client_protocol(request)):
+            return compatibility_error
         authorization = request.headers.get("authorization", "")
         if not authorization.startswith("Bearer "):
             raise RelayServiceError(401, "Ride credential required")
@@ -184,6 +262,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         session: Session = Depends(database_session),
     ) -> Response:
+        if compatibility_error := client_compatibility_error(request, client_protocol(request)):
+            return compatibility_error
         if len(ride_code) != 6 or not ride_code.isascii() or not ride_code.isdecimal():
             raise RelayServiceError(400, "Ride code must be six digits")
         resolve_token = request.headers.get("x-ride-relay-join-token") or None
@@ -250,6 +330,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             parsed = SyncRequest.model_validate_json(body)
         except (ValidationError, json.JSONDecodeError, UnicodeDecodeError) as error:
             raise RelayServiceError(400, "Malformed sync request") from error
+
+        request_protocol = client_protocol(request, parsed.protocolVersion)
+        if compatibility_error := client_compatibility_error(request, request_protocol):
+            return compatibility_error
 
         try:
             result = service.synchronize(

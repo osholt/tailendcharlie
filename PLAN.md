@@ -158,6 +158,10 @@ server automatically when any rider regains connectivity.
 - Roles: Lead, Rider, Tail End Charlie, Marker.
 - Ephemeral device key pair and ride-scoped identity; no email/password.
 - A reconnecting device resumes its previous ride state.
+- Signed membership reduces to joined/active/inactive/left/expired, with an
+  explicit leave event, a two-minute inactive threshold and twelve-hour expiry.
+- The in-app roster shows role, freshness and observed relay evidence without
+  treating transport observations as membership authority.
 
 Acceptance:
 
@@ -212,6 +216,8 @@ Acceptance:
 - Store the route, decision junctions, and an offline map corridor before riding.
 - Show download state and estimated storage; warn before departure if incomplete.
 - Continue route display and deviation calculation without internet.
+- Scope active route state to its ride and distribute bounded, verified,
+  leader-authored route revisions and clear decisions through the event journal.
 
 Acceptance:
 
@@ -219,6 +225,8 @@ Acceptance:
 - A corrupt or unsupported GPX file produces a useful error and does not create a
   partial ride.
 - The user can delete downloaded ride data explicitly.
+- Late joiners, reconnecting phones and lead changes converge on the last
+  complete route decision; an incomplete newer revision never replaces it.
 
 #### Marker assistance and counting
 
@@ -395,6 +403,9 @@ has been tested while stationary with gloves and via audio/haptics while moving.
 
 - Store compliance, support tooling, retention verification, threat review.
 - Onboarding that clearly explains permissions and force-quit limitations.
+- Persistent first-run rider profile setup, optional workflow education,
+  create/join handoff, Settings editing and replay are implemented; usability
+  validation with a first-time user remains a release gate.
 - Operational dashboards based on anonymous reliability metrics.
 - Incident runbook and staged rollout.
 

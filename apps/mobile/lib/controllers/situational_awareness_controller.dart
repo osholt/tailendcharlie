@@ -409,8 +409,12 @@ class SituationalAwarenessController extends ChangeNotifier {
           _alerts[alert.riderId] = alert;
         }
         break;
+      case RideEventType.routeRevisionChunk:
+      case RideEventType.routeRevisionPublished:
+      case RideEventType.routeCleared:
       case RideEventType.rideCreated:
       case RideEventType.riderJoined:
+      case RideEventType.riderLeft:
       case RideEventType.roleChanged:
       case RideEventType.rideStarted:
       case RideEventType.markerStarted:

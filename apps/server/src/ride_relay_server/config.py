@@ -48,6 +48,20 @@ class Settings(BaseSettings):
         ge=1024 * 1024,
         le=1024 * 1024 * 1024,
     )
+    protocol_version: int = Field(default=1, ge=1, le=1000)
+    minimum_client_protocol: int = Field(default=1, ge=1, le=1000)
+    supported_capabilities: list[str] = Field(
+        default_factory=lambda: [
+            "ride-start-v1",
+            "membership-v1",
+            "route-revisions-v1",
+        ]
+    )
+    required_capabilities: list[str] = Field(default_factory=list)
+    compatibility_cache_seconds: int = Field(default=300, ge=30, le=3600)
+    update_url: str = "https://tailendcharlie.app"
+    ios_update_url: str = "https://tailendcharlie.app"
+    android_update_url: str = "https://tailendcharlie.app"
 
     @field_validator("data_encryption_key", "cursor_signing_key")
     @classmethod

@@ -38,3 +38,15 @@ class JoinCodeResponse(BaseModel):
     rideCode: str
     inviteSecret: str
     resolveToken: str
+
+
+class CompatibilityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    serverProtocol: int
+    minimumClientProtocol: int
+    maximumClientProtocol: int
+    capabilities: list[str]
+    requiredCapabilities: list[str]
+    cacheSeconds: int
+    updateUrls: dict[str, str]

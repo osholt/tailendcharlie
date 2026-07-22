@@ -212,10 +212,15 @@ class RelayEngine {
       throw ArgumentError('Cannot relay an event from another ride');
     }
     final now = _clock();
-    final defaultLifetime = switch (event.priority) {
-      EventPriority.routine => const Duration(hours: 2),
-      EventPriority.important => const Duration(hours: 8),
-      EventPriority.critical => const Duration(hours: 24),
+    final defaultLifetime = switch (event.type) {
+      RideEventType.routeRevisionChunk ||
+      RideEventType.routeRevisionPublished ||
+      RideEventType.routeCleared => const Duration(hours: 72),
+      _ => switch (event.priority) {
+        EventPriority.routine => const Duration(hours: 2),
+        EventPriority.important => const Duration(hours: 8),
+        EventPriority.critical => const Duration(hours: 24),
+      },
     };
     final defaultExpiry = now.add(defaultLifetime);
     final eventExpiry = event.expiresAt;

@@ -58,6 +58,8 @@ class RideMapFeature extends StatefulWidget {
     this.overlayMarkers,
     this.offRouteTraces,
     this.leaderStatus,
+    this.groupRiderCount,
+    this.onOpenRoster,
     this.junctionMarkerOverlay,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -72,6 +74,7 @@ class RideMapFeature extends StatefulWidget {
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
+    this.canEditRoute = true,
     this.offlineTileCache,
     this.mapLibreOfflineManager,
     this.mapStyleString,
@@ -88,6 +91,8 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
     ValueListenable<List<MapOverlayTrace>>? offRouteTraces,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
+    int? groupRiderCount,
+    VoidCallback? onOpenRoster,
     ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
@@ -101,6 +106,7 @@ class RideMapFeature extends StatefulWidget {
     PickedGpxFile? pendingSharedGpxFile,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
+    bool canEditRoute = true,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     bool darkMapStyle = false,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
@@ -112,6 +118,8 @@ class RideMapFeature extends StatefulWidget {
     overlayMarkers: overlayMarkers,
     offRouteTraces: offRouteTraces,
     leaderStatus: leaderStatus,
+    groupRiderCount: groupRiderCount,
+    onOpenRoster: onOpenRoster,
     junctionMarkerOverlay: junctionMarkerOverlay,
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
@@ -125,6 +133,7 @@ class RideMapFeature extends StatefulWidget {
     pendingSharedGpxFile: pendingSharedGpxFile,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
+    canEditRoute: canEditRoute,
     distanceUnit: distanceUnit,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
       dark: darkMapStyle,
@@ -138,6 +147,8 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
+  final int? groupRiderCount;
+  final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -152,6 +163,7 @@ class RideMapFeature extends StatefulWidget {
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
+  final bool canEditRoute;
   final OfflineTileCache? offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String? mapStyleString;
@@ -242,6 +254,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         overlayMarkers: widget.overlayMarkers,
         offRouteTraces: widget.offRouteTraces,
         leaderStatus: widget.leaderStatus,
+        groupRiderCount: widget.groupRiderCount,
+        onOpenRoster: widget.onOpenRoster,
         junctionMarkerOverlay: widget.junctionMarkerOverlay,
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
@@ -249,6 +263,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         ridePaused: widget.ridePaused,
         onLeaveRide: widget.onLeaveRide,
         onOpenRideMenu: widget.onOpenRideMenu,
+        canEditRoute: widget.canEditRoute,
         onRouteChanged: widget.onRouteChanged,
         changeRouteRequestToken: widget.changeRouteRequestToken,
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
@@ -291,6 +306,8 @@ class RideMapScreen extends StatefulWidget {
     this.overlayMarkers,
     this.offRouteTraces,
     this.leaderStatus,
+    this.groupRiderCount,
+    this.onOpenRoster,
     this.junctionMarkerOverlay,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -298,6 +315,7 @@ class RideMapScreen extends StatefulWidget {
     this.ridePaused = false,
     this.onLeaveRide,
     this.onOpenRideMenu,
+    this.canEditRoute = true,
     this.onRouteChanged,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
@@ -324,6 +342,8 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
+  final int? groupRiderCount;
+  final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -331,6 +351,7 @@ class RideMapScreen extends StatefulWidget {
   final bool ridePaused;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
+  final bool canEditRoute;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
@@ -588,18 +609,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     : null,
               ),
               actions: [
-                IconButton(
-                  tooltip: 'Plan a destination',
-                  visualDensity: compactDensity,
-                  onPressed: _routing ? null : _planDestination,
-                  icon: _routing
-                      ? const SizedBox.square(
-                          dimension: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add_road),
-                ),
-                if (_route == null)
+                if (widget.canEditRoute)
+                  IconButton(
+                    tooltip: 'Plan a destination',
+                    visualDensity: compactDensity,
+                    onPressed: _routing ? null : _planDestination,
+                    icon: _routing
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add_road),
+                  ),
+                if (widget.canEditRoute && _route == null)
                   IconButton(
                     tooltip: 'Import GPX route',
                     visualDensity: compactDensity,
@@ -636,19 +658,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       : const EdgeInsets.all(8),
                   onSelected: _handleMenuAction,
                   itemBuilder: (context) => [
-                    PopupMenuItem(
-                      value: _MapAction.importGpx,
-                      child: Text(
-                        _route == null
-                            ? 'Import GPX route'
-                            : 'Replace GPX route',
+                    if (widget.canEditRoute) ...[
+                      PopupMenuItem(
+                        value: _MapAction.importGpx,
+                        child: Text(
+                          _route == null
+                              ? 'Import GPX route'
+                              : 'Replace GPX route',
+                        ),
                       ),
-                    ),
-                    const PopupMenuItem(
-                      value: _MapAction.loadDemo,
-                      child: Text('Load demo route'),
-                    ),
-                    if (_route != null)
+                      const PopupMenuItem(
+                        value: _MapAction.loadDemo,
+                        child: Text('Load demo route'),
+                      ),
+                    ],
+                    if (widget.canEditRoute && _route != null)
                       PopupMenuItem(
                         value: _MapAction.downloadOffline,
                         enabled:
@@ -747,8 +771,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             .where((marker) => marker.id.startsWith('rider-'))
                             .toList(growable: false);
                         final groupSize =
+                            widget.groupRiderCount ??
                             groupRiders.length +
-                            (_effectivePosition == null ? 0 : 1);
+                                (_effectivePosition == null ? 0 : 1);
                         if (groupSize <= 1) return const SizedBox.shrink();
                         return _GroupMiniMap(
                           width: groupMiniMapWidth,
@@ -759,6 +784,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                               .toList(growable: false),
                           currentPosition: _effectivePosition,
                           riders: groupRiders,
+                          riderCount: groupSize,
+                          onTap: widget.onOpenRoster,
                           showTiles: shouldUseTiledGroupMiniMap(
                             mapLibreEnabled: _basemap.usesMapLibre,
                             platform: defaultTargetPlatform,
@@ -2107,6 +2134,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<ImportedRoute> _activateRoute(ImportedRoute route) async {
+    if (!widget.canEditRoute) {
+      throw const FormatException(
+        'Only the ride leader can replace the group route.',
+      );
+    }
     final enrichment = await _routeGeometryEnricher.enrich(route);
     final activeRoute = enrichment.route;
     await widget.routeStore.saveActiveRoute(activeRoute);
@@ -2276,6 +2308,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       case _MapAction.downloadOffline:
         await _downloadOfflineMap();
       case _MapAction.removeRoute:
+        if (!widget.canEditRoute || !await _confirmRemoveRoute()) return;
         await widget.routeStore.clearActiveRoute();
         if (mounted) {
           _routeProgressTracker.reset();
@@ -2295,6 +2328,30 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _showMessage('Offline map data cleared.');
     }
   }
+
+  Future<bool> _confirmRemoveRoute() async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Clear the group route?'),
+          content: const Text(
+            'The route will be removed for every rider after this signed '
+            'change is relayed. This cannot be undone offline.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const Key('confirm-clear-group-route'),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Clear route'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
 
   void _showMessage(String message) {
     if (!mounted) return;
@@ -2324,6 +2381,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.onChangeRouteRequestHandled?.call();
       if (!mounted) return;
+      if (!widget.canEditRoute) {
+        _showMessage('Only the ride leader can replace the group route.');
+        return;
+      }
       if (sharedFile != null) {
         unawaited(_importSharedGpx(sharedFile));
       } else {
@@ -2347,6 +2408,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<void> _showChangeRouteSheet() async {
+    if (!widget.canEditRoute) {
+      _showMessage('Only the ride leader can replace the group route.');
+      return;
+    }
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -2826,6 +2891,8 @@ class _GroupMiniMap extends StatefulWidget {
     required this.routePaths,
     required this.currentPosition,
     required this.riders,
+    required this.riderCount,
+    required this.onTap,
     required this.showTiles,
     required this.mapStyleString,
   });
@@ -2835,6 +2902,8 @@ class _GroupMiniMap extends StatefulWidget {
   final List<List<GeoPoint>> routePaths;
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
+  final int riderCount;
+  final VoidCallback? onTap;
   final bool showTiles;
   final String mapStyleString;
 
@@ -2908,8 +2977,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
 
   @override
   Widget build(BuildContext context) {
-    final riderCount =
-        widget.riders.length + (widget.currentPosition == null ? 0 : 1);
+    final riderCount = widget.riderCount;
     final visibleRoutePaths = _visibleRoutePaths(_snapshot());
     return Stack(
       clipBehavior: Clip.none,
@@ -3020,6 +3088,18 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
             ),
           ),
         ),
+        if (widget.onTap != null)
+          Positioned.fill(
+            bottom: -22,
+            child: Semantics(
+              button: true,
+              label: 'Open ride roster, $riderCount riders',
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onTap,
+              ),
+            ),
+          ),
       ],
     );
   }

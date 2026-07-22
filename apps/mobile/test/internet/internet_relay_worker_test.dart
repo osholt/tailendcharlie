@@ -169,6 +169,70 @@ void main() {
     expect(api.callCount, 2);
     await worker.close();
   });
+
+  test('withholds capability-dependent events from a legacy relay', () async {
+    final eventStore = InMemoryEventStore();
+    await eventStore.append(_event(id: 'core'));
+    await eventStore.append(
+      _event(id: 'departure', type: RideEventType.riderLeft),
+    );
+    await eventStore.append(
+      _event(id: 'route', type: RideEventType.routeCleared),
+    );
+    final api = _CompatibilityApi(
+      compatibility: _compatibility(
+        RelayCompatibilityDisposition.legacyCompatible,
+        capabilities: const {},
+      ),
+    );
+    final worker = InternetRelayWorker(
+      api: api,
+      eventStore: eventStore,
+      cursorStore: InMemoryInternetCursorStore(),
+      pollInterval: const Duration(days: 1),
+    );
+    final synced = worker.statuses.firstWhere(
+      (status) => status.phase == InternetRelayPhase.synced,
+    );
+
+    await worker.start(_session);
+    await synced.timeout(const Duration(seconds: 1));
+    await worker.stop();
+
+    expect(api.compatibilityChecks, 1);
+    expect(api.uploads.first.map((event) => event.id), ['core']);
+    expect(
+      (await eventStore.pendingEvents(
+        _session.rideId,
+      )).map((event) => event.id),
+      containsAll(['departure', 'route']),
+    );
+    await worker.close();
+  });
+
+  test('stops safely when the relay requires an app update', () async {
+    final api = _CompatibilityApi(
+      compatibility: _compatibility(
+        RelayCompatibilityDisposition.updateRequired,
+        capabilities: const {},
+      ),
+    );
+    final worker = InternetRelayWorker(
+      api: api,
+      eventStore: InMemoryEventStore(),
+      cursorStore: InMemoryInternetCursorStore(),
+    );
+    final blocked = worker.statuses.firstWhere(
+      (status) => status.phase == InternetRelayPhase.updateRequired,
+    );
+
+    await worker.start(_session);
+    final status = await blocked.timeout(const Duration(seconds: 1));
+
+    expect(api.callCount, 0);
+    expect(status.actionUrl, Uri.parse('https://tailendcharlie.app/update'));
+    await worker.close();
+  });
 }
 
 class _FakeApi implements InternetRelayApi {
@@ -231,6 +295,61 @@ class _RecoveringApi implements InternetRelayApi {
   void close() {}
 }
 
+class _CompatibilityApi implements InternetRelayApi, RelayCompatibilityApi {
+  _CompatibilityApi({required this.compatibility});
+
+  final RelayCompatibilityResult compatibility;
+  final List<List<RideEvent>> uploads = [];
+  int compatibilityChecks = 0;
+  int callCount = 0;
+
+  @override
+  InternetRelayConfiguration get configuration =>
+      InternetRelayConfiguration(baseUri: Uri.parse('https://relay.example'));
+
+  @override
+  Future<RelayCompatibilityResult> checkCompatibility() async {
+    compatibilityChecks += 1;
+    return compatibility;
+  }
+
+  @override
+  Future<InternetSyncResult> synchronize({
+    required RideSession session,
+    required String? cursor,
+    required List<RideEvent> events,
+  }) async {
+    callCount += 1;
+    uploads.add(List.of(events));
+    return InternetSyncResult(
+      cursor: 'cursor-$callCount',
+      acceptedEventIds: events.map((event) => event.id).toSet(),
+      events: const [],
+    );
+  }
+
+  @override
+  void close() {}
+}
+
+RelayCompatibilityResult _compatibility(
+  RelayCompatibilityDisposition disposition, {
+  required Set<String> capabilities,
+}) => RelayCompatibilityResult(
+  disposition: disposition,
+  serverProtocol: 1,
+  minimumClientProtocol: 1,
+  capabilities: capabilities,
+  checkedAt: DateTime.utc(2026, 7, 22),
+  validUntil: DateTime.utc(2026, 7, 22, 0, 5),
+  message: disposition == RelayCompatibilityDisposition.updateRequired
+      ? 'Update required.'
+      : null,
+  updateUri: disposition == RelayCompatibilityDisposition.updateRequired
+      ? Uri.parse('https://tailendcharlie.app/update')
+      : null,
+);
+
 final _session = RideSession(
   rideId: 'ride-alpha',
   rideCode: 'ALPHA1',
@@ -242,15 +361,22 @@ final _session = RideSession(
   joinedAt: DateTime.utc(2026, 7, 16),
 );
 
-RideEvent _event({required String id, String deviceId = 'local-device'}) =>
-    _signedEvent(id: id, deviceId: deviceId);
+RideEvent _event({
+  required String id,
+  String deviceId = 'local-device',
+  RideEventType type = RideEventType.statusMessage,
+}) => _signedEvent(id: id, deviceId: deviceId, type: type);
 
-RideEvent _signedEvent({required String id, required String deviceId}) {
+RideEvent _signedEvent({
+  required String id,
+  required String deviceId,
+  RideEventType type = RideEventType.statusMessage,
+}) {
   final unsigned = RideEvent(
     id: id,
     rideId: _session.rideId,
     deviceId: deviceId,
-    type: RideEventType.statusMessage,
+    type: type,
     priority: EventPriority.routine,
     createdAt: DateTime.utc(2026, 7, 16, 10),
     payload: const {'message': 'OK'},

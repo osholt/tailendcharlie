@@ -66,6 +66,7 @@ abstract final class MarkerStatistics {
           break;
         case RideEventType.rideCreated:
         case RideEventType.riderJoined:
+        case RideEventType.riderLeft:
         case RideEventType.roleChanged:
         case RideEventType.rideStarted:
         case RideEventType.statusMessage:
@@ -74,6 +75,9 @@ abstract final class MarkerStatistics {
         case RideEventType.hazardCleared:
         case RideEventType.routeDeviationChanged:
         case RideEventType.routeAlertAcknowledged:
+        case RideEventType.routeRevisionChunk:
+        case RideEventType.routeRevisionPublished:
+        case RideEventType.routeCleared:
         case RideEventType.ridePaused:
         case RideEventType.rideResumed:
         case RideEventType.rideEnded:

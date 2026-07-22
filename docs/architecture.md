@@ -84,6 +84,52 @@ Pre-start presence is deliberately roster-only: no coarse coordinate is sent.
 This is still a group-HMAC trust model, so production-grade per-device leader
 authorization remains part of the device-identity/key-rotation release gate.
 
+### Membership and roster
+
+The canonical roster is also rebuilt from signed ride events. `rideCreated`,
+`riderJoined`, later rider activity and `riderLeft` reduce to `joined`, `active`,
+`inactive`, `left` or `expired`. A rider becomes inactive after two minutes
+without signed activity and expires after twelve hours; an explicit leave takes
+effect immediately. Rejoining with the same installation-derived, ride-scoped
+identity supersedes the earlier leave rather than creating a ghost rider.
+
+Internet and nearby observations are ephemeral transport evidence, not
+membership authority. The roster labels only evidence actually observed by
+this phone and keeps journal-only state distinct from a claimed live link.
+
+### Authoritative route revisions
+
+Active routes are ride-scoped and journal-derived. Only a rider whose latest
+signed role is lead can publish a route revision or clear it. GPX-derived route
+JSON is gzip-compressed, base64url encoded and split across bounded
+`routeRevisionChunk` events; a signed `routeRevisionPublished` manifest carries
+the chunk count, compressed size and SHA-256 digest. A revision is applied only
+when every chunk verifies. Incomplete or corrupt newer revisions leave the last
+complete decision in place. `routeCleared` is an explicit versioned decision,
+not deletion of unrelated local state. Event time plus ID ordering provides the
+same late-join, reconnect, offline-edit and leader-change result on each phone.
+
+### Client/server compatibility
+
+Before code registration, code resolution or relay sync, current clients fetch
+`GET /v1/compatibility` with protocol, platform, app-build and capability
+headers. The response is cached for a bounded interval. A server without the
+endpoint is treated as legacy protocol 1: core events may sync, while start,
+membership-leave and route-revision events remain queued locally unless their
+capabilities are advertised. Unsupported clients stop before ride state is
+accepted and receive a specific update-required or server-upgrade-required UI.
+
+### First-run setup
+
+First run requires a rider name and reuses the saved bike icon and colour
+profile used by future create/join forms. Optional education explains roles,
+ride-code privacy, start/leave/end semantics, roster freshness, relay evidence
+and foreground permission limits. Permission prompts remain at the feature
+that uses them. Denial leaves create/join available but clearly identifies the
+missing location or nearby function and the platform-settings recovery path.
+Profile edits affect the next ride; an active ride retains the identity it
+joined with so journal and roster identity do not change mid-session.
+
 ## Uncertainty is part of the model
 
 The eventual UI states are `live`, `relayed`, `stale`, and `unknown`. A

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../domain/rider_color.dart';
 import '../features/map/motorcycle_icon.dart';
@@ -11,6 +12,7 @@ import '../features/map/motorcycle_icon.dart';
 class RiderProfileController extends ChangeNotifier {
   RiderProfileController._(
     this._preferences,
+    this._installationId,
     this._displayName,
     this._motorcycleStyle,
     this._riderColor,
@@ -18,9 +20,12 @@ class RiderProfileController extends ChangeNotifier {
     this._emergencyContactPhone,
     this._medicalNotes,
     this._shareIceWithLeaderByDefault,
+    this._onboardingCompleted,
+    this._onboardingEducationSkipped,
   );
 
   static const _nameKey = 'rider_profile_display_name';
+  static const _installationIdKey = 'rider_profile_installation_id';
   static const _styleKey = 'rider_profile_motorcycle_style';
   static const _colorKey = 'rider_profile_colour';
   static const _emergencyContactNameKey = 'rider_profile_ice_contact_name';
@@ -28,8 +33,12 @@ class RiderProfileController extends ChangeNotifier {
   static const _medicalNotesKey = 'rider_profile_ice_medical_notes';
   static const _shareIceWithLeaderByDefaultKey =
       'rider_profile_ice_share_with_leader_default';
+  static const _onboardingCompletedKey = 'rider_profile_onboarding_completed';
+  static const _onboardingEducationSkippedKey =
+      'rider_profile_onboarding_education_skipped';
 
   final SharedPreferences _preferences;
+  final String _installationId;
   String _displayName;
   MotorcycleIconStyle _motorcycleStyle;
   RiderColor _riderColor;
@@ -37,10 +46,17 @@ class RiderProfileController extends ChangeNotifier {
   String _emergencyContactPhone;
   String _medicalNotes;
   bool _shareIceWithLeaderByDefault;
+  bool _onboardingCompleted;
+  bool _onboardingEducationSkipped;
+  OnboardingRideChoice? _pendingRideChoice;
 
+  String get installationId => _installationId;
   String get displayName => _displayName;
   MotorcycleIconStyle get motorcycleStyle => _motorcycleStyle;
   RiderColor get riderColor => _riderColor;
+  bool get onboardingCompleted => _onboardingCompleted;
+  bool get needsOnboarding => !_onboardingCompleted;
+  bool get onboardingEducationSkipped => _onboardingEducationSkipped;
 
   // In-case-of-emergency details. Kept device-local by default: not read by
   // RideSession/RideEvent, so ordinary ride events never carry it. It only
@@ -62,15 +78,30 @@ class RiderProfileController extends ChangeNotifier {
 
   static Future<RiderProfileController> load() async {
     final preferences = await SharedPreferences.getInstance();
+    var installationId = preferences.getString(_installationIdKey);
+    if (installationId == null || installationId.isEmpty) {
+      installationId = const Uuid().v7();
+      await preferences.setString(_installationIdKey, installationId);
+    }
+    final displayName = preferences.getString(_nameKey) ?? '';
+    final onboardingCompleted =
+        preferences.getBool(_onboardingCompletedKey) ?? displayName.isNotEmpty;
+    if (!preferences.containsKey(_onboardingCompletedKey) &&
+        onboardingCompleted) {
+      await preferences.setBool(_onboardingCompletedKey, true);
+    }
     return RiderProfileController._(
       preferences,
-      preferences.getString(_nameKey) ?? '',
+      installationId,
+      displayName,
       motorcycleIconStyleFromName(preferences.getString(_styleKey)),
       riderColorFromName(preferences.getString(_colorKey)),
       preferences.getString(_emergencyContactNameKey) ?? '',
       preferences.getString(_emergencyContactPhoneKey) ?? '',
       preferences.getString(_medicalNotesKey) ?? '',
       preferences.getBool(_shareIceWithLeaderByDefaultKey) ?? false,
+      onboardingCompleted,
+      preferences.getBool(_onboardingEducationSkippedKey) ?? false,
     );
   }
 
@@ -88,6 +119,46 @@ class RiderProfileController extends ChangeNotifier {
       _preferences.setString(_colorKey, riderColor.name),
     ]);
     notifyListeners();
+  }
+
+  Future<void> completeOnboarding({
+    required String displayName,
+    required MotorcycleIconStyle motorcycleStyle,
+    required RiderColor riderColor,
+    required bool educationSkipped,
+    required OnboardingRideChoice rideChoice,
+  }) async {
+    final normalizedName = displayName.trim();
+    if (normalizedName.isEmpty) {
+      throw ArgumentError.value(displayName, 'displayName', 'is required');
+    }
+    _displayName = normalizedName;
+    _motorcycleStyle = motorcycleStyle;
+    _riderColor = riderColor;
+    _onboardingCompleted = true;
+    _onboardingEducationSkipped = educationSkipped;
+    _pendingRideChoice = rideChoice;
+    await Future.wait([
+      _preferences.setString(_nameKey, normalizedName),
+      _preferences.setString(_styleKey, motorcycleStyle.name),
+      _preferences.setString(_colorKey, riderColor.name),
+      _preferences.setBool(_onboardingCompletedKey, true),
+      _preferences.setBool(_onboardingEducationSkippedKey, educationSkipped),
+    ]);
+    notifyListeners();
+  }
+
+  Future<void> replayOnboarding() async {
+    _onboardingCompleted = false;
+    _pendingRideChoice = null;
+    await _preferences.setBool(_onboardingCompletedKey, false);
+    notifyListeners();
+  }
+
+  OnboardingRideChoice? takePendingRideChoice() {
+    final choice = _pendingRideChoice;
+    _pendingRideChoice = null;
+    return choice;
   }
 
   Future<void> saveEmergencyInfo({
@@ -112,3 +183,5 @@ class RiderProfileController extends ChangeNotifier {
     notifyListeners();
   }
 }
+
+enum OnboardingRideChoice { create, join }

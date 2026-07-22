@@ -27,6 +27,42 @@ The worker uses the same durable `RideEvent` journal as nearby delivery:
 - rejects redirects so a bearer credential cannot leave the configured HTTPS
   origin.
 
+Before joining or synchronizing, current clients request the bounded
+compatibility document:
+
+```text
+GET {base}/v1/compatibility
+X-TailEndCharlie-Protocol: 1
+X-TailEndCharlie-Platform: iOS|android|...
+X-TailEndCharlie-App-Version: <version>
+X-TailEndCharlie-App-Build: <build>
+X-TailEndCharlie-Capabilities: ride-start-v1,membership-v1,route-revisions-v1
+```
+
+The server advertises its minimum/maximum protocol, supported and required
+capabilities, a 30–3600 second cache interval and platform update URLs. An old
+client receives HTTP 426 `update_required`; a client newer than the server
+receives HTTP 409 `server_upgrade_required`. A relay returning 404 for this
+endpoint is treated as legacy protocol 1 for five minutes. Core events can
+still synchronize, but capability-dependent events stay durable and local
+instead of being silently misinterpreted. The cache is in memory; after an app
+restart, an offline compatibility check must succeed before a new join/sync.
+
+### Compatibility rollout and emergency cutoff
+
+Protocol changes should be additive while the server advertises both the old
+and new capability set. Validate these three contract paths before deployment:
+current client/current server, a supported protocol-1 client/current server,
+and current client/a legacy server that returns 404 for the compatibility
+document. Deploy server support first, then the capability-gated client. Raise
+`RIDE_RELAY_MINIMUM_CLIENT_PROTOCOL` only after the supported client is
+available through the relevant store/TestFlight path and operators have
+checked compatibility-response counts and structured 426 rates. Keep at least
+one release window unless an unsafe protocol requires an emergency cutoff. For
+an emergency cutoff, set the minimum protocol and platform update URLs together;
+the server rejects join-code and sync state before accepting events. Do not
+retire the old hostname until supported clients have received the new endpoint.
+
 Nearby and internet acknowledgements remain separate. A server-acknowledged
 event is still eligible for nearby carriage, which lets a connected phone move
 events back into a group without coverage.
@@ -39,6 +75,8 @@ Content-Type: application/json
 Authorization: Bearer rr1_<base64url-HMAC-SHA256>
 Idempotency-Key: rr1-<base64url-SHA256-exact-request-body>
 X-Ride-Relay-Device: <device-id>
+X-TailEndCharlie-Protocol: 1
+X-TailEndCharlie-Capabilities: <comma-separated capabilities>
 ```
 
 ```json

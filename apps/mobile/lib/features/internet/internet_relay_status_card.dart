@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/internet_relay_controller.dart';
 import '../../internet/internet_relay_worker.dart';
@@ -39,7 +40,17 @@ class InternetRelayStatusCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (status.pendingEventCount > 0)
+              if (status.actionUrl case final actionUrl?)
+                IconButton(
+                  key: const Key('open-required-update'),
+                  tooltip: 'Open update page',
+                  onPressed: () => launchUrl(
+                    actionUrl,
+                    mode: LaunchMode.externalApplication,
+                  ),
+                  icon: const Icon(Icons.system_update_alt),
+                )
+              else if (status.pendingEventCount > 0)
                 Text(
                   '${status.pendingEventCount} queued',
                   style: TextStyle(
@@ -94,6 +105,16 @@ class InternetRelayStatusCard extends StatelessWidget {
         InternetRelayPhase.retrying => const _InternetPresentation(
           title: 'Internet relay reconnecting',
           icon: Icons.cloud_sync_outlined,
+          color: Color(0xFFFFC857),
+        ),
+        InternetRelayPhase.updateRequired => const _InternetPresentation(
+          title: 'App update required',
+          icon: Icons.system_update_alt,
+          color: Color(0xFFFF5D73),
+        ),
+        InternetRelayPhase.serverUpgradeRequired => const _InternetPresentation(
+          title: 'Ride service update required',
+          icon: Icons.cloud_off_outlined,
           color: Color(0xFFFFC857),
         ),
         InternetRelayPhase.unauthorized => const _InternetPresentation(

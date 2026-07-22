@@ -3,6 +3,7 @@ import 'dart:convert';
 enum RideEventType {
   rideCreated,
   riderJoined,
+  riderLeft,
   roleChanged,
   rideStarted,
   markerStarted,
@@ -14,6 +15,9 @@ enum RideEventType {
   hazardCleared,
   routeDeviationChanged,
   routeAlertAcknowledged,
+  routeRevisionChunk,
+  routeRevisionPublished,
+  routeCleared,
   ridePaused,
   rideResumed,
   rideEnded,

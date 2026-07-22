@@ -14,6 +14,8 @@ enum InternetRelayPhase {
   syncing,
   synced,
   retrying,
+  updateRequired,
+  serverUpgradeRequired,
   unauthorized,
   failed,
 }
@@ -25,6 +27,7 @@ class InternetRelayStatus {
     this.lastSuccessfulSync,
     this.nextAttemptAt,
     this.pendingEventCount = 0,
+    this.actionUrl,
   });
 
   const InternetRelayStatus.stopped()
@@ -38,6 +41,7 @@ class InternetRelayStatus {
   final DateTime? lastSuccessfulSync;
   final DateTime? nextAttemptAt;
   final int pendingEventCount;
+  final Uri? actionUrl;
 }
 
 class InternetRetryPolicy {
@@ -105,6 +109,7 @@ class InternetRelayWorker {
   bool _closed = false;
   int _failureCount = 0;
   int _generation = 0;
+  RelayCompatibilityResult? _compatibility;
 
   InternetRelayStatus get status => _status;
   Stream<InternetRelayStatus> get statuses => _statusController.stream;
@@ -116,6 +121,7 @@ class InternetRelayWorker {
     _session = session;
     _status = const InternetRelayStatus.stopped();
     _failureCount = 0;
+    _compatibility = null;
     final configurationError = _api.configuration.configurationError;
     if (configurationError != null) {
       _emit(
@@ -149,8 +155,29 @@ class InternetRelayWorker {
     _syncing = true;
     var nextDelay = _pollInterval;
     try {
+      if (_compatibility == null && _api is RelayCompatibilityApi) {
+        final result = await (_api as RelayCompatibilityApi)
+            .checkCompatibility();
+        _compatibility = result;
+        if (!result.canSynchronize) {
+          throw InternetRelayException(
+            result.message ?? 'Ride service compatibility check failed.',
+            retryable:
+                result.disposition ==
+                RelayCompatibilityDisposition.temporarilyUnavailable,
+            code: switch (result.disposition) {
+              RelayCompatibilityDisposition.updateRequired => 'update_required',
+              RelayCompatibilityDisposition.serverUpgradeRequired =>
+                'server_upgrade_required',
+              _ => 'temporarily_unavailable',
+            },
+            actionUrl: result.updateUri,
+          );
+        }
+      }
       final pending = await _eventStore.pendingEvents(session.rideId);
       final upload = pending
+          .where(_serverSupportsEvent)
           .take(_api.configuration.maximumUploadEvents)
           .toList(growable: false);
       if (!_isCurrent(generation, session)) return;
@@ -214,11 +241,16 @@ class InternetRelayWorker {
       if (!_isCurrent(generation, session)) return;
       _failureCount += 1;
       nextDelay = _boundedRetryDelay(error.retryAfter);
-      final phase = error.unauthorized
-          ? InternetRelayPhase.unauthorized
-          : error.retryable
-          ? InternetRelayPhase.retrying
-          : InternetRelayPhase.failed;
+      final phase = switch (error.code) {
+        'update_required' => InternetRelayPhase.updateRequired,
+        'server_upgrade_required' => InternetRelayPhase.serverUpgradeRequired,
+        _ =>
+          error.unauthorized
+              ? InternetRelayPhase.unauthorized
+              : error.retryable
+              ? InternetRelayPhase.retrying
+              : InternetRelayPhase.failed,
+      };
       if (!error.retryable) {
         nextDelay = const Duration(minutes: 1);
       }
@@ -229,6 +261,7 @@ class InternetRelayWorker {
           lastSuccessfulSync: _status.lastSuccessfulSync,
           nextAttemptAt: _clock().add(nextDelay),
           pendingEventCount: _status.pendingEventCount,
+          actionUrl: error.actionUrl,
         ),
       );
     } on Object catch (error) {
@@ -258,6 +291,22 @@ class InternetRelayWorker {
       return Duration(milliseconds: milliseconds);
     }
     return _retryPolicy.delayFor(_failureCount, randomValue: _randomValue());
+  }
+
+  bool _serverSupportsEvent(RideEvent event) {
+    final compatibility = _compatibility;
+    if (compatibility == null) return true;
+    final capability = switch (event.type) {
+      RideEventType.rideStarted ||
+      RideEventType.ridePaused ||
+      RideEventType.rideResumed => RelayProtocolCapabilities.rideStart,
+      RideEventType.riderLeft => RelayProtocolCapabilities.membership,
+      RideEventType.routeRevisionChunk ||
+      RideEventType.routeRevisionPublished ||
+      RideEventType.routeCleared => RelayProtocolCapabilities.routeRevisions,
+      _ => null,
+    };
+    return capability == null || compatibility.supports(capability);
   }
 
   void wake() {

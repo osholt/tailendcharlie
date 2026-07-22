@@ -5,30 +5,44 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
+import '../../controllers/rider_profile_controller.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
+import '../../domain/rider_color.dart';
 import '../../services/basemap_configuration.dart';
+import '../map/motorcycle_icon.dart';
+import 'rider_profile_sheet.dart';
 
 class UnitSettingsSheet extends StatelessWidget {
   const UnitSettingsSheet({
     super.key,
     required this.controller,
     required this.mapStyleMode,
+    required this.riderProfile,
+    this.currentRideActive = false,
   });
 
   final DistanceUnitController controller;
   final MapStyleModeController mapStyleMode;
+  final RiderProfileController riderProfile;
+  final bool currentRideActive;
 
   static Future<void> show(
     BuildContext context,
     DistanceUnitController controller,
     MapStyleModeController mapStyleMode,
-  ) => showModalBottomSheet<void>(
+    RiderProfileController riderProfile, {
+    bool currentRideActive = false,
+  }) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
     useSafeArea: true,
-    builder: (_) =>
-        UnitSettingsSheet(controller: controller, mapStyleMode: mapStyleMode),
+    builder: (_) => UnitSettingsSheet(
+      controller: controller,
+      mapStyleMode: mapStyleMode,
+      riderProfile: riderProfile,
+      currentRideActive: currentRideActive,
+    ),
   );
 
   @override
@@ -42,6 +56,43 @@ class UnitSettingsSheet extends StatelessWidget {
         children: [
           Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 20),
+          Text(
+            'RIDER PROFILE',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF8D98A7),
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ListTile(
+            key: const Key('open-rider-profile'),
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.two_wheeler),
+            title: Text(
+              riderProfile.displayName.isEmpty
+                  ? 'Set up rider profile'
+                  : riderProfile.displayName,
+            ),
+            subtitle: Text(
+              '${riderProfile.motorcycleStyle.label} · ${riderProfile.riderColor.label}',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              final appContext = Navigator.of(
+                context,
+                rootNavigator: true,
+              ).context;
+              Navigator.of(context).pop();
+              unawaited(
+                RiderProfileSheet.show(
+                  appContext,
+                  riderProfile,
+                  currentRideActive: currentRideActive,
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 16),
           Text(
             'DISTANCE UNITS',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(

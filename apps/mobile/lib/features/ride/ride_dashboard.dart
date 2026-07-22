@@ -7,6 +7,7 @@ import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../domain/quick_message.dart';
@@ -25,6 +26,8 @@ class RideDashboard extends StatelessWidget {
     required this.distanceUnits,
     required this.mapStyleMode,
     required this.onLeaveRide,
+    required this.onOpenRoster,
+    required this.riderProfile,
     this.relayController,
     this.markerAssistanceController,
     this.internetRelayController,
@@ -36,6 +39,8 @@ class RideDashboard extends StatelessWidget {
   final DistanceUnitController distanceUnits;
   final MapStyleModeController mapStyleMode;
   final Future<void> Function() onLeaveRide;
+  final VoidCallback onOpenRoster;
+  final RiderProfileController riderProfile;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
@@ -53,8 +58,13 @@ class RideDashboard extends StatelessWidget {
         actions: [
           IconButton(
             tooltip: 'Settings',
-            onPressed: () =>
-                UnitSettingsSheet.show(context, distanceUnits, mapStyleMode),
+            onPressed: () => UnitSettingsSheet.show(
+              context,
+              distanceUnits,
+              mapStyleMode,
+              riderProfile,
+              currentRideActive: true,
+            ),
             icon: const Icon(Icons.settings_outlined),
           ),
           IconButton(
@@ -91,7 +101,10 @@ class RideDashboard extends StatelessWidget {
                   onRoleChanged: controller.setRole,
                 ),
                 const SizedBox(height: 14),
-                _ConnectionCard(controller: controller),
+                _ConnectionCard(
+                  controller: controller,
+                  onOpenRoster: onOpenRoster,
+                ),
                 if (relayController case final relayController?) ...[
                   const SizedBox(height: 14),
                   RelayStatusCard(controller: relayController),
@@ -303,21 +316,39 @@ class _RideHeader extends StatelessWidget {
 }
 
 class _ConnectionCard extends StatelessWidget {
-  const _ConnectionCard({required this.controller});
+  const _ConnectionCard({required this.controller, required this.onOpenRoster});
 
   final RideController controller;
+  final VoidCallback onOpenRoster;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
-        child: _StatusRow(
-          icon: Icons.cloud_queue,
-          title: 'Durable event queue',
-          detail: '${controller.pendingEventCount} events stored locally',
-          state: 'OFFLINE SAFE',
-          stateColor: const Color(0xFFFFC857),
+        child: Column(
+          children: [
+            _StatusRow(
+              icon: Icons.cloud_queue,
+              title: 'Durable event queue',
+              detail: '${controller.pendingEventCount} events stored locally',
+              state: 'OFFLINE SAFE',
+              stateColor: const Color(0xFFFFC857),
+            ),
+            const Divider(height: 24),
+            ListTile(
+              key: const Key('dashboard-open-roster'),
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.groups_2_outlined),
+              title: const Text('Ride roster'),
+              subtitle: Text(
+                '${controller.liveParticipants.length} current riders · '
+                'presence and transport status',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: onOpenRoster,
+            ),
+          ],
         ),
       ),
     );
@@ -658,6 +689,7 @@ class _EventRow extends StatelessWidget {
     final title = switch (event.type) {
       RideEventType.rideCreated => 'Ride created',
       RideEventType.riderJoined => 'Joined ride',
+      RideEventType.riderLeft => 'Left ride',
       RideEventType.roleChanged => 'Role changed',
       RideEventType.rideStarted => 'Ride started',
       RideEventType.markerStarted => 'Marker started',
@@ -670,6 +702,9 @@ class _EventRow extends StatelessWidget {
       RideEventType.hazardCleared => 'Hazard cleared',
       RideEventType.routeDeviationChanged => 'Route status changed',
       RideEventType.routeAlertAcknowledged => 'Route alert acknowledged',
+      RideEventType.routeRevisionChunk => 'Route revision received',
+      RideEventType.routeRevisionPublished => 'Group route updated',
+      RideEventType.routeCleared => 'Group route cleared',
       RideEventType.ridePaused => 'Ride paused',
       RideEventType.rideResumed => 'Ride resumed',
       RideEventType.rideEnded => 'Ride ended',

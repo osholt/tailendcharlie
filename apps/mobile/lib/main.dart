@@ -23,10 +23,12 @@ Future<void> main() async {
   // equivalent composition mode and is unaffected either way.
   MapLibreMap.useHybridComposition = true;
 
+  final riderProfile = await RiderProfileController.load();
   final controller = RideController(
     SqliteEventStore(),
     SharedPreferencesSessionStore(),
     const NearbyBridge(),
+    installationId: riderProfile.installationId,
   );
   await controller.initialize();
   final distanceUnits = await DistanceUnitController.load(
@@ -34,7 +36,6 @@ Future<void> main() async {
   );
   final mapStyleMode = await MapStyleModeController.load();
   final rideCodePreference = await RideCodePreferenceController.load();
-  final riderProfile = await RiderProfileController.load();
   final sharedRoutes = await SharedRouteController.load();
   final recordedRoutes = await JsonFileRecordedRouteStore.openDefault();
 
