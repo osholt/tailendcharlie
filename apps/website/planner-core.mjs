@@ -100,7 +100,10 @@ export function routeBendScore(route) {
     const before = bearing(sampled[index - 2], sampled[index - 1]);
     const after = bearing(sampled[index - 1], sampled[index]);
     const change = Math.abs((((after - before) % 360) + 540) % 360 - 180);
-    if (change >= 8) totalHeadingChange += Math.min(change, 120);
+    // Reward road curvature, not route manoeuvres. Tiny changes are usually
+    // geometry noise; sharper changes are more likely to be a U-turn,
+    // roundabout exit or urban-grid junction than a useful flowing bend.
+    if (change >= 8 && change <= 70) totalHeadingChange += change;
   }
   return totalHeadingChange / Math.max(distanceMetres / 1000, 1);
 }

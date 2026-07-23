@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -16,6 +17,52 @@ import {
   routeSelfCrossingArrows,
   StateHistory,
 } from "./planner-core.mjs";
+
+const reviewedSouthWalesCatalogue = JSON.parse(
+  readFileSync(
+    new URL("./data/discovery-catalogue.geojson", import.meta.url),
+    "utf8",
+  ),
+);
+
+function reviewedRoute(featureId) {
+  const feature = reviewedSouthWalesCatalogue.features.find(
+    (candidate) => candidate.properties.id === featureId,
+  );
+  const coordinates = feature.geometry.coordinates;
+  return {
+    distance: geometryDistance(coordinates),
+    geometry: { coordinates },
+  };
+}
+
+function geometryDistance(coordinates) {
+  return coordinates
+    .slice(1)
+    .reduce(
+      (total, coordinate, index) =>
+        total + coordinateDistance(coordinates[index], coordinate),
+      0,
+    );
+}
+
+function coordinateDistance(first, second) {
+  const radians = (value) => (value * Math.PI) / 180;
+  const latitudeDelta = radians(second[1] - first[1]);
+  const longitudeDelta = radians(second[0] - first[0]);
+  const firstLatitude = radians(first[1]);
+  const secondLatitude = radians(second[1]);
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(firstLatitude) *
+      Math.cos(secondLatitude) *
+      Math.sin(longitudeDelta / 2) ** 2;
+  return (
+    6371000 *
+    2 *
+    Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
+  );
+}
 
 test("buildGpx creates app-compatible GPX metadata, waypoints and track", () => {
   const gpx = buildGpx({
@@ -49,7 +96,13 @@ test("twisty routing chooses a bendier reasonable alternative", () => {
     duration: 750,
     distance: 11000,
     geometry: {
-      coordinates: [[-2, 51], [-1.99, 51.01], [-1.98, 51], [-1.97, 51.01], [-1.9, 51]],
+      coordinates: [
+        [-2, 51],
+        [-1.98, 51.005],
+        [-1.96, 51],
+        [-1.94, 51.005],
+        [-1.9, 51],
+      ],
     },
   };
   const excessiveDetour = {
@@ -70,6 +123,42 @@ test("twisty routing chooses a bendier reasonable alternative", () => {
   assert.equal(routeDetourLimit("balanced"), 1.25);
   assert.equal(routeDetourLimit("very-twisty"), 1.75);
 });
+
+test("bend score is calibrated on reviewed UK routes and rejects manoeuvres", () => {
+  const blackMountain = reviewedRoute("poc-a4069-black-mountain");
+  const gospelPass = reviewedRoute("poc-gospel-pass-road");
+  const blackMountainScore = routeBendScore(blackMountain);
+  const gospelPassScore = routeBendScore(gospelPass);
+
+  assert.equal(routeBendScore(blackMountain), blackMountainScore);
+  assert.ok(blackMountainScore >= 14 && blackMountainScore <= 16);
+  assert.ok(gospelPassScore >= 15 && gospelPassScore <= 20);
+
+  const uTurn = [
+    [-3.2, 51.48],
+    [-3.19, 51.48],
+    [-3.2, 51.48],
+  ];
+  const rightAngleGrid = [
+    [-3.2, 51.48],
+    [-3.19, 51.48],
+    [-3.19, 51.49],
+    [-3.18, 51.49],
+    [-3.18, 51.5],
+  ];
+  expectManoeuvreScoreToBeZero(uTurn);
+  expectManoeuvreScoreToBeZero(rightAngleGrid);
+});
+
+function expectManoeuvreScoreToBeZero(coordinates) {
+  assert.equal(
+    routeBendScore({
+      distance: geometryDistance(coordinates),
+      geometry: { coordinates },
+    }),
+    0,
+  );
+}
 
 test("self-crossing routes get directional arrows for both traversals", () => {
   const arrows = routeSelfCrossingArrows([
