@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
 import 'package:ride_relay/controllers/distance_unit_controller.dart';
+import 'package:ride_relay/controllers/completed_rides_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/ride_code_preference_controller.dart';
 import 'package:ride_relay/controllers/ride_controller.dart';
@@ -10,6 +11,7 @@ import 'package:ride_relay/controllers/shared_route_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
@@ -31,6 +33,9 @@ void main() {
     _sharedRoutes = await SharedRouteController.load();
     _mapStyleMode = await MapStyleModeController.load();
     _rideCodePreference = RideCodePreferenceController.memory();
+    _completedRides = await CompletedRidesController.load(
+      InMemoryCompletedRideStore(),
+    );
   });
 
   testWidgets('home screen exposes the two ride entry points', (tester) async {
@@ -169,6 +174,7 @@ void main() {
         riderProfile: _riderProfile,
         sharedRoutes: _sharedRoutes,
         recordedRoutes: _recordedRoutes,
+        completedRides: _completedRides,
         enableNativeServices: false,
       ),
     );
@@ -412,6 +418,7 @@ late RiderProfileController _riderProfile;
 late SharedRouteController _sharedRoutes;
 late MapStyleModeController _mapStyleMode;
 late RideCodePreferenceController _rideCodePreference;
+late CompletedRidesController _completedRides;
 final _recordedRoutes = InMemoryRecordedRouteStore();
 final _rideFormScrollable = find
     .descendant(
@@ -431,6 +438,7 @@ RideRelayApp _app(
   riderProfile: _riderProfile,
   sharedRoutes: _sharedRoutes,
   recordedRoutes: _recordedRoutes,
+  completedRides: _completedRides,
   enableNativeServices: false,
 );
 

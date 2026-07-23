@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
+import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
@@ -13,6 +14,7 @@ import '../../domain/recorded_route_store.dart';
 import '../../domain/rider_color.dart';
 import '../map/motorcycle_icon.dart';
 import '../ride/route_recorder_screen.dart';
+import '../ride/previous_rides_screen.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
 
@@ -26,6 +28,7 @@ class HomeScreen extends StatefulWidget {
     required this.riderProfile,
     required this.sharedRoutes,
     required this.recordedRoutes,
+    required this.completedRides,
   });
 
   final RideController controller;
@@ -35,6 +38,7 @@ class HomeScreen extends StatefulWidget {
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
   final RecordedRouteStore recordedRoutes;
+  final CompletedRidesController completedRides;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -126,6 +130,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         icon: const Icon(Icons.fiber_manual_record_outlined),
                         label: const Text('Record a route'),
+                      ),
+                      TextButton.icon(
+                        key: const Key('previous-rides-button'),
+                        onPressed: () => PreviousRidesScreen.show(
+                          context,
+                          widget.completedRides,
+                          widget.distanceUnits,
+                        ),
+                        icon: const Icon(Icons.history),
+                        label: Text(
+                          widget.completedRides.rides.isEmpty
+                              ? 'Previous rides'
+                              : 'Previous rides (${widget.completedRides.rides.length})',
+                        ),
                       ),
                       const SizedBox(height: 20),
                       const Text(

@@ -36,6 +36,7 @@ void main() {
         NavigationTarget.myRouteApp,
         NavigationTarget.garmin,
         NavigationTarget.bmwMotorrad,
+        NavigationTarget.harleyDavidson,
       ]) {
         expect(
           target.capability.routeTransfer,
@@ -156,6 +157,7 @@ void main() {
       NavigationTarget.myRouteApp,
       NavigationTarget.garmin,
       NavigationTarget.bmwMotorrad,
+      NavigationTarget.harleyDavidson,
     ]) {
       await coordinator.export(target, _route(4));
     }
@@ -166,6 +168,7 @@ void main() {
       NavigationTarget.myRouteApp,
       NavigationTarget.garmin,
       NavigationTarget.bmwMotorrad,
+      NavigationTarget.harleyDavidson,
     ]);
   });
 }

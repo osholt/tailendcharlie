@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../domain/event_store.dart';
 import '../domain/ice_share.dart';
 import '../domain/imported_route.dart';
+import '../domain/completed_ride_store.dart';
 import '../domain/join_invite.dart';
 import '../domain/marker_assistance.dart';
 import '../domain/quick_message.dart';
@@ -19,6 +20,7 @@ import '../domain/rider_color.dart';
 import '../domain/session_store.dart';
 import '../features/map/motorcycle_icon.dart';
 import '../services/nearby_bridge.dart';
+import '../services/completed_ride_archiver.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
 import '../services/ride_lifecycle.dart';
@@ -39,6 +41,7 @@ class RideController extends ChangeNotifier {
     IdFactory? idFactory,
     Random? random,
     RideCodeDirectory? rideCodeDirectory,
+    this._completedRideStore,
     this._installationId,
   }) : _clock = clock ?? DateTime.now,
        _idFactory = idFactory ?? const Uuid().v7,
@@ -54,6 +57,7 @@ class RideController extends ChangeNotifier {
   final Clock _clock;
   final IdFactory _idFactory;
   final Random _random;
+  final CompletedRideStore? _completedRideStore;
   final String? _installationId;
   final RideCodeDirectory _rideCodeDirectory;
 
@@ -323,6 +327,7 @@ class RideController extends ChangeNotifier {
     if (activeSession != null) {
       _events = await _eventStore.eventsForRide(activeSession.rideId);
       _rebuildLifecycle();
+      await _archiveCurrentRideIfComplete();
       await _expireEndedRideIfDue();
       await _purgeUnusedIceSharesIfEnded();
       _roleBeforeMarker = _activeMarkerPreviousRole();
@@ -337,6 +342,7 @@ class RideController extends ChangeNotifier {
     }
     _events = await _eventStore.eventsForRide(activeSession.rideId);
     _rebuildLifecycle();
+    await _archiveCurrentRideIfComplete();
     await _expireEndedRideIfDue();
     await _purgeUnusedIceSharesIfEnded();
     notifyListeners();
@@ -768,6 +774,7 @@ class RideController extends ChangeNotifier {
         priority: EventPriority.important,
         payload: {'markingSummary': summary.toJson()},
       );
+      await _archiveCurrentRideIfComplete();
       _roleBeforeMarker = null;
       await _purgeUnusedIceSharesIfEnded();
       await _expireEndedRideIfDue();
@@ -777,6 +784,7 @@ class RideController extends ChangeNotifier {
   Future<void> clearEndedRide() async {
     if (!rideEnded) return;
     await _run(() async {
+      await _archiveCurrentRideIfComplete();
       await _removeRideData();
     });
   }
@@ -805,6 +813,7 @@ class RideController extends ChangeNotifier {
           }
         }
       }
+      await _archiveCurrentRideIfComplete(force: true);
       await _removeRideData(deleteEvents: false);
     });
   }
@@ -988,6 +997,7 @@ class RideController extends ChangeNotifier {
     final expiresAt = endedAt.add(endedRideRecoveryWindow);
     final delay = expiresAt.difference(_clock());
     if (delay <= Duration.zero) {
+      await _archiveCurrentRideIfComplete();
       await _removeRideData();
       notifyListeners();
       return;
@@ -995,6 +1005,26 @@ class RideController extends ChangeNotifier {
     _endedRideCleanupTimer = Timer(delay, () {
       unawaited(_expireEndedRideIfDue());
     });
+  }
+
+  Future<void> _archiveCurrentRideIfComplete({bool force = false}) async {
+    final store = _completedRideStore;
+    final activeSession = _session;
+    if (store == null ||
+        activeSession == null ||
+        activeSession.isSimulation ||
+        (!force && !rideEnded) ||
+        (force && !rideStarted && !rideEnded)) {
+      return;
+    }
+    final archivedAt = _rideEndedAt ?? _clock();
+    final snapshot = const CompletedRideArchiver().create(
+      session: activeSession,
+      events: _events,
+      archivedAt: archivedAt,
+      plannedRoute: _routeState.route,
+    );
+    await store.save(snapshot);
   }
 
   /// Removes ICE shares this device received (not ones it sent) as soon as

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../controllers/distance_unit_controller.dart';
+import '../controllers/completed_rides_controller.dart';
 import '../controllers/map_style_mode_controller.dart';
 import '../controllers/ride_code_preference_controller.dart';
 import '../controllers/ride_controller.dart';
@@ -21,6 +22,7 @@ class RideRelayApp extends StatelessWidget {
     required this.riderProfile,
     required this.sharedRoutes,
     required this.recordedRoutes,
+    required this.completedRides,
     this.enableNativeServices = true,
   });
 
@@ -31,6 +33,7 @@ class RideRelayApp extends StatelessWidget {
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
   final RecordedRouteStore recordedRoutes;
+  final CompletedRidesController completedRides;
   final bool enableNativeServices;
 
   @override
@@ -111,6 +114,7 @@ class RideRelayApp extends StatelessWidget {
           controller,
           distanceUnits,
           mapStyleMode,
+          completedRides,
           sharedRoutes,
           riderProfile,
         ]),
@@ -138,6 +142,7 @@ class RideRelayApp extends StatelessWidget {
             riderProfile: riderProfile,
             sharedRoutes: sharedRoutes,
             recordedRoutes: recordedRoutes,
+            completedRides: completedRides,
           );
         },
       ),
