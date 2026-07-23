@@ -107,11 +107,15 @@ curl --fail https://preprod-relay.example.com/api/v1/compatibility
 ```
 
 Once enabled, include `compose.preproduction-proxy.yaml` whenever recreating
-the production Caddy service. Build test clients with
-`RIDE_RELAY_API_BASE_URL=https://preprod-relay.example.com/api`; production
-clients remain compiled against `https://relay.example.com/api`. Destructive
-pre-production testing is safe only after confirming the two Compose projects
-show different database containers and named PostgreSQL volumes.
+the production Caddy service. The pre-production API service deliberately uses
+the distinct Compose name `preproduction-server`; do not rename it to `server`,
+because Docker would then publish a second `server` alias on the production
+proxy network and could send production traffic to pre-production. Build test
+clients with `RIDE_RELAY_API_BASE_URL=https://preprod-relay.example.com/api`;
+production clients remain compiled against `https://relay.example.com/api`.
+Destructive pre-production testing is safe only after confirming the two
+Compose projects show different database containers and named PostgreSQL
+volumes.
 
 ## Tailnet-only field-test host
 
