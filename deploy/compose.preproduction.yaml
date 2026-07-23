@@ -68,7 +68,7 @@ services:
     healthcheck:
       disable: true
     depends_on:
-      db:
+      server:
         condition: service_healthy
 
 networks:
