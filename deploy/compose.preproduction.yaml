@@ -16,7 +16,10 @@ services:
       timeout: 5s
       retries: 12
 
-  server:
+  # Keep this service name distinct from production's `server`. Docker adds
+  # the Compose service name as a DNS alias on every attached network; using
+  # `server` here would make the production proxy randomly resolve either API.
+  preproduction-server:
     build:
       context: ../apps/server
     restart: unless-stopped
@@ -68,7 +71,7 @@ services:
     healthcheck:
       disable: true
     depends_on:
-      server:
+      preproduction-server:
         condition: service_healthy
 
 networks:
