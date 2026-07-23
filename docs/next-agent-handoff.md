@@ -5,16 +5,16 @@ Updated: 2026-07-23
 ## Current branch
 
 Issue #34 and #38 work is on `codex/route-review-push` in
-[draft PR #52](https://github.com/osholt/tailendcharlie/pull/52), stacked
-directly on `codex/ui-navigation-batch` (draft PR #43). The user's primary
-worktree still contains an unrelated local Xcode signing edit and untracked
-`docs/carplay-entitlement-submission/` material; this feature work was completed
-in a separate clean worktree and must not overwrite either item.
+[draft PR #52](https://github.com/osholt/tailendcharlie/pull/52), rebased on
+current `main` after PR #43, the pre-production routing hotfix in PR #55, the
+curvy-route calibration in PR #56 and the Android mini-map fallback in PR #45
+merged. The user's primary worktree still contains an unrelated local Xcode
+signing edit and untracked `docs/carplay-entitlement-submission/` material; this
+feature work was completed in a separate clean worktree and must not overwrite
+either item.
 
-The other open navigation branches remain separate:
-
-- PR #44: `codex/turn-by-turn-guidance`, based on the PR #43 branch.
-- PR #45: `codex/android-mini-map-fallback`, based on PR #44's branch.
+PR #44 (`codex/turn-by-turn-guidance`) remains a separate open navigation
+branch.
 
 ## Current issue batch
 
@@ -43,7 +43,7 @@ flutter build apk --debug
 flutter build ios --simulator --debug
 ```
 
-The full Flutter suite passes (308 tests). Android also builds with a complete
+The full Flutter suite passes (309 tests). Android also builds with a complete
 dummy FCM dart-define set, exercising generated Firebase resource values.
 
 ```bash
