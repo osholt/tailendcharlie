@@ -15,10 +15,12 @@ reusable adjustment handles; the road route previews while a handle is dragged,
 and route edits can be undone or redone. Direction arrows follow the route,
 with larger arrows distinguishing each traversal near a self-crossing. Flowing,
 twisty and very-twisty choices use a reproducible bend score and explicit detour
-limits. Catalogue matching stays in the browser. Draft rides and preferences
-are retained in first-party browser storage for save-and-return, with an
-in-planner clear control and no cookies or tracking. Route coordinates and
-other place queries go only to the documented providers.
+limits, documented in
+[`docs/route-twistiness.md`](../../docs/route-twistiness.md). Catalogue matching
+stays in the browser. Draft rides and preferences are retained in first-party
+browser storage for save-and-return, with an in-planner clear control and no
+cookies or tracking. Route coordinates and other place queries go only to the
+documented providers.
 
 Three default-off motorcycle discovery layers use the bounded Wales
 proof-of-concept catalogue in `data/discovery-catalogue.geojson`. The planner
