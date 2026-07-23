@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
+import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
@@ -11,8 +14,11 @@ import '../../controllers/shared_route_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/rider_color.dart';
+import '../../internet/plan_directory.dart';
+import '../../services/gpx_import_source.dart';
 import '../map/motorcycle_icon.dart';
 import '../ride/route_recorder_screen.dart';
+import '../ride/previous_rides_screen.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
 
@@ -26,6 +32,8 @@ class HomeScreen extends StatefulWidget {
     required this.riderProfile,
     required this.sharedRoutes,
     required this.recordedRoutes,
+    required this.completedRides,
+    this.planDirectory,
   });
 
   final RideController controller;
@@ -35,6 +43,8 @@ class HomeScreen extends StatefulWidget {
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
   final RecordedRouteStore recordedRoutes;
+  final CompletedRidesController completedRides;
+  final PlanDirectory? planDirectory;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -127,6 +137,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         icon: const Icon(Icons.fiber_manual_record_outlined),
                         label: const Text('Record a route'),
                       ),
+                      TextButton.icon(
+                        key: const Key('previous-rides-button'),
+                        onPressed: () => PreviousRidesScreen.show(
+                          context,
+                          widget.completedRides,
+                          widget.distanceUnits,
+                        ),
+                        icon: const Icon(Icons.history),
+                        label: Text(
+                          widget.completedRides.rides.isEmpty
+                              ? 'Previous rides'
+                              : 'Previous rides (${widget.completedRides.rides.length})',
+                        ),
+                      ),
                       const SizedBox(height: 20),
                       const Text(
                         'No account required · the simulator never shares location',
@@ -185,6 +209,8 @@ class _HomeScreenState extends State<HomeScreen> {
         controller: widget.controller,
         rideCodePreference: widget.rideCodePreference,
         riderProfile: widget.riderProfile,
+        sharedRoutes: widget.sharedRoutes,
+        planDirectory: widget.planDirectory,
         creating: creating,
         onComplete: () => Navigator.of(sheetContext).pop(),
       ),
@@ -281,6 +307,8 @@ class _RideForm extends StatefulWidget {
     required this.controller,
     required this.rideCodePreference,
     required this.riderProfile,
+    required this.sharedRoutes,
+    required this.planDirectory,
     required this.creating,
     required this.onComplete,
   });
@@ -288,6 +316,8 @@ class _RideForm extends StatefulWidget {
   final RideController controller;
   final RideCodePreferenceController rideCodePreference;
   final RiderProfileController riderProfile;
+  final SharedRouteController sharedRoutes;
+  final PlanDirectory? planDirectory;
   final bool creating;
   final VoidCallback onComplete;
 
@@ -303,6 +333,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     text: widget.creating ? null : widget.rideCodePreference.savedCode,
   );
   final _rideNameController = TextEditingController();
+  final _planCodeController = TextEditingController();
   final _codeFocusNode = FocusNode();
   final _codeFieldKey = GlobalKey();
   late MotorcycleIconStyle _selectedStyle = widget.riderProfile.motorcycleStyle;
@@ -311,6 +342,9 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
   /// Set once a created ride's code needs sharing before handing off to the
   /// map - the moment a leader most needs it, with people waiting nearby.
   bool _showShareStep = false;
+  bool _checkingPlanCode = false;
+  String? _planCodeError;
+  PickedGpxFile? _pendingPlanFile;
 
   /// Captured when pasted text includes a join token alongside the six
   /// digits - see [parseJoinInvite]. Typing the code by hand leaves this
@@ -332,6 +366,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     _nameController.dispose();
     _codeController.dispose();
     _rideNameController.dispose();
+    _planCodeController.dispose();
     super.dispose();
   }
 
@@ -383,6 +418,28 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                     labelText: 'Ride name (optional)',
                     hintText: 'e.g. Sunday coast run',
                     counterText: '',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  key: const Key('planned-route-code-field'),
+                  controller: _planCodeController,
+                  textCapitalization: TextCapitalization.characters,
+                  textInputAction: TextInputAction.next,
+                  autocorrect: false,
+                  maxLength: 16,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
+                    LengthLimitingTextInputFormatter(16),
+                  ],
+                  decoration: InputDecoration(
+                    labelText: 'Planned route code (optional)',
+                    hintText: 'e.g. 7F3K9QRT',
+                    helperText:
+                        'From the web planner. The route opens for review after the ride is created.',
+                    errorText: _planCodeError,
+                    counterText: '',
+                    suffixIcon: const Icon(Icons.qr_code),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -567,8 +624,10 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
               ],
               const SizedBox(height: 22),
               FilledButton(
-                onPressed: widget.controller.busy ? null : _submit,
-                child: widget.controller.busy
+                onPressed: widget.controller.busy || _checkingPlanCode
+                    ? null
+                    : _submit,
+                child: widget.controller.busy || _checkingPlanCode
                     ? const SizedBox.square(
                         dimension: 22,
                         child: CircularProgressIndicator(strokeWidth: 2),
@@ -585,6 +644,40 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
   Future<void> _submit() async {
     final name = _nameController.text;
     if (widget.creating) {
+      final code = _planCodeController.text.trim();
+      _pendingPlanFile = null;
+      if (code.isNotEmpty) {
+        setState(() {
+          _checkingPlanCode = true;
+          _planCodeError = null;
+        });
+        final ownedDirectory = widget.planDirectory == null
+            ? HttpPlanDirectory.fromEnvironment()
+            : null;
+        try {
+          final plan = await (widget.planDirectory ?? ownedDirectory!).fetch(
+            code,
+          );
+          _pendingPlanFile = PickedGpxFile(
+            name: '${plan.name ?? 'planned-route'}.gpx',
+            bytes: Uint8List.fromList(utf8.encode(plan.gpx)),
+          );
+        } on PlanDirectoryException catch (error) {
+          if (mounted) setState(() => _planCodeError = error.message);
+          return;
+        } on Object {
+          if (mounted) {
+            setState(
+              () => _planCodeError =
+                  'The planned route could not be loaded. Check your connection and try again.',
+            );
+          }
+          return;
+        } finally {
+          ownedDirectory?.close();
+          if (mounted) setState(() => _checkingPlanCode = false);
+        }
+      }
       await widget.controller.createRide(
         name,
         motorcycleStyle: _selectedStyle,
@@ -623,7 +716,13 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     }
   }
 
-  void _finishCreating() => widget.onComplete();
+  void _finishCreating() {
+    if (_pendingPlanFile case final file?) {
+      widget.sharedRoutes.stagePending(file);
+      _pendingPlanFile = null;
+    }
+    widget.onComplete();
+  }
 
   @override
   void didChangeMetrics() {

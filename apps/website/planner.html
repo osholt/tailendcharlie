@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Plan a road-following group ride and download it as a GPX file for Tail End Charlie."
+      content="Plan a road-following group ride, create an app code, or download it as a GPX file for Tail End Charlie."
     />
     <meta name="theme-color" content="#171124" />
     <meta
@@ -15,7 +15,7 @@
     <meta property="og:title" content="Ride planner | Tail End Charlie" />
     <meta
       property="og:description"
-      content="Choose your stops, build a road-following route, and download a GPX file."
+      content="Choose your stops, build a road-following route, then create an app code or download a GPX file."
     />
     <meta property="og:image" content="/assets/tail-end-charlie-icon.png" />
     <meta property="og:type" content="website" />
@@ -44,7 +44,7 @@
       </a>
       <div class="planner-header-copy">
         <span>Ride planner</span>
-        <small>Build a route. Download the GPX. Ride together.</small>
+        <small>Build a route. Send it to the app. Ride together.</small>
       </div>
       <a class="planner-home-link" href="/">Back to website</a>
     </header>
@@ -303,9 +303,24 @@
           <button class="button button-primary" id="download-gpx" disabled>
             Download GPX
           </button>
+          <button class="button button-secondary" id="create-plan-code" disabled>
+            Create app code
+          </button>
           <span>
-            After downloading, open or share the GPX with Tail End Charlie.
+            A code loads the route in the app without transferring a GPX file
+            manually. Email opens an editable web copy and includes the code.
           </span>
+          <section class="plan-share-result" id="plan-share-result" hidden>
+            <p>
+              App code
+              <strong id="plan-code"></strong>
+            </p>
+            <p id="plan-expiry"></p>
+            <div>
+              <button type="button" id="copy-plan-code">Copy code</button>
+              <a id="email-plan" href="#">Email route</a>
+            </div>
+          </section>
         </div>
       </aside>
 

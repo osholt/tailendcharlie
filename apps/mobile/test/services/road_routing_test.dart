@@ -147,6 +147,7 @@ void main() {
       expect(result.route.paths.first.kind, RoutePathKind.track);
       expect(result.route.paths.last.kind, RoutePathKind.track);
       expect(result.route.paths.last.points, hasLength(3));
+      expect(result.route.maneuvers.single.name, 'High Street');
       expect(routing.requests.single, hasLength(2));
     },
   );

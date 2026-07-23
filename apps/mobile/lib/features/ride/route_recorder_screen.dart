@@ -4,6 +4,8 @@ import 'package:uuid/uuid.dart';
 import '../../controllers/route_recorder_controller.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../domain/recorded_route_store.dart';
+import '../../services/basemap_configuration.dart';
+import '../map/resolved_route_map_preview.dart';
 import 'route_sketch.dart';
 
 const _surface = Color(0xFF171D25);
@@ -16,17 +18,35 @@ enum _Phase { recording, review }
 ///
 /// Returns true via [Navigator.pop] if a recording was saved.
 class RouteRecorderScreen extends StatefulWidget {
-  const RouteRecorderScreen({super.key, required this.store, this.controller});
+  const RouteRecorderScreen({
+    super.key,
+    required this.store,
+    this.controller,
+    this.basemapConfiguration = const BasemapConfiguration(),
+    this.mapStyleString,
+  });
 
   final RecordedRouteStore store;
   final RouteRecorderController? controller;
+  final BasemapConfiguration basemapConfiguration;
+  final String? mapStyleString;
 
   static Future<bool> show(
     BuildContext context,
-    RecordedRouteStore store,
-  ) async {
+    RecordedRouteStore store, {
+    BasemapConfiguration? basemapConfiguration,
+    String? mapStyleString,
+  }) async {
     final saved = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => RouteRecorderScreen(store: store)),
+      MaterialPageRoute(
+        builder: (_) => RouteRecorderScreen(
+          store: store,
+          basemapConfiguration:
+              basemapConfiguration ??
+              BasemapConfiguration.fromEnvironment().forBrightness(dark: true),
+          mapStyleString: mapStyleString,
+        ),
+      ),
     );
     return saved ?? false;
   }
@@ -95,7 +115,42 @@ class _RouteRecorderScreenState extends State<RouteRecorderScreen> {
                 borderRadius: BorderRadius.circular(20),
               ),
               padding: const EdgeInsets.all(20),
-              child: points.length >= 2
+              child: widget.basemapConfiguration.usesMapLibre
+                  ? Stack(
+                      children: [
+                        Positioned.fill(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: ResolvedRouteMapPreview(
+                              paths: points.isEmpty ? const [] : [points],
+                              basemapConfiguration: widget.basemapConfiguration,
+                              mapStyleString: widget.mapStyleString,
+                              lineColor: '#FF7A1A',
+                            ),
+                          ),
+                        ),
+                        if (points.length < 2)
+                          Center(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: const Color(0xD9111820),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Text(
+                                  state == RouteRecorderState.idle
+                                      ? 'Start recording to trace your route.'
+                                      : 'Waiting for a GPS fix…',
+                                  style: const TextStyle(color: _muted),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    )
+                  : points.length >= 2
                   ? CustomPaint(
                       size: Size.infinite,
                       painter: RouteSketchPainter(normalizeRoutePoints(points)),
@@ -256,22 +311,35 @@ class _RouteRecorderScreenState extends State<RouteRecorderScreen> {
                 borderRadius: BorderRadius.circular(20),
               ),
               padding: const EdgeInsets.all(20),
-              child: LayoutBuilder(
-                builder: (context, constraints) => GestureDetector(
-                  key: const Key('route-sketch-gesture-detector'),
-                  behavior: HitTestBehavior.opaque,
-                  onTapUp: (details) => _removeTappedPoint(
-                    tapPosition: details.localPosition,
-                    canvasSize: constraints.biggest,
-                    normalized: normalized,
-                    rangeStart: start,
-                  ),
-                  child: CustomPaint(
-                    size: Size.infinite,
-                    painter: RouteSketchPainter(normalized),
-                  ),
-                ),
-              ),
+              child: widget.basemapConfiguration.usesMapLibre
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: ResolvedRouteMapPreview(
+                        key: const Key('route-sketch-gesture-detector'),
+                        paths: [points],
+                        basemapConfiguration: widget.basemapConfiguration,
+                        mapStyleString: widget.mapStyleString,
+                        lineColor: '#FF7A1A',
+                        onPointTap: (index) =>
+                            _removeDisplayedPoint(index, rangeStart: start),
+                      ),
+                    )
+                  : LayoutBuilder(
+                      builder: (context, constraints) => GestureDetector(
+                        key: const Key('route-sketch-gesture-detector'),
+                        behavior: HitTestBehavior.opaque,
+                        onTapUp: (details) => _removeTappedPoint(
+                          tapPosition: details.localPosition,
+                          canvasSize: constraints.biggest,
+                          normalized: normalized,
+                          rangeStart: start,
+                        ),
+                        child: CustomPaint(
+                          size: Size.infinite,
+                          painter: RouteSketchPainter(normalized),
+                        ),
+                      ),
+                    ),
             ),
           ),
           if (points.length > 2) ...[
@@ -360,7 +428,11 @@ class _RouteRecorderScreenState extends State<RouteRecorderScreen> {
     }
     if (closestIndex == -1 || closestDistance > _tapHitRadius) return;
 
-    final removedIndex = rangeStart + closestIndex;
+    _removeDisplayedPoint(closestIndex, rangeStart: rangeStart);
+  }
+
+  void _removeDisplayedPoint(int displayedIndex, {required int rangeStart}) {
+    final removedIndex = rangeStart + displayedIndex;
     _controller.removePoint(removedIndex);
     final range = _trimRange!;
     final start = range.start.round();

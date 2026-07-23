@@ -52,6 +52,13 @@ void main() {
         ),
       ],
       waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.005, longitude: -2.005),
+          type: 'turn',
+          modifier: 'left',
+        ),
+      ],
     );
 
     await tester.pumpWidget(
@@ -67,6 +74,12 @@ void main() {
 
     final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
     expect(layer.polylines, hasLength(2));
+    expect(find.text('Visual turn-by-turn ready'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Destination'),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
     expect(find.text('Start'), findsOneWidget);
     expect(find.text('Destination'), findsOneWidget);
   });

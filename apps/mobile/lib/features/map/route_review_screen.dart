@@ -6,6 +6,7 @@ import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/measurement_formatter.dart';
+import 'resolved_route_map_preview.dart';
 
 enum RouteReviewAction { cancel, edit, confirm }
 
@@ -61,6 +62,10 @@ class RouteReviewScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final previewPaths = route.paths
+        .map((path) => path.points)
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
     final routeSegments = route.paths
         .map((path) => path.points.map(_latLng).toList(growable: false))
         .where((points) => points.isNotEmpty)
@@ -101,6 +106,20 @@ class RouteReviewScreen extends StatelessWidget {
                 color: const Color(0xFF111720),
                 child: allPoints.isEmpty
                     ? const Center(child: Text('No route geometry to review.'))
+                    : basemapConfiguration.usesMapLibre
+                    ? ResolvedRouteMapPreview(
+                        key: const Key('route-review-map'),
+                        paths: previewPaths,
+                        pins: reviewWaypoints.indexed
+                            .map(
+                              (entry) => RoutePreviewPin(
+                                point: entry.$2.point,
+                                kind: entry.$1 == 0 ? 'start' : 'waypoint',
+                              ),
+                            )
+                            .toList(growable: false),
+                        basemapConfiguration: basemapConfiguration,
+                      )
                     : FlutterMap(
                         key: const Key('route-review-map'),
                         options: MapOptions(
@@ -210,9 +229,15 @@ class RouteReviewScreen extends StatelessWidget {
                         label:
                             '${reviewWaypoints.length} route point${reviewWaypoints.length == 1 ? '' : 's'}',
                       ),
+                      if (route.maneuvers.isNotEmpty)
+                        const _SummaryItem(
+                          icon: Icons.turn_slight_right,
+                          label: 'Visual turn-by-turn ready',
+                        ),
                     ],
                   ),
-                  if (!basemapConfiguration.usesLegacyRaster) ...[
+                  if (!basemapConfiguration.usesMapLibre &&
+                      !basemapConfiguration.usesLegacyRaster) ...[
                     const SizedBox(height: 10),
                     const Text(
                       'Route-only preview: geometry and pins remain available without map tiles.',

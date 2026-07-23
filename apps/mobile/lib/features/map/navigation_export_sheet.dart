@@ -103,5 +103,6 @@ class _TargetTile extends StatelessWidget {
     NavigationTarget.myRouteApp => Icons.alt_route,
     NavigationTarget.garmin => Icons.gps_fixed,
     NavigationTarget.bmwMotorrad => Icons.two_wheeler,
+    NavigationTarget.harleyDavidson => Icons.two_wheeler,
   };
 }

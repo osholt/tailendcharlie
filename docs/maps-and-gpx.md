@@ -13,6 +13,10 @@ not bulk-download from the public OpenStreetMap tile servers.
 - Accepts UTF-8 files up to 10 MB and 200,000 points.
 - Rejects invalid coordinates, document type declarations, and empty geometry.
 - Treats recorded `<trk>` geometry as authoritative and never reroutes it.
+- Recognises web-planner tracks carrying the Tail End Charlie
+  `<tec:road-route>` extension as calculated road routes. During review the app
+  can refresh those through the road router to recover manoeuvre instructions;
+  an ordinary recorded track remains untouched.
 - Attempts to match sparse `<rte>` geometry, or waypoint-only GPX files, to the
   road network after an explicit import. If routing is unavailable, the original
   GPX remains usable and is stored unchanged.
@@ -61,7 +65,8 @@ a narrow left rail. Manual pan or zoom suspends camera following and shows a
 Landscape navigation also shows a compact group overview above the primary
 turn-by-turn map. It uses a second, throttled view of the configured MapLibre
 style, fits the latest known rider locations, distinguishes the local rider,
-and includes route geometry without changing the main camera.
+and includes route geometry without changing the main camera. Rider locations
+are enough to show this overview; choosing a planned route is not a prerequisite.
 
 On Android, the overview uses the local route-and-rider renderer instead of a
 second nested MapLibre platform view. This avoids the black platform surface
@@ -84,7 +89,8 @@ distance, and road name or reference in a large banner. The banner advances only
 after the rider passes the maneuver, using the same monotonic route progress as
 the completed-route display. It is hidden when there is no maneuver-bearing
 route or the rider is substantially off route. Imported recorded GPX tracks do
-not invent directions from geometry alone.
+not invent directions from geometry alone. Route review explicitly reports
+**Visual turn-by-turn ready** when manoeuvres are present.
 
 This guidance complements the existing Google Maps, Waze, and GPX handoffs; it
 does not change or remove them. Spoken prompts are deferred until audio focus,

@@ -3,12 +3,14 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'app/ride_relay_app.dart';
 import 'controllers/distance_unit_controller.dart';
+import 'controllers/completed_rides_controller.dart';
 import 'controllers/map_style_mode_controller.dart';
 import 'controllers/ride_code_preference_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/shared_route_controller.dart';
 import 'data/json_file_recorded_route_store.dart';
+import 'data/json_file_completed_ride_store.dart';
 import 'data/shared_preferences_session_store.dart';
 import 'data/sqlite_event_store.dart';
 import 'services/nearby_bridge.dart';
@@ -24,11 +26,15 @@ Future<void> main() async {
   MapLibreMap.useHybridComposition = true;
 
   final riderProfile = await RiderProfileController.load();
+  final completedRides = await CompletedRidesController.load(
+    await JsonFileCompletedRideStore.openDefault(),
+  );
   final controller = RideController(
     SqliteEventStore(),
     SharedPreferencesSessionStore(),
     const NearbyBridge(),
     installationId: riderProfile.installationId,
+    completedRideStore: completedRides,
   );
   await controller.initialize();
   final distanceUnits = await DistanceUnitController.load(
@@ -48,6 +54,7 @@ Future<void> main() async {
       riderProfile: riderProfile,
       sharedRoutes: sharedRoutes,
       recordedRoutes: recordedRoutes,
+      completedRides: completedRides,
     ),
   );
 }

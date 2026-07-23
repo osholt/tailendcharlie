@@ -271,7 +271,7 @@ export function buildGpx({ rideName, stops, routeCoordinates, createdAt }) {
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    '<gpx version="1.1" creator="Tail End Charlie" xmlns="http://www.topografix.com/GPX/1/1">',
+    '<gpx version="1.1" creator="Tail End Charlie" xmlns="http://www.topografix.com/GPX/1/1" xmlns:tec="https://tailendcharlie.app/gpx/1">',
     "  <metadata>",
     `    <name>${escapeXml(safeName)}</name>`,
     "    <desc>Road-following group ride planned at tailendcharlie.app.</desc>",
@@ -280,6 +280,7 @@ export function buildGpx({ rideName, stops, routeCoordinates, createdAt }) {
     waypoints,
     "  <trk>",
     `    <name>${escapeXml(safeName)}</name>`,
+    "    <extensions><tec:road-route>true</tec:road-route></extensions>",
     "    <trkseg>",
     trackPoints,
     "    </trkseg>",

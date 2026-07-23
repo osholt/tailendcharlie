@@ -38,9 +38,15 @@ void main() {
     expect(find.text('Garmin'), findsOneWidget);
     expect(find.text('BMW Motorrad'), findsOneWidget);
     expect(find.textContaining('BMW Motorrad Connected app'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Harley-Davidson'),
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.textContaining('H-D app'), findsOneWidget);
 
-    await tester.tap(find.text('BMW Motorrad'));
+    await tester.tap(find.text('Harley-Davidson'));
     await tester.pumpAndSettle();
-    expect(selected, NavigationTarget.bmwMotorrad);
+    expect(selected, NavigationTarget.harleyDavidson);
   });
 }

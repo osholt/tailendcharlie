@@ -45,7 +45,7 @@
     <main class="wrap legal">
       <h1>Privacy Policy</h1>
       <p class="legal-meta">
-        Effective 22 July 2026 &middot; Tail End Charlie is operated by
+        Effective 23 July 2026 &middot; Tail End Charlie is operated by
         <strong>Holt Racing Limited</strong> ("we", "us")
       </p>
 
@@ -60,7 +60,10 @@
           or opt in to auto-sharing with the ride leader during an
           emergency-stop alert &mdash; both described below. The website ride
           planner keeps your draft route and preferences in your browser so it
-          is there when you return. It uses no cookies or tracking storage.
+          is there when you return. If you choose <strong>Create app
+          code</strong>, an encrypted shared copy is stored for 30 days so the
+          code or emailed link can reopen it. It uses no cookies or tracking
+          storage.
           You can read the full detail below, or jump straight to
           <a href="#your-rights">your rights</a> or
           <a href="#deleting-your-information">how to delete your data</a>.
@@ -140,8 +143,8 @@
       <h3>Other information that stays on your device</h3>
       <p>
         The following is stored only in the app's local storage on your
-        phone and is never sent to our relay server, to other riders, or
-        anywhere else:
+        phone and is not sent to our relay server, to other riders, or
+        anywhere else unless you explicitly share or create an app code:
       </p>
       <ul>
         <li>Your distance-unit and display preferences.</li>
@@ -161,6 +164,15 @@
         limits. The website sets no cookies and uses this storage only for the
         planner features described here, not for analytics, advertising, or
         tracking.
+      </p>
+      <p>
+        If you select <strong>Create app code</strong>, the route name, stops
+        and GPX route shape are sent to our relay and encrypted at rest. The
+        shared copy is deleted automatically after 30 days. Anyone with its
+        short code can load that route in the app or reopen its editable web
+        copy, so treat the code and link as private. <strong>Email
+        route</strong> opens your own email application with the link and code
+        filled in; the website does not send or receive the email.
       </p>
       <p>
         If you draft a motorcycle discovery-layer suggestion, the browser also
@@ -224,6 +236,10 @@
         <li>
           To operate destination search and road routing (see Third parties,
           below).
+        </li>
+        <li>
+          To store and retrieve a planned route when you explicitly create or
+          use a route code.
         </li>
         <li>To secure the relay service against abuse and misuse.</li>
       </ul>
@@ -318,6 +334,10 @@
             <td>A ride record overall (if never explicitly ended)</td>
             <td>72 hours from creation</td>
           </tr>
+          <tr>
+            <td>A planned route shared with an app code</td>
+            <td>30 days from creation</td>
+          </tr>
         </tbody>
       </table>
       <p>
@@ -327,7 +347,8 @@
         is kept until you delete it, uninstall the app, or clear the website's
         browser storage, as applicable. A planner draft is ignored after 180
         days and removed on your next visit; cached searches expire after seven
-        days.
+        days. A route-code copy is separate from the browser draft and expires
+        after 30 days even if the original draft remains on your device.
       </p>
 
       <h2>How we protect your information</h2>
@@ -339,6 +360,11 @@
           of a database file or backup; it does not mean the data is
           end-to-end encrypted between riders, since the relay operator holds
           the key needed to relay events between group members.
+        </li>
+        <li>
+          Route-code GPX content is also encrypted at rest. The short code is
+          a bearer secret: anyone who has it can retrieve that shared route
+          until it expires.
         </li>
         <li>
           Ride join codes are short-lived, rate-limited, and stored as

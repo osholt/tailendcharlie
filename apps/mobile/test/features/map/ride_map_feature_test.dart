@@ -49,6 +49,50 @@ void main() {
     expect(groupMiniMapGridColor(Brightness.dark), const Color(0xFF263443));
   });
 
+  testWidgets('group mini-map appears before a route is loaded', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-no-route-mini-map-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final riders = ValueNotifier<List<MapOverlayMarker>>([
+      const MapOverlayMarker(
+        id: 'rider-alex',
+        point: GeoPoint(latitude: 53.34, longitude: -1.78),
+        label: 'Alex',
+      ),
+      const MapOverlayMarker(
+        id: 'rider-charlie',
+        point: GeoPoint(latitude: 53.35, longitude: -1.79),
+        label: 'Charlie',
+      ),
+    ]);
+    addTearDown(riders.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          overlayMarkers: riders,
+          groupRiderCount: 3,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
+    expect(find.text('3 RIDERS'), findsOneWidget);
+  });
+
   testWidgets('offers file import and loads bundled demo route offline', (
     tester,
   ) async {

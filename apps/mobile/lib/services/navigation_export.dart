@@ -16,6 +16,7 @@ enum NavigationTarget {
   myRouteApp,
   garmin,
   bmwMotorrad,
+  harleyDavidson,
 }
 
 /// The amount of route information Tail End Charlie can transfer to an external
@@ -111,6 +112,15 @@ const navigationHandoffCapabilities = <NavigationHandoffCapability>[
     routeTransfer: NavigationRouteTransfer.fullGpx,
     platforms: allNavigationPlatforms,
     limitation: 'Uses the GPX share sheet for the BMW Motorrad Connected app',
+  ),
+  NavigationHandoffCapability(
+    target: NavigationTarget.harleyDavidson,
+    label: 'Harley-Davidson',
+    transport: NavigationHandoffTransport.gpxShare,
+    routeTransfer: NavigationRouteTransfer.fullGpx,
+    platforms: allNavigationPlatforms,
+    limitation:
+        'Uses the GPX share sheet for the H-D app or a manual compatible-device import',
   ),
   NavigationHandoffCapability(
     target: NavigationTarget.shareGpx,

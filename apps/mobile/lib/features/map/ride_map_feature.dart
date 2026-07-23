@@ -623,9 +623,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // avoids relying on a parent platform-map rebuild to notice rider updates,
     // which left the portrait mini-map absent in the live simulator.
     final canShowGroupMiniMap =
-        _route != null &&
-        widget.overlayMarkers != null &&
-        !markerOverviewActive;
+        widget.overlayMarkers != null && !markerOverviewActive;
     final groupMiniMapWidth = landscape ? 196.0 : 150.0;
     final groupMiniMapHeight = landscape ? 116.0 : 104.0;
     final showRideMenu = hideChrome && widget.onOpenRideMenu != null;
@@ -853,10 +851,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         return _GroupMiniMap(
                           width: groupMiniMapWidth,
                           height: groupMiniMapHeight,
-                          routePaths: _route!.paths
-                              .map((path) => path.points)
-                              .where((points) => points.length >= 2)
-                              .toList(growable: false),
+                          routePaths:
+                              _route?.paths
+                                  .map((path) => path.points)
+                                  .where((points) => points.length >= 2)
+                                  .toList(growable: false) ??
+                              const [],
                           currentPosition: _effectivePosition,
                           riders: groupRiders,
                           riderCount: groupSize,

@@ -5,6 +5,7 @@ import 'package:ride_relay/controllers/ride_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/quick_message.dart';
+import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/marker_assistance.dart';
 import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/imported_route.dart' as route_domain;
@@ -21,12 +22,14 @@ void main() {
   late InMemorySessionStore sessionStore;
   late RideController controller;
   late _InMemoryRideCodeDirectory rideCodes;
+  late InMemoryCompletedRideStore completedRideStore;
   late int id;
 
   setUp(() async {
     eventStore = InMemoryEventStore();
     sessionStore = InMemorySessionStore();
     rideCodes = _InMemoryRideCodeDirectory();
+    completedRideStore = InMemoryCompletedRideStore();
     id = 0;
     controller = RideController(
       eventStore,
@@ -36,6 +39,7 @@ void main() {
       idFactory: () => 'id-${(id++).toString().padLeft(3, '0')}',
       random: Random(42),
       rideCodeDirectory: rideCodes,
+      completedRideStore: completedRideStore,
     );
     await controller.initialize();
   });
@@ -534,6 +538,22 @@ void main() {
     expect(controller.hasActiveRide, isTrue);
     expect(controller.rideEnded, isTrue);
     expect((await sessionStore.load())?.rideId, rideId);
+  });
+
+  test('ending a real ride creates a secret-free local archive', () async {
+    await controller.createRide('Oliver', rideName: 'Peak District');
+    final inviteSecret = controller.session!.inviteSecret;
+    final joinToken = controller.session!.joinToken;
+    await controller.startRide();
+
+    await controller.endRide();
+
+    final archived = (await completedRideStore.list()).single;
+    expect(archived.title, 'Peak District');
+    expect(archived.localRole, RideRole.lead);
+    expect(archived.endedAt, DateTime.utc(2026, 7, 16, 12));
+    expect(archived.toJson().toString(), isNot(contains(inviteSecret)));
+    expect(archived.toJson().toString(), isNot(contains(joinToken)));
   });
 
   test('ended ride is removed only after explicit clearing', () async {

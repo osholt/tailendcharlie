@@ -3,7 +3,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
   Permissions-Policy: camera=(), geolocation=(), microphone=()
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https://tiles.openfreemap.org; connect-src 'self' http://127.0.0.1:8080 https://api.tailendcharlie.app https://tiles.openfreemap.org https://router.project-osrm.org https://nominatim.openstreetmap.org https://valhalla1.openstreetmap.de; worker-src blob:; child-src blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https://tiles.openfreemap.org; connect-src 'self' http://127.0.0.1:8080 https://api.tailendcharlie.app https://relay.tailendcharlie.app https://tiles.openfreemap.org https://router.project-osrm.org https://nominatim.openstreetmap.org https://valhalla1.openstreetmap.de; worker-src blob:; child-src blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
 
 /admin-suggestions.html
   X-Robots-Tag: noindex, nofollow, noarchive

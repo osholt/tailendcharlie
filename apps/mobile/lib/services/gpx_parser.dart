@@ -79,6 +79,13 @@ class GpxParser {
     final paths = <RoutePath>[];
     for (final track in _children(root, 'trk')) {
       final trackName = _childText(track, 'name');
+      final isCalculatedRoadRoute = _children(track, 'extensions')
+          .expand((extensions) => extensions.childElements)
+          .any(
+            (element) =>
+                element.name.local.toLowerCase() == 'road-route' &&
+                element.innerText.trim().toLowerCase() == 'true',
+          );
       final segments = _children(track, 'trkseg').toList(growable: false);
       for (var index = 0; index < segments.length; index += 1) {
         final points = _children(
@@ -91,7 +98,9 @@ class GpxParser {
             : trackName;
         paths.add(
           RoutePath(
-            kind: RoutePathKind.track,
+            kind: isCalculatedRoadRoute
+                ? RoutePathKind.route
+                : RoutePathKind.track,
             name: segmentName,
             points: points,
           ),

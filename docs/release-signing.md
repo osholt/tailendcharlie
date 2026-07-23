@@ -37,7 +37,9 @@ requests never send a build to Apple.
 Changing capabilities on `app.tailendcharlie` invalidates every profile for
 that App ID. Regenerate both `Tail End Charlie CarPlay Development` and
 `Tail End Charlie CI App Store`, verify that each embeds
-`com.apple.developer.carplay-driving-task`, and replace
+`com.apple.developer.carplay-driving-task`, verify that the development profile
+has `aps-environment = development` and the App Store profile has
+`aps-environment = production`, and replace
 `APPLE_APPSTORE_PROFILE_BASE64` with the regenerated App Store profile before
 the next TestFlight run.
 

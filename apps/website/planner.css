@@ -727,6 +727,56 @@
   text-align: center;
 }
 
+.plan-share-result {
+  margin-top: 4px;
+  border: 1px solid rgba(255, 173, 129, 0.38);
+  border-radius: 13px;
+  padding: 12px;
+  background: rgba(255, 173, 129, 0.08);
+}
+
+.plan-share-result p {
+  margin: 0;
+  color: var(--planner-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.plan-share-result strong {
+  display: block;
+  margin: 4px 0 2px;
+  color: var(--peach);
+  font-size: 1.45rem;
+  letter-spacing: 0.14em;
+}
+
+.plan-share-result > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.plan-share-result button,
+.plan-share-result a {
+  border: 1px solid rgba(253, 245, 240, 0.2);
+  border-radius: 9px;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: #2b2c37;
+  font: inherit;
+  font-size: 0.74rem;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.plan-share-result button:hover,
+.plan-share-result a:hover {
+  border-color: var(--peach);
+  color: var(--peach);
+}
+
 .planner-map-shell {
   position: relative;
   min-width: 0;

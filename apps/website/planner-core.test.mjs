@@ -64,7 +64,7 @@ function coordinateDistance(first, second) {
   );
 }
 
-test("buildGpx creates app-compatible GPX metadata, waypoints and track", () => {
+test("buildGpx marks its calculated track as a road route", () => {
   const gpx = buildGpx({
     rideName: "Peaks & Dales",
     stops: [
@@ -82,6 +82,7 @@ test("buildGpx creates app-compatible GPX metadata, waypoints and track", () => 
   assert.match(gpx, /<name>Peaks &amp; Dales<\/name>/);
   assert.match(gpx, /<name>Start &lt;cafe&gt;<\/name>/);
   assert.match(gpx, /<wpt lat="53\.1234568" lon="-2\.1234568">/);
+  assert.match(gpx, /<tec:road-route>true<\/tec:road-route>/);
   assert.match(gpx, /<trkpt lat="53\.2345679" lon="-1\.9876543" \/>/);
   assert.match(gpx, /<time>2026-07-22T10:30:00\.000Z<\/time>/);
 });

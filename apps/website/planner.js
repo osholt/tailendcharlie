@@ -26,6 +26,13 @@ import {
   PLANNER_DRAFT_KEY,
 } from "./planner-storage.mjs";
 import {
+  buildPlanEmailHref,
+  buildPlannerPlanUrl,
+  createRoutePlan,
+  fetchRoutePlan,
+  normalizePlanCode,
+} from "./planner-plan.mjs";
+import {
   DISCOVERY_CATALOGUE_URL,
   DISCOVERY_CATEGORIES,
   discoveryFeatureAnchor,
@@ -50,9 +57,10 @@ const MAX_STOPS = 50;
 const SEARCH_CACHE_KEY = "tec-planner-search-v1";
 const SEARCH_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const CATALOG_TABLE_BATCH_SIZE = 75;
-const DISCOVERY_API_URL = document
+const RELAY_API_URL = document
   .querySelector('meta[name="tec-discovery-api"]')
   ?.content?.replace(/\/$/, "");
+const DISCOVERY_API_URL = RELAY_API_URL;
 
 const elements = {
   clearRoute: document.querySelector("#clear-route"),
@@ -69,6 +77,8 @@ const elements = {
   bikerSort: document.querySelector("#biker-place-sort"),
   browseBikerStops: document.querySelector("#browse-biker-stops"),
   clearSavedDraft: document.querySelector("#clear-saved-draft"),
+  copyPlanCode: document.querySelector("#copy-plan-code"),
+  createPlanCode: document.querySelector("#create-plan-code"),
   distance: document.querySelector("#route-distance"),
   download: document.querySelector("#download-gpx"),
   duration: document.querySelector("#route-duration"),
@@ -78,6 +88,10 @@ const elements = {
   expandLabel: document.querySelector(".map-expand-label"),
   mapInstructions: document.querySelector("#map-instructions"),
   mapShell: document.querySelector("#map-shell"),
+  emailPlan: document.querySelector("#email-plan"),
+  planCode: document.querySelector("#plan-code"),
+  planExpiry: document.querySelector("#plan-expiry"),
+  planShareResult: document.querySelector("#plan-share-result"),
   discoveryLayerStatus: document.querySelector("#discovery-layer-status"),
   layerGoodRoad: document.querySelector("#layer-good-road"),
   layerMountainPass: document.querySelector("#layer-mountain-pass"),
@@ -137,6 +151,7 @@ let catalogTravelTimeSequence = 0;
 let catalogTravelTimes = { startKey: "", durations: new Map() };
 let draftSaveTimer = null;
 let restoringDraft = false;
+let creatingPlanCode = false;
 let discoveryCatalogue = emptyFeatureCollection();
 let visibleDiscoveryCatalogue = emptyFeatureCollection();
 let discoveryLoadRequest = null;
@@ -324,7 +339,11 @@ map.on("load", () => {
   updateBikerLayerVisibility();
   updateMapLines();
   installRouteDragging();
-  restorePlannerDraft();
+  if (new URLSearchParams(window.location.search).has("code")) {
+    void loadPlanFromUrl();
+  } else {
+    restorePlannerDraft();
+  }
 });
 
 map.on("click", async (event) => {
@@ -410,6 +429,8 @@ elements.undoRoute.addEventListener("click", undoRouteChange);
 elements.redoRoute.addEventListener("click", redoRouteChange);
 elements.clearSavedDraft.addEventListener("click", clearSavedPlannerData);
 elements.download.addEventListener("click", downloadGpx);
+elements.createPlanCode.addEventListener("click", createPlanCode);
+elements.copyPlanCode.addEventListener("click", copyPlanCode);
 elements.expand.addEventListener("click", toggleExpandedMap);
 for (const layerToggle of discoveryLayerElements) {
   layerToggle.addEventListener("change", changeDiscoveryLayers);
@@ -1040,8 +1061,13 @@ function setStatus(message, isError = false) {
 }
 
 function updateDownloadState() {
-  elements.download.disabled =
-    !elements.rideName.value.trim() || stops.length < 2 || routeCoordinates.length < 2;
+  const routeIsReady =
+    Boolean(elements.rideName.value.trim()) &&
+    stops.length >= 2 &&
+    routeCoordinates.length >= 2;
+  elements.download.disabled = !routeIsReady;
+  elements.createPlanCode.disabled =
+    !routeIsReady || creatingPlanCode || !RELAY_API_URL;
 }
 
 function downloadGpx() {
@@ -1061,6 +1087,201 @@ function downloadGpx() {
   } catch (error) {
     setStatus(error.message || "The GPX file could not be created.", true);
   }
+}
+
+async function createPlanCode() {
+  if (creatingPlanCode) return;
+  creatingPlanCode = true;
+  updateDownloadState();
+  setStatus("Creating a private route code…");
+  try {
+    const rideName = elements.rideName.value.trim();
+    const gpx = buildGpx({
+      rideName,
+      stops,
+      routeCoordinates,
+      createdAt: new Date(),
+    });
+    const plan = await createRoutePlan({
+      apiBase: RELAY_API_URL,
+      name: rideName,
+      gpx,
+    });
+    showPlanShareResult({
+      ...plan,
+      name: rideName,
+    });
+    setStatus(
+      `Route code ${plan.code} is ready. Load it in the app or email the editable link.`,
+    );
+  } catch (error) {
+    setStatus(error.message || "The route code could not be created.", true);
+  } finally {
+    creatingPlanCode = false;
+    updateDownloadState();
+  }
+}
+
+async function copyPlanCode() {
+  const code = elements.planCode.textContent.trim();
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    setStatus(`Route code ${code} copied.`);
+  } catch {
+    setStatus(`Copy this route code into the app: ${code}`);
+  }
+}
+
+async function loadPlanFromUrl() {
+  const codeValue = new URLSearchParams(window.location.search).get("code");
+  try {
+    const code = normalizePlanCode(codeValue);
+    setStatus(`Loading shared route ${code}…`);
+    const plan = await fetchRoutePlan({
+      apiBase: RELAY_API_URL,
+      code,
+    });
+    const parsed = parsePlanGpx(plan.gpx, plan.name);
+    replaceRouteWithPlan(parsed);
+    fitRoute();
+    await routeStops(false, true);
+    showPlanShareResult({
+      code: plan.code,
+      expiresAt: plan.expiresAt,
+      name: parsed.name,
+    });
+    setStatus(
+      `Shared route ${plan.code} is ready to edit. Its code can also be entered in the app.`,
+    );
+  } catch (error) {
+    setStatus(error.message || "The shared route could not be loaded.", true);
+    restorePlannerDraft();
+  }
+}
+
+function parsePlanGpx(gpx, fallbackName) {
+  const documentNode = new DOMParser().parseFromString(gpx, "application/xml");
+  if (documentNode.querySelector("parsererror")) {
+    throw new Error("The shared route contains invalid GPX data.");
+  }
+  const root = documentNode.documentElement;
+  if (root?.localName !== "gpx") {
+    throw new Error("The shared route contains invalid GPX data.");
+  }
+
+  const pointElements = (localName) =>
+    Array.from(documentNode.getElementsByTagNameNS("*", localName));
+  const coordinateFrom = (node) => {
+    const longitude = Number(node.getAttribute("lon"));
+    const latitude = Number(node.getAttribute("lat"));
+    if (!isCoordinate(longitude, latitude)) {
+      throw new Error("The shared route contains an invalid map position.");
+    }
+    return [longitude, latitude];
+  };
+  const childText = (node, localName) =>
+    Array.from(node.children).find((child) => child.localName === localName)
+      ?.textContent?.trim() || "";
+
+  const routePointElements = pointElements("trkpt");
+  if (routePointElements.length < 2) {
+    routePointElements.push(...pointElements("rtept"));
+  }
+  const parsedRoute = routePointElements.map(coordinateFrom);
+  if (parsedRoute.length < 2) {
+    throw new Error("The shared route does not contain enough route points.");
+  }
+
+  const parsedStops = pointElements("wpt")
+    .slice(0, MAX_STOPS)
+    .map((node, index) => {
+      const [longitude, latitude] = coordinateFrom(node);
+      return {
+        longitude,
+        latitude,
+        name: childText(node, "name") || `Stop ${index + 1}`,
+      };
+    });
+  if (parsedStops.length < 2) {
+    const first = parsedRoute[0];
+    const last = parsedRoute.at(-1);
+    parsedStops.splice(
+      0,
+      parsedStops.length,
+      {
+        longitude: first[0],
+        latitude: first[1],
+        name: "Start",
+      },
+      {
+        longitude: last[0],
+        latitude: last[1],
+        name: "Finish",
+      },
+    );
+  }
+
+  const metadata = pointElements("metadata")[0];
+  const track = pointElements("trk")[0];
+  const name =
+    String(fallbackName || "").trim() ||
+    childText(metadata, "name") ||
+    childText(track, "name") ||
+    "Shared ride";
+  return {
+    name: cleanPlaceName(name),
+    stops: parsedStops,
+    routeCoordinates: parsedRoute,
+  };
+}
+
+function replaceRouteWithPlan(plan) {
+  routeRequest?.abort();
+  cancelRoutePreview();
+  stops.forEach((stop) => stop.marker.remove());
+  stops = [];
+  clearShapingPoints();
+  routeCoordinates = plan.routeCoordinates;
+  routeLegGeometries = [];
+  routedControls = [];
+  restoringDraft = true;
+  elements.rideName.value = plan.name;
+  for (const stop of plan.stops) {
+    addStop(stop, stops.length, false, false);
+  }
+  restoringDraft = false;
+  routedControls = routingControls();
+  setSummary(
+    null,
+    null,
+    routeBendScore({
+      geometry: { coordinates: routeCoordinates },
+      distance: null,
+    }),
+  );
+  updateMapLines();
+  updateDownloadState();
+  updateHistoryButtons();
+  scheduleDraftSave();
+}
+
+function showPlanShareResult({ code, expiresAt, name }) {
+  const planUrl = buildPlannerPlanUrl(code, window.location.href);
+  const expiry = new Date(expiresAt);
+  elements.planCode.textContent = normalizePlanCode(code);
+  elements.planExpiry.textContent = Number.isNaN(expiry.getTime())
+    ? "This shared copy is temporary."
+    : `This shared copy expires ${new Intl.DateTimeFormat("en-GB", {
+        dateStyle: "long",
+      }).format(expiry)}.`;
+  elements.emailPlan.href = buildPlanEmailHref({
+    name,
+    code,
+    planUrl,
+    expiresAt,
+  });
+  elements.planShareResult.hidden = false;
 }
 
 async function searchPlaces(event) {
@@ -1429,6 +1650,7 @@ function bikerPlaceLabel(place) {
 
 function scheduleDraftSave() {
   if (restoringDraft || routeDrag) return;
+  elements.planShareResult.hidden = true;
   window.clearTimeout(draftSaveTimer);
   draftSaveTimer = window.setTimeout(savePlannerDraft, 180);
 }

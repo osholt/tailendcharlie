@@ -38,6 +38,13 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Stages a route obtained inside the app (for example from a web-planner
+  /// code) through the same leader-only handoff as an OS "Open in…" file.
+  void stagePending(PickedGpxFile file) {
+    _pending = file;
+    notifyListeners();
+  }
+
   /// Call once a screen has either started importing the file or shown the
   /// rider a "start a ride first" message, so it is not offered again.
   void clearPending() {

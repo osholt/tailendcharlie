@@ -62,6 +62,29 @@ void main() {
     );
   });
 
+  test('recognises a planner-calculated track as a road route', () {
+    final route = parser.parse(
+      _bytes('''
+        <gpx version="1.1"
+             xmlns="http://www.topografix.com/GPX/1/1"
+             xmlns:tec="https://tailendcharlie.app/gpx/1">
+          <trk>
+            <extensions><tec:road-route>true</tec:road-route></extensions>
+            <trkseg>
+              <trkpt lat="53.1" lon="-1.4" />
+              <trkpt lat="53.2" lon="-1.5" />
+            </trkseg>
+          </trk>
+        </gpx>
+      '''),
+      routeId: 'planned',
+      sourceFileName: 'planned.gpx',
+      importedAt: DateTime.utc(2026, 7, 23),
+    );
+
+    expect(route.paths.single.kind.name, 'route');
+  });
+
   test('bundled demo is valid GPX geometry', () {
     final bytes = File('assets/demo_route.gpx').readAsBytesSync();
     final route = parser.parse(
