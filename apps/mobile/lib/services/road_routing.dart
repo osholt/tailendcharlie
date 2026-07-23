@@ -49,20 +49,14 @@ class RoadRouteResult {
 /// A decision reported by the routing engine rather than inferred from a
 /// bend in recorded GPS geometry. These are the points where a second rider
 /// may need to mark a junction.
-class RoadRouteManeuver {
+class RoadRouteManeuver extends RouteManeuver {
   const RoadRouteManeuver({
-    required this.position,
-    required this.type,
-    this.modifier,
-    this.name,
-    this.ref,
+    required super.position,
+    required super.type,
+    super.modifier,
+    super.name,
+    super.ref,
   });
-
-  final GeoPoint position;
-  final String type;
-  final String? modifier;
-  final String? name;
-  final String? ref;
 
   /// OSRM does not expose UK give-way signage, but these manoeuvres are the
   /// routing decisions where the group leaves its current road or must
@@ -433,6 +427,7 @@ class DestinationRoutePlanner {
           symbol: 'Flag, Red',
         ),
       ],
+      maneuvers: roadRoute.maneuvers,
     );
     return DestinationRoutePlan(
       route: route,

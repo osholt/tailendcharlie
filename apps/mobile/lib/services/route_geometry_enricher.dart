@@ -28,6 +28,7 @@ class RouteGeometryEnricher {
 
   Future<RouteGeometryEnrichment> enrich(ImportedRoute route) async {
     final paths = <RoutePath>[];
+    final maneuvers = <RouteManeuver>[...route.maneuvers];
     var attempted = false;
     var snapped = 0;
     String? warning;
@@ -49,6 +50,7 @@ class RouteGeometryEnricher {
             points: result.points,
           ),
         );
+        maneuvers.addAll(result.maneuvers);
         snapped += 1;
       } on Object catch (error) {
         paths.add(path);
@@ -72,6 +74,7 @@ class RouteGeometryEnricher {
             points: result.points,
           ),
         );
+        maneuvers.addAll(result.maneuvers);
         snapped += 1;
       } on Object catch (error) {
         warning = 'Could not match GPX waypoints to roads: $error';
@@ -95,6 +98,7 @@ class RouteGeometryEnricher {
         sourceFileName: route.sourceFileName,
         paths: List.unmodifiable(paths),
         waypoints: route.waypoints,
+        maneuvers: List.unmodifiable(maneuvers),
       ),
       attempted: attempted,
       snappedPathCount: snapped,

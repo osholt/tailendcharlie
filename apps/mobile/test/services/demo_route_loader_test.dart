@@ -12,6 +12,7 @@ void main() {
     expect(route.waypoints, hasLength(3));
     expect(route.waypoints.first.name, "King's Oak Academy car park");
     expect(route.waypoints.last.name, 'Cross Hands Hotel car park');
+    expect(route.maneuvers, hasLength(4));
 
     final points = route.paths.single.points;
     expect(points.first.latitude, closeTo(51.462674, 0.00001));

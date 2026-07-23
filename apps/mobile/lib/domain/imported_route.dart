@@ -120,6 +120,44 @@ class RouteWaypoint {
   }
 }
 
+/// A route-engine instruction retained with the route geometry so navigation
+/// guidance remains available after restart and while offline.
+class RouteManeuver {
+  const RouteManeuver({
+    required this.position,
+    required this.type,
+    this.modifier,
+    this.name,
+    this.ref,
+  });
+
+  final GeoPoint position;
+  final String type;
+  final String? modifier;
+  final String? name;
+  final String? ref;
+
+  Map<String, Object?> toJson() => {
+    'latitude': position.latitude,
+    'longitude': position.longitude,
+    'type': type,
+    if (modifier != null) 'modifier': modifier,
+    if (name != null) 'name': name,
+    if (ref != null) 'ref': ref,
+  };
+
+  factory RouteManeuver.fromJson(Map<String, Object?> json) => RouteManeuver(
+    position: GeoPoint(
+      latitude: _number(json, 'latitude'),
+      longitude: _number(json, 'longitude'),
+    ),
+    type: _requiredString(json, 'type'),
+    modifier: _optionalString(json['modifier']),
+    name: _optionalString(json['name']),
+    ref: _optionalString(json['ref']),
+  );
+}
+
 class ImportedRoute {
   const ImportedRoute({
     required this.id,
@@ -128,6 +166,7 @@ class ImportedRoute {
     required this.sourceFileName,
     required this.paths,
     required this.waypoints,
+    this.maneuvers = const [],
     this.description,
   });
 
@@ -140,6 +179,7 @@ class ImportedRoute {
   final String sourceFileName;
   final List<RoutePath> paths;
   final List<RouteWaypoint> waypoints;
+  final List<RouteManeuver> maneuvers;
 
   Iterable<GeoPoint> get allPoints sync* {
     for (final path in paths) {
@@ -162,6 +202,8 @@ class ImportedRoute {
     'sourceFileName': sourceFileName,
     'paths': paths.map((path) => path.toJson()).toList(),
     'waypoints': waypoints.map((waypoint) => waypoint.toJson()).toList(),
+    if (maneuvers.isNotEmpty)
+      'maneuvers': maneuvers.map((maneuver) => maneuver.toJson()).toList(),
   };
 
   String toJsonString() => jsonEncode(toJson());
@@ -174,8 +216,11 @@ class ImportedRoute {
     }
     final rawPaths = json['paths'];
     final rawWaypoints = json['waypoints'];
-    if (rawPaths is! List || rawWaypoints is! List) {
-      throw const FormatException('Route paths and waypoints must be lists.');
+    final rawManeuvers = json['maneuvers'] ?? const [];
+    if (rawPaths is! List || rawWaypoints is! List || rawManeuvers is! List) {
+      throw const FormatException(
+        'Route paths, waypoints and maneuvers must be lists.',
+      );
     }
     final paths = rawPaths
         .map((path) {
@@ -193,6 +238,14 @@ class ImportedRoute {
           return RouteWaypoint.fromJson(Map<String, Object?>.from(waypoint));
         })
         .toList(growable: false);
+    final maneuvers = rawManeuvers
+        .map((maneuver) {
+          if (maneuver is! Map) {
+            throw const FormatException('Route maneuver must be an object.');
+          }
+          return RouteManeuver.fromJson(Map<String, Object?>.from(maneuver));
+        })
+        .toList(growable: false);
     if (paths.isEmpty && waypoints.isEmpty) {
       throw const FormatException('A route must contain geometry.');
     }
@@ -205,6 +258,7 @@ class ImportedRoute {
       sourceFileName: _requiredString(json, 'sourceFileName'),
       paths: paths,
       waypoints: waypoints,
+      maneuvers: maneuvers,
     );
   }
 

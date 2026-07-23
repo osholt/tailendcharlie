@@ -76,6 +76,22 @@ magenta trail with a dark outline so their actual path is visually distinct
 from the planned route. Rider trails are capped in memory and are not added to
 the imported GPX.
 
+## In-app maneuver guidance
+
+Road routes planned through OSRM retain their maneuver steps. While the rider is
+near the planned route, the map shows the next useful maneuver, remaining
+distance, and road name or reference in a large banner. The banner advances only
+after the rider passes the maneuver, using the same monotonic route progress as
+the completed-route display. It is hidden when there is no maneuver-bearing
+route or the rider is substantially off route. Imported recorded GPX tracks do
+not invent directions from geometry alone.
+
+This guidance complements the existing Google Maps, Waze, and GPX handoffs; it
+does not change or remove them. Spoken prompts are deferred until audio focus,
+Bluetooth/intercom routing, interruption behaviour, and helmet intelligibility
+can be tested on physical iOS and Android devices. A visual-only prompt must not
+be represented as voice-guided navigation in release material.
+
 ## Destination and road routing
 
 Every calculated route, GPX import, plan-code import, recorded route and demo

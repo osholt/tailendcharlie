@@ -509,6 +509,14 @@ void main() {
           ),
         ],
         waypoints: const [],
+        maneuvers: const [
+          RouteManeuver(
+            position: GeoPoint(latitude: 53, longitude: -1.005),
+            type: 'turn',
+            modifier: 'right',
+            name: 'Station Road',
+          ),
+        ],
       );
       final cache = OfflineTileCache(
         rootDirectory: directory,
@@ -541,6 +549,12 @@ void main() {
       expect(find.byKey(const Key('mini-map-you-legend')), findsOneWidget);
       expect(find.byKey(const Key('mini-map-north-indicator')), findsOneWidget);
       expect(find.byKey(const Key('mini-map-scale')), findsOneWidget);
+      expect(
+        find.byKey(const Key('navigation-guidance-banner')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Turn right'), findsOneWidget);
+      expect(find.text('Station Road'), findsOneWidget);
       final arrowLayer = tester.widget<MarkerLayer>(
         find.byKey(const Key('trail-direction-arrow-layer')),
       );

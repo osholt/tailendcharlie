@@ -181,6 +181,7 @@ void main() {
 
     expect(route.waypoints.first.point.latitude, 52.0);
     expect(routing.requests.single.first.latitude, 52.0);
+    expect(route.maneuvers.single.name, 'High Street');
   });
 
   test(
@@ -289,6 +290,14 @@ class _FakeRoadRoutingService implements RoadRoutingService {
       ],
       distanceMeters: 10000,
       duration: Duration(minutes: 12),
+      maneuvers: [
+        RoadRouteManeuver(
+          position: GeoPoint(latitude: 53.05, longitude: -1.05),
+          type: 'turn',
+          modifier: 'left',
+          name: 'High Street',
+        ),
+      ],
     );
   }
 }

@@ -32,6 +32,15 @@ void main() {
           symbol: 'Fuel',
         ),
       ],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 53.2, longitude: -1.5),
+          type: 'turn',
+          modifier: 'left',
+          name: 'High Street',
+          ref: 'A1',
+        ),
+      ],
     );
 
     final restored = ImportedRoute.fromJsonString(route.toJsonString());
@@ -42,5 +51,8 @@ void main() {
     expect(restored.paths.single.kind, RoutePathKind.track);
     expect(restored.paths.single.points.first.elevationMeters, 210);
     expect(restored.waypoints.single.name, 'Fuel');
+    expect(restored.maneuvers.single.type, 'turn');
+    expect(restored.maneuvers.single.modifier, 'left');
+    expect(restored.maneuvers.single.name, 'High Street');
   });
 }

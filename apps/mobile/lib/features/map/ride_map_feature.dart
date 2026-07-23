@@ -29,6 +29,7 @@ import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
 import '../../services/measurement_formatter.dart';
+import '../../services/navigation_guidance.dart';
 import '../../services/motorcycle_discovery.dart';
 import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
@@ -400,11 +401,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _overlaySource = 'ride-relay-overlays';
   static const _trailDirectionArrowImage = 'ride-relay-trail-direction-arrow';
   static const _trailDirectionArrowSampler = TrailDirectionArrowSampler();
+  static const _navigationGuidancePlanner = NavigationGuidancePlanner();
   static const _discoveryLineSource = 'ride-relay-discovery-lines';
   static const _discoveryPointSource = 'ride-relay-discovery-points';
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
+  final ValueNotifier<NavigationGuidance?> _navigationGuidance = ValueNotifier(
+    null,
+  );
   final Map<int, Offset> _mapPointerOrigins = {};
   late final http.Client _routingClient;
   late final RoadRoutingService _roadRoutingService;
@@ -538,6 +543,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
+    _navigationGuidance.dispose();
     _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
@@ -561,6 +567,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _initialCameraPositioned = false;
         _loading = false;
       });
+      _updateNavigationGuidance(_effectivePosition);
       widget.onRouteChanged?.call(route);
       if (_navigationMode) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -633,6 +640,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ? overlayRight + groupMiniMapWidth + 16
         : overlayRight + (landscape ? 68 : 12);
     final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
+    final hasGuidance = _route?.maneuvers.isNotEmpty ?? false;
+    final guidanceOffset = hasGuidance ? (landscape ? 62.0 : 74.0) : 0.0;
+    final leaderStatusTop = statusTop + guidanceOffset;
     final emergencyBottom =
         overlayBottom + (markerOverviewActive && !landscape ? 254.0 : 54.0);
     final showLeaveRide = _route != null && widget.onLeaveRide != null;
@@ -790,7 +800,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   Positioned(
                     left: statusLeft,
                     right: statusRight,
-                    top: statusTop,
+                    top: leaderStatusTop,
                     child: ValueListenableBuilder<LeaderRideStatus?>(
                       valueListenable: widget.leaderStatus!,
                       builder: (context, status, _) => status == null
@@ -802,6 +812,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             ),
                     ),
                   ),
+                if (hasGuidance)
+                  Positioned(
+                    left: statusLeft,
+                    right: statusRight,
+                    top: statusTop,
+                    child: ValueListenableBuilder<NavigationGuidance?>(
+                      valueListenable: _navigationGuidance,
+                      builder: (context, guidance, _) => guidance == null
+                          ? const SizedBox.shrink()
+                          : _NavigationGuidanceBanner(
+                              guidance: guidance,
+                              distanceUnit: widget.distanceUnit,
+                              compact: landscape,
+                            ),
+                    ),
+                  ),
                 if (canShowGroupMiniMap)
                   Positioned(
                     key: const Key('group-mini-map-position'),
@@ -809,7 +835,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     // In portrait the overview sits beneath the TEC card so
                     // it does not compress the status text into an unusable
                     // narrow strip.
-                    top: landscape ? statusTop : statusTop + 96,
+                    top: landscape
+                        ? statusTop
+                        : leaderStatusTop +
+                              (widget.leaderStatus == null ? 24 : 96),
                     child: ValueListenableBuilder<List<MapOverlayMarker>>(
                       valueListenable: widget.overlayMarkers!,
                       builder: (context, overlays, _) {
@@ -1282,6 +1311,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _route != null && position != null && !_navigationCanvasActive;
     if (refreshProgress) {
       _progressGeometry = _routeProgressTracker.update(_route, position);
+      _updateNavigationGuidance(position);
     }
     // MapLibre receives sources directly. Keep its platform view mounted while
     // the simulation is running; only FlutterMap needs a widget rebuild for
@@ -1311,6 +1341,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
         if (mounted) unawaited(_showEmergencyActions());
       });
     }
+  }
+
+  void _updateNavigationGuidance(GeoPoint? position) {
+    final next = _navigationGuidancePlanner.plan(
+      route: _route,
+      position: position,
+      progressMeters: _progressGeometry.progressMeters,
+    );
+    final current = _navigationGuidance.value;
+    final unchanged =
+        current?.maneuver == next?.maneuver &&
+        current != null &&
+        next != null &&
+        (current.distanceMeters - next.distanceMeters).abs() < 5;
+    if (!unchanged) _navigationGuidance.value = next;
   }
 
   void _onOverlayDataChanged() {
@@ -2496,6 +2541,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _navigationCanvasActive = true;
       }
     });
+    _updateNavigationGuidance(_effectivePosition);
     await _syncMapLibreSources();
     _fitRoute();
     if (_navigationMode) unawaited(_followNavigationCamera());
@@ -3033,6 +3079,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             _navigationCanvasActive = false;
             _initialCameraPositioned = false;
           });
+          _navigationGuidance.value = null;
           await _syncMapLibreSources();
           widget.onRouteChanged?.call(null);
         }
@@ -4469,6 +4516,134 @@ class _MarkerStatusPill extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _NavigationGuidanceBanner extends StatelessWidget {
+  const _NavigationGuidanceBanner({
+    required this.guidance,
+    required this.distanceUnit,
+    required this.compact,
+  });
+
+  final NavigationGuidance guidance;
+  final DistanceUnit distanceUnit;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final distance = MeasurementFormatter(
+      distanceUnit,
+    ).distance(guidance.distanceMeters);
+    final instruction = _maneuverInstruction(guidance.maneuver);
+    final semanticLabel = '$instruction in $distance. ${guidance.roadLabel}';
+    return Semantics(
+      key: const Key('navigation-guidance-banner'),
+      container: true,
+      liveRegion: true,
+      label: semanticLabel,
+      excludeSemantics: true,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 10 : 12,
+              vertical: compact ? 7 : 9,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xF2252E39),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFF445262)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x55000000),
+                  blurRadius: 10,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _maneuverIcon(guidance.maneuver),
+                  size: compact ? 30 : 38,
+                  color: const Color(0xFF68A9FF),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$distance · $instruction',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: compact ? 14 : 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        guidance.roadLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Color(0xFFB7C2CF)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+IconData _maneuverIcon(RouteManeuver maneuver) {
+  final type = maneuver.type.toLowerCase();
+  final modifier = maneuver.modifier?.toLowerCase() ?? '';
+  if (type == 'arrive') return Icons.flag;
+  if (type == 'roundabout' || type == 'rotary') {
+    return modifier.contains('right')
+        ? Icons.roundabout_right
+        : Icons.roundabout_left;
+  }
+  if (type == 'merge') return Icons.merge;
+  if (type == 'fork') return Icons.call_split;
+  if (modifier.contains('u-turn') || modifier.contains('uturn')) {
+    return modifier.contains('right') ? Icons.u_turn_right : Icons.u_turn_left;
+  }
+  if (modifier.contains('slight left')) return Icons.turn_slight_left;
+  if (modifier.contains('slight right')) return Icons.turn_slight_right;
+  if (modifier.contains('left')) return Icons.turn_left;
+  if (modifier.contains('right')) return Icons.turn_right;
+  return Icons.straight;
+}
+
+String _maneuverInstruction(RouteManeuver maneuver) {
+  final type = maneuver.type.toLowerCase();
+  final modifier = maneuver.modifier?.toLowerCase() ?? '';
+  if (type == 'arrive') return 'Arrive';
+  if (type == 'roundabout' || type == 'rotary') {
+    return modifier.isEmpty || modifier == 'straight'
+        ? 'Continue at roundabout'
+        : 'At roundabout, bear $modifier';
+  }
+  if (type == 'merge') {
+    return modifier.isEmpty ? 'Merge' : 'Merge $modifier';
+  }
+  if (type == 'fork') {
+    return modifier.isEmpty ? 'Keep at fork' : 'Keep $modifier';
+  }
+  if (modifier.contains('u-turn') || modifier.contains('uturn')) {
+    return 'Make a U-turn';
+  }
+  if (modifier == 'straight' || modifier.isEmpty) return 'Continue straight';
+  return 'Turn $modifier';
 }
 
 class _LeaderMapStatus extends StatelessWidget {
