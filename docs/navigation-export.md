@@ -42,15 +42,17 @@ preselect a third-party recipient.
 
 ## Projected navigation (CarPlay / Android Auto)
 
-CarPlay has a working companion: a `CPListTemplate` showing each rider's name,
-role, and an off-route indicator, the current highest-priority alert, and an
-SOS button wired to the same emergency alert as the phone's map. It is not a
-native map. `CPMapTemplate` requires Apple's manually-granted CarPlay
-Navigation entitlement - a bare `CPMapTemplate` attempt crashed Apple's own
-internal chrome code (confirmed via crash report) without it, since Simulator
-ad-hoc builds don't carry the real entitlement. That entitlement has been
-requested from Apple; a native map is a well-scoped follow-up once it is
-granted.
+CarPlay has a Driving Task companion: a `CPListTemplate` showing each rider's
+name, role, and off-route indicator, the current highest-priority alert, and an
+SOS button wired to the same emergency alert as the phone's map. The app's
+Debug and Release signing configurations request the approved
+`com.apple.developer.carplay-driving-task` entitlement. The list is refreshed
+at most once every ten seconds to remain a low-interaction, glanceable surface.
+
+This is not a native map. `CPMapTemplate` and turn-by-turn guidance require
+Apple's separate CarPlay Navigation entitlement; Driving Task approval does not
+grant that capability. Tail End Charlie therefore keeps route planning,
+maneuver guidance, ride setup, and detailed settings on the phone.
 
 Android Auto is not implemented. It would use the Android for Cars App
 Library and its own distraction-optimized templates, comparable in scope to

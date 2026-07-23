@@ -11,17 +11,21 @@
   reads signing material from GitHub Actions secrets once those are configured.
 
 Unsigned iOS applications cannot normally be installed on a physical iPhone.
-Simulator/device development through Xcode can use a developer's local account
-later without changing the repository.
+The Runner target's Debug and Profile configurations use the locally installed
+`Tail End Charlie CarPlay Development` profile. Manual signing is required
+because automatic signing does not select a manually issued profile carrying
+the restricted CarPlay Driving Task entitlement. The profile must include the
+developer's Apple Development certificate and test device; it is never stored
+in the repository.
 
 ## TestFlight beta distribution
 
-The iOS target uses bundle ID `app.tailendcharlie`. Debug and test builds use
-automatic signing, but the Runner target's Release configuration is signed
-manually (`CODE_SIGN_STYLE = Manual` in `project.pbxproj`) with a
-`PROVISIONING_PROFILE_SPECIFIER` naming an exact profile - CI has no Apple ID
-signed into Xcode to resolve a profile automatically. That profile name must
-match in three places: the CI-created provisioning profile itself, the
+The iOS target uses bundle ID `app.tailendcharlie`. The Runner target's Release
+configuration is signed manually (`CODE_SIGN_STYLE = Manual` in
+`project.pbxproj`) with a `PROVISIONING_PROFILE_SPECIFIER` naming an exact
+profile - CI has no Apple ID signed into Xcode to resolve a profile
+automatically. That profile name must match in three places: the CI-created
+provisioning profile itself, the
 `PROVISIONING_PROFILE_SPECIFIER` build setting, and the `provisioningProfiles`
 entry in `ios/ExportOptions-TestFlight.plist`. `ExportOptions-TestFlight.plist`
 only governs the later `-exportArchive` step, not the archive step itself -
@@ -29,6 +33,13 @@ mismatching just that file while missing `PROVISIONING_PROFILE_SPECIFIER`
 still fails the build with "No profile ... found" during archiving. The
 `TestFlight` GitHub workflow is manual only, so normal commits and pull
 requests never send a build to Apple.
+
+Changing capabilities on `app.tailendcharlie` invalidates every profile for
+that App ID. Regenerate both `Tail End Charlie CarPlay Development` and
+`Tail End Charlie CI App Store`, verify that each embeds
+`com.apple.developer.carplay-driving-task`, and replace
+`APPLE_APPSTORE_PROFILE_BASE64` with the regenerated App Store profile before
+the next TestFlight run.
 
 The app previously shipped internal TestFlight builds under bundle ID
 `me.osholt.rideRelay`. That identifier is retired - Apple never allows a bundle

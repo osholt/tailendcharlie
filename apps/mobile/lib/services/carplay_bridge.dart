@@ -11,12 +11,10 @@ import '../domain/route_alert.dart';
 /// alert) to the native CarPlay scene, and relays the CarPlay emergency
 /// button back to [onEmergencyTriggered].
 ///
-/// Renders as a `CPListTemplate` (rider name/role/alert-status rows), not a
-/// native map: `CPMapTemplate` requires Apple's manually-granted CarPlay
-/// Navigation entitlement, which Simulator ad-hoc builds don't carry -
-/// without it, CPMapTemplate crashes Apple's own internal chrome code on
-/// load (confirmed via the CarPlayTemplateUIHost crash report). A list needs
-/// no such entitlement.
+/// Renders as a `CPListTemplate` (rider name/role/alert-status rows) under the
+/// app's CarPlay Driving Task entitlement. It is not a native map:
+/// `CPMapTemplate` requires Apple's separate CarPlay Navigation entitlement,
+/// which this app does not request or carry.
 ///
 /// One bidirectional method channel rather than a channel pair: unlike the
 /// nearby transport (native is the continuous data source there, so it uses
@@ -24,22 +22,28 @@ import '../domain/route_alert.dart';
 /// `updateSnapshot` on every ride-state change - and native only pushes back
 /// the occasional `triggerEmergency` call.
 class CarPlayBridge {
-  CarPlayBridge({this.onEmergencyTriggered})
-    : _channel = const MethodChannel('me.osholt.ride_relay/carplay') {
+  CarPlayBridge({
+    this.onEmergencyTriggered,
+    @visibleForTesting MethodChannel? channel,
+    @visibleForTesting DateTime Function()? clock,
+    @visibleForTesting
+    this._minimumPublishInterval = const Duration(seconds: 10),
+  }) : _channel =
+           channel ?? const MethodChannel('me.osholt.ride_relay/carplay'),
+       _clock = clock ?? DateTime.now {
     _channel.setMethodCallHandler(_handleMethodCall);
   }
 
   final MethodChannel _channel;
+  final DateTime Function() _clock;
+  final Duration _minimumPublishInterval;
   final Future<void> Function()? onEmergencyTriggered;
   DateTime? _lastPublishedAt;
 
-  /// CarPlay is a glanceable secondary display, not a live map that needs
-  /// every simulation tick (~200ms during Ride Lab) - publishing that often
-  /// visibly loaded down the CarPlay Simulator's own relay daemon. A call
-  /// always arrives again well within this interval during an active ride,
-  /// so simply dropping over-frequent calls (rather than coalescing a
-  /// trailing one) still keeps CarPlay within a second of current state.
-  static const _minPublishInterval = Duration(seconds: 1);
+  /// Driving Task templates are deliberately low-frequency, glanceable
+  /// surfaces. Active rides supply regular location updates, so dropping
+  /// intermediate snapshots keeps the latest rider state flowing without
+  /// refreshing the CarPlay list more often than once every ten seconds.
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     if (call.method == 'triggerEmergency') {
@@ -53,9 +57,9 @@ class CarPlayBridge {
     required List<RiderRouteAlert> routeAlerts,
     required List<HazardReport> activeHazards,
   }) async {
-    final now = DateTime.now();
+    final now = _clock();
     if (_lastPublishedAt != null &&
-        now.difference(_lastPublishedAt!) < _minPublishInterval) {
+        now.difference(_lastPublishedAt!) < _minimumPublishInterval) {
       return;
     }
     _lastPublishedAt = now;
