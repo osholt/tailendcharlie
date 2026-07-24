@@ -84,9 +84,14 @@ test("email handoff includes the editable link and app instructions", () => {
     code: "7F3K9QRT",
     planUrl: "https://tailendcharlie.app/planner.html?code=7F3K9QRT",
     expiresAt: "2026-08-22T12:00:00Z",
+    routeSummary:
+      "Distance: 84 mi\nEstimated time: 2 hr 18 min\nBend score: 22°/km · Twisty",
   });
   const decoded = decodeURIComponent(href);
   assert.match(decoded, /Sunday loop/);
   assert.match(decoded, /planner\.html\?code=7F3K9QRT/);
   assert.match(decoded, /Load a planned route/);
+  assert.match(decoded, /Distance: 84 mi/);
+  assert.match(decoded, /Estimated time: 2 hr 18 min/);
+  assert.match(decoded, /Bend score: 22°\/km · Twisty/);
 });

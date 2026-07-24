@@ -48,16 +48,27 @@ export function buildPlannerPlanUrl(code, pageUrl) {
   return url.toString();
 }
 
-export function buildPlanEmailHref({ name, code, planUrl, expiresAt }) {
+export function buildPlanEmailHref({
+  name,
+  code,
+  planUrl,
+  expiresAt,
+  routeSummary = "",
+}) {
   const normalizedCode = normalizePlanCode(code);
   const expires = new Date(expiresAt);
+  const routeName = String(name || "").trim() || "planned ride";
+  const summary = String(routeSummary || "").trim();
   const expiryText = Number.isNaN(expires.getTime())
     ? ""
     : `\nThis link and code expire on ${new Intl.DateTimeFormat("en-GB", {
         dateStyle: "long",
       }).format(expires)}.`;
-  const subject = `Tail End Charlie route: ${String(name).trim() || "planned ride"}`;
+  const subject = `Tail End Charlie route: ${routeName}`;
   const body = [
+    `Ride: ${routeName}`,
+    ...(summary ? ["", "Route summary", summary] : []),
+    "",
     `Open and edit the route: ${planUrl}`,
     "",
     `To load it in the Tail End Charlie app, open the ride map, choose Change route → Load a planned route, and enter code ${normalizedCode}.`,

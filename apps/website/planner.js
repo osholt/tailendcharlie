@@ -83,6 +83,7 @@ const elements = {
   download: document.querySelector("#download-gpx"),
   duration: document.querySelector("#route-duration"),
   draftSaveStatus: document.querySelector("#draft-save-status"),
+  editPlan: document.querySelector("#edit-plan"),
   emptyStops: document.querySelector("#empty-stops"),
   expand: document.querySelector("#map-expand"),
   expandLabel: document.querySelector(".map-expand-label"),
@@ -152,6 +153,7 @@ let catalogTravelTimes = { startKey: "", durations: new Map() };
 let draftSaveTimer = null;
 let restoringDraft = false;
 let creatingPlanCode = false;
+let latestPlanShare = null;
 let discoveryCatalogue = emptyFeatureCollection();
 let visibleDiscoveryCatalogue = emptyFeatureCollection();
 let discoveryLoadRequest = null;
@@ -429,7 +431,8 @@ elements.undoRoute.addEventListener("click", undoRouteChange);
 elements.redoRoute.addEventListener("click", redoRouteChange);
 elements.clearSavedDraft.addEventListener("click", clearSavedPlannerData);
 elements.download.addEventListener("click", downloadGpx);
-elements.createPlanCode.addEventListener("click", createPlanCode);
+elements.createPlanCode.addEventListener("click", () => void createPlanCode());
+elements.emailPlan.addEventListener("click", () => void emailRoute());
 elements.copyPlanCode.addEventListener("click", copyPlanCode);
 elements.expand.addEventListener("click", toggleExpandedMap);
 for (const layerToggle of discoveryLayerElements) {
@@ -1068,6 +1071,8 @@ function updateDownloadState() {
   elements.download.disabled = !routeIsReady;
   elements.createPlanCode.disabled =
     !routeIsReady || creatingPlanCode || !RELAY_API_URL;
+  elements.emailPlan.disabled =
+    !routeIsReady || creatingPlanCode || !RELAY_API_URL;
 }
 
 function downloadGpx() {
@@ -1090,7 +1095,10 @@ function downloadGpx() {
 }
 
 async function createPlanCode() {
-  if (creatingPlanCode) return;
+  if (latestPlanShare && !elements.planShareResult.hidden) {
+    return latestPlanShare;
+  }
+  if (creatingPlanCode) return null;
   creatingPlanCode = true;
   updateDownloadState();
   setStatus("Creating a private route code…");
@@ -1107,19 +1115,27 @@ async function createPlanCode() {
       name: rideName,
       gpx,
     });
-    showPlanShareResult({
+    const share = showPlanShareResult({
       ...plan,
       name: rideName,
     });
     setStatus(
       `Route code ${plan.code} is ready. Load it in the app or email the editable link.`,
     );
+    return share;
   } catch (error) {
     setStatus(error.message || "The route code could not be created.", true);
+    return null;
   } finally {
     creatingPlanCode = false;
     updateDownloadState();
   }
+}
+
+async function emailRoute() {
+  const share = latestPlanShare || (await createPlanCode());
+  if (!share) return;
+  window.location.href = share.emailHref;
 }
 
 async function copyPlanCode() {
@@ -1268,6 +1284,13 @@ function replaceRouteWithPlan(plan) {
 
 function showPlanShareResult({ code, expiresAt, name }) {
   const planUrl = buildPlannerPlanUrl(code, window.location.href);
+  const emailHref = buildPlanEmailHref({
+    name,
+    code,
+    planUrl,
+    expiresAt,
+    routeSummary: currentRouteSummary(),
+  });
   const expiry = new Date(expiresAt);
   elements.planCode.textContent = normalizePlanCode(code);
   elements.planExpiry.textContent = Number.isNaN(expiry.getTime())
@@ -1275,13 +1298,27 @@ function showPlanShareResult({ code, expiresAt, name }) {
     : `This shared copy expires ${new Intl.DateTimeFormat("en-GB", {
         dateStyle: "long",
       }).format(expiry)}.`;
-  elements.emailPlan.href = buildPlanEmailHref({
-    name,
-    code,
-    planUrl,
-    expiresAt,
-  });
+  elements.editPlan.href = planUrl;
   elements.planShareResult.hidden = false;
+  latestPlanShare = { code: normalizePlanCode(code), emailHref, planUrl };
+  return latestPlanShare;
+}
+
+function currentRouteSummary() {
+  return [
+    routeDistance === null ? null : `Distance: ${formatDistance(routeDistance)}`,
+    routeDuration === null
+      ? null
+      : `Estimated time: ${formatDuration(routeDuration)}`,
+    routeBendScoreValue === null
+      ? null
+      : `Bend score: ${formatRouteBendScore(routeBendScoreValue)}`,
+    stops.length
+      ? `Stops: ${stops.map((stop) => cleanPlaceName(stop.name)).join(" → ")}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function searchPlaces(event) {
@@ -1651,6 +1688,7 @@ function bikerPlaceLabel(place) {
 function scheduleDraftSave() {
   if (restoringDraft || routeDrag) return;
   elements.planShareResult.hidden = true;
+  latestPlanShare = null;
   window.clearTimeout(draftSaveTimer);
   draftSaveTimer = window.setTimeout(savePlannerDraft, 180);
 }

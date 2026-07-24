@@ -30,3 +30,11 @@ test("planner assets are versioned so deployed fixes replace cached copies", () 
   assert.match(plannerHtml, /href="\/planner\.css\?v=\d{8}-\d+"/);
   assert.match(plannerHtml, /src="\/planner\.js\?v=\d{8}-\d+"/);
 });
+
+test("email route is a visible route action rather than a hidden result", () => {
+  assert.match(
+    plannerHtml,
+    /<button class="button button-secondary" id="email-plan" disabled>/,
+  );
+  assert.match(plannerHtml, /Email route/);
+});
