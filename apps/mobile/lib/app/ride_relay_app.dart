@@ -7,6 +7,7 @@ import '../controllers/ride_code_preference_controller.dart';
 import '../controllers/ride_controller.dart';
 import '../controllers/rider_profile_controller.dart';
 import '../controllers/shared_route_controller.dart';
+import '../controllers/speed_limit_display_controller.dart';
 import '../domain/recorded_route_store.dart';
 import '../features/home/home_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
@@ -22,6 +23,7 @@ class RideRelayApp extends StatelessWidget {
     required this.rideCodePreference,
     required this.riderProfile,
     required this.sharedRoutes,
+    required this.speedLimitDisplay,
     required this.recordedRoutes,
     required this.completedRides,
     this.planDirectory,
@@ -34,6 +36,7 @@ class RideRelayApp extends StatelessWidget {
   final RideCodePreferenceController rideCodePreference;
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
+  final SpeedLimitDisplayController speedLimitDisplay;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final PlanDirectory? planDirectory;
@@ -120,6 +123,7 @@ class RideRelayApp extends StatelessWidget {
           completedRides,
           sharedRoutes,
           riderProfile,
+          speedLimitDisplay,
         ]),
         builder: (context, _) {
           if (controller.hasActiveRide) {
@@ -132,6 +136,7 @@ class RideRelayApp extends StatelessWidget {
               enableNativeServices: enableNativeServices,
               riderProfile: riderProfile,
               sharedRoutes: sharedRoutes,
+              speedLimitDisplay: speedLimitDisplay,
             );
           }
           if (riderProfile.needsOnboarding) {
@@ -144,6 +149,7 @@ class RideRelayApp extends StatelessWidget {
             rideCodePreference: rideCodePreference,
             riderProfile: riderProfile,
             sharedRoutes: sharedRoutes,
+            speedLimitDisplay: speedLimitDisplay,
             recordedRoutes: recordedRoutes,
             completedRides: completedRides,
             planDirectory: planDirectory,

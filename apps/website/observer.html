@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="theme-color" content="#171124" />
+    <meta
+      name="tec-observer-api"
+      content="https://relay.tailendcharlie.app"
+    />
+    <link rel="icon" href="/assets/tail-end-charlie-icon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/assets/maplibre-gl-5.24.0/maplibre-gl.css" />
+    <link rel="stylesheet" href="/observer.css" />
+    <script
+      src="/assets/maplibre-gl-5.24.0/maplibre-gl.js"
+      defer
+    ></script>
+    <script type="module" src="/observer.js" defer></script>
+    <title>Safety contact view | Tail End Charlie</title>
+  </head>
+  <body class="observer-page">
+    <header class="planner-header">
+      <a class="brand" href="/" aria-label="Tail End Charlie home">
+        <img
+          src="/assets/tail-end-charlie-icon.png"
+          alt=""
+          width="42"
+          height="42"
+        />
+        <span>Tail End Charlie</span>
+      </a>
+      <div class="planner-header-copy">
+        <span>Safety contact view</span>
+        <small>Private, read-only, time-limited access</small>
+      </div>
+    </header>
+
+    <main class="observer-layout">
+      <section class="observer-summary" aria-live="polite">
+        <p class="eyebrow"><span></span> Shared progress</p>
+        <h1 id="subject-name">Opening safety link…</h1>
+        <p id="access-label" class="observer-label"></p>
+        <div id="observer-error" class="observer-error" hidden></div>
+        <div id="observer-content" hidden>
+          <div class="observer-status-grid">
+            <article>
+              <small>Ride</small>
+              <strong id="ride-status">—</strong>
+            </article>
+            <article>
+              <small>Last-known position</small>
+              <strong id="freshness-status">—</strong>
+              <span id="position-age">—</span>
+            </article>
+            <article>
+              <small>Access</small>
+              <strong id="access-expiry">—</strong>
+            </article>
+          </div>
+          <div id="assistance-alert" class="assistance-alert" hidden>
+            <strong id="assistance-label"></strong>
+            <span id="assistance-time"></span>
+          </div>
+          <p class="observer-caution">
+            This is a last-known location, not proof that the rider is safe.
+            Mobile signal, GPS, background restrictions, or battery loss can
+            delay updates. Contact the rider or emergency services if you are
+            concerned.
+          </p>
+        </div>
+      </section>
+      <section class="observer-map-shell" aria-label="Last-known rider position">
+        <div id="observer-map"></div>
+        <div id="map-empty" class="observer-map-empty">
+          Waiting for the first shared location.
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

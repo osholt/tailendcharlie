@@ -8,6 +8,7 @@ import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
+import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../domain/quick_message.dart';
@@ -28,9 +29,12 @@ class RideDashboard extends StatelessWidget {
     required this.onLeaveRide,
     required this.onOpenRoster,
     required this.riderProfile,
+    required this.speedLimitDisplay,
     this.relayController,
     this.markerAssistanceController,
     this.internetRelayController,
+    this.onSendQuickMessage,
+    this.localObserverAssistanceActive = false,
     this.serviceWarning,
     this.summarySharer,
   });
@@ -41,9 +45,12 @@ class RideDashboard extends StatelessWidget {
   final Future<void> Function() onLeaveRide;
   final VoidCallback onOpenRoster;
   final RiderProfileController riderProfile;
+  final SpeedLimitDisplayController speedLimitDisplay;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
+  final Future<void> Function(QuickMessage)? onSendQuickMessage;
+  final bool localObserverAssistanceActive;
   final String? serviceWarning;
   final RideSummarySharer? summarySharer;
 
@@ -63,6 +70,7 @@ class RideDashboard extends StatelessWidget {
               distanceUnits,
               mapStyleMode,
               riderProfile,
+              speedLimitDisplay: speedLimitDisplay,
               currentRideActive: true,
             ),
             icon: const Icon(Icons.settings_outlined),
@@ -138,7 +146,11 @@ class RideDashboard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                _QuickMessageGrid(controller: controller),
+                QuickMessageGrid(
+                  busy: controller.busy,
+                  onSend: onSendQuickMessage ?? controller.sendQuickMessage,
+                  showResolved: localObserverAssistanceActive,
+                ),
                 const SizedBox(height: 22),
                 _RideCodeCard(controller: controller),
                 const SizedBox(height: 22),
@@ -503,10 +515,17 @@ class _MarkerCard extends StatelessWidget {
   }
 }
 
-class _QuickMessageGrid extends StatelessWidget {
-  const _QuickMessageGrid({required this.controller});
+class QuickMessageGrid extends StatelessWidget {
+  const QuickMessageGrid({
+    super.key,
+    required this.busy,
+    required this.onSend,
+    this.showResolved = false,
+  });
 
-  final RideController controller;
+  final bool busy;
+  final Future<void> Function(QuickMessage) onSend;
+  final bool showResolved;
 
   static const _messages = [
     (QuickMessage.stopped, Icons.pause_circle_outline),
@@ -532,9 +551,7 @@ class _QuickMessageGrid extends StatelessWidget {
           children: [
             for (final (message, icon) in _messages)
               OutlinedButton.icon(
-                onPressed: controller.busy
-                    ? null
-                    : () => controller.sendQuickMessage(message),
+                onPressed: busy ? null : () => onSend(message),
                 icon: Icon(
                   icon,
                   color: message.priority == EventPriority.critical
@@ -546,6 +563,13 @@ class _QuickMessageGrid extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+              ),
+            if (showResolved)
+              OutlinedButton.icon(
+                key: const Key('observer-assistance-resolved'),
+                onPressed: busy ? null : () => onSend(QuickMessage.resolved),
+                icon: const Icon(Icons.check_circle_outline),
+                label: const Text('Resolved / I’m OK'),
               ),
           ],
         );

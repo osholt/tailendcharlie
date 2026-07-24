@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class SyncRequest(BaseModel):
@@ -229,3 +236,99 @@ class GetPlanResponse(BaseModel):
     gpx: str
     createdAt: str
     expiresAt: str
+
+
+class CreateObserverGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=80)
+    durationMinutes: int = Field(ge=30, le=24 * 60)
+    consentConfirmed: Literal[True]
+
+
+class ObserverGrantResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    createdAt: datetime
+    expiresAt: datetime
+    revokedAt: datetime | None
+
+
+class CreateObserverGrantResponse(ObserverGrantResponse):
+    managementToken: str
+    publisherToken: str
+    observerToken: str
+
+
+class ObserverPosition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracyMeters: float = Field(ge=0, le=500)
+    recordedAt: datetime
+
+    @field_validator("recordedAt")
+    @classmethod
+    def recorded_at_requires_timezone(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+
+class PublishObserverAssistance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["assistance", "emergencyStop"]
+    reportedAt: datetime
+
+    @field_validator("reportedAt")
+    @classmethod
+    def reported_at_requires_timezone(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+
+class PublishObserverSnapshotRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subjectName: str = Field(min_length=1, max_length=80)
+    snapshotGeneratedAt: datetime
+    rideStatus: Literal["waiting", "active", "paused", "ended"]
+    statusUpdatedAt: datetime
+    position: ObserverPosition | None
+    assistanceUpdatedAt: datetime
+    assistance: PublishObserverAssistance | None
+
+    @field_validator(
+        "snapshotGeneratedAt",
+        "statusUpdatedAt",
+        "assistanceUpdatedAt",
+    )
+    @classmethod
+    def timestamps_require_timezone(cls, value: datetime) -> datetime:
+        return _aware_utc(value)
+
+
+class ObserverAssistance(PublishObserverAssistance):
+    label: str
+
+
+class ObserverSnapshotResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    protocolVersion: Literal[1] = 1
+    label: str
+    subjectName: str | None
+    rideStatus: Literal["waiting", "active", "paused", "ended"]
+    statusUpdatedAt: datetime | None
+    freshness: Literal["unavailable", "fresh", "delayed", "offline"]
+    serverTime: datetime
+    expiresAt: datetime
+    position: ObserverPosition | None
+    assistance: ObserverAssistance | None
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("Timestamp timezone is required")
+    return value.astimezone(UTC)

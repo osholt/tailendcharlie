@@ -8,6 +8,7 @@ SECRET = "0123456789abcdef0123456789abcdef"
 CURRENT_CAPABILITIES = [
     "ride-start-v1",
     "membership-v1",
+    "observer-access-v1",
     "pre-start-presence-v1",
     "push-notifications-v1",
     "route-revisions-v1",

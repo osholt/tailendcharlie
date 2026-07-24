@@ -99,6 +99,82 @@ void main() {
     },
   );
 
+  test('one failed ride write does not stop later GPS fixes', () async {
+    final platform = _FakeLocationPlatform(
+      permission: DeviceLocationPermission.whileInUse,
+    );
+    final source = DeviceLocationSource(platform);
+    final received = <LocationSample>[];
+    final errors = <Object>[];
+    var attempts = 0;
+    final controller = ForegroundLocationController(source, (sample) async {
+      attempts += 1;
+      if (attempts == 1) throw StateError('ride state changed');
+      received.add(sample);
+    }, onSampleError: (error, _) => errors.add(error));
+    await controller.initialize();
+    await controller.requestAndStart();
+
+    platform.positions
+      ..add(_sample)
+      ..add(_laterSample);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(attempts, 2);
+    expect(received, [_laterSample]);
+    expect(errors, hasLength(1));
+    controller.dispose();
+    await platform.dispose();
+  });
+
+  test('foreground resume restarts only an opted-in location stream', () async {
+    final platform = _FakeLocationPlatform(
+      permission: DeviceLocationPermission.whileInUse,
+    );
+    final source = DeviceLocationSource(platform);
+    final controller = ForegroundLocationController(source, (_) async {});
+    await controller.initialize();
+    await controller.requestAndStart();
+    expect(platform.streamRequests, 1);
+
+    platform.positions.add(_sample);
+    await source.statuses.firstWhere((status) => status.lastSample == _sample);
+    await controller.restartAfterForegroundResume();
+
+    expect(platform.streamRequests, 2);
+    expect(controller.sharing, isTrue);
+    expect(controller.activeSample, _sample);
+
+    await controller.stop();
+    await controller.restartAfterForegroundResume();
+    expect(platform.streamRequests, 2);
+    controller.dispose();
+    await platform.dispose();
+  });
+
+  test('foreground resume recovers a native stream error', () async {
+    final platform = _FakeLocationPlatform(
+      permission: DeviceLocationPermission.whileInUse,
+    );
+    final source = DeviceLocationSource(platform);
+    final controller = ForegroundLocationController(source, (_) async {});
+    await controller.initialize();
+    await controller.requestAndStart();
+
+    platform.positions.addError(StateError('Core Location interrupted'));
+    await source.statuses.firstWhere(
+      (status) => status.state == DeviceLocationState.failed,
+    );
+    await controller.restartAfterForegroundResume();
+
+    expect(platform.streamRequests, 2);
+    expect(controller.sharing, isTrue);
+    controller.dispose();
+    await platform.dispose();
+  });
+
   test('disabled service is surfaced and stream is not started', () async {
     final platform = _FakeLocationPlatform(serviceEnabled: false);
     final source = DeviceLocationSource(platform);
@@ -111,11 +187,59 @@ void main() {
     await source.dispose();
     await platform.dispose();
   });
+
+  test('restart resume uses existing permission without prompting', () async {
+    final platform = _FakeLocationPlatform(
+      permission: DeviceLocationPermission.whileInUse,
+    );
+    final controller = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    await controller.initialize();
+
+    await controller.resumeIfAuthorized();
+
+    expect(controller.sharing, isTrue);
+    expect(platform.permissionRequests, 0);
+    expect(platform.streamRequests, 1);
+
+    await controller.restartAfterForegroundResume();
+
+    expect(controller.sharing, isTrue);
+    expect(platform.permissionRequests, 0);
+    expect(platform.streamRequests, 2);
+    controller.dispose();
+    await platform.dispose();
+  });
+
+  test('restart resume stays stopped when permission was removed', () async {
+    final platform = _FakeLocationPlatform();
+    final controller = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    await controller.initialize();
+
+    await controller.resumeIfAuthorized();
+
+    expect(controller.sharing, isFalse);
+    expect(platform.permissionRequests, 0);
+    expect(platform.streamRequests, 0);
+    controller.dispose();
+    await platform.dispose();
+  });
 }
 
 final _sample = LocationSample(
   position: const GeoPoint(latitude: 51, longitude: -1),
   recordedAt: DateTime.utc(2026, 7, 16, 12),
+  accuracyMeters: 4,
+);
+
+final _laterSample = LocationSample(
+  position: const GeoPoint(latitude: 51.001, longitude: -1),
+  recordedAt: DateTime.utc(2026, 7, 16, 12, 0, 10),
   accuracyMeters: 4,
 );
 

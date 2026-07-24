@@ -48,6 +48,15 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
 14. Ride/walk past at 20, 40, and 60 mph using safe test conditions.
 15. Run four hours with GPS sampling and radio activity to measure battery use.
 16. Force-quit each platform separately and document loss/recovery honestly.
+17. Run the safety-contact observer matrix in `observer-access.md`: fresh,
+    delayed and offline states; lock/background/force-quit; signal loss;
+    revocation; expiry; ride end; and four-hour battery impact.
+18. Fetch the deployed observer MapLibre style and recursively inspect every
+    source tile URL, sprite URL, glyph URL and imported style. Confirm each is
+    HTTPS on the ride-relay host, then verify the observer-specific CSP blocks
+    a fixture that points any of them at a third party. If the operator map
+    archive and style are absent, verify the page shows bounded coordinates
+    without making a tile request and record the observer map as unavailable.
 
 ## Pass gates
 
@@ -61,6 +70,8 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
   signed current membership, and route publish/replace/clear converges.
 - Four-hour screen-off consumption remains within the 45% planning limit.
 - The observed iOS limitations are reflected in product wording and onboarding.
+- Observer revocation and expiry deny the next refresh, freshness never labels
+  a stale point as current, and the page never exposes another rider.
 
 If the gate fails, retain durable offline queues and opportunistic exchange but
 do not market the product as a continuously available mesh.

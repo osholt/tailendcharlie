@@ -12,15 +12,18 @@ import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
+import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
+import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
 import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
+import '../../data/secure_observer_grant_store.dart';
 import '../../domain/event_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
 import '../../domain/hazard.dart';
@@ -28,12 +31,14 @@ import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
+import '../../domain/ride_session.dart';
 import '../../domain/rider_location.dart';
 import '../../domain/rider_color.dart';
 import '../../domain/route_alert.dart';
 import '../../domain/route_store.dart';
 import '../../internet/internet_relay_client.dart';
 import '../../internet/internet_relay_worker.dart';
+import '../../internet/observer_access_client.dart';
 import '../../internet/push_registration_client.dart';
 import '../../internet/shared_preferences_internet_cursor_store.dart';
 import '../../relay/native_nearby_transport.dart';
@@ -59,8 +64,37 @@ import 'ice_share_inbox_sheet.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
 import 'ended_ride_screen.dart';
+import 'observer_access_sheet.dart';
 import 'ride_dashboard.dart';
 import 'ride_roster_sheet.dart';
+
+@visibleForTesting
+ObserverPublishedSnapshot buildLocalObserverSnapshot({
+  required RideSession session,
+  required DateTime snapshotGeneratedAt,
+  required String rideStatus,
+  required DateTime statusUpdatedAt,
+  required DateTime assistanceUpdatedAt,
+  required LocationSample? localLocation,
+  required ObserverPublishedAssistance? assistance,
+}) {
+  return ObserverPublishedSnapshot(
+    subjectName: session.displayName,
+    snapshotGeneratedAt: snapshotGeneratedAt,
+    rideStatus: rideStatus,
+    statusUpdatedAt: statusUpdatedAt,
+    assistanceUpdatedAt: assistanceUpdatedAt,
+    position: localLocation == null
+        ? null
+        : ObserverPublishedPosition(
+            latitude: localLocation.position.latitude,
+            longitude: localLocation.position.longitude,
+            accuracyMeters: localLocation.accuracyMeters,
+            recordedAt: localLocation.recordedAt,
+          ),
+    assistance: assistance,
+  );
+}
 
 /// Owns the active-ride feature lifecycle and keeps each feature independently
 /// testable. Native permissions are requested only by the installed app, not by
@@ -75,6 +109,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.enableNativeServices,
     required this.riderProfile,
     required this.sharedRoutes,
+    required this.speedLimitDisplay,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.pushTokenSource,
@@ -88,6 +123,7 @@ class ActiveRideShell extends StatefulWidget {
   final bool enableNativeServices;
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
+  final SpeedLimitDisplayController speedLimitDisplay;
   final ScreenWakeLock screenWakeLock;
   final Duration screenWakeReassertInterval;
   final PushTokenSource? pushTokenSource;
@@ -125,6 +161,8 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.onChangeRoute,
     required this.onEmergencyInfo,
     required this.onNotifications,
+    required this.canManageObserverAccess,
+    required this.onObserverAccess,
     required this.canShareIceInfo,
     required this.onShareIceInfo,
     required this.receivedIceShareCount,
@@ -145,6 +183,8 @@ class _RideNavigationMenu extends StatelessWidget {
   final VoidCallback onChangeRoute;
   final VoidCallback onEmergencyInfo;
   final VoidCallback onNotifications;
+  final bool canManageObserverAccess;
+  final VoidCallback onObserverAccess;
   final bool canShareIceInfo;
   final VoidCallback onShareIceInfo;
   final int receivedIceShareCount;
@@ -250,6 +290,19 @@ class _RideNavigationMenu extends StatelessWidget {
                 onNotifications();
               },
             ),
+            if (canManageObserverAccess)
+              ListTile(
+                key: const Key('ride-menu-observer-access'),
+                leading: const Icon(Icons.visibility_outlined),
+                title: const Text('Share my progress'),
+                subtitle: const Text(
+                  'Private, time-limited link for a trusted safety contact',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onObserverAccess();
+                },
+              ),
             if (canShareIceInfo)
               ListTile(
                 key: const Key('ride-menu-share-ice-info'),
@@ -442,7 +495,8 @@ class _PreStartRidePanel extends StatelessWidget {
 
 enum _StartRideDecision { cancel, chooseRoute, start }
 
-class _ActiveRideShellState extends State<ActiveRideShell> {
+class _ActiveRideShellState extends State<ActiveRideShell>
+    with WidgetsBindingObserver {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
   final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
@@ -462,6 +516,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
   InternetRelayController? _internetRelayController;
+  ObserverAccessController? _observerAccessController;
   RidePushNotificationController? _pushNotificationController;
   PreStartPresenceController? _preStartPresenceController;
   SharedPreferencesInternetCursorStore? _internetCursorStore;
@@ -487,6 +542,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   int _handledAutomaticMarkerRideOffActivation = 0;
   DateTime? _lastSimulationNavigationUpdateAt;
   DateTime? _lastSimulationOverlayUpdateAt;
+  LocationSample? _latestObserverLocationSample;
   bool _loading = true;
   bool _relayConfigured = false;
   bool _refreshingRideEvents = false;
@@ -502,6 +558,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _screenAwakeCoordinator = RideScreenAwakeCoordinator(
       wakeLock: widget.screenWakeLock,
       reassertInterval: widget.screenWakeReassertInterval,
@@ -653,6 +710,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       final locationController = ForegroundLocationController(
         DeviceLocationSource(),
         (sample) async {
+          _latestObserverLocationSample = sample;
+          _publishObserverSnapshot();
           final startedAt = widget.rideController.rideStartedAt;
           if (startedAt == null) {
             final currentSession = widget.rideController.session;
@@ -679,8 +738,21 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
             await awareness.recordLocalLocation(sample);
           }
         },
+        onSampleError: (error, stackTrace) {
+          if (kDebugMode) {
+            debugPrint(
+              'Could not persist a location update; continuing: '
+              '$error\n$stackTrace',
+            );
+          }
+          final added = _warnings.add(
+            'A location update could not be saved. Live GPS is continuing.',
+          );
+          if (added && mounted) setState(() {});
+        },
       );
       _locationController = locationController;
+      locationController.addListener(_onDeviceLocationChanged);
       try {
         await locationController.initialize();
       } on Object catch (error) {
@@ -708,6 +780,22 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   _onReceivedEvent(event, RideTransportEvidence.internetRelay),
             );
         await internetRelayController.start(session);
+        final observerConfiguration =
+            ObserverAccessConfiguration.fromEnvironment();
+        if (observerConfiguration.configurationError == null) {
+          _observerAccessController = ObserverAccessController(
+            HttpObserverAccessClient(
+              configuration: observerConfiguration,
+              client: http.Client(),
+            ),
+            const SecureObserverGrantStore(),
+          );
+          await _observerAccessController!.attach(session);
+          if (_observerAccessController!.hasActiveGrants) {
+            await locationController.resumeIfAuthorized();
+            _publishObserverSnapshot();
+          }
+        }
         final pushNotificationController = RidePushNotificationController(
           tokenSource:
               widget.pushTokenSource ??
@@ -1199,7 +1287,10 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final activeDeviceSample = _isSimulation
         ? null
         : _locationController?.activeSample;
-    final localMapSample = localLocation?.sample ?? activeDeviceSample;
+    final localMapSample = _newestLocationSample(
+      localLocation?.sample,
+      activeDeviceSample,
+    );
     final mapPoint = simulatedLocal != null
         ? route_domain.GeoPoint(
             latitude: simulatedLocal.position.latitude,
@@ -1227,6 +1318,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
               headingDegrees:
                   simulatedLocal?.headingDegrees ??
                   localMapSample!.headingDegrees,
+              accuracyMeters: localMapSample?.accuracyMeters,
             );
       _mapPosition.value = mapPoint;
     }
@@ -1548,6 +1640,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final session = widget.rideController.session;
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
+      _observerAccessController?.updateSession(session);
       _updateMapOverlays();
       unawaited(_synchroniseRideControllers());
       if (widget.rideController.rideStarted) {
@@ -1557,6 +1650,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         _lastPushRole = session.role;
         unawaited(_pushNotificationController?.refreshRegistration());
       }
+      _publishObserverSnapshot();
     }
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
@@ -1614,6 +1708,20 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   void _onPreStartPresenceChanged() {
     if (!mounted || widget.rideController.rideStarted) return;
     _updateMapOverlays();
+  }
+
+  void _onDeviceLocationChanged() {
+    if (!mounted) return;
+    // The foreground map follows the newest device fix even if writing that
+    // sample to the durable ride journal is briefly delayed or fails. Only
+    // the journal feeds trails, summaries and GPX recording.
+    _updateMapOverlays(updateDerivedState: false, updateOverlayMarkers: false);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_locationController?.restartAfterForegroundResume());
   }
 
   void _schedulePublish() {
@@ -1827,6 +1935,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       routeStore: routeStore,
       canEditRoute: _isSimulation || widget.rideController.isLocalRideLeader,
       distanceUnit: widget.distanceUnits.value,
+      speedLimitDisplay: widget.speedLimitDisplay,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
       ),
@@ -1891,6 +2000,24 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       message,
       recipientRiderIds: recipients,
     );
+    await _recordLocalObserverQuickMessage(message);
+  }
+
+  Future<void> _sendLocalQuickMessage(QuickMessage message) async {
+    await widget.rideController.sendQuickMessage(message);
+    await _recordLocalObserverQuickMessage(message);
+  }
+
+  Future<void> _recordLocalObserverQuickMessage(QuickMessage message) async {
+    if (message == QuickMessage.assistance ||
+        message == QuickMessage.emergencyStop ||
+        message == QuickMessage.resolved) {
+      await _observerAccessController?.recordLocalAssistance(
+        message == QuickMessage.resolved ? null : message.name,
+      );
+      if (mounted) setState(() {});
+      _publishObserverSnapshot();
+    }
   }
 
   /// The opt-in "share with the leader by default" setting, fired alongside
@@ -2121,6 +2248,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         onEmergencyInfo: () =>
             EmergencyInfoSheet.show(context, widget.riderProfile),
         onNotifications: _openNotificationPreferences,
+        canManageObserverAccess: _observerAccessController != null,
+        onObserverAccess: _openObserverAccess,
         canShareIceInfo: widget.riderProfile.hasEmergencyInfo,
         onShareIceInfo: _shareIceInfoWithGroup,
         receivedIceShareCount: widget.rideController.receivedIceShares.length,
@@ -2139,6 +2268,53 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   void _openRoster() {
     unawaited(RideRosterSheet.show(context, widget.rideController));
+  }
+
+  Future<void> _openObserverAccess() async {
+    final controller = _observerAccessController;
+    if (controller == null) return;
+    await ObserverAccessSheet.show(context, controller);
+    if (!mounted || !controller.hasActiveGrants) return;
+    await _locationController?.requestAndStart();
+    _publishObserverSnapshot();
+  }
+
+  void _publishObserverSnapshot() {
+    final controller = _observerAccessController;
+    final session = widget.rideController.session;
+    if (controller == null || session == null || !controller.hasActiveGrants) {
+      return;
+    }
+    final sample = _latestObserverLocationSample;
+    controller.publishSnapshot(
+      buildLocalObserverSnapshot(
+        session: session,
+        snapshotGeneratedAt: controller.nextSnapshotGeneratedAt(),
+        rideStatus: widget.rideController.rideEnded
+            ? 'ended'
+            : widget.rideController.ridePaused
+            ? 'paused'
+            : widget.rideController.rideStarted
+            ? 'active'
+            : 'waiting',
+        statusUpdatedAt: _observerStatusUpdatedAt(),
+        assistanceUpdatedAt: controller.localAssistanceUpdatedAt,
+        localLocation: sample,
+        assistance: controller.localAssistance,
+      ),
+    );
+  }
+
+  DateTime _observerStatusUpdatedAt() {
+    for (final event in widget.rideController.events.reversed) {
+      if (event.type == RideEventType.rideStarted ||
+          event.type == RideEventType.ridePaused ||
+          event.type == RideEventType.rideResumed ||
+          event.type == RideEventType.rideEnded) {
+        return event.createdAt;
+      }
+    }
+    return widget.rideController.session?.joinedAt ?? DateTime.now();
   }
 
   /// Switches to the map tab and asks it to open its route picker. The route
@@ -2307,12 +2483,16 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     controller: widget.rideController,
     distanceUnits: widget.distanceUnits,
     mapStyleMode: widget.mapStyleMode,
+    speedLimitDisplay: widget.speedLimitDisplay,
     riderProfile: widget.riderProfile,
     onLeaveRide: _leaveRide,
     onOpenRoster: _openRoster,
     relayController: _relayController,
     markerAssistanceController: _markerAssistanceController,
     internetRelayController: _internetRelayController,
+    onSendQuickMessage: _sendLocalQuickMessage,
+    localObserverAssistanceActive:
+        _observerAccessController?.localAssistance != null,
     serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
   );
 
@@ -2393,6 +2573,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);
@@ -2407,6 +2588,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_pushOpenSubscription?.cancel());
     _stalenessTimer?.cancel();
     _markerExitChromeTimer?.cancel();
+    _locationController?.removeListener(_onDeviceLocationChanged);
     _locationController?.dispose();
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
@@ -2415,6 +2597,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       _onPushNotificationStatusChanged,
     );
     unawaited(_pushNotificationController?.close());
+    _observerAccessController?.dispose();
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
     _mapOverlays.dispose();
@@ -2424,4 +2607,15 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     unawaited(_carPlayBridge?.dispose());
     super.dispose();
   }
+}
+
+LocationSample? _newestLocationSample(
+  LocationSample? journalSample,
+  LocationSample? deviceSample,
+) {
+  if (journalSample == null) return deviceSample;
+  if (deviceSample == null) return journalSample;
+  return deviceSample.recordedAt.isAfter(journalSample.recordedAt)
+      ? deviceSample
+      : journalSample;
 }
