@@ -6,6 +6,10 @@ const plannerCss = await readFile(
   new URL("./planner.css", import.meta.url),
   "utf8",
 );
+const plannerHtml = await readFile(
+  new URL("./planner.html", import.meta.url),
+  "utf8",
+);
 
 test("the enabled app-code action is visually distinct from disabled actions", () => {
   const enabledRule = plannerCss.match(
@@ -20,4 +24,9 @@ test("the enabled app-code action is visually distinct from disabled actions", (
   assert.match(enabledRule.groups.body, /border:/);
   assert.match(enabledRule.groups.body, /background:/);
   assert.notEqual(enabledRule.groups.body.trim(), disabledRule.groups.body.trim());
+});
+
+test("planner assets are versioned so deployed fixes replace cached copies", () => {
+  assert.match(plannerHtml, /href="\/planner\.css\?v=\d{8}-\d+"/);
+  assert.match(plannerHtml, /src="\/planner\.js\?v=\d{8}-\d+"/);
 });
