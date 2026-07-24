@@ -106,6 +106,7 @@ class DeviceLocationSource {
   final DeviceLocationPlatform _platform;
   final _statusController = StreamController<DeviceLocationStatus>.broadcast();
   StreamSubscription<LocationSample>? _positionSubscription;
+  int _positionGeneration = 0;
   DeviceLocationStatus _status = const DeviceLocationStatus.idle();
 
   DeviceLocationStatus get status => _status;
@@ -154,6 +155,7 @@ class DeviceLocationSource {
         lastSample: _status.lastSample,
       ),
     );
+    final generation = ++_positionGeneration;
     _positionSubscription = _platform.positionStream().listen(
       (sample) => _emit(
         DeviceLocationStatus(
@@ -162,31 +164,27 @@ class DeviceLocationSource {
           lastSample: sample,
         ),
       ),
-      onError: (Object error, StackTrace stackTrace) => _emit(
-        DeviceLocationStatus(
-          state: DeviceLocationState.failed,
-          message: 'Location updates stopped: $error',
-          lastSample: _status.lastSample,
-        ),
-      ),
-      onDone: () {
-        _positionSubscription = null;
-        _emit(
-          DeviceLocationStatus(
-            state: DeviceLocationState.ready,
-            message: 'Location sharing is stopped.',
-            lastSample: _status.lastSample,
-          ),
-        );
-      },
+      onError: (Object error, StackTrace stackTrace) =>
+          _handlePositionError(generation, error),
+      onDone: () => _handlePositionDone(generation),
     );
     return _status;
   }
 
+  /// Recreates the native stream after an app lifecycle interruption while
+  /// preserving the last fix. The caller is responsible for remembering that
+  /// the rider previously opted in.
+  Future<DeviceLocationStatus> restart() async {
+    await stop();
+    return start();
+  }
+
   Future<void> stop() async {
-    final wasActive = _positionSubscription != null;
-    await _positionSubscription?.cancel();
+    final subscription = _positionSubscription;
+    final wasActive = subscription != null;
     _positionSubscription = null;
+    _positionGeneration += 1;
+    await subscription?.cancel();
     if (wasActive && _status.canSample) {
       _emit(
         DeviceLocationStatus(
@@ -201,6 +199,34 @@ class DeviceLocationSource {
   Future<void> dispose() async {
     await stop();
     await _statusController.close();
+  }
+
+  void _handlePositionError(int generation, Object error) {
+    if (generation != _positionGeneration) return;
+    final subscription = _positionSubscription;
+    _positionSubscription = null;
+    _positionGeneration += 1;
+    unawaited(subscription?.cancel());
+    _emit(
+      DeviceLocationStatus(
+        state: DeviceLocationState.failed,
+        message: 'Location updates stopped: $error',
+        lastSample: _status.lastSample,
+      ),
+    );
+  }
+
+  void _handlePositionDone(int generation) {
+    if (generation != _positionGeneration) return;
+    _positionSubscription = null;
+    _positionGeneration += 1;
+    _emit(
+      DeviceLocationStatus(
+        state: DeviceLocationState.ready,
+        message: 'Location sharing is stopped.',
+        lastSample: _status.lastSample,
+      ),
+    );
   }
 
   DeviceLocationStatus _statusForPermission(

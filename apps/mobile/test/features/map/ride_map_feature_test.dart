@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/route_store.dart';
@@ -18,6 +19,7 @@ import 'package:ride_relay/services/map_style_repository.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/route_importer.dart';
 import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/speed_limit.dart';
 
 void main() {
   test('Android group mini-map uses the local fallback', () {
@@ -94,6 +96,253 @@ void main() {
     expect(find.text('3 RIDERS'), findsOneWidget);
   });
 
+  testWidgets('turn guidance reduces the TEC gap to a single-line chip', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-compact-tec-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'guided',
+      name: 'Guided route',
+      importedAt: DateTime.utc(2026, 7, 24),
+      sourceFileName: 'guided.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.451, longitude: -2.58),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.451, longitude: -2.58),
+          type: 'turn',
+          modifier: 'right',
+        ),
+      ],
+    );
+    final navigation = ValueNotifier(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.45, longitude: -2.59),
+        recordedAt: DateTime.utc(2026, 7, 24, 12),
+        speedMetersPerSecond: 10,
+        headingDegrees: 90,
+      ),
+    );
+    final leaderStatus = ValueNotifier<LeaderRideStatus?>(
+      const LeaderRideStatus(
+        tecName: 'Charlie',
+        distanceToTecMeters: 3200,
+        estimatedTimeToTec: Duration(minutes: 4),
+        offCourseAlerts: [],
+      ),
+    );
+    addTearDown(navigation.dispose);
+    addTearDown(leaderStatus.dispose);
+
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          leaderStatus: leaderStatus,
+          distanceUnit: DistanceUnit.miles,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final chip = find.byKey(const Key('leader-tec-gap'));
+    expect(chip, findsOneWidget);
+    expect(find.text('TEC GAP'), findsNothing);
+    expect(find.text('TEC'), findsOneWidget);
+    expect(find.textContaining('Charlie · 2.0 mi · ~4 min'), findsOneWidget);
+    expect(tester.getSize(chip).height, lessThanOrEqualTo(44));
+    expect(tester.getSize(chip).width, lessThanOrEqualTo(360));
+  });
+
+  testWidgets('TEC waiting state stays at the top without active guidance', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-tec-waiting-position-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'waiting-for-location',
+      name: 'Waiting route',
+      importedAt: DateTime.utc(2026, 7, 24),
+      sourceFileName: 'waiting.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.451, longitude: -2.58),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.451, longitude: -2.58),
+          type: 'turn',
+          modifier: 'right',
+        ),
+      ],
+    );
+    final navigation = ValueNotifier<MapNavigationPosition?>(null);
+    final leaderStatus = ValueNotifier<LeaderRideStatus?>(
+      const LeaderRideStatus(
+        tecName: null,
+        distanceToTecMeters: null,
+        estimatedTimeToTec: null,
+        offCourseAlerts: [],
+      ),
+    );
+    addTearDown(navigation.dispose);
+    addTearDown(leaderStatus.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          leaderStatus: leaderStatus,
+          distanceUnit: DistanceUnit.miles,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final chip = find.byKey(const Key('leader-tec-gap'));
+    expect(chip, findsOneWidget);
+    expect(find.text('waiting for location'), findsOneWidget);
+    expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
+    expect(tester.getTopLeft(chip).dy, lessThan(120));
+  });
+
+  testWidgets('map exposes an informed speed-limit opt-in', (tester) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-speed-limit-opt-in-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: _WidgetSpeedLimitProvider(),
+    );
+    addTearDown(speedLimitDisplay.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          speedLimitDisplay: speedLimitDisplay,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('speed-limit-opt-in-chip')), findsOneWidget);
+    expect(find.byKey(const Key('posted-speed-limit-badge')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('speed-limit-opt-in-chip')));
+    await tester.pumpAndSettle();
+    expect(find.text('Show mapped speed limits?'), findsOneWidget);
+    expect(find.textContaining('foreground GPS positions'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('confirm-speed-limit-opt-in')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('speed-limit-opt-in-chip')), findsNothing);
+    expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
+    expect(find.text('MOVE TO IDENTIFY ROAD'), findsOneWidget);
+  });
+
+  testWidgets('opt-in mapped speed limit appears in the map view', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-speed-limit-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final now = DateTime.utc(2026, 7, 24, 10);
+    final navigation = ValueNotifier<MapNavigationPosition>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.5000, longitude: -0.12),
+        recordedAt: now,
+        accuracyMeters: 5,
+        headingDegrees: 0,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: _WidgetSpeedLimitProvider(),
+      enabled: true,
+      clock: () => now,
+    );
+    addTearDown(speedLimitDisplay.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          speedLimitDisplay: speedLimitDisplay,
+        ),
+      ),
+    );
+    await tester.pump();
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 51.5004, longitude: -0.12),
+      recordedAt: now.add(const Duration(seconds: 1)),
+      accuracyMeters: 5,
+      headingDegrees: 0,
+    );
+    await speedLimitDisplay.waitForIdle();
+    await tester.pump();
+
+    expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
+    expect(find.text('30'), findsOneWidget);
+    expect(find.text('MPH · MAPPED'), findsOneWidget);
+  });
+
   testWidgets('offers file import and loads bundled demo route offline', (
     tester,
   ) async {
@@ -152,7 +401,8 @@ void main() {
     expect(find.text('Import GPX'), findsOneWidget);
     expect(find.text('ROUTE-ONLY OFFLINE MAP'), findsOneWidget);
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
-    expect(find.text('TEC GAP'), findsOneWidget);
+    expect(find.byKey(const Key('leader-tec-gap')), findsOneWidget);
+    expect(find.text('TEC'), findsOneWidget);
     expect(find.textContaining('Alex is clearly off course'), findsOneWidget);
     expect(find.textContaining('2.0 mi'), findsOneWidget);
     expect(find.textContaining('0.1 mi'), findsOneWidget);
@@ -974,6 +1224,24 @@ class _StraightRoadRoutingService implements RoadRoutingService {
         distanceMeters: 12000,
         duration: const Duration(minutes: 22),
       );
+}
+
+class _WidgetSpeedLimitProvider implements SpeedLimitProvider {
+  @override
+  Future<SpeedLimitLookupResult> lookup({
+    required SpeedLimitLocation previous,
+    required SpeedLimitLocation current,
+  }) async => SpeedLimitLookupResult.known(
+    PostedSpeedLimit(
+      milesPerHour: 30,
+      source: 'Test',
+      checkedAt: current.recordedAt,
+      matchDistanceMeters: 2,
+    ),
+  );
+
+  @override
+  void close() {}
 }
 
 ImportedRoute _testRoute({required String id, required String name}) =>

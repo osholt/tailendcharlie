@@ -11,6 +11,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../controllers/speed_limit_display_controller.dart';
 import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../domain/distance_unit.dart';
@@ -39,6 +40,7 @@ import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_progress.dart';
+import '../../services/speed_limit.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'motorcycle_icon.dart';
@@ -99,6 +101,7 @@ class RideMapFeature extends StatefulWidget {
     this.mapLibreOfflineManager,
     this.mapStyleString,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.speedLimitDisplay,
     this.basemapConfiguration = const BasemapConfiguration(),
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
     this.localBadgeColor = const Color(0xFF2F80ED),
@@ -129,6 +132,7 @@ class RideMapFeature extends StatefulWidget {
     RouteStore? routeStore,
     bool canEditRoute = true,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
+    SpeedLimitDisplayController? speedLimitDisplay,
     bool darkMapStyle = false,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
     Color localBadgeColor = const Color(0xFF2F80ED),
@@ -157,6 +161,7 @@ class RideMapFeature extends StatefulWidget {
     routeStore: routeStore,
     canEditRoute: canEditRoute,
     distanceUnit: distanceUnit,
+    speedLimitDisplay: speedLimitDisplay,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
       dark: darkMapStyle,
     ),
@@ -191,6 +196,7 @@ class RideMapFeature extends StatefulWidget {
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String? mapStyleString;
   final DistanceUnit distanceUnit;
+  final SpeedLimitDisplayController? speedLimitDisplay;
   final BasemapConfiguration basemapConfiguration;
   final MotorcycleIconStyle localMotorcycleStyle;
   final Color localBadgeColor;
@@ -312,6 +318,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
         distanceUnit: widget.distanceUnit,
+        speedLimitDisplay: widget.speedLimitDisplay,
         localMotorcycleStyle: widget.localMotorcycleStyle,
         localBadgeColor: widget.localBadgeColor,
       );
@@ -370,6 +377,7 @@ class RideMapScreen extends StatefulWidget {
     this.demoRouteLoader,
     this.recordedRouteStore,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.speedLimitDisplay,
     this.disposeOfflineTileCache = false,
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
     this.localBadgeColor = const Color(0xFF2F80ED),
@@ -408,6 +416,7 @@ class RideMapScreen extends StatefulWidget {
   final Future<ImportedRoute> Function()? demoRouteLoader;
   final RecordedRouteStore? recordedRouteStore;
   final DistanceUnit distanceUnit;
+  final SpeedLimitDisplayController? speedLimitDisplay;
   final bool disposeOfflineTileCache;
   final MotorcycleIconStyle localMotorcycleStyle;
   final Color localBadgeColor;
@@ -443,6 +452,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   late final DiscoverySuggestionConfiguration _suggestionConfiguration;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
+  late SpeedLimitDisplayController _speedLimitDisplay;
+  late bool _ownsSpeedLimitDisplay;
   ml.MapLibreMapController? _mapLibreController;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
   bool _mapLibreStyleReady = false;
@@ -520,6 +531,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _defaultRouteGeometryEnricher = RouteGeometryEnricher(
       routingService: _roadRoutingService,
     );
+    _ownsSpeedLimitDisplay = widget.speedLimitDisplay == null;
+    _speedLimitDisplay =
+        widget.speedLimitDisplay ?? SpeedLimitDisplayController.inMemory();
     _mapLibreOfflineManager =
         widget.mapLibreOfflineManager ??
         MapLibreOfflineManager(configuration: _basemap);
@@ -528,6 +542,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.offRouteTraces?.addListener(_onOverlayDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
+    _observeSpeedLimit(_navigationFix);
     _markerOverviewVisible =
         widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
     _loadPersistedRoute();
@@ -562,6 +577,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
       widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
       _onJunctionMarkerChanged();
     }
+    if (oldWidget.speedLimitDisplay != widget.speedLimitDisplay) {
+      if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
+      _ownsSpeedLimitDisplay = widget.speedLimitDisplay == null;
+      _speedLimitDisplay =
+          widget.speedLimitDisplay ?? SpeedLimitDisplayController.inMemory();
+      _observeSpeedLimit(_navigationFix);
+    }
   }
 
   @override
@@ -575,6 +597,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _navigationGuidance.dispose();
+    if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
@@ -669,7 +692,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ? overlayRight + groupMiniMapWidth + 16
         : overlayRight + (landscape ? 68 : 12);
     final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
-    final hasGuidance = _route?.maneuvers.isNotEmpty ?? false;
+    // A route can contain manoeuvres before the device has a usable location.
+    // Reserve banner space only while guidance is actually visible; otherwise
+    // the TEC waiting state floats unnecessarily far down the map.
+    final hasGuidance = _navigationGuidance.value != null;
     // Guidance can include lane arrows and a closely following turn. Reserve
     // enough overlay space so the leader status and group mini-map never
     // cover those safety-critical lines.
@@ -759,6 +785,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     const PopupMenuItem(
                       value: _MapAction.discoveryLayers,
                       child: Text('Motorcycle discovery layers'),
+                    ),
+                    PopupMenuItem(
+                      value: _MapAction.speedLimitDisplay,
+                      child: Row(
+                        children: [
+                          Icon(
+                            _speedLimitDisplay.enabled
+                                ? Icons.check_box
+                                : Icons.check_box_outline_blank,
+                          ),
+                          const SizedBox(width: 10),
+                          const Text('Show mapped speed limit'),
+                        ],
+                      ),
                     ),
                     if (_route?.maneuvers.isNotEmpty ?? false)
                       PopupMenuItem(
@@ -879,7 +919,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     top: landscape
                         ? statusTop
                         : leaderStatusTop +
-                              (widget.leaderStatus == null ? 24 : 96),
+                              (widget.leaderStatus == null
+                                  ? 24
+                                  : hideChrome
+                                  ? 52
+                                  : 96),
                     child: ValueListenableBuilder<List<MapOverlayMarker>>(
                       valueListenable: widget.overlayMarkers!,
                       builder: (context, overlays, _) {
@@ -916,6 +960,29 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             platform: defaultTargetPlatform,
                           ),
                           mapStyleString: widget.mapStyleString,
+                        );
+                      },
+                    ),
+                  ),
+                if (!markerOverviewActive)
+                  Positioned(
+                    key: const Key('posted-speed-limit-position'),
+                    right: overlayRight + 12,
+                    bottom:
+                        overlayBottom +
+                        (_route != null && !_navigationMode ? 76 : 12),
+                    child: AnimatedBuilder(
+                      animation: _speedLimitDisplay,
+                      builder: (context, _) {
+                        if (!_speedLimitDisplay.enabled) {
+                          return _SpeedLimitOptInChip(
+                            onPressed: _confirmEnableSpeedLimitDisplay,
+                          );
+                        }
+                        return _PostedSpeedLimitBadge(
+                          status: _speedLimitDisplay.status,
+                          outcome: _speedLimitDisplay.lastOutcome,
+                          limit: _speedLimitDisplay.limit,
                         );
                       },
                     ),
@@ -1348,6 +1415,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!mounted) return;
     final position = _effectivePosition;
     final navigationFix = _navigationFix;
+    _observeSpeedLimit(navigationFix);
     if (navigationFix != null) {
       if (navigationFix == _lastHandledNavigationFix) return;
       _lastHandledNavigationFix = navigationFix;
@@ -1435,6 +1503,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  void _observeSpeedLimit(MapNavigationPosition? fix) {
+    if (fix == null) return;
+    _speedLimitDisplay.observe(
+      SpeedLimitLocation(
+        point: fix.point,
+        recordedAt: fix.recordedAt,
+        accuracyMeters: fix.accuracyMeters,
+        headingDegrees: fix.headingDegrees,
+      ),
+    );
+  }
+
   void _updateNavigationGuidance(GeoPoint? position) {
     final next = _navigationGuidancePlanner.plan(
       route: _route,
@@ -1442,12 +1522,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
       progressMeters: _progressGeometry.progressMeters,
     );
     final current = _navigationGuidance.value;
+    final visibilityChanged = (current == null) != (next == null);
     final unchanged =
         current?.maneuver == next?.maneuver &&
         current != null &&
         next != null &&
         (current.distanceMeters - next.distanceMeters).abs() < 5;
-    if (!unchanged) _navigationGuidance.value = next;
+    if (!unchanged) {
+      _navigationGuidance.value = next;
+      if (visibilityChanged && mounted) setState(() {});
+    }
   }
 
   void _onOverlayDataChanged() {
@@ -3229,6 +3313,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await _loadDemoRoute();
       case _MapAction.discoveryLayers:
         await _showDiscoveryLayersSheet();
+      case _MapAction.speedLimitDisplay:
+        if (_speedLimitDisplay.enabled) {
+          await _speedLimitDisplay.setEnabled(false);
+        } else {
+          await _confirmEnableSpeedLimitDisplay();
+        }
       case _MapAction.markerPlan:
         setState(() => _markerPlanVisible = !_markerPlanVisible);
         _scheduleMapLibreSync(overlays: true);
@@ -3257,6 +3347,36 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await widget.offlineTileCache.clearAll();
         _showMessage('Offline map data cleared.');
     }
+  }
+
+  Future<void> _confirmEnableSpeedLimitDisplay() async {
+    if (_speedLimitDisplay.enabled) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Show mapped speed limits?'),
+        content: const Text(
+          'When this is on, the app sends your current and recent foreground '
+          'GPS positions to a Valhalla road-matching service after you move. '
+          'It works in the UK and uses mapped OpenStreetMap limits, which may '
+          'be missing or out of date. Roadside signs always apply.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            key: const Key('confirm-speed-limit-opt-in'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Turn on'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    await _speedLimitDisplay.setEnabled(true);
+    _observeSpeedLimit(_navigationFix);
   }
 
   Future<bool> _confirmRemoveRoute() async =>
@@ -3413,6 +3533,7 @@ enum _MapAction {
   importGpx,
   loadDemo,
   discoveryLayers,
+  speedLimitDisplay,
   markerPlan,
   downloadOffline,
   removeRoute,
@@ -3427,12 +3548,14 @@ class MapNavigationPosition {
     required this.recordedAt,
     this.speedMetersPerSecond,
     this.headingDegrees,
+    this.accuracyMeters,
   });
 
   final GeoPoint point;
   final DateTime recordedAt;
   final double? speedMetersPerSecond;
   final double? headingDegrees;
+  final double? accuracyMeters;
 
   bool get isMoving => (speedMetersPerSecond ?? 0) >= 2.5;
 
@@ -3443,7 +3566,8 @@ class MapNavigationPosition {
       point.longitude == other.point.longitude &&
       recordedAt == other.recordedAt &&
       speedMetersPerSecond == other.speedMetersPerSecond &&
-      headingDegrees == other.headingDegrees;
+      headingDegrees == other.headingDegrees &&
+      accuracyMeters == other.accuracyMeters;
 
   @override
   int get hashCode => Object.hash(
@@ -3452,6 +3576,7 @@ class MapNavigationPosition {
     recordedAt,
     speedMetersPerSecond,
     headingDegrees,
+    accuracyMeters,
   );
 }
 
@@ -4688,6 +4813,173 @@ class _MarkerStatusPill extends StatelessWidget {
   );
 }
 
+class _SpeedLimitOptInChip extends StatelessWidget {
+  const _SpeedLimitOptInChip({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Mapped speed limits are off',
+    child: FilledButton.tonalIcon(
+      key: const Key('speed-limit-opt-in-chip'),
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xE6252E39),
+        foregroundColor: const Color(0xFFE4E9EF),
+        padding: const EdgeInsets.fromLTRB(7, 5, 11, 5),
+        minimumSize: const Size(0, 40),
+        side: const BorderSide(color: Color(0xFF445262)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      icon: Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF8993A0), width: 3),
+        ),
+        child: const Text(
+          '–',
+          style: TextStyle(
+            color: Color(0xFF30343B),
+            fontSize: 18,
+            height: 1,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+      label: const Text(
+        'Limits off',
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+      ),
+    ),
+  );
+}
+
+class _PostedSpeedLimitBadge extends StatelessWidget {
+  const _PostedSpeedLimitBadge({
+    required this.status,
+    required this.outcome,
+    required this.limit,
+  });
+
+  final SpeedLimitDisplayStatus status;
+  final SpeedLimitLookupOutcome? outcome;
+  final PostedSpeedLimit? limit;
+
+  @override
+  Widget build(BuildContext context) {
+    final reading = limit;
+    final known = status == SpeedLimitDisplayStatus.known && reading != null;
+    final value = known ? '${reading.milesPerHour}' : '–';
+    final checkedAt = known
+        ? MaterialLocalizations.of(
+            context,
+          ).formatTimeOfDay(TimeOfDay.fromDateTime(reading.checkedAt.toLocal()))
+        : null;
+    final detail = known
+        ? reading.roadName == null
+              ? 'Checked $checkedAt · mapped · not live'
+              : '${reading.roadName} · checked $checkedAt · mapped · not live'
+        : switch (outcome) {
+            SpeedLimitLookupOutcome.poorAccuracy => 'GPS accuracy too low',
+            SpeedLimitLookupOutcome.poorMatch => 'Road match uncertain',
+            SpeedLimitLookupOutcome.unsupportedRegion => 'UK only',
+            SpeedLimitLookupOutcome.noTaggedLimit => 'No mapped limit',
+            SpeedLimitLookupOutcome.unavailable => 'Limit unavailable',
+            _ when status == SpeedLimitDisplayStatus.checking =>
+              'Checking mapped road',
+            _ => 'Move to identify road',
+          };
+    final semanticLabel = known
+        ? 'Mapped speed limit ${reading.milesPerHour} miles per hour'
+              '${reading.roadName == null ? '' : ' on ${reading.roadName}'}. '
+              'Looked up at $checkedAt. Not live. Roadside signs apply.'
+        : '$detail. Roadside signs apply.';
+    return Semantics(
+      key: const Key('posted-speed-limit-badge'),
+      container: true,
+      liveRegion: true,
+      label: semanticLabel,
+      excludeSemantics: true,
+      child: Tooltip(
+        message:
+            '$detail\n© OpenStreetMap contributors via Valhalla; temporary and variable limits may differ. Roadside signs apply.',
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 150),
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 7),
+          decoration: BoxDecoration(
+            color: const Color(0xE6252E39),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF445262)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x55000000),
+                blurRadius: 10,
+                offset: Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 58,
+                height: 58,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: known
+                        ? const Color(0xFFD71920)
+                        : const Color(0xFF8993A0),
+                    width: 6,
+                  ),
+                ),
+                child: status == SpeedLimitDisplayStatus.checking
+                    ? const SizedBox.square(
+                        dimension: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: Color(0xFF30343B),
+                        ),
+                      )
+                    : Text(
+                        value,
+                        style: const TextStyle(
+                          color: Color(0xFF111111),
+                          fontSize: 26,
+                          height: 1,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                known ? 'MPH · MAPPED' : detail.toUpperCase(),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFFE4E9EF),
+                  fontSize: 9,
+                  height: 1.15,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _NavigationGuidanceBanner extends StatelessWidget {
   const _NavigationGuidanceBanner({
     required this.guidance,
@@ -5071,6 +5363,54 @@ class _TecGapCard extends StatelessWidget {
         : distance == null || eta == null
         ? '$name · last update ${_ageLabel(age)}'
         : '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · about ${_durationLabel(eta)}';
+    if (compact) {
+      final compactDetail = name == null
+          ? 'waiting for location'
+          : distance == null || eta == null
+          ? '$name · ${_ageLabel(age)}'
+          : '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · ~${_durationLabel(eta)}';
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Card(
+            key: const Key('leader-tec-gap'),
+            margin: EdgeInsets.zero,
+            color: const Color(0xE6252E39),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.two_wheeler,
+                    size: 18,
+                    color: Color(0xFF6ED89A),
+                  ),
+                  const SizedBox(width: 7),
+                  const Text(
+                    'TEC',
+                    style: TextStyle(
+                      color: Color(0xFFB7C2CF),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      compactDetail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Card(
       key: const Key('leader-tec-gap'),
       margin: EdgeInsets.zero,
