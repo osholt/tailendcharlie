@@ -11,6 +11,7 @@ import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
+import '../../controllers/speed_limit_display_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/rider_color.dart';
@@ -31,6 +32,7 @@ class HomeScreen extends StatefulWidget {
     required this.rideCodePreference,
     required this.riderProfile,
     required this.sharedRoutes,
+    required this.speedLimitDisplay,
     required this.recordedRoutes,
     required this.completedRides,
     this.planDirectory,
@@ -42,6 +44,7 @@ class HomeScreen extends StatefulWidget {
   final RideCodePreferenceController rideCodePreference;
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
+  final SpeedLimitDisplayController speedLimitDisplay;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final PlanDirectory? planDirectory;
@@ -183,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       widget.distanceUnits,
                       widget.mapStyleMode,
                       widget.riderProfile,
+                      speedLimitDisplay: widget.speedLimitDisplay,
                     ),
                     icon: const Icon(Icons.settings_outlined),
                   ),
