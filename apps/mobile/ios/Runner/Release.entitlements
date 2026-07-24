@@ -6,6 +6,10 @@
 	<string>production</string>
 	<key>com.apple.developer.carplay-driving-task</key>
 	<true/>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:tailendcharlie.app</string>
+	</array>
 	<key>keychain-access-groups</key>
 	<array/>
 </dict>

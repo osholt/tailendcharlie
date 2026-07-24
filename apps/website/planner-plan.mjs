@@ -71,7 +71,7 @@ export function buildPlanEmailHref({
     "",
     `Open and edit the route: ${planUrl}`,
     "",
-    `To load it in the Tail End Charlie app, open the ride map, choose Change route → Load a planned route, and enter code ${normalizedCode}.`,
+    `If Tail End Charlie is installed, tap the link to offer this route to the app. You can also open the ride map, choose Change route → Load a planned route, and enter code ${normalizedCode}.`,
     expiryText,
   ].join("\n");
   return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;

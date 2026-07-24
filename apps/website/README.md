@@ -22,9 +22,17 @@ browser storage for save-and-return, with an in-planner clear control and no
 cookies or tracking. A rider can explicitly create an eight-character app code;
 that sends the generated GPX to the configured relay's existing encrypted plan
 store for 30 days. The same code imports the route into the mobile app, and its
-HTTPS planner link reopens an editable web copy. The email action opens the
-rider's own mail client and does not send email from the website. Route
+HTTPS planner link reopens an editable web copy or offers the route to an
+installed mobile app through Universal Links/App Links. The email action opens
+the rider's own mail client and does not send email from the website. Route
 coordinates and other place queries go only to the documented providers.
+
+The two association files are in `.well-known/`. The Apple entry is the
+production team/bundle identifier. The Android entry currently contains only
+the local debug signing certificate so physical development builds can be
+verified; add the Play App Signing SHA-256 fingerprint from Play Console before
+enabling the feature for closed testers. The upload-key fingerprint is not a
+substitute because Play-distributed APKs are signed with the app-signing key.
 
 Three default-off motorcycle discovery layers use the bounded Wales
 proof-of-concept catalogue in `data/discovery-catalogue.geojson`. The planner

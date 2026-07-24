@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -90,6 +91,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         _PendingSharedRouteBanner(
                           fileName: file.name,
                           onDismiss: widget.sharedRoutes.clearPending,
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+                      if (widget.sharedRoutes.plannerLinkStatus !=
+                          PlannerLinkStatus.idle) ...[
+                        _PlannerLinkStatusBanner(
+                          status: widget.sharedRoutes.plannerLinkStatus,
+                          message:
+                              widget.sharedRoutes.plannerLinkMessage ??
+                              'Loading shared route…',
+                          canRetry: widget.sharedRoutes.canRetryPlannerLink,
+                          onRetry: () =>
+                              unawaited(widget.sharedRoutes.retryPlannerLink()),
+                          onDismiss: widget.sharedRoutes.clearPlannerLinkNotice,
                         ),
                         const SizedBox(height: 20),
                       ],
@@ -301,6 +316,63 @@ class _PendingSharedRouteBanner extends StatelessWidget {
           onPressed: onDismiss,
           icon: const Icon(Icons.close, size: 20),
         ),
+      ],
+    ),
+  );
+}
+
+class _PlannerLinkStatusBanner extends StatelessWidget {
+  const _PlannerLinkStatusBanner({
+    required this.status,
+    required this.message,
+    required this.canRetry,
+    required this.onRetry,
+    required this.onDismiss,
+  });
+
+  final PlannerLinkStatus status;
+  final String message;
+  final bool canRetry;
+  final VoidCallback onRetry;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: const Key('planner-link-status'),
+    padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF1D2530),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: status == PlannerLinkStatus.error
+            ? const Color(0xFFD96A6A)
+            : const Color(0xFF3B4654),
+      ),
+    ),
+    child: Row(
+      children: [
+        if (status == PlannerLinkStatus.loading)
+          const SizedBox.square(
+            dimension: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        else
+          const Icon(Icons.link_off, color: Color(0xFFFFB15C)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            message,
+            style: const TextStyle(color: Color(0xFFD2D9E1), fontSize: 13),
+          ),
+        ),
+        if (canRetry)
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        if (status == PlannerLinkStatus.error)
+          IconButton(
+            tooltip: 'Dismiss route link message',
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close, size: 20),
+          ),
       ],
     ),
   );

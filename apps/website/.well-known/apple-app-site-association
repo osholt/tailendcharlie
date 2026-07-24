@@ -1,0 +1,18 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["UY4624PH6X.app.tailendcharlie"],
+        "components": [
+          {
+            "/": "/planner.html",
+            "?": {
+              "code": "?*"
+            },
+            "comment": "Open a shared Tail End Charlie route code in the installed app."
+          }
+        ]
+      }
+    ]
+  }
+}

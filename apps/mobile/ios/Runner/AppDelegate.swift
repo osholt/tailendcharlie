@@ -16,6 +16,8 @@ import UserNotifications
   private var pendingPeers = Set<EndpointID>()
   private var gpxImportChannel: FlutterMethodChannel?
   private var pendingGpxImport: (data: Data, fileName: String)?
+  private var plannerLinkChannel: FlutterMethodChannel?
+  private var pendingPlannerLink: String?
   private var carPlayChannel: FlutterMethodChannel?
   private var latestCarPlaySnapshot: [String: Any]?
   private var pushChannel: FlutterMethodChannel?
@@ -116,6 +118,21 @@ import UserNotifications
       ])
     }
     gpxImportChannel = gpxChannel
+
+    let plannerChannel = FlutterMethodChannel(
+      name: "me.osholt.ride_relay/planner_link",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    plannerChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "consumePendingPlannerLink" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let pending = self?.pendingPlannerLink
+      self?.pendingPlannerLink = nil
+      result(pending)
+    }
+    plannerLinkChannel = plannerChannel
 
     let pushChannel = FlutterMethodChannel(
       name: "me.osholt.ride_relay/push",
@@ -344,6 +361,16 @@ import UserNotifications
     }
     guard let data = try? Data(contentsOf: url) else { return }
     pendingGpxImport = (data: data, fileName: url.lastPathComponent)
+  }
+
+  func handleIncomingPlannerLink(url: URL) {
+    guard
+      url.scheme == "https",
+      url.host?.lowercased() == "tailendcharlie.app",
+      url.path == "/planner.html",
+      url.absoluteString.count <= 2048
+    else { return }
+    pendingPlannerLink = url.absoluteString
   }
 
   private func startNearby(serviceID: String, endpointName: String, result: @escaping FlutterResult) {

@@ -568,6 +568,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     )..start();
     widget.rideController.addListener(_onRideControllerChanged);
     widget.sharedRoutes.addListener(_onSharedRoutesChanged);
+    _capturePlannerLinkError();
     if (widget.sharedRoutes.pending case final file?) {
       if (widget.rideController.isLocalRideLeader) {
         _selectedIndex = 0;
@@ -590,8 +591,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// file already in hand instead of asking the map to show its picker.
   void _onSharedRoutesChanged() {
     if (!mounted) return;
+    final warningAdded = _capturePlannerLinkError();
     final file = widget.sharedRoutes.pending;
-    if (file == null) return;
+    if (file == null) {
+      if (warningAdded) setState(() {});
+      return;
+    }
     if (!widget.rideController.isLocalRideLeader) {
       _warnings.add('Only the ride leader can replace the group route.');
       _clearSharedRoutePending();
@@ -604,6 +609,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       _pendingSharedGpxFile = file;
     });
     _clearSharedRoutePending();
+  }
+
+  bool _capturePlannerLinkError() {
+    if (widget.sharedRoutes.plannerLinkStatus != PlannerLinkStatus.error) {
+      return false;
+    }
+    final message = widget.sharedRoutes.plannerLinkMessage;
+    if (message == null) return false;
+    final code = widget.sharedRoutes.plannerLinkCode;
+    return _warnings.add(
+      'Shared route link: $message'
+      '${code == null ? '' : ' You can still enter code $code from Change route → Load a planned route.'}',
+    );
   }
 
   /// Deferred a frame so this never calls notifyListeners() back into

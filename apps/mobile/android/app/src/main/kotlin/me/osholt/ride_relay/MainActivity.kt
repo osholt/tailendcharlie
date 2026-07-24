@@ -39,6 +39,7 @@ class MainActivity : FlutterActivity() {
         private const val METHOD_CHANNEL = "me.osholt.ride_relay/nearby"
         private const val EVENT_CHANNEL = "me.osholt.ride_relay/nearby_events"
         private const val GPX_METHOD_CHANNEL = "me.osholt.ride_relay/gpx_import"
+        private const val PLANNER_LINK_METHOD_CHANNEL = "me.osholt.ride_relay/planner_link"
         private const val PUSH_METHOD_CHANNEL = "me.osholt.ride_relay/push"
         private const val PERMISSION_REQUEST = 7102
         private const val PUSH_PERMISSION_REQUEST = 7103
@@ -46,6 +47,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var pendingGpxImport: Pair<ByteArray, String>? = null
+    private var pendingPlannerLink: String? = null
 
     private val connectionsClient: ConnectionsClient by lazy {
         Nearby.getConnectionsClient(this)
@@ -130,6 +132,18 @@ class MainActivity : FlutterActivity() {
                 result.success(mapOf("bytes" to pending.first, "fileName" to pending.second))
             }
         }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            PLANNER_LINK_METHOD_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "consumePendingPlannerLink") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val pending = pendingPlannerLink
+            pendingPlannerLink = null
+            result.success(pending)
+        }
         val pushChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             PUSH_METHOD_CHANNEL,
@@ -156,6 +170,7 @@ class MainActivity : FlutterActivity() {
         super.onCreate(savedInstanceState)
         createNotificationChannels()
         captureGpxIntent(intent)
+        capturePlannerLinkIntent(intent)
         capturePushIntent(intent)
     }
 
@@ -187,6 +202,7 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         captureGpxIntent(intent)
+        capturePlannerLinkIntent(intent)
         capturePushIntent(intent)
     }
 
@@ -196,12 +212,27 @@ class MainActivity : FlutterActivity() {
             Intent.ACTION_SEND -> extraStreamUri(intent)
             else -> null
         } ?: return
+        if (uri.scheme != "content" && uri.scheme != "file") return
         val bytes = try {
             contentResolver.openInputStream(uri)?.use { it.readBytes() }
         } catch (error: Exception) {
             null
         } ?: return
         pendingGpxImport = bytes to (queryDisplayName(uri) ?: uri.lastPathSegment ?: "shared.gpx")
+    }
+
+    private fun capturePlannerLinkIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        if (
+            uri.scheme != "https" ||
+            !uri.host.equals("tailendcharlie.app", ignoreCase = true) ||
+            uri.path != "/planner.html" ||
+            uri.toString().length > 2048
+        ) {
+            return
+        }
+        pendingPlannerLink = uri.toString()
     }
 
     @Suppress("DEPRECATION")

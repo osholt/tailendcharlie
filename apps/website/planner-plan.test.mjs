@@ -90,6 +90,7 @@ test("email handoff includes the editable link and app instructions", () => {
   const decoded = decodeURIComponent(href);
   assert.match(decoded, /Sunday loop/);
   assert.match(decoded, /planner\.html\?code=7F3K9QRT/);
+  assert.match(decoded, /tap the link to offer this route to the app/);
   assert.match(decoded, /Load a planned route/);
   assert.match(decoded, /Distance: 84 mi/);
   assert.match(decoded, /Estimated time: 2 hr 18 min/);
