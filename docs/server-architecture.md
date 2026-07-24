@@ -25,9 +25,11 @@ flowchart LR
   internal metrics endpoint.
 - **FastAPI relay:** validates protocol bounds, authenticates a ride, applies
   idempotency, stores events, and builds bounded cursor pages.
-- **PostgreSQL:** durable rides, encrypted event envelopes, and encrypted exact
-  idempotency replays. Alembic owns the schema.
-- **Cleanup worker:** removes expired events/replays and cascades expired rides.
+- **PostgreSQL:** durable rides, encrypted event envelopes, encrypted exact
+  idempotency replays, and replace-only encrypted pre-start snapshots. Alembic
+  owns the schema.
+- **Cleanup worker:** removes expired events/replays/pre-start snapshots and
+  cascades expired rides.
 - **Martin (optional):** serves operator-supplied MBTiles/PMTiles over ordinary
   vector-tile URLs for MapLibre display and native offline-region downloads.
 
@@ -44,6 +46,13 @@ This keeps the mobile protocol account-free. It assumes ride IDs and private
 invitations are unguessable and makes private invitation handling part of the
 security boundary.
 
+`POST /api/v1/rides/{ride_id}/presence:sync` is deliberately separate from
+event sync. It upserts one encrypted snapshot under `(ride_id, rider_id)`,
+deletes expired rows before every read, and returns no data after a
+`rideStarted` or `rideEnded` event. This shared table replaces the earlier
+process-local cache, so replicas see the same latest state without retaining a
+sequence of movements.
+
 Opaque cursors contain a monotonically increasing database sequence and a
 ride-bound HMAC. Expired records can create gaps without invalidating cursor
 ordering. Responses stop at 100 events or 128 KiB, whichever comes first.
@@ -58,6 +67,10 @@ ciphertext to its ride/event or ride/idempotency identity.
 Maximum retention is based on server receipt: 30 minutes for positions, two
 hours for status/deviation acknowledgements, 24 hours for hazards, 72 hours for
 other events, and the shorter configured grace after `rideEnded`.
+
+Pre-start snapshots have a separate default 45-second TTL and are deleted when
+the ride starts or ends. Publishing a new fix overwrites the rider's existing
+encrypted row; there is no pre-start history table.
 
 Default capacity bounds are 100 active rides, 5,000 retained events and 25 MiB
 of encrypted event bodies per ride, 5,000 replay records and 25 MiB of encrypted
@@ -75,9 +88,9 @@ alert on readiness, 5xx rate, sync latency, storage growth, and cleanup failure.
 
 The included in-process limiter is correct for one API replica. Before scaling
 horizontally, replace it with a shared Redis/edge limit and add a load test.
-Database constraints preserve event/idempotency correctness across replicas.
-The active-ride capacity check is a single-host admission guard, not a billing
-or multi-tenant quota system.
+Database constraints preserve event/idempotency and latest pre-start presence
+correctness across replicas. The active-ride capacity check is a single-host
+admission guard, not a billing or multi-tenant quota system.
 
 ## Security boundaries and trade-offs
 

@@ -4,10 +4,12 @@ import 'dart:math';
 import 'package:uuid/uuid.dart';
 
 import '../domain/event_store.dart';
+import '../domain/rider_location.dart';
 import '../domain/ride_event.dart';
 import 'peer_transport.dart';
 import 'relay_protocol.dart';
 import 'relay_queue.dart';
+import 'relay_presence.dart';
 
 typedef RelayClock = DateTime Function();
 typedef RelayIdFactory = String Function();
@@ -171,6 +173,8 @@ class RelayEngine {
   final Random _random;
   final _statusController = StreamController<RelayStatus>.broadcast();
   final _receivedEventController = StreamController<RideEvent>.broadcast();
+  final _receivedPresenceController =
+      StreamController<RelayPresenceUpdate>.broadcast();
 
   RelayEngineConfig? _config;
   RelayStatus _status = const RelayStatus.stopped();
@@ -182,10 +186,13 @@ class RelayEngine {
   bool _running = false;
   bool _flushing = false;
   bool _flushRequested = false;
+  RelayPresenceUpdate? _localPresence;
 
   RelayStatus get status => _status;
   Stream<RelayStatus> get statuses => _statusController.stream;
   Stream<RideEvent> get receivedEvents => _receivedEventController.stream;
+  Stream<RelayPresenceUpdate> get receivedPresence =>
+      _receivedPresenceController.stream;
 
   Future<void> start(RelayEngineConfig config) async {
     if (config.rideId.isEmpty ||
@@ -241,6 +248,30 @@ class RelayEngine {
     await _queue.prune(now: now, maxItems: maxQueuedEvents);
     await _refreshQueueCount();
     await flush();
+  }
+
+  Future<void> publishPresence(
+    RiderLocation? position, {
+    bool clear = false,
+    Duration ttl = const Duration(seconds: 45),
+  }) async {
+    final config = _requireConfig();
+    if (clear == (position != null) ||
+        ttl < const Duration(seconds: 15) ||
+        ttl > const Duration(minutes: 5) ||
+        (position != null && position.riderId != config.localDeviceId)) {
+      throw ArgumentError('Invalid pre-start presence update');
+    }
+    final now = _clock();
+    final update = RelayPresenceUpdate(
+      riderId: config.localDeviceId,
+      sentAt: now,
+      expiresAt: now.add(ttl),
+      clear: clear,
+      position: position,
+    );
+    _localPresence = clear ? null : update;
+    await _sendPresence(update, peerIds: _status.peerIds);
   }
 
   Future<void> flush() async {
@@ -339,6 +370,14 @@ class RelayEngine {
       _retryAttempt = 0;
       _retryGeneration++;
       unawaited(flush());
+      final localPresence = _localPresence;
+      if (localPresence != null &&
+          localPresence.expiresAt.isAfter(_clock()) &&
+          transportStatus.peerIds.isNotEmpty) {
+        unawaited(
+          _sendPresence(localPresence, peerIds: transportStatus.peerIds),
+        );
+      }
     } else if (transportStatus.state == PeerTransportState.failed) {
       _scheduleReconnect(transportStatus.message ?? 'Nearby transport failed');
     }
@@ -373,6 +412,14 @@ class RelayEngine {
       await _refreshQueueCount(lastExchangeAt: now);
       return;
     }
+    if (frame.kind == RelayFrameKind.presence) {
+      final presence = frame.presence;
+      if (presence != null && !_receivedPresenceController.isClosed) {
+        _receivedPresenceController.add(presence);
+      }
+      await _refreshQueueCount(lastExchangeAt: now);
+      return;
+    }
 
     final acknowledged = <String>[];
     for (final item in frame.events) {
@@ -397,6 +444,26 @@ class RelayEngine {
     await _queue.prune(now: now, maxItems: maxQueuedEvents);
     await _refreshQueueCount(lastExchangeAt: now);
     await flush();
+  }
+
+  Future<void> _sendPresence(
+    RelayPresenceUpdate update, {
+    required Set<String> peerIds,
+  }) async {
+    if (peerIds.isEmpty || !update.expiresAt.isAfter(_clock())) return;
+    final config = _requireConfig();
+    final bytes = _protocol.encode(
+      RelayFrame(
+        kind: RelayFrameKind.presence,
+        rideId: config.rideId,
+        senderId: config.localDeviceId,
+        frameId: _idFactory(),
+        sentAt: update.sentAt,
+        presence: update,
+      ),
+      secret: config.rideSecret,
+    );
+    await _transport.send(bytes, peerIds: peerIds);
   }
 
   Future<void> _sendAcknowledgement(
@@ -484,6 +551,7 @@ class RelayEngine {
     _packetSubscription = null;
     await _transport.stop();
     _config = null;
+    _localPresence = null;
     _retryAttempt = 0;
     _emit(const RelayStatus.stopped());
   }
@@ -494,5 +562,6 @@ class RelayEngine {
     await _transport.dispose();
     await _statusController.close();
     await _receivedEventController.close();
+    await _receivedPresenceController.close();
   }
 }

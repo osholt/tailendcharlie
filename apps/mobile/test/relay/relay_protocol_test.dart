@@ -1,9 +1,13 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/domain/geo_point.dart';
+import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_event.dart';
+import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/relay/relay_protocol.dart';
 import 'package:ride_relay/relay/relay_queue.dart';
+import 'package:ride_relay/relay/relay_presence.dart';
 
 void main() {
   const secret = '0123456789abcdef0123456789abcdef';
@@ -75,6 +79,49 @@ void main() {
       ),
       throwsA(isA<RelayProtocolException>()),
     );
+  });
+
+  test('round trips one authenticated replace-only presence snapshot', () {
+    final location = RiderLocation(
+      riderId: 'device-a',
+      displayName: 'Alex',
+      role: RideRole.rider,
+      sample: LocationSample(
+        position: const GeoPoint(latitude: 51.1, longitude: -2.4),
+        recordedAt: now,
+        accuracyMeters: 4,
+      ),
+      receivedAt: now,
+    );
+    final bytes = protocol.encode(
+      RelayFrame(
+        kind: RelayFrameKind.presence,
+        rideId: 'ride-1',
+        senderId: 'device-a',
+        frameId: 'presence-1',
+        sentAt: now,
+        presence: RelayPresenceUpdate(
+          riderId: 'device-a',
+          sentAt: now,
+          expiresAt: now.add(const Duration(seconds: 45)),
+          clear: false,
+          position: location,
+        ),
+      ),
+      secret: secret,
+    );
+
+    final decoded = protocol.decode(
+      bytes,
+      secret: secret,
+      expectedRideId: 'ride-1',
+      now: now.add(const Duration(seconds: 1)),
+    );
+
+    expect(decoded.kind, RelayFrameKind.presence);
+    expect(decoded.presence?.riderId, 'device-a');
+    expect(decoded.presence?.position?.sample.position.latitude, 51.1);
+    expect(decoded.events, isEmpty);
   });
 }
 

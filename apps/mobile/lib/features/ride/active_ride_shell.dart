@@ -843,6 +843,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         try {
           await relayController.start(session);
           _relayConfigured = true;
+          await _preStartPresenceController?.attachNearby(relayController);
         } on Object catch (error) {
           _warnings.add('Nearby relay could not start: $error');
         }
