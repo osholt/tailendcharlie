@@ -15,4 +15,9 @@
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <style name="GroupPipTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#151E28</item>
+        <item name="android:colorAccent">#FF7A1A</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
 </resources>
