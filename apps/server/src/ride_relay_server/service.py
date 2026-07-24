@@ -17,7 +17,14 @@ from sqlalchemy.orm import Session
 from .config import Settings
 from .crypto import CursorCodec, DataCipher, base64url, sha256, token_hash
 from .gpx import GpxValidationError, validate_gpx
-from .models import IdempotencyReplay, Ride, RideJoinCode, RidePlan, StoredEvent
+from .models import (
+    IdempotencyReplay,
+    ObserverGrant,
+    Ride,
+    RideJoinCode,
+    RidePlan,
+    StoredEvent,
+)
 from .schemas import PresenceSyncRequest, SyncRequest, SyncResponse
 
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -842,7 +849,10 @@ class RelayService:
         return f"replay:{ride_id}:{idempotency_key}".encode()
 
 
-def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, int, int, int, int]:
+def purge_expired(
+    session: Session,
+    now: datetime | None = None,
+) -> tuple[int, int, int, int, int, int]:
     now = now or datetime.now(UTC)
     with session.begin():
         events = session.execute(delete(StoredEvent).where(StoredEvent.expires_at <= now))
@@ -852,10 +862,12 @@ def purge_expired(session: Session, now: datetime | None = None) -> tuple[int, i
         rides = session.execute(delete(Ride).where(Ride.delete_after <= now))
         join_codes = session.execute(delete(RideJoinCode).where(RideJoinCode.expires_at <= now))
         plans = session.execute(delete(RidePlan).where(RidePlan.expires_at <= now))
+        observers = session.execute(delete(ObserverGrant).where(ObserverGrant.expires_at <= now))
     return (
         events.rowcount or 0,
         replays.rowcount or 0,
         rides.rowcount or 0,
         join_codes.rowcount or 0,
         plans.rowcount or 0,
+        observers.rowcount or 0,
     )

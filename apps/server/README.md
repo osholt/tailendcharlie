@@ -20,6 +20,12 @@ credential indexed by that short code for the bounded ride-retention window.
 The code is the join credential, so it should only be shared with the intended
 group; lookup attempts are rate limited.
 
+Safety-contact access uses independent hash-only `om1_` management, `op1_`
+publisher and `ro1_` viewer credentials. The app, not the relay event journal,
+publishes one minimized local-device snapshot. The observer endpoint cannot
+return the ride feed or create membership. See `docs/observer-access.md` for
+the privacy boundary, deployment order, threat model and evidence gate.
+
 ## Development
 
 ```bash

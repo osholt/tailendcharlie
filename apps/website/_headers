@@ -7,3 +7,10 @@
 
 /admin-suggestions.html
   X-Robots-Tag: noindex, nofollow, noarchive
+
+/observer.html
+  X-Robots-Tag: noindex, nofollow, noarchive
+  Referrer-Policy: no-referrer
+  Cache-Control: no-store
+  Pragma: no-cache
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://relay.tailendcharlie.app; connect-src 'self' https://relay.tailendcharlie.app; worker-src blob:; child-src blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

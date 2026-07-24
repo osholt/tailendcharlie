@@ -31,6 +31,8 @@ class RideDashboard extends StatelessWidget {
     this.relayController,
     this.markerAssistanceController,
     this.internetRelayController,
+    this.onSendQuickMessage,
+    this.localObserverAssistanceActive = false,
     this.serviceWarning,
     this.summarySharer,
   });
@@ -44,6 +46,8 @@ class RideDashboard extends StatelessWidget {
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
+  final Future<void> Function(QuickMessage)? onSendQuickMessage;
+  final bool localObserverAssistanceActive;
   final String? serviceWarning;
   final RideSummarySharer? summarySharer;
 
@@ -138,7 +142,11 @@ class RideDashboard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                _QuickMessageGrid(controller: controller),
+                QuickMessageGrid(
+                  busy: controller.busy,
+                  onSend: onSendQuickMessage ?? controller.sendQuickMessage,
+                  showResolved: localObserverAssistanceActive,
+                ),
                 const SizedBox(height: 22),
                 _RideCodeCard(controller: controller),
                 const SizedBox(height: 22),
@@ -503,10 +511,17 @@ class _MarkerCard extends StatelessWidget {
   }
 }
 
-class _QuickMessageGrid extends StatelessWidget {
-  const _QuickMessageGrid({required this.controller});
+class QuickMessageGrid extends StatelessWidget {
+  const QuickMessageGrid({
+    super.key,
+    required this.busy,
+    required this.onSend,
+    this.showResolved = false,
+  });
 
-  final RideController controller;
+  final bool busy;
+  final Future<void> Function(QuickMessage) onSend;
+  final bool showResolved;
 
   static const _messages = [
     (QuickMessage.stopped, Icons.pause_circle_outline),
@@ -532,9 +547,7 @@ class _QuickMessageGrid extends StatelessWidget {
           children: [
             for (final (message, icon) in _messages)
               OutlinedButton.icon(
-                onPressed: controller.busy
-                    ? null
-                    : () => controller.sendQuickMessage(message),
+                onPressed: busy ? null : () => onSend(message),
                 icon: Icon(
                   icon,
                   color: message.priority == EventPriority.critical
@@ -546,6 +559,13 @@ class _QuickMessageGrid extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+              ),
+            if (showResolved)
+              OutlinedButton.icon(
+                key: const Key('observer-assistance-resolved'),
+                onPressed: busy ? null : () => onSend(QuickMessage.resolved),
+                icon: const Icon(Icons.check_circle_outline),
+                label: const Text('Resolved / I’m OK'),
               ),
           ],
         );

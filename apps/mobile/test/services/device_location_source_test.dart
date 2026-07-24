@@ -111,6 +111,42 @@ void main() {
     await source.dispose();
     await platform.dispose();
   });
+
+  test('restart resume uses existing permission without prompting', () async {
+    final platform = _FakeLocationPlatform(
+      permission: DeviceLocationPermission.whileInUse,
+    );
+    final controller = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    await controller.initialize();
+
+    await controller.resumeIfAuthorized();
+
+    expect(controller.sharing, isTrue);
+    expect(platform.permissionRequests, 0);
+    expect(platform.streamRequests, 1);
+    controller.dispose();
+    await platform.dispose();
+  });
+
+  test('restart resume stays stopped when permission was removed', () async {
+    final platform = _FakeLocationPlatform();
+    final controller = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    await controller.initialize();
+
+    await controller.resumeIfAuthorized();
+
+    expect(controller.sharing, isFalse);
+    expect(platform.permissionRequests, 0);
+    expect(platform.streamRequests, 0);
+    controller.dispose();
+    await platform.dispose();
+  });
 }
 
 final _sample = LocationSample(

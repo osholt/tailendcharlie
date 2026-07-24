@@ -1,0 +1,119 @@
+.observer-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(122, 76, 196, 0.18), transparent 34rem),
+    #0e0d12;
+  color: #f6f2fb;
+}
+
+.observer-layout {
+  display: grid;
+  grid-template-columns: minmax(19rem, 27rem) minmax(0, 1fr);
+  min-height: calc(100vh - 72px);
+}
+
+.observer-summary {
+  padding: clamp(1.5rem, 4vw, 3.5rem);
+  background: rgba(20, 17, 27, 0.94);
+  border-right: 1px solid #342a41;
+}
+
+.observer-summary h1 {
+  margin: 0.35rem 0;
+  font-size: clamp(2rem, 5vw, 3.25rem);
+}
+
+.observer-label {
+  color: #bcb2c9;
+}
+
+.observer-status-grid {
+  display: grid;
+  gap: 0.8rem;
+  margin: 2rem 0;
+}
+
+.observer-status-grid article {
+  display: grid;
+  gap: 0.3rem;
+  padding: 1rem;
+  background: #1c1723;
+  border: 1px solid #3d314b;
+  border-radius: 0.9rem;
+}
+
+.observer-status-grid small,
+.observer-status-grid span {
+  color: #bcb2c9;
+}
+
+.assistance-alert,
+.observer-error {
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 0.9rem;
+}
+
+.assistance-alert {
+  display: grid;
+  gap: 0.25rem;
+  color: #fff5f6;
+  background: #6c1f31;
+  border: 1px solid #ff7f98;
+}
+
+.observer-error {
+  background: #36242b;
+  border: 1px solid #835265;
+}
+
+.observer-caution {
+  color: #d5cedd;
+  line-height: 1.55;
+}
+
+.observer-map-shell {
+  position: relative;
+  min-height: 34rem;
+}
+
+#observer-map {
+  position: absolute;
+  inset: 0;
+}
+
+.observer-map-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  color: #d5cedd;
+  background: #17131d;
+  text-align: center;
+}
+
+.observer-position-marker {
+  width: 1.4rem;
+  height: 1.4rem;
+  background: #ffc857;
+  border: 4px solid #fff8dd;
+  border-radius: 50%;
+  box-shadow: 0 0 0 10px rgba(255, 200, 87, 0.25);
+}
+
+@media (max-width: 760px) {
+  .observer-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .observer-summary {
+    border-right: 0;
+    border-bottom: 1px solid #342a41;
+  }
+
+  .observer-map-shell {
+    min-height: 50vh;
+  }
+}

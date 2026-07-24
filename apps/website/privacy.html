@@ -45,7 +45,7 @@
     <main class="wrap legal">
       <h1>Privacy Policy</h1>
       <p class="legal-meta">
-        Effective 23 July 2026 &middot; Tail End Charlie is operated by
+        Effective 24 July 2026 &middot; Tail End Charlie is operated by
         <strong>Holt Racing Limited</strong> ("we", "us")
       </p>
 
@@ -53,8 +53,12 @@
         <p>
           <strong>In short:</strong> Tail End Charlie shares your live
           location with your own ride group while a ride is active, so the
-          group can stay together. That data is encrypted at rest, kept only
-          briefly, and deleted automatically. The app has no analytics, no
+          group can stay together. If you explicitly create a time-limited
+          safety link, one trusted contact can also see your last-known
+          position, its freshness, ride status, and your help or
+          emergency-stop status until you revoke the link or it expires. That
+          data is encrypted at rest, kept only briefly, and deleted
+          automatically. The app has no analytics, no
           advertising, no trackers, and does not sell data. Your emergency
           contact details stay on your phone unless you choose to share them,
           or opt in to auto-sharing with the ride leader during an
@@ -112,6 +116,19 @@
         only visible to people in the same ride (joined using that ride's
         six-digit code) and, where the app is online, passes through our
         relay server described below.
+      </p>
+
+      <h3>Optional safety-contact link</h3>
+      <p>
+        If you explicitly create a safety link, anyone you give that private
+        link to can use a read-only web page to see your single last-known
+        position, when it was recorded, update freshness, whether the ride is
+        waiting, active, paused or ended, and whether you most recently sent a
+        help or emergency-stop status. The link does not show other riders,
+        your location trail, the route, ride code, nearby identifiers, or your
+        ICE contact or medical notes. You choose a duration of up to 24 hours
+        and can revoke it from the app. An old or missing update is not proof
+        that you are safe.
       </p>
 
       <h3>Emergency contact (ICE) sharing</h3>
@@ -228,6 +245,10 @@
       <h2>How we use your information</h2>
       <ul>
         <li>To share your position and status with your own ride group.</li>
+        <li>
+          If you explicitly opt in, to show your last-known progress to the
+          trusted safety contact who has your private, time-limited link.
+        </li>
         <li>To provide navigation and route-deviation warnings.</li>
         <li>
           To relay hazard reports, alerts, and emergency-stop signals between
@@ -291,6 +312,13 @@
         Store and Google Play, under their own privacy policies.
       </p>
       <p>
+        <strong>Safety-contact maps.</strong> The private observer view does
+        not send a rider's last-known viewport to OpenFreeMap. It requests map
+        assets only from the same Tail End Charlie relay that serves the
+        observer snapshot, or shows coordinates when those private map assets
+        are not configured.
+      </p>
+      <p>
         <strong>We do not use</strong> advertising networks, analytics SDKs,
         crash-reporting services, or any other third-party trackers in the
         app, and we do not share ride or location data with data brokers or
@@ -313,6 +341,10 @@
           <tr>
             <td>Live location updates</td>
             <td>30 minutes</td>
+          </tr>
+          <tr>
+            <td>Safety-contact access grant</td>
+            <td>24 hours, or less if you choose or revoke it</td>
           </tr>
           <tr>
             <td>Status messages and route-deviation alerts</td>
@@ -369,6 +401,12 @@
         <li>
           Ride join codes are short-lived, rate-limited, and stored as
           encrypted, hashed records rather than plain codes.
+        </li>
+        <li>
+          Safety-contact access uses three separate high-entropy credentials
+          for management, publishing and read-only viewing. The relay stores
+          only their hashes, automatically expires them, and cannot use them
+          to join a ride or retrieve the ride event feed.
         </li>
       </ul>
 

@@ -42,6 +42,19 @@
 		file_server
 	}
 
+	@observer_static path /observer.html /observer.css /observer.js /observer-core.mjs /styles.css /assets/*
+	handle @observer_static {
+		root * /srv/website
+		header Cache-Control "no-store"
+		header Pragma "no-cache"
+		header Referrer-Policy "no-referrer"
+		header X-Content-Type-Options "nosniff"
+		header X-Frame-Options "DENY"
+		header X-Robots-Tag "noindex, nofollow, noarchive"
+		header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src blob:; child-src blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		file_server
+	}
+
 	respond 404
 }
 
@@ -72,6 +85,19 @@
 
 	@private_health path /health/*
 	respond @private_health 404
+
+	@observer_static path /observer.html /observer.css /observer.js /observer-core.mjs /styles.css /assets/*
+	handle @observer_static {
+		root * /srv/website
+		header Cache-Control "no-store"
+		header Pragma "no-cache"
+		header Referrer-Policy "no-referrer"
+		header X-Content-Type-Options "nosniff"
+		header X-Frame-Options "DENY"
+		header X-Robots-Tag "noindex, nofollow, noarchive"
+		header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src blob:; child-src blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		file_server
+	}
 
 	respond 404
 }

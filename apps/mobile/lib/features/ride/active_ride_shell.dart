@@ -12,6 +12,7 @@ import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
+import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
@@ -21,6 +22,7 @@ import '../../controllers/shared_route_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
 import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
+import '../../data/secure_observer_grant_store.dart';
 import '../../domain/event_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
 import '../../domain/hazard.dart';
@@ -28,12 +30,14 @@ import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/quick_message.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
+import '../../domain/ride_session.dart';
 import '../../domain/rider_location.dart';
 import '../../domain/rider_color.dart';
 import '../../domain/route_alert.dart';
 import '../../domain/route_store.dart';
 import '../../internet/internet_relay_client.dart';
 import '../../internet/internet_relay_worker.dart';
+import '../../internet/observer_access_client.dart';
 import '../../internet/push_registration_client.dart';
 import '../../internet/shared_preferences_internet_cursor_store.dart';
 import '../../relay/native_nearby_transport.dart';
@@ -59,8 +63,37 @@ import 'ice_share_inbox_sheet.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
 import 'ended_ride_screen.dart';
+import 'observer_access_sheet.dart';
 import 'ride_dashboard.dart';
 import 'ride_roster_sheet.dart';
+
+@visibleForTesting
+ObserverPublishedSnapshot buildLocalObserverSnapshot({
+  required RideSession session,
+  required DateTime snapshotGeneratedAt,
+  required String rideStatus,
+  required DateTime statusUpdatedAt,
+  required DateTime assistanceUpdatedAt,
+  required LocationSample? localLocation,
+  required ObserverPublishedAssistance? assistance,
+}) {
+  return ObserverPublishedSnapshot(
+    subjectName: session.displayName,
+    snapshotGeneratedAt: snapshotGeneratedAt,
+    rideStatus: rideStatus,
+    statusUpdatedAt: statusUpdatedAt,
+    assistanceUpdatedAt: assistanceUpdatedAt,
+    position: localLocation == null
+        ? null
+        : ObserverPublishedPosition(
+            latitude: localLocation.position.latitude,
+            longitude: localLocation.position.longitude,
+            accuracyMeters: localLocation.accuracyMeters,
+            recordedAt: localLocation.recordedAt,
+          ),
+    assistance: assistance,
+  );
+}
 
 /// Owns the active-ride feature lifecycle and keeps each feature independently
 /// testable. Native permissions are requested only by the installed app, not by
@@ -125,6 +158,8 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.onChangeRoute,
     required this.onEmergencyInfo,
     required this.onNotifications,
+    required this.canManageObserverAccess,
+    required this.onObserverAccess,
     required this.canShareIceInfo,
     required this.onShareIceInfo,
     required this.receivedIceShareCount,
@@ -145,6 +180,8 @@ class _RideNavigationMenu extends StatelessWidget {
   final VoidCallback onChangeRoute;
   final VoidCallback onEmergencyInfo;
   final VoidCallback onNotifications;
+  final bool canManageObserverAccess;
+  final VoidCallback onObserverAccess;
   final bool canShareIceInfo;
   final VoidCallback onShareIceInfo;
   final int receivedIceShareCount;
@@ -250,6 +287,19 @@ class _RideNavigationMenu extends StatelessWidget {
                 onNotifications();
               },
             ),
+            if (canManageObserverAccess)
+              ListTile(
+                key: const Key('ride-menu-observer-access'),
+                leading: const Icon(Icons.visibility_outlined),
+                title: const Text('Share my progress'),
+                subtitle: const Text(
+                  'Private, time-limited link for a trusted safety contact',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onObserverAccess();
+                },
+              ),
             if (canShareIceInfo)
               ListTile(
                 key: const Key('ride-menu-share-ice-info'),
@@ -462,6 +512,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
   InternetRelayController? _internetRelayController;
+  ObserverAccessController? _observerAccessController;
   RidePushNotificationController? _pushNotificationController;
   PreStartPresenceController? _preStartPresenceController;
   SharedPreferencesInternetCursorStore? _internetCursorStore;
@@ -487,6 +538,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
   int _handledAutomaticMarkerRideOffActivation = 0;
   DateTime? _lastSimulationNavigationUpdateAt;
   DateTime? _lastSimulationOverlayUpdateAt;
+  LocationSample? _latestObserverLocationSample;
   bool _loading = true;
   bool _relayConfigured = false;
   bool _refreshingRideEvents = false;
@@ -635,6 +687,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       final locationController = ForegroundLocationController(
         DeviceLocationSource(),
         (sample) async {
+          _latestObserverLocationSample = sample;
+          _publishObserverSnapshot();
           final startedAt = widget.rideController.rideStartedAt;
           if (startedAt == null) {
             final currentSession = widget.rideController.session;
@@ -690,6 +744,22 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
                   _onReceivedEvent(event, RideTransportEvidence.internetRelay),
             );
         await internetRelayController.start(session);
+        final observerConfiguration =
+            ObserverAccessConfiguration.fromEnvironment();
+        if (observerConfiguration.configurationError == null) {
+          _observerAccessController = ObserverAccessController(
+            HttpObserverAccessClient(
+              configuration: observerConfiguration,
+              client: http.Client(),
+            ),
+            const SecureObserverGrantStore(),
+          );
+          await _observerAccessController!.attach(session);
+          if (_observerAccessController!.hasActiveGrants) {
+            await locationController.resumeIfAuthorized();
+            _publishObserverSnapshot();
+          }
+        }
         final pushNotificationController = RidePushNotificationController(
           tokenSource:
               widget.pushTokenSource ??
@@ -1530,6 +1600,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     final session = widget.rideController.session;
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
+      _observerAccessController?.updateSession(session);
       _updateMapOverlays();
       unawaited(_synchroniseRideControllers());
       if (widget.rideController.rideStarted) {
@@ -1539,6 +1610,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         _lastPushRole = session.role;
         unawaited(_pushNotificationController?.refreshRegistration());
       }
+      _publishObserverSnapshot();
     }
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
@@ -1873,6 +1945,24 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       message,
       recipientRiderIds: recipients,
     );
+    await _recordLocalObserverQuickMessage(message);
+  }
+
+  Future<void> _sendLocalQuickMessage(QuickMessage message) async {
+    await widget.rideController.sendQuickMessage(message);
+    await _recordLocalObserverQuickMessage(message);
+  }
+
+  Future<void> _recordLocalObserverQuickMessage(QuickMessage message) async {
+    if (message == QuickMessage.assistance ||
+        message == QuickMessage.emergencyStop ||
+        message == QuickMessage.resolved) {
+      await _observerAccessController?.recordLocalAssistance(
+        message == QuickMessage.resolved ? null : message.name,
+      );
+      if (mounted) setState(() {});
+      _publishObserverSnapshot();
+    }
   }
 
   /// The opt-in "share with the leader by default" setting, fired alongside
@@ -2103,6 +2193,8 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
         onEmergencyInfo: () =>
             EmergencyInfoSheet.show(context, widget.riderProfile),
         onNotifications: _openNotificationPreferences,
+        canManageObserverAccess: _observerAccessController != null,
+        onObserverAccess: _openObserverAccess,
         canShareIceInfo: widget.riderProfile.hasEmergencyInfo,
         onShareIceInfo: _shareIceInfoWithGroup,
         receivedIceShareCount: widget.rideController.receivedIceShares.length,
@@ -2121,6 +2213,53 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
 
   void _openRoster() {
     unawaited(RideRosterSheet.show(context, widget.rideController));
+  }
+
+  Future<void> _openObserverAccess() async {
+    final controller = _observerAccessController;
+    if (controller == null) return;
+    await ObserverAccessSheet.show(context, controller);
+    if (!mounted || !controller.hasActiveGrants) return;
+    await _locationController?.requestAndStart();
+    _publishObserverSnapshot();
+  }
+
+  void _publishObserverSnapshot() {
+    final controller = _observerAccessController;
+    final session = widget.rideController.session;
+    if (controller == null || session == null || !controller.hasActiveGrants) {
+      return;
+    }
+    final sample = _latestObserverLocationSample;
+    controller.publishSnapshot(
+      buildLocalObserverSnapshot(
+        session: session,
+        snapshotGeneratedAt: controller.nextSnapshotGeneratedAt(),
+        rideStatus: widget.rideController.rideEnded
+            ? 'ended'
+            : widget.rideController.ridePaused
+            ? 'paused'
+            : widget.rideController.rideStarted
+            ? 'active'
+            : 'waiting',
+        statusUpdatedAt: _observerStatusUpdatedAt(),
+        assistanceUpdatedAt: controller.localAssistanceUpdatedAt,
+        localLocation: sample,
+        assistance: controller.localAssistance,
+      ),
+    );
+  }
+
+  DateTime _observerStatusUpdatedAt() {
+    for (final event in widget.rideController.events.reversed) {
+      if (event.type == RideEventType.rideStarted ||
+          event.type == RideEventType.ridePaused ||
+          event.type == RideEventType.rideResumed ||
+          event.type == RideEventType.rideEnded) {
+        return event.createdAt;
+      }
+    }
+    return widget.rideController.session?.joinedAt ?? DateTime.now();
   }
 
   /// Switches to the map tab and asks it to open its route picker. The route
@@ -2295,6 +2434,9 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     relayController: _relayController,
     markerAssistanceController: _markerAssistanceController,
     internetRelayController: _internetRelayController,
+    onSendQuickMessage: _sendLocalQuickMessage,
+    localObserverAssistanceActive:
+        _observerAccessController?.localAssistance != null,
     serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
   );
 
@@ -2397,6 +2539,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       _onPushNotificationStatusChanged,
     );
     unawaited(_pushNotificationController?.close());
+    _observerAccessController?.dispose();
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
     _mapOverlays.dispose();

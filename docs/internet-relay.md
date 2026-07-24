@@ -91,10 +91,10 @@ relay worker until the cache is moved to a shared short-lived store; otherwise
 different workers can return different assembly snapshots. Nearby exchange is
 a separate follow-up for groups without mobile data.
 
-External monitoring can reuse this latest-position model, but must not reuse
-the group invite as a public tracking credential. It needs a separate,
-revocable, least-privilege observer token, explicit sharing controls, and the
-same short retention before it is exposed outside the ride group.
+Safety contacts use separate, revocable, least-privilege management, publisher
+and read-only credentials plus a sanitized last-known snapshot; they never
+receive this presence response, the group invite or the event journal. See
+[Safety-contact observer access](./observer-access.md).
 
 ### Background notification hints
 

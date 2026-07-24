@@ -72,6 +72,7 @@ class Settings(BaseSettings):
             "pre-start-presence-v1",
             "route-revisions-v1",
             "push-notifications-v1",
+            "observer-access-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)
@@ -92,6 +93,17 @@ class Settings(BaseSettings):
     plan_lookup_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     pre_start_presence_ttl_seconds: int = Field(default=45, ge=15, le=300)
     maximum_pre_start_presence_riders: int = Field(default=200, ge=2, le=1000)
+    observer_read_rate_limit_requests: int = Field(default=120, ge=10, le=10_000)
+    observer_read_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    observer_ip_abuse_rate_limit_requests: int = Field(default=5000, ge=100, le=100_000)
+    observer_create_rate_limit_requests: int = Field(default=10, ge=1, le=1000)
+    observer_create_ip_abuse_rate_limit_requests: int = Field(
+        default=500,
+        ge=100,
+        le=100_000,
+    )
+    observer_create_rate_limit_window_seconds: int = Field(default=3600, ge=60, le=86400)
+    maximum_observer_grants_per_ride: int = Field(default=50, ge=1, le=500)
     apns_team_id: str = Field(default="", max_length=32)
     apns_key_id: str = Field(default="", max_length=32)
     apns_bundle_id: str = Field(default="", max_length=255)

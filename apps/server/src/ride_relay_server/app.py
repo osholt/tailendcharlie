@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -38,24 +39,40 @@ from .discovery import (
     purge_expired_private_suggestions,
     suggestion_json,
 )
+from .observer import (
+    create_observer_grant,
+    get_managed_observer_grant,
+    grant_json,
+    observer_snapshot,
+    publish_observer_snapshot,
+    revoke_observer_grant,
+)
 from .push import PushDispatcher, register_push, registration_json, revoke_push
 from .rate_limit import SlidingWindowRateLimiter
 from .schemas import (
     CompatibilityResponse,
+    CreateObserverGrantRequest,
+    CreateObserverGrantResponse,
     CreatePlanRequest,
     CreatePlanResponse,
     DiscoveryModerationRequest,
     DiscoverySuggestionRequest,
     GetPlanResponse,
     JoinCodeResponse,
+    ObserverGrantResponse,
+    ObserverSnapshotResponse,
     PresenceSyncRequest,
     PresenceSyncResponse,
+    PublishObserverSnapshotRequest,
     PushRegistrationRequest,
     PushRegistrationResponse,
     RegisterJoinCodeRequest,
     SyncRequest,
 )
 from .service import RelayService, RelayServiceError
+
+OBSERVER_API_TOKEN = re.compile(r"^(?:om1|op1|ro1)_[A-Za-z0-9_-]{43}$")
+RIDE_API_TOKEN = re.compile(r"^rr1_[A-Za-z0-9_-]{43}$")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -97,6 +114,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     plan_lookup_limiter = SlidingWindowRateLimiter(
         maximum_requests=settings.plan_lookup_rate_limit_requests,
         window_seconds=settings.plan_lookup_rate_limit_window_seconds,
+    )
+    observer_read_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.observer_read_rate_limit_requests,
+        window_seconds=settings.observer_read_rate_limit_window_seconds,
+    )
+    observer_ip_abuse_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.observer_ip_abuse_rate_limit_requests,
+        window_seconds=settings.observer_read_rate_limit_window_seconds,
+    )
+    observer_create_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.observer_create_rate_limit_requests,
+        window_seconds=settings.observer_create_rate_limit_window_seconds,
+    )
+    observer_create_ip_abuse_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.observer_create_ip_abuse_rate_limit_requests,
+        window_seconds=settings.observer_create_rate_limit_window_seconds,
     )
     registry = CollectorRegistry()
     sync_requests = Counter(
@@ -497,6 +530,155 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         plan_requests.labels(outcome="fetched").inc()
         return JSONResponse(content=GetPlanResponse.model_validate(result).model_dump())
 
+    @app.post(
+        "/api/v1/rides/{ride_id}/observer-grants",
+        include_in_schema=False,
+        response_model=CreateObserverGrantResponse,
+        status_code=201,
+    )
+    def post_observer_grant(
+        ride_id: str,
+        payload: CreateObserverGrantRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> dict[str, object]:
+        bearer_token = _ride_bearer(request)
+        if not RIDE_API_TOKEN.fullmatch(bearer_token):
+            raise RelayServiceError(401, "Ride credential rejected")
+        client_ip = request.client.host if request.client is not None else "unknown"
+        # Carrier-grade NAT must not make a few active rides exhaust each
+        # other's normal creation allowance. The IP ceiling only bounds
+        # broad abuse; each well-shaped ride secret gets the tighter budget.
+        retry_after = observer_create_ip_abuse_limiter.check(f"ip:{client_ip}")
+        if retry_after is None:
+            retry_after = observer_create_limiter.check(
+                f"ride:{sha256(bearer_token.encode()).hex()}"
+            )
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                headers={"retry-after": str(min(retry_after, 3600))},
+                content={"error": "Observer creation rate limit exceeded"},
+            )
+        grant, management_token, publisher_token, observer_token = create_observer_grant(
+            session,
+            settings=settings,
+            ride_id=ride_id,
+            bearer_token=bearer_token,
+            request=payload,
+        )
+        return {
+            **grant_json(grant),
+            "managementToken": management_token,
+            "publisherToken": publisher_token,
+            "observerToken": observer_token,
+        }
+
+    def observer_rate_limit(request: Request, supplied_token: str) -> Response | None:
+        if not OBSERVER_API_TOKEN.fullmatch(supplied_token):
+            raise RelayServiceError(404, "Observer access is unavailable")
+        client_ip = request.client.host if request.client is not None else "unknown"
+        digest = token_hash(supplied_token).hex()
+        # Valid grants get a per-secret operational budget. The much higher
+        # IP budget only bounds random-token abuse and must not make riders
+        # sharing carrier-grade NAT exhaust each other's normal allowance.
+        retry_after = observer_ip_abuse_limiter.check(f"ip:{client_ip}")
+        if retry_after is None:
+            retry_after = observer_read_limiter.check(f"token:{digest}")
+        if retry_after is None:
+            return None
+        return JSONResponse(
+            status_code=429,
+            headers={"retry-after": str(min(retry_after, 300))},
+            content={"error": "Observer request rate limit exceeded"},
+        )
+
+    @app.get(
+        "/api/v1/observer-grants/{grant_id}/management",
+        include_in_schema=False,
+        response_model=ObserverGrantResponse,
+    )
+    def get_observer_grant_management(
+        grant_id: str,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> dict[str, object]:
+        management_token = _observer_bearer(request)
+        if limited := observer_rate_limit(request, management_token):
+            return limited
+        return grant_json(
+            get_managed_observer_grant(
+                session,
+                grant_id=grant_id,
+                management_token=management_token,
+            )
+        )
+
+    @app.delete(
+        "/api/v1/observer-grants/{grant_id}/management",
+        include_in_schema=False,
+        status_code=204,
+        response_model=None,
+    )
+    def delete_observer_grant(
+        grant_id: str,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        management_token = _observer_bearer(request)
+        if limited := observer_rate_limit(request, management_token):
+            return limited
+        revoke_observer_grant(
+            session,
+            grant_id=grant_id,
+            management_token=management_token,
+        )
+        return Response(status_code=204)
+
+    @app.put(
+        "/api/v1/observer-grants/{grant_id}/snapshot",
+        include_in_schema=False,
+        status_code=204,
+        response_model=None,
+    )
+    def put_observer_snapshot(
+        grant_id: str,
+        payload: PublishObserverSnapshotRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        publisher_token = _observer_bearer(request)
+        if limited := observer_rate_limit(request, publisher_token):
+            return limited
+        publish_observer_snapshot(
+            session,
+            cipher=cipher,
+            grant_id=grant_id,
+            publisher_token=publisher_token,
+            request=payload,
+        )
+        return Response(status_code=204)
+
+    @app.get(
+        "/api/v1/observer-grants/{grant_id}",
+        include_in_schema=False,
+        response_model=ObserverSnapshotResponse,
+    )
+    def get_observer_snapshot(
+        grant_id: str,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> dict[str, object]:
+        observer_token = _observer_bearer(request)
+        if limited := observer_rate_limit(request, observer_token):
+            return limited
+        return observer_snapshot(
+            session,
+            cipher=cipher,
+            grant_id=grant_id,
+            observer_token=observer_token,
+        )
+
     @app.post("/api/v1/rides/{ride_id}/events:sync", include_in_schema=False)
     async def synchronize(
         ride_id: str,
@@ -705,6 +887,13 @@ def _ride_bearer(request: Request) -> str:
     authorization = request.headers.get("authorization", "")
     if not authorization.startswith("Bearer "):
         raise RelayServiceError(401, "Ride credential required")
+    return authorization[7:]
+
+
+def _observer_bearer(request: Request) -> str:
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise RelayServiceError(404, "Observer access is unavailable")
     return authorization[7:]
 
 
