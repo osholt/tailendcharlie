@@ -692,7 +692,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ? overlayRight + groupMiniMapWidth + 16
         : overlayRight + (landscape ? 68 : 12);
     final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
-    final hasGuidance = _route?.maneuvers.isNotEmpty ?? false;
+    // A route can contain manoeuvres before the device has a usable location.
+    // Reserve banner space only while guidance is actually visible; otherwise
+    // the TEC waiting state floats unnecessarily far down the map.
+    final hasGuidance = _navigationGuidance.value != null;
     // Guidance can include lane arrows and a closely following turn. Reserve
     // enough overlay space so the leader status and group mini-map never
     // cover those safety-critical lines.
@@ -970,13 +973,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         (_route != null && !_navigationMode ? 76 : 12),
                     child: AnimatedBuilder(
                       animation: _speedLimitDisplay,
-                      builder: (context, _) => _speedLimitDisplay.enabled
-                          ? _PostedSpeedLimitBadge(
-                              status: _speedLimitDisplay.status,
-                              outcome: _speedLimitDisplay.lastOutcome,
-                              limit: _speedLimitDisplay.limit,
-                            )
-                          : const SizedBox.shrink(),
+                      builder: (context, _) {
+                        if (!_speedLimitDisplay.enabled) {
+                          return _SpeedLimitOptInChip(
+                            onPressed: _confirmEnableSpeedLimitDisplay,
+                          );
+                        }
+                        return _PostedSpeedLimitBadge(
+                          status: _speedLimitDisplay.status,
+                          outcome: _speedLimitDisplay.lastOutcome,
+                          limit: _speedLimitDisplay.limit,
+                        );
+                      },
                     ),
                   ),
                 if (localMarkerOverlay != null)
@@ -1514,12 +1522,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
       progressMeters: _progressGeometry.progressMeters,
     );
     final current = _navigationGuidance.value;
+    final visibilityChanged = (current == null) != (next == null);
     final unchanged =
         current?.maneuver == next?.maneuver &&
         current != null &&
         next != null &&
         (current.distanceMeters - next.distanceMeters).abs() < 5;
-    if (!unchanged) _navigationGuidance.value = next;
+    if (!unchanged) {
+      _navigationGuidance.value = next;
+      if (visibilityChanged && mounted) setState(() {});
+    }
   }
 
   void _onOverlayDataChanged() {
@@ -3302,8 +3314,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
       case _MapAction.discoveryLayers:
         await _showDiscoveryLayersSheet();
       case _MapAction.speedLimitDisplay:
-        await _speedLimitDisplay.setEnabled(!_speedLimitDisplay.enabled);
-        _observeSpeedLimit(_navigationFix);
+        if (_speedLimitDisplay.enabled) {
+          await _speedLimitDisplay.setEnabled(false);
+        } else {
+          await _confirmEnableSpeedLimitDisplay();
+        }
       case _MapAction.markerPlan:
         setState(() => _markerPlanVisible = !_markerPlanVisible);
         _scheduleMapLibreSync(overlays: true);
@@ -3332,6 +3347,36 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await widget.offlineTileCache.clearAll();
         _showMessage('Offline map data cleared.');
     }
+  }
+
+  Future<void> _confirmEnableSpeedLimitDisplay() async {
+    if (_speedLimitDisplay.enabled) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Show mapped speed limits?'),
+        content: const Text(
+          'When this is on, the app sends your current and recent foreground '
+          'GPS positions to a Valhalla road-matching service after you move. '
+          'It works in the UK and uses mapped OpenStreetMap limits, which may '
+          'be missing or out of date. Roadside signs always apply.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            key: const Key('confirm-speed-limit-opt-in'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Turn on'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+    await _speedLimitDisplay.setEnabled(true);
+    _observeSpeedLimit(_navigationFix);
   }
 
   Future<bool> _confirmRemoveRoute() async =>
@@ -4763,6 +4808,52 @@ class _MarkerStatusPill extends StatelessWidget {
         fontWeight: FontWeight.w900,
         fontSize: 10,
         letterSpacing: 0.8,
+      ),
+    ),
+  );
+}
+
+class _SpeedLimitOptInChip extends StatelessWidget {
+  const _SpeedLimitOptInChip({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Mapped speed limits are off',
+    child: FilledButton.tonalIcon(
+      key: const Key('speed-limit-opt-in-chip'),
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: const Color(0xE6252E39),
+        foregroundColor: const Color(0xFFE4E9EF),
+        padding: const EdgeInsets.fromLTRB(7, 5, 11, 5),
+        minimumSize: const Size(0, 40),
+        side: const BorderSide(color: Color(0xFF445262)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      icon: Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF8993A0), width: 3),
+        ),
+        child: const Text(
+          '–',
+          style: TextStyle(
+            color: Color(0xFF30343B),
+            fontSize: 18,
+            height: 1,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+      label: const Text(
+        'Limits off',
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
       ),
     ),
   );

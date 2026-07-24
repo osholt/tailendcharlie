@@ -175,6 +175,118 @@ void main() {
     expect(tester.getSize(chip).width, lessThanOrEqualTo(360));
   });
 
+  testWidgets('TEC waiting state stays at the top without active guidance', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-tec-waiting-position-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'waiting-for-location',
+      name: 'Waiting route',
+      importedAt: DateTime.utc(2026, 7, 24),
+      sourceFileName: 'waiting.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.451, longitude: -2.58),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.451, longitude: -2.58),
+          type: 'turn',
+          modifier: 'right',
+        ),
+      ],
+    );
+    final navigation = ValueNotifier<MapNavigationPosition?>(null);
+    final leaderStatus = ValueNotifier<LeaderRideStatus?>(
+      const LeaderRideStatus(
+        tecName: null,
+        distanceToTecMeters: null,
+        estimatedTimeToTec: null,
+        offCourseAlerts: [],
+      ),
+    );
+    addTearDown(navigation.dispose);
+    addTearDown(leaderStatus.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          leaderStatus: leaderStatus,
+          distanceUnit: DistanceUnit.miles,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final chip = find.byKey(const Key('leader-tec-gap'));
+    expect(chip, findsOneWidget);
+    expect(find.text('waiting for location'), findsOneWidget);
+    expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
+    expect(tester.getTopLeft(chip).dy, lessThan(120));
+  });
+
+  testWidgets('map exposes an informed speed-limit opt-in', (tester) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-speed-limit-opt-in-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: _WidgetSpeedLimitProvider(),
+    );
+    addTearDown(speedLimitDisplay.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          speedLimitDisplay: speedLimitDisplay,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('speed-limit-opt-in-chip')), findsOneWidget);
+    expect(find.byKey(const Key('posted-speed-limit-badge')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('speed-limit-opt-in-chip')));
+    await tester.pumpAndSettle();
+    expect(find.text('Show mapped speed limits?'), findsOneWidget);
+    expect(find.textContaining('foreground GPS positions'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('confirm-speed-limit-opt-in')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('speed-limit-opt-in-chip')), findsNothing);
+    expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
+    expect(find.text('MOVE TO IDENTIFY ROAD'), findsOneWidget);
+  });
+
   testWidgets('opt-in mapped speed limit appears in the map view', (
     tester,
   ) async {
