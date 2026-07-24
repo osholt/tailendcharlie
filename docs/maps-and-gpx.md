@@ -130,12 +130,14 @@ curvy-road optimization.
 
 ## Optional mapped speed-limit display
 
-The map menu and Settings screen contain an opt-in UK speed-limit display. It
-is off by default. When enabled, the app submits the current and a recent prior
-foreground GPS fix to a Valhalla `trace_attributes` endpoint no more often than
-every 15 seconds and after at least 25 metres of movement. It rejects fixes
-outside the UK, fixes with worse than 50-metre accuracy, distant road matches,
-and matches whose direction conflicts with travel.
+The map, map menu and Settings screen contain an opt-in UK speed-limit display.
+It is off by default. While it is off, a compact `Limits off` map control opens
+the location-data explanation before enabling the layer. When enabled, the app
+submits the current and a recent prior foreground GPS fix to a Valhalla
+`trace_attributes` endpoint no more often than every 15 seconds and after at
+least 25 metres of movement. It rejects fixes outside the UK, fixes with worse
+than 50-metre accuracy, distant road matches, and matches whose direction
+conflicts with travel.
 
 Only an OpenStreetMap `maxspeed` value reported by Valhalla as
 `speed_type=tagged` is displayed. A classified or inferred speed is deliberately
