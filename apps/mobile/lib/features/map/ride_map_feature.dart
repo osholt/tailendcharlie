@@ -11,6 +11,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../controllers/speed_limit_display_controller.dart';
 import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../domain/distance_unit.dart';
@@ -39,6 +40,7 @@ import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_progress.dart';
+import '../../services/speed_limit.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'motorcycle_icon.dart';
@@ -99,6 +101,7 @@ class RideMapFeature extends StatefulWidget {
     this.mapLibreOfflineManager,
     this.mapStyleString,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.speedLimitDisplay,
     this.basemapConfiguration = const BasemapConfiguration(),
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
     this.localBadgeColor = const Color(0xFF2F80ED),
@@ -129,6 +132,7 @@ class RideMapFeature extends StatefulWidget {
     RouteStore? routeStore,
     bool canEditRoute = true,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
+    SpeedLimitDisplayController? speedLimitDisplay,
     bool darkMapStyle = false,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
     Color localBadgeColor = const Color(0xFF2F80ED),
@@ -157,6 +161,7 @@ class RideMapFeature extends StatefulWidget {
     routeStore: routeStore,
     canEditRoute: canEditRoute,
     distanceUnit: distanceUnit,
+    speedLimitDisplay: speedLimitDisplay,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
       dark: darkMapStyle,
     ),
@@ -191,6 +196,7 @@ class RideMapFeature extends StatefulWidget {
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String? mapStyleString;
   final DistanceUnit distanceUnit;
+  final SpeedLimitDisplayController? speedLimitDisplay;
   final BasemapConfiguration basemapConfiguration;
   final MotorcycleIconStyle localMotorcycleStyle;
   final Color localBadgeColor;
@@ -312,6 +318,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
         distanceUnit: widget.distanceUnit,
+        speedLimitDisplay: widget.speedLimitDisplay,
         localMotorcycleStyle: widget.localMotorcycleStyle,
         localBadgeColor: widget.localBadgeColor,
       );
@@ -370,6 +377,7 @@ class RideMapScreen extends StatefulWidget {
     this.demoRouteLoader,
     this.recordedRouteStore,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.speedLimitDisplay,
     this.disposeOfflineTileCache = false,
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
     this.localBadgeColor = const Color(0xFF2F80ED),
@@ -408,6 +416,7 @@ class RideMapScreen extends StatefulWidget {
   final Future<ImportedRoute> Function()? demoRouteLoader;
   final RecordedRouteStore? recordedRouteStore;
   final DistanceUnit distanceUnit;
+  final SpeedLimitDisplayController? speedLimitDisplay;
   final bool disposeOfflineTileCache;
   final MotorcycleIconStyle localMotorcycleStyle;
   final Color localBadgeColor;
@@ -443,6 +452,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   late final DiscoverySuggestionConfiguration _suggestionConfiguration;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
+  late SpeedLimitDisplayController _speedLimitDisplay;
+  late bool _ownsSpeedLimitDisplay;
   ml.MapLibreMapController? _mapLibreController;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
   bool _mapLibreStyleReady = false;
@@ -520,6 +531,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _defaultRouteGeometryEnricher = RouteGeometryEnricher(
       routingService: _roadRoutingService,
     );
+    _ownsSpeedLimitDisplay = widget.speedLimitDisplay == null;
+    _speedLimitDisplay =
+        widget.speedLimitDisplay ?? SpeedLimitDisplayController.inMemory();
     _mapLibreOfflineManager =
         widget.mapLibreOfflineManager ??
         MapLibreOfflineManager(configuration: _basemap);
@@ -528,6 +542,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.offRouteTraces?.addListener(_onOverlayDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
+    _observeSpeedLimit(_navigationFix);
     _markerOverviewVisible =
         widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
     _loadPersistedRoute();
@@ -562,6 +577,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
       widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
       _onJunctionMarkerChanged();
     }
+    if (oldWidget.speedLimitDisplay != widget.speedLimitDisplay) {
+      if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
+      _ownsSpeedLimitDisplay = widget.speedLimitDisplay == null;
+      _speedLimitDisplay =
+          widget.speedLimitDisplay ?? SpeedLimitDisplayController.inMemory();
+      _observeSpeedLimit(_navigationFix);
+    }
   }
 
   @override
@@ -575,6 +597,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _navigationGuidance.dispose();
+    if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
@@ -760,6 +783,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       value: _MapAction.discoveryLayers,
                       child: Text('Motorcycle discovery layers'),
                     ),
+                    PopupMenuItem(
+                      value: _MapAction.speedLimitDisplay,
+                      child: Row(
+                        children: [
+                          Icon(
+                            _speedLimitDisplay.enabled
+                                ? Icons.check_box
+                                : Icons.check_box_outline_blank,
+                          ),
+                          const SizedBox(width: 10),
+                          const Text('Show mapped speed limit'),
+                        ],
+                      ),
+                    ),
                     if (_route?.maneuvers.isNotEmpty ?? false)
                       PopupMenuItem(
                         value: _MapAction.markerPlan,
@@ -918,6 +955,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           mapStyleString: widget.mapStyleString,
                         );
                       },
+                    ),
+                  ),
+                if (!markerOverviewActive)
+                  Positioned(
+                    key: const Key('posted-speed-limit-position'),
+                    right: overlayRight + 12,
+                    bottom:
+                        overlayBottom +
+                        (_route != null && !_navigationMode ? 76 : 12),
+                    child: AnimatedBuilder(
+                      animation: _speedLimitDisplay,
+                      builder: (context, _) => _speedLimitDisplay.enabled
+                          ? _PostedSpeedLimitBadge(
+                              status: _speedLimitDisplay.status,
+                              outcome: _speedLimitDisplay.lastOutcome,
+                              limit: _speedLimitDisplay.limit,
+                            )
+                          : const SizedBox.shrink(),
                     ),
                   ),
                 if (localMarkerOverlay != null)
@@ -1348,6 +1403,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!mounted) return;
     final position = _effectivePosition;
     final navigationFix = _navigationFix;
+    _observeSpeedLimit(navigationFix);
     if (navigationFix != null) {
       if (navigationFix == _lastHandledNavigationFix) return;
       _lastHandledNavigationFix = navigationFix;
@@ -1433,6 +1489,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
         if (mounted) unawaited(_showEmergencyActions());
       });
     }
+  }
+
+  void _observeSpeedLimit(MapNavigationPosition? fix) {
+    if (fix == null) return;
+    _speedLimitDisplay.observe(
+      SpeedLimitLocation(
+        point: fix.point,
+        recordedAt: fix.recordedAt,
+        accuracyMeters: fix.accuracyMeters,
+        headingDegrees: fix.headingDegrees,
+      ),
+    );
   }
 
   void _updateNavigationGuidance(GeoPoint? position) {
@@ -3229,6 +3297,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await _loadDemoRoute();
       case _MapAction.discoveryLayers:
         await _showDiscoveryLayersSheet();
+      case _MapAction.speedLimitDisplay:
+        await _speedLimitDisplay.setEnabled(!_speedLimitDisplay.enabled);
+        _observeSpeedLimit(_navigationFix);
       case _MapAction.markerPlan:
         setState(() => _markerPlanVisible = !_markerPlanVisible);
         _scheduleMapLibreSync(overlays: true);
@@ -3413,6 +3484,7 @@ enum _MapAction {
   importGpx,
   loadDemo,
   discoveryLayers,
+  speedLimitDisplay,
   markerPlan,
   downloadOffline,
   removeRoute,
@@ -3427,12 +3499,14 @@ class MapNavigationPosition {
     required this.recordedAt,
     this.speedMetersPerSecond,
     this.headingDegrees,
+    this.accuracyMeters,
   });
 
   final GeoPoint point;
   final DateTime recordedAt;
   final double? speedMetersPerSecond;
   final double? headingDegrees;
+  final double? accuracyMeters;
 
   bool get isMoving => (speedMetersPerSecond ?? 0) >= 2.5;
 
@@ -3443,7 +3517,8 @@ class MapNavigationPosition {
       point.longitude == other.point.longitude &&
       recordedAt == other.recordedAt &&
       speedMetersPerSecond == other.speedMetersPerSecond &&
-      headingDegrees == other.headingDegrees;
+      headingDegrees == other.headingDegrees &&
+      accuracyMeters == other.accuracyMeters;
 
   @override
   int get hashCode => Object.hash(
@@ -3452,6 +3527,7 @@ class MapNavigationPosition {
     recordedAt,
     speedMetersPerSecond,
     headingDegrees,
+    accuracyMeters,
   );
 }
 
@@ -4686,6 +4762,127 @@ class _MarkerStatusPill extends StatelessWidget {
       ),
     ),
   );
+}
+
+class _PostedSpeedLimitBadge extends StatelessWidget {
+  const _PostedSpeedLimitBadge({
+    required this.status,
+    required this.outcome,
+    required this.limit,
+  });
+
+  final SpeedLimitDisplayStatus status;
+  final SpeedLimitLookupOutcome? outcome;
+  final PostedSpeedLimit? limit;
+
+  @override
+  Widget build(BuildContext context) {
+    final reading = limit;
+    final known = status == SpeedLimitDisplayStatus.known && reading != null;
+    final value = known ? '${reading.milesPerHour}' : '–';
+    final checkedAt = known
+        ? MaterialLocalizations.of(
+            context,
+          ).formatTimeOfDay(TimeOfDay.fromDateTime(reading.checkedAt.toLocal()))
+        : null;
+    final detail = known
+        ? reading.roadName == null
+              ? 'Checked $checkedAt · mapped · not live'
+              : '${reading.roadName} · checked $checkedAt · mapped · not live'
+        : switch (outcome) {
+            SpeedLimitLookupOutcome.poorAccuracy => 'GPS accuracy too low',
+            SpeedLimitLookupOutcome.poorMatch => 'Road match uncertain',
+            SpeedLimitLookupOutcome.unsupportedRegion => 'UK only',
+            SpeedLimitLookupOutcome.noTaggedLimit => 'No mapped limit',
+            SpeedLimitLookupOutcome.unavailable => 'Limit unavailable',
+            _ when status == SpeedLimitDisplayStatus.checking =>
+              'Checking mapped road',
+            _ => 'Move to identify road',
+          };
+    final semanticLabel = known
+        ? 'Mapped speed limit ${reading.milesPerHour} miles per hour'
+              '${reading.roadName == null ? '' : ' on ${reading.roadName}'}. '
+              'Looked up at $checkedAt. Not live. Roadside signs apply.'
+        : '$detail. Roadside signs apply.';
+    return Semantics(
+      key: const Key('posted-speed-limit-badge'),
+      container: true,
+      liveRegion: true,
+      label: semanticLabel,
+      excludeSemantics: true,
+      child: Tooltip(
+        message:
+            '$detail\n© OpenStreetMap contributors via Valhalla; temporary and variable limits may differ. Roadside signs apply.',
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 150),
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 7),
+          decoration: BoxDecoration(
+            color: const Color(0xE6252E39),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF445262)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x55000000),
+                blurRadius: 10,
+                offset: Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 58,
+                height: 58,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: known
+                        ? const Color(0xFFD71920)
+                        : const Color(0xFF8993A0),
+                    width: 6,
+                  ),
+                ),
+                child: status == SpeedLimitDisplayStatus.checking
+                    ? const SizedBox.square(
+                        dimension: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: Color(0xFF30343B),
+                        ),
+                      )
+                    : Text(
+                        value,
+                        style: const TextStyle(
+                          color: Color(0xFF111111),
+                          fontSize: 26,
+                          height: 1,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                known ? 'MPH · MAPPED' : detail.toUpperCase(),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFFE4E9EF),
+                  fontSize: 9,
+                  height: 1.15,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _NavigationGuidanceBanner extends StatelessWidget {

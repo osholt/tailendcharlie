@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/route_store.dart';
@@ -18,6 +19,7 @@ import 'package:ride_relay/services/map_style_repository.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/route_importer.dart';
 import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/speed_limit.dart';
 
 void main() {
   test('Android group mini-map uses the local fallback', () {
@@ -92,6 +94,62 @@ void main() {
 
     expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
     expect(find.text('3 RIDERS'), findsOneWidget);
+  });
+
+  testWidgets('opt-in mapped speed limit appears in the map view', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-speed-limit-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final now = DateTime.utc(2026, 7, 24, 10);
+    final navigation = ValueNotifier<MapNavigationPosition>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.5000, longitude: -0.12),
+        recordedAt: now,
+        accuracyMeters: 5,
+        headingDegrees: 0,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: _WidgetSpeedLimitProvider(),
+      enabled: true,
+      clock: () => now,
+    );
+    addTearDown(speedLimitDisplay.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          speedLimitDisplay: speedLimitDisplay,
+        ),
+      ),
+    );
+    await tester.pump();
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 51.5004, longitude: -0.12),
+      recordedAt: now.add(const Duration(seconds: 1)),
+      accuracyMeters: 5,
+      headingDegrees: 0,
+    );
+    await speedLimitDisplay.waitForIdle();
+    await tester.pump();
+
+    expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
+    expect(find.text('30'), findsOneWidget);
+    expect(find.text('MPH · MAPPED'), findsOneWidget);
   });
 
   testWidgets('offers file import and loads bundled demo route offline', (
@@ -974,6 +1032,24 @@ class _StraightRoadRoutingService implements RoadRoutingService {
         distanceMeters: 12000,
         duration: const Duration(minutes: 22),
       );
+}
+
+class _WidgetSpeedLimitProvider implements SpeedLimitProvider {
+  @override
+  Future<SpeedLimitLookupResult> lookup({
+    required SpeedLimitLocation previous,
+    required SpeedLimitLocation current,
+  }) async => SpeedLimitLookupResult.known(
+    PostedSpeedLimit(
+      milesPerHour: 30,
+      source: 'Test',
+      checkedAt: current.recordedAt,
+      matchDistanceMeters: 2,
+    ),
+  );
+
+  @override
+  void close() {}
 }
 
 ImportedRoute _testRoute({required String id, required String name}) =>

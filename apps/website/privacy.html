@@ -45,7 +45,7 @@
     <main class="wrap legal">
       <h1>Privacy Policy</h1>
       <p class="legal-meta">
-        Effective 23 July 2026 &middot; Tail End Charlie is operated by
+        Effective 24 July 2026 &middot; Tail End Charlie is operated by
         <strong>Holt Racing Limited</strong> ("we", "us")
       </p>
 
@@ -207,6 +207,20 @@
         requests, these providers receive your IP address and standard
         connection information.
       </p>
+      <p>
+        The mobile app's <strong>Show mapped speed limit</strong> setting is
+        off by default. If you turn it on while using the map in the UK, the
+        app periodically sends your current and a recent prior foreground
+        location point, plus current GPS accuracy, to a configured Valhalla
+        road-matching service. The points are used to infer direction of
+        travel. Development and alpha builds use the public
+        FOSSGIS/OpenStreetMap.de Valhalla service. This is used only to identify
+        an OpenStreetMap road with an explicitly mapped speed limit; Tail End
+        Charlie does not store those lookup requests. The provider receives
+        your IP address and standard connection information. Mapped limits are
+        not live and can be incomplete or out of date, so roadside signs always
+        apply.
+      </p>
 
       <h3>Device identifier</h3>
       <p>
@@ -278,9 +292,12 @@
         to the OpenStreetMap Foundation's public Nominatim service and route
         coordinates to the public Project OSRM service, or to the public
         FOSSGIS/OpenStreetMap.de Valhalla service when motorway, major-road,
-        toll, or ferry avoidance is selected. The website also loads map styles
-        and tiles from OpenFreeMap. These are independent third-party services.
-        Nominatim is covered by the OpenStreetMap Foundation's
+        toll, or ferry avoidance is selected. If you opt in to mapped speed
+        limits in the mobile app, the current and a recent prior foreground
+        location point are also sent to the configured Valhalla service for road
+        matching. The website also loads map styles and tiles from OpenFreeMap.
+        These are independent third-party services. Nominatim is covered by the
+        OpenStreetMap Foundation's
         <a href="https://osmfoundation.org/wiki/Privacy_Policy"
           >privacy policy</a
         >.
@@ -293,8 +310,9 @@
       <p>
         <strong>We do not use</strong> advertising networks, analytics SDKs,
         crash-reporting services, or any other third-party trackers in the
-        app, and we do not share ride or location data with data brokers or
-        any other third party.
+        app, and we do not share ride or location data with data brokers.
+        Location is sent to map and routing providers only for the
+        user-requested and opt-in features described above.
       </p>
 
       <h2>How long we keep information</h2>

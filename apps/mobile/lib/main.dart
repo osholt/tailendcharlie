@@ -9,6 +9,7 @@ import 'controllers/ride_code_preference_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/shared_route_controller.dart';
+import 'controllers/speed_limit_display_controller.dart';
 import 'data/json_file_recorded_route_store.dart';
 import 'data/json_file_completed_ride_store.dart';
 import 'data/shared_preferences_session_store.dart';
@@ -43,6 +44,7 @@ Future<void> main() async {
   final mapStyleMode = await MapStyleModeController.load();
   final rideCodePreference = await RideCodePreferenceController.load();
   final sharedRoutes = await SharedRouteController.load();
+  final speedLimitDisplay = await SpeedLimitDisplayController.load();
   final recordedRoutes = await JsonFileRecordedRouteStore.openDefault();
 
   runApp(
@@ -53,6 +55,7 @@ Future<void> main() async {
       rideCodePreference: rideCodePreference,
       riderProfile: riderProfile,
       sharedRoutes: sharedRoutes,
+      speedLimitDisplay: speedLimitDisplay,
       recordedRoutes: recordedRoutes,
       completedRides: completedRides,
     ),

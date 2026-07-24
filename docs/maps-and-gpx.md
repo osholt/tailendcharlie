@@ -128,6 +128,56 @@ or self-hosted proxy before scale testing. OSRM uses the driving profile, so it
 produces road-following routes but does not claim Calimoto-style motorcycle or
 curvy-road optimization.
 
+## Optional mapped speed-limit display
+
+The map menu and Settings screen contain an opt-in UK speed-limit display. It
+is off by default. When enabled, the app submits the current and a recent prior
+foreground GPS fix to a Valhalla `trace_attributes` endpoint no more often than
+every 15 seconds and after at least 25 metres of movement. It rejects fixes
+outside the UK, fixes with worse than 50-metre accuracy, distant road matches,
+and matches whose direction conflicts with travel.
+
+Only an OpenStreetMap `maxspeed` value reported by Valhalla as
+`speed_type=tagged` is displayed. A classified or inferred speed is deliberately
+treated as unknown. The UI uses mph and familiar UK sign styling, labels the
+reading `MAPPED`, and always warns that it is not live: temporary and variable
+limits may differ and roadside signs apply.
+
+`PostedSpeedLimit.checkedAt` is the lookup time, not the age of the underlying
+OpenStreetMap tag. The provider does not expose a reliable source-update time,
+so data freshness is explicitly unknown. A reading is kept only in memory,
+replaced or cleared by the next attempted match, and cleared when the user
+turns the feature off; it is not persisted as a speed-limit cache.
+
+Alpha builds default to FOSSGIS/OpenStreetMap.de's public Valhalla instance.
+The endpoint is replaceable without an app update:
+
+```text
+--dart-define=RIDE_RELAY_SPEED_LIMIT_URL=https://routing.example.com/trace_attributes
+```
+
+Valhalla is MIT-licensed and its OpenStreetMap-derived road data is ODbL with
+attribution required. The app credits `© OpenStreetMap contributors` in the
+setting and reading detail. The FOSSGIS endpoint is a free public demo subject
+to fair use and rate limits, not a contracted or production service; requests
+include the requested `X-Client-Id: tailendcharlie.app`. Before any public
+tester rollout that enables this endpoint, the project must notify its
+operators as requested in the Valhalla repository.
+
+A production release needs an operated Valhalla service or licensed provider,
+capacity monitoring, and UK road tests covering direction, parallel roads,
+junctions, national-speed-limit roads, temporary limits, and variable limits.
+The current alpha integration has no per-request provider fee, but operating a
+production instance or selecting a commercial source has an unresolved cost.
+
+Provider references:
+
+- [Valhalla trace attributes and country/speed metadata](https://valhalla.github.io/valhalla/api/map-matching/api-reference/)
+- [Valhalla speed source semantics](https://valhalla.github.io/valhalla/concepts/speeds/)
+- [Valhalla data licences](https://valhalla.github.io/valhalla/contributing/data/data-sources/)
+- [Valhalla attribution requirements](https://valhalla.github.io/valhalla/mjolnir/attribution/)
+- [Public demo fair-use and client identification](https://github.com/valhalla/valhalla#demo-server)
+
 ## MapLibre provider configuration
 
 Development-alpha builds default to OpenFreeMap's public Liberty style for an

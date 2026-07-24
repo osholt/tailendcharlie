@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
+import '../../controllers/speed_limit_display_controller.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
 import '../../domain/rider_color.dart';
@@ -19,12 +20,14 @@ class UnitSettingsSheet extends StatelessWidget {
     required this.controller,
     required this.mapStyleMode,
     required this.riderProfile,
+    required this.speedLimitDisplay,
     this.currentRideActive = false,
   });
 
   final DistanceUnitController controller;
   final MapStyleModeController mapStyleMode;
   final RiderProfileController riderProfile;
+  final SpeedLimitDisplayController speedLimitDisplay;
   final bool currentRideActive;
 
   static Future<void> show(
@@ -32,6 +35,7 @@ class UnitSettingsSheet extends StatelessWidget {
     DistanceUnitController controller,
     MapStyleModeController mapStyleMode,
     RiderProfileController riderProfile, {
+    required SpeedLimitDisplayController speedLimitDisplay,
     bool currentRideActive = false,
   }) => showModalBottomSheet<void>(
     context: context,
@@ -41,13 +45,14 @@ class UnitSettingsSheet extends StatelessWidget {
       controller: controller,
       mapStyleMode: mapStyleMode,
       riderProfile: riderProfile,
+      speedLimitDisplay: speedLimitDisplay,
       currentRideActive: currentRideActive,
     ),
   );
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: Listenable.merge([controller, mapStyleMode]),
+    animation: Listenable.merge([controller, mapStyleMode, speedLimitDisplay]),
     builder: (context, _) => SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
       child: Column(
@@ -162,6 +167,19 @@ class UnitSettingsSheet extends StatelessWidget {
           Text(
             _mapAppearanceStatus(context, mapStyleMode),
             style: const TextStyle(color: Color(0xFF98A3B1)),
+          ),
+          const SizedBox(height: 18),
+          SwitchListTile.adaptive(
+            key: const Key('posted-speed-limit-toggle'),
+            contentPadding: EdgeInsets.zero,
+            value: speedLimitDisplay.enabled,
+            onChanged: speedLimitDisplay.setEnabled,
+            title: const Text('Show mapped speed limit'),
+            subtitle: const Text(
+              'Opt in to UK road matching using © OpenStreetMap contributors '
+              'via Valhalla. Mapped limits are not live; roadside signs '
+              'always apply.',
+            ),
           ),
           const SizedBox(height: 22),
           Text(

@@ -18,6 +18,7 @@ import '../../controllers/ride_push_notification_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
+import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
 import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
@@ -75,6 +76,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.enableNativeServices,
     required this.riderProfile,
     required this.sharedRoutes,
+    required this.speedLimitDisplay,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.pushTokenSource,
@@ -88,6 +90,7 @@ class ActiveRideShell extends StatefulWidget {
   final bool enableNativeServices;
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
+  final SpeedLimitDisplayController speedLimitDisplay;
   final ScreenWakeLock screenWakeLock;
   final Duration screenWakeReassertInterval;
   final PushTokenSource? pushTokenSource;
@@ -1209,6 +1212,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
               headingDegrees:
                   simulatedLocal?.headingDegrees ??
                   localMapSample!.headingDegrees,
+              accuracyMeters: localMapSample?.accuracyMeters,
             );
       _mapPosition.value = mapPoint;
     }
@@ -1809,6 +1813,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
       routeStore: routeStore,
       canEditRoute: _isSimulation || widget.rideController.isLocalRideLeader,
       distanceUnit: widget.distanceUnits.value,
+      speedLimitDisplay: widget.speedLimitDisplay,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
       ),
@@ -2289,6 +2294,7 @@ class _ActiveRideShellState extends State<ActiveRideShell> {
     controller: widget.rideController,
     distanceUnits: widget.distanceUnits,
     mapStyleMode: widget.mapStyleMode,
+    speedLimitDisplay: widget.speedLimitDisplay,
     riderProfile: widget.riderProfile,
     onLeaveRide: _leaveRide,
     onOpenRoster: _openRoster,
