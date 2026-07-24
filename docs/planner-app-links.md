@@ -25,11 +25,10 @@ The website publishes:
 - `/.well-known/assetlinks.json` for `app.tailendcharlie`
 
 Both files must be served directly over HTTPS as `application/json`, without a
-redirect. The checked-in Android association currently includes the local
-debug certificate so development builds can be exercised. Before deploying
-this change, add the SHA-256 certificate fingerprint shown under **Play
-Console → Setup → App integrity → App signing key certificate**. The upload-key
-or local debug-key fingerprint does not verify Play-distributed builds.
+redirect. The checked-in Android association includes both the Play App Signing
+certificate and the local debug certificate so Play-distributed and development
+builds can be exercised. The upload-key fingerprint is intentionally excluded:
+Google signs tester downloads with the Play App Signing key, not the upload key.
 
 iOS development and distribution provisioning profiles must be regenerated
 after enabling **Associated Domains** for `app.tailendcharlie`. Verify the new
