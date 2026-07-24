@@ -56,6 +56,7 @@ import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
+import '../../services/relay_traffic_hazard_provider.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
 import '../settings/emergency_info_sheet.dart';
@@ -527,6 +528,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   StreamSubscription<PushOpenRequest>? _pushOpenSubscription;
   Timer? _stalenessTimer;
+  Timer? _externalHazardTimer;
   Timer? _simulationAwarenessTimer;
   Timer? _markerExitChromeTimer;
   Future<void> _publishChain = Future.value();
@@ -706,6 +708,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         widget.rideController.refreshMembershipFreshness();
         final awareness = _awarenessController;
         if (awareness != null) unawaited(awareness.refreshStaleness());
+      });
+      _externalHazardTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+        final awareness = _awarenessController;
+        if (awareness != null) {
+          unawaited(awareness.refreshExternalHazards());
+        }
       });
       final locationController = ForegroundLocationController(
         DeviceLocationSource(),
@@ -898,19 +906,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final awarenessEventStore = _isSimulation
         ? InMemoryEventStore()
         : widget.eventStore;
+    final externalProviders = <ExternalHazardProvider>[
+      const WazeReadHazardProvider(),
+      if (session.role == RideRole.lead && !_isSimulation)
+        RelayTrafficHazardProvider(
+          configuration: InternetRelayConfiguration.fromEnvironment(),
+        ),
+    ];
     final controller = SituationalAwarenessController(
       awarenessEventStore,
       session,
       route: routeSegments.expand((segment) => segment).toList(growable: false),
       routeSegments: routeSegments,
-      externalProviders: const [
-        WazeReadHazardProvider(),
-        UnconfiguredExternalHazardProvider(
-          id: 'licensed-traffic-feed',
-          displayName: 'Licensed traffic feed',
-          configurationHint: 'No external traffic provider is configured.',
-        ),
-      ],
+      externalProviders: externalProviders,
       rideStarted: widget.rideController.rideStarted,
       rideStartedAt: widget.rideController.rideStartedAt,
     );
@@ -954,6 +962,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _riderTrails.clear();
     _offRouteTraces.value = const [];
     controller.addListener(_onAwarenessChanged);
+    if (session.role == RideRole.lead &&
+        !_isSimulation &&
+        widget.enableNativeServices) {
+      unawaited(controller.refreshExternalHazards());
+    }
     previous?.dispose();
     _updateMapOverlays();
     if (notify) setState(() {});
@@ -1698,8 +1711,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (_rideEndHandled) return;
     _rideEndHandled = true;
     _stalenessTimer?.cancel();
+    _externalHazardTimer?.cancel();
     _simulationAwarenessTimer?.cancel();
     _stalenessTimer = null;
+    _externalHazardTimer = null;
     await _preStartPresenceController?.stop();
     await _pushNotificationController?.stop();
     await _locationController?.stop();
@@ -2587,6 +2602,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(_internetReceivedEventSubscription?.cancel());
     unawaited(_pushOpenSubscription?.cancel());
     _stalenessTimer?.cancel();
+    _externalHazardTimer?.cancel();
     _markerExitChromeTimer?.cancel();
     _locationController?.removeListener(_onDeviceLocationChanged);
     _locationController?.dispose();

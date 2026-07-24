@@ -329,6 +329,33 @@ void main() {
     },
   );
 
+  test(
+    'refreshing the same provider incident does not invent confirmations',
+    () async {
+      final provider = _RefreshingTrafficProvider(now);
+      final live = SituationalAwarenessController(
+        store,
+        _session,
+        route: const [
+          GeoPoint(latitude: 51, longitude: -1),
+          GeoPoint(latitude: 51, longitude: -0.99),
+        ],
+        externalProviders: [provider],
+        clock: () => now,
+        idFactory: () => 'external-${nextId++}',
+      );
+      await live.initialize();
+
+      await live.refreshExternalHazards();
+      await live.refreshExternalHazards();
+
+      expect(live.activeHazards, hasLength(1));
+      expect(live.activeHazards.single.id, 'tomtom-incident');
+      expect(live.activeHazards.single.confirmations, 4);
+      live.dispose();
+    },
+  );
+
   test('unavailable Waze adapter remains explicit and is never fetched', () {
     final provider = controller.externalProviders.single;
 
@@ -336,6 +363,53 @@ void main() {
     expect(provider.status.state, ExternalHazardProviderState.unavailable);
     expect(provider.status.canFetch, isFalse);
   });
+}
+
+class _RefreshingTrafficProvider implements ExternalHazardProvider {
+  _RefreshingTrafficProvider(this.now);
+
+  final DateTime now;
+  var fetchCount = 0;
+
+  @override
+  String get displayName => 'Live traffic';
+
+  @override
+  String get id => 'tomtom-traffic';
+
+  @override
+  ExternalHazardProviderStatus get status => const ExternalHazardProviderStatus(
+    state: ExternalHazardProviderState.configured,
+    message: 'Configured',
+  );
+
+  @override
+  Future<ExternalHazardFetchResult> fetch(ExternalHazardQuery query) async {
+    fetchCount += 1;
+    return ExternalHazardFetchResult(
+      status: ExternalHazardProviderStatus(
+        state: ExternalHazardProviderState.ready,
+        message: 'Ready',
+        lastUpdatedAt: now.add(Duration(minutes: fetchCount)),
+      ),
+      hazards: [
+        HazardReport(
+          id: 'tomtom-incident',
+          rideId: query.rideId,
+          type: HazardType.roadworks,
+          severity: HazardSeverity.serious,
+          position: const GeoPoint(latitude: 51, longitude: -0.995),
+          reportedAt: now,
+          updatedAt: now.add(Duration(minutes: fetchCount)),
+          expiresAt: now.add(const Duration(hours: 1)),
+          reporterId: id,
+          source: HazardSource.externalProvider,
+          providerId: id,
+          confirmations: 4,
+        ),
+      ],
+    );
+  }
 }
 
 SituationalAwarenessController _controller({

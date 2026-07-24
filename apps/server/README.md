@@ -55,3 +55,18 @@ provenance; rejected and superseded private submissions are removed after the
 configured retention period. The static website's `admin-suggestions.html`
 provides the corresponding no-index review UI and keeps the administrator token
 in memory only.
+
+## Live UK traffic incidents
+
+`GET /api/v1/traffic/incidents` is a bounded UK-only relay for current TomTom
+Orbis traffic incidents. The mobile app sends a route viewport, not a ride code,
+rider identity, or GPS sample. The relay validates and rate-limits the viewport,
+caches a normalized result briefly, and keeps the provider credential
+server-side in `RIDE_RELAY_TOMTOM_TRAFFIC_API_KEY`.
+
+Leave the key unset to return the explicit
+`traffic_provider_unconfigured` state without affecting ride sync. Before
+setting it in production, confirm the selected TomTom contract permits the
+intended display and redistribution. Full behavior, privacy boundaries, and the
+field-test gate are documented in
+[live-traffic-incidents.md](../../docs/live-traffic-incidents.md).

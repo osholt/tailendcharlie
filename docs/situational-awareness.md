@@ -54,6 +54,12 @@ describes partners sending incidents and closures to Waze, not a supported
 general crowd-report read feed. The app neither scrapes Waze nor labels a source
 live without a working provider implementation and appropriate rights.
 
+`RelayTrafficHazardProvider` is the supported live UK path. A leader sends only
+bounded route viewports to the Tail End Charlie relay, which keeps the TomTom
+Orbis key server-side; the app then rejects incidents outside the route
+corridor. Configuration, privacy limits and deployment gates are documented in
+[live-traffic-incidents.md](./live-traffic-incidents.md).
+
 ## Event contract and limitations
 
 Location, hazard, route-transition and acknowledgement events use the existing
