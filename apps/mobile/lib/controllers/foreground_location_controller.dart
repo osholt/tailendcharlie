@@ -55,6 +55,25 @@ class ForegroundLocationController extends ChangeNotifier {
     }
   }
 
+  /// Resumes a sharing choice after restart without displaying a new
+  /// permission prompt. If access has since been removed, it stays stopped.
+  Future<void> resumeIfAuthorized() async {
+    if (_disposed) return;
+    _statusSubscription ??= _source.statuses.listen(_handleStatus);
+    _status = await _source.inspect();
+    notifyListeners();
+    if (_status.canSample) {
+      _sharingRequested = true;
+      final started = await _source.start();
+      if (!_disposed) {
+        _status = started;
+        notifyListeners();
+      }
+    } else {
+      _sharingRequested = false;
+    }
+  }
+
   Future<void> restartAfterForegroundResume() async {
     if (_disposed || !_sharingRequested) return;
     final restarted = await _source.restart();

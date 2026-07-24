@@ -40,6 +40,19 @@ the relay.
 Cloudflare Pages is connected directly to this repository and publishes the
 site automatically from `main`.
 
+`observer.html` is the no-index, read-only safety-contact view. A rider creates
+its time-limited link in the mobile ride menu; the high-entropy secret remains
+in the URL fragment and is sent only to the relay in an authorization header.
+The page shows one last-known point with age/freshness and never accepts a ride
+join code. Released apps share the copy served by their own relay host, so
+production and pre-production credentials cannot cross environments. The
+Cloudflare Pages copy uses the `tec-observer-api` meta value only as a
+production-site fallback. Observer map requests are same-origin and fall back
+to coordinates until the relay's optional map style/assets are installed.
+The observer page serves its reviewed MapLibre GL JS 5.24.0 executable and
+stylesheet from `assets/maplibre-gl-5.24.0/`; the upstream MIT licence is
+vendored alongside them. It does not permit a third-party script origin.
+
 Refresh and revalidate the authorised catalogue with:
 
 ```bash

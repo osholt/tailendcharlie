@@ -43,6 +43,10 @@ class Ride(Base):
         back_populates="ride",
         cascade="all, delete-orphan",
     )
+    observer_grants: Mapped[list[ObserverGrant]] = relationship(
+        back_populates="ride",
+        cascade="all, delete-orphan",
+    )
 
 
 class RideJoinCode(Base):
@@ -199,6 +203,36 @@ class PushDelivery(Base):
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     registration: Mapped[PushRegistration] = relationship(back_populates="deliveries")
+
+
+class ObserverGrant(Base):
+    """Time-bounded, independently managed/published/read observer state."""
+
+    __tablename__ = "observer_grants"
+    __table_args__ = (
+        Index("ix_observer_grants_ride", "ride_id"),
+        Index("ix_observer_grants_expiry", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ride_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("rides.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    label: Mapped[str] = mapped_column(String(80), nullable=False)
+    management_token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    publisher_token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    observer_token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    snapshot_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
+    snapshot_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    snapshot_version_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    ride: Mapped[Ride] = relationship(back_populates="observer_grants")
 
 
 class DiscoverySuggestion(Base):
