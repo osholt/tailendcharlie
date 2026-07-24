@@ -8,6 +8,7 @@ import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
+import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../domain/quick_message.dart';
@@ -28,6 +29,7 @@ class RideDashboard extends StatelessWidget {
     required this.onLeaveRide,
     required this.onOpenRoster,
     required this.riderProfile,
+    required this.speedLimitDisplay,
     this.relayController,
     this.markerAssistanceController,
     this.internetRelayController,
@@ -41,6 +43,7 @@ class RideDashboard extends StatelessWidget {
   final Future<void> Function() onLeaveRide;
   final VoidCallback onOpenRoster;
   final RiderProfileController riderProfile;
+  final SpeedLimitDisplayController speedLimitDisplay;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
@@ -63,6 +66,7 @@ class RideDashboard extends StatelessWidget {
               distanceUnits,
               mapStyleMode,
               riderProfile,
+              speedLimitDisplay: speedLimitDisplay,
               currentRideActive: true,
             ),
             icon: const Icon(Icons.settings_outlined),
