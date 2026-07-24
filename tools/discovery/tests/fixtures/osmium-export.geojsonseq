@@ -1,0 +1,7 @@
+{"type":"Feature","id":"w100","properties":{"highway":"secondary","name":"Test Valley Road","ref":"A100","surface":"asphalt","maxspeed":"60 mph"},"geometry":{"type":"LineString","coordinates":[[-3.2,51.5],[-3.19,51.52],[-3.17,51.51],[-3.15,51.53]]}}
+{"type":"Feature","id":"w101","properties":{"highway":"secondary","name":"Test Valley Road","ref":"A100","surface":"asphalt","maxspeed":"60 mph"},"geometry":{"type":"LineString","coordinates":[[-3.15,51.53],[-3.13,51.515],[-3.11,51.535],[-3.09,51.52]]}}
+{"type":"Feature","id":"w200","properties":{"highway":"primary","name":"Straight Road","ref":"A200","surface":"asphalt","maxspeed":"60 mph"},"geometry":{"type":"LineString","coordinates":[[-3.3,51.4],[-3.2,51.4],[-3.1,51.4]]}}
+{"type":"Feature","id":"w300","properties":{"highway":"motorway","name":"Excluded Motorway","ref":"M1","surface":"asphalt"},"geometry":{"type":"LineString","coordinates":[[-3.4,51.6],[-3.2,51.6],[-3.0,51.6]]}}
+{"type":"Feature","id":"w400","properties":{"highway":"tertiary","name":"Urban Road","surface":"asphalt","maxspeed":"30 mph"},"geometry":{"type":"LineString","coordinates":[[-3.3,51.7],[-3.2,51.72],[-3.1,51.7]]}}
+{"type":"Feature","id":"n500","properties":{"mountain_pass":"yes","name":"Test Pass","ele":"410"},"geometry":{"type":"Point","coordinates":[-3.1501,51.5301]}}
+{"type":"Feature","id":"n501","properties":{"mountain_pass":"yes","name":"Disconnected Pass"},"geometry":{"type":"Point","coordinates":[-4.5,52.5]}}
