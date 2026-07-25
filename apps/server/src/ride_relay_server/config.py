@@ -73,6 +73,7 @@ class Settings(BaseSettings):
             "route-revisions-v1",
             "push-notifications-v1",
             "observer-access-v1",
+            "traffic-incidents-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)
@@ -104,6 +105,16 @@ class Settings(BaseSettings):
     )
     observer_create_rate_limit_window_seconds: int = Field(default=3600, ge=60, le=86400)
     maximum_observer_grants_per_ride: int = Field(default=50, ge=1, le=500)
+    tomtom_traffic_api_key: SecretStr | None = None
+    traffic_provider_timeout_seconds: int = Field(default=8, ge=2, le=30)
+    traffic_incident_cache_seconds: int = Field(default=60, ge=30, le=300)
+    traffic_incident_rate_limit_requests: int = Field(default=60, ge=10, le=1000)
+    traffic_incident_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    traffic_incident_maximum_response_bytes: int = Field(
+        default=512 * 1024,
+        ge=64 * 1024,
+        le=2 * 1024 * 1024,
+    )
     apns_team_id: str = Field(default="", max_length=32)
     apns_key_id: str = Field(default="", max_length=32)
     apns_bundle_id: str = Field(default="", max_length=255)
@@ -140,12 +151,13 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
+        "tomtom_traffic_api_key",
         "apns_private_key_base64",
         "fcm_private_key_base64",
         mode="before",
     )
     @classmethod
-    def empty_push_secrets_are_none(cls, value: object) -> object:
+    def empty_optional_secrets_are_none(cls, value: object) -> object:
         if value is None or value == "":
             return None
         return value

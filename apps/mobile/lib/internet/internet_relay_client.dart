@@ -61,6 +61,7 @@ abstract final class RelayProtocolCapabilities {
   static const routeRevisions = 'route-revisions-v1';
   static const pushNotifications = 'push-notifications-v1';
   static const observerAccess = 'observer-access-v1';
+  static const trafficIncidents = 'traffic-incidents-v1';
 
   static const current = {
     rideStart,
@@ -69,6 +70,7 @@ abstract final class RelayProtocolCapabilities {
     routeRevisions,
     pushNotifications,
     observerAccess,
+    trafficIncidents,
   };
 }
 

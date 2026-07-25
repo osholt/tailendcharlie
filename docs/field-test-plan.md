@@ -60,6 +60,12 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
     a fixture that points any of them at a third party. If the operator map
     archive and style are absent, verify the page shows bounded coordinates
     without making a tile request and record the observer map as unavailable.
+19. Stage one route-intersecting closure and one nearby unrelated incident
+    through the licensed traffic provider. Verify only the intersecting
+    incident appears, its source/freshness/expiry remain visible, and a provider
+    outage retains the last useful result only until expiry. Repeat with a
+    follower phone and confirm only the leader fetches provider data while the
+    signed hazard converges to the follower.
 
 ## Pass gates
 
@@ -76,6 +82,9 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
 - The observed iOS limitations are reflected in product wording and onboarding.
 - Observer revocation and expiry deny the next refresh, freshness never labels
   a stale point as current, and the page never exposes another rider.
+- Live traffic never erases or silently replaces the authoritative route;
+  unrelated incidents do not trigger leader action, and provider failure is
+  distinguishable from a verified all-clear.
 
 If the gate fails, retain durable offline queues and opportunistic exchange but
 do not market the product as a continuously available mesh.

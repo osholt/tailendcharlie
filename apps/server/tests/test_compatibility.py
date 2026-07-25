@@ -12,6 +12,7 @@ CURRENT_CAPABILITIES = [
     "pre-start-presence-v1",
     "push-notifications-v1",
     "route-revisions-v1",
+    "traffic-incidents-v1",
 ]
 
 

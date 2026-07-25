@@ -70,12 +70,22 @@ from .schemas import (
     SyncRequest,
 )
 from .service import RelayService, RelayServiceError
+from .traffic import (
+    TomTomOrbisTrafficProvider,
+    TrafficIncidentProvider,
+    TrafficProviderError,
+    validate_uk_incident_bounds,
+)
 
 OBSERVER_API_TOKEN = re.compile(r"^(?:om1|op1|ro1)_[A-Za-z0-9_-]{43}$")
 RIDE_API_TOKEN = re.compile(r"^rr1_[A-Za-z0-9_-]{43}$")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    traffic_provider: TrafficIncidentProvider | None = None,
+) -> FastAPI:
     settings = settings or get_settings()
     engine = create_database_engine(settings)
     session_factory = create_session_factory(engine)
@@ -131,6 +141,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maximum_requests=settings.observer_create_ip_abuse_rate_limit_requests,
         window_seconds=settings.observer_create_rate_limit_window_seconds,
     )
+    traffic_incident_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.traffic_incident_rate_limit_requests,
+        window_seconds=settings.traffic_incident_rate_limit_window_seconds,
+    )
     registry = CollectorRegistry()
     sync_requests = Counter(
         "ride_relay_sync_requests_total",
@@ -162,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         registry=registry,
     )
     push_dispatcher = PushDispatcher.from_settings(settings, cipher)
+    traffic_provider = traffic_provider or TomTomOrbisTrafficProvider(settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -169,6 +184,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             initialize_schema(engine)
         yield
         push_dispatcher.close()
+        await traffic_provider.close()
         engine.dispose()
 
     app = FastAPI(
@@ -191,6 +207,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_factory = session_factory
     app.state.service = service
     app.state.push_dispatcher = push_dispatcher
+    app.state.traffic_provider = traffic_provider
 
     def database_session():
         yield from session_dependency(session_factory)
@@ -248,6 +265,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "android": settings.android_update_url,
             },
         )
+
+    @app.get("/api/v1/traffic/incidents", include_in_schema=False)
+    async def traffic_incidents(
+        request: Request,
+        west: float = Query(ge=-180, le=180),
+        south: float = Query(ge=-90, le=90),
+        east: float = Query(ge=-180, le=180),
+        north: float = Query(ge=-90, le=90),
+    ) -> Response:
+        try:
+            validate_uk_incident_bounds(west, south, east, north)
+        except ValueError as error:
+            raise RelayServiceError(400, str(error)) from error
+        if not traffic_provider.configured:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": "traffic_provider_unconfigured",
+                    "message": "Live UK traffic incidents are not configured.",
+                },
+            )
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = traffic_incident_limiter.check(f"traffic:{client_ip}")
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                headers={"retry-after": str(min(retry_after, 300))},
+                content={"error": "Traffic incident rate limit exceeded"},
+            )
+        try:
+            result = await traffic_provider.incidents(
+                west=west,
+                south=south,
+                east=east,
+                north=north,
+            )
+        except TrafficProviderError as error:
+            headers = (
+                {"retry-after": str(error.retry_after)} if error.retry_after is not None else None
+            )
+            return JSONResponse(
+                status_code=503,
+                headers=headers,
+                content={
+                    "code": "traffic_provider_unavailable",
+                    "message": str(error),
+                },
+            )
+        return JSONResponse(content=result)
 
     def client_compatibility_error(request: Request, protocol: int) -> Response | None:
         platform = request.headers.get("x-tailendcharlie-platform", "")

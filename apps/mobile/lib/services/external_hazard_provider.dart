@@ -23,7 +23,8 @@ class ExternalHazardProviderStatus {
 
   bool get canFetch =>
       state == ExternalHazardProviderState.configured ||
-      state == ExternalHazardProviderState.ready;
+      state == ExternalHazardProviderState.ready ||
+      state == ExternalHazardProviderState.failed;
 }
 
 class ExternalHazardQuery {
