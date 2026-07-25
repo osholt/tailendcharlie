@@ -1100,13 +1100,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ),
                 if (_route == null)
                   Positioned.fill(
-                    child: _EmptyRoutePrompt(
-                      importing: _importing,
-                      routing: _routing,
-                      onPlanDestination: _planDestination,
-                      onImport: _importGpx,
-                      onLoadDemo: _loadDemoRoute,
-                    ),
+                    child: widget.canEditRoute
+                        ? _EmptyRoutePrompt(
+                            importing: _importing,
+                            routing: _routing,
+                            onPlanDestination: _planDestination,
+                            onImport: _importGpx,
+                            onLoadDemo: _loadDemoRoute,
+                          )
+                        : const _WaitingForLeaderRoutePrompt(),
                   ),
               ],
             ),
@@ -3947,6 +3949,39 @@ class _EmptyRoutePrompt extends StatelessWidget {
               TextButton(
                 onPressed: onLoadDemo,
                 child: const Text('Use demo route'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _WaitingForLeaderRoutePrompt extends StatelessWidget {
+  const _WaitingForLeaderRoutePrompt();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Card(
+      margin: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: const Padding(
+          padding: EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Waiting for the leader’s route',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'This ride has no group route yet. It will appear here when '
+                'the leader shares one.',
+                style: TextStyle(color: Color(0xFF98A3B1)),
               ),
             ],
           ),
