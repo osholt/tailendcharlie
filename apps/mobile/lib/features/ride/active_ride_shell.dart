@@ -155,6 +155,37 @@ RouteStore? activeRideMapStoreWhenReady({
   return isSimulation ? simulationRouteStore : rideRouteStore;
 }
 
+/// Riders holding the Tail End Charlie role right now.
+///
+/// Resolved from the reconciled membership model rather than a location
+/// snapshot, so a TEC who has joined but not yet reported a position still
+/// counts as registered, and so the role disappearing (the TEC leaves the ride
+/// or moves to another role) is picked up mid-ride without a restart. Only
+/// riders still included in the live roster count: a departed TEC is no TEC.
+///
+/// Ride Lab drives its whole virtual group locally, so pass its roster as
+/// [simulatedRiders] and it becomes the equivalent authority there.
+@visibleForTesting
+Set<String> registeredTecRiderIds({
+  required Iterable<SimulatedRiderSnapshot>? simulatedRiders,
+  required Iterable<RideParticipant> liveParticipants,
+}) {
+  if (simulatedRiders != null) {
+    return simulatedRiders
+        .where((rider) => rider.role == RideRole.tailEndCharlie)
+        .map((rider) => rider.id)
+        .toSet();
+  }
+  return liveParticipants
+      .where(
+        (participant) =>
+            participant.role == RideRole.tailEndCharlie &&
+            participant.isIncludedInLiveCount,
+      )
+      .map((participant) => participant.riderId)
+      .toSet();
+}
+
 /// Compact, always-available navigation for the full-screen map canvas.
 class _RideNavigationMenu extends StatelessWidget {
   const _RideNavigationMenu({
@@ -500,6 +531,8 @@ class _PreStartRidePanel extends StatelessWidget {
 }
 
 enum _StartRideDecision { cancel, chooseRoute, start }
+
+enum _MissingTecDecision { cancel, assignTec, startAnyway }
 
 class _ActiveRideShellState extends State<ActiveRideShell>
     with WidgetsBindingObserver {
@@ -1636,11 +1669,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                   .where((alert) => activeRiderIds.contains(alert.riderId))
                   .toList(growable: false),
               route: awareness.route,
+              registeredTecRiderIds: _registeredTecRiderIds,
             );
     } else if (!widget.rideController.rideStarted) {
       _leaderStatus.value = null;
     }
   }
+
+  Set<String> get _registeredTecRiderIds => registeredTecRiderIds(
+    simulatedRiders: _isSimulation ? _simulationController?.riders : null,
+    liveParticipants: widget.rideController.liveParticipants,
+  );
 
   Future<void> _maybeAutomaticallyEndRide(
     SituationalAwarenessController awareness,
@@ -2438,6 +2477,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     if (decision == _StartRideDecision.start) {
+      if (!await _confirmStartWithoutTec()) return;
       _localRideStartInProgress = true;
       try {
         await widget.rideController.startRide();
@@ -2460,6 +2500,54 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         _localRideStartInProgress = false;
       }
     }
+  }
+
+  /// Warns the leader once, before the ride starts, that nobody is Tail End
+  /// Charlie, and returns whether they chose to ride anyway.
+  ///
+  /// This is deliberately a warning and not a block: a two-rider ride or a
+  /// solo scouting ride is legitimate. It only ever runs inside the start
+  /// confirmation, so it cannot nag during the ride.
+  Future<bool> _confirmStartWithoutTec() async {
+    if (_registeredTecRiderIds.isNotEmpty) return true;
+    final decision = await showDialog<_MissingTecDecision>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const Key('no-tec-warning'),
+        icon: const Icon(Icons.warning_amber_rounded, color: Color(0xFFFFC857)),
+        title: const Text('No Tail End Charlie'),
+        content: const Text(
+          'Nobody in this ride holds the Tail End Charlie role, so starting '
+          'now means:\n\n'
+          '· no back-marker to confirm the group is complete\n'
+          '· no distance to the back of the group for you\n'
+          '· no TEC for a rider who falls a long way behind to aim for\n\n'
+          'A rider takes the role from their own Ride tab. Fine for a small '
+          'or solo ride — worth fixing for a group.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, _MissingTecDecision.cancel),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const Key('assign-tec-button'),
+            onPressed: () =>
+                Navigator.pop(dialogContext, _MissingTecDecision.assignTec),
+            child: const Text('Assign a TEC'),
+          ),
+          FilledButton(
+            key: const Key('start-without-tec-button'),
+            onPressed: () =>
+                Navigator.pop(dialogContext, _MissingTecDecision.startAnyway),
+            child: const Text('Start anyway'),
+          ),
+        ],
+      ),
+    );
+    if (decision == _MissingTecDecision.assignTec && mounted) _openRoster();
+    return decision == _MissingTecDecision.startAnyway;
   }
 
   Future<void> _confirmLeaveRideFromMap() async {
