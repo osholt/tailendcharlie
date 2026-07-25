@@ -41,6 +41,7 @@ class MainActivity : FlutterActivity() {
         private const val GPX_METHOD_CHANNEL = "me.osholt.ride_relay/gpx_import"
         private const val PLANNER_LINK_METHOD_CHANNEL = "me.osholt.ride_relay/planner_link"
         private const val PUSH_METHOD_CHANNEL = "me.osholt.ride_relay/push"
+        private const val PROJECTED_RIDE_METHOD_CHANNEL = "me.osholt.ride_relay/carplay"
         private const val PERMISSION_REQUEST = 7102
         private const val PUSH_PERMISSION_REQUEST = 7103
         private const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
@@ -159,6 +160,23 @@ class MainActivity : FlutterActivity() {
                     result.success(pending)
                 }
                 else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            PROJECTED_RIDE_METHOD_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "updateSnapshot") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            @Suppress("UNCHECKED_CAST")
+            val snapshot = call.arguments as? Map<String, Any?>
+            if (snapshot == null) {
+                result.error("invalid_arguments", "Snapshot must be a map", null)
+            } else {
+                AndroidAutoSnapshotStore.update(snapshot)
+                result.success(null)
             }
         }
     }

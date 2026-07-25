@@ -1,10 +1,8 @@
 import CarPlay
 import UIKit
 
-/// Builds and updates the CarPlay status list: one row per rider (name,
-/// role, off-route indicator), a row for the current highest-priority
-/// alert/hazard if any, and an SOS bar button. Driven by the same snapshot
-/// shape `CarPlayBridge` publishes on the Dart side.
+/// Builds and updates the glanceable CarPlay status list from the same bounded
+/// projected snapshot used by Android Auto.
 enum CarPlayStatusTemplate {
   static func makeTemplate() -> CPListTemplate {
     let template = CPListTemplate(title: "Tail End Charlie", sections: [])
@@ -15,6 +13,26 @@ enum CarPlayStatusTemplate {
   static func apply(snapshot: [String: Any], to template: CPListTemplate) {
     var items: [CPListItem] = []
 
+    let routeName = (snapshot["routeName"] as? String).flatMap {
+      $0.isEmpty ? nil : $0
+    }
+    let rideState = snapshot["rideState"] as? String
+    items.append(
+      CPListItem(
+        text: routeName ?? "No route selected",
+        detailText: rideState
+      )
+    )
+
+    if let guidance = snapshot["guidanceTitle"] as? String {
+      items.append(
+        CPListItem(
+          text: guidance,
+          detailText: snapshot["guidanceDetail"] as? String
+        )
+      )
+    }
+
     if
       let alert = snapshot["alert"] as? [String: Any],
       let message = alert["message"] as? String
@@ -22,8 +40,16 @@ enum CarPlayStatusTemplate {
       items.append(CPListItem(text: "Alert", detailText: message))
     }
 
+    if let markerStatus = snapshot["markerStatus"] as? String {
+      items.append(CPListItem(text: "Marker", detailText: markerStatus))
+    }
+
+    if let groupStatus = snapshot["groupStatus"] as? String {
+      items.append(CPListItem(text: "Group", detailText: groupStatus))
+    }
+
     if let riders = snapshot["riders"] as? [[String: Any]] {
-      for rider in riders {
+      for rider in riders.prefix(4) {
         guard let label = rider["label"] as? String else { continue }
         let isLocal = (rider["isLocal"] as? NSNumber)?.boolValue ?? false
         let role = rider["role"] as? String ?? ""
