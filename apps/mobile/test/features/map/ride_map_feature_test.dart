@@ -96,6 +96,43 @@ void main() {
     expect(find.text('3 RIDERS'), findsOneWidget);
   });
 
+  testWidgets(
+    'follower waits for the leader instead of seeing route controls',
+    (tester) async {
+      final directory = Directory.systemTemp.createTempSync(
+        'map-follower-no-route-test',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            canEditRoute: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Waiting for the leader’s route'), findsOneWidget);
+      expect(find.text('Choose a route'), findsNothing);
+      expect(
+        find.byKey(const Key('plan-destination-empty-button')),
+        findsNothing,
+      );
+      expect(find.text('Import GPX'), findsNothing);
+      expect(find.text('Use demo route'), findsNothing);
+    },
+  );
+
   testWidgets('turn guidance reduces the TEC gap to a single-line chip', (
     tester,
   ) async {
