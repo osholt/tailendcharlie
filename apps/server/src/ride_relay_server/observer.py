@@ -216,12 +216,27 @@ def publish_observer_snapshot(
             merged["assistanceUpdatedAt"] = incoming["assistanceUpdatedAt"]
             merged["assistance"] = incoming["assistance"]
 
-        grant.snapshot_ciphertext = cipher.encrypt_json(
+        snapshot_ciphertext = cipher.encrypt_json(
             merged,
             associated_data=_snapshot_aad(grant.id),
         )
-        grant.snapshot_updated_at = now
-        grant.snapshot_version_at = request.snapshotGeneratedAt
+        result = session.execute(
+            update(ObserverGrant)
+            .where(
+                ObserverGrant.id == grant.id,
+                ObserverGrant.publisher_token_hash == token_hash(publisher_token),
+                ObserverGrant.revoked_at.is_(None),
+                ObserverGrant.expires_at > now,
+            )
+            .values(
+                snapshot_ciphertext=snapshot_ciphertext,
+                snapshot_updated_at=now,
+                snapshot_version_at=request.snapshotGeneratedAt,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise RelayServiceError(404, "Observer access is unavailable")
 
 
 def observer_snapshot(
