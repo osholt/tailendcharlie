@@ -42,6 +42,7 @@ class MainActivity : FlutterActivity() {
         private const val PLANNER_LINK_METHOD_CHANNEL = "me.osholt.ride_relay/planner_link"
         private const val PUSH_METHOD_CHANNEL = "me.osholt.ride_relay/push"
         private const val PROJECTED_RIDE_METHOD_CHANNEL = "me.osholt.ride_relay/carplay"
+        private const val GROUP_PIP_METHOD_CHANNEL = "me.osholt.ride_relay/group_pip"
         private const val PERMISSION_REQUEST = 7102
         private const val PUSH_PERMISSION_REQUEST = 7103
         private const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
@@ -177,6 +178,40 @@ class MainActivity : FlutterActivity() {
             } else {
                 AndroidAutoSnapshotStore.update(snapshot)
                 result.success(null)
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            GROUP_PIP_METHOD_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "isSupported" -> result.success(
+                    packageManager.hasSystemFeature(
+                        PackageManager.FEATURE_PICTURE_IN_PICTURE,
+                    ),
+                )
+                "enter" -> {
+                    if (
+                        !packageManager.hasSystemFeature(
+                            PackageManager.FEATURE_PICTURE_IN_PICTURE,
+                        )
+                    ) {
+                        result.success(false)
+                    } else {
+                        GroupPipSnapshotStore.update(call.arguments)
+                        startActivity(Intent(this, GroupPipActivity::class.java))
+                        result.success(true)
+                    }
+                }
+                "updateSnapshot" -> {
+                    GroupPipSnapshotStore.update(call.arguments)
+                    result.success(GroupPipActivity.isRunning())
+                }
+                "close" -> {
+                    GroupPipActivity.closeCurrent()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
             }
         }
     }

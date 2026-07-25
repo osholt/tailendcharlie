@@ -58,6 +58,7 @@ import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
+import '../../services/relay_traffic_hazard_provider.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
 import '../settings/emergency_info_sheet.dart';
@@ -529,6 +530,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   StreamSubscription<RideEvent>? _internetReceivedEventSubscription;
   StreamSubscription<PushOpenRequest>? _pushOpenSubscription;
   Timer? _stalenessTimer;
+  Timer? _externalHazardTimer;
   Timer? _simulationAwarenessTimer;
   Timer? _markerExitChromeTimer;
   Future<void> _publishChain = Future.value();
@@ -554,6 +556,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   bool _holdingNavigationChromeForMarkerExit = false;
   bool _autoEndingRide = false;
   bool _simulationPausedByRide = false;
+  bool _observedRideStarted = false;
+  bool _localRideStartInProgress = false;
   RideRole? _lastPushRole;
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
@@ -562,6 +566,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _observedRideStarted =
+        widget.rideController.rideStarted && !widget.rideController.rideEnded;
     _screenAwakeCoordinator = RideScreenAwakeCoordinator(
       wakeLock: widget.screenWakeLock,
       reassertInterval: widget.screenWakeReassertInterval,
@@ -710,6 +716,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         final awareness = _awarenessController;
         if (awareness != null) unawaited(awareness.refreshStaleness());
       });
+      _externalHazardTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+        final awareness = _awarenessController;
+        if (awareness != null) {
+          unawaited(awareness.refreshExternalHazards());
+        }
+      });
       final locationController = ForegroundLocationController(
         DeviceLocationSource(),
         (sample) async {
@@ -760,6 +772,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         await locationController.initialize();
       } on Object catch (error) {
         _warnings.add('Location capability check failed: $error');
+      }
+      if (widget.rideController.rideStarted &&
+          !widget.rideController.rideEnded) {
+        await _resumeLocationForActiveRide();
       }
 
       if (session != null) {
@@ -846,6 +862,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         try {
           await relayController.start(session);
           _relayConfigured = true;
+          await _preStartPresenceController?.attachNearby(relayController);
         } on Object catch (error) {
           _warnings.add('Nearby relay could not start: $error');
         }
@@ -901,19 +918,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final awarenessEventStore = _isSimulation
         ? InMemoryEventStore()
         : widget.eventStore;
+    final externalProviders = <ExternalHazardProvider>[
+      const WazeReadHazardProvider(),
+      if (session.role == RideRole.lead && !_isSimulation)
+        RelayTrafficHazardProvider(
+          configuration: InternetRelayConfiguration.fromEnvironment(),
+        ),
+    ];
     final controller = SituationalAwarenessController(
       awarenessEventStore,
       session,
       route: routeSegments.expand((segment) => segment).toList(growable: false),
       routeSegments: routeSegments,
-      externalProviders: const [
-        WazeReadHazardProvider(),
-        UnconfiguredExternalHazardProvider(
-          id: 'licensed-traffic-feed',
-          displayName: 'Licensed traffic feed',
-          configurationHint: 'No external traffic provider is configured.',
-        ),
-      ],
+      externalProviders: externalProviders,
       rideStarted: widget.rideController.rideStarted,
       rideStartedAt: widget.rideController.rideStartedAt,
     );
@@ -957,6 +974,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _riderTrails.clear();
     _offRouteTraces.value = const [];
     controller.addListener(_onAwarenessChanged);
+    if (session.role == RideRole.lead &&
+        !_isSimulation &&
+        widget.enableNativeServices) {
+      unawaited(controller.refreshExternalHazards());
+    }
     previous?.dispose();
     _updateMapOverlays();
     if (notify) setState(() {});
@@ -1647,6 +1669,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   void _onRideControllerChanged() {
     final session = widget.rideController.session;
+    final rideStarted =
+        widget.rideController.rideStarted && !widget.rideController.rideEnded;
+    final rideJustStarted = rideStarted && !_observedRideStarted;
+    _observedRideStarted = rideStarted;
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _observerAccessController?.updateSession(session);
@@ -1654,6 +1680,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       unawaited(_synchroniseRideControllers());
       if (widget.rideController.rideStarted) {
         unawaited(_preStartPresenceController?.stop());
+      }
+      if (rideJustStarted && !_localRideStartInProgress) {
+        unawaited(_resumeLocationForActiveRide());
       }
       if (_lastPushRole != session.role) {
         _lastPushRole = session.role;
@@ -1665,6 +1694,27 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       unawaited(_handleRideEnded());
     }
     _schedulePublish();
+  }
+
+  Future<void> _resumeLocationForActiveRide() async {
+    final locationController = _locationController;
+    if (locationController == null ||
+        !widget.rideController.rideStarted ||
+        widget.rideController.rideEnded) {
+      return;
+    }
+    try {
+      await locationController.resumeIfAuthorized();
+    } on Object catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Could not resume live GPS: $error\n$stackTrace');
+      }
+      final added = _warnings.add(
+        'Live GPS could not resume automatically. Use Follow me or Safety '
+        'to try again.',
+      );
+      if (added && mounted) setState(() {});
+    }
   }
 
   Future<void> _synchroniseRideControllers() async {
@@ -1707,8 +1757,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (_rideEndHandled) return;
     _rideEndHandled = true;
     _stalenessTimer?.cancel();
+    _externalHazardTimer?.cancel();
     _simulationAwarenessTimer?.cancel();
     _stalenessTimer = null;
+    _externalHazardTimer = null;
     await _preStartPresenceController?.stop();
     await _pushNotificationController?.stop();
     await _locationController?.stop();
@@ -2216,7 +2268,27 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     if (decision == _StartRideDecision.start) {
-      await widget.rideController.startRide();
+      _localRideStartInProgress = true;
+      try {
+        await widget.rideController.startRide();
+        try {
+          // The confirmation is an explicit user action and promises that
+          // live sharing begins now, so it is the correct place to request
+          // permission when the leader has not granted it yet.
+          await _locationController?.requestAndStart();
+        } on Object catch (error, stackTrace) {
+          if (kDebugMode) {
+            debugPrint('Could not start live GPS: $error\n$stackTrace');
+          }
+          final added = _warnings.add(
+            'The ride started, but live GPS could not start. Use Follow me '
+            'or Safety to try again.',
+          );
+          if (added && mounted) setState(() {});
+        }
+      } finally {
+        _localRideStartInProgress = false;
+      }
     }
   }
 
@@ -2630,6 +2702,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(_internetReceivedEventSubscription?.cancel());
     unawaited(_pushOpenSubscription?.cancel());
     _stalenessTimer?.cancel();
+    _externalHazardTimer?.cancel();
     _markerExitChromeTimer?.cancel();
     _locationController?.removeListener(_onDeviceLocationChanged);
     _locationController?.dispose();

@@ -25,6 +25,7 @@ import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/gpx_import_source.dart';
+import '../../services/group_pip_bridge.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
@@ -461,6 +462,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
   late SpeedLimitDisplayController _speedLimitDisplay;
   late bool _ownsSpeedLimitDisplay;
+  late final GroupPipBridge _groupPipBridge;
   ml.MapLibreMapController? _mapLibreController;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
   bool _mapLibreStyleReady = false;
@@ -541,6 +543,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _ownsSpeedLimitDisplay = widget.speedLimitDisplay == null;
     _speedLimitDisplay =
         widget.speedLimitDisplay ?? SpeedLimitDisplayController.inMemory();
+    _groupPipBridge = GroupPipBridge();
     _mapLibreOfflineManager =
         widget.mapLibreOfflineManager ??
         MapLibreOfflineManager(configuration: _basemap);
@@ -548,6 +551,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.navigationPosition?.addListener(_onPositionChanged);
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.offRouteTraces?.addListener(_onOverlayDataChanged);
+    widget.leaderStatus?.addListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
     _observeSpeedLimit(_navigationFix);
     _markerOverviewVisible =
@@ -579,6 +583,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
       oldWidget.offRouteTraces?.removeListener(_onOverlayDataChanged);
       widget.offRouteTraces?.addListener(_onOverlayDataChanged);
     }
+    if (oldWidget.leaderStatus != widget.leaderStatus) {
+      oldWidget.leaderStatus?.removeListener(_onGroupPipDataChanged);
+      widget.leaderStatus?.addListener(_onGroupPipDataChanged);
+      _onGroupPipDataChanged();
+    }
     if (oldWidget.junctionMarkerOverlay != widget.junctionMarkerOverlay) {
       oldWidget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
       widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
@@ -600,11 +609,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
     widget.offRouteTraces?.removeListener(_onOverlayDataChanged);
+    widget.leaderStatus?.removeListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _navigationGuidance.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
+    unawaited(_groupPipBridge.dispose());
     _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
@@ -630,6 +641,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       });
       _updateNavigationGuidance(_effectivePosition);
       widget.onRouteChanged?.call(route);
+      unawaited(_publishGroupPipSnapshot());
       if (_navigationMode) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) unawaited(_followNavigationCamera());
@@ -815,6 +827,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
                               ? 'Hide marker plan'
                               : 'Show marker plan',
                         ),
+                      ),
+                    if (!kIsWeb &&
+                        defaultTargetPlatform == TargetPlatform.android)
+                      const PopupMenuItem(
+                        value: _MapAction.groupPip,
+                        child: Text('Show mini-map over another app'),
                       ),
                     if (_route != null)
                       PopupMenuItem(
@@ -1508,6 +1526,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         if (mounted) unawaited(_showEmergencyActions());
       });
     }
+    unawaited(_publishGroupPipSnapshot());
   }
 
   void _observeSpeedLimit(MapNavigationPosition? fix) {
@@ -1548,6 +1567,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // platform map here can resize it and briefly bring the top chrome back.
     if (!_basemap.usesMapLibre) setState(() {});
     _scheduleMapLibreSync(overlays: true);
+    unawaited(_publishGroupPipSnapshot());
+  }
+
+  void _onGroupPipDataChanged() {
+    unawaited(_publishGroupPipSnapshot());
   }
 
   void _onJunctionMarkerChanged() {
@@ -1581,6 +1605,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         }
       });
     }
+    unawaited(_publishGroupPipSnapshot());
   }
 
   void _onFlutterMapEvent(MapEvent event) {
@@ -3330,6 +3355,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
       case _MapAction.markerPlan:
         setState(() => _markerPlanVisible = !_markerPlanVisible);
         _scheduleMapLibreSync(overlays: true);
+      case _MapAction.groupPip:
+        await _openGroupPip();
       case _MapAction.downloadOffline:
         await _downloadOfflineMap();
       case _MapAction.removeRoute:
@@ -3356,6 +3383,97 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await widget.offlineTileCache.clearAll();
         _showMessage('Offline map data cleared.');
     }
+  }
+
+  Future<void> _openGroupPip() async {
+    if (!await _groupPipBridge.isSupported()) {
+      _showMessage(
+        'Picture-in-Picture is not supported on this Android device.',
+      );
+      return;
+    }
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Show the group over another app?'),
+        content: const Text(
+          'Android will pin a small, non-interactive route and rider view. '
+          'It uses no map tiles and can remain visible while you open your '
+          'navigation app. Close it with Android’s Picture-in-Picture control.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('confirm-group-pip'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Show mini-map'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final entered = await _groupPipBridge.enter(_groupPipSnapshot());
+    if (!entered) {
+      _showMessage('The Android mini-map could not be opened.');
+    }
+  }
+
+  Future<void> _publishGroupPipSnapshot() =>
+      _groupPipBridge.publish(_groupPipSnapshot());
+
+  GroupPipSnapshot _groupPipSnapshot() {
+    final overlays = widget.overlayMarkers?.value ?? const <MapOverlayMarker>[];
+    final currentPosition = _effectivePosition;
+    final leaderStatus = widget.leaderStatus?.value;
+    final markerStatus = widget.junctionMarkerOverlay?.value;
+    final offCourseCount = leaderStatus?.offCourseAlerts.length ?? 0;
+    String? status;
+    if (markerStatus?.isLocalMarker == true) {
+      status = markerStatus!.instruction;
+    } else if (offCourseCount > 0) {
+      status =
+          '$offCourseCount rider${offCourseCount == 1 ? '' : 's'} '
+          'need attention';
+    } else if (leaderStatus?.distanceToTecMeters case final distance?) {
+      status =
+          'TEC '
+          '${MeasurementFormatter(widget.distanceUnit).distance(distance)} '
+          'behind';
+    } else if (widget.groupRiderCount case final count?) {
+      status = '$count rider${count == 1 ? '' : 's'}';
+    }
+    return GroupPipSnapshot(
+      routePaths:
+          _route?.paths.map((path) => path.points).toList(growable: false) ??
+          const [],
+      markers: [
+        if (currentPosition != null)
+          GroupPipMarker(
+            point: currentPosition,
+            label: 'You',
+            colourArgb: widget.localBadgeColor.toARGB32(),
+            kind: GroupPipMarkerKind.rider,
+            isLocal: true,
+          ),
+        for (final marker in overlays)
+          GroupPipMarker(
+            point: marker.point,
+            label: marker.label,
+            colourArgb: marker.color.toARGB32(),
+            kind: marker.motorcycleStyle == null
+                ? GroupPipMarkerKind.hazard
+                : GroupPipMarkerKind.rider,
+          ),
+      ],
+      status: status,
+      alert:
+          offCourseCount > 0 ||
+          overlays.any((marker) => marker.motorcycleStyle == null),
+    );
   }
 
   Future<void> _confirmEnableSpeedLimitDisplay() async {
@@ -3544,6 +3662,7 @@ enum _MapAction {
   discoveryLayers,
   speedLimitDisplay,
   markerPlan,
+  groupPip,
   downloadOffline,
   removeRoute,
   clearOfflineTiles,

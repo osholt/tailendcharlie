@@ -33,6 +33,9 @@ jobs:
       - run: uv sync --frozen --extra dev
       - run: uv run ruff format --check .
       - run: uv run ruff check .
+      - run: uv run ruff format --check ../../tools/discovery
+      - run: uv run ruff check ../../tools/discovery
+      - run: cd ../.. && python3 -m unittest discover -s tools/discovery/tests -v
       - run: uv run pytest --cov=ride_relay_server --cov-report=term-missing --cov-fail-under=80
 
   postgres-migration:

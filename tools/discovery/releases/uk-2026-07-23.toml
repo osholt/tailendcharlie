@@ -1,0 +1,11 @@
+[catalogue]
+version = "uk-osm-2026-07-23-v1"
+region = "United Kingdom (Great Britain and Northern Ireland)"
+last_verified = "2026-07-24"
+
+[source]
+url = "https://download.geofabrik.de/europe/united-kingdom-260723.osm.pbf"
+filename = "united-kingdom-260723.osm.pbf"
+release = "2026-07-23T20:22:05Z"
+size_bytes = 2230969421
+md5 = "66679f77d561243a3e2509242ed389e5"

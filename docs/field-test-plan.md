@@ -31,8 +31,11 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
 4. Lock every screen and repeat.
 5. Background the app without force-quitting and repeat.
 6. Separate peers, create events, reunite them, and verify convergence.
-7. Join all phones before departure and verify that the roster converges while
-   no coordinate or route trace appears on any phone.
+7. Join all phones before departure, opt in to foreground location, and verify
+   that each fresh latest position converges over internet-only, nearby-only
+   and mixed transport. Move a phone twice and confirm the first point is
+   replaced rather than drawn as a trace; wait 46 seconds and confirm it
+   expires.
 8. Start once from the lead, then verify early joiners begin from the same start
    time; add a late joiner and verify it becomes active without restarting.
 9. Repeat the start with one phone offline, duplicate delivery, app restart,
@@ -57,6 +60,12 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
     a fixture that points any of them at a third party. If the operator map
     archive and style are absent, verify the page shows bounded coordinates
     without making a tile request and record the observer map as unavailable.
+19. Stage one route-intersecting closure and one nearby unrelated incident
+    through the licensed traffic provider. Verify only the intersecting
+    incident appears, its source/freshness/expiry remain visible, and a provider
+    outage retains the last useful result only until expiry. Repeat with a
+    follower phone and confirm only the leader fetches provider data while the
+    signed hazard converges to the follower.
 
 ## Pass gates
 
@@ -64,14 +73,18 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
   is in a supported active-ride state.
 - No duplicate marker count after 100 event replays.
 - Queued events converge without user repair after peers reunite.
-- No pre-start trace is retained, and every early/late/reconnected phone uses the
-  same authoritative ride start.
+- No pre-start trace is retained; latest snapshots expire or clear at start,
+  and every early/late/reconnected phone uses the same authoritative ride
+  start.
 - Explicit leave/rejoin produces no ghost riders, roster/alert counts match the
   signed current membership, and route publish/replace/clear converges.
 - Four-hour screen-off consumption remains within the 45% planning limit.
 - The observed iOS limitations are reflected in product wording and onboarding.
 - Observer revocation and expiry deny the next refresh, freshness never labels
   a stale point as current, and the page never exposes another rider.
+- Live traffic never erases or silently replaces the authoritative route;
+  unrelated incidents do not trigger leader action, and provider failure is
+  distinguishable from a verified all-clear.
 
 If the gate fails, retain durable offline queues and opportunistic exchange but
 do not market the product as a continuously available mesh.

@@ -30,52 +30,57 @@ Supported alternatives, per the issue's own suggestion:
   over another app" and deserves its own issue rather than folding into #7's
   PiP question.
 
-## Android: policy-compliant in principle, but unproven - needs a prototype before committing further
+## Android: policy-compliant prototype implemented
 
 Android's `Activity.enterPictureInPictureMode()` is not video-restricted the
 way iOS's API is, so a small, non-interactive PiP window showing rider dots,
 route, and an alert badge is plausible without a private API or misleading
 media trick.
 
-What is **not** yet known, and can only be resolved by building a real
-(throwaway) prototype rather than more reading:
+The prototype now implements that design:
 
-- **Rendering approach.** The whole app is Flutter; a PiP window is a
-  separate, small (roughly 200x150dp), non-interactive Activity. Hosting a
-  full Flutter engine in that space is heavier than the content justifies.
-  The mini-map's own non-tiled fallback path (`_GroupMiniMapPainter` in
-  `ride_map_feature.dart`) already draws nothing more than circles and lines
-  for exactly this kind of compact view - a good sign that a lightweight
-  native Android `Canvas`/`View` doing the same simple drawing is a more
-  realistic PiP renderer than embedding Flutter, but this needs to actually be
-  tried, not assumed.
-- **Data delivery.** There is no single "current ride status" snapshot today.
-  Rider positions, hazards, route alerts, and leader/TEC separation are
-  computed by three different owners - `SituationalAwarenessController`,
-  `LeaderRideStatusCalculator`, and `active_ride_shell.dart`'s own
-  aggregation - and only briefly unified inside that shell's private state.
-  A PiP prototype needs a small, purpose-built, serializable snapshot type
-  (rider positions/colours + an alert flag) pushed to native code. The
-  existing `me.osholt.ride_relay/nearby_events` EventChannel (and the
-  `gpx_import` MethodChannel added this session) are the right pattern to
-  copy for that delivery - this part is moderate, well-understood Dart work,
-  not a new architecture.
+- **Rendering approach.** `GroupPipActivity` is a private, excluded-from-recents
+  Android Activity backed by one lightweight native `Canvas` view. It draws
+  bounded route polylines, rider/hazard dots, a short group/TEC status, and an
+  alert badge. It does not host a second Flutter engine, fetch map tiles,
+  request overlay permission, or disguise the content as video.
+- **Data delivery.** `GroupPipSnapshot` is the small serializable boundary
+  between the existing map state and native Android. The Dart side caps route
+  geometry at approximately 500 points and markers at 100; native code checks
+  coordinates and independently applies its own bounds. Nothing is published
+  until the rider explicitly selects **Show mini-map over another app** and
+  confirms the explanation.
 - **Lifecycle and battery impact.** The issue requires real-device evidence
-  for foreground/background transitions and battery cost. That can only come
-  from an actual running PiP Activity, not from documentation.
+  for foreground/background transitions and battery cost. Automated Dart
+  tests and a compiled APK cover the data contract and integration, but cannot
+  provide that field evidence.
 
-**Recommendation**: this is a legitimate, scoped follow-up - roughly a
-throwaway Activity plus a minimal Canvas renderer fed by a synthetic snapshot,
-to answer the rendering-approach question before investing in the real
-snapshot pipeline. It should be its own piece of work, not something started
-opportunistically alongside other changes.
+### Android 14 emulator evidence
+
+The debug APK was exercised on a clean Android 14 Google Play ARM64 emulator
+on 2026-07-25:
+
+- a leader created an empty ride, explicitly selected the demo route, reviewed
+  it, and opted in through **Show mini-map over another app**;
+- Android entered native Picture-in-Picture and rendered the route-only
+  snapshot without map tiles or overlay permission;
+- the PiP remained visible when Google Maps became the foreground activity;
+- the `GroupPipActivity` remained present across a screen-off/screen-on cycle
+  and restored above Google Maps after unlock; and
+- the PiP remained present while airplane mode was enabled, then disabled.
+
+This validates the supported host lifecycle and offline-retention paths in the
+official emulator. It does not substitute for the issue's physical-device
+battery, external-navigation, lock/background, and live rider-update matrix.
+
+**Recommendation**: retain the Android prototype as the supported cross-app
+companion, subject to physical-device lifecycle and battery validation. Keep
+iOS on the in-app mini-map; a separate Live Activity issue would be the
+supported route to glanceable, non-map status outside the iOS app.
 
 ## What this record does and does not settle
 
-The issue's acceptance criteria calls for a decision record written *after*
-native prototypes on both platforms. This document covers the platform-policy
-half - what each OS actually allows, and what's structurally required - based
-on documented API constraints and this app's current architecture. It does
-not replace an Android prototype; it identifies exactly what that prototype
-needs to answer. iOS needs no prototype, since the API surface itself rules
-out a live-map PiP window regardless of implementation effort.
+The iOS platform decision is final because the public API surface itself rules
+out a live arbitrary-map PiP window. The Android implementation is complete at
+prototype level, but issue #7 must remain open until its required physical
+foreground/background and battery evidence has been recorded.

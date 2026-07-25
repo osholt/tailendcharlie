@@ -5,7 +5,6 @@ import json
 import math
 import re
 import secrets
-import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -20,6 +19,7 @@ from .gpx import GpxValidationError, validate_gpx
 from .models import (
     IdempotencyReplay,
     ObserverGrant,
+    PreStartPosition,
     Ride,
     RideJoinCode,
     RidePlan,
@@ -94,69 +94,13 @@ class ValidatedEvent:
     client_expires_at: datetime | None
 
 
-class _PreStartPresenceRegistry:
-    """Process-local latest-position cache; intentionally never persisted."""
-
-    def __init__(self, *, ttl: timedelta, maximum_riders: int) -> None:
-        self._ttl = ttl
-        self._maximum_riders = maximum_riders
-        self._entries: dict[str, dict[str, dict[str, Any]]] = {}
-        self._lock = threading.Lock()
-
-    @property
-    def ttl_seconds(self) -> int:
-        return int(self._ttl.total_seconds())
-
-    def synchronize(
-        self,
-        *,
-        ride_id: str,
-        rider_id: str,
-        position: dict[str, Any] | None,
-        clear: bool,
-        now: datetime,
-    ) -> list[dict[str, Any]]:
-        with self._lock:
-            for existing_ride_id, existing_ride in list(self._entries.items()):
-                self._purge_expired(existing_ride, now)
-                if not existing_ride:
-                    self._entries.pop(existing_ride_id, None)
-            ride = self._entries.setdefault(ride_id, {})
-            if clear:
-                ride.pop(rider_id, None)
-            elif position is not None:
-                if rider_id not in ride and len(ride) >= self._maximum_riders:
-                    raise RelayServiceError(409, "Pre-start presence capacity reached")
-                ride[rider_id] = {
-                    **position,
-                    "riderId": rider_id,
-                    "receivedAt": now,
-                    "expiresAt": now + self._ttl,
-                }
-            if not ride:
-                self._entries.pop(ride_id, None)
-                return []
-            return [dict(ride[key]) for key in sorted(ride)]
-
-    def clear_ride(self, ride_id: str) -> None:
-        with self._lock:
-            self._entries.pop(ride_id, None)
-
-    @staticmethod
-    def _purge_expired(ride: dict[str, dict[str, Any]], now: datetime) -> None:
-        for rider_id in [rider_id for rider_id, value in ride.items() if value["expiresAt"] <= now]:
-            ride.pop(rider_id, None)
-
-
 class RelayService:
     def __init__(self, settings: Settings, cipher: DataCipher, cursors: CursorCodec) -> None:
         self._settings = settings
         self._cipher = cipher
         self._cursors = cursors
-        self._pre_start_presence = _PreStartPresenceRegistry(
-            ttl=timedelta(seconds=settings.pre_start_presence_ttl_seconds),
-            maximum_riders=settings.maximum_pre_start_presence_riders,
-        )
+        self._pre_start_presence_ttl = timedelta(seconds=settings.pre_start_presence_ttl_seconds)
+        self._maximum_pre_start_presence_riders = settings.maximum_pre_start_presence_riders
 
     def synchronize(
         self,
@@ -217,6 +161,8 @@ class RelayService:
 
             self._validate_event_conflicts(session, ride_id, events)
             accepted_ids = self._store_events(session, ride, events, now)
+            if any(event.event_type in {"rideStarted", "rideEnded"} for event in events):
+                session.execute(delete(PreStartPosition).where(PreStartPosition.ride_id == ride_id))
             response = self._build_response(
                 session,
                 ride_id=ride_id,
@@ -255,44 +201,117 @@ class RelayService:
         self._validate_identity(ride_id, request.deviceId, device_header)
         if not TOKEN.fullmatch(bearer_token):
             raise RelayServiceError(401, "Ride credential rejected")
-        ride = session.get(Ride, ride_id)
-        if ride is None:
-            raise RelayServiceError(404, "Ride is not ready for presence")
-        if not hmac.compare_digest(ride.token_hash, token_hash(bearer_token)):
-            raise RelayServiceError(403, "Ride credential rejected")
-        lifecycle_event = session.scalar(
-            select(StoredEvent.event_type)
-            .where(
-                StoredEvent.ride_id == ride_id,
-                StoredEvent.event_type.in_(["rideStarted", "rideEnded"]),
-            )
-            .limit(1)
+        position = (
+            request.position.model_dump(mode="json") if request.position is not None else None
         )
-        if lifecycle_event is not None:
-            self._pre_start_presence.clear_ride(ride_id)
-            positions: list[dict[str, Any]] = []
-        else:
-            position = (
-                request.position.model_dump(mode="json") if request.position is not None else None
+        if position is not None:
+            recorded_at = request.position.sample.recordedAt
+            if recorded_at < now - timedelta(minutes=5):
+                raise RelayServiceError(400, "Presence sample is too old")
+            if recorded_at > now + timedelta(minutes=2):
+                raise RelayServiceError(400, "Presence sample is from the future")
+        with session.begin():
+            ride = session.scalar(select(Ride).where(Ride.id == ride_id).with_for_update())
+            if ride is None:
+                raise RelayServiceError(404, "Ride is not ready for presence")
+            if not hmac.compare_digest(ride.token_hash, token_hash(bearer_token)):
+                raise RelayServiceError(403, "Ride credential rejected")
+            session.execute(
+                delete(PreStartPosition).where(
+                    PreStartPosition.ride_id == ride_id,
+                    PreStartPosition.expires_at <= now,
+                )
             )
-            if position is not None:
-                recorded_at = request.position.sample.recordedAt
-                if recorded_at < now - timedelta(minutes=5):
-                    raise RelayServiceError(400, "Presence sample is too old")
-                if recorded_at > now + timedelta(minutes=2):
-                    raise RelayServiceError(400, "Presence sample is from the future")
-            positions = self._pre_start_presence.synchronize(
-                ride_id=ride_id,
-                rider_id=request.deviceId,
-                position=position,
-                clear=request.clear,
-                now=now,
+            lifecycle_event = session.scalar(
+                select(StoredEvent.event_type)
+                .where(
+                    StoredEvent.ride_id == ride_id,
+                    StoredEvent.event_type.in_(["rideStarted", "rideEnded"]),
+                )
+                .limit(1)
             )
+            if lifecycle_event is not None:
+                session.execute(delete(PreStartPosition).where(PreStartPosition.ride_id == ride_id))
+                positions: list[dict[str, Any]] = []
+            else:
+                existing = session.get(
+                    PreStartPosition,
+                    (ride_id, request.deviceId),
+                )
+                if request.clear:
+                    if existing is not None:
+                        session.delete(existing)
+                elif position is not None:
+                    if existing is None:
+                        rider_count = session.scalar(
+                            select(func.count(PreStartPosition.rider_id)).where(
+                                PreStartPosition.ride_id == ride_id
+                            )
+                        )
+                        if (rider_count or 0) >= self._maximum_pre_start_presence_riders:
+                            raise RelayServiceError(
+                                409,
+                                "Pre-start presence capacity reached",
+                            )
+                    expires_at = now + self._pre_start_presence_ttl
+                    snapshot = {
+                        **position,
+                        "riderId": request.deviceId,
+                        "receivedAt": now.isoformat(),
+                        "expiresAt": expires_at.isoformat(),
+                    }
+                    ciphertext = self._cipher.encrypt_json(
+                        snapshot,
+                        associated_data=self._pre_start_presence_aad(
+                            ride_id,
+                            request.deviceId,
+                        ),
+                    )
+                    if existing is None:
+                        session.add(
+                            PreStartPosition(
+                                ride_id=ride_id,
+                                rider_id=request.deviceId,
+                                snapshot_ciphertext=ciphertext,
+                                received_at=now,
+                                expires_at=expires_at,
+                            )
+                        )
+                    else:
+                        existing.snapshot_ciphertext = ciphertext
+                        existing.received_at = now
+                        existing.expires_at = expires_at
+                session.flush()
+                rows = session.scalars(
+                    select(PreStartPosition)
+                    .where(PreStartPosition.ride_id == ride_id)
+                    .order_by(PreStartPosition.rider_id)
+                ).all()
+                positions = [self._decrypt_pre_start_position(row) for row in rows]
         return {
             "protocolVersion": 1,
-            "ttlSeconds": self._pre_start_presence.ttl_seconds,
+            "ttlSeconds": int(self._pre_start_presence_ttl.total_seconds()),
             "positions": positions,
         }
+
+    @staticmethod
+    def _pre_start_presence_aad(ride_id: str, rider_id: str) -> bytes:
+        return f"pre-start-presence-v1\n{ride_id}\n{rider_id}".encode()
+
+    def _decrypt_pre_start_position(
+        self,
+        row: PreStartPosition,
+    ) -> dict[str, Any]:
+        value = self._cipher.decrypt_json(
+            row.snapshot_ciphertext,
+            associated_data=self._pre_start_presence_aad(
+                row.ride_id,
+                row.rider_id,
+            ),
+        )
+        if not isinstance(value, dict):
+            raise RelayServiceError(500, "Stored pre-start presence is invalid")
+        return value
 
     def register_join_code(
         self,
@@ -852,7 +871,7 @@ class RelayService:
 def purge_expired(
     session: Session,
     now: datetime | None = None,
-) -> tuple[int, int, int, int, int, int]:
+) -> tuple[int, int, int, int, int, int, int]:
     now = now or datetime.now(UTC)
     with session.begin():
         events = session.execute(delete(StoredEvent).where(StoredEvent.expires_at <= now))
@@ -863,6 +882,9 @@ def purge_expired(
         join_codes = session.execute(delete(RideJoinCode).where(RideJoinCode.expires_at <= now))
         plans = session.execute(delete(RidePlan).where(RidePlan.expires_at <= now))
         observers = session.execute(delete(ObserverGrant).where(ObserverGrant.expires_at <= now))
+        pre_start_positions = session.execute(
+            delete(PreStartPosition).where(PreStartPosition.expires_at <= now)
+        )
     return (
         events.rowcount or 0,
         replays.rowcount or 0,
@@ -870,4 +892,5 @@ def purge_expired(
         join_codes.rowcount or 0,
         plans.rowcount or 0,
         observers.rowcount or 0,
+        pre_start_positions.rowcount or 0,
     )

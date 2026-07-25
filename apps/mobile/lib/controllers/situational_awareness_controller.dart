@@ -300,7 +300,13 @@ class SituationalAwarenessController extends ChangeNotifier {
               hazard.rideId != _session.rideId) {
             continue;
           }
-          final merged = deduplicator.mergeOrAdd(hazard, activeHazards);
+          final existingProviderIncident = _hazards[hazard.id];
+          final merged =
+              existingProviderIncident?.source ==
+                      HazardSource.externalProvider &&
+                  existingProviderIncident?.providerId == provider.id
+              ? hazard
+              : deduplicator.mergeOrAdd(hazard, activeHazards);
           final event = _eventFactory.create(
             type: RideEventType.hazardReported,
             payload: {'hazard': merged.toJson()},
