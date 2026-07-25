@@ -36,10 +36,27 @@ Alternatives use the official
 service with live traffic, bounded avoid rectangles and guidance instructions.
 Waze's public partner feed is not used as a read source.
 
+## Licensing and enablement gate
+
+TomTom documents detailed Traffic Incidents and Traffic Flow coverage for the
+United Kingdom:
+
+- [Traffic API market coverage](https://developer.tomtom.com/traffic-api/documentation/tomtom-maps/v1/product-information/market-coverage)
+- [Published self-service pricing](https://developer.tomtom.com/pricing)
+
+The published pricing currently lists 2,500 free non-tile requests per day,
+then EUR 0.75 per 1,000 Traffic incident or Routing requests. However, the
+current self-service
+[TomTom Developer Portal terms](https://developer.tomtom.com/terms-and-conditions)
+exclude use for "Navigation Functionality" unless TomTom permits it under a
+separate written agreement. Tail End Charlie must therefore obtain and record
+that written permission (including tester display, caching and redistribution
+terms) before a provider key is configured or availability is claimed.
+
 ## Configure
 
-Create an approved TomTom application and put its server key only in the relay
-environment:
+After the written navigation permission and plan are approved, create the
+TomTom application and put its server key only in the relay environment:
 
 ```text
 RIDE_RELAY_TOMTOM_TRAFFIC_API_KEY=...
@@ -71,7 +88,7 @@ reports and all offline ride functions continue to work.
 - Alternative calculation uses the existing route-review boundary: no provider
   result can silently replace the leader's authoritative route.
 
-Before enabling this in tester builds, confirm the selected TomTom plan and
-contract permit the intended field-test volume and display/redistribution
-behaviour. Record a staged closure test and a provider-failure test in
-`docs/field-test-plan.md`.
+Before enabling this in tester builds, record the written navigation permission
+and confirm the selected plan permits the intended field-test volume,
+display/caching and redistribution behaviour. Record a staged closure test and
+a provider-failure test in `docs/field-test-plan.md`.
