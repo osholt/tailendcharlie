@@ -79,7 +79,7 @@ void main() {
 
     final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
     expect(layer.polylines, hasLength(2));
-    expect(find.text('Visual turn-by-turn ready'), findsOneWidget);
+    expect(find.text('2 turn instructions'), findsOneWidget);
     expect(find.text('1 likely marker position'), findsOneWidget);
     expect(find.text('1 junction safety review'), findsOneWidget);
     expect(find.byKey(const Key('route-review-marker-plan')), findsOneWidget);
@@ -90,6 +90,73 @@ void main() {
     );
     expect(find.text('Start'), findsOneWidget);
     expect(find.text('Destination'), findsOneWidget);
+  });
+
+  testWidgets('route review opens the full manoeuvre list before the ride', (
+    tester,
+  ) async {
+    final route = ImportedRoute(
+      id: 'reviewed',
+      name: 'Reviewed route',
+      importedAt: DateTime.utc(2026, 7, 25),
+      sourceFileName: 'reviewed.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.46, longitude: -2.59),
+            GeoPoint(latitude: 51.47, longitude: -2.59),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.46, longitude: -2.59),
+          type: 'roundabout',
+          modifier: 'slight left',
+          name: 'Wells Road',
+          exitNumber: 2,
+          drivingSide: 'left',
+          bearingBeforeDegrees: 0,
+          bearingAfterDegrees: 300,
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.4602, longitude: -2.59),
+          type: 'exit roundabout',
+          modifier: 'slight left',
+          name: 'Wells Road',
+          drivingSide: 'left',
+          bearingBeforeDegrees: 40,
+          bearingAfterDegrees: 2,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RouteReviewScreen(
+          route: route,
+          distanceUnit: DistanceUnit.kilometres,
+          basemapConfiguration: const BasemapConfiguration(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('1 turn instruction'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('review-maneuver-list')),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.byKey(const Key('review-maneuver-list')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.byKey(const Key('maneuver-list')), findsOneWidget);
+    expect(find.text('Roundabout, 2nd exit, straight on'), findsOneWidget);
   });
 }
 

@@ -7,6 +7,8 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_geometry_enricher.dart';
 
+import 'osrm_maneuver_fixtures.dart';
+
 void main() {
   test('OSRM client requests and parses full road geometry', () async {
     final client = MockClient((request) async {
@@ -98,6 +100,34 @@ void main() {
       'right',
     ]);
     expect(result.maneuvers.last.requiresSecondBikeDrop, isFalse);
+  });
+
+  test('roundabout steps keep their bearings, exit count and lanes', () async {
+    final route = await routeFromOsrmResponse(ukRoundaboutStraightOnResponse());
+
+    final entry = route.maneuvers[1];
+    final exit = route.maneuvers[2];
+
+    expect(entry.type, 'roundabout');
+    expect(entry.exitNumber, 2);
+    expect(entry.modifier, 'slight left');
+    expect(entry.bearingBeforeDegrees, 1);
+    expect(entry.bearingAfterDegrees, 315);
+    expect(entry.drivingSide, 'left');
+    expect(entry.lanes.map((lane) => lane.valid), [false, true, false]);
+    expect(exit.type, 'exit roundabout');
+    expect(exit.bearingAfterDegrees, 2);
+  });
+
+  test('a small roundabout reported as a turn still needs a marker', () {
+    expect(
+      const RoadRouteManeuver(
+        position: GeoPoint(latitude: 51.46, longitude: -2.59),
+        type: 'roundabout turn',
+        modifier: 'left',
+      ).requiresSecondBikeDrop,
+      isTrue,
+    );
   });
 
   test(

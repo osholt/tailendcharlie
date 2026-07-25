@@ -44,6 +44,8 @@ import '../../services/route_progress.dart';
 import '../../services/speed_limit.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
+import 'maneuver_list_screen.dart';
+import 'maneuver_symbol.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 import 'route_review_screen.dart';
@@ -815,11 +817,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
                                 : Icons.check_box_outline_blank,
                           ),
                           const SizedBox(width: 10),
-                          const Text('Show mapped speed limit'),
+                          // A popup menu constrains its items, and this label
+                          // was wide enough to be clipped without flexing.
+                          const Expanded(
+                            child: Text('Show mapped speed limit'),
+                          ),
                         ],
                       ),
                     ),
-                    if (_route?.maneuvers.isNotEmpty ?? false)
+                    if (_route?.maneuvers.isNotEmpty ?? false) ...[
+                      const PopupMenuItem(
+                        value: _MapAction.maneuverList,
+                        child: Text('All turns for this route'),
+                      ),
                       PopupMenuItem(
                         value: _MapAction.markerPlan,
                         child: Text(
@@ -828,6 +838,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                               : 'Show marker plan',
                         ),
                       ),
+                    ],
                     if (!kIsWeb &&
                         defaultTargetPlatform == TargetPlatform.android)
                       const PopupMenuItem(
@@ -3354,6 +3365,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
         } else {
           await _confirmEnableSpeedLimitDisplay();
         }
+      case _MapAction.maneuverList:
+        await _showManeuverList();
       case _MapAction.markerPlan:
         setState(() => _markerPlanVisible = !_markerPlanVisible);
         _scheduleMapLibreSync(overlays: true);
@@ -3385,6 +3398,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await widget.offlineTileCache.clearAll();
         _showMessage('Offline map data cleared.');
     }
+  }
+
+  /// Lists every manoeuvre for the loaded route.
+  ///
+  /// Distances come from the persisted route and the map's own progress tracker,
+  /// so the list works with no network and no fresh routing call.
+  Future<void> _showManeuverList() async {
+    final route = _route;
+    if (route == null) return;
+    await ManeuverListScreen.show(
+      context,
+      route: route,
+      distanceUnit: widget.distanceUnit,
+      progressMeters: _effectivePosition == null
+          ? null
+          : _progressGeometry.progressMeters,
+    );
   }
 
   Future<void> _openGroupPip() async {
@@ -3663,6 +3693,7 @@ enum _MapAction {
   loadDemo,
   discoveryLayers,
   speedLimitDisplay,
+  maneuverList,
   markerPlan,
   groupPip,
   downloadOffline,
@@ -5158,19 +5189,17 @@ class _NavigationGuidanceBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final formatter = MeasurementFormatter(distanceUnit);
     final distance = formatter.distance(guidance.distanceMeters);
-    final instruction = _maneuverInstruction(guidance.maneuver);
-    final following = guidance.followingManeuver;
-    final followingInstruction = following == null
-        ? null
-        : _maneuverInstruction(following);
+    final instruction = guidance.instruction;
+    final following = guidance.followingInstruction;
+    final showLanes = maneuverLanesAreShowable(instruction.lanes);
     final followingDistance = guidance.followingDistanceMeters == null
         ? null
         : formatter.distance(guidance.followingDistanceMeters!);
     final semanticLabel = [
-      '$instruction in $distance.',
-      if (guidance.maneuver.lanes.isNotEmpty) 'Lane guidance is shown.',
-      if (followingInstruction != null)
-        'Then $followingInstruction${followingDistance == null ? '' : ' after $followingDistance'}.',
+      '${instruction.text} in $distance.',
+      if (showLanes) maneuverLaneSummary(instruction.lanes),
+      if (following != null)
+        'Then ${following.text}${followingDistance == null ? '' : ' after $followingDistance'}.',
       guidance.roadLabel,
     ].join(' ');
     return Semantics(
@@ -5202,8 +5231,8 @@ class _NavigationGuidanceBanner extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Icon(
-                  _maneuverIcon(guidance.maneuver),
+                ManeuverSymbolView(
+                  instruction: instruction,
                   size: compact ? 30 : 38,
                   color: const Color(0xFF68A9FF),
                 ),
@@ -5214,7 +5243,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '$distance · $instruction',
+                        '$distance · ${instruction.text}',
                         maxLines: 2,
                         softWrap: true,
                         style: TextStyle(
@@ -5222,20 +5251,20 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      if (guidance.maneuver.lanes.isNotEmpty) ...[
+                      if (showLanes) ...[
                         const SizedBox(height: 5),
-                        _LaneGuidance(
-                          lanes: guidance.maneuver.lanes,
+                        ManeuverLaneStrip(
+                          lanes: instruction.lanes,
                           compact: compact,
                         ),
                       ],
-                      if (followingInstruction != null) ...[
+                      if (following != null) ...[
                         const SizedBox(height: 5),
                         Row(
                           key: const Key('following-maneuver'),
                           children: [
-                            Icon(
-                              _maneuverIcon(following!),
+                            ManeuverSymbolView(
+                              instruction: following,
                               size: compact ? 17 : 19,
                               color: const Color(0xFFFFC857),
                             ),
@@ -5244,7 +5273,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                               child: Text(
                                 'Then'
                                 '${followingDistance == null ? '' : ' in $followingDistance'} · '
-                                '$followingInstruction',
+                                '${following.text}',
                                 maxLines: 2,
                                 softWrap: true,
                                 style: TextStyle(
@@ -5273,140 +5302,6 @@ class _NavigationGuidanceBanner extends StatelessWidget {
       ),
     );
   }
-}
-
-class _LaneGuidance extends StatelessWidget {
-  const _LaneGuidance({required this.lanes, required this.compact});
-
-  final List<RouteLane> lanes;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    key: const Key('lane-guidance'),
-    label: _laneSemanticLabel(lanes),
-    excludeSemantics: true,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final lane in lanes.take(6)) ...[
-          Container(
-            width: compact ? 25 : 29,
-            height: compact ? 25 : 29,
-            decoration: BoxDecoration(
-              color: lane.valid
-                  ? const Color(0xFF225C45)
-                  : const Color(0xFF303A46),
-              borderRadius: BorderRadius.circular(5),
-              border: Border.all(
-                color: lane.valid
-                    ? const Color(0xFF6ED89A)
-                    : const Color(0xFF596574),
-              ),
-            ),
-            child: Icon(
-              _laneIcon(lane.indications),
-              size: compact ? 17 : 20,
-              color: lane.valid
-                  ? const Color(0xFFE8FFF2)
-                  : const Color(0xFF818C99),
-            ),
-          ),
-          const SizedBox(width: 4),
-        ],
-      ],
-    ),
-  );
-}
-
-IconData _maneuverIcon(RouteManeuver maneuver) {
-  final type = maneuver.type.toLowerCase();
-  final modifier = maneuver.modifier?.toLowerCase() ?? '';
-  if (type == 'arrive') return Icons.flag;
-  if (type == 'roundabout' || type == 'rotary') {
-    final drivingSide = maneuver.drivingSide?.toLowerCase();
-    if (drivingSide == 'left') return Icons.roundabout_left;
-    if (drivingSide == 'right') return Icons.roundabout_right;
-    return modifier.contains('left')
-        ? Icons.roundabout_left
-        : Icons.roundabout_right;
-  }
-  if (type == 'merge') return Icons.merge;
-  if (type == 'fork') return Icons.call_split;
-  if (modifier.contains('u-turn') || modifier.contains('uturn')) {
-    return modifier.contains('right') ? Icons.u_turn_right : Icons.u_turn_left;
-  }
-  if (modifier.contains('slight left')) return Icons.turn_slight_left;
-  if (modifier.contains('slight right')) return Icons.turn_slight_right;
-  if (modifier.contains('left')) return Icons.turn_left;
-  if (modifier.contains('right')) return Icons.turn_right;
-  return Icons.straight;
-}
-
-String _maneuverInstruction(RouteManeuver maneuver) {
-  final type = maneuver.type.toLowerCase();
-  final modifier = maneuver.modifier?.toLowerCase() ?? '';
-  if (type == 'arrive') return 'Arrive';
-  if (type == 'roundabout' || type == 'rotary') {
-    final exit = maneuver.exitNumber;
-    final direction = modifier.isEmpty || modifier == 'straight'
-        ? ''
-        : ' $modifier';
-    if (exit != null && exit > 0) return 'Take exit $exit$direction';
-    return modifier.isEmpty || modifier == 'straight'
-        ? 'Continue at roundabout'
-        : 'At roundabout, bear $modifier';
-  }
-  if (type == 'merge') {
-    return modifier.isEmpty ? 'Merge' : 'Merge $modifier';
-  }
-  if (type == 'fork') {
-    return modifier.isEmpty ? 'Keep at fork' : 'Keep $modifier';
-  }
-  if (modifier.contains('u-turn') || modifier.contains('uturn')) {
-    return 'Make a U-turn';
-  }
-  if (modifier == 'straight' || modifier.isEmpty) return 'Continue straight';
-  return 'Turn $modifier';
-}
-
-IconData _laneIcon(List<String> indications) {
-  final normalized = indications.map((value) => value.toLowerCase()).toSet();
-  if (normalized.any((value) => value.contains('uturn'))) {
-    return normalized.any((value) => value.contains('right'))
-        ? Icons.u_turn_right
-        : Icons.u_turn_left;
-  }
-  if (normalized.any((value) => value.contains('sharp left'))) {
-    return Icons.turn_sharp_left;
-  }
-  if (normalized.any((value) => value.contains('sharp right'))) {
-    return Icons.turn_sharp_right;
-  }
-  if (normalized.any((value) => value.contains('slight left'))) {
-    return Icons.turn_slight_left;
-  }
-  if (normalized.any((value) => value.contains('slight right'))) {
-    return Icons.turn_slight_right;
-  }
-  if (normalized.any((value) => value == 'left')) return Icons.turn_left;
-  if (normalized.any((value) => value == 'right')) return Icons.turn_right;
-  return Icons.straight;
-}
-
-String _laneSemanticLabel(List<RouteLane> lanes) {
-  final valid = <String>[];
-  for (var index = 0; index < lanes.length; index += 1) {
-    final lane = lanes[index];
-    if (!lane.valid) continue;
-    final direction = lane.indications.isEmpty
-        ? 'continue'
-        : lane.indications.join(' or ');
-    valid.add('lane ${index + 1}: $direction');
-  }
-  return valid.isEmpty
-      ? 'No recommended lane supplied'
-      : 'Use ${valid.join(', ')}';
 }
 
 class _LeaderMapStatus extends StatelessWidget {
