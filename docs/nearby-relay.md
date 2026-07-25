@@ -104,6 +104,15 @@ alpha and the application HMAC rejects non-members. A user-visible transport
 verification or ride-bound token check must be chosen before release to reduce
 unauthenticated connection/denial-of-service exposure.
 
+Android also keeps the normal `ACCESS_WIFI_STATE` and `CHANGE_WIFI_STATE`
+permissions on Android 13 and newer. `NEARBY_WIFI_DEVICES` replaces the
+dangerous Wi-Fi scan permission prompt, but Google Play services still checks
+the two normal permissions when `P2P_CLUSTER` starts advertising. An Android 14
+emulator run on 2026-07-25 confirmed Bluetooth, BLE and Wi-Fi LAN advertising
+plus BLE and Wi-Fi LAN discovery after removing the obsolete SDK cap; before
+that change, Play services aborted both operations as missing
+`ACCESS_WIFI_STATE`.
+
 ## Hardware release gate
 
 Run the matrix in `field-test-plan.md` on physical devices with mobile data off.
