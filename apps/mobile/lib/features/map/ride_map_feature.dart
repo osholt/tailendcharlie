@@ -965,8 +965,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     ),
             )
           : null;
-      final tecGap =
-          leaderStatus != null && showsDistanceToTecSurface(leaderStatus)
+      // With nobody holding the TEC role there is nothing honest to show, so
+      // the surface is hidden entirely and its space reclaimed rather than
+      // presenting an empty or zero gap. A registered TEC keeps the surface
+      // through its waiting, stale and tracking states.
+      final tecGap = leaderStatus != null && leaderStatus.hasRegisteredTec
           ? _TecGapCard(
               status: leaderStatus,
               compact: compactStatus,
@@ -5612,29 +5615,6 @@ String _laneSemanticLabel(List<RouteLane> lanes) {
       : 'Use ${valid.join(', ')}';
 }
 
-/// Whether the map shows a distance-to-TEC surface at all.
-///
-/// Three states must stay distinct and must never be conflated:
-///
-/// * **No TEC registered** - the status carries no TEC identity and no TEC
-///   location of any age. There is nothing honest to show, so the surface is
-///   hidden entirely and its space reclaimed rather than presenting an empty or
-///   zero gap.
-/// * **TEC registered but no position yet** - the status names a TEC, so the
-///   card shows its waiting state.
-/// * **TEC position stale** - the status names a TEC and carries a location
-///   age, so the card reports that age honestly.
-///
-/// The identity fields are the contract with
-/// [LeaderRideStatusCalculator]: a TEC that is registered in the reconciled
-/// membership must be named even before it has reported a position, which is
-/// what separates the first two states.
-bool showsDistanceToTecSurface(LeaderRideStatus status) =>
-    status.tecName != null ||
-    status.distanceToTecMeters != null ||
-    status.estimatedTimeToTec != null ||
-    status.tecLocationAge != null;
-
 class _OffCourseBanner extends StatelessWidget {
   const _OffCourseBanner({
     required this.alerts,
@@ -5705,24 +5685,29 @@ class _TecGapCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Only reached once a TEC is registered - see [showsDistanceToTecSurface].
-    // A registered TEC that has never reported a position says so, rather than
-    // borrowing the stale-location wording and claiming an age it does not have.
+    // Only reached once a TEC is registered: the map hides this surface for
+    // TecAvailability.none. One branch per remaining state, so a TEC that has
+    // never reported a position is never dressed up as a fresh or merely stale
+    // one, and no state borrows an age it does not have.
+    final formatter = MeasurementFormatter(distanceUnit);
     final name = status.tecName ?? 'Tail End Charlie';
     final distance = status.distanceToTecMeters;
     final eta = status.estimatedTimeToTec;
     final age = status.tecLocationAge;
-    final detail = distance != null && eta != null
-        ? '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · about ${_durationLabel(eta)}'
-        : age == null
-        ? '$name · waiting for location'
-        : '$name · last update ${_ageLabel(age)}';
+    final detail = switch (status.tecAvailability) {
+      TecAvailability.tracking when distance != null && eta != null =>
+        '$name · ${formatter.distance(distance)} · about ${_durationLabel(eta)}',
+      TecAvailability.stale when age != null =>
+        '$name · last update ${_ageLabel(age)}',
+      _ => '$name · waiting for location',
+    };
     if (compact) {
-      final compactDetail = distance != null && eta != null
-          ? '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · ~${_durationLabel(eta)}'
-          : age == null
-          ? '$name · waiting for location'
-          : '$name · ${_ageLabel(age)}';
+      final compactDetail = switch (status.tecAvailability) {
+        TecAvailability.tracking when distance != null && eta != null =>
+          '$name · ${formatter.distance(distance)} · ~${_durationLabel(eta)}',
+        TecAvailability.stale when age != null => '$name · ${_ageLabel(age)}',
+        _ => '$name · waiting for location',
+      };
       return Align(
         alignment: Alignment.centerLeft,
         child: ConstrainedBox(

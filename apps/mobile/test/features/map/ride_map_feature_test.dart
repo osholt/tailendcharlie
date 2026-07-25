@@ -243,13 +243,11 @@ void main() {
       ],
     );
     final navigation = ValueNotifier<MapNavigationPosition?>(null);
-    // A TEC that is registered but has never reported a position: named, with
-    // no distance, no estimate and no location age.
+    // A TEC that is registered but has never reported a position: no name, no
+    // distance, no estimate and no location age.
     final leaderStatus = ValueNotifier<LeaderRideStatus?>(
       const LeaderRideStatus(
-        tecName: 'Charlie',
-        distanceToTecMeters: null,
-        estimatedTimeToTec: null,
+        tecAvailability: TecAvailability.awaitingLocation,
         offCourseAlerts: [],
       ),
     );
@@ -279,7 +277,7 @@ void main() {
     final chip = find.byKey(const Key('leader-tec-gap'));
     expect(chip, findsOneWidget);
     expect(
-      find.textContaining('Charlie · waiting for location'),
+      find.textContaining('Tail End Charlie · waiting for location'),
       findsOneWidget,
     );
     expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
@@ -327,6 +325,7 @@ void main() {
 
     // Assigning a TEC mid-ride brings the surface back without a restart.
     leaderStatus.value = const LeaderRideStatus(
+      tecAvailability: TecAvailability.stale,
       tecName: 'Charlie',
       tecLocationAge: Duration(minutes: 4),
       offCourseAlerts: [],
