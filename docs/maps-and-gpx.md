@@ -145,6 +145,16 @@ treated as unknown. The UI uses mph and familiar UK sign styling, labels the
 reading `MAPPED`, and always warns that it is not live: temporary and variable
 limits may differ and roadside signs apply.
 
+The sign is drawn straight onto the map with no surrounding panel. The rider's
+own GPS speed appears directly beneath it at the sign's own font size, so the
+two numbers can be compared at a glance. That readout stays in mph regardless
+of the rider's distance-unit preference, because two different units under one
+mph sign would invite a dangerous misread. It is the smoothed foreground GPS
+speed already used for the navigation camera, it is never sent anywhere, and it
+shows `–` when the platform reports no usable speed. Labels outside the white
+sign face are stroked as well as shadowed so they stay legible over both the
+day and night basemaps.
+
 `PostedSpeedLimit.checkedAt` is the lookup time, not the age of the underlying
 OpenStreetMap tag. The provider does not expose a reliable source-update time,
 so data freshness is explicitly unknown. A reading is kept only in memory,

@@ -484,6 +484,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   Object? _handledChangeRouteRequestToken;
   double _lastHeadingDegrees = 0;
   double? _smoothedNavigationSpeedMetersPerSecond;
+  // The speed readout is its own notifier so a new fix repaints the badge
+  // without rebuilding the map: MapLibre keeps its platform view mounted and
+  // only calls setState when navigation mode changes.
+  final ValueNotifier<double?> _riderSpeedMetersPerSecond = ValueNotifier(null);
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
   GeoPoint? _lastHandledCurrentPosition;
@@ -614,6 +618,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _navigationGuidance.dispose();
+    _riderSpeedMetersPerSecond.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     unawaited(_groupPipBridge.dispose());
     _routingClient.close();
@@ -1004,10 +1009,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             onPressed: _confirmEnableSpeedLimitDisplay,
                           );
                         }
-                        return _PostedSpeedLimitBadge(
-                          status: _speedLimitDisplay.status,
-                          outcome: _speedLimitDisplay.lastOutcome,
-                          limit: _speedLimitDisplay.limit,
+                        return ValueListenableBuilder<double?>(
+                          valueListenable: _riderSpeedMetersPerSecond,
+                          builder: (context, riderSpeed, _) =>
+                              _PostedSpeedLimitBadge(
+                                status: _speedLimitDisplay.status,
+                                outcome: _speedLimitDisplay.lastOutcome,
+                                limit: _speedLimitDisplay.limit,
+                                riderSpeedMetersPerSecond: riderSpeed,
+                              ),
                         );
                       },
                     ),
@@ -1471,6 +1481,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _smoothedNavigationSpeedMetersPerSecond = previousSpeed == null
           ? boundedSpeed
           : previousSpeed * 0.72 + boundedSpeed * 0.28;
+      _riderSpeedMetersPerSecond.value =
+          _smoothedNavigationSpeedMetersPerSecond;
+    } else if (navigationFix != null) {
+      // A fix without a usable speed must not leave a stale number on screen.
+      _riderSpeedMetersPerSecond.value = null;
     }
 
     final progressNow = navigationFix?.recordedAt ?? DateTime.now();
@@ -5022,22 +5037,89 @@ class _SpeedLimitOptInChip extends StatelessWidget {
   );
 }
 
+// The badge sits directly on the map without a panel behind it, so every label
+// outside the white sign face carries its own shadow for legibility.
+const _mapOverlayTextShadows = [
+  Shadow(color: Color(0xCC0B0F14), blurRadius: 6),
+  Shadow(color: Color(0x990B0F14), blurRadius: 2, offset: Offset(0, 1)),
+];
+
+/// Light text drawn over an unknown map background.
+///
+/// A shadow alone washes out over a light daytime basemap, so the glyphs are
+/// painted twice: a dark stroke first, then the fill.
+class _MapOverlayLabel extends StatelessWidget {
+  const _MapOverlayLabel(
+    this.text, {
+    required this.style,
+    required this.strokeWidth,
+    this.fillKey,
+    this.maxLines,
+    this.textAlign,
+  });
+
+  final String text;
+  final TextStyle style;
+  final double strokeWidth;
+  final Key? fillKey;
+  final int? maxLines;
+  final TextAlign? textAlign;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      Text(
+        text,
+        maxLines: maxLines,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+        textAlign: textAlign,
+        style: style.copyWith(
+          shadows: const [],
+          foreground: Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = strokeWidth
+            ..strokeJoin = StrokeJoin.round
+            ..color = const Color(0xE60B0F14),
+        ),
+      ),
+      Text(
+        text,
+        key: fillKey,
+        maxLines: maxLines,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+        textAlign: textAlign,
+        style: style,
+      ),
+    ],
+  );
+}
+
 class _PostedSpeedLimitBadge extends StatelessWidget {
   const _PostedSpeedLimitBadge({
     required this.status,
     required this.outcome,
     required this.limit,
+    required this.riderSpeedMetersPerSecond,
   });
 
   final SpeedLimitDisplayStatus status;
   final SpeedLimitLookupOutcome? outcome;
   final PostedSpeedLimit? limit;
+  final double? riderSpeedMetersPerSecond;
 
   @override
   Widget build(BuildContext context) {
     final reading = limit;
     final known = status == SpeedLimitDisplayStatus.known && reading != null;
     final value = known ? '${reading.milesPerHour}' : '–';
+    // The readout sits under a UK mph sign, so it stays in mph whatever the
+    // rider's distance-unit preference is. Two units under one sign would
+    // invite a dangerous misread.
+    final speed = riderSpeedMetersPerSecond;
+    final riderMilesPerHour = speed != null && speed.isFinite && speed >= 0
+        ? (speed * 2.236936).round()
+        : null;
+    final speedValue = riderMilesPerHour == null ? '–' : '$riderMilesPerHour';
     final checkedAt = known
         ? MaterialLocalizations.of(
             context,
@@ -5057,11 +5139,15 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
               'Checking mapped road',
             _ => 'Move to identify road',
           };
+    final riderSpeedLabel = riderMilesPerHour == null
+        ? 'Your speed is unavailable.'
+        : 'You are riding at $riderMilesPerHour miles per hour by GPS.';
     final semanticLabel = known
         ? 'Mapped speed limit ${reading.milesPerHour} miles per hour'
               '${reading.roadName == null ? '' : ' on ${reading.roadName}'}. '
-              'Looked up at $checkedAt. Not live. Roadside signs apply.'
-        : '$detail. Roadside signs apply.';
+              'Looked up at $checkedAt. Not live. $riderSpeedLabel '
+              'Roadside signs apply.'
+        : '$detail. $riderSpeedLabel Roadside signs apply.';
     return Semantics(
       key: const Key('posted-speed-limit-badge'),
       container: true,
@@ -5070,22 +5156,9 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
       excludeSemantics: true,
       child: Tooltip(
         message:
-            '$detail\n© OpenStreetMap contributors via Valhalla; temporary and variable limits may differ. Roadside signs apply.',
-        child: Container(
+            '$detail\n$riderSpeedLabel\n© OpenStreetMap contributors via Valhalla; temporary and variable limits may differ. Roadside signs apply.',
+        child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 150),
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 7),
-          decoration: BoxDecoration(
-            color: const Color(0xE6252E39),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF445262)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x55000000),
-                blurRadius: 10,
-                offset: Offset(0, 3),
-              ),
-            ],
-          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -5102,6 +5175,13 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                         : const Color(0xFF8993A0),
                     width: 6,
                   ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x66000000),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: status == SpeedLimitDisplayStatus.checking
                     ? const SizedBox.square(
@@ -5121,11 +5201,27 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                         ),
                       ),
               ),
-              const SizedBox(height: 5),
-              Text(
-                known ? 'MPH · MAPPED' : detail.toUpperCase(),
+              const SizedBox(height: 4),
+              _MapOverlayLabel(
+                speedValue,
+                fillKey: const Key('posted-speed-limit-rider-speed'),
+                strokeWidth: 4,
+                style: const TextStyle(
+                  color: Color(0xFFFFFFFF),
+                  fontSize: 26,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  shadows: _mapOverlayTextShadows,
+                ),
+              ),
+              const SizedBox(height: 3),
+              _MapOverlayLabel(
+                known
+                    ? 'MPH · MAPPED LIMIT · GPS SPEED'
+                    : '${detail.toUpperCase()} · MPH GPS SPEED',
+                fillKey: const Key('posted-speed-limit-caption'),
+                strokeWidth: 2,
                 maxLines: 2,
-                overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: Color(0xFFE4E9EF),
@@ -5133,6 +5229,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                   height: 1.15,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.5,
+                  shadows: _mapOverlayTextShadows,
                 ),
               ),
             ],

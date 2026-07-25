@@ -321,7 +321,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('speed-limit-opt-in-chip')), findsNothing);
     expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
-    expect(find.text('MOVE TO IDENTIFY ROAD'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('posted-speed-limit-caption')))
+          .data,
+      startsWith('MOVE TO IDENTIFY ROAD'),
+    );
   });
 
   testWidgets('opt-in mapped speed limit appears in the map view', (
@@ -371,13 +376,25 @@ void main() {
       recordedAt: now.add(const Duration(seconds: 1)),
       accuracyMeters: 5,
       headingDegrees: 0,
+      speedMetersPerSecond: 20,
     );
     await speedLimitDisplay.waitForIdle();
     await tester.pump();
 
     expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
     expect(find.text('30'), findsOneWidget);
-    expect(find.text('MPH · MAPPED'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('posted-speed-limit-caption')))
+          .data,
+      'MPH · MAPPED LIMIT · GPS SPEED',
+    );
+    // 20 m/s is 45 mph, shown below the sign at the sign's own font size.
+    final riderSpeed = tester.widget<Text>(
+      find.byKey(const Key('posted-speed-limit-rider-speed')),
+    );
+    expect(riderSpeed.data, '45');
+    expect(riderSpeed.style?.fontSize, 26);
   });
 
   testWidgets('offers file import and loads bundled demo route offline', (
