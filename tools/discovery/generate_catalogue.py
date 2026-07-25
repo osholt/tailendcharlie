@@ -135,9 +135,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--layer-directory", type=Path)
     parser.add_argument("--review-sample", type=Path)
-    parser.add_argument("--max-twisty", type=int, default=4_000)
-    parser.add_argument("--max-good-roads", type=int, default=4_000)
-    parser.add_argument("--max-passes", type=int, default=2_000)
+    parser.add_argument("--max-twisty", type=int, default=1_100)
+    parser.add_argument("--max-good-roads", type=int, default=1_100)
+    parser.add_argument("--max-passes", type=int, default=350)
     parser.add_argument("--max-output-bytes", type=int, default=12 * 1024 * 1024)
     return parser.parse_args(argv)
 

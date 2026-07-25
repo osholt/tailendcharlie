@@ -21,8 +21,15 @@ python3 tools/discovery/generate_catalogue.py \
   --pbf /data/united-kingdom-260723.osm.pbf \
   --output /tmp/discovery-catalogue.geojson \
   --layer-directory /tmp/discovery-layers \
-  --review-sample /tmp/discovery-manual-review.geojson
+  --review-sample /tmp/discovery-manual-review.geojson \
+  --max-twisty 1100 \
+  --max-good-roads 1100 \
+  --max-passes 350
 ```
+
+These bounded release caps keep the combined review artefact below the 12 MiB
+publication gate. A source release that exceeds the gate must be reviewed and
+retuned explicitly; it must not silently emit an oversized catalogue.
 
 The output remains `review-required`; running the script never publishes or
 silently replaces the app catalogue. Before publication:
