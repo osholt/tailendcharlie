@@ -990,14 +990,20 @@ def create_app(
             for value in request.headers.get("x-tailendcharlie-capabilities", "").split(",")
             if value.strip()
         }
-        if "pre-start-presence-v1" not in capabilities:
-            raise RelayServiceError(400, "Pre-start presence capability is required")
+        # Unknown capability strings from a newer client are ignored, not
+        # rejected. Either the legacy pre-start capability or the live-presence
+        # capability is enough to use the channel.
+        live_presence = "live-presence-v2" in capabilities
+        if not live_presence and "pre-start-presence-v1" not in capabilities:
+            raise RelayServiceError(400, "A live presence capability is required")
         result = service.synchronize_pre_start_presence(
             session,
             ride_id=ride_id,
             bearer_token=bearer_token,
             device_header=request.headers.get("x-ride-relay-device", ""),
             request=payload,
+            live_presence=live_presence,
+            client_protocol=request_protocol,
         )
         response = PresenceSyncResponse.model_validate(result).model_dump(mode="json")
         encoded = json.dumps(response, separators=(",", ":"), allow_nan=False).encode()

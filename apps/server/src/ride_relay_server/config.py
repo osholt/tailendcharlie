@@ -70,6 +70,10 @@ class Settings(BaseSettings):
             "ride-start-v1",
             "membership-v1",
             "pre-start-presence-v1",
+            # Presence that spans the pre-start and started phases and reports a
+            # cursor-independent ride roster. Advertised alongside the legacy
+            # pre-start capability so an older client keeps working unchanged.
+            "live-presence-v2",
             "route-revisions-v1",
             "push-notifications-v1",
             "observer-access-v1",

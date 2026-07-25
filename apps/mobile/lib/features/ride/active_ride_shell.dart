@@ -41,6 +41,7 @@ import '../../internet/internet_relay_worker.dart';
 import '../../internet/observer_access_client.dart';
 import '../../internet/push_registration_client.dart';
 import '../../internet/shared_preferences_internet_cursor_store.dart';
+import '../../relay/live_presence.dart';
 import '../../relay/native_nearby_transport.dart';
 import '../../relay/nearby_event_source.dart';
 import '../../relay/relay_engine.dart';
@@ -770,25 +771,25 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         (sample) async {
           _latestObserverLocationSample = sample;
           _publishObserverSnapshot();
-          final startedAt = widget.rideController.rideStartedAt;
-          if (startedAt == null) {
-            final currentSession = widget.rideController.session;
-            if (currentSession != null) {
-              _preStartPresenceController?.updateLocalPosition(
-                RiderLocation(
-                  riderId: currentSession.localRiderId,
-                  displayName: currentSession.displayName,
-                  role: currentSession.role,
-                  sample: sample,
-                  receivedAt: DateTime.now(),
-                  motorcycleStyle: currentSession.motorcycleStyle,
-                  riderColor: currentSession.riderColor,
-                ),
-              );
-            }
-            return;
+          // Every fix goes to the ephemeral presence channel, in both phases,
+          // so this rider stays continuously visible to the group. The durable
+          // journal still only receives post-start fixes.
+          final currentSession = widget.rideController.session;
+          if (currentSession != null) {
+            _preStartPresenceController?.updateLocalPosition(
+              RiderLocation(
+                riderId: currentSession.localRiderId,
+                displayName: currentSession.displayName,
+                role: currentSession.role,
+                sample: sample,
+                receivedAt: DateTime.now(),
+                motorcycleStyle: currentSession.motorcycleStyle,
+                riderColor: currentSession.riderColor,
+              ),
+            );
           }
-          if (sample.recordedAt.isBefore(startedAt)) {
+          final startedAt = widget.rideController.rideStartedAt;
+          if (startedAt == null || sample.recordedAt.isBefore(startedAt)) {
             return;
           }
           final awareness = _awarenessController;
@@ -886,7 +887,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         );
         _preStartPresenceController = preStartPresenceController;
         preStartPresenceController.addListener(_onPreStartPresenceChanged);
-        if (!widget.rideController.rideStarted) {
+        // Presence runs for the whole ride, not only before the start. It is
+        // what keeps a rider visible across `rideStarted` and what makes a
+        // rider who joins an already-started ride appear immediately.
+        if (!widget.rideController.rideEnded) {
           await preStartPresenceController.start(session);
         }
       }
@@ -1481,9 +1485,18 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       for (final participant in widget.rideController.participants)
         participant.riderId: participant,
     };
-    final locationSource = !_isSimulation && !widget.rideController.rideStarted
-        ? _preStartPresenceController?.locations ?? const <RiderLocation>[]
-        : awareness.riderLocations;
+    // One reconciled model for both ride phases and both transports, so nobody
+    // disappears at the `rideStarted` transition and a late joiner appears at
+    // once.
+    final livePresence = _isSimulation
+        ? const <LiveRiderPresence>[]
+        : _reconciledLivePresence();
+    final freshnessByRider = {
+      for (final presence in livePresence) presence.riderId: presence,
+    };
+    final locationSource = _isSimulation
+        ? awareness.riderLocations
+        : [for (final presence in livePresence) ?presence.location];
     final visibleRiderLocations = locationSource
         .where(
           (location) =>
@@ -1617,24 +1630,45 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                     RouteAlertLevel.urgent.index;
             final isTec = location.role == RideRole.tailEndCharlie;
             final isLead = location.role == RideRole.lead;
+            // A position past its freshness threshold is demoted in words and
+            // in colour, never drawn as though it were current.
+            final freshness =
+                freshnessByRider[location.riderId]?.freshness ??
+                PresenceFreshness.live;
+            final ageSuffix = switch (freshness) {
+              PresenceFreshness.live => null,
+              PresenceFreshness.none => PresenceFreshness.none.label,
+              _ =>
+                freshnessByRider[location.riderId]?.freshnessLabel ??
+                    freshness.label,
+            };
+            final roleSuffix = needsAttention
+                ? 'check route'
+                : isTec
+                ? 'TEC'
+                : isLead
+                ? 'Lead'
+                : null;
+            final label = [
+              location.displayName,
+              ?roleSuffix,
+              ?ageSuffix,
+            ].join(' · ');
+            final baseColor = needsAttention
+                ? alertColor
+                : isTec
+                ? tailEndCharlieColor
+                : isLead
+                ? leadColor
+                : location.riderColor.color;
             return MapOverlayMarker(
               id: 'rider-${location.riderId}',
               point: location.point,
-              label: needsAttention
-                  ? '${location.displayName} · check route'
-                  : isTec
-                  ? '${location.displayName} · TEC'
-                  : isLead
-                  ? '${location.displayName} · Lead'
-                  : location.displayName,
+              label: label,
               motorcycleStyle: location.motorcycleStyle,
-              color: needsAttention
-                  ? alertColor
-                  : isTec
-                  ? tailEndCharlieColor
-                  : isLead
-                  ? leadColor
-                  : location.riderColor.color,
+              color: freshness == PresenceFreshness.live
+                  ? baseColor
+                  : _demotedMarkerColor(baseColor, freshness),
             );
           }),
     ];
@@ -1823,6 +1857,18 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       (first.latitude - second.latitude).abs() > 1e-7 ||
       (first.longitude - second.longitude).abs() > 1e-7;
 
+  /// Desaturates a rider marker as its position ages. The wording beside it
+  /// always states the age too, so this is never the only signal.
+  static Color _demotedMarkerColor(Color base, PresenceFreshness freshness) {
+    final blend = switch (freshness) {
+      PresenceFreshness.live => 0.0,
+      PresenceFreshness.ageing => 0.35,
+      PresenceFreshness.stale => 0.6,
+      PresenceFreshness.none => 0.75,
+    };
+    return Color.lerp(base, const Color(0xFF6B7684), blend) ?? base;
+  }
+
   static Color _hazardColor(HazardSeverity severity) => switch (severity) {
     HazardSeverity.advisory => const Color(0xFF8EA7C4),
     HazardSeverity.caution => const Color(0xFFFFC857),
@@ -1887,9 +1933,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       _observerAccessController?.updateSession(session);
       _updateMapOverlays();
       unawaited(_synchroniseRideControllers());
-      if (widget.rideController.rideStarted) {
-        unawaited(_preStartPresenceController?.stop());
-      }
       if (rideJustStarted && !_localRideStartInProgress) {
         unawaited(_resumeLocationForActiveRide());
       }
@@ -1976,8 +2019,36 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   void _onPreStartPresenceChanged() {
-    if (!mounted || widget.rideController.rideStarted) return;
+    if (!mounted) return;
+    // Presence is the channel that does not depend on the bulk event batch, so
+    // it is what tells the roster a rider has joined.
+    widget.rideController.observeLivePresence(_reconciledLivePresence());
+    // A capability refusal, a rejected credential or an older peer used to turn
+    // live positions off with no visible reason at all.
+    var changed = false;
+    for (final limitation
+        in _preStartPresenceController?.limitations ?? const []) {
+      if (_warnings.add(limitation.message)) changed = true;
+    }
     _updateMapOverlays();
+    if (changed && mounted) setState(() {});
+  }
+
+  /// One reconciled live-position model: the durable journal, the internet
+  /// presence channel, the nearby presence channel and the relay's
+  /// cursor-independent roster, merged newest-sample-wins.
+  List<LiveRiderPresence> _reconciledLivePresence() {
+    final session = widget.rideController.session;
+    if (session == null || _isSimulation) return const [];
+    final presence = _preStartPresenceController;
+    return const LivePresenceReconciler().reconcile(
+      now: DateTime.now(),
+      localRiderId: session.localRiderId,
+      journal: _awarenessController?.riderLocations ?? const [],
+      internetPresence: presence?.internetLocations ?? const [],
+      nearbyPresence: presence?.nearbyLocations ?? const [],
+      roster: presence?.roster ?? const [],
+    );
   }
 
   void _onDeviceLocationChanged() {

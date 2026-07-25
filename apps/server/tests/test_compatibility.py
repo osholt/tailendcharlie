@@ -7,6 +7,7 @@ from ride_relay_server.app import create_app
 SECRET = "0123456789abcdef0123456789abcdef"
 CURRENT_CAPABILITIES = [
     "ride-start-v1",
+    "live-presence-v2",
     "membership-v1",
     "observer-access-v1",
     "pre-start-presence-v1",
