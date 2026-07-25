@@ -68,6 +68,7 @@ from .schemas import (
     PushRegistrationResponse,
     RegisterJoinCodeRequest,
     SyncRequest,
+    TrafficRerouteRequest,
 )
 from .service import RelayService, RelayServiceError
 from .traffic import (
@@ -75,6 +76,7 @@ from .traffic import (
     TrafficIncidentProvider,
     TrafficProviderError,
     validate_uk_incident_bounds,
+    validate_uk_reroute,
 )
 
 OBSERVER_API_TOKEN = re.compile(r"^(?:om1|op1|ro1)_[A-Za-z0-9_-]{43}$")
@@ -143,6 +145,10 @@ def create_app(
     )
     traffic_incident_limiter = SlidingWindowRateLimiter(
         maximum_requests=settings.traffic_incident_rate_limit_requests,
+        window_seconds=settings.traffic_incident_rate_limit_window_seconds,
+    )
+    traffic_reroute_limiter = SlidingWindowRateLimiter(
+        maximum_requests=max(5, settings.traffic_incident_rate_limit_requests // 6),
         window_seconds=settings.traffic_incident_rate_limit_window_seconds,
     )
     registry = CollectorRegistry()
@@ -314,6 +320,59 @@ def create_app(
                 },
             )
         return JSONResponse(content=result)
+
+    @app.post("/api/v1/traffic/reroutes", include_in_schema=False)
+    async def traffic_reroute(
+        request: Request,
+        payload: TrafficRerouteRequest,
+    ) -> Response:
+        path = [(point.latitude, point.longitude) for point in payload.path]
+        avoid_areas = [
+            (area.west, area.south, area.east, area.north) for area in payload.avoidAreas
+        ]
+        try:
+            validate_uk_reroute(path, avoid_areas)
+        except ValueError as error:
+            raise RelayServiceError(400, str(error)) from error
+        if not traffic_provider.configured:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": "traffic_provider_unconfigured",
+                    "message": "Live UK traffic rerouting is not configured.",
+                },
+            )
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = traffic_reroute_limiter.check(f"traffic-reroute:{client_ip}")
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                headers={"retry-after": str(min(retry_after, 300))},
+                content={"error": "Traffic reroute rate limit exceeded"},
+            )
+        try:
+            result = await traffic_provider.reroute(
+                path=path,
+                avoid_areas=avoid_areas,
+            )
+        except TrafficProviderError as error:
+            headers = (
+                {"retry-after": str(error.retry_after)} if error.retry_after is not None else None
+            )
+            return JSONResponse(
+                status_code=503,
+                headers=headers,
+                content={
+                    "code": "traffic_provider_unavailable",
+                    "message": str(error),
+                },
+            )
+        return JSONResponse(
+            content={
+                **result,
+                "incidentIds": payload.incidentIds,
+            }
+        )
 
     def client_compatibility_error(request: Request, protocol: int) -> Response | None:
         platform = request.headers.get("x-tailendcharlie-platform", "")

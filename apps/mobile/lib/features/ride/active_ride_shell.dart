@@ -46,6 +46,7 @@ import '../../relay/nearby_event_source.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
+import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/device_location_source.dart';
 import '../../services/external_hazard_provider.dart';
@@ -59,8 +60,10 @@ import '../../services/ride_completion_detector.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
+import '../../services/relay_traffic_reroute_provider.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
+import '../map/route_review_screen.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/notification_preferences_sheet.dart';
 import 'ice_share_inbox_sheet.dart';
@@ -524,6 +527,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   PreStartPresenceController? _preStartPresenceController;
   SharedPreferencesInternetCursorStore? _internetCursorStore;
   RideSimulationController? _simulationController;
+  RelayTrafficRerouteProvider? _trafficRerouteProvider;
+  SharedPreferences? _trafficReroutePreferences;
   InMemoryRouteStore? _simulationRouteStore;
   RouteStore? _rideRouteStore;
   StreamSubscription<RideEvent>? _receivedEventSubscription;
@@ -539,6 +544,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   String? _simulationRouteFingerprint;
   route_domain.ImportedRoute? _activeRoute;
   NavigationGuidance? _latestNavigationGuidance;
+  TrafficRerouteSuppression? _trafficRerouteSuppression;
+  String? _lastTrafficOfferFingerprint;
+  String? _trafficRerouteError;
   int _routeGeneration = 0;
   int _selectedIndex = 0;
   Object? _changeRouteRequestToken;
@@ -556,6 +564,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   bool _holdingNavigationChromeForMarkerExit = false;
   bool _autoEndingRide = false;
   bool _simulationPausedByRide = false;
+  bool _trafficRerouting = false;
   bool _observedRideStarted = false;
   bool _localRideStartInProgress = false;
   RideRole? _lastPushRole;
@@ -691,6 +700,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     }
 
     _activeRoute = route;
+    await _initializeTrafficRerouting();
     await _replaceAwarenessController(route, notify: false);
     if (_isSimulation) {
       await _replaceSimulationController(route, notify: false);
@@ -875,6 +885,158 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     }
     setState(() => _loading = false);
     _schedulePublish();
+  }
+
+  Future<void> _initializeTrafficRerouting() async {
+    if (_isSimulation || !widget.enableNativeServices) return;
+    _trafficRerouteProvider = RelayTrafficRerouteProvider(
+      configuration: InternetRelayConfiguration.fromEnvironment(),
+    );
+    final preferences = await SharedPreferences.getInstance();
+    _trafficReroutePreferences = preferences;
+    final value = preferences.getString(_trafficRerouteSuppressionKey);
+    if (value == null) return;
+    final suppression = TrafficRerouteSuppression.tryDecode(value);
+    if (suppression == null || !suppression.until.isAfter(DateTime.now())) {
+      await preferences.remove(_trafficRerouteSuppressionKey);
+      return;
+    }
+    _trafficRerouteSuppression = suppression;
+  }
+
+  String get _trafficRerouteSuppressionKey =>
+      'traffic-reroute-suppression:'
+      '${widget.rideController.session?.rideId ?? 'none'}';
+
+  List<HazardReport> get _trafficRerouteHazards {
+    if (!widget.rideController.isLocalRideLeader ||
+        !widget.rideController.rideStarted ||
+        _activeRoute == null) {
+      return const [];
+    }
+    final now = DateTime.now();
+    final hazards =
+        _awarenessController?.activeHazards
+            .where(
+              (hazard) =>
+                  hazard.source == HazardSource.externalProvider &&
+                  hazard.providerId == 'tomtom-traffic' &&
+                  hazard.severity.index >= HazardSeverity.serious.index,
+            )
+            .take(10)
+            .toList(growable: false) ??
+        const <HazardReport>[];
+    if (hazards.isEmpty) return hazards;
+    if (_trafficRerouteSuppression?.suppresses(hazards, now) == true) {
+      return const [];
+    }
+    return hazards;
+  }
+
+  Future<void> _dismissTrafficAlternative() async {
+    final hazards = _trafficRerouteHazards;
+    if (hazards.isEmpty) return;
+    await _suppressTrafficIncidents(hazards);
+    if (mounted) {
+      setState(() {
+        _trafficRerouteError = null;
+        _lastTrafficOfferFingerprint = null;
+      });
+    }
+  }
+
+  Future<void> _suppressTrafficIncidents(List<HazardReport> hazards) async {
+    if (hazards.isEmpty) return;
+    final suppression = TrafficRerouteSuppression.forHazards(hazards);
+    _trafficRerouteSuppression = suppression;
+    await _trafficReroutePreferences?.setString(
+      _trafficRerouteSuppressionKey,
+      suppression.encode(),
+    );
+  }
+
+  Future<void> _reviewTrafficAlternative() async {
+    if (_trafficRerouting) return;
+    final provider = _trafficRerouteProvider;
+    final route = _activeRoute;
+    final hazards = _trafficRerouteHazards;
+    if (provider == null || route == null || hazards.isEmpty) return;
+    setState(() {
+      _trafficRerouting = true;
+      _trafficRerouteError = null;
+    });
+    try {
+      final preview = await provider.preview(
+        route: route,
+        currentPosition: _mapPosition.value,
+        hazards: hazards,
+      );
+      if (!mounted) return;
+      final formatter = MeasurementFormatter(widget.distanceUnits.value);
+      final distanceDelta = preview.distanceDeltaMeters;
+      final durationDelta = preview.durationDelta;
+      final comparison =
+          '${distanceDelta >= 0 ? '+' : '−'}'
+          '${formatter.distance(distanceDelta.abs())}; '
+          '${durationDelta.isNegative ? 'saves' : 'adds'} '
+          '${_trafficDurationLabel(durationDelta.abs())}.';
+      final action = await RouteReviewScreen.show(
+        context,
+        route: preview.route,
+        distanceUnit: widget.distanceUnits.value,
+        basemapConfiguration: BasemapConfiguration.fromEnvironment()
+            .forBrightness(
+              dark: widget.mapStyleMode.resolveDark(
+                MediaQuery.platformBrightnessOf(context),
+              ),
+            ),
+        distanceMeters: preview.alternativeDistanceMeters,
+        duration: preview.alternativeDuration,
+        previousRoute: route,
+        warnings: [
+          hazards.first.details ??
+              '${hazards.first.type.label} may affect the current route.',
+          'TomTom traffic alternative: $comparison',
+          if (preview.trafficDelaySaved > Duration.zero)
+            'Estimated live-traffic delay avoided: '
+                '${_trafficDurationLabel(preview.trafficDelaySaved)}.',
+          'The current group route remains authoritative until you confirm.',
+        ],
+      );
+      if (action != RouteReviewAction.confirm || !mounted) return;
+      final previousRevision =
+          widget.rideController.authoritativeRouteState.revisionNumber;
+      await _handleRouteChanged(preview.route);
+      final published = widget.rideController.authoritativeRouteState;
+      if (published.revisionNumber <= previousRevision ||
+          published.route?.id != preview.route.id) {
+        _activeRoute = route;
+        await _replaceAwarenessController(route);
+        await _rideRouteStore?.saveActiveRoute(route);
+        throw const FormatException(
+          'The traffic alternative could not be published. '
+          'The current route has been restored.',
+        );
+      }
+      await _suppressTrafficIncidents(hazards);
+      if (mounted) {
+        setState(() {
+          _lastTrafficOfferFingerprint = null;
+        });
+      }
+    } on FormatException catch (error) {
+      if (mounted) setState(() => _trafficRerouteError = error.message);
+    } on Object {
+      if (mounted) {
+        setState(() {
+          _trafficRerouteError =
+              'The traffic alternative could not be calculated. '
+              'The current route has not changed.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _trafficRerouting = false);
+    }
   }
 
   Future<void> _replaceAwarenessController(
@@ -1239,6 +1401,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     _updateMapOverlays();
+    _refreshTrafficOfferState();
     _schedulePublish();
     if (!_refreshingRideEvents) {
       _refreshingRideEvents = true;
@@ -1250,6 +1413,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         }
       }());
     }
+  }
+
+  void _refreshTrafficOfferState() {
+    final fingerprint = trafficIncidentFingerprint(_trafficRerouteHazards);
+    if (fingerprint == _lastTrafficOfferFingerprint) return;
+    _lastTrafficOfferFingerprint = fingerprint;
+    if (mounted) setState(() {});
   }
 
   void _scheduleSimulationAwarenessUpdate() {
@@ -2657,6 +2827,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           ? _locationController
           : null,
       onLocationStopped: _clearPreStartPresence,
+      trafficRerouteHazards: _trafficRerouteHazards,
+      trafficRerouting: _trafficRerouting,
+      trafficRerouteError: _trafficRerouteError,
+      onReviewTrafficAlternative: _trafficRerouteHazards.isEmpty
+          ? null
+          : _reviewTrafficAlternative,
+      onDismissTrafficAlternative: _trafficRerouteHazards.isEmpty
+          ? null
+          : _dismissTrafficAlternative,
     );
   }
 
@@ -2734,4 +2913,13 @@ LocationSample? _newestLocationSample(
   return deviceSample.recordedAt.isAfter(journalSample.recordedAt)
       ? deviceSample
       : journalSample;
+}
+
+String _trafficDurationLabel(Duration duration) {
+  final minutes = (duration.inSeconds / 60).round();
+  if (minutes < 1) return '${duration.inSeconds} sec';
+  if (minutes < 60) return '$minutes min';
+  final hours = minutes ~/ 60;
+  final remainder = minutes % 60;
+  return remainder == 0 ? '$hours hr' : '$hours hr $remainder min';
 }

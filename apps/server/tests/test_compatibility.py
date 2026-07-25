@@ -13,6 +13,7 @@ CURRENT_CAPABILITIES = [
     "push-notifications-v1",
     "route-revisions-v1",
     "traffic-incidents-v1",
+    "traffic-reroutes-v1",
 ]
 
 
