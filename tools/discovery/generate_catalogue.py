@@ -775,18 +775,13 @@ def write_review_sample(
     destination: Path,
     collection: Mapping[str, object],
 ) -> None:
-    regions = {
-        "England": (-5.8, 50.0, 1.8, 55.8),
-        "Scotland": (-8.7, 54.6, -0.5, 61.0),
-        "Wales": (-5.5, 51.2, -2.5, 53.6),
-        "Northern Ireland": (-8.3, 54.0, -5.3, 55.5),
-    }
+    regions = ("England", "Scotland", "Wales", "Northern Ireland")
     sample: list[dict[str, object]] = []
-    for region, bounds in regions.items():
+    for region in regions:
         candidates = [
             feature
             for feature in collection["features"]
-            if point_in_bounds(feature_anchor(feature), bounds)
+            if review_region(feature_anchor(feature)) == region
         ]
         candidates.sort(
             key=lambda feature: (
@@ -809,6 +804,20 @@ def write_review_sample(
         "features": sample,
     }
     write_bytes(destination, encode_collection(review))
+
+
+def review_region(anchor: tuple[float, float]) -> str | None:
+    """Assign unambiguous nation-core samples without claiming border precision."""
+    core_bounds = (
+        ("Northern Ireland", (-8.3, 54.0, -5.3, 55.5)),
+        ("Wales", (-5.3, 51.4, -3.1, 53.5)),
+        ("Scotland", (-8.7, 55.8, -0.5, 61.0)),
+        ("England", (-5.8, 50.0, 1.8, 54.8)),
+    )
+    for region, bounds in core_bounds:
+        if point_in_bounds(anchor, bounds):
+            return region
+    return None
 
 
 def source_feature_id(

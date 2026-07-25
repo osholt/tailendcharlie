@@ -16,6 +16,7 @@ from tools.discovery.generate_catalogue import (  # noqa: E402
     encode_collection,
     generate_catalogue,
     main,
+    review_region,
     validate_features,
     validate_pbf,
 )
@@ -121,6 +122,13 @@ class DiscoveryCatalogueTest(unittest.TestCase):
         duplicate_geometry["properties"]["id"] = "different-id"
         with self.assertRaisesRegex(ValueError, "Duplicate .* geometry"):
             validate_features([first, duplicate_geometry])
+
+    def test_review_regions_use_non_overlapping_nation_cores(self) -> None:
+        self.assertEqual(review_region((-1.9, 52.5)), "England")
+        self.assertEqual(review_region((-4.2, 57.2)), "Scotland")
+        self.assertEqual(review_region((-4.0, 52.2)), "Wales")
+        self.assertEqual(review_region((-6.7, 54.6)), "Northern Ireland")
+        self.assertIsNone(review_region((-3.0, 55.2)))
 
 
 if __name__ == "__main__":

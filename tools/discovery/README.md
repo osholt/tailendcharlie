@@ -34,8 +34,9 @@ retuned explicitly; it must not silently emit an oversized catalogue.
 The output remains `review-required`; running the script never publishes or
 silently replaces the app catalogue. Before publication:
 
-1. review the deterministic sample from England, Scotland, Wales and Northern
-   Ireland, correcting any coarse region-selection overlap during human review;
+1. review the deterministic, non-overlapping nation-core sample from England,
+   Scotland, Wales and Northern Ireland; border areas are deliberately excluded
+   because the generator does not treat coarse bounds as administrative truth;
 2. inspect access, surface, seasonal closure, junction churn and false-positive
    handling;
 3. compare road-class coverage against OS Open Roads and traffic metadata only
