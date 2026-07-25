@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../internet/internet_relay_client.dart';
+
 /// Where an installed build came from.
 ///
 /// The value is stamped at build time by the workflow that produced the
@@ -70,15 +72,15 @@ class BuildIdentity {
     const overriddenUpdateUrl = String.fromEnvironment(
       'RIDE_RELAY_TESTER_UPDATE_URL',
     );
+    // Read the version through the relay descriptor rather than re-reading the
+    // dart-defines here. Two independent reads with two different fallbacks is
+    // exactly how the About screen and the relay headers came to disagree, and
+    // an unstamped build must report `unknown` on both rather than a
+    // plausible-looking constant.
+    final declared = RelayClientDescriptor.current();
     return BuildIdentity(
-      appVersion: const String.fromEnvironment(
-        'RIDE_RELAY_APP_VERSION',
-        defaultValue: '1.0.1',
-      ),
-      appBuild: const String.fromEnvironment(
-        'RIDE_RELAY_APP_BUILD',
-        defaultValue: '22',
-      ),
+      appVersion: declared.appVersion,
+      appBuild: declared.appBuild,
       track: DistributionTrack.parse(
         const String.fromEnvironment('RIDE_RELAY_DISTRIBUTION_TRACK'),
       ),
@@ -149,12 +151,20 @@ class BuildIdentity {
       };
 
   /// `1.0.1 (build 42)` - the identity to quote in a bug report.
-  String get versionLabel => '$appVersion (build $appBuild)';
+  /// False when this build channel did not stamp its version in, so the app
+  /// says so instead of quoting a constant that does not identify the artefact.
+  bool get reportsVersion =>
+      appVersion != RelayClientDescriptor.unknownVersion &&
+      appBuild != RelayClientDescriptor.unknownVersion;
+
+  String get versionLabel => reportsVersion
+      ? '$appVersion (build $appBuild)'
+      : 'This build does not report its version';
 
   /// A single line a tester can copy into a bug report.
   String get bugReportLine =>
-      'Tail End Charlie $appVersion+$appBuild · ${track.label} · '
-      '${platform.name}';
+      'Tail End Charlie ${reportsVersion ? '$appVersion+$appBuild' : 'unstamped build (version not reported)'} · '
+      '${track.label} · ${platform.name}';
 
   bool get hasRelayEndpoint => relayHost.isNotEmpty;
 

@@ -306,7 +306,7 @@ class TesterUpdateBanner extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'You are on ${identity.versionLabel}, built '
+              '${identity.reportsVersion ? 'You are on ${identity.versionLabel}, built' : 'This build does not report its version. It was built'} '
               '${_daysLabel(identity.ageInDaysAt(resolvedNow) ?? 0)} ago. '
               '${identity.updateInstruction}',
               style: const TextStyle(color: Color(0xFFD8CFBB)),
