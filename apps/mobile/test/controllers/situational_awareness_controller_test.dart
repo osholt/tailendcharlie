@@ -306,6 +306,73 @@ void main() {
     );
   });
 
+  test("another device's off-course alert is ignored for a rider following the "
+      'leader', () async {
+    await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+    now = now.add(const Duration(seconds: 5));
+    // The leader abandons the GPX.
+    await controller.recordLocalLocation(_sample(latitude: 52, at: now));
+    await controller.ingestRemoteEvent(
+      _remoteLocationEvent(
+        riderId: 'follower',
+        role: RideRole.rider,
+        latitude: 52,
+        now: now,
+      ),
+    );
+    expect(controller.isFollowingLeaderTrack('follower'), isTrue);
+
+    // A device that had not yet seen the leader leave the GPX relays an
+    // off-route alert for that follower. It must not surface anywhere.
+    now = now.add(const Duration(seconds: 5));
+    await controller.ingestRemoteEvent(
+      _remoteDeviationEvent(riderId: 'follower', now: now),
+    );
+
+    expect(
+      controller.alertFor('follower')?.assessment.state,
+      RouteTrackingState.onRoute,
+    );
+    expect(
+      controller.alertFor('follower')?.assessment.alertLevel,
+      RouteAlertLevel.none,
+    );
+    expect(
+      controller.routeAlerts.map((alert) => alert.riderId),
+      isNot(contains('follower')),
+    );
+  });
+
+  test('a relayed off-course alert still surfaces for a rider who is not '
+      'following the leader', () async {
+    await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+    now = now.add(const Duration(seconds: 5));
+    await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+    await controller.ingestRemoteEvent(
+      _remoteLocationEvent(
+        riderId: 'stray',
+        role: RideRole.rider,
+        latitude: 53,
+        now: now,
+      ),
+    );
+    expect(controller.isFollowingLeaderTrack('stray'), isFalse);
+
+    now = now.add(const Duration(seconds: 5));
+    await controller.ingestRemoteEvent(
+      _remoteDeviationEvent(riderId: 'stray', now: now),
+    );
+
+    expect(
+      controller.alertFor('stray')?.assessment.state,
+      RouteTrackingState.offRoute,
+    );
+    expect(
+      controller.routeAlerts.map((alert) => alert.riderId),
+      contains('stray'),
+    );
+  });
+
   test(
     'a follower who genuinely separates from the leader is still flagged',
     () async {
@@ -468,5 +535,35 @@ RideEvent _remoteLocationEvent({
   return factory.create(
     type: RideEventType.riderLocationUpdated,
     payload: {'location': location.toJson()},
+  );
+}
+
+/// A deviation alert as another device would have relayed it: that device
+/// compared the rider against the planned GPX only.
+RideEvent _remoteDeviationEvent({
+  required String riderId,
+  required DateTime now,
+}) {
+  final factory = SituationEventFactory(
+    session: _session,
+    clock: () => now,
+    idFactory: () => '$riderId-deviation',
+  );
+  final alert = RiderRouteAlert(
+    riderId: riderId,
+    displayName: riderId,
+    assessment: RouteDeviationAssessment(
+      state: RouteTrackingState.offRoute,
+      alertLevel: RouteAlertLevel.urgent,
+      audience: RouteAlertAudience.coordinators,
+      evaluatedAt: now,
+      message: 'Rider is confirmed off route.',
+      distanceFromRouteMeters: 111000,
+      offRouteSince: now,
+    ),
+  );
+  return factory.create(
+    type: RideEventType.routeDeviationChanged,
+    payload: {'alert': alert.toJson()},
   );
 }

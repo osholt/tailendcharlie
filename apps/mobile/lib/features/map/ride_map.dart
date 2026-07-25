@@ -8,6 +8,7 @@ export 'ride_map_feature.dart'
         MapOverlayTrace,
         RideMapFeature,
         RideMapScreen,
+        rejoinRouteTraceColor,
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
         shouldUseTiledGroupMiniMap;

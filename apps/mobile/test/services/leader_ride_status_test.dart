@@ -200,6 +200,66 @@ void main() {
     },
   );
 
+  test('a rider on the leader\'s own track is not counted as off course', () {
+    RiderRouteAlert offCourse(String riderId, String name) => RiderRouteAlert(
+      riderId: riderId,
+      displayName: name,
+      assessment: RouteDeviationAssessment(
+        state: RouteTrackingState.offRoute,
+        alertLevel: RouteAlertLevel.urgent,
+        audience: RouteAlertAudience.coordinators,
+        evaluatedAt: now,
+        message: 'Off route',
+        distanceFromRouteMeters: 2400,
+      ),
+    );
+
+    // Both riders are far from the planned GPX and both have an off-route alert
+    // raised by another device. Only the one who is not on the leader's actual
+    // track should reach the leader's count.
+    final status = const LeaderRideStatusCalculator().calculate(
+      localRole: RideRole.lead,
+      localRiderId: 'lead',
+      localLocation: null,
+      riderLocations: [
+        _location(
+          id: 'follower',
+          name: 'Alex',
+          role: RideRole.rider,
+          longitude: 0.01,
+          speed: 10,
+          at: now,
+        ),
+        RiderLocation(
+          riderId: 'stray',
+          displayName: 'Sam',
+          role: RideRole.rider,
+          sample: LocationSample(
+            position: const GeoPoint(latitude: 0.05, longitude: 0.01),
+            recordedAt: now,
+            accuracyMeters: 5,
+          ),
+          receivedAt: now,
+        ),
+      ],
+      routeAlerts: [offCourse('follower', 'Alex'), offCourse('stray', 'Sam')],
+      route: const [
+        GeoPoint(latitude: 0.02, longitude: 0),
+        GeoPoint(latitude: 0.02, longitude: 0.02),
+      ],
+      // The leader abandoned the GPX and rode along latitude 0, where the
+      // follower now is.
+      leaderTrail: const [
+        GeoPoint(latitude: 0, longitude: 0),
+        GeoPoint(latitude: 0, longitude: 0.02),
+      ],
+      now: now,
+    );
+
+    expect(status!.offCourseAlerts, hasLength(1));
+    expect(status.offCourseAlerts.single.riderId, 'stray');
+  });
+
   test('non-leaders do not receive leader map status', () {
     final status = const LeaderRideStatusCalculator().calculate(
       localRole: RideRole.rider,

@@ -15,9 +15,11 @@ class RouteDeviationConfig {
     this.staleAfter = const Duration(seconds: 30),
     this.coordinatorStaleAfter = const Duration(seconds: 90),
     this.criticalOffRouteAfter = const Duration(minutes: 3),
+    this.leaderTrackCorridorMeters = 120,
   }) : assert(enterOffRouteMeters > exitOffRouteMeters),
        assert(samplesToConfirmOffRoute > 0),
-       assert(samplesToConfirmRecovery > 0);
+       assert(samplesToConfirmRecovery > 0),
+       assert(leaderTrackCorridorMeters > 0);
 
   final double enterOffRouteMeters;
   final double exitOffRouteMeters;
@@ -27,6 +29,12 @@ class RouteDeviationConfig {
   final Duration staleAfter;
   final Duration coordinatorStaleAfter;
   final Duration criticalOffRouteAfter;
+
+  /// How close to the ride leader's *actual* recorded track a rider has to be
+  /// to count as following the leader rather than as off course. Matched to
+  /// [enterOffRouteMeters] so the leader's track is treated exactly as
+  /// generously as the planned route is.
+  final double leaderTrackCorridorMeters;
 }
 
 class RouteDeviationDetector {
@@ -55,6 +63,45 @@ class RouteDeviationDetector {
       List.unmodifiable(
         segments.map((segment) => List<GeoPoint>.unmodifiable(segment)),
       );
+
+  /// The stable state the hysteresis has settled on, before any caller-applied
+  /// exemption. Exposed so a caller that overrides the verdict - the
+  /// leader-follow exemption does - can still see what the geometry said.
+  RouteTrackingState get stableState => _stableState;
+
+  DateTime? get offRouteSince => _offRouteSince;
+
+  /// Drops the off-route/recovery hysteresis and the off-route clock.
+  ///
+  /// Called when a rider is exempt from the planned-route comparison because
+  /// they are following the ride leader's own track. Without this the detector
+  /// would keep counting: a rider who spent twenty minutes behind the leader on
+  /// a diversion would be an instant all-rider critical the moment they left
+  /// the leader's track, instead of getting a fresh three-sample confirmation.
+  void resetOffRouteHysteresis() {
+    _stableState = RouteTrackingState.onRoute;
+    _outsideSamples = 0;
+    _insideSamples = 0;
+    _offRouteSince = null;
+  }
+
+  /// The verdict for a rider inside the ride leader's live-track corridor.
+  ///
+  /// Such a rider is on route by definition, whatever the planned GPX says: the
+  /// leader has physically ridden this road. Using one constructor for it keeps
+  /// alert state, the leader's off-course count, the roster and the map in
+  /// agreement.
+  static RouteDeviationAssessment followingLeaderTrackAssessment({
+    required DateTime evaluatedAt,
+    double? distanceFromRouteMeters,
+  }) => RouteDeviationAssessment(
+    state: RouteTrackingState.onRoute,
+    alertLevel: RouteAlertLevel.none,
+    audience: RouteAlertAudience.rider,
+    evaluatedAt: evaluatedAt,
+    message: 'Following the ride leader\'s track.',
+    distanceFromRouteMeters: distanceFromRouteMeters,
+  );
 
   RouteDeviationAssessment evaluate(LocationSample sample, DateTime now) {
     final usableSegments = _routeSegments

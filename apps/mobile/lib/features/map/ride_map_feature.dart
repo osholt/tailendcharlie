@@ -79,6 +79,7 @@ class RideMapFeature extends StatefulWidget {
     this.navigationPosition,
     this.overlayMarkers,
     this.offRouteTraces,
+    this.rejoinRoutes,
     this.leaderStatus,
     this.groupRiderCount,
     this.onOpenRoster,
@@ -115,6 +116,7 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<MapNavigationPosition?>? navigationPosition,
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
     ValueListenable<List<MapOverlayTrace>>? offRouteTraces,
+    ValueListenable<List<MapOverlayTrace>>? rejoinRoutes,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
     int? groupRiderCount,
     VoidCallback? onOpenRoster,
@@ -145,6 +147,7 @@ class RideMapFeature extends StatefulWidget {
     navigationPosition: navigationPosition,
     overlayMarkers: overlayMarkers,
     offRouteTraces: offRouteTraces,
+    rejoinRoutes: rejoinRoutes,
     leaderStatus: leaderStatus,
     groupRiderCount: groupRiderCount,
     onOpenRoster: onOpenRoster,
@@ -177,6 +180,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
+  final ValueListenable<List<MapOverlayTrace>>? rejoinRoutes;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
@@ -304,6 +308,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         navigationPosition: widget.navigationPosition,
         overlayMarkers: widget.overlayMarkers,
         offRouteTraces: widget.offRouteTraces,
+        rejoinRoutes: widget.rejoinRoutes,
         leaderStatus: widget.leaderStatus,
         groupRiderCount: widget.groupRiderCount,
         onOpenRoster: widget.onOpenRoster,
@@ -360,6 +365,7 @@ class RideMapScreen extends StatefulWidget {
     this.navigationPosition,
     this.overlayMarkers,
     this.offRouteTraces,
+    this.rejoinRoutes,
     this.leaderStatus,
     this.groupRiderCount,
     this.onOpenRoster,
@@ -400,6 +406,10 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
+
+  /// Issue #102: advisory rejoin routes, drawn as a live breadcrumb in a
+  /// colour reserved for them. Only ever geometry the routing engine returned.
+  final ValueListenable<List<MapOverlayTrace>>? rejoinRoutes;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
@@ -437,6 +447,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _remainingRouteSource = 'ride-relay-route-remaining';
   static const _riddenRouteSource = 'ride-relay-route-ridden';
   static const _offRouteTraceSource = 'ride-relay-off-route-traces';
+  static const _rejoinRouteSource = 'ride-relay-rejoin-routes';
   static const _trailDirectionArrowSource = 'ride-relay-trail-direction-arrows';
   static const _waypointSource = 'ride-relay-waypoints';
   static const _positionSource = 'ride-relay-position';
@@ -551,6 +562,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.navigationPosition?.addListener(_onPositionChanged);
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.offRouteTraces?.addListener(_onOverlayDataChanged);
+    widget.rejoinRoutes?.addListener(_onOverlayDataChanged);
     widget.leaderStatus?.addListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
     _observeSpeedLimit(_navigationFix);
@@ -583,6 +595,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       oldWidget.offRouteTraces?.removeListener(_onOverlayDataChanged);
       widget.offRouteTraces?.addListener(_onOverlayDataChanged);
     }
+    if (oldWidget.rejoinRoutes != widget.rejoinRoutes) {
+      oldWidget.rejoinRoutes?.removeListener(_onOverlayDataChanged);
+      widget.rejoinRoutes?.addListener(_onOverlayDataChanged);
+    }
     if (oldWidget.leaderStatus != widget.leaderStatus) {
       oldWidget.leaderStatus?.removeListener(_onGroupPipDataChanged);
       widget.leaderStatus?.addListener(_onGroupPipDataChanged);
@@ -609,6 +625,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
     widget.offRouteTraces?.removeListener(_onOverlayDataChanged);
+    widget.rejoinRoutes?.removeListener(_onOverlayDataChanged);
     widget.leaderStatus?.removeListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
@@ -1328,6 +1345,27 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         ],
                       ),
                     ),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        // Issue #102: advisory rejoin breadcrumb. Dashed cyan over a dark
+        // casing - the only cyan line on the map, and the only dashed line
+        // other than the blue route-ahead dots, so it cannot be confused with
+        // the planned route, the ridden trail, the leader's trail or an
+        // off-route trace in either map style.
+        if (_rejoinRouteTraces.isNotEmpty)
+          PolylineLayer(
+            key: const Key('rejoin-route-layer'),
+            polylines: _rejoinRouteTraces
+                .map(
+                  (trace) => Polyline(
+                    points: trace.points.map(_latLng).toList(growable: false),
+                    color: trace.color,
+                    strokeWidth: 6,
+                    borderColor: const Color(0xFF10151C),
+                    borderStrokeWidth: 3,
+                    pattern: StrokePattern.dashed(segments: const [14, 8]),
                   ),
                 )
                 .toList(growable: false),
@@ -2180,6 +2218,36 @@ class _RideMapScreenState extends State<RideMapScreen> {
           iconIgnorePlacement: true,
         ),
       );
+      // Issue #102: rejoin breadcrumb, added last so it draws above the
+      // planned route, the ridden trail and any off-route trace.
+      await controller.addGeoJsonSource(
+        _rejoinRouteSource,
+        _rejoinRouteGeoJson(),
+      );
+      await controller.addLineLayer(
+        _rejoinRouteSource,
+        'ride-relay-rejoin-route-casing',
+        const ml.LineLayerProperties(
+          lineColor: '#10151C',
+          lineOpacity: 0.85,
+          lineWidth: 11,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _rejoinRouteSource,
+        'ride-relay-rejoin-route-line',
+        const ml.LineLayerProperties(
+          lineColor: ['get', 'color'],
+          lineWidth: 6,
+          lineDasharray: [2, 1.2],
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
       _mapLibreStyleReady = true;
       await _syncMapLibreSources();
       if (_navigationMode) {
@@ -2231,6 +2299,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
       await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
       await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
+      await controller.setGeoJsonSource(
+        _rejoinRouteSource,
+        _rejoinRouteGeoJson(),
+      );
     } on Object catch (error) {
       if (kDebugMode) {
         debugPrint('Could not refresh MapLibre ride layers: $error');
@@ -2300,6 +2372,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _markerPlanGeoJson(),
         );
         await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
+        await controller.setGeoJsonSource(
+          _rejoinRouteSource,
+          _rejoinRouteGeoJson(),
+        );
       }
       if (progress || overlays) {
         await controller.setGeoJsonSource(
@@ -2447,6 +2523,32 @@ class _RideMapScreenState extends State<RideMapScreen> {
       ],
     };
   }
+
+  /// Issue #102: rejoin breadcrumbs with at least two routed points. Anything
+  /// shorter is not a route the engine returned and is not drawn.
+  List<MapOverlayTrace> get _rejoinRouteTraces =>
+      (widget.rejoinRoutes?.value ?? const <MapOverlayTrace>[])
+          .where((trace) => trace.points.length >= 2)
+          .toList(growable: false);
+
+  Map<String, dynamic> _rejoinRouteGeoJson() => {
+    'type': 'FeatureCollection',
+    'features': [
+      for (final trace in _rejoinRouteTraces)
+        {
+          'type': 'Feature',
+          'id': trace.id,
+          'properties': {'color': _hexColor(trace.color), 'label': trace.label},
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              for (final point in trace.points)
+                [point.longitude, point.latitude],
+            ],
+          },
+        },
+    ],
+  };
 
   Map<String, dynamic> _waypointGeoJson() => MapGeoJson.points(
     _route?.waypoints
@@ -3764,6 +3866,16 @@ class MapEmergencyContact {
     _ => displayName,
   };
 }
+
+/// Issue #102: reserved for the advisory rejoin breadcrumb.
+///
+/// Deliberately the only cyan line geometry on the map. It does not collide
+/// with the planned route ahead (#3478F6 blue), the ridden trail (#FF7A1A
+/// orange), an off-route trace (#E244C7 magenta), the leader's trail (#B58CFF
+/// violet) or GPX waypoints (#FFC857 amber), and its luminance keeps it legible
+/// on both the light and the dark basemap once drawn over the dark casing every
+/// route layer here uses.
+const rejoinRouteTraceColor = Color(0xFF00E5FF);
 
 class MapOverlayTrace {
   const MapOverlayTrace({

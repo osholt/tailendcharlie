@@ -5,6 +5,7 @@ import '../domain/ride_role.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 import 'geo_calculations.dart';
+import 'route_rejoin_planner.dart' show LeaderTrackExemption;
 
 class LeaderOffCourseAlert {
   const LeaderOffCourseAlert({
@@ -41,12 +42,21 @@ class LeaderRideStatusCalculator {
     this.defaultMovingSpeedMetersPerSecond = 13.4,
     this.maximumOnRouteDistanceMeters = 250,
     this.staleAfter = const Duration(minutes: 2),
+    this.leaderTrackCorridorMeters = 120,
   });
 
   final double defaultMovingSpeedMetersPerSecond;
   final double maximumOnRouteDistanceMeters;
   final Duration staleAfter;
 
+  /// Corridor around the leader's own recorded track inside which a rider is
+  /// following the leader rather than off course. See [LeaderTrackExemption].
+  final double leaderTrackCorridorMeters;
+
+  /// [leaderTrail] is the leader's own recorded track. A rider inside its
+  /// corridor is following the leader and is never counted as off course, even
+  /// if a deviation alert for them arrived from a device that had not yet seen
+  /// the leader leave the GPX.
   LeaderRideStatus? calculate({
     required RideRole localRole,
     required String localRiderId,
@@ -54,6 +64,7 @@ class LeaderRideStatusCalculator {
     required List<RiderLocation> riderLocations,
     required List<RiderRouteAlert> routeAlerts,
     required List<GeoPoint> route,
+    List<GeoPoint> leaderTrail = const [],
     DateTime? now,
   }) {
     if (localRole != RideRole.lead) return null;
@@ -61,6 +72,9 @@ class LeaderRideStatusCalculator {
     final currentRiderIds = riderLocations
         .map((location) => location.riderId)
         .toSet();
+    final locationsById = {
+      for (final location in riderLocations) location.riderId: location,
+    };
     final currentOffCourseAlerts = <String, RiderRouteAlert>{};
     for (final alert in routeAlerts) {
       if (alert.riderId == localRiderId ||
@@ -68,6 +82,16 @@ class LeaderRideStatusCalculator {
           alert.acknowledged ||
           alert.assessment.state != RouteTrackingState.offRoute ||
           !alert.assessment.coordinatorActionRequired) {
+        continue;
+      }
+      final location = locationsById[alert.riderId];
+      if (location != null &&
+          LeaderTrackExemption.isFollowingLeaderTrack(
+            position: location.sample.position,
+            accuracyMeters: location.sample.accuracyMeters,
+            leaderTrack: leaderTrail,
+            corridorMeters: leaderTrackCorridorMeters,
+          )) {
         continue;
       }
       final previous = currentOffCourseAlerts[alert.riderId];
