@@ -45,13 +45,15 @@ import '../../relay/native_nearby_transport.dart';
 import '../../relay/nearby_event_source.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
-import '../../services/device_location_source.dart';
 import '../../services/carplay_bridge.dart';
 import '../../services/demo_route_loader.dart';
+import '../../services/device_location_source.dart';
 import '../../services/external_hazard_provider.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
+import '../../services/measurement_formatter.dart';
 import '../../services/native_push_token_source.dart';
+import '../../services/navigation_guidance.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/ride_membership.dart';
@@ -536,6 +538,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   String? _appliedAuthoritativeRouteRevision;
   String? _simulationRouteFingerprint;
   route_domain.ImportedRoute? _activeRoute;
+  NavigationGuidance? _latestNavigationGuidance;
   int _routeGeneration = 0;
   int _selectedIndex = 0;
   Object? _changeRouteRequestToken;
@@ -1441,6 +1444,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 .where((alert) => activeRiderIds.contains(alert.riderId))
                 .toList(growable: false),
             activeHazards: awareness.activeHazards,
+            routeName: _activeRoute?.name,
+            rideState: _projectedRideState,
+            guidanceTitle: _projectedGuidanceTitle,
+            guidanceDetail: _projectedGuidanceDetail,
+            groupStatus: '${visibleRiderLocations.length} riders visible',
+            markerStatus: _junctionMarkerOverlay.value?.instruction,
           ) ??
           Future<void>.value(),
     );
@@ -1978,6 +1987,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onLeaveRide: _confirmLeaveRideFromMap,
       onOpenRideMenu: _openRideMenu,
       onRouteCommitted: _onRouteChanged,
+      onNavigationGuidanceChanged: _onNavigationGuidanceChanged,
       changeRouteRequestToken: _changeRouteRequestToken,
       onChangeRouteRequestHandled: _clearChangeRouteRequest,
       pendingSharedGpxFile: _pendingSharedGpxFile,
@@ -1996,6 +2006,39 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           motorcycleIconStyleDefault,
       localBadgeColor: _localBadgeColor,
     );
+  }
+
+  void _onNavigationGuidanceChanged(NavigationGuidance? guidance) {
+    _latestNavigationGuidance = guidance;
+    _updateMapOverlays(updateDerivedState: false);
+  }
+
+  String get _projectedRideState {
+    if (widget.rideController.rideEnded) return 'Ride ended';
+    if (widget.rideController.ridePaused) return 'Ride paused';
+    if (widget.rideController.rideStarted) return 'Ride in progress';
+    return 'Waiting for the ride leader to start';
+  }
+
+  String? get _projectedGuidanceTitle {
+    final guidance = _latestNavigationGuidance;
+    if (guidance == null) return null;
+    final maneuver = guidance.maneuver;
+    final exit = maneuver.exitNumber == null
+        ? ''
+        : ' take exit ${maneuver.exitNumber}';
+    final modifier = maneuver.modifier?.trim();
+    final direction = modifier == null || modifier.isEmpty ? '' : ' $modifier';
+    return '${maneuver.type}$direction$exit'.trim();
+  }
+
+  String? get _projectedGuidanceDetail {
+    final guidance = _latestNavigationGuidance;
+    if (guidance == null) return null;
+    final distance = MeasurementFormatter(
+      widget.distanceUnits.value,
+    ).distance(guidance.distanceMeters);
+    return '$distance · ${guidance.roadLabel}';
   }
 
   Color get _localBadgeColor {

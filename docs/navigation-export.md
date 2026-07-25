@@ -42,21 +42,47 @@ preselect a third-party recipient.
 
 ## Projected navigation (CarPlay / Android Auto)
 
-CarPlay has a Driving Task companion: a `CPListTemplate` showing each rider's
-name, role, and off-route indicator, the current highest-priority alert, and an
-SOS button wired to the same emergency alert as the phone's map. The app's
-Debug and Release signing configurations request the approved
+CarPlay has a Driving Task companion: a `CPListTemplate` showing the selected
+route, current ride state, next manoeuvre, group status, marker status, the
+current highest-priority alert, and a bounded rider list. Its SOS button is
+wired to the same emergency alert as the phone's map. The app's Debug and
+Release signing configurations request the approved
 `com.apple.developer.carplay-driving-task` entitlement. The list is refreshed
 at most once every ten seconds to remain a low-interaction, glanceable surface.
 
 This is not a native map. `CPMapTemplate` and turn-by-turn guidance require
 Apple's separate CarPlay Navigation entitlement; Driving Task approval does not
 grant that capability. Tail End Charlie therefore keeps route planning,
-maneuver guidance, ride setup, and detailed settings on the phone.
+ride setup, and detailed settings on the phone. The list can mirror the next
+instruction but cannot present itself as Apple turn-by-turn navigation.
 
-Android Auto is not implemented. It would use the Android for Cars App
-Library and its own distraction-optimized templates, comparable in scope to
-the CarPlay work above.
+Android Auto uses Android for Cars App Library 1.7.0 and declares the
+navigation category. It renders the same bounded snapshot as a read-only
+`ListTemplate`: route, next instruction, ride/group/marker state, priority
+alert, and at most one rider needing attention. It does not persist rider
+positions in the car integration. A cold host connection without an active
+Flutter process shows `Open Tail End Charlie on the phone`; once the phone app
+resumes, the existing journal-derived snapshot repopulates the car surface.
+
+Debug builds accept the Desktop Head Unit host for development. Release builds
+use the Car App Library's documented host allow-list and privileged template
+renderer permission instead of trusting arbitrary callers.
+
+### Driver-distraction and validation status
+
+- Both projected surfaces are read-only during normal operation; route editing,
+  ride setup, roster management, and detailed settings remain on the phone.
+- Data is reduced to short template rows and refreshed no more frequently than
+  every ten seconds.
+- Android Auto uses host-rendered templates rather than custom touch targets or
+  a mirrored phone UI.
+- Unit tests cover bounded snapshot parsing and in-process reconnect updates.
+- Flutter analysis/tests, Android native unit tests, and a debug APK build cover
+  compilation and phone-side state publication.
+- Real-host or official Desktop Head Unit checks for disconnect/reconnect,
+  no-signal, background recovery, day/night, and driving-state restrictions
+  remain required before issue #6 can be closed or Android Auto can be described
+  as field validated.
 
 ## Ride and marker summary
 

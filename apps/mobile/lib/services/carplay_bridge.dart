@@ -7,9 +7,9 @@ import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 
-/// Publishes a compact ride status (riders, the single highest-priority
-/// alert) to the native CarPlay scene, and relays the CarPlay emergency
-/// button back to [onEmergencyTriggered].
+/// Publishes a compact projected ride status to the native CarPlay and Android
+/// Auto scenes, and relays the CarPlay emergency button back to
+/// [onEmergencyTriggered].
 ///
 /// Renders as a `CPListTemplate` (rider name/role/alert-status rows) under the
 /// app's CarPlay Driving Task entitlement. It is not a native map:
@@ -56,6 +56,12 @@ class CarPlayBridge {
     required List<RiderLocation> riderLocations,
     required List<RiderRouteAlert> routeAlerts,
     required List<HazardReport> activeHazards,
+    String? routeName,
+    String? rideState,
+    String? guidanceTitle,
+    String? guidanceDetail,
+    String? groupStatus,
+    String? markerStatus,
   }) async {
     final now = _clock();
     if (_lastPublishedAt != null &&
@@ -67,6 +73,13 @@ class CarPlayBridge {
       for (final alert in routeAlerts) alert.riderId: alert,
     };
     final snapshot = {
+      'routeName': routeName,
+      'rideState': rideState,
+      'guidanceTitle': guidanceTitle,
+      'guidanceDetail': guidanceDetail,
+      'groupStatus': groupStatus,
+      'markerStatus': markerStatus,
+      'updatedAtMillis': now.millisecondsSinceEpoch,
       'riders': [
         for (final location in riderLocations)
           {

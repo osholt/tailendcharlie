@@ -30,6 +30,12 @@ void main() {
         riderLocations: const [],
         routeAlerts: const [],
         activeHazards: const [],
+        routeName: 'Friday to the Ferry',
+        rideState: 'Ride in progress',
+        guidanceTitle: 'turn right',
+        guidanceDetail: '400 m · A27',
+        groupStatus: '5 riders visible',
+        markerStatus: 'Marker at the next junction',
       );
 
       await publish();
@@ -40,7 +46,17 @@ void main() {
 
       expect(calls, hasLength(2));
       expect(calls.every((call) => call.method == 'updateSnapshot'), isTrue);
-      expect(calls.first.arguments, {'riders': <Object?>[], 'alert': null});
+      expect(calls.first.arguments, {
+        'routeName': 'Friday to the Ferry',
+        'rideState': 'Ride in progress',
+        'guidanceTitle': 'turn right',
+        'guidanceDetail': '400 m · A27',
+        'groupStatus': '5 riders visible',
+        'markerStatus': 'Marker at the next junction',
+        'updatedAtMillis': DateTime.utc(2026, 7, 23, 12).millisecondsSinceEpoch,
+        'riders': <Object?>[],
+        'alert': null,
+      });
     },
   );
 }

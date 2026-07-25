@@ -91,6 +91,7 @@ class RideMapFeature extends StatefulWidget {
     this.onOpenRideMenu,
     this.onRouteChanged,
     this.onRouteCommitted,
+    this.onNavigationGuidanceChanged,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
@@ -126,6 +127,7 @@ class RideMapFeature extends StatefulWidget {
     Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
     ValueChanged<ImportedRoute?>? onRouteCommitted,
+    ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged,
     Object? changeRouteRequestToken,
     VoidCallback? onChangeRouteRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
@@ -155,6 +157,7 @@ class RideMapFeature extends StatefulWidget {
     onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
     onRouteCommitted: onRouteCommitted,
+    onNavigationGuidanceChanged: onNavigationGuidanceChanged,
     changeRouteRequestToken: changeRouteRequestToken,
     onChangeRouteRequestHandled: onChangeRouteRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
@@ -186,6 +189,7 @@ class RideMapFeature extends StatefulWidget {
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final ValueChanged<ImportedRoute?>? onRouteCommitted;
+  final ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
@@ -313,6 +317,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         canEditRoute: widget.canEditRoute,
         onRouteChanged: widget.onRouteChanged,
         onRouteCommitted: widget.onRouteCommitted,
+        onNavigationGuidanceChanged: widget.onNavigationGuidanceChanged,
         changeRouteRequestToken: widget.changeRouteRequestToken,
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
         pendingSharedGpxFile: widget.pendingSharedGpxFile,
@@ -368,6 +373,7 @@ class RideMapScreen extends StatefulWidget {
     this.canEditRoute = true,
     this.onRouteChanged,
     this.onRouteCommitted,
+    this.onNavigationGuidanceChanged,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
@@ -407,6 +413,7 @@ class RideMapScreen extends StatefulWidget {
   final bool canEditRoute;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final ValueChanged<ImportedRoute?>? onRouteCommitted;
+  final ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
@@ -1551,6 +1558,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         (current.distanceMeters - next.distanceMeters).abs() < 5;
     if (!unchanged) {
       _navigationGuidance.value = next;
+      widget.onNavigationGuidanceChanged?.call(next);
       if (visibilityChanged && mounted) setState(() {});
     }
   }
@@ -3367,6 +3375,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             _initialCameraPositioned = false;
           });
           _navigationGuidance.value = null;
+          widget.onNavigationGuidanceChanged?.call(null);
           await _syncMapLibreSources();
           widget.onRouteChanged?.call(null);
           widget.onRouteCommitted?.call(null);
