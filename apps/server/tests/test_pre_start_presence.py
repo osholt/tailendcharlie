@@ -4,8 +4,10 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
-from ride_relay_server.models import StoredEvent
+from ride_relay_server.crypto import CursorCodec, DataCipher
+from ride_relay_server.models import PreStartPosition, StoredEvent
 from ride_relay_server.schemas import PresenceSyncRequest
+from ride_relay_server.service import RelayService
 
 from .conftest import event, ride_token
 
@@ -57,6 +59,34 @@ def test_presence_replaces_latest_position_without_storing_events(client, synchr
     assert positions[0]["sample"]["position"]["latitude"] == 51.1
     with client.app.state.session_factory() as session:
         assert session.scalar(select(func.count(StoredEvent.sequence))) == 0
+        assert session.scalar(select(func.count()).select_from(PreStartPosition)) == 1
+
+
+def test_presence_is_shared_between_relay_processes(client, settings, synchronize) -> None:
+    ride_id = "ride-presence-shared"
+    assert synchronize(client, ride_id=ride_id, secret=SECRET).status_code == 200
+    assert _presence(client, ride_id, "rider-a", position=_position(51.2)).status_code == 200
+
+    second_process = RelayService(
+        settings,
+        DataCipher(settings.decoded_key("data_encryption_key")),
+        CursorCodec(settings.decoded_key("cursor_signing_key")),
+    )
+    with client.app.state.session_factory() as session:
+        observed = second_process.synchronize_pre_start_presence(
+            session,
+            ride_id=ride_id,
+            bearer_token=ride_token(ride_id, SECRET),
+            device_header="leader",
+            request=PresenceSyncRequest(
+                protocolVersion=1,
+                deviceId="leader",
+            ),
+        )
+
+    assert len(observed["positions"]) == 1
+    assert observed["positions"][0]["riderId"] == "rider-a"
+    assert observed["positions"][0]["sample"]["position"]["latitude"] == 51.2
 
 
 def test_presence_expires_and_clears_when_the_ride_starts(client, synchronize) -> None:
@@ -97,6 +127,8 @@ def test_presence_expires_and_clears_when_the_ride_starts(client, synchronize) -
         ).status_code
         == 200
     )
+    with client.app.state.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(PreStartPosition)) == 0
     assert _presence(client, ride_id, "leader").json()["positions"] == []
 
 

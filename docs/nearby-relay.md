@@ -18,6 +18,9 @@ PeerTransport -> Google Nearby Connections (Swift / Play Services)
 - `NearbyRelayController.start(session)` scopes the relay to one active ride.
 - `publish(event)` queues an already-journalled event for delivery.
 - `receivedEvents` emits newly accepted remote events.
+- `publishPresence` and `presenceUpdates` carry one signed, 45-second,
+  replace-only pre-start rider snapshot without touching the event store or
+  durable relay queue.
 - `status` exposes searching/reconnecting/connected state, peer IDs, queue depth,
   rejected-frame count and last exchange time.
 - `stop()` cancels discovery, advertising, reconnect work and connections.
@@ -26,6 +29,10 @@ The queue is durable in `SqliteRelayQueue`. The in-memory implementation exists
 for deterministic tests. Delivery is at-least-once: peers acknowledge event IDs,
 lost acknowledgements cause safe replay, and the event journal deduplicates by
 globally unique event ID.
+
+Presence is intentionally different: it is best-effort and memory-only. A new
+peer receives the local rider's still-fresh latest snapshot, but a disconnected
+phone does not accumulate or replay pre-start movement history.
 
 ## Wire safety limits
 
@@ -44,6 +51,10 @@ per-device local delivery metadata, not a group event property. It also enforces
 - five-minute frame freshness and two-minute future-clock tolerance;
 - per-event expiry (2h routine, 8h important, 24h critical by default); and
 - a 512-event local queue cap that retains higher-priority/newer items first.
+
+Presence frames additionally require the signed sender ID to match the rider
+ID, carry either one bounded position or an explicit clear, and expire within
+five minutes (45 seconds in the product flow).
 
 HMAC with a group secret prevents outsiders without the invite secret from
 injecting or altering accepted frames. It does not provide per-rider identity,
@@ -92,6 +103,15 @@ Swift setup guide. Nearby's connection token is automatically accepted in this
 alpha and the application HMAC rejects non-members. A user-visible transport
 verification or ride-bound token check must be chosen before release to reduce
 unauthenticated connection/denial-of-service exposure.
+
+Android also keeps the normal `ACCESS_WIFI_STATE` and `CHANGE_WIFI_STATE`
+permissions on Android 13 and newer. `NEARBY_WIFI_DEVICES` replaces the
+dangerous Wi-Fi scan permission prompt, but Google Play services still checks
+the two normal permissions when `P2P_CLUSTER` starts advertising. An Android 14
+emulator run on 2026-07-25 confirmed Bluetooth, BLE and Wi-Fi LAN advertising
+plus BLE and Wi-Fi LAN discovery after removing the obsolete SDK cap; before
+that change, Play services aborted both operations as missing
+`ACCESS_WIFI_STATE`.
 
 ## Hardware release gate
 

@@ -3,10 +3,12 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+import '../domain/rider_location.dart';
 import '../domain/ride_event.dart';
 import 'relay_queue.dart';
+import 'relay_presence.dart';
 
-enum RelayFrameKind { events, acknowledgement }
+enum RelayFrameKind { events, acknowledgement, presence }
 
 class RelayFrame {
   const RelayFrame({
@@ -17,6 +19,7 @@ class RelayFrame {
     required this.sentAt,
     this.events = const [],
     this.acknowledgedEventIds = const [],
+    this.presence,
   });
 
   final RelayFrameKind kind;
@@ -26,6 +29,7 @@ class RelayFrame {
   final DateTime sentAt;
   final List<QueuedRelayEvent> events;
   final List<String> acknowledgedEventIds;
+  final RelayPresenceUpdate? presence;
 }
 
 class RelayProtocolException implements Exception {
@@ -64,6 +68,9 @@ class RelayProtocol {
         (frame.acknowledgedEventIds.isEmpty ||
             frame.acknowledgedEventIds.length > maxAcknowledgementsPerFrame)) {
       throw const RelayProtocolException('Invalid acknowledgement size');
+    }
+    if (frame.kind == RelayFrameKind.presence) {
+      _validatePresence(frame);
     }
     for (final item in frame.events) {
       if (item.hopCount < 0 ||
@@ -134,6 +141,7 @@ class RelayProtocol {
     final kind = switch (kindName) {
       'events' => RelayFrameKind.events,
       'acknowledgement' => RelayFrameKind.acknowledgement,
+      'presence' => RelayFrameKind.presence,
       _ => throw const RelayProtocolException('Unknown frame kind'),
     };
 
@@ -154,6 +162,84 @@ class RelayProtocol {
             .map((id) => _boundedString(id, 'eventId', 128))
             .toSet()
             .toList(growable: false),
+      );
+    }
+    if (kind == RelayFrameKind.presence) {
+      final rawPresence = json['presence'];
+      if (rawPresence is! Map<Object?, Object?>) {
+        throw const RelayProtocolException('Invalid presence body');
+      }
+      final presence = Map<String, Object?>.from(rawPresence);
+      final riderId = _boundedString(
+        presence['riderId'],
+        'presence riderId',
+        128,
+      );
+      if (riderId != senderId) {
+        throw const RelayProtocolException(
+          'Presence rider does not match sender',
+        );
+      }
+      final expiresAt = _date(presence['expiresAt'], 'presence expiresAt');
+      if (!expiresAt.isAfter(now.toUtc()) ||
+          expiresAt.isAfter(sentAt.add(const Duration(minutes: 5)))) {
+        throw const RelayProtocolException('Invalid presence expiry');
+      }
+      final clear = presence['clear'];
+      if (clear is! bool) {
+        throw const RelayProtocolException('Invalid presence clear flag');
+      }
+      final rawPosition = presence['position'];
+      if (clear != (rawPosition == null)) {
+        throw const RelayProtocolException('Invalid presence payload');
+      }
+      RiderLocation? position;
+      if (rawPosition != null) {
+        if (rawPosition is! Map<Object?, Object?>) {
+          throw const RelayProtocolException('Invalid presence position');
+        }
+        try {
+          position = RiderLocation.fromJson(
+            Map<String, Object?>.from(rawPosition),
+          );
+        } on Object {
+          throw const RelayProtocolException('Invalid presence position');
+        }
+        if (position.riderId != riderId ||
+            position.displayName.isEmpty ||
+            position.displayName.length > 80 ||
+            position.sample.accuracyMeters > 10000 ||
+            position.sample.recordedAt.toUtc().isBefore(
+              sentAt.subtract(const Duration(minutes: 5)),
+            ) ||
+            position.sample.recordedAt.toUtc().isAfter(
+              sentAt.add(maxFutureSkew),
+            )) {
+          throw const RelayProtocolException('Invalid presence position');
+        }
+        position = RiderLocation(
+          riderId: position.riderId,
+          displayName: position.displayName,
+          role: position.role,
+          sample: position.sample,
+          receivedAt: sentAt.toLocal(),
+          motorcycleStyle: position.motorcycleStyle,
+          riderColor: position.riderColor,
+        );
+      }
+      return RelayFrame(
+        kind: kind,
+        rideId: rideId,
+        senderId: senderId,
+        frameId: frameId,
+        sentAt: sentAt,
+        presence: RelayPresenceUpdate(
+          riderId: riderId,
+          sentAt: sentAt,
+          expiresAt: expiresAt,
+          clear: clear,
+          position: position,
+        ),
       );
     }
 
@@ -234,7 +320,34 @@ class RelayProtocol {
           .toList(growable: false),
     if (frame.kind == RelayFrameKind.acknowledgement)
       'acknowledgedEventIds': frame.acknowledgedEventIds,
+    if (frame.kind == RelayFrameKind.presence)
+      'presence': {
+        'riderId': frame.presence!.riderId,
+        'expiresAt': frame.presence!.expiresAt.toUtc().toIso8601String(),
+        'clear': frame.presence!.clear,
+        if (frame.presence!.position case final position?)
+          'position': position.toJson(),
+      },
   };
+
+  void _validatePresence(RelayFrame frame) {
+    final presence = frame.presence;
+    if (presence == null ||
+        frame.events.isNotEmpty ||
+        frame.acknowledgedEventIds.isNotEmpty ||
+        presence.riderId != frame.senderId ||
+        presence.riderId.isEmpty ||
+        presence.riderId.length > 128 ||
+        presence.clear != (presence.position == null) ||
+        presence.expiresAt.isAfter(
+          frame.sentAt.add(const Duration(minutes: 5)),
+        ) ||
+        !presence.expiresAt.isAfter(frame.sentAt) ||
+        (presence.position != null &&
+            presence.position!.riderId != presence.riderId)) {
+      throw const RelayProtocolException('Invalid presence update');
+    }
+  }
 
   String _sign(Map<String, Object?> value, String secret) => Hmac(
     sha256,

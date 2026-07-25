@@ -31,8 +31,11 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
 4. Lock every screen and repeat.
 5. Background the app without force-quitting and repeat.
 6. Separate peers, create events, reunite them, and verify convergence.
-7. Join all phones before departure and verify that the roster converges while
-   no coordinate or route trace appears on any phone.
+7. Join all phones before departure, opt in to foreground location, and verify
+   that each fresh latest position converges over internet-only, nearby-only
+   and mixed transport. Move a phone twice and confirm the first point is
+   replaced rather than drawn as a trace; wait 46 seconds and confirm it
+   expires.
 8. Start once from the lead, then verify early joiners begin from the same start
    time; add a late joiner and verify it becomes active without restarting.
 9. Repeat the start with one phone offline, duplicate delivery, app restart,
@@ -70,8 +73,9 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
   is in a supported active-ride state.
 - No duplicate marker count after 100 event replays.
 - Queued events converge without user repair after peers reunite.
-- No pre-start trace is retained, and every early/late/reconnected phone uses the
-  same authoritative ride start.
+- No pre-start trace is retained; latest snapshots expire or clear at start,
+  and every early/late/reconnected phone uses the same authoritative ride
+  start.
 - Explicit leave/rejoin produces no ghost riders, roster/alert counts match the
   signed current membership, and route publish/replace/clear converges.
 - Four-hour screen-off consumption remains within the 45% planning limit.

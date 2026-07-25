@@ -47,6 +47,10 @@ class Ride(Base):
         back_populates="ride",
         cascade="all, delete-orphan",
     )
+    pre_start_positions: Mapped[list[PreStartPosition]] = relationship(
+        back_populates="ride",
+        cascade="all, delete-orphan",
+    )
 
 
 class RideJoinCode(Base):
@@ -104,6 +108,29 @@ class StoredEvent(Base):
     body_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
     ride: Mapped[Ride] = relationship(back_populates="events")
+
+
+class PreStartPosition(Base):
+    """One encrypted, short-lived pre-start snapshot per rider.
+
+    This is deliberately not an event or history table. Publishing again
+    replaces the same row, and every read purges expired rows first.
+    """
+
+    __tablename__ = "pre_start_positions"
+    __table_args__ = (Index("ix_pre_start_positions_expiry", "expires_at"),)
+
+    ride_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("rides.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    rider_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    snapshot_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    ride: Mapped[Ride] = relationship(back_populates="pre_start_positions")
 
 
 class IdempotencyReplay(Base):
