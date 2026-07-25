@@ -89,6 +89,19 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
 - Live traffic never erases or silently replaces the authoritative route;
   unrelated incidents do not trigger leader action, and provider failure is
   distinguishable from a verified all-clear.
+- On a mounted phone, in portrait and landscape on iOS and Android, the upper
+  third of the map carries no persistent overlay during an active ride, every
+  surface stays readable at a glance, none covers another at the maximum
+  simultaneous overlay count, and every target is reachable with gloves.
+- At rest, at urban speed and at road speed, in both orientations and both map
+  styles, the visible road ahead is materially greater than the road behind, the
+  rider's own marker stays visible and clear of chrome, and no camera transition
+  snaps as speed changes.
+- A gently curving A-road produces no perceptible map rotation; a 90 degree
+  junction and a roundabout exit each settle on the correct bearing within about
+  two seconds with no overshoot or oscillation; a stationary phone with a noisy
+  fix leaves the map still; and the bearing never misrepresents which way the
+  rider faces at a junction.
 
 If the gate fails, retain durable offline queues and opportunistic exchange but
 do not market the product as a continuously available mesh.
