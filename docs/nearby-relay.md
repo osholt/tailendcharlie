@@ -18,6 +18,9 @@ PeerTransport -> Google Nearby Connections (Swift / Play Services)
 - `NearbyRelayController.start(session)` scopes the relay to one active ride.
 - `publish(event)` queues an already-journalled event for delivery.
 - `receivedEvents` emits newly accepted remote events.
+- `publishPresence` and `presenceUpdates` carry one signed, 45-second,
+  replace-only pre-start rider snapshot without touching the event store or
+  durable relay queue.
 - `status` exposes searching/reconnecting/connected state, peer IDs, queue depth,
   rejected-frame count and last exchange time.
 - `stop()` cancels discovery, advertising, reconnect work and connections.
@@ -26,6 +29,10 @@ The queue is durable in `SqliteRelayQueue`. The in-memory implementation exists
 for deterministic tests. Delivery is at-least-once: peers acknowledge event IDs,
 lost acknowledgements cause safe replay, and the event journal deduplicates by
 globally unique event ID.
+
+Presence is intentionally different: it is best-effort and memory-only. A new
+peer receives the local rider's still-fresh latest snapshot, but a disconnected
+phone does not accumulate or replay pre-start movement history.
 
 ## Wire safety limits
 
@@ -44,6 +51,10 @@ per-device local delivery metadata, not a group event property. It also enforces
 - five-minute frame freshness and two-minute future-clock tolerance;
 - per-event expiry (2h routine, 8h important, 24h critical by default); and
 - a 512-event local queue cap that retains higher-priority/newer items first.
+
+Presence frames additionally require the signed sender ID to match the rider
+ID, carry either one bounded position or an explicit clear, and expire within
+five minutes (45 seconds in the product flow).
 
 HMAC with a group secret prevents outsiders without the invite secret from
 injecting or altering accepted frames. It does not provide per-rider identity,

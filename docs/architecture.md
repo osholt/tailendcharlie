@@ -80,9 +80,15 @@ handover deterministic. Late joiners download the same journal and enter the
 started state without creating another start event. Ride summaries and GPX
 traces use the accepted event time as their lower bound.
 
-Pre-start presence is deliberately roster-only: no coarse coordinate is sent.
-This is still a group-HMAC trust model, so production-grade per-device leader
-authorization remains part of the device-identity/key-rotation release gate.
+Pre-start presence is an explicit, foreground-only latest snapshot. An opted-in
+rider sends one authenticated current coordinate with a 45-second TTL; the next
+fix replaces it. Internet relay stores one AES-GCM-encrypted row per rider so
+multiple API replicas converge, while Nearby carries a signed presence frame
+directly between connected peers. Neither path appends a ride event, enters the
+durable Nearby queue, records a trail, or survives past its TTL. A signed
+`rideStarted`/`rideEnded` event deletes all server snapshots. This is still a
+group-HMAC trust model, so production-grade per-device leader authorization
+remains part of the device-identity/key-rotation release gate.
 
 ### Membership and roster
 

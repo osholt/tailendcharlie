@@ -3,7 +3,10 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
+import 'package:ride_relay/domain/geo_point.dart';
+import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_event.dart';
+import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/relay/in_memory_relay_queue.dart';
 import 'package:ride_relay/relay/peer_transport.dart';
 import 'package:ride_relay/relay/relay_engine.dart';
@@ -155,6 +158,71 @@ void main() {
 
     expect(await storeB.eventsForRide('ride-1'), isEmpty);
     expect(engineB.status.rejectedFrameCount, greaterThanOrEqualTo(1));
+    await engineA.dispose();
+    await engineB.dispose();
+  });
+
+  test('carries nearby presence without journalling or queueing it', () async {
+    final transportA = FakePeerTransport('peer-a');
+    final transportB = FakePeerTransport('peer-b');
+    final storeA = InMemoryEventStore();
+    final storeB = InMemoryEventStore();
+    final queueA = InMemoryRelayQueue();
+    final queueB = InMemoryRelayQueue();
+    var id = 0;
+    RelayEngine engine(
+      FakePeerTransport transport,
+      InMemoryEventStore store,
+      InMemoryRelayQueue queue,
+    ) => RelayEngine(
+      transport: transport,
+      eventStore: store,
+      queue: queue,
+      clock: () => now,
+      idFactory: () => 'presence-frame-${id++}',
+    );
+    final engineA = engine(transportA, storeA, queueA);
+    final engineB = engine(transportB, storeB, queueB);
+    await engineA.start(
+      const RelayEngineConfig(
+        rideId: 'ride-1',
+        rideSecret: secret,
+        localDeviceId: 'device-a',
+        endpointName: 'A',
+      ),
+    );
+    await engineB.start(
+      const RelayEngineConfig(
+        rideId: 'ride-1',
+        rideSecret: secret,
+        localDeviceId: 'device-b',
+        endpointName: 'B',
+      ),
+    );
+    await _drain();
+    transportA.connect(transportB);
+    await _drain();
+    final received = engineB.receivedPresence.first;
+
+    await engineA.publishPresence(
+      RiderLocation(
+        riderId: 'device-a',
+        displayName: 'Alex',
+        role: RideRole.rider,
+        sample: LocationSample(
+          position: const GeoPoint(latitude: 51.1, longitude: -2.4),
+          recordedAt: now,
+          accuracyMeters: 4,
+        ),
+        receivedAt: now,
+      ),
+    );
+
+    expect((await received).position?.sample.position.latitude, 51.1);
+    expect(await storeA.eventsForRide('ride-1'), isEmpty);
+    expect(await storeB.eventsForRide('ride-1'), isEmpty);
+    expect(await queueA.count('ride-1', now: now), 0);
+    expect(await queueB.count('ride-1', now: now), 0);
     await engineA.dispose();
     await engineB.dispose();
   });
