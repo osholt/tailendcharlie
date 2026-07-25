@@ -72,9 +72,11 @@ from .schemas import (
 )
 from .service import RelayService, RelayServiceError
 from .traffic import (
+    PreferredTrafficProvider,
     TomTomOrbisTrafficProvider,
     TrafficIncidentProvider,
     TrafficProviderError,
+    WazeForCitiesTrafficProvider,
     validate_uk_incident_bounds,
     validate_uk_reroute,
 )
@@ -182,7 +184,10 @@ def create_app(
         registry=registry,
     )
     push_dispatcher = PushDispatcher.from_settings(settings, cipher)
-    traffic_provider = traffic_provider or TomTomOrbisTrafficProvider(settings)
+    traffic_provider = traffic_provider or PreferredTrafficProvider(
+        preferred=WazeForCitiesTrafficProvider(settings),
+        fallback=TomTomOrbisTrafficProvider(settings),
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -334,7 +339,7 @@ def create_app(
             validate_uk_reroute(path, avoid_areas)
         except ValueError as error:
             raise RelayServiceError(400, str(error)) from error
-        if not traffic_provider.configured:
+        if not traffic_provider.reroute_configured:
             return JSONResponse(
                 status_code=503,
                 content={

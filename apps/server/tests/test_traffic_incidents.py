@@ -4,16 +4,24 @@ import asyncio
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from ride_relay_server.app import create_app
-from ride_relay_server.traffic import TomTomOrbisTrafficProvider
+from ride_relay_server.config import Settings
+from ride_relay_server.traffic import (
+    PreferredTrafficProvider,
+    TomTomOrbisTrafficProvider,
+    TrafficProviderError,
+    WazeForCitiesTrafficProvider,
+)
 
 
 class _FakeTrafficProvider:
     def __init__(self):
         self.configured = True
+        self.reroute_configured = True
         self.calls: list[tuple[float, float, float, float]] = []
         self.closed = False
 
@@ -391,3 +399,253 @@ def test_tomtom_provider_requests_and_selects_a_path_alternative(settings):
             "message": "Turn right onto Newport Road.",
         }
     ]
+
+
+_WAZE_FEED_URL = "https://www.waze.com/row-partnerhub-api/partners/1/waze-feeds/token"
+
+
+def _waze_settings(settings, **overrides):
+    return settings.model_copy(
+        update={"waze_traffic_feed_url": SecretStr(_WAZE_FEED_URL), **overrides}
+    )
+
+
+def test_waze_provider_normalises_alerts_and_jams_and_caches_one_snapshot(settings):
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert str(request.url) == _WAZE_FEED_URL
+        return httpx.Response(
+            200,
+            json={
+                "alerts": [
+                    {
+                        "uuid": "closure-1",
+                        "type": "ROAD_CLOSED",
+                        "subtype": "ROAD_CLOSED_EVENT",
+                        "street": "A4161",
+                        "reportDescription": "Road closed for an event",
+                        "location": {"x": -3.18, "y": 51.48},
+                        "pubMillis": 1_784_923_080_000,
+                        "reliability": 8,
+                        "nThumbsUp": 3,
+                    },
+                    {
+                        "uuid": "pothole-1",
+                        "type": "HAZARD",
+                        "subtype": "HAZARD_ON_ROAD_POT_HOLE",
+                        "location": {"x": -3.175, "y": 51.482},
+                        "pubMillis": 1_784_923_080_000,
+                        "reliability": 7,
+                    },
+                ],
+                "jams": [
+                    {
+                        "uuid": 7788,
+                        "level": 5,
+                        "delay": 900,
+                        "street": "A470",
+                        "line": [
+                            {"x": -3.17, "y": 51.49},
+                            {"x": -3.16, "y": 51.495},
+                        ],
+                        "pubMillis": 1_784_923_080_000,
+                    }
+                ],
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = WazeForCitiesTrafficProvider(
+        _waze_settings(settings),
+        client=client,
+        clock=lambda: datetime(2026, 7, 24, 20, 0, tzinfo=UTC),
+    )
+
+    first = asyncio.run(provider.incidents(west=-3.3, south=51.3, east=-2.9, north=51.7))
+    second = asyncio.run(provider.incidents(west=-3.3, south=51.3, east=-2.9, north=51.7))
+    asyncio.run(client.aclose())
+
+    assert first == second
+    assert len(requests) == 1
+    assert first["provider"] == "waze-for-cities"
+    closure, pothole, jam = first["incidents"]
+    assert closure["id"] == "alert-closure-1"
+    assert closure["type"] == "roadworks"
+    assert closure["severity"] == "critical"
+    assert closure["description"] == "Road closed for an event · A4161"
+    assert closure["geometry"] == [{"latitude": 51.48, "longitude": -3.18}]
+    assert closure["expiresAt"] == "2026-07-24T20:10:00Z"
+    assert closure["reportCount"] == 4
+    assert pothole["type"] == "pothole"
+    assert pothole["severity"] == "caution"
+    assert jam["id"] == "jam-7788"
+    assert jam["severity"] == "serious"
+    assert jam["description"] == "Heavy traffic (Waze level 5) · A470 · 15 min delay"
+    assert len(jam["geometry"]) == 2
+
+
+def test_waze_provider_drops_low_reliability_reports_and_light_jams(settings):
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "alerts": [
+                    {
+                        "uuid": "unreliable-1",
+                        "type": "ACCIDENT",
+                        "subtype": "ACCIDENT_MINOR",
+                        "location": {"x": -3.18, "y": 51.48},
+                        "reliability": 2,
+                    }
+                ],
+                "jams": [
+                    {
+                        "uuid": 1,
+                        "level": 2,
+                        "delay": 30,
+                        "line": [{"x": -3.17, "y": 51.49}, {"x": -3.16, "y": 51.495}],
+                    }
+                ],
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = WazeForCitiesTrafficProvider(
+        _waze_settings(settings),
+        client=client,
+        clock=lambda: datetime(2026, 7, 24, 20, 0, tzinfo=UTC),
+    )
+
+    result = asyncio.run(provider.incidents(west=-3.3, south=51.3, east=-2.9, north=51.7))
+    asyncio.run(client.aclose())
+
+    assert result["incidents"] == []
+
+
+def test_waze_provider_filters_the_snapshot_to_the_requested_viewport(settings):
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "alerts": [
+                    {
+                        "uuid": "cardiff",
+                        "type": "CONSTRUCTION",
+                        "location": {"x": -3.18, "y": 51.48},
+                        "reliability": 8,
+                    },
+                    {
+                        "uuid": "glasgow",
+                        "type": "CONSTRUCTION",
+                        "location": {"x": -4.25, "y": 55.86},
+                        "reliability": 8,
+                    },
+                ]
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = WazeForCitiesTrafficProvider(
+        _waze_settings(settings),
+        client=client,
+        clock=lambda: datetime(2026, 7, 24, 20, 0, tzinfo=UTC),
+    )
+
+    result = asyncio.run(provider.incidents(west=-3.3, south=51.3, east=-2.9, north=51.7))
+    asyncio.run(client.aclose())
+
+    assert [incident["id"] for incident in result["incidents"]] == ["alert-cardiff"]
+
+
+def test_waze_provider_offers_no_route_alternative(settings):
+    provider = WazeForCitiesTrafficProvider(_waze_settings(settings))
+
+    with pytest.raises(TrafficProviderError):
+        asyncio.run(provider.reroute(path=[(51.48, -3.18), (51.49, -3.17)], avoid_areas=[]))
+    asyncio.run(provider.close())
+
+
+def test_preferred_provider_prefers_waze_and_falls_back_to_tomtom(settings):
+    waze = _FakeTrafficProvider()
+    tomtom = _FakeTrafficProvider()
+    provider = PreferredTrafficProvider(preferred=waze, fallback=tomtom)
+
+    asyncio.run(provider.incidents(west=-3.3, south=51.3, east=-2.9, north=51.7))
+    assert waze.calls == [(-3.3, 51.3, -2.9, 51.7)]
+    assert tomtom.calls == []
+
+    async def unavailable(**_: float) -> dict[str, object]:
+        raise TrafficProviderError("Waze feed is unavailable")
+
+    waze.incidents = unavailable
+    asyncio.run(provider.incidents(west=-3.3, south=51.3, east=-2.9, north=51.7))
+    assert tomtom.calls == [(-3.3, 51.3, -2.9, 51.7)]
+
+
+def test_preferred_provider_surfaces_waze_failure_without_a_fallback(settings):
+    waze = _FakeTrafficProvider()
+    tomtom = _FakeTrafficProvider()
+    tomtom.configured = False
+    tomtom.reroute_configured = False
+
+    async def unavailable(**_: float) -> dict[str, object]:
+        raise TrafficProviderError("Waze feed is unavailable")
+
+    waze.incidents = unavailable
+    provider = PreferredTrafficProvider(preferred=waze, fallback=tomtom)
+
+    with pytest.raises(TrafficProviderError, match="Waze feed is unavailable"):
+        asyncio.run(provider.incidents(west=-3.3, south=51.3, east=-2.9, north=51.7))
+
+
+def test_reroutes_report_unconfigured_when_only_waze_is_configured(settings):
+    provider = PreferredTrafficProvider(
+        preferred=WazeForCitiesTrafficProvider(_waze_settings(settings)),
+        fallback=TomTomOrbisTrafficProvider(settings),
+    )
+
+    with TestClient(create_app(settings, traffic_provider=provider)) as client:
+        incidents = client.get(
+            "/api/v1/traffic/incidents",
+            params={"west": -3.3, "south": 51.3, "east": -2.9, "north": 51.7},
+        )
+        reroute = client.post(
+            "/api/v1/traffic/reroutes",
+            json={
+                "path": [
+                    {"latitude": 51.48, "longitude": -3.18},
+                    {"latitude": 51.49, "longitude": -3.17},
+                ],
+                "avoidAreas": [{"west": -3.181, "south": 51.479, "east": -3.179, "north": 51.481}],
+                "incidentIds": ["alert-closure-1"],
+            },
+        )
+
+    assert incidents.status_code == 503
+    assert incidents.json()["code"] == "traffic_provider_unavailable"
+    assert reroute.status_code == 503
+    assert reroute.json() == {
+        "code": "traffic_provider_unconfigured",
+        "message": "Live UK traffic rerouting is not configured.",
+    }
+
+
+def test_waze_feed_url_must_be_an_https_waze_host(settings):
+    base = {
+        "environment": "test",
+        "database_url": settings.database_url,
+        "data_encryption_key": settings.data_encryption_key.get_secret_value(),
+        "cursor_signing_key": settings.cursor_signing_key.get_secret_value(),
+    }
+
+    with pytest.raises(ValidationError):
+        Settings(**base, waze_traffic_feed_url="http://www.waze.com/feed")
+    with pytest.raises(ValidationError):
+        Settings(**base, waze_traffic_feed_url="https://example.com/feed")
+
+    accepted = Settings(**base, waze_traffic_feed_url=_WAZE_FEED_URL)
+    assert accepted.waze_traffic_feed_url is not None
+    assert accepted.waze_traffic_feed_url.get_secret_value() == _WAZE_FEED_URL
+    assert "token" not in str(accepted.waze_traffic_feed_url)

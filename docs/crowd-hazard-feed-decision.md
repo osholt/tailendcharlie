@@ -44,6 +44,16 @@ The app must remain fully useful without either feed.
 Conclusion: Waze is not a supported source for this feature. Existing deep-link
 handoff remains the appropriate integration.
 
+**Amended 2026-07-25.** The technical finding above holds for every interface
+reachable without a partnership. It does not cover Waze for Cities Data, the
+partner programme whose signed participants do receive a read feed of Waze
+alerts and jams. Tail End Charlie is now expecting access to that feed, so a
+relay-side reader for it is implemented in
+[live-traffic-incidents.md](live-traffic-incidents.md) under path 1 above,
+alongside TomTom rather than replacing it. No feed URL is configured and no
+Waze support may be claimed until the partner agreement and its display,
+caching, redistribution and attribution terms are recorded.
+
 ### Google Maps Platform
 
 - The documented [Roads API](https://developers.google.com/maps/documentation/roads/overview)

@@ -39,6 +39,44 @@ _CATEGORY_NAMES = {
     11: "flooding",
     14: "brokenDownVehicle",
 }
+# Waze for Cities feed vocabulary. Alert types are an allowlist so an unknown
+# category Waze adds later is dropped rather than shown as "other".
+_WAZE_ALERT_TYPES: dict[str, tuple[str, str]] = {
+    "ACCIDENT": ("collision", "caution"),
+    "ROAD_CLOSED": ("roadworks", "critical"),
+    "CONSTRUCTION": ("roadworks", "caution"),
+    "HAZARD": ("other", "caution"),
+    "WEATHERHAZARD": ("other", "caution"),
+}
+_WAZE_ALERT_LABELS = {
+    "ACCIDENT": "Collision reported",
+    "ROAD_CLOSED": "Road closed",
+    "CONSTRUCTION": "Roadworks",
+    "HAZARD": "Road hazard",
+    "WEATHERHAZARD": "Weather hazard",
+}
+_WAZE_HAZARD_SUBTYPES: dict[str, tuple[str, str]] = {
+    "HAZARD_ON_ROAD_CONSTRUCTION": ("roadworks", "caution"),
+    "HAZARD_ON_ROAD_CAR_STOPPED": ("stoppedVehicle", "caution"),
+    "HAZARD_ON_ROAD_POT_HOLE": ("pothole", "caution"),
+    "HAZARD_ON_ROAD_ROAD_KILL": ("animals", "caution"),
+    "HAZARD_ON_ROAD_OBJECT": ("debris", "caution"),
+    "HAZARD_ON_ROAD_LANE_CLOSED": ("roadworks", "caution"),
+    "HAZARD_ON_ROAD_ICE": ("looseSurface", "serious"),
+    "HAZARD_ON_ROAD_OIL": ("looseSurface", "serious"),
+    "HAZARD_WEATHER_FLOOD": ("flooding", "serious"),
+    "HAZARD_WEATHER": ("other", "caution"),
+    "HAZARD_ON_SHOULDER_ANIMALS": ("animals", "caution"),
+    "HAZARD_ON_SHOULDER_CAR_STOPPED": ("stoppedVehicle", "advisory"),
+    "HAZARD_ON_SHOULDER": ("other", "advisory"),
+}
+# Waze scores crowd reports 0-10. A low-confidence report is not a safe basis
+# for prompting a rerouting decision mid-ride.
+_WAZE_MINIMUM_RELIABILITY = 5
+_WAZE_MINIMUM_JAM_LEVEL = 3
+# The feed is a live snapshot with no per-incident expiry, so a reading is
+# trusted only until the next few refreshes would have replaced it.
+_WAZE_SNAPSHOT_EXPIRY = timedelta(minutes=10)
 _MAGNITUDE_NAMES = {
     0: "unknown",
     1: "minor",
@@ -57,6 +95,9 @@ class TrafficProviderError(RuntimeError):
 class TrafficIncidentProvider(Protocol):
     @property
     def configured(self) -> bool: ...
+
+    @property
+    def reroute_configured(self) -> bool: ...
 
     async def incidents(
         self,
@@ -105,6 +146,10 @@ class TomTomOrbisTrafficProvider:
     @property
     def configured(self) -> bool:
         return self._api_key is not None
+
+    @property
+    def reroute_configured(self) -> bool:
+        return self.configured
 
     async def incidents(
         self,
@@ -284,6 +329,203 @@ class TomTomOrbisTrafficProvider:
             await self._client.aclose()
 
 
+class WazeForCitiesTrafficProvider:
+    """Waze for Cities partner feed, normalised to the relay incident contract.
+
+    The feed is a whole-area snapshot rather than a bounded query, so one
+    fetch is cached and each viewport is served by filtering that snapshot.
+    Waze publishes no routing API, so this provider cannot offer alternatives.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        client: httpx.AsyncClient | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ):
+        self._feed_url = settings.waze_traffic_feed_url
+        self._cache_seconds = settings.waze_traffic_feed_cache_seconds
+        self._maximum_response_bytes = settings.traffic_incident_maximum_response_bytes
+        self._clock = clock
+        self._client = client or httpx.AsyncClient(
+            timeout=httpx.Timeout(settings.traffic_provider_timeout_seconds),
+            http2=True,
+            follow_redirects=False,
+        )
+        self._owns_client = client is None
+        self._lock = asyncio.Lock()
+        self._snapshot: tuple[datetime, list[dict[str, object]]] | None = None
+
+    @property
+    def configured(self) -> bool:
+        return self._feed_url is not None
+
+    @property
+    def reroute_configured(self) -> bool:
+        return False
+
+    async def incidents(
+        self,
+        *,
+        west: float,
+        south: float,
+        east: float,
+        north: float,
+    ) -> dict[str, object]:
+        if self._feed_url is None:
+            raise TrafficProviderError("Traffic incident provider is not configured")
+        fetched_at, snapshot = await self._feed()
+        incidents = [
+            incident
+            for incident in snapshot
+            if _intersects_bounds(incident, west=west, south=south, east=east, north=north)
+        ]
+        return {
+            "provider": "waze-for-cities",
+            "fetchedAt": fetched_at.isoformat().replace("+00:00", "Z"),
+            "incidents": incidents[:500],
+        }
+
+    async def _feed(self) -> tuple[datetime, list[dict[str, object]]]:
+        now = self._clock()
+        snapshot = self._snapshot
+        if snapshot is not None and now - snapshot[0] < timedelta(seconds=self._cache_seconds):
+            return snapshot
+
+        async with self._lock:
+            now = self._clock()
+            snapshot = self._snapshot
+            if snapshot is not None and now - snapshot[0] < timedelta(seconds=self._cache_seconds):
+                return snapshot
+            fresh = (now, await self._fetch(now))
+            self._snapshot = fresh
+            return fresh
+
+    async def _fetch(self, fetched_at: datetime) -> list[dict[str, object]]:
+        assert self._feed_url is not None
+        try:
+            response = await self._client.get(
+                self._feed_url.get_secret_value(),
+                headers={"Accept": "application/json"},
+            )
+        except httpx.HTTPError as error:
+            raise TrafficProviderError("Traffic incident provider is unavailable") from error
+
+        if response.status_code == 429:
+            raise TrafficProviderError(
+                "Traffic incident provider rate limit reached",
+                retry_after=_retry_after_seconds(response.headers),
+            )
+        if response.status_code != 200:
+            raise TrafficProviderError("Traffic incident provider request failed")
+        if len(response.content) > self._maximum_response_bytes:
+            raise TrafficProviderError("Traffic incident response exceeded the safe size limit")
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise TrafficProviderError("Traffic incident provider returned invalid data") from error
+        if not isinstance(payload, Mapping):
+            raise TrafficProviderError("Traffic incident provider returned invalid data")
+        raw_alerts = payload.get("alerts")
+        raw_jams = payload.get("jams")
+        if not isinstance(raw_alerts, list) and not isinstance(raw_jams, list):
+            raise TrafficProviderError("Traffic incident provider returned invalid data")
+
+        incidents: list[dict[str, object]] = []
+        if isinstance(raw_alerts, list):
+            incidents.extend(
+                incident
+                for item in raw_alerts[:2000]
+                if (incident := _normalise_waze_alert(item, fetched_at)) is not None
+            )
+        if isinstance(raw_jams, list):
+            incidents.extend(
+                incident
+                for item in raw_jams[:2000]
+                if (incident := _normalise_waze_jam(item, fetched_at)) is not None
+            )
+        return incidents
+
+    async def reroute(
+        self,
+        *,
+        path: list[tuple[float, float]],
+        avoid_areas: list[tuple[float, float, float, float]],
+    ) -> dict[str, object]:
+        raise TrafficProviderError("Waze publishes no route alternatives")
+
+    async def close(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+
+class PreferredTrafficProvider:
+    """Waze incidents when its feed is configured, TomTom otherwise.
+
+    Waze has no routing API, so alternatives always come from TomTom and the
+    reroute surface reports itself unconfigured when only Waze is available.
+    """
+
+    def __init__(
+        self,
+        *,
+        preferred: TrafficIncidentProvider,
+        fallback: TrafficIncidentProvider,
+    ):
+        self._preferred = preferred
+        self._fallback = fallback
+
+    @property
+    def configured(self) -> bool:
+        return self._preferred.configured or self._fallback.configured
+
+    @property
+    def reroute_configured(self) -> bool:
+        return self._preferred.reroute_configured or self._fallback.reroute_configured
+
+    async def incidents(
+        self,
+        *,
+        west: float,
+        south: float,
+        east: float,
+        north: float,
+    ) -> dict[str, object]:
+        if self._preferred.configured:
+            try:
+                return await self._preferred.incidents(
+                    west=west,
+                    south=south,
+                    east=east,
+                    north=north,
+                )
+            except TrafficProviderError:
+                # A degraded preferred feed must not hide a healthy fallback,
+                # but with no fallback the original failure is what callers
+                # need to see.
+                if not self._fallback.configured:
+                    raise
+        if not self._fallback.configured:
+            raise TrafficProviderError("Traffic incident provider is not configured")
+        return await self._fallback.incidents(west=west, south=south, east=east, north=north)
+
+    async def reroute(
+        self,
+        *,
+        path: list[tuple[float, float]],
+        avoid_areas: list[tuple[float, float, float, float]],
+    ) -> dict[str, object]:
+        for provider in (self._preferred, self._fallback):
+            if provider.reroute_configured:
+                return await provider.reroute(path=path, avoid_areas=avoid_areas)
+        raise TrafficProviderError("Traffic routing provider is not configured")
+
+    async def close(self) -> None:
+        await self._preferred.close()
+        await self._fallback.close()
+
+
 def validate_uk_incident_bounds(
     west: float,
     south: float,
@@ -378,6 +620,159 @@ def _normalise_incident(
         "probability": _short_string(properties.get("probabilityOfOccurrence"), 40),
         "reportCount": _optional_nonnegative_int(properties.get("numberOfReports")),
     }
+
+
+def _intersects_bounds(
+    incident: Mapping[str, object],
+    *,
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+) -> bool:
+    geometry = incident.get("geometry")
+    if not isinstance(geometry, list):
+        return False
+    for point in geometry:
+        if not isinstance(point, Mapping):
+            continue
+        latitude = point.get("latitude")
+        longitude = point.get("longitude")
+        if not isinstance(latitude, int | float) or not isinstance(longitude, int | float):
+            continue
+        if south <= latitude <= north and west <= longitude <= east:
+            return True
+    return False
+
+
+def _normalise_waze_alert(raw: object, fetched_at: datetime) -> dict[str, object] | None:
+    if not isinstance(raw, Mapping):
+        return None
+    alert_id = raw.get("uuid")
+    if not isinstance(alert_id, str) or not alert_id or len(alert_id) > 200:
+        return None
+    alert_type = raw.get("type")
+    if not isinstance(alert_type, str):
+        return None
+    subtype = raw.get("subtype") if isinstance(raw.get("subtype"), str) else ""
+    mapped = _WAZE_ALERT_TYPES.get(alert_type)
+    if mapped is None:
+        return None
+    point = _waze_point(raw.get("location"))
+    if point is None:
+        return None
+
+    reliability = raw.get("reliability")
+    if isinstance(reliability, int | float) and reliability < _WAZE_MINIMUM_RELIABILITY:
+        return None
+
+    hazard_type, severity = mapped
+    if alert_type in {"HAZARD", "WEATHERHAZARD"}:
+        hazard_type, severity = _waze_hazard_subtype(subtype)
+    elif alert_type == "ACCIDENT" and subtype == "ACCIDENT_MAJOR":
+        severity = "serious"
+
+    observed_at = _parse_millis(raw.get("pubMillis")) or fetched_at
+    thumbs_up = _optional_nonnegative_int(raw.get("nThumbsUp")) or 0
+    return {
+        "id": f"alert-{alert_id}",
+        "type": hazard_type,
+        "severity": severity,
+        "category": _short_string(subtype, 60) or alert_type.lower(),
+        "magnitude": "unknown",
+        "description": _waze_description(raw, _WAZE_ALERT_LABELS.get(alert_type, "Road hazard")),
+        "geometry": [point],
+        "observedAt": observed_at.isoformat().replace("+00:00", "Z"),
+        "expiresAt": (fetched_at + _WAZE_SNAPSHOT_EXPIRY).isoformat().replace("+00:00", "Z"),
+        "reportCount": thumbs_up + 1,
+    }
+
+
+def _normalise_waze_jam(raw: object, fetched_at: datetime) -> dict[str, object] | None:
+    if not isinstance(raw, Mapping):
+        return None
+    jam_id = raw.get("uuid")
+    if not isinstance(jam_id, str | int):
+        return None
+    level = raw.get("level")
+    delay_seconds = _optional_nonnegative_int(raw.get("delay"))
+    if not isinstance(level, int) or level < _WAZE_MINIMUM_JAM_LEVEL:
+        return None
+    points: list[dict[str, float]] = []
+    line = raw.get("line")
+    if isinstance(line, list):
+        for item in line[:500]:
+            vertex = _waze_point(item)
+            if vertex is not None:
+                points.append(vertex)
+    if not points:
+        return None
+
+    # Level 5 is Waze's blocked state; 4 is a standstill. Both are worth a
+    # reroute review, lighter congestion is context only.
+    severity = "serious" if level >= 4 or (delay_seconds or 0) >= 600 else "caution"
+    street = _short_string(raw.get("street"), 100)
+    description_parts = [f"Heavy traffic (Waze level {level})"]
+    if street:
+        description_parts.append(street)
+    if delay_seconds:
+        description_parts.append(f"{round(delay_seconds / 60)} min delay")
+    return {
+        "id": f"jam-{jam_id}",
+        "type": "other",
+        "severity": severity,
+        "category": "jam",
+        "magnitude": "major" if severity == "serious" else "moderate",
+        "description": " · ".join(description_parts)[:300],
+        "geometry": points,
+        "observedAt": (_parse_millis(raw.get("pubMillis")) or fetched_at)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "expiresAt": (fetched_at + _WAZE_SNAPSHOT_EXPIRY).isoformat().replace("+00:00", "Z"),
+        "delaySeconds": delay_seconds,
+        "reportCount": 1,
+    }
+
+
+def _waze_point(raw: object) -> dict[str, float] | None:
+    if not isinstance(raw, Mapping):
+        return None
+    longitude = raw.get("x")
+    latitude = raw.get("y")
+    if not isinstance(longitude, int | float) or not isinstance(latitude, int | float):
+        return None
+    if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+        return None
+    return {"latitude": float(latitude), "longitude": float(longitude)}
+
+
+def _waze_hazard_subtype(subtype: str) -> tuple[str, str]:
+    for prefix, mapped in _WAZE_HAZARD_SUBTYPES.items():
+        if subtype.startswith(prefix):
+            return mapped
+    return ("other", "caution")
+
+
+def _waze_description(raw: Mapping[str, object], fallback: str) -> str:
+    parts: list[str] = []
+    description = _short_string(raw.get("reportDescription"), 160)
+    if description:
+        parts.append(description)
+    else:
+        parts.append(fallback)
+    street = _short_string(raw.get("street"), 100)
+    if street:
+        parts.append(street)
+    return " · ".join(parts)[:300]
+
+
+def _parse_millis(value: object) -> datetime | None:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return None
+    try:
+        return datetime.fromtimestamp(float(value) / 1000, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _normalise_geometry(geometry: Mapping[str, object]) -> list[dict[str, float]]:

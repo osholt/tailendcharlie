@@ -920,7 +920,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             .where(
               (hazard) =>
                   hazard.source == HazardSource.externalProvider &&
-                  hazard.providerId == 'tomtom-traffic' &&
+                  liveTrafficHazardProviderIds.contains(hazard.providerId) &&
                   hazard.severity.index >= HazardSeverity.serious.index,
             )
             .take(10)

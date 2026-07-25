@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../domain/hazard.dart';
 import '../domain/imported_route.dart';
 import '../internet/internet_relay_client.dart';
+import 'relay_traffic_hazard_provider.dart';
 
 typedef TrafficHttpPost =
     Future<http.Response> Function(
@@ -137,7 +138,7 @@ class RelayTrafficRerouteProvider {
         .where(
           (hazard) =>
               hazard.source == HazardSource.externalProvider &&
-              hazard.providerId == 'tomtom-traffic' &&
+              liveTrafficHazardProviderIds.contains(hazard.providerId) &&
               hazard.isActiveAt(_clock()) &&
               hazard.severity.index >= HazardSeverity.serious.index,
         )

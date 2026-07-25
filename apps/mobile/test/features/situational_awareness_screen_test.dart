@@ -88,7 +88,10 @@ void main() {
     expect(find.text('1 coordinator alert'), findsOneWidget);
     expect(find.text('Acknowledge'), findsOneWidget);
     expect(find.text('Waze reports'), findsOneWidget);
-    expect(find.textContaining('No supported general Waze'), findsOneWidget);
+    expect(
+      find.textContaining('only through the relay traffic feed'),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Acknowledge'));
     await tester.pump();

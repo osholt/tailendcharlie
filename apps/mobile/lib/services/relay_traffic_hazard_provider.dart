@@ -12,6 +12,24 @@ import 'external_hazard_provider.dart';
 typedef TrafficHttpGet =
     Future<http.Response> Function(Uri uri, {Map<String, String>? headers});
 
+/// Identifies hazards that came from the relay's live traffic feed, whichever
+/// source the relay is configured with.
+const liveTrafficHazardProviderId = 'relay-traffic';
+
+/// Includes the identifier used before the relay could serve more than one
+/// traffic source, so hazards in existing ride journals still match.
+const liveTrafficHazardProviderIds = {
+  liveTrafficHazardProviderId,
+  'tomtom-traffic',
+};
+
+/// Relay traffic sources this app understands, with the attribution each one
+/// requires. An unknown value is rejected rather than shown unattributed.
+const _trafficSources = <String, ({String idPrefix, String label})>{
+  'tomtom-orbis': (idPrefix: 'tomtom', label: 'TomTom'),
+  'waze-for-cities': (idPrefix: 'waze', label: 'Waze'),
+};
+
 class RelayTrafficHazardProvider implements ExternalHazardProvider {
   RelayTrafficHazardProvider({
     required this.configuration,
@@ -37,7 +55,7 @@ class RelayTrafficHazardProvider implements ExternalHazardProvider {
   ExternalHazardProviderStatus _status;
 
   @override
-  String get id => 'tomtom-traffic';
+  String get id => liveTrafficHazardProviderId;
 
   @override
   String get displayName => 'Live UK traffic';
@@ -96,7 +114,7 @@ class RelayTrafficHazardProvider implements ExternalHazardProvider {
           throw const FormatException('Live traffic response was too large.');
         }
         final body = _jsonObject(response.bodyBytes);
-        if (body['provider'] != 'tomtom-orbis' ||
+        if (!_trafficSources.containsKey(body['provider']) ||
             body['incidents'] is! List<Object?>) {
           throw const FormatException('Live traffic response was invalid.');
         }
@@ -109,7 +127,10 @@ class RelayTrafficHazardProvider implements ExternalHazardProvider {
 
       final sampledRoute = _sampleRoute(route, maximumPoints: 800);
       final hazards = <String, HazardReport>{};
+      final sourceLabels = <String>{};
       for (final response in responses) {
+        final source = _trafficSources[response['provider']]!;
+        sourceLabels.add(source.label);
         final fetchedAt = _parseDate(response['fetchedAt']) ?? _clock();
         for (final raw in response['incidents']! as List<Object?>) {
           final incident = _incidentMap(raw);
@@ -123,8 +144,8 @@ class RelayTrafficHazardProvider implements ExternalHazardProvider {
           final expiresAt =
               incident.expiresAt ?? fetchedAt.add(const Duration(minutes: 10));
           if (!expiresAt.isAfter(query.requestedAt)) continue;
-          hazards[incident.id] = HazardReport(
-            id: 'tomtom-${incident.id}',
+          hazards['${source.idPrefix}-${incident.id}'] = HazardReport(
+            id: '${source.idPrefix}-${incident.id}',
             rideId: query.rideId,
             type: incident.type,
             severity: incident.severity,
@@ -137,7 +158,7 @@ class RelayTrafficHazardProvider implements ExternalHazardProvider {
             source: HazardSource.externalProvider,
             providerId: id,
             details:
-                '${incident.description} · TomTom · '
+                '${incident.description} · ${source.label} · '
                 'updated ${_freshnessLabel(fetchedAt, query.requestedAt)}',
             confirmations: math.max(1, incident.reportCount ?? 1),
           );
@@ -150,7 +171,7 @@ class RelayTrafficHazardProvider implements ExternalHazardProvider {
             ? 'No current incidents intersect this route corridor.'
             : '${hazards.length} route-relevant '
                   '${hazards.length == 1 ? 'incident' : 'incidents'} · '
-                  'TomTom',
+                  '${sourceLabels.join(' + ')}',
         lastUpdatedAt: updatedAt,
       );
       return ExternalHazardFetchResult(
