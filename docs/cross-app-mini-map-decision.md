@@ -55,6 +55,24 @@ The prototype now implements that design:
   tests and a compiled APK cover the data contract and integration, but cannot
   provide that field evidence.
 
+### Android 14 emulator evidence
+
+The debug APK was exercised on a clean Android 14 Google Play ARM64 emulator
+on 2026-07-25:
+
+- a leader created an empty ride, explicitly selected the demo route, reviewed
+  it, and opted in through **Show mini-map over another app**;
+- Android entered native Picture-in-Picture and rendered the route-only
+  snapshot without map tiles or overlay permission;
+- the PiP remained visible when Google Maps became the foreground activity;
+- the `GroupPipActivity` remained present across a screen-off/screen-on cycle
+  and restored above Google Maps after unlock; and
+- the PiP remained present while airplane mode was enabled, then disabled.
+
+This validates the supported host lifecycle and offline-retention paths in the
+official emulator. It does not substitute for the issue's physical-device
+battery, external-navigation, lock/background, and live rider-update matrix.
+
 **Recommendation**: retain the Android prototype as the supported cross-app
 companion, subject to physical-device lifecycle and battery validation. Keep
 iOS on the in-app mini-map; a separate Live Activity issue would be the
