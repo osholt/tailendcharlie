@@ -11,5 +11,9 @@ export 'ride_map_feature.dart'
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
         shouldUseTiledGroupMiniMap;
+export 'route_trail_style.dart'
+    show RouteLineStyle, RouteTrailStyle, contrastRatio, relativeLuminance;
 export '../../services/navigation_export.dart'
     show NavigationExportCoordinator, NavigationExportResult, NavigationTarget;
+export '../../services/rider_trail_recorder.dart'
+    show RiderTrail, RiderTrailKind, RiderTrailRecorder, RiderTrailUpdate;

@@ -506,10 +506,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
   final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
-  final _offRouteTraces = ValueNotifier<List<MapOverlayTrace>>(const []);
+  final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
   final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
-  final _riderTrails = <String, List<route_domain.GeoPoint>>{};
+  final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
   final _rideCompletionDetector = RideCompletionDetector();
@@ -540,6 +540,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   Timer? _markerExitChromeTimer;
   Future<void> _publishChain = Future.value();
   String? _routeFingerprint;
+  String? _trailLifecycleFingerprint;
   String? _appliedAuthoritativeRouteRevision;
   String? _simulationRouteFingerprint;
   route_domain.ImportedRoute? _activeRoute;
@@ -1133,8 +1134,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _awarenessController = controller;
     _markerAssistanceController = markerController;
     _routeFingerprint = effectiveFingerprint;
-    _riderTrails.clear();
-    _offRouteTraces.value = const [];
+    // Replacing the awareness controller usually only means the route changed -
+    // a leader reroute, say - and travelled history must survive that with no
+    // gap or restart. Only a new ride lifecycle discards it, which is also what
+    // keeps the pre-start no-trace rule intact (#35/#51).
+    if (lifecycleFingerprint != _trailLifecycleFingerprint) {
+      _trailLifecycleFingerprint = lifecycleFingerprint;
+      _trailRecorder.clear();
+      _riderTrails.value = const [];
+    }
     controller.addListener(_onAwarenessChanged);
     if (session.role == RideRole.lead &&
         !_isSimulation &&
@@ -1524,9 +1532,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(_maybeAutomaticallyEndRide(awareness));
     if (!updateOverlayMarkers) return;
     if (_isSimulation) {
-      _updateSimulationOffRouteTraces(simulatedRiders ?? const []);
+      _updateSimulationRiderTrails(simulatedRiders ?? const []);
     } else if (updateDerivedState) {
-      _updateOffRouteTraces(awareness);
+      _updateRiderTrails(awareness);
     }
 
     final overlays = <MapOverlayMarker>[
@@ -1693,96 +1701,101 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     return route.waypoints.isEmpty ? null : route.waypoints.last.point;
   }
 
-  void _updateSimulationOffRouteTraces(List<SimulatedRiderSnapshot> riders) {
-    final traces = <MapOverlayTrace>[];
-    final leader = riders
-        .where((rider) => rider.role == RideRole.lead)
-        .firstOrNull;
-    if (leader != null && leader.travelTrail.length >= 2) {
-      traces.add(
-        MapOverlayTrace(
-          id: 'leader-track-${leader.id}',
-          points: leader.travelTrail
-              .map(
-                (point) => route_domain.GeoPoint(
-                  latitude: point.latitude,
-                  longitude: point.longitude,
-                ),
-              )
-              .toList(growable: false),
-          label: '${leader.displayName} leader track',
-          color: const Color(0xFFB58CFF),
-        ),
-      );
-    }
-    traces.addAll(
-      riders
-          .where((rider) => rider.isOffRoute && rider.offRouteTrail.length >= 2)
-          .map(
-            (rider) => MapOverlayTrace(
-              id: 'off-route-${rider.id}',
-              points: rider.offRouteTrail
-                  .map(
-                    (point) => route_domain.GeoPoint(
-                      latitude: point.latitude,
-                      longitude: point.longitude,
-                    ),
-                  )
-                  .toList(growable: false),
-              label: '${rider.displayName} off-route trace',
+  /// Ride Lab drives the same trail model as a real ride, so the simulator can
+  /// no longer show a leader track the live path never builds (#100).
+  void _updateSimulationRiderTrails(List<SimulatedRiderSnapshot> riders) =>
+      _publishRiderTrails([
+        for (final rider in riders)
+          RiderTrail(
+            riderId: rider.id,
+            displayName: rider.displayName,
+            kind: RiderTrailRecorder.kindFor(
+              isLeader: rider.role == RideRole.lead,
+              isOffRoute: rider.isOffRoute,
+            ),
+            // Ride Lab maintains its own ephemeral history; the same per-rider
+            // cap is applied here so the simulator and a real ride agree.
+            points: _trailRecorder.boundedTrail(
+              _routePoints(rider.travelTrail),
             ),
           ),
-    );
-    _offRouteTraces.value = List.unmodifiable(traces);
-  }
+      ]);
 
-  void _updateOffRouteTraces(SituationalAwarenessController awareness) {
+  /// Records and publishes every eligible rider's travelled trail from position
+  /// history alone.
+  ///
+  /// Route matching decides route progress and alerts; it never decides whether
+  /// a trail is drawn. The leader's trail also draws on the awareness
+  /// controller's leader history, which is rebuilt from the durable journal on
+  /// restart, so it survives an app restart mid-ride as far as the journal
+  /// allows.
+  void _updateRiderTrails(SituationalAwarenessController awareness) {
+    if (!widget.rideController.rideStarted) {
+      _trailRecorder.clear();
+      _publishRiderTrails(const []);
+      return;
+    }
     final alerts = {
       for (final alert in awareness.routeAlerts) alert.riderId: alert,
     };
-    final traces = <MapOverlayTrace>[];
-    for (final location in awareness.riderLocations) {
-      final participant = widget.rideController.participantFor(
-        location.riderId,
-      );
-      if (participant?.isEligibleForLivePosition != true) {
-        _riderTrails.remove(location.riderId);
-        continue;
-      }
-      final point = route_domain.GeoPoint(
-        latitude: location.sample.position.latitude,
-        longitude: location.sample.position.longitude,
-        recordedAt: location.sample.recordedAt,
-      );
-      final trail = _riderTrails.putIfAbsent(location.riderId, () => []);
-      if (trail.isEmpty || _trailPointChanged(trail.last, point)) {
-        trail.add(point);
-        if (trail.length > 120) trail.removeRange(0, trail.length - 120);
-      }
-      final state = alerts[location.riderId]?.assessment.state;
-      final isOffRoute =
-          state == RouteTrackingState.suspectedOffRoute ||
-          state == RouteTrackingState.offRoute ||
-          state == RouteTrackingState.recovering;
-      if (isOffRoute && trail.length >= 2) {
-        traces.add(
-          MapOverlayTrace(
-            id: 'off-route-${location.riderId}',
-            points: List.unmodifiable(trail),
-            label: '${location.displayName} off-route trace',
+    _publishRiderTrails(
+      _trailRecorder.update([
+        for (final location in awareness.riderLocations)
+          RiderTrailUpdate(
+            riderId: location.riderId,
+            displayName: location.displayName,
+            position: route_domain.GeoPoint(
+              latitude: location.sample.position.latitude,
+              longitude: location.sample.position.longitude,
+              recordedAt: location.sample.recordedAt,
+            ),
+            isLeader: location.role == RideRole.lead,
+            isOffRoute: _isOffRouteState(
+              alerts[location.riderId]?.assessment.state,
+            ),
+            isEligible:
+                widget.rideController
+                    .participantFor(location.riderId)
+                    ?.isEligibleForLivePosition ==
+                true,
+            journalTrail: location.role == RideRole.lead
+                ? _routePoints(awareness.leaderTrail)
+                : null,
           ),
-        );
-      }
-    }
-    _offRouteTraces.value = List.unmodifiable(traces);
+      ]),
+    );
   }
 
-  static bool _trailPointChanged(
-    route_domain.GeoPoint first,
-    route_domain.GeoPoint second,
-  ) =>
-      (first.latitude - second.latitude).abs() > 1e-7 ||
-      (first.longitude - second.longitude).abs() > 1e-7;
+  static List<route_domain.GeoPoint> _routePoints(
+    List<awareness_geo.GeoPoint> points,
+  ) => [
+    for (final point in points)
+      route_domain.GeoPoint(
+        latitude: point.latitude,
+        longitude: point.longitude,
+      ),
+  ];
+
+  void _publishRiderTrails(List<RiderTrail> trails) {
+    _riderTrails.value = List.unmodifiable([
+      for (final trail in trails.where((trail) => trail.isRenderable))
+        MapOverlayTrace(
+          id: 'trail-${trail.riderId}',
+          points: trail.points,
+          label: switch (trail.kind) {
+            RiderTrailKind.leader => '${trail.displayName} leader trail',
+            RiderTrailKind.offRoute => '${trail.displayName} off-route trace',
+            RiderTrailKind.rider => '${trail.displayName} trail',
+          },
+          kind: trail.kind,
+        ),
+    ]);
+  }
+
+  static bool _isOffRouteState(RouteTrackingState? state) =>
+      state == RouteTrackingState.suspectedOffRoute ||
+      state == RouteTrackingState.offRoute ||
+      state == RouteTrackingState.recovering;
 
   static Color _hazardColor(HazardSeverity severity) => switch (severity) {
     HazardSeverity.advisory => const Color(0xFF8EA7C4),
@@ -2145,7 +2158,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       currentPosition: _mapPosition,
       navigationPosition: _mapNavigationPosition,
       overlayMarkers: _mapOverlays,
-      offRouteTraces: _offRouteTraces,
+      riderTrails: _riderTrails,
       leaderStatus: _leaderStatus,
       groupRiderCount: widget.rideController.liveParticipants.length,
       onOpenRoster: _openRoster,
@@ -2896,7 +2909,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
     _mapOverlays.dispose();
-    _offRouteTraces.dispose();
+    _riderTrails.dispose();
     _leaderStatus.dispose();
     _junctionMarkerOverlay.dispose();
     unawaited(_carPlayBridge?.dispose());
