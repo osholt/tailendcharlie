@@ -44,10 +44,18 @@ are unchanged.
 Normalisation rules, all enforced on the relay:
 
 - Alert types are an **allowlist**: `ACCIDENT`, `ROAD_CLOSED`, `CONSTRUCTION`,
-  `HAZARD` and `WEATHERHAZARD`. A category Waze adds later is dropped rather
-  than shown as an unclassified hazard.
-- Crowd reports below Waze reliability 5 are discarded. A low-confidence
-  report is not a safe basis for prompting a rerouting decision mid-ride.
+  `HAZARD`, `WEATHERHAZARD` and `POLICE`. A category Waze adds later is
+  dropped rather than shown as an unclassified hazard.
+- Enforcement is first-class. `POLICE` maps to `policeActivity`, and any
+  subtype containing `CAMERA`, `RADAR` or `SPEED_TRAP` maps to `speedCamera` —
+  including the documented `HAZARD_ON_ROAD_MOBILE_SPEED_CAMERA`. Both are
+  `serious`, both are exempt from the confidence floor below, and both drive
+  the advance warning described in
+  [situational-awareness.md](situational-awareness.md).
+- Crowd reports below Waze reliability 5 are discarded, **except** enforcement
+  reports. A low-confidence pothole is noise; a low-confidence camera warning
+  is still worth having, and missing one costs the rider more than a false
+  positive does.
 - Jams below level 3 are ignored. Level 4 and above, or a delay of ten minutes
   or more, is `serious` and therefore eligible for a reroute offer; level 3 is
   `caution` context only.
@@ -138,7 +146,10 @@ itself unconfigured.
 - A failed refresh leaves already journalled incidents visible until their
   stated expiry rather than replacing them with a false all-clear.
 - The feature is limited to UK route geometry.
-- Only serious and critical route-matched incidents offer a reroute.
+- Only serious and critical route-matched incidents offer a reroute, and
+  enforcement types are excluded from that set regardless of severity. A
+  camera is warned about, never routed around: it is not an obstruction, and
+  the group's authoritative route is not the place to react to one.
 - Dismissing or accepting an offer suppresses the same incident set until its
   provider expiry. A different incident set can offer a new review.
 - If the routing provider returns no path alternative, the current route is

@@ -40,8 +40,8 @@ identity/application-layer encryption review, deployment of the included relay,
 and field-tested marker/pass detection. A basemap archive/style and licensed
 traffic provider are not configured. Waze remains unavailable as a general
 hazard-read source without a partnership; the relay can now read a Waze for
-Cities partner feed once that agreement and its terms are recorded. Manual
-six-character
+Cities partner feed, including its police and mobile-camera alerts, once that
+agreement and its terms are recorded. Manual six-character
 joining cannot start authenticated nearby or internet relay because it does not
 carry the high-entropy invitation secret; sharing and pasting the private invite
 is the supported alpha path. OS deep-link registration and an in-app QR scanner
@@ -109,8 +109,8 @@ server automatically when any rider regains connectivity.
   hardware problem. MVP supports preset messages and queued voice notes later.
 - **Reading Waze crowd hazards without a partnership.** Waze has no general
   public read API for its live user reports. The Waze for Cities partner feed
-  is supported on the relay, but that partnership is an optional enhancement,
-  not a launch dependency.
+  is supported on the relay and carries its police and mobile-camera alerts,
+  but that partnership is an optional enhancement, not a launch dependency.
 - **Guaranteed operation after force-quit.** iOS does not permit a promise of
   continuous peer discovery after the user terminates the app.
 - **Public social network, ride discovery, profiles, or feeds.** These dilute

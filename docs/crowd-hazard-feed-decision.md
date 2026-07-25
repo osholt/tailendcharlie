@@ -50,9 +50,18 @@ partner programme whose signed participants do receive a read feed of Waze
 alerts and jams. Tail End Charlie is now expecting access to that feed, so a
 relay-side reader for it is implemented in
 [live-traffic-incidents.md](live-traffic-incidents.md) under path 1 above,
-alongside TomTom rather than replacing it. No feed URL is configured and no
-Waze support may be claimed until the partner agreement and its display,
-caching, redistribution and attribution terms are recorded.
+alongside TomTom rather than replacing it.
+
+The enforcement position in point 2 above is **superseded** as a product
+decision. Camera and police reports are now a wanted feature, not an excluded
+one: they are carried at any confidence level and given the most prominent
+warning in the app. What the original decision was really protecting — not
+shipping enforcement data the project has no right to — still stands, and is
+now handled where it belongs: no feed URL is configured, and no Waze support
+may be claimed, until the partner agreement and its display, caching,
+redistribution and attribution terms are recorded. Whether that agreement
+permits redistributing `POLICE` and camera alerts specifically is one of the
+terms to confirm, because it is the part most likely to be restricted.
 
 ### Google Maps Platform
 

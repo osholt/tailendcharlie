@@ -30,10 +30,13 @@ extension HazardTypeLabel on HazardType {
   };
 }
 
-/// Enforcement-related values remain decodable for old ride journals, but are
-/// deliberately excluded from new first-party reports until the exact feature
-/// has both documented data rights and market-specific legal approval.
+/// Everything a rider can raise from the app. Enforcement sightings are
+/// included: they are first-hand observations by the rider making the report,
+/// which is a different thing from redistributing a provider's data, and they
+/// are the reports the group most wants to receive.
 const riderReportableHazardTypes = <HazardType>[
+  HazardType.speedCamera,
+  HazardType.policeActivity,
   HazardType.pothole,
   HazardType.looseSurface,
   HazardType.debris,
@@ -169,10 +172,13 @@ class HazardExpiryPolicy {
       HazardType.pothole ||
       HazardType.roadworks ||
       HazardType.flooding => const Duration(hours: 12),
-      HazardType.speedCamera => const Duration(hours: 4),
+      // Enforcement a rider reports is almost always a mobile van or a patrol
+      // car, and both move on. A stale sighting raises a full-screen warning
+      // for the whole group, so these expire faster than a road defect.
+      HazardType.speedCamera => const Duration(hours: 2),
+      HazardType.policeActivity => const Duration(hours: 1),
       HazardType.collision ||
-      HazardType.stoppedVehicle ||
-      HazardType.policeActivity => const Duration(hours: 2),
+      HazardType.stoppedVehicle => const Duration(hours: 2),
       HazardType.looseSurface ||
       HazardType.debris ||
       HazardType.animals ||

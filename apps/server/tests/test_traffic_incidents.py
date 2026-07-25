@@ -486,19 +486,34 @@ def test_waze_provider_normalises_alerts_and_jams_and_caches_one_snapshot(settin
     assert len(jam["geometry"]) == 2
 
 
-def test_waze_provider_drops_low_reliability_reports_and_light_jams(settings):
+def test_waze_provider_keeps_enforcement_reports_at_any_confidence(settings):
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
                 "alerts": [
                     {
-                        "uuid": "unreliable-1",
-                        "type": "ACCIDENT",
-                        "subtype": "ACCIDENT_MINOR",
+                        "uuid": "police-1",
+                        "type": "POLICE",
+                        "subtype": "POLICE_VISIBLE",
+                        "street": "A470",
+                        "location": {"x": -3.18, "y": 51.48},
+                        "reliability": 1,
+                    },
+                    {
+                        "uuid": "camera-1",
+                        "type": "HAZARD",
+                        "subtype": "HAZARD_ON_ROAD_MOBILE_SPEED_CAMERA",
+                        "location": {"x": -3.179, "y": 51.481},
+                        "reliability": 0,
+                    },
+                    {
+                        "uuid": "unreliable-pothole",
+                        "type": "HAZARD",
+                        "subtype": "HAZARD_ON_ROAD_POT_HOLE",
                         "location": {"x": -3.18, "y": 51.48},
                         "reliability": 2,
-                    }
+                    },
                 ],
                 "jams": [
                     {
@@ -521,7 +536,16 @@ def test_waze_provider_drops_low_reliability_reports_and_light_jams(settings):
     result = asyncio.run(provider.incidents(west=-3.3, south=51.3, east=-2.9, north=51.7))
     asyncio.run(client.aclose())
 
-    assert result["incidents"] == []
+    police, camera = result["incidents"]
+    assert police["id"] == "alert-police-1"
+    assert police["type"] == "policeActivity"
+    assert police["severity"] == "serious"
+    assert police["description"] == "Police reported · A470"
+    assert camera["type"] == "speedCamera"
+    assert camera["severity"] == "serious"
+    # The unreliable pothole and the light jam are still filtered out; only
+    # enforcement is exempt from the confidence floor.
+    assert len(result["incidents"]) == 2
 
 
 def test_waze_provider_filters_the_snapshot_to_the_requested_viewport(settings):

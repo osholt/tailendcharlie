@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../domain/hazard.dart';
 import '../domain/imported_route.dart';
 import '../internet/internet_relay_client.dart';
+import 'enforcement_alert_detector.dart';
 import 'relay_traffic_hazard_provider.dart';
 
 typedef TrafficHttpPost =
@@ -139,6 +140,9 @@ class RelayTrafficRerouteProvider {
           (hazard) =>
               hazard.source == HazardSource.externalProvider &&
               liveTrafficHazardProviderIds.contains(hazard.providerId) &&
+              // Enforcement reports warn the rider; they never justify
+              // recalculating the group's route around them.
+              !enforcementHazardTypes.contains(hazard.type) &&
               hazard.isActiveAt(_clock()) &&
               hazard.severity.index >= HazardSeverity.serious.index,
         )

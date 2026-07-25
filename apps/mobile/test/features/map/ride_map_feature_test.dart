@@ -7,12 +7,15 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/geo_point.dart' as awareness_geo;
+import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
+import 'package:ride_relay/services/enforcement_alert_detector.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/map_style_repository.dart';
@@ -395,6 +398,143 @@ void main() {
     );
     expect(riderSpeed.data, '45');
     expect(riderSpeed.style?.fontSize, 26);
+  });
+
+  testWidgets('reports a gloved enforcement sighting from the map', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('map-report');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final reported = <HazardType>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          onReportHazard: (type) async => reported.add(type),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final button = find.byKey(const Key('report-sighting-button'));
+    expect(button, findsOneWidget);
+    // Comfortably past the 48dp minimum target, for gloves at speed.
+    expect(tester.getSize(button).shortestSide, greaterThanOrEqualTo(56));
+    // The sighting button sits directly above the speed-limit control.
+    expect(
+      tester.getBottomLeft(button).dy,
+      lessThanOrEqualTo(
+        tester.getTopLeft(find.byKey(const Key('speed-limit-opt-in-chip'))).dy,
+      ),
+    );
+
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    final option = find.byKey(const Key('report-speed-camera-option'));
+    expect(option, findsOneWidget);
+    expect(tester.getSize(option).height, greaterThanOrEqualTo(72));
+
+    await tester.tap(option);
+    await tester.pumpAndSettle();
+
+    expect(reported, [HazardType.speedCamera]);
+    expect(find.textContaining('Speed camera reported'), findsOneWidget);
+  });
+
+  testWidgets('the map has no report control outside a ride', (tester) async {
+    final directory = Directory.systemTemp.createTempSync('map-no-report');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('report-sighting-button')), findsNothing);
+  });
+
+  testWidgets('an approaching speed camera takes over the map', (tester) async {
+    final directory = Directory.systemTemp.createTempSync('map-enforcement');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final now = DateTime.utc(2026, 7, 25, 12);
+    final alert = ValueNotifier<EnforcementAlert?>(null);
+    addTearDown(alert.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          distanceUnit: DistanceUnit.miles,
+          enforcementAlert: alert,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('enforcement-alert-overlay')), findsNothing);
+
+    alert.value = EnforcementAlert(
+      hazard: HazardReport(
+        id: 'waze-alert-camera-1',
+        rideId: 'ride-1',
+        type: HazardType.speedCamera,
+        severity: HazardSeverity.serious,
+        position: const awareness_geo.GeoPoint(
+          latitude: 51.5,
+          longitude: -3.18,
+        ),
+        reportedAt: now,
+        updatedAt: now,
+        expiresAt: now.add(const Duration(minutes: 10)),
+        reporterId: 'relay-traffic',
+        source: HazardSource.externalProvider,
+        providerId: 'relay-traffic',
+        details: 'Mobile speed camera · Waze · updated just now',
+      ),
+      distanceMeters: 1207,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('enforcement-alert-overlay')), findsOneWidget);
+    expect(find.text('SPEED CAMERA'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('enforcement-alert-distance')))
+          .data,
+      '0.7 mi',
+    );
+
+    await tester.tap(find.byKey(const Key('enforcement-alert-overlay')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('enforcement-alert-overlay')), findsNothing);
   });
 
   testWidgets('offers file import and loads bundled demo route offline', (

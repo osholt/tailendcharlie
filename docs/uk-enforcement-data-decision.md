@@ -28,6 +28,22 @@ attribution, UK-only filtering and redistribution to Tail End Charlie users.
 There is no public anonymous endpoint that can safely be embedded in tonight's
 build.
 
+## Update 2026-07-25
+
+Enforcement warnings are now a headline rider feature, not a deferred one. The
+display side is built and provider-neutral: any hazard typed `speedCamera` or
+`policeActivity` raises a full-screen warning a mile out, described in
+[situational-awareness.md](situational-awareness.md). The relay's Waze for
+Cities reader is the first source wired into it and supplies police alerts and
+mobile-camera subtypes at any confidence.
+
+This does not replace the Cyclops decision. Waze carries crowd-reported mobile
+cameras and police sightings; it does not carry the UK's fixed, average-speed
+and red-light camera database, which is the larger and more reliable half of
+the picture. Cyclops (or TomTom Safety Locations) remains the plan for that,
+and it now has a display surface waiting for it — the integration work left is
+the feed itself, not the alert.
+
 ## Alternatives
 
 ### Waze for Cities data feed

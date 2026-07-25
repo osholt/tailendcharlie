@@ -158,25 +158,21 @@ void main() {
     },
   );
 
-  test('enforcement reports cannot be added to a ride', () async {
+  test('riders can report enforcement sightings to the group', () async {
     for (final type in [HazardType.policeActivity, HazardType.speedCamera]) {
-      await expectLater(
-        controller.reportHazard(
-          type: type,
-          severity: HazardSeverity.advisory,
-          position: const GeoPoint(latitude: 51, longitude: -1),
-        ),
-        throwsA(
-          isA<FormatException>().having(
-            (error) => error.message,
-            'message',
-            contains('not supported'),
-          ),
-        ),
+      final report = await controller.reportHazard(
+        type: type,
+        severity: HazardSeverity.serious,
+        position: const GeoPoint(latitude: 51, longitude: -1),
       );
+
+      expect(report, isNotNull);
+      expect(report!.type, type);
+      expect(report.source, HazardSource.rider);
     }
-    expect(controller.activeHazards, isEmpty);
-    expect(await store.eventsForRide(_session.rideId), isEmpty);
+
+    expect(controller.activeHazards, hasLength(2));
+    expect(await store.eventsForRide(_session.rideId), hasLength(2));
   });
 
   test('event replay restores active hazards and acknowledgements', () async {

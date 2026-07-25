@@ -47,6 +47,7 @@ _WAZE_ALERT_TYPES: dict[str, tuple[str, str]] = {
     "CONSTRUCTION": ("roadworks", "caution"),
     "HAZARD": ("other", "caution"),
     "WEATHERHAZARD": ("other", "caution"),
+    "POLICE": ("policeActivity", "serious"),
 }
 _WAZE_ALERT_LABELS = {
     "ACCIDENT": "Collision reported",
@@ -54,6 +55,7 @@ _WAZE_ALERT_LABELS = {
     "CONSTRUCTION": "Roadworks",
     "HAZARD": "Road hazard",
     "WEATHERHAZARD": "Weather hazard",
+    "POLICE": "Police reported",
 }
 _WAZE_HAZARD_SUBTYPES: dict[str, tuple[str, str]] = {
     "HAZARD_ON_ROAD_CONSTRUCTION": ("roadworks", "caution"),
@@ -70,9 +72,15 @@ _WAZE_HAZARD_SUBTYPES: dict[str, tuple[str, str]] = {
     "HAZARD_ON_SHOULDER_CAR_STOPPED": ("stoppedVehicle", "advisory"),
     "HAZARD_ON_SHOULDER": ("other", "advisory"),
 }
-# Waze scores crowd reports 0-10. A low-confidence report is not a safe basis
-# for prompting a rerouting decision mid-ride.
+# Enforcement subtype fragments. Waze documents
+# HAZARD_ON_ROAD_MOBILE_SPEED_CAMERA; matching on the fragment also catches the
+# camera and radar spellings that appear in real partner feeds.
+_WAZE_ENFORCEMENT_SUBTYPE_MARKERS = ("CAMERA", "RADAR", "SPEED_TRAP")
+# Waze scores crowd reports 0-10. Ordinary hazards below this are noise, but
+# enforcement reports are deliberately exempt: riders want a low-confidence
+# camera warning far more than they want a missed one.
 _WAZE_MINIMUM_RELIABILITY = 5
+_WAZE_ENFORCEMENT_TYPES = ("speedCamera", "policeActivity")
 _WAZE_MINIMUM_JAM_LEVEL = 3
 # The feed is a live snapshot with no per-incident expiry, so a reading is
 # trusted only until the next few refreshes would have replaced it.
@@ -662,15 +670,21 @@ def _normalise_waze_alert(raw: object, fetched_at: datetime) -> dict[str, object
     if point is None:
         return None
 
-    reliability = raw.get("reliability")
-    if isinstance(reliability, int | float) and reliability < _WAZE_MINIMUM_RELIABILITY:
-        return None
-
     hazard_type, severity = mapped
-    if alert_type in {"HAZARD", "WEATHERHAZARD"}:
+    if any(marker in subtype.upper() for marker in _WAZE_ENFORCEMENT_SUBTYPE_MARKERS):
+        hazard_type, severity = ("speedCamera", "serious")
+    elif alert_type in {"HAZARD", "WEATHERHAZARD"}:
         hazard_type, severity = _waze_hazard_subtype(subtype)
     elif alert_type == "ACCIDENT" and subtype == "ACCIDENT_MAJOR":
         severity = "serious"
+
+    reliability = raw.get("reliability")
+    if (
+        hazard_type not in _WAZE_ENFORCEMENT_TYPES
+        and isinstance(reliability, int | float)
+        and reliability < _WAZE_MINIMUM_RELIABILITY
+    ):
+        return None
 
     observed_at = _parse_millis(raw.get("pubMillis")) or fetched_at
     thumbs_up = _optional_nonnegative_int(raw.get("nThumbsUp")) or 0
