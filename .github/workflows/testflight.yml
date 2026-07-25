@@ -60,9 +60,18 @@ jobs:
           profile_uuid="$(security cms -D -i "$profile_path" | plutil -extract UUID raw -)"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$profile_path" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+      - name: Resolve build identity
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+        run: |
+          set -euo pipefail
+          "$GITHUB_WORKSPACE/tools/build-identity.sh" pubspec.yaml testflight "$BUILD_NUMBER" \
+            | tee -a "$GITHUB_ENV"
       - name: Build App Store IPA
         env:
           BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          TESTER_NOTES_URL: https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/tester-release-notes.md
+          TESTFLIGHT_INVITE_URL: ${{ vars.RIDE_RELAY_TESTFLIGHT_INVITE_URL }}
           RIDE_RELAY_API_BASE_URL: ${{ vars.RIDE_RELAY_API_BASE_URL }}
           RIDE_RELAY_FIREBASE_IOS_APP_ID: ${{ vars.RIDE_RELAY_FIREBASE_IOS_APP_ID }}
         run: |
@@ -77,7 +86,14 @@ jobs:
           fi
           flutter pub get
           flutter build ios --release --no-codesign \
+            --build-name="$RIDE_RELAY_APP_VERSION" \
             --build-number="$BUILD_NUMBER" \
+            --dart-define=RIDE_RELAY_APP_VERSION="$RIDE_RELAY_APP_VERSION" \
+            --dart-define=RIDE_RELAY_APP_BUILD="$RIDE_RELAY_APP_BUILD" \
+            --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK="$RIDE_RELAY_DISTRIBUTION_TRACK" \
+            --dart-define=RIDE_RELAY_BUILD_TIMESTAMP="$RIDE_RELAY_BUILD_TIMESTAMP" \
+            --dart-define=RIDE_RELAY_TESTER_NOTES_URL="$TESTER_NOTES_URL" \
+            --dart-define=RIDE_RELAY_TESTER_UPDATE_URL="$TESTFLIGHT_INVITE_URL" \
             --dart-define=RIDE_RELAY_API_BASE_URL="$RIDE_RELAY_API_BASE_URL" \
             --dart-define=RIDE_RELAY_PUSH_ENABLED="$push_enabled" \
             --dart-define=RIDE_RELAY_FIREBASE_IOS_APP_ID="$RIDE_RELAY_FIREBASE_IOS_APP_ID"
