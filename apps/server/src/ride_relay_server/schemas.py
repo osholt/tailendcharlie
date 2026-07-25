@@ -78,6 +78,28 @@ class PresencePositionResponse(PresencePositionRequest):
     receivedAt: datetime
     expiresAt: datetime
 
+    # False when the publishing build only advertised the legacy pre-start
+    # capability, so a peer can name the limitation instead of showing an
+    # unexplained gap once the ride starts.
+    livePresence: bool = False
+    clientProtocol: int = Field(default=1, ge=1, le=1000)
+
+
+class PresenceMemberResponse(BaseModel):
+    """One rider derived from durable membership events, with no cursor.
+
+    This is what lets a join reach the other devices even when their bulk event
+    batch is wedged or backed off.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    riderId: str = Field(min_length=1, max_length=128)
+    displayName: str = Field(min_length=1, max_length=80)
+    role: str = Field(min_length=1, max_length=40)
+    joinedAt: datetime
+    left: bool = False
+
 
 class PresenceSyncResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -85,6 +107,8 @@ class PresenceSyncResponse(BaseModel):
     protocolVersion: Literal[1] = 1
     ttlSeconds: int
     positions: list[PresencePositionResponse]
+    phase: Literal["open", "started", "ended"] = "open"
+    members: list[PresenceMemberResponse] = Field(default_factory=list)
 
 
 class PushPreferences(BaseModel):

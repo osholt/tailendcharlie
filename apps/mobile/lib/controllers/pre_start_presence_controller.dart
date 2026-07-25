@@ -2,29 +2,43 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../domain/ride_role.dart';
 import '../domain/rider_location.dart';
 import '../domain/ride_session.dart';
 import '../internet/internet_relay_client.dart';
+import '../relay/live_presence.dart';
 import '../relay/relay_presence.dart';
 
-/// Maintains one short-lived, non-journalled position per rider before start.
+/// Maintains one short-lived, non-journalled position per rider for the whole
+/// ride.
 ///
 /// This controller deliberately has no [EventStore] dependency. Its snapshots
 /// disappear when stale, when the controller stops, or when the process exits.
+/// The durable journal remains the only record of where the group has been;
+/// this is only the answer to "where is everyone right now".
+///
+/// It runs across the `rideStarted` transition on purpose. Stopping at start
+/// left two disconnected channels with no continuity, so a rider visible before
+/// the start vanished at start, and a rider joining an already-started ride was
+/// never visible at all until a journal round-trip completed.
 class PreStartPresenceController extends ChangeNotifier {
   PreStartPresenceController(
     this._api, {
     this.pollInterval = const Duration(seconds: 4),
+    this.freshnessPolicy = const PresenceFreshnessPolicy(),
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
   final PreStartPresenceApi _api;
   final Duration pollInterval;
+  final PresenceFreshnessPolicy freshnessPolicy;
   final DateTime Function() _clock;
   RideSession? _session;
   RiderLocation? _localPosition;
-  List<RiderLocation> _internetLocations = const [];
+  final Map<String, RiderLocation> _internetLocations = {};
   final Map<String, RelayPresenceUpdate> _nearbyLocations = {};
+  final Map<String, PresenceRosterMember> _roster = {};
+  Set<String> _legacyPeerRiderIds = const {};
   RelayPresenceGateway? _nearby;
   StreamSubscription<RelayPresenceUpdate>? _nearbySubscription;
   Duration _ttl = const Duration(seconds: 45);
@@ -33,37 +47,126 @@ class PreStartPresenceController extends ChangeNotifier {
   bool _syncing = false;
   bool _closed = false;
   bool _clearOnNextSync = false;
-  String? _statusMessage;
+  PresenceAvailability _availability = PresenceAvailability.stopped;
+  RidePresencePhase _phase = RidePresencePhase.unknown;
 
   bool get active => _active;
+
+  /// The named availability of the internet presence channel. Replaces the
+  /// previous string comparison against a server status code, which turned a
+  /// capability refusal into a silent shrug.
+  PresenceAvailability get availability => _availability;
+
+  /// True when at least one presence channel can carry positions.
   bool get supported =>
-      _nearby != null || _statusMessage != 'feature_unsupported';
-  String? get statusMessage => _statusMessage;
-  List<RiderLocation> get locations {
-    final now = _clock();
-    final latest = <String, RiderLocation>{};
-    for (final location in _internetLocations) {
-      if (now.difference(location.receivedAt) <= _ttl) {
-        latest[location.riderId] = location;
-      }
+      _nearby != null ||
+      _availability != PresenceAvailability.serviceUnsupported;
+
+  /// Plain-language reason, or null when presence is working.
+  String? get unavailableReason => switch (_availability) {
+    PresenceAvailability.live || PresenceAvailability.starting => null,
+    PresenceAvailability.stopped => null,
+    PresenceAvailability.serviceUnsupported =>
+      PresenceLimitation.serviceCapabilityMissing.message,
+    PresenceAvailability.serviceUnauthorized =>
+      PresenceLimitation.serviceUnauthorized.message,
+    PresenceAvailability.clientUpdateRequired =>
+      PresenceLimitation.clientUpdateRequired.message,
+    PresenceAvailability.serviceUpgradeRequired =>
+      PresenceLimitation.serviceUpgradeRequired.message,
+    PresenceAvailability.serviceUnreachable =>
+      PresenceLimitation.serviceUnreachable.message,
+  };
+
+  /// Retained so existing callers keep compiling; prefer [unavailableReason].
+  String? get statusMessage => unavailableReason;
+
+  /// The phase the relay reports for this ride, which is what makes presence
+  /// continuous rather than something the client has to infer from its own
+  /// cursor.
+  RidePresencePhase get phase => _phase;
+
+  /// Riders the relay has seen, independent of the bulk event batch.
+  List<PresenceRosterMember> get roster =>
+      List.unmodifiable(_roster.values.toList()..sort(_byJoinedAt));
+
+  /// Every named degradation currently affecting live positions.
+  List<PresenceLimitation> get limitations {
+    final channel = switch (_availability) {
+      PresenceAvailability.serviceUnsupported =>
+        PresenceLimitation.serviceCapabilityMissing,
+      PresenceAvailability.serviceUnauthorized =>
+        PresenceLimitation.serviceUnauthorized,
+      PresenceAvailability.clientUpdateRequired =>
+        PresenceLimitation.clientUpdateRequired,
+      PresenceAvailability.serviceUpgradeRequired =>
+        PresenceLimitation.serviceUpgradeRequired,
+      PresenceAvailability.serviceUnreachable =>
+        PresenceLimitation.serviceUnreachable,
+      _ => null,
+    };
+    final result = <PresenceLimitation>[?channel];
+    for (final riderId in _legacyPeerRiderIds) {
+      if (riderId == _session?.localRiderId) continue;
+      final name =
+          _roster[riderId]?.displayName ??
+          _internetLocations[riderId]?.displayName;
+      if (name == null) continue;
+      result.add(
+        PresenceLimitation.peerAppOlder(riderId: riderId, displayName: name),
+      );
     }
-    for (final update in _nearbyLocations.values) {
-      final location = update.position;
-      if (location == null || !update.expiresAt.isAfter(now)) continue;
-      final previous = latest[location.riderId];
-      if (previous == null ||
-          location.sample.recordedAt.isAfter(previous.sample.recordedAt)) {
-        latest[location.riderId] = location;
-      }
-    }
-    return List.unmodifiable(
-      latest.values.toList()
-        ..sort((left, right) => left.riderId.compareTo(right.riderId)),
-    );
+    return List.unmodifiable(result);
   }
 
+  /// The freshest retained position per rider across both presence channels.
+  ///
+  /// Positions past [PresenceFreshnessPolicy.retainFor] are dropped so nothing
+  /// is drawn as if current; between the TTL and that threshold they survive so
+  /// they can be visibly demoted to ageing and then stale.
+  List<RiderLocation> get locations => [
+    for (final presence in presenceAt(_clock())) ?presence.location,
+  ];
+
+  /// Retained positions from the internet presence channel only, so a caller
+  /// merging in the journal can still attribute each source correctly.
+  List<RiderLocation> get internetLocations =>
+      List.unmodifiable(_retained(_internetLocations.values, _clock()));
+
+  /// Retained positions from the nearby presence channel only.
+  List<RiderLocation> get nearbyLocations {
+    final now = _clock();
+    return List.unmodifiable(_retained(_nearbyPositions(now), now));
+  }
+
+  /// The reconciled per-rider state, including riders the roster names but who
+  /// have no position yet.
+  List<LiveRiderPresence> presenceAt(DateTime now) =>
+      LivePresenceReconciler(policy: freshnessPolicy).reconcile(
+        now: now,
+        localRiderId: _session?.localRiderId ?? '',
+        internetPresence: _retained(_internetLocations.values, now),
+        nearbyPresence: _retained(_nearbyPositions(now), now),
+        roster: _roster.values,
+      );
+
+  Iterable<RiderLocation> _retained(
+    Iterable<RiderLocation> locations,
+    DateTime now,
+  ) => locations.where(
+    (location) => location.sample.ageAt(now) <= freshnessPolicy.retainFor,
+  );
+
+  Iterable<RiderLocation> _nearbyPositions(DateTime now) => [
+    for (final update in _nearbyLocations.values)
+      if (update.position case final position?)
+        if (update.expiresAt.isAfter(now) ||
+            position.sample.ageAt(now) <= freshnessPolicy.retainFor)
+          position,
+  ];
+
   Future<void> attachNearby(RelayPresenceGateway nearby) async {
-    if (_closed) throw StateError('Pre-start presence controller is closed.');
+    if (_closed) throw StateError('Live presence controller is closed.');
     await _nearbySubscription?.cancel();
     _nearby = nearby;
     _nearbySubscription = nearby.presenceUpdates.listen(_onNearbyPresence);
@@ -75,10 +178,10 @@ class PreStartPresenceController extends ChangeNotifier {
   }
 
   Future<void> start(RideSession session) async {
-    if (_closed) throw StateError('Pre-start presence controller is closed.');
+    if (_closed) throw StateError('Live presence controller is closed.');
     _session = session;
     _active = true;
-    _statusMessage = null;
+    _availability = PresenceAvailability.starting;
     await synchronizeNow();
   }
 
@@ -90,10 +193,7 @@ class PreStartPresenceController extends ChangeNotifier {
       return;
     }
     _localPosition = location;
-    _internetLocations = [
-      ..._internetLocations.where((value) => value.riderId != location.riderId),
-      location,
-    ];
+    _offerInternet(location);
     _nearbyLocations[location.riderId] = RelayPresenceUpdate(
       riderId: location.riderId,
       sentAt: location.receivedAt,
@@ -110,9 +210,7 @@ class PreStartPresenceController extends ChangeNotifier {
     final localId = _session?.localRiderId;
     _localPosition = null;
     if (localId != null) {
-      _internetLocations = _internetLocations
-          .where((location) => location.riderId != localId)
-          .toList(growable: false);
+      _internetLocations.remove(localId);
       _nearbyLocations.remove(localId);
     }
     _clearOnNextSync = true;
@@ -139,12 +237,13 @@ class PreStartPresenceController extends ChangeNotifier {
       if (!_active || _closed || !identical(session, _session)) return;
       _clearOnNextSync = false;
       _ttl = result.ttl;
-      _internetLocations = result.locations;
-      _statusMessage = null;
+      _phase = result.phase;
+      _applyInternetResult(result, session);
+      _availability = PresenceAvailability.live;
       notifyListeners();
     } on InternetRelayException catch (error) {
       if (!_active || _closed || !identical(session, _session)) return;
-      _statusMessage = error.code ?? error.message;
+      _availability = _availabilityFor(error);
       notifyListeners();
     } finally {
       _syncing = false;
@@ -163,16 +262,20 @@ class PreStartPresenceController extends ChangeNotifier {
 
   Future<void> stop({bool clearRemote = true}) async {
     if (!_active) {
-      _internetLocations = const [];
+      _internetLocations.clear();
       _nearbyLocations.clear();
+      _roster.clear();
       return;
     }
     _timer?.cancel();
     _timer = null;
     final session = _session;
     _active = false;
-    _internetLocations = const [];
+    _availability = PresenceAvailability.stopped;
+    _internetLocations.clear();
     _nearbyLocations.clear();
+    _roster.clear();
+    _legacyPeerRiderIds = const {};
     notifyListeners();
     if (clearRemote) {
       await Future.wait([
@@ -196,11 +299,101 @@ class PreStartPresenceController extends ChangeNotifier {
     dispose();
   }
 
+  void _applyInternetResult(
+    PreStartPresenceResult result,
+    RideSession session,
+  ) {
+    // An out-of-order or duplicated reply must never rewind a rider to an older
+    // coordinate.
+    for (final location in result.locations) {
+      _offerInternet(location);
+    }
+    final localPosition = _localPosition;
+    if (localPosition != null) _offerInternet(localPosition);
+    _legacyPeerRiderIds = result.legacyPeerRiderIds;
+    _roster
+      ..clear()
+      ..addEntries(
+        result.roster.map(
+          (entry) => MapEntry(
+            entry.riderId,
+            PresenceRosterMember(
+              riderId: entry.riderId,
+              displayName: entry.displayName,
+              role: _roleFor(entry.role),
+              joinedAt: entry.joinedAt,
+              left: entry.left,
+            ),
+          ),
+        ),
+      );
+    // A rider missing from the relay's list has stopped reporting; that is
+    // shown by demoting their last position to ageing and then stale, not by
+    // deleting it, because a marker that silently vanishes is indistinguishable
+    // from one that was never there. Only an explicit departure removes a
+    // rider, and only [PresenceFreshnessPolicy.retainFor] drops the position.
+    final now = _clock();
+    final departed = {
+      for (final entry in result.roster)
+        if (entry.left) entry.riderId,
+    };
+    _internetLocations.removeWhere(
+      (riderId, location) =>
+          (departed.contains(riderId) && riderId != session.localRiderId) ||
+          location.sample.ageAt(now) > freshnessPolicy.retainFor,
+    );
+    _nearbyLocations.removeWhere((riderId, update) {
+      final position = update.position;
+      return (departed.contains(riderId) && riderId != session.localRiderId) ||
+          position == null ||
+          position.sample.ageAt(now) > freshnessPolicy.retainFor;
+    });
+  }
+
+  void _offerInternet(RiderLocation location) {
+    final previous = _internetLocations[location.riderId];
+    if (previous != null &&
+        !location.sample.recordedAt.isAfter(previous.sample.recordedAt)) {
+      return;
+    }
+    _internetLocations[location.riderId] = location;
+  }
+
+  static PresenceAvailability _availabilityFor(InternetRelayException error) {
+    if (error.code == 'feature_unsupported') {
+      return PresenceAvailability.serviceUnsupported;
+    }
+    if (error.code == 'update_required') {
+      return PresenceAvailability.clientUpdateRequired;
+    }
+    if (error.code == 'server_upgrade_required') {
+      return PresenceAvailability.serviceUpgradeRequired;
+    }
+    if (error.unauthorized) return PresenceAvailability.serviceUnauthorized;
+    return PresenceAvailability.serviceUnreachable;
+  }
+
+  static RideRole _roleFor(String value) {
+    for (final role in RideRole.values) {
+      if (role.name == value) return role;
+    }
+    // An unknown future role must not drop the rider from the roster.
+    return RideRole.rider;
+  }
+
+  static int _byJoinedAt(
+    PresenceRosterMember left,
+    PresenceRosterMember right,
+  ) {
+    final byJoin = left.joinedAt.compareTo(right.joinedAt);
+    return byJoin != 0 ? byJoin : left.riderId.compareTo(right.riderId);
+  }
+
   void _onNearbyPresence(RelayPresenceUpdate update) {
     if (!_active || _closed) return;
     final previous = _nearbyLocations[update.riderId];
     if (previous != null && !update.sentAt.isAfter(previous.sentAt)) return;
-    if (update.clear || !update.expiresAt.isAfter(_clock())) {
+    if (update.clear) {
       _nearbyLocations.remove(update.riderId);
     } else {
       _nearbyLocations[update.riderId] = update;
@@ -235,4 +428,17 @@ class PreStartPresenceController extends ChangeNotifier {
       // Nearby snapshots expire independently on every peer.
     }
   }
+}
+
+/// Why live positions are or are not flowing over the internet presence
+/// channel. Every value is a state a rider can be told about.
+enum PresenceAvailability {
+  stopped,
+  starting,
+  live,
+  serviceUnsupported,
+  serviceUnauthorized,
+  serviceUnreachable,
+  clientUpdateRequired,
+  serviceUpgradeRequired,
 }
