@@ -122,6 +122,56 @@ void main() {
     expect(find.textContaining('Tracks, route progress'), findsOneWidget);
     expect(find.byKey(const Key('location-sharing-button')), findsOneWidget);
   });
+
+  testWidgets(
+    'offers a serious traffic alternative only through leader review',
+    (tester) async {
+      var reviewed = false;
+      var dismissed = false;
+      final hazard = HazardReport(
+        id: 'tomtom-closure',
+        rideId: 'ride',
+        type: HazardType.roadworks,
+        severity: HazardSeverity.critical,
+        position: const GeoPoint(latitude: 51, longitude: -0.995),
+        reportedAt: now,
+        updatedAt: now,
+        expiresAt: now.add(const Duration(minutes: 15)),
+        reporterId: 'tomtom-traffic',
+        source: HazardSource.externalProvider,
+        providerId: 'tomtom-traffic',
+        details: 'A48 closed · TomTom · updated now',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: SituationalAwarenessScreen(
+            controller: controller,
+            trafficRerouteHazards: [hazard],
+            trafficRerouteError: 'Provider retry is available.',
+            onReviewTrafficAlternative: () async => reviewed = true,
+            onDismissTrafficAlternative: () async => dismissed = true,
+          ),
+        ),
+      );
+
+      expect(
+        find.text('Serious incident may affect the route'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('group route changes only'), findsOneWidget);
+      expect(find.byKey(const Key('traffic-reroute-error')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('review-traffic-alternative')));
+      await tester.pump();
+      expect(reviewed, isTrue);
+
+      await tester.tap(find.byKey(const Key('dismiss-traffic-alternative')));
+      await tester.pump();
+      expect(dismissed, isTrue);
+    },
+  );
 }
 
 Widget _app(SituationalAwarenessController controller) => MaterialApp(

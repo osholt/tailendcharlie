@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -11,11 +12,17 @@ import httpx
 from .config import Settings
 
 _TOMTOM_INCIDENT_URL = "https://api.tomtom.com/maps/orbis/traffic/incidents/details"
+_TOMTOM_ROUTE_URL = "https://api.tomtom.com/maps/orbis/routing/routes/calculate"
 _TOMTOM_ATTRIBUTES = (
     "incidents(type,geometry(type,coordinates),properties("
     "id,iconCategory,magnitudeOfDelay,events(description,code,iconCategory),"
     "startTime,endTime,from,to,lengthInMeters,delayInSeconds,roadNumbers,"
     "timeValidity,probabilityOfOccurrence,numberOfReports,lastReportTime))"
+)
+_TOMTOM_ROUTE_ATTRIBUTES = (
+    "routes(summary(lengthInMeters,travelDurationInSeconds,"
+    "trafficDelayDurationInSeconds,deviationDistanceInMeters,"
+    "deviationDurationInSeconds),legs(path),instructions)"
 )
 _CATEGORY_NAMES = {
     0: "unknown",
@@ -58,6 +65,13 @@ class TrafficIncidentProvider(Protocol):
         south: float,
         east: float,
         north: float,
+    ) -> dict[str, object]: ...
+
+    async def reroute(
+        self,
+        *,
+        path: list[tuple[float, float]],
+        avoid_areas: list[tuple[float, float, float, float]],
     ) -> dict[str, object]: ...
 
     async def close(self) -> None: ...
@@ -172,6 +186,99 @@ class TomTomOrbisTrafficProvider:
             "incidents": incidents,
         }
 
+    async def reroute(
+        self,
+        *,
+        path: list[tuple[float, float]],
+        avoid_areas: list[tuple[float, float, float, float]],
+    ) -> dict[str, object]:
+        if self._api_key is None:
+            raise TrafficProviderError("Traffic routing provider is not configured")
+        calculated_at = self._clock()
+        body = {
+            "routePlanningLocations": {
+                "origin": {
+                    "type": "Point",
+                    "coordinates": [path[0][1], path[0][0]],
+                },
+                "destination": {
+                    "type": "Point",
+                    "coordinates": [path[-1][1], path[-1][0]],
+                },
+            },
+            "path": {
+                "type": "LineString",
+                "coordinates": [[longitude, latitude] for latitude, longitude in path],
+            },
+            "avoidAreas": {
+                "rectangles": [
+                    {
+                        "type": "Feature",
+                        "bbox": [west, south, east, north],
+                        "geometry": None,
+                    }
+                    for west, south, east, north in avoid_areas
+                ]
+            },
+            "maxPathAlternativeRoutes": 2,
+            "traffic": "live",
+            "routeType": "fast",
+            "travelMode": "car",
+            "guidance": "instructions",
+            "instructionPhonetics": "ipa",
+        }
+        try:
+            response = await self._client.post(
+                _TOMTOM_ROUTE_URL,
+                params={"apiVersion": "3"},
+                headers={
+                    "TomTom-Api-Key": self._api_key.get_secret_value(),
+                    "Attributes": _TOMTOM_ROUTE_ATTRIBUTES,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Accept-Language": "en-GB",
+                },
+                json=body,
+            )
+        except httpx.HTTPError as error:
+            raise TrafficProviderError("Traffic routing provider is unavailable") from error
+
+        if response.status_code == 429:
+            raise TrafficProviderError(
+                "Traffic routing provider rate limit reached",
+                retry_after=_retry_after_seconds(response.headers),
+            )
+        if response.status_code != 200:
+            raise TrafficProviderError("Traffic routing provider request failed")
+        if len(response.content) > self._maximum_response_bytes:
+            raise TrafficProviderError("Traffic routing response exceeded the safe size limit")
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise TrafficProviderError("Traffic routing provider returned invalid data") from error
+        raw_routes = payload.get("routes") if isinstance(payload, Mapping) else None
+        if not isinstance(raw_routes, list) or len(raw_routes) < 2:
+            raise TrafficProviderError("No traffic-aware alternative route is currently available")
+        reference = _normalise_route(raw_routes[0])
+        alternatives = [
+            route for raw in raw_routes[1:3] if (route := _normalise_route(raw)) is not None
+        ]
+        if reference is None or not alternatives:
+            raise TrafficProviderError("Traffic routing provider returned no usable alternative")
+        alternative = min(
+            alternatives,
+            key=lambda route: (
+                int(route["travelDurationSeconds"]),
+                int(route["distanceMeters"]),
+            ),
+        )
+        return {
+            "provider": "tomtom-orbis",
+            "calculatedAt": calculated_at.isoformat().replace("+00:00", "Z"),
+            "reference": reference,
+            "alternative": alternative,
+        }
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
@@ -191,6 +298,25 @@ def validate_uk_incident_bounds(
     longitude_km = (east - west) * 111.32 * math.cos(math.radians((south + north) / 2))
     if latitude_km * longitude_km > 9_500:
         raise ValueError("Traffic viewport exceeds the provider area limit")
+
+
+def validate_uk_reroute(
+    path: list[tuple[float, float]],
+    avoid_areas: list[tuple[float, float, float, float]],
+) -> None:
+    if len(path) < 2 or len(path) > 1000:
+        raise ValueError("Traffic rerouting requires 2 to 1000 route points")
+    if not 1 <= len(avoid_areas) <= 10:
+        raise ValueError("Traffic rerouting requires 1 to 10 avoid areas")
+    for latitude, longitude in path:
+        if not 49.0 <= latitude <= 61.5 or not -11.5 <= longitude <= 3.0:
+            raise ValueError("Traffic rerouting is currently available only for UK routes")
+    for west, south, east, north in avoid_areas:
+        validate_uk_incident_bounds(west, south, east, north)
+        latitude_km = (north - south) * 111.32
+        longitude_km = (east - west) * 111.32 * math.cos(math.radians((south + north) / 2))
+        if latitude_km * longitude_km > 25:
+            raise ValueError("A traffic reroute avoid area is too large")
 
 
 def _normalise_incident(
@@ -279,6 +405,152 @@ def _normalise_geometry(geometry: Mapping[str, object]) -> list[dict[str, float]
             continue
         result.append({"latitude": latitude, "longitude": longitude})
     return result
+
+
+def _normalise_route(raw: object) -> dict[str, object] | None:
+    if not isinstance(raw, Mapping):
+        return None
+    summary = raw.get("summary")
+    legs = raw.get("legs")
+    if not isinstance(summary, Mapping) or not isinstance(legs, list):
+        return None
+    distance = _optional_nonnegative_int(summary.get("lengthInMeters"))
+    duration = _optional_nonnegative_int(summary.get("travelDurationInSeconds"))
+    if distance is None or duration is None:
+        return None
+    points: list[dict[str, float]] = []
+    for leg in legs:
+        if not isinstance(leg, Mapping):
+            continue
+        geometry = leg.get("path")
+        if not isinstance(geometry, Mapping):
+            continue
+        leg_points = _normalise_geometry(geometry)
+        if points and leg_points and points[-1] == leg_points[0]:
+            leg_points = leg_points[1:]
+        points.extend(leg_points)
+        if len(points) > 5000:
+            return None
+    if len(points) < 2:
+        return None
+    result: dict[str, object] = {
+        "distanceMeters": distance,
+        "travelDurationSeconds": duration,
+        "trafficDelaySeconds": _optional_nonnegative_int(
+            summary.get("trafficDelayDurationInSeconds")
+        )
+        or 0,
+        "points": points,
+        "maneuvers": _normalise_instructions(raw.get("instructions")),
+    }
+    deviation_distance = _optional_nonnegative_int(summary.get("deviationDistanceInMeters"))
+    deviation_duration = _optional_nonnegative_int(summary.get("deviationDurationInSeconds"))
+    if deviation_distance is not None:
+        result["deviationDistanceMeters"] = deviation_distance
+    if deviation_duration is not None:
+        result["deviationDurationSeconds"] = deviation_duration
+    return result
+
+
+def _normalise_instructions(raw: object) -> list[dict[str, object]]:
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, object]] = []
+    for item in raw[:1000]:
+        if not isinstance(item, Mapping):
+            continue
+        maneuver = item.get("maneuver")
+        point = item.get("maneuverPoint")
+        if not isinstance(maneuver, str) or not isinstance(point, Mapping):
+            continue
+        latitude = point.get("latitude")
+        longitude = point.get("longitude")
+        if not isinstance(latitude, int | float) or not isinstance(longitude, int | float):
+            continue
+        mapped = _normalise_maneuver_code(maneuver)
+        next_road = item.get("nextRoadInformation")
+        road_name = None
+        road_ref = None
+        if isinstance(next_road, Mapping):
+            street_name = next_road.get("streetName")
+            if isinstance(street_name, Mapping):
+                road_name = _short_string(street_name.get("text"), 120)
+            shields = next_road.get("roadShields")
+            if isinstance(shields, list):
+                for shield in shields:
+                    if not isinstance(shield, Mapping):
+                        continue
+                    number = shield.get("roadNumber")
+                    if isinstance(number, Mapping):
+                        road_ref = _short_string(number.get("text"), 40)
+                    if road_ref:
+                        break
+        instruction: dict[str, object] = {
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "type": mapped[0],
+        }
+        if mapped[1] is not None:
+            instruction["modifier"] = mapped[1]
+        if road_name is not None:
+            instruction["name"] = road_name
+        if road_ref is not None:
+            instruction["ref"] = road_ref
+        exit_number = _optional_nonnegative_int(item.get("roundaboutExitNumber"))
+        if exit_number is not None:
+            instruction["exitNumber"] = exit_number
+        driving_side = item.get("drivingSide")
+        if driving_side in {"left", "right"}:
+            instruction["drivingSide"] = driving_side
+        message = _short_string(
+            item.get("message") or item.get("instructionMessage"),
+            240,
+        )
+        if message is not None:
+            instruction["message"] = message
+        result.append(instruction)
+    return result
+
+
+def _normalise_maneuver_code(value: str) -> tuple[str, str | None]:
+    direct = {
+        "depart": ("depart", None),
+        "arrive": ("arrive", None),
+        "arriveLeft": ("arrive", "left"),
+        "arriveRight": ("arrive", "right"),
+        "arriveAhead": ("arrive", "straight"),
+        "continueStraight": ("continue", "straight"),
+        "makeUTurn": ("turn", "uturn"),
+        "keepLeft": ("fork", "left"),
+        "keepRight": ("fork", "right"),
+        "keepCenter": ("fork", "straight"),
+        "exitMotorwayLeft": ("off ramp", "left"),
+        "exitMotorwayRight": ("off ramp", "right"),
+        "exitMotorwayMiddle": ("off ramp", "straight"),
+        "switchMotorwayLeft": ("fork", "left"),
+        "switchMotorwayRight": ("fork", "right"),
+        "switchMotorwayMiddle": ("fork", "straight"),
+        "mergeLeftLane": ("merge", "left"),
+        "mergeRightLane": ("merge", "right"),
+        "exitRoundabout": ("exit roundabout", None),
+    }
+    if value in direct:
+        return direct[value]
+    if value.startswith("turn"):
+        return "turn", _camel_direction(value.removeprefix("turn"))
+    if value.startswith("roundabout"):
+        return "roundabout", _camel_direction(value.removeprefix("roundabout"))
+    return value, None
+
+
+def _camel_direction(value: str) -> str | None:
+    if not value:
+        return None
+    spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", value).lower()
+    return {
+        "back": "uturn",
+        "straight": "straight",
+    }.get(spaced, spaced)
 
 
 def _category_name(value: object) -> str:

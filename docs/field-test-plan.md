@@ -65,7 +65,11 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
     incident appears, its source/freshness/expiry remain visible, and a provider
     outage retains the last useful result only until expiry. Repeat with a
     follower phone and confirm only the leader fetches provider data while the
-    signed hazard converges to the follower.
+    signed hazard converges to the follower. On the leader, review an
+    alternative, cancel it once, dismiss it once, and finally accept it. Verify
+    cancellation and provider failure leave the current route unchanged,
+    dismissal suppresses the same incident until expiry, and acceptance
+    publishes exactly one higher route revision that converges to the follower.
 
 ## Pass gates
 

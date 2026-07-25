@@ -15,6 +15,11 @@ class SituationalAwarenessScreen extends StatelessWidget {
     this.locationController,
     this.rideStarted = true,
     this.onLocationStopped,
+    this.trafficRerouteHazards = const [],
+    this.trafficRerouting = false,
+    this.trafficRerouteError,
+    this.onReviewTrafficAlternative,
+    this.onDismissTrafficAlternative,
   });
 
   final SituationalAwarenessController controller;
@@ -22,6 +27,11 @@ class SituationalAwarenessScreen extends StatelessWidget {
   final ForegroundLocationController? locationController;
   final bool rideStarted;
   final Future<void> Function()? onLocationStopped;
+  final List<HazardReport> trafficRerouteHazards;
+  final bool trafficRerouting;
+  final String? trafficRerouteError;
+  final Future<void> Function()? onReviewTrafficAlternative;
+  final Future<void> Function()? onDismissTrafficAlternative;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -89,6 +99,18 @@ class SituationalAwarenessScreen extends StatelessWidget {
                     ),
                   ),
                 ),
+              if (trafficRerouteHazards.isNotEmpty &&
+                  onReviewTrafficAlternative != null &&
+                  onDismissTrafficAlternative != null) ...[
+                const SizedBox(height: 12),
+                _TrafficRerouteCard(
+                  hazards: trafficRerouteHazards,
+                  busy: trafficRerouting,
+                  error: trafficRerouteError,
+                  onReview: onReviewTrafficAlternative!,
+                  onDismiss: onDismissTrafficAlternative!,
+                ),
+              ],
               const SizedBox(height: 20),
               const _SectionHeader(title: 'RIDER STATUS'),
               const SizedBox(height: 10),
@@ -150,6 +172,96 @@ class SituationalAwarenessScreen extends StatelessWidget {
         details: draft.details,
       );
     }
+  }
+}
+
+class _TrafficRerouteCard extends StatelessWidget {
+  const _TrafficRerouteCard({
+    required this.hazards,
+    required this.busy,
+    required this.error,
+    required this.onReview,
+    required this.onDismiss,
+  });
+
+  final List<HazardReport> hazards;
+  final bool busy;
+  final String? error;
+  final Future<void> Function() onReview;
+  final Future<void> Function() onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = hazards.first;
+    return Card(
+      key: const Key('traffic-reroute-card'),
+      color: const Color(0xFF2A211A),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.alt_route_rounded, color: Color(0xFFFFC857)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    hazards.length == 1
+                        ? 'Serious incident may affect the route'
+                        : '${hazards.length} serious incidents may affect the route',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              first.details ??
+                  '${first.type.label} · ${first.severity.label} · live traffic',
+              style: const TextStyle(color: Color(0xFFD8CBBE)),
+            ),
+            if (error case final message?) ...[
+              const SizedBox(height: 8),
+              Text(
+                message,
+                key: const Key('traffic-reroute-error'),
+                style: const TextStyle(color: Color(0xFFFF8A80)),
+              ),
+            ],
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  key: const Key('review-traffic-alternative'),
+                  onPressed: busy ? null : onReview,
+                  icon: busy
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.route_outlined),
+                  label: Text(busy ? 'Calculating…' : 'Review alternative'),
+                ),
+                TextButton(
+                  key: const Key('dismiss-traffic-alternative'),
+                  onPressed: busy ? null : onDismiss,
+                  child: const Text('Dismiss this incident'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'The group route changes only after the leader reviews and '
+              'confirms the alternative.',
+              style: TextStyle(color: Color(0xFFAD9E90), fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

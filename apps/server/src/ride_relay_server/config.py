@@ -74,6 +74,7 @@ class Settings(BaseSettings):
             "push-notifications-v1",
             "observer-access-v1",
             "traffic-incidents-v1",
+            "traffic-reroutes-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)

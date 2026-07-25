@@ -64,6 +64,12 @@ rider identity, or GPS sample. The relay validates and rate-limits the viewport,
 caches a normalized result briefly, and keeps the provider credential
 server-side in `RIDE_RELAY_TOMTOM_TRAFFIC_API_KEY`.
 
+`POST /api/v1/traffic/reroutes` accepts a bounded remaining-route polyline and
+up to ten compact incident avoid rectangles. It asks TomTom Orbis Routing for
+live-traffic path alternatives, returns normalized geometry and guidance, and
+does not persist the request. The app presents the result only to the leader;
+publishing it still requires the ordinary route-review confirmation.
+
 Leave the key unset to return the explicit
 `traffic_provider_unconfigured` state without affecting ride sync. Before
 setting it in production, confirm the selected TomTom contract permits the

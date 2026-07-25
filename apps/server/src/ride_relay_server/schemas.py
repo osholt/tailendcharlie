@@ -154,6 +154,46 @@ class CompatibilityResponse(BaseModel):
     updateUrls: dict[str, str]
 
 
+class TrafficRoutePoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: float = Field(ge=49.0, le=61.5)
+    longitude: float = Field(ge=-11.5, le=3.0)
+
+
+class TrafficAvoidArea(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    west: float = Field(ge=-11.5, le=3.0)
+    south: float = Field(ge=49.0, le=61.5)
+    east: float = Field(ge=-11.5, le=3.0)
+    north: float = Field(ge=49.0, le=61.5)
+
+    @model_validator(mode="after")
+    def bounds_are_ordered(self) -> TrafficAvoidArea:
+        if self.west >= self.east or self.south >= self.north:
+            raise ValueError("Avoid-area bounds must be ordered")
+        return self
+
+
+class TrafficRerouteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: list[TrafficRoutePoint] = Field(min_length=2, max_length=1000)
+    avoidAreas: list[TrafficAvoidArea] = Field(min_length=1, max_length=10)
+    incidentIds: list[str] = Field(min_length=1, max_length=10)
+
+    @field_validator("incidentIds")
+    @classmethod
+    def incident_ids_are_bounded(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values]
+        if any(not value or len(value) > 200 for value in cleaned):
+            raise ValueError("Incident IDs must contain 1 to 200 characters")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("Incident IDs must be unique")
+        return cleaned
+
+
 DiscoveryCategory = Literal[
     "twisty_highlight",
     "mountain_pass",
