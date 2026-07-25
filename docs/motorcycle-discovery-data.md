@@ -1,6 +1,7 @@
 # Motorcycle discovery layer data decision
 
-Status: proposed implementation decision for issues #47–#49.
+Status: review-gated generator implemented for issue #64; UK-wide publication
+and manual review remain pending.
 
 ## Decision
 
@@ -10,8 +11,9 @@ instances on every pan or copy routes from proprietary motorcycle products.
 
 The initial sources are:
 
-- OpenStreetMap or the ODbL-licensed Overture transportation theme for road
-  centre-lines, access restrictions, class, surface and speed attributes.
+- The dated Geofabrik **United Kingdom** OpenStreetMap extract for road
+  centre-lines, access restrictions, class, surface and speed attributes. This
+  extract includes Great Britain and Northern Ireland.
 - OpenStreetMap nodes tagged `mountain_pass=yes`, normally combined with
   `name=*` and `ele=*`, for the mountain-pass layer.
 - Copernicus DEM GLO-30 for optional elevation-derived ranking once its access
@@ -38,7 +40,9 @@ Overture release in a controlled job.
 
 ## Pipeline
 
-1. Download a versioned UK regional extract or Overture transportation release.
+1. Download the exact dated UK extract pinned in
+   `tools/discovery/releases/uk-2026-07-23.toml`; verify its published byte size
+   and checksum before processing.
 2. Keep road segments that permit motorcycles. Initially exclude motorways,
    motorway links, private/no-motor-vehicle access, ferries, steps, paths and
    unpaved tracks unless an administrator explicitly approves an exception.
@@ -59,6 +63,12 @@ Overture release in a controlled job.
    over an imported source until an administrator clears it.
 8. Validate geometry, duplicates, access, attribution and source freshness,
    then publish immutable versioned tiles plus a small manifest.
+
+`tools/discovery/generate_catalogue.py` now implements the pinned-source check,
+streaming Osmium export, road exclusions, 100 m resampling, bend-density score,
+way joining, pass-to-road matching, deterministic limits, separate layer
+outputs, review sampling, provenance and byte-identical web/mobile candidates.
+Its output is always marked `review-required`; running it does not publish data.
 
 ## Published schema
 
@@ -100,6 +110,14 @@ The algorithm, thresholds and test fixtures are published with the data so a
 score is reproducible. Changes create a new catalogue version rather than
 silently altering existing features.
 
+## Validation-only datasets
+
+OS Open Roads may be used to sample-check Great Britain road classification and
+coverage. DfT GB traffic counts and Northern Ireland DfI traffic counts may add
+descriptive traffic context after their releases are separately pinned. None
+of those datasets is a turn-by-turn source or a safety rating, and lower traffic
+must never be presented as evidence that a road is safe, open or suitable.
+
 ## Licensing and attribution
 
 - OpenStreetMap data is available under ODbL and requires visible attribution.
@@ -126,12 +144,27 @@ manually review at least:
 - access, surface and seasonal-closure handling;
 - tile size and map performance on a lower-end phone.
 
+The generated `--review-sample` output selects candidates for England, Scotland,
+Wales and Northern Ireland. Its coarse geographic buckets are a review aid, not
+an administrative-boundary dataset; a reviewer must correct overlaps and sign
+off each nation before publication.
+
 ## Primary references
 
 - OpenStreetMap `mountain_pass` tag:
   https://wiki.openstreetmap.org/wiki/Key%3Amountain_pass
+- Geofabrik United Kingdom extract:
+  https://download.geofabrik.de/europe/united-kingdom.html
 - OpenStreetMap licence and attribution:
   https://www.openstreetmap.org/about/license
+- Osmium streaming export:
+  https://docs.osmcode.org/osmium/latest/osmium-export.html
+- OS Open Roads:
+  https://docs.os.uk/os-downloads/products/transport-network-portfolio/os-open-roads
+- DfT GB road traffic counts:
+  https://www.data.gov.uk/dataset/208c0e7b-353f-4e2d-8b7a-1a7118467acc/gb-road-traffic-counts
+- Northern Ireland DfI traffic counts:
+  https://admin.opendatani.gov.uk/dataset/northern-ireland-traffic-count-data
 - OpenStreetMap vector-tile policy:
   https://operations.osmfoundation.org/policies/vector/
 - Overpass API instances and usage guidance:
