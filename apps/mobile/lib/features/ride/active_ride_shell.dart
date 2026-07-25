@@ -551,6 +551,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   bool _holdingNavigationChromeForMarkerExit = false;
   bool _autoEndingRide = false;
   bool _simulationPausedByRide = false;
+  bool _observedRideStarted = false;
+  bool _localRideStartInProgress = false;
   RideRole? _lastPushRole;
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
@@ -559,6 +561,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _observedRideStarted =
+        widget.rideController.rideStarted && !widget.rideController.rideEnded;
     _screenAwakeCoordinator = RideScreenAwakeCoordinator(
       wakeLock: widget.screenWakeLock,
       reassertInterval: widget.screenWakeReassertInterval,
@@ -757,6 +761,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         await locationController.initialize();
       } on Object catch (error) {
         _warnings.add('Location capability check failed: $error');
+      }
+      if (widget.rideController.rideStarted &&
+          !widget.rideController.rideEnded) {
+        await _resumeLocationForActiveRide();
       }
 
       if (session != null) {
@@ -1639,6 +1647,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   void _onRideControllerChanged() {
     final session = widget.rideController.session;
+    final rideStarted =
+        widget.rideController.rideStarted && !widget.rideController.rideEnded;
+    final rideJustStarted = rideStarted && !_observedRideStarted;
+    _observedRideStarted = rideStarted;
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _observerAccessController?.updateSession(session);
@@ -1646,6 +1658,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       unawaited(_synchroniseRideControllers());
       if (widget.rideController.rideStarted) {
         unawaited(_preStartPresenceController?.stop());
+      }
+      if (rideJustStarted && !_localRideStartInProgress) {
+        unawaited(_resumeLocationForActiveRide());
       }
       if (_lastPushRole != session.role) {
         _lastPushRole = session.role;
@@ -1657,6 +1672,27 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       unawaited(_handleRideEnded());
     }
     _schedulePublish();
+  }
+
+  Future<void> _resumeLocationForActiveRide() async {
+    final locationController = _locationController;
+    if (locationController == null ||
+        !widget.rideController.rideStarted ||
+        widget.rideController.rideEnded) {
+      return;
+    }
+    try {
+      await locationController.resumeIfAuthorized();
+    } on Object catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Could not resume live GPS: $error\n$stackTrace');
+      }
+      final added = _warnings.add(
+        'Live GPS could not resume automatically. Use Follow me or Safety '
+        'to try again.',
+      );
+      if (added && mounted) setState(() {});
+    }
   }
 
   Future<void> _synchroniseRideControllers() async {
@@ -2174,7 +2210,27 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     if (decision == _StartRideDecision.start) {
-      await widget.rideController.startRide();
+      _localRideStartInProgress = true;
+      try {
+        await widget.rideController.startRide();
+        try {
+          // The confirmation is an explicit user action and promises that
+          // live sharing begins now, so it is the correct place to request
+          // permission when the leader has not granted it yet.
+          await _locationController?.requestAndStart();
+        } on Object catch (error, stackTrace) {
+          if (kDebugMode) {
+            debugPrint('Could not start live GPS: $error\n$stackTrace');
+          }
+          final added = _warnings.add(
+            'The ride started, but live GPS could not start. Use Follow me '
+            'or Safety to try again.',
+          );
+          if (added && mounted) setState(() {});
+        }
+      } finally {
+        _localRideStartInProgress = false;
+      }
     }
   }
 
