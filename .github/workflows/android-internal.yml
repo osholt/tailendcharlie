@@ -7,9 +7,33 @@ on:
         description: Optional unique Android version code (defaults to GitHub run number)
         required: false
         type: string
+      promote_to:
+        description: >-
+          Closed track to promote to after a successful upload. Testers are on
+          alpha; "none" uploads to internal only and reaches no closed tester.
+        required: true
+        default: alpha
+        type: choice
+        options:
+          - alpha
+          - beta
+          - none
+      notification_mode:
+        description: >-
+          auto emails the closed tester group when one is configured; dry-run
+          only renders the mail into the run summary.
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - dry-run
 
 permissions:
   contents: read
+  # Reading this workflow's own previous successful run gives the notification a
+  # truthful "what changed since the build testers already have".
+  actions: read
 
 concurrency:
   group: android-internal-upload
@@ -17,6 +41,7 @@ concurrency:
 
 env:
   FLUTTER_VERSION: 3.44.6
+  FASTLANE_VERSION: 2.228.0
   MOBILE_DIR: apps/mobile
   PACKAGE_NAME: app.tailendcharlie
 
@@ -67,9 +92,17 @@ jobs:
       - name: Resolve build identity
         env:
           BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          PROMOTE_TO: ${{ inputs.promote_to }}
         run: |
           set -euo pipefail
-          "$GITHUB_WORKSPACE/tools/build-identity.sh" pubspec.yaml internal "$BUILD_NUMBER" \
+          # Stamp the track this build is *destined* for. Promotion reuses the
+          # uploaded artefact and never rebuilds, so stamping `internal` here is
+          # what told every closed tester they were on internal testing (#122).
+          destination_track=internal
+          if test "$PROMOTE_TO" != "none"; then
+            destination_track="$PROMOTE_TO"
+          fi
+          "$GITHUB_WORKSPACE/tools/build-identity.sh" pubspec.yaml "$destination_track" "$BUILD_NUMBER" \
             | tee -a "$GITHUB_ENV"
       - name: Build App Bundle
         env:
@@ -120,26 +153,131 @@ jobs:
           releaseFiles: ${{ env.MOBILE_DIR }}/build/app/outputs/bundle/release/app-release.aab
           track: internal
           status: completed
+      - name: Install Fastlane
+        if: ${{ success() && inputs.promote_to != 'none' }}
+        run: |
+          set -euo pipefail
+          gem install fastlane \
+            --version "$FASTLANE_VERSION" \
+            --no-document \
+            --user-install
+          echo "$(ruby -e 'puts Gem.user_dir')/bin" >> "$GITHUB_PATH"
+      - name: Promote to the closed testing track
+        id: promote
+        if: ${{ success() && inputs.promote_to != 'none' }}
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          TARGET_TRACK: ${{ inputs.promote_to }}
+          VERSION_CODE: ${{ inputs.build_number || github.run_number }}
+        run: |
+          set -euo pipefail
+          test -n "$SERVICE_ACCOUNT_JSON"
+          test -n "$VERSION_CODE"
+          json_key_path="$RUNNER_TEMP/play-service-account.json"
+          umask 077
+          printf '%s' "$SERVICE_ACCOUNT_JSON" > "$json_key_path"
+          # Leaves the internal release active on purpose: the internal cohort
+          # and the closed group are configured independently, and deactivating
+          # the source strands internal testers on no available update.
+          fastlane supply \
+            --json_key "$json_key_path" \
+            --package_name "$PACKAGE_NAME" \
+            --track internal \
+            --track_promote_to "$TARGET_TRACK" \
+            --track_promote_release_status completed \
+            --deactivate_on_promote false \
+            --version_code "$VERSION_CODE"
+      - name: Collect what changed since the previous notified build
+        if: ${{ success() && inputs.promote_to != 'none' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: android-internal.yml
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          changes_file="$RUNNER_TEMP/tester-changes.md"
+          previous_sha="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow "$WORKFLOW_FILE" \
+            --status success \
+            --limit 20 \
+            --json databaseId,headSha \
+            --jq "[.[] | select(.databaseId < $RUN_ID) | .headSha] | first // \"\"" \
+            2>/dev/null | tr -d '"' || true)"
+          if test -n "$previous_sha" && git cat-file -e "$previous_sha^{commit}" 2>/dev/null; then
+            baseline="the last released build (commit ${previous_sha:0:7})"
+            git log --no-merges --pretty='- %s (%h)' "$previous_sha..HEAD" > "$changes_file"
+          else
+            baseline="the last 20 commits on this ref (no previous release commit available)"
+            git log --no-merges --max-count=20 --pretty='- %s (%h)' > "$changes_file"
+          fi
+          echo "TESTER_CHANGES_FILE=$changes_file" >> "$GITHUB_ENV"
+          echo "TESTER_CHANGES_BASELINE=$baseline" >> "$GITHUB_ENV"
+      - name: Notify the closed tester group
+        # Only after a successful promotion: the mail says testers can install
+        # this build, so it must not go out when they cannot. A notification
+        # problem must never fail a release, hence continue-on-error as well as
+        # the tool's own exit-0 contract.
+        if: ${{ success() && inputs.promote_to != 'none' }}
+        continue-on-error: true
+        env:
+          NOTIFICATION_MODE: ${{ inputs.notification_mode }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TARGET_TRACK: ${{ inputs.promote_to }}
+          TESTER_GROUP: ${{ vars.RIDE_RELAY_ANDROID_TESTER_GROUP }}
+          TESTER_NOTIFY_FROM: ${{ vars.RIDE_RELAY_TESTER_NOTIFY_FROM }}
+          TESTER_NOTIFY_SMTP_HOST: ${{ vars.RIDE_RELAY_TESTER_NOTIFY_SMTP_HOST }}
+          TESTER_NOTIFY_SMTP_PORT: ${{ vars.RIDE_RELAY_TESTER_NOTIFY_SMTP_PORT }}
+          TESTER_NOTIFY_SMTP_USERNAME: ${{ secrets.RIDE_RELAY_TESTER_NOTIFY_SMTP_USERNAME }}
+          TESTER_NOTIFY_SMTP_PASSWORD: ${{ secrets.RIDE_RELAY_TESTER_NOTIFY_SMTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/tools/tester_notify/notify_testers.py" \
+            --track "$TARGET_TRACK" \
+            --app-version "$RIDE_RELAY_APP_VERSION" \
+            --build-number "$RIDE_RELAY_APP_BUILD" \
+            --commit "$GITHUB_SHA" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-url "$RUN_URL" \
+            --changes-file "${TESTER_CHANGES_FILE:-}" \
+            --changes-baseline "${TESTER_CHANGES_BASELINE:-}" \
+            --recipient "$TESTER_GROUP" \
+            --mode "$NOTIFICATION_MODE"
       - name: Publish tester release summary
         if: always()
         env:
+          PROMOTE_TO: ${{ inputs.promote_to }}
+          PROMOTION_OUTCOME: ${{ steps.promote.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           app_version="${RIDE_RELAY_APP_VERSION:-unknown}"
           app_build="${RIDE_RELAY_APP_BUILD:-unknown}"
-          track="${RIDE_RELAY_DISTRIBUTION_TRACK:-internal}"
+          track="${RIDE_RELAY_DISTRIBUTION_TRACK:-unknown}"
           built_at="${RIDE_RELAY_BUILD_TIMESTAMP:-unknown}"
           notes="$RUNNER_TEMP/tester-release-notes.md"
+          # A green run used to say nothing about whether testers received
+          # anything: version code 24 was uploaded on 24 July, never promoted,
+          # and no closed tester ever saw it (#101, #122).
+          if test "$PROMOTE_TO" = "none"; then
+            reach='**No closed tester has this build.** It was uploaded to `internal` only - run this workflow with `promote_to`, or `Promote Android testing release`, to reach the closed track.'
+          elif test "$PROMOTION_OUTCOME" = "success"; then
+            reach="**Closed testers can install this now from the \`$PROMOTE_TO\` track.**"
+          else
+            reach="**No closed tester has this build:** promotion to \`$PROMOTE_TO\` did not succeed (\`${PROMOTION_OUTCOME:-not reached}\`)."
+          fi
           {
-            printf '# Android internal testing build %s\n\n' "$app_build"
+            printf '# Android tester build %s\n\n' "$app_build"
             printf -- '- App version: `%s`\n' "$app_version"
             printf -- '- Build number (Play version code): `%s`\n' "$app_build"
-            printf -- '- Track: `%s`\n' "$track"
+            printf -- '- Uploaded to: `internal`\n'
+            printf -- '- Stamped distribution track: `%s`\n' "$track"
             printf -- '- Built: `%s`\n' "$built_at"
             printf -- '- Commit: `%s`\n' "$GITHUB_SHA"
             printf -- '- Workflow run: %s\n\n' "$RUN_URL"
-            printf 'Testers see this build identity under **Settings -> About & build**.\n\n'
+            printf '%s\n\n' "$reach"
+            printf 'Testers see this build identity under **Settings -> About & build**;\n'
+            printf 'the distribution track it shows is the stamped track above.\n\n'
             printf '## Recent commits on this ref\n\n'
             git log --no-merges --max-count=20 --pretty='- %s (%h)' || true
             printf '\nCopy the tester-facing entry into `docs/tester-release-notes.md`'

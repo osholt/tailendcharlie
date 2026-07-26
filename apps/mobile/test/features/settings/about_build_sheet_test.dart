@@ -99,6 +99,30 @@ void main() {
     );
   });
 
+  testWidgets('sends a closed-track tester to the opt-in page, not the '
+      'store listing', (tester) async {
+    const closedIdentity = BuildIdentity(
+      appVersion: '1.0.1',
+      appBuild: '137',
+      track: DistributionTrack.playClosedAlpha,
+      platform: TargetPlatform.android,
+      relayHost: 'relay.tailendcharlie.app',
+    );
+    await tester.pumpWidget(
+      wrap(
+        AboutBuildSheet(
+          identity: closedIdentity.copiedWithBuiltAt(DateTime.utc(2026, 6)),
+          now: DateTime.utc(2026, 7, 25),
+        ),
+      ),
+    );
+
+    expect(find.text('Play closed testing (alpha)'), findsOneWidget);
+    expect(find.text('Open closed testing page'), findsOneWidget);
+    expect(find.text('Open Google Play listing'), findsNothing);
+    expect(find.textContaining('closed-testing opt-in page'), findsOneWidget);
+  });
+
   testWidgets('routes iOS testers to TestFlight instead of Play', (
     tester,
   ) async {
@@ -181,7 +205,7 @@ extension on BuildIdentity {
     platform: platform,
     builtAt: builtAt,
     relayHost: relayHost,
-    updateUri: updateUri ?? BuildIdentity.defaultUpdateUriFor(platform),
+    updateUri: updateUri ?? BuildIdentity.defaultUpdateUriFor(platform, track),
     testerNotesUri: testerNotesUri,
     testerBuildLifetime: testerBuildLifetime,
   );

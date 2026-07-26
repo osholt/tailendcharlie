@@ -216,6 +216,10 @@ void main() {
       expect(requests.single.url.path, '/base/v1/compatibility');
       expect(requests.single.headers['x-tailendcharlie-protocol'], '1');
       expect(
+        requests.single.headers['x-tailendcharlie-distribution-track'],
+        'alpha',
+      );
+      expect(
         requests.single.headers['x-tailendcharlie-capabilities'],
         contains(RelayProtocolCapabilities.routeRevisions),
       );
@@ -395,6 +399,7 @@ const _clientDescriptor = RelayClientDescriptor(
   appVersion: '1.0.1',
   appBuild: '22',
   capabilities: RelayProtocolCapabilities.current,
+  distributionTrack: 'alpha',
 );
 
 http.Response _compatibilityResponse({int minimumClientProtocol = 1}) =>

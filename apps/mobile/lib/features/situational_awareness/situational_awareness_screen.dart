@@ -6,6 +6,7 @@ import '../../domain/hazard.dart';
 import '../../domain/route_alert.dart';
 import '../../services/device_location_source.dart';
 import '../../services/external_hazard_provider.dart';
+import '../map/route_trail_style.dart';
 
 class SituationalAwarenessScreen extends StatelessWidget {
   const SituationalAwarenessScreen({
@@ -20,6 +21,7 @@ class SituationalAwarenessScreen extends StatelessWidget {
     this.trafficRerouteError,
     this.onReviewTrafficAlternative,
     this.onDismissTrafficAlternative,
+    this.rejoinGuidance,
   });
 
   final SituationalAwarenessController controller;
@@ -32,6 +34,11 @@ class SituationalAwarenessScreen extends StatelessWidget {
   final String? trafficRerouteError;
   final Future<void> Function()? onReviewTrafficAlternative;
   final Future<void> Function()? onDismissTrafficAlternative;
+
+  /// Issue #102: advisory rejoin guidance for the local rider, or null when
+  /// they are on route. Shown verbatim - it already says when routing is
+  /// unavailable and never names a manoeuvre.
+  final String? rejoinGuidance;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -51,7 +58,10 @@ class SituationalAwarenessScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
               ],
-              _RouteStatusCard(controller: controller),
+              _RouteStatusCard(
+                controller: controller,
+                rejoinGuidance: rejoinGuidance,
+              ),
               if (!rideStarted) ...[
                 const SizedBox(height: 12),
                 const _PreStartLocationCard(),
@@ -554,9 +564,10 @@ class ProviderStatusCard extends StatelessWidget {
 }
 
 class _RouteStatusCard extends StatelessWidget {
-  const _RouteStatusCard({required this.controller});
+  const _RouteStatusCard({required this.controller, this.rejoinGuidance});
 
   final SituationalAwarenessController controller;
+  final String? rejoinGuidance;
 
   @override
   Widget build(BuildContext context) {
@@ -602,6 +613,19 @@ class _RouteStatusCard extends StatelessWidget {
                       : 'Hysteresis filters short GPS jumps and poor accuracy.',
                   style: const TextStyle(color: Color(0xFF9CA7B5)),
                 ),
+                if (rejoinGuidance case final guidance?) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    guidance,
+                    key: const Key('rejoin-guidance-text'),
+                    // The same cyan the breadcrumb is drawn in, from the one
+                    // palette table, so the words and the line on the map read
+                    // as one thing.
+                    style: TextStyle(
+                      color: RouteTrailStyle.rejoinBreadcrumb.color,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

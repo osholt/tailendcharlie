@@ -63,6 +63,8 @@ import '../../services/ride_screen_awake.dart';
 import '../../services/enforcement_alert_detector.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
+import '../../services/road_routing.dart';
+import '../../services/route_rejoin_planner.dart';
 import '../map/maneuver_list_screen.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
@@ -568,6 +570,18 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
   final _rideCompletionDetector = RideCompletionDetector();
+  late final RouteRejoinPlanner _rejoinPlanner;
+  Future<void> _rejoinChain = Future.value();
+  String? _rejoinGuidance;
+
+  /// Recorded travelled trails and, separately, the local rider's advisory
+  /// rejoin breadcrumb (#102). They share the map's one trail channel so the
+  /// rejoin route inherits the same palette table and layer ordering, but they
+  /// are composed apart because a rejoin route is not recorded history: it must
+  /// survive a trail refresh and be dropped the moment the rider is back on
+  /// route.
+  List<MapOverlayTrace> _recordedTrailTraces = const [];
+  MapOverlayTrace? _rejoinTrace;
 
   late final RideScreenAwakeCoordinator _screenAwakeCoordinator;
 
@@ -640,6 +654,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         if (kDebugMode) debugPrint('Could not enforce ride wake lock: $error');
       },
     )..start();
+    // Issue #102: advisory off-route rejoin routing. Uses the same documented
+    // OSRM configuration as the rest of the app; when it is unreachable the
+    // planner degrades to the plain "you are off route by X" message.
+    _rejoinPlanner = RouteRejoinPlanner(
+      routingService: OsrmRoadRoutingService(
+        client: http.Client(),
+        baseUrl: RoutingConfiguration.fromEnvironment().routingBaseUrl,
+      ),
+      distanceUnit: widget.distanceUnits.value,
+    );
     widget.rideController.addListener(_onRideControllerChanged);
     widget.sharedRoutes.addListener(_onSharedRoutesChanged);
     _capturePlannerLinkError();
@@ -1216,8 +1240,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (lifecycleFingerprint != _trailLifecycleFingerprint) {
       _trailLifecycleFingerprint = lifecycleFingerprint;
       _trailRecorder.clear();
-      _riderTrails.value = const [];
+      _recordedTrailTraces = const [];
     }
+    // Issue #102: unlike travelled history, a rejoin plan is only valid for the
+    // route it was computed against, so a route change always discards it along
+    // with the last-matched progress behind it.
+    _rejoinTrace = null;
+    _rejoinGuidance = null;
+    _rejoinPlanner.reset();
+    _pushRiderTrails();
     controller.addListener(_onAwarenessChanged);
     if (session.role == RideRole.lead &&
         !_isSimulation &&
@@ -1756,6 +1787,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                   .where((alert) => activeRiderIds.contains(alert.riderId))
                   .toList(growable: false),
               route: awareness.route,
+              // Issue #102: a rider inside the leader's own track corridor is
+              // following the leader, not off course, and must not be counted.
+              leaderTrail: awareness.leaderTrail,
               registeredTecRiderIds: _registeredTecRiderIds,
             );
     } else if (!widget.rideController.rideStarted) {
@@ -1882,6 +1916,91 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           ),
       ]),
     );
+    unawaited(_updateRejoinRoute(awareness));
+  }
+
+  /// Issue #102: keeps the local rider's advisory rejoin breadcrumb current.
+  ///
+  /// Only the local rider is planned for. The breadcrumb belongs to whoever is
+  /// off route and nothing here is relayed, so no other rider's rejoin route can
+  /// reach this map. Recompute frequency is bounded inside [RouteRejoinPlanner];
+  /// this only serialises the calls so a burst of location events cannot overlap
+  /// them.
+  Future<void> _updateRejoinRoute(SituationalAwarenessController awareness) {
+    _rejoinChain = _rejoinChain.then((_) async {
+      // Ride Lab drives a virtual group and the headless mode has no map, so
+      // neither may reach a real routing provider.
+      if (!mounted || _isSimulation || !widget.enableNativeServices) return;
+      final session = widget.rideController.session;
+      final local = awareness.localLocation;
+      final alert = session == null
+          ? null
+          : awareness.alertFor(session.localRiderId);
+      if (session == null || local == null || alert == null) {
+        _setRejoinPlan(null, null);
+        return;
+      }
+      // The TEC is resolved through the one availability model (#113) rather
+      // than a null check, so "nobody is TEC", "registered but never reported"
+      // and "last fix too old to trust" all fall back to the leader.
+      final tec = const LeaderRideStatusCalculator().resolveTecTarget(
+        localRiderId: session.localRiderId,
+        riderLocations: awareness.riderLocations,
+        registeredTecRiderIds: _registeredTecRiderIds,
+        now: DateTime.now(),
+      );
+      final leader = _newestLocationFor(awareness, RideRole.lead);
+      final plan = await _rejoinPlanner.update(
+        riderId: session.localRiderId,
+        sample: local.sample,
+        assessment: alert.assessment,
+        plannedRoute: awareness.route,
+        followingLeaderTrack: awareness.isFollowingLeaderTrack(
+          session.localRiderId,
+        ),
+        leaderPosition: leader?.sample.position,
+        tecAvailability: tec.availability,
+        tecPosition: tec.navigableLocation?.sample.position,
+      );
+      if (!mounted) return;
+      _setRejoinPlan(
+        plan.severity == RouteRejoinSeverity.onRoute ? null : plan.guidance,
+        plan.hasBreadcrumb
+            ? MapOverlayTrace(
+                id: 'rejoin-${plan.riderId}',
+                points: _routePoints(plan.breadcrumb),
+                label: 'Advisory rejoin route',
+                kind: RiderTrailKind.rejoin,
+              )
+            : null,
+      );
+    });
+    return _rejoinChain;
+  }
+
+  void _setRejoinPlan(String? guidance, MapOverlayTrace? trace) {
+    if (trace != _rejoinTrace) {
+      _rejoinTrace = trace;
+      _pushRiderTrails();
+    }
+    if (guidance != _rejoinGuidance) {
+      setState(() => _rejoinGuidance = guidance);
+    }
+  }
+
+  static RiderLocation? _newestLocationFor(
+    SituationalAwarenessController awareness,
+    RideRole role,
+  ) {
+    RiderLocation? newest;
+    for (final location in awareness.riderLocations) {
+      if (location.role != role) continue;
+      if (newest == null ||
+          location.sample.recordedAt.isAfter(newest.sample.recordedAt)) {
+        newest = location;
+      }
+    }
+    return newest;
   }
 
   static List<route_domain.GeoPoint> _routePoints(
@@ -1895,7 +2014,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   ];
 
   void _publishRiderTrails(List<RiderTrail> trails) {
-    _riderTrails.value = List.unmodifiable([
+    _recordedTrailTraces = List.unmodifiable([
       for (final trail in trails.where((trail) => trail.isRenderable))
         MapOverlayTrace(
           id: 'trail-${trail.riderId}',
@@ -1904,9 +2023,22 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             RiderTrailKind.leader => '${trail.displayName} leader trail',
             RiderTrailKind.offRoute => '${trail.displayName} off-route trace',
             RiderTrailKind.rider => '${trail.displayName} trail',
+            // RiderTrailRecorder only records where riders have been, so it
+            // never produces a rejoin route.
+            RiderTrailKind.rejoin => '${trail.displayName} rejoin route',
           },
           kind: trail.kind,
         ),
+    ]);
+    _pushRiderTrails();
+  }
+
+  /// The rejoin breadcrumb is appended last so it draws above the trails in the
+  /// flutter_map fallback, matching the MapLibre layer order.
+  void _pushRiderTrails() {
+    _riderTrails.value = List.unmodifiable([
+      ..._recordedTrailTraces,
+      ?_rejoinTrace,
     ]);
   }
 
@@ -3070,6 +3202,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onDismissTrafficAlternative: _trafficRerouteHazards.isEmpty
           ? null
           : _dismissTrafficAlternative,
+      // Issue #102: the affected rider's own rejoin guidance, including the
+      // honest "routing is unavailable" case.
+      rejoinGuidance: _rejoinGuidance,
     );
   }
 

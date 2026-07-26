@@ -1,5 +1,6 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/features/settings/about_build_sheet.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/services/build_identity.dart';
 
@@ -91,6 +92,42 @@ void main() {
       );
     });
 
+    // The track equivalent of the guarded build-number proof above, and the
+    // answer to defect 2 of #122: a build promoted to `alpha` must not tell its
+    // testers they are on internal testing. Skipped on an unstamped run;
+    // exercised by `flutter test --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK=
+    // alpha ...`, the command in docs/android-internal-testing.md.
+    const stampedTrack = String.fromEnvironment(
+      'RIDE_RELAY_DISTRIBUTION_TRACK',
+    );
+    testWidgets(
+      'a stamped track reaches the About screen and the relay headers',
+      (tester) async {
+        final identity = BuildIdentity.fromEnvironment(
+          platform: TargetPlatform.android,
+        );
+        final headers = RelayClientDescriptor.current().headers;
+
+        expect(identity.track, DistributionTrack.parse(stampedTrack));
+        expect(headers['x-tailendcharlie-distribution-track'], stampedTrack);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(body: AboutBuildSheet(identity: identity)),
+          ),
+        );
+
+        expect(find.text(identity.track.label), findsOneWidget);
+        expect(find.text(identity.updateActionLabel), findsOneWidget);
+        debugPrint(
+          'stamped track: ${identity.track.label} · header '
+          '${headers['x-tailendcharlie-distribution-track']} · update '
+          '${identity.updateUri}',
+        );
+      },
+      skip: stampedTrack.isEmpty,
+    );
+
     test('never exposes more of the relay endpoint than its host', () {
       final identity = BuildIdentity.fromEnvironment(
         platform: TargetPlatform.android,
@@ -109,6 +146,11 @@ void main() {
         DistributionTrack.playInternal,
       );
       expect(
+        DistributionTrack.parse('alpha'),
+        DistributionTrack.playClosedAlpha,
+      );
+      expect(DistributionTrack.parse('beta'), DistributionTrack.playClosedBeta);
+      expect(
         DistributionTrack.parse('TestFlight'),
         DistributionTrack.testFlight,
       );
@@ -120,6 +162,22 @@ void main() {
       expect(
         DistributionTrack.parse('something-else'),
         DistributionTrack.local,
+      );
+      // The relay descriptor sanitises an unstamped define to `unknown`.
+      expect(DistributionTrack.parse('unknown'), DistributionTrack.local);
+    });
+
+    test('separates the closed Play tracks testers are actually on', () {
+      expect(DistributionTrack.playClosedAlpha.isPlayClosedTesting, isTrue);
+      expect(DistributionTrack.playClosedBeta.isPlayClosedTesting, isTrue);
+      expect(DistributionTrack.playInternal.isPlayClosedTesting, isFalse);
+      expect(
+        DistributionTrack.playClosedAlpha.label,
+        'Play closed testing (alpha)',
+      );
+      expect(
+        DistributionTrack.playClosedBeta.label,
+        'Play closed testing (beta)',
       );
     });
   });
@@ -174,8 +232,11 @@ void main() {
   });
 
   group('tester update destinations', () {
-    test('Android points at the app.tailendcharlie Play listing', () {
-      final uri = BuildIdentity.defaultUpdateUriFor(TargetPlatform.android)!;
+    test('an Android internal build points at the Play listing', () {
+      final uri = BuildIdentity.defaultUpdateUriFor(
+        TargetPlatform.android,
+        DistributionTrack.playInternal,
+      )!;
 
       expect(uri.scheme, 'https');
       expect(uri.host, 'play.google.com');
@@ -183,25 +244,65 @@ void main() {
       expect(uri.queryParameters['id'], 'app.tailendcharlie');
     });
 
+    test('a closed-track build points at the closed-testing opt-in page', () {
+      // The store listing does not offer the app to a closed tester who has
+      // not opted in on this device's Google account - the defect the #101
+      // delivery investigation found.
+      for (final track in [
+        DistributionTrack.playClosedAlpha,
+        DistributionTrack.playClosedBeta,
+      ]) {
+        final uri = BuildIdentity.defaultUpdateUriFor(
+          TargetPlatform.android,
+          track,
+        )!;
+
+        expect(uri.scheme, 'https');
+        expect(uri.host, 'play.google.com');
+        expect(uri.path, '/apps/testing/app.tailendcharlie');
+        expect(uri.toString(), BuildIdentity.playClosedTestingOptInUrl);
+      }
+    });
+
     test('iOS points at TestFlight', () {
-      final uri = BuildIdentity.defaultUpdateUriFor(TargetPlatform.iOS)!;
+      final uri = BuildIdentity.defaultUpdateUriFor(
+        TargetPlatform.iOS,
+        DistributionTrack.testFlight,
+      )!;
 
       expect(uri.scheme, 'https');
       expect(uri.host, 'testflight.apple.com');
     });
 
-    test('platform-specific update instructions name the right store app', () {
-      expect(
-        BuildIdentity.fromEnvironment(
-          platform: TargetPlatform.android,
-        ).updateInstruction,
-        contains('Google Play'),
+    test('track-specific update instructions name the right destination', () {
+      const closed = BuildIdentity(
+        appVersion: '1.0.1',
+        appBuild: '137',
+        track: DistributionTrack.playClosedAlpha,
+        platform: TargetPlatform.android,
       );
+      const internal = BuildIdentity(
+        appVersion: '1.0.1',
+        appBuild: '137',
+        track: DistributionTrack.playInternal,
+        platform: TargetPlatform.android,
+      );
+
+      expect(closed.updateInstruction, contains('closed-testing opt-in page'));
+      expect(closed.updateActionLabel, 'Open closed testing page');
+      expect(internal.updateInstruction, contains('Manage apps & device'));
+      expect(internal.updateActionLabel, 'Open Google Play listing');
       expect(
         BuildIdentity.fromEnvironment(
           platform: TargetPlatform.iOS,
         ).updateInstruction,
         contains('TestFlight'),
+      );
+      expect(
+        BuildIdentity.fromEnvironment(
+          platform: TargetPlatform.iOS,
+        ).updateActionLabel,
+        'Open TestFlight',
       );
     });
   });

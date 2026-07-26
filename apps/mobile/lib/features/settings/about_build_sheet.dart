@@ -130,10 +130,7 @@ class AboutBuildSheet extends StatelessWidget {
               key: const Key('open-tester-update-channel'),
               onPressed: () => unawaited(_openUri(context, updateUri)),
               icon: const Icon(Icons.system_update_alt),
-              label: Text(switch (identity.platform) {
-                TargetPlatform.iOS => 'Open TestFlight',
-                _ => 'Open Google Play listing',
-              }),
+              label: Text(identity.updateActionLabel),
             ),
           ],
           if (identity.testerNotesUri case final notesUri?) ...[
@@ -326,10 +323,7 @@ class TesterUpdateBanner extends StatelessWidget {
                   FilledButton(
                     key: const Key('tester-update-banner-open-channel'),
                     onPressed: () => unawaited(_openUri(context, updateUri)),
-                    child: Text(switch (identity.platform) {
-                      TargetPlatform.iOS => 'Open TestFlight',
-                      _ => 'Open Google Play',
-                    }),
+                    child: Text(identity.updateActionLabel),
                   ),
               ],
             ),

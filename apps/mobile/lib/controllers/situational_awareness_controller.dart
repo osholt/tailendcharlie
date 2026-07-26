@@ -13,6 +13,7 @@ import '../relay/live_presence.dart';
 import '../services/external_hazard_provider.dart';
 import '../services/hazard_deduplicator.dart';
 import '../services/route_deviation_detector.dart';
+import '../services/leader_track_exemption.dart';
 import '../services/situation_event_factory.dart';
 
 class SituationalAwarenessController extends ChangeNotifier {
@@ -70,6 +71,7 @@ class SituationalAwarenessController extends ChangeNotifier {
   final Map<String, HazardReport> _hazards = {};
   final Map<String, RiderRouteAlert> _alerts = {};
   final Map<String, RouteDeviationDetector> _detectors = {};
+  final Map<String, bool> _followingLeaderTrack = {};
   final List<({DateTime recordedAt, GeoPoint position})> _leaderTrail = [];
   bool _busy = false;
   bool _refreshingStaleness = false;
@@ -122,6 +124,7 @@ class SituationalAwarenessController extends ChangeNotifier {
 
   List<RiderRouteAlert> get routeAlerts {
     final values = _alerts.values
+        .map(_exemptIfFollowingLeaderTrack)
         .where((alert) => alert.assessment.alertLevel != RouteAlertLevel.none)
         .toList();
     values.sort(
@@ -144,7 +147,15 @@ class SituationalAwarenessController extends ChangeNotifier {
   RiderLocationEvidence? locationEvidenceFor(String riderId) =>
       _locationEvidence[riderId];
 
-  RiderRouteAlert? alertFor(String riderId) => _alerts[riderId];
+  RiderRouteAlert? alertFor(String riderId) {
+    final alert = _alerts[riderId];
+    return alert == null ? null : _exemptIfFollowingLeaderTrack(alert);
+  }
+
+  /// Whether [riderId]'s most recent fix was inside the ride leader's live
+  /// track corridor. Such a rider is on route by definition.
+  bool isFollowingLeaderTrack(String riderId) =>
+      _followingLeaderTrack[riderId] ?? false;
 
   void updateLocalSession(RideSession session) {
     if (session.rideId != _session.rideId ||
@@ -488,7 +499,11 @@ class SituationalAwarenessController extends ChangeNotifier {
       ),
     );
     detector.updateRouteSegments(_combinedRouteSegments);
-    final assessment = detector.evaluate(location.sample, _clock());
+    final assessment = _applyLeaderFollowExemption(
+      location,
+      detector,
+      detector.evaluate(location.sample, _clock()),
+    );
     final previous = _alerts[location.riderId];
     if (previous?.assessment.state != assessment.state ||
         previous?.assessment.alertLevel != assessment.alertLevel ||
@@ -533,6 +548,65 @@ class SituationalAwarenessController extends ChangeNotifier {
   List<List<GeoPoint>> get _combinedRouteSegments {
     final leaderPoints = _leaderTrailPoints;
     return [..._routeSegments, if (leaderPoints.length >= 2) leaderPoints];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Issue #102 - leader-follow exemption. Deliberately the only place this rule
+  // is decided, so the alert state, the relayed deviation event, the roster, the
+  // map and the leader's off-course count cannot disagree.
+  //
+  // A rider inside the corridor of the leader's ACTUAL recorded track is on
+  // route whatever the planned GPX says - including when the leader has
+  // abandoned the GPX themselves. Applied at both ends: when this device
+  // evaluates a fix, and when a deviation alert arrives from another device that
+  // had not yet seen the leader's trail.
+  // ---------------------------------------------------------------------------
+
+  RouteDeviationAssessment _applyLeaderFollowExemption(
+    RiderLocation location,
+    RouteDeviationDetector detector,
+    RouteDeviationAssessment assessment,
+  ) {
+    // The leader is always the end of their own trail, so exempting them says
+    // nothing; leave their verdict to the geometry.
+    final exempt =
+        location.role != RideRole.lead &&
+        LeaderTrackExemption.isFollowingLeaderTrack(
+          position: location.sample.position,
+          accuracyMeters: location.sample.accuracyMeters,
+          leaderTrack: _leaderTrailPoints,
+          corridorMeters: routeConfig.leaderTrackCorridorMeters,
+        );
+    _followingLeaderTrack[location.riderId] = exempt;
+    // A stale or inaccurate fix is a GPS problem, not a route problem, and must
+    // keep reporting as one.
+    if (!exempt || assessment.state == RouteTrackingState.gpsStale) {
+      return assessment;
+    }
+    detector.resetOffRouteHysteresis();
+    return RouteDeviationDetector.followingLeaderTrackAssessment(
+      evaluatedAt: assessment.evaluatedAt,
+      distanceFromRouteMeters: assessment.distanceFromRouteMeters,
+    );
+  }
+
+  RiderRouteAlert _exemptIfFollowingLeaderTrack(RiderRouteAlert alert) {
+    if (!isFollowingLeaderTrack(alert.riderId) ||
+        alert.assessment.state == RouteTrackingState.gpsStale ||
+        alert.assessment.alertLevel == RouteAlertLevel.none) {
+      return alert;
+    }
+    return RiderRouteAlert(
+      riderId: alert.riderId,
+      displayName: alert.displayName,
+      assessment: RouteDeviationDetector.followingLeaderTrackAssessment(
+        evaluatedAt: alert.assessment.evaluatedAt,
+        distanceFromRouteMeters: alert.assessment.distanceFromRouteMeters,
+      ),
+      acknowledged: alert.acknowledged,
+      acknowledgedBy: alert.acknowledgedBy,
+      acknowledgedAt: alert.acknowledgedAt,
+    );
   }
 
   void _removeExpiredHazards() {

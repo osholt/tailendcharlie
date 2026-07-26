@@ -420,6 +420,7 @@ void main() {
         appVersion: '1.4.0',
         appBuild: '91',
         capabilities: {'ride-start-v1'},
+        distributionTrack: 'alpha',
       );
 
       expect(descriptor.reportsAppVersion, isTrue);
@@ -428,8 +429,24 @@ void main() {
         'x-tailendcharlie-platform': 'android',
         'x-tailendcharlie-app-version': '1.4.0',
         'x-tailendcharlie-app-build': '91',
+        'x-tailendcharlie-distribution-track': 'alpha',
         'x-tailendcharlie-capabilities': 'ride-start-v1',
       });
+    });
+
+    test('an unstamped descriptor reports an unknown track, not a guess', () {
+      const descriptor = RelayClientDescriptor(
+        protocolVersion: 1,
+        platform: 'android',
+        appVersion: '1.4.0',
+        appBuild: '91',
+        capabilities: {'ride-start-v1'},
+      );
+
+      expect(
+        descriptor.headers['x-tailendcharlie-distribution-track'],
+        RelayClientDescriptor.unknownVersion,
+      );
     });
   });
 }

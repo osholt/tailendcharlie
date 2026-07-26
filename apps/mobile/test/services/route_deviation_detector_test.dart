@@ -202,6 +202,62 @@ void main() {
 
     expect(assessment.state, RouteTrackingState.offRoute);
   });
+
+  test('the leader-follow exemption resets the off-route clock', () {
+    final detector = RouteDeviationDetector(
+      route,
+      config: const RouteDeviationConfig(
+        samplesToConfirmOffRoute: 2,
+        criticalOffRouteAfter: Duration(minutes: 3),
+      ),
+    );
+    final start = DateTime.utc(2026, 7, 25, 12);
+
+    detector.evaluate(_sample(51.002, start), start);
+    final confirmed = detector.evaluate(
+      _sample(51.002, start.add(const Duration(seconds: 5))),
+      start.add(const Duration(seconds: 5)),
+    );
+    expect(confirmed.state, RouteTrackingState.offRoute);
+    expect(detector.stableState, RouteTrackingState.offRoute);
+    expect(detector.offRouteSince, start.add(const Duration(seconds: 5)));
+
+    // The rider turns out to have been following the leader's own track all
+    // along, so the caller exempts them. Four minutes later - past the critical
+    // escalation - a genuine new deviation must start from scratch, not arrive
+    // pre-escalated.
+    detector.resetOffRouteHysteresis();
+    expect(detector.stableState, RouteTrackingState.onRoute);
+    expect(detector.offRouteSince, isNull);
+
+    final later = start.add(const Duration(minutes: 4));
+    expect(
+      detector.evaluate(_sample(51.002, later), later).state,
+      RouteTrackingState.suspectedOffRoute,
+    );
+    final reconfirmed = detector.evaluate(
+      _sample(51.002, later.add(const Duration(seconds: 5))),
+      later.add(const Duration(seconds: 5)),
+    );
+    expect(reconfirmed.state, RouteTrackingState.offRoute);
+    expect(reconfirmed.alertLevel, RouteAlertLevel.urgent);
+    expect(reconfirmed.audience, RouteAlertAudience.coordinators);
+  });
+
+  test('a rider following the leader reads as on route with no alert', () {
+    final assessment = RouteDeviationDetector.followingLeaderTrackAssessment(
+      evaluatedAt: DateTime.utc(2026, 7, 25, 12),
+      distanceFromRouteMeters: 4200,
+    );
+
+    expect(assessment.state, RouteTrackingState.onRoute);
+    expect(assessment.alertLevel, RouteAlertLevel.none);
+    expect(assessment.audience, RouteAlertAudience.rider);
+    expect(assessment.coordinatorActionRequired, isFalse);
+    // The measured distance is kept: the rider is a long way from the GPX and
+    // the roster should still be able to say so.
+    expect(assessment.distanceFromRouteMeters, 4200);
+  });
 }
 
 LocationSample _sample(double latitude, DateTime at) => LocationSample(

@@ -362,6 +362,66 @@ void main() {
     },
   );
 
+  test('a rider on the leader\'s own track is not counted as off course', () {
+    RiderRouteAlert offCourse(String riderId, String name) => RiderRouteAlert(
+      riderId: riderId,
+      displayName: name,
+      assessment: RouteDeviationAssessment(
+        state: RouteTrackingState.offRoute,
+        alertLevel: RouteAlertLevel.urgent,
+        audience: RouteAlertAudience.coordinators,
+        evaluatedAt: now,
+        message: 'Off route',
+        distanceFromRouteMeters: 2400,
+      ),
+    );
+
+    // Both riders are far from the planned GPX and both have an off-route alert
+    // raised by another device. Only the one who is not on the leader's actual
+    // track should reach the leader's count.
+    final status = const LeaderRideStatusCalculator().calculate(
+      localRole: RideRole.lead,
+      localRiderId: 'lead',
+      localLocation: null,
+      riderLocations: [
+        _location(
+          id: 'follower',
+          name: 'Alex',
+          role: RideRole.rider,
+          longitude: 0.01,
+          speed: 10,
+          at: now,
+        ),
+        RiderLocation(
+          riderId: 'stray',
+          displayName: 'Sam',
+          role: RideRole.rider,
+          sample: LocationSample(
+            position: const GeoPoint(latitude: 0.05, longitude: 0.01),
+            recordedAt: now,
+            accuracyMeters: 5,
+          ),
+          receivedAt: now,
+        ),
+      ],
+      routeAlerts: [offCourse('follower', 'Alex'), offCourse('stray', 'Sam')],
+      route: const [
+        GeoPoint(latitude: 0.02, longitude: 0),
+        GeoPoint(latitude: 0.02, longitude: 0.02),
+      ],
+      // The leader abandoned the GPX and rode along latitude 0, where the
+      // follower now is.
+      leaderTrail: const [
+        GeoPoint(latitude: 0, longitude: 0),
+        GeoPoint(latitude: 0, longitude: 0.02),
+      ],
+      now: now,
+    );
+
+    expect(status!.offCourseAlerts, hasLength(1));
+    expect(status.offCourseAlerts.single.riderId, 'stray');
+  });
+
   test('non-leaders do not receive leader map status', () {
     final status = const LeaderRideStatusCalculator().calculate(
       localRole: RideRole.rider,
@@ -374,6 +434,155 @@ void main() {
     );
 
     expect(status, isNull);
+  });
+
+  group('resolveTecTarget', () {
+    const calculator = LeaderRideStatusCalculator();
+
+    TecTarget resolve({
+      List<RiderLocation> riderLocations = const [],
+      Iterable<String> registered = const [],
+      DateTime? at,
+    }) => calculator.resolveTecTarget(
+      localRiderId: 'lead',
+      riderLocations: riderLocations,
+      registeredTecRiderIds: registered,
+      now: at ?? now,
+    );
+
+    test('no back-marker at all reports none and offers no target', () {
+      final target = resolve();
+
+      expect(target.availability, TecAvailability.none);
+      expect(target.hasRegisteredTec, isFalse);
+      expect(target.navigableLocation, isNull);
+    });
+
+    test('a registered TEC with no position yet is not navigable', () {
+      final target = resolve(registered: const ['tec']);
+
+      expect(target.availability, TecAvailability.awaitingLocation);
+      expect(target.hasRegisteredTec, isTrue);
+      expect(target.riderId, 'tec');
+      expect(target.navigableLocation, isNull);
+    });
+
+    test('a stale fix is kept but withheld from navigation', () {
+      final target = resolve(
+        riderLocations: [
+          _location(
+            id: 'tec',
+            name: 'Charlie',
+            role: RideRole.tailEndCharlie,
+            longitude: 0.005,
+            speed: 10,
+            at: now.subtract(const Duration(minutes: 5)),
+          ),
+        ],
+      );
+
+      expect(target.availability, TecAvailability.stale);
+      expect(target.location, isNotNull);
+      expect(target.navigableLocation, isNull);
+    });
+
+    test('a fresh fix is navigable', () {
+      final target = resolve(
+        riderLocations: [
+          _location(
+            id: 'tec',
+            name: 'Charlie',
+            role: RideRole.tailEndCharlie,
+            longitude: 0.005,
+            speed: 10,
+            at: now,
+          ),
+        ],
+      );
+
+      expect(target.availability, TecAvailability.tracking);
+      expect(target.navigableLocation?.riderId, 'tec');
+    });
+
+    test('a rider is never their own back-marker', () {
+      final target = calculator.resolveTecTarget(
+        localRiderId: 'tec',
+        riderLocations: [
+          _location(
+            id: 'tec',
+            name: 'Charlie',
+            role: RideRole.tailEndCharlie,
+            longitude: 0.005,
+            speed: 10,
+            at: now,
+          ),
+        ],
+        registeredTecRiderIds: const ['tec'],
+        now: now,
+      );
+
+      expect(target.availability, TecAvailability.none);
+    });
+
+    test('agrees with the availability the leader card reports', () {
+      // One model, two consumers: the leader's TEC card and rejoin routing must
+      // never disagree about whether there is a usable back-marker.
+      for (final scenario in [
+        (<RiderLocation>[], const <String>[]),
+        (<RiderLocation>[], const ['tec']),
+        (
+          [
+            _location(
+              id: 'tec',
+              name: 'Charlie',
+              role: RideRole.tailEndCharlie,
+              longitude: 0.005,
+              speed: 10,
+              at: now.subtract(const Duration(minutes: 5)),
+            ),
+          ],
+          const <String>[],
+        ),
+        (
+          [
+            _location(
+              id: 'tec',
+              name: 'Charlie',
+              role: RideRole.tailEndCharlie,
+              longitude: 0.005,
+              speed: 10,
+              at: now,
+            ),
+          ],
+          const <String>[],
+        ),
+      ]) {
+        final status = calculator.calculate(
+          localRole: RideRole.lead,
+          localRiderId: 'lead',
+          localLocation: _location(
+            id: 'lead',
+            name: 'Lead',
+            role: RideRole.lead,
+            longitude: 0,
+            speed: 10,
+            at: now,
+          ),
+          riderLocations: scenario.$1,
+          routeAlerts: const [],
+          route: const [],
+          registeredTecRiderIds: scenario.$2,
+          now: now,
+        );
+        final target = resolve(
+          riderLocations: scenario.$1,
+          registered: scenario.$2,
+        );
+
+        expect(status!.tecAvailability, target.availability);
+        expect(status.hasRegisteredTec, target.hasRegisteredTec);
+      }
+    });
   });
 }
 

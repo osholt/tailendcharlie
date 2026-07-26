@@ -1,3 +1,9 @@
+# Re-promotes an existing version code. `Android internal testing` promotes
+# automatically at the end of a successful upload, so this workflow is for
+# moving a build that is already in Play - after a rollback, or onto a second
+# closed track. It deliberately sends no tester mail: it cannot know which
+# commit an arbitrary version code was built from, and a tester notification
+# that guesses the commit is worse than none.
 name: Promote Android testing release
 
 on:
@@ -51,6 +57,7 @@ jobs:
             --user-install
           echo "$(ruby -e 'puts Gem.user_dir')/bin" >> "$GITHUB_PATH"
       - name: Promote release
+        id: promote
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           SOURCE_TRACK: ${{ inputs.source_track }}
@@ -71,3 +78,22 @@ jobs:
             --track_promote_release_status completed \
             --deactivate_on_promote false \
             --version_code "$VERSION_CODE"
+      - name: Summarise the promotion
+        if: always()
+        env:
+          PROMOTION_OUTCOME: ${{ steps.promote.outcome }}
+          SOURCE_TRACK: ${{ inputs.source_track }}
+          TARGET_TRACK: ${{ inputs.target_track }}
+          VERSION_CODE: ${{ inputs.version_code }}
+        run: |
+          set -euo pipefail
+          {
+            printf '# Promotion of version code %s\n\n' "$VERSION_CODE"
+            printf -- '- From: `%s`\n' "$SOURCE_TRACK"
+            printf -- '- To: `%s`\n' "$TARGET_TRACK"
+            printf -- '- Result: `%s`\n\n' "${PROMOTION_OUTCOME:-not reached}"
+            printf 'No tester notification is sent from this workflow: a re-promotion\n'
+            printf 'cannot say which commit the version code was built from, and the\n'
+            printf 'mail must not guess. `Android internal testing` notifies when it\n'
+            printf 'promotes a build it has just produced.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
