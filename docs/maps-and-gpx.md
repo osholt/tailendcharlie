@@ -242,12 +242,26 @@ engine emits no separate exit step, the heading before the next manoeuvre is
 used if it is within 250 m. `rotary` and `roundabout turn` are presented as
 roundabouts, and adjacent ring steps within 25 m are treated as one gyratory.
 
+- The wording beside the symbol does not name the junction: the symbol is a
+  drawn roundabout, and repeating the word spends a rider's glance on something
+  they can already see. An exit taken third to the right reads
+  *"3rd exit, right"*.
+- Where nothing shows the symbol the junction is named, because otherwise
+  nothing does. `ManeuverInstruction.standaloneText` is the wording used for the
+  banner's accessibility label, which a rider who cannot see the symbol depends
+  on, and for the CarPlay and Android Auto rows, which are plain text:
+  *"Roundabout, 3rd exit, right"*. Every other manoeuvre reads the same either
+  way. Wording and symbol can still never contradict each other — the agreement
+  test covers both strings.
 - The exit number is only ever the engine's own `exit` count for a circular
   junction, and is dropped where two merged rings each counted their own exits.
-  With no count the instruction says *"Roundabout, take the exit straight on"*.
+  With no count the instruction says *"Take the exit straight on"*.
 - With no bearings — a route saved before they were stored — no direction is
-  claimed: the instruction says *"Roundabout, take the 2nd exit"* rather than
-  repeating the entry modifier.
+  claimed: the instruction says *"Take the 2nd exit"* rather than repeating the
+  entry modifier.
+- With neither an exit count nor a direction, the wording states only what is
+  known: *"Follow the route"*, and *"Roundabout ahead, follow the route"* where
+  there is no symbol.
 - The driving side reported by the engine only chooses clockwise or
   anticlockwise ring rendering and the handedness of a U-turn glyph. It never
   decides which way an instruction says to go.
@@ -270,6 +284,16 @@ needed while competing with the arrow that mattered.
   is the part the rider rides and is drawn heaviest, so a first exit is a short
   arc and a last exit is nearly the whole ring. Where the engine reported no
   driving side, no part of the ring is claimed as the ridden one.
+- An arc shorter than three times the ring's own stroke width is not drawn, and
+  the gap beside it widens to take its place. At a square left or right exit the
+  arc between that exit and the road in is barely twice as long as the ring is
+  thick, and drawn it read as something left in the gap the arrow leaves through
+  rather than as part of the ring. The ring is then a single arc with one wide
+  opening that both roads leave through, and driving side is carried by the
+  wording and the arrow alone at those two angles.
+- The symbol is drawn with plain strokes and fills, with no layer and no blend
+  mode. Anything whose result depends on the rendering backend cannot be
+  verified by the rasterised tests, which do not use the renderer on the phone.
 - Where the exit turns so far back that it would be drawn along the road in, the
   road in swings to the other side of straight back, so a turn back on itself
   leaves as a V beside the road it came in on.
@@ -284,6 +308,11 @@ needed while competing with the arrow that mattered.
 ![Roundabout symbol matrix](images/roundabout-symbol-matrix.png)
 
 ![Roundabout symbol at each size](images/roundabout-symbol-sizes.png)
+
+The right exit at iPhone scale, before and after the short arc beside it was
+dropped:
+
+![Roundabout right exit gap](images/roundabout-right-exit-gap.png)
 
 ### Lane guidance and the manoeuvre list
 
