@@ -2,6 +2,7 @@ import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/rider_color.dart';
 import '../features/map/motorcycle_icon.dart';
+import '../relay/live_presence.dart';
 import 'ride_event_authenticator.dart';
 import 'ride_lifecycle.dart';
 
@@ -23,6 +24,8 @@ class RideParticipant {
     required this.isLocal,
     this.leftAt,
     this.attentionLabel,
+    this.positionFreshness,
+    this.knownFromRelayOnly = false,
   });
 
   final String riderId;
@@ -38,6 +41,15 @@ class RideParticipant {
   final bool isLocal;
   final String? attentionLabel;
 
+  /// How fresh this rider's newest position is, or null when live presence was
+  /// not evaluated for this roster.
+  final PresenceFreshness? positionFreshness;
+
+  /// True when the only evidence of this rider is the relay's out-of-band
+  /// roster or presence channel — their membership event has not arrived in the
+  /// durable journal yet. They are still a real, reachable participant.
+  final bool knownFromRelayOnly;
+
   bool get isIncludedInLiveCount =>
       state != RideMembershipState.left && state != RideMembershipState.expired;
 
@@ -45,13 +57,28 @@ class RideParticipant {
 
   bool get isEligibleForRouteAlerts => state == RideMembershipState.active;
 
-  String get stateLabel => switch (state) {
-    RideMembershipState.joined => 'Joined · waiting to ride',
-    RideMembershipState.active => 'Active now',
-    RideMembershipState.inactive => 'Inactive · location is stale',
-    RideMembershipState.left => 'Left the ride',
-    RideMembershipState.expired => 'Expired',
-  };
+  String get stateLabel {
+    final base = switch (state) {
+      RideMembershipState.joined => 'Joined · waiting to ride',
+      RideMembershipState.active => 'Active now',
+      RideMembershipState.inactive => 'Inactive · location is stale',
+      RideMembershipState.left => 'Left the ride',
+      RideMembershipState.expired => 'Expired',
+    };
+    if (state == RideMembershipState.left ||
+        state == RideMembershipState.expired) {
+      return base;
+    }
+    // Stated in words, never by colour alone, and never silently absent: "no
+    // position" is a state a rider is told about.
+    final suffix = switch (positionFreshness) {
+      null || PresenceFreshness.live => null,
+      PresenceFreshness.ageing => 'position ageing',
+      PresenceFreshness.stale => 'position stale',
+      PresenceFreshness.none => 'no position',
+    };
+    return suffix == null ? base : '$base · $suffix';
+  }
 
   String get transportLabel {
     if (isLocal) return 'This phone';
@@ -61,6 +88,13 @@ class RideParticipant {
     final nearby = transportEvidence.contains(
       RideTransportEvidence.nearbyRelay,
     );
+    if (knownFromRelayOnly) {
+      return internet && nearby
+          ? 'Internet + nearby · joining'
+          : nearby
+          ? 'Nearby relay · joining'
+          : 'Internet relay · joining';
+    }
     if (internet && nearby) return 'Internet + nearby';
     if (internet) return 'Internet relay';
     if (nearby) return 'Nearby relay';
@@ -81,6 +115,8 @@ class RideParticipant {
     bool? isLocal,
     String? attentionLabel,
     bool clearAttention = false,
+    PresenceFreshness? positionFreshness,
+    bool? knownFromRelayOnly,
   }) => RideParticipant(
     riderId: riderId,
     displayName: displayName ?? this.displayName,
@@ -96,6 +132,8 @@ class RideParticipant {
     attentionLabel: clearAttention
         ? null
         : (attentionLabel ?? this.attentionLabel),
+    positionFreshness: positionFreshness ?? this.positionFreshness,
+    knownFromRelayOnly: knownFromRelayOnly ?? this.knownFromRelayOnly,
   );
 }
 
@@ -122,6 +160,7 @@ class RideMembershipReducer {
     DateTime? rideStartedAt,
     DateTime? rideEndedAt,
     Map<String, Set<RideTransportEvidence>> transportByEventId = const {},
+    Iterable<LiveRiderPresence> livePresence = const [],
   }) {
     final ordered =
         events
@@ -223,6 +262,36 @@ class RideMembershipReducer {
       }
     }
 
+    // A rider the relay can demonstrably reach must appear even when their
+    // membership event has not arrived through the bulk batch. Otherwise a
+    // wedged or backed-off sync hides a participant completely, and every
+    // surface that filters positions by participant drops their marker too.
+    final presenceById = <String, LiveRiderPresence>{};
+    for (final presence in livePresence) {
+      presenceById[presence.riderId] = presence;
+      if (participants.containsKey(presence.riderId)) continue;
+      final evidence = _presenceEvidence(presence);
+      participants[presence.riderId] = RideParticipant(
+        riderId: presence.riderId,
+        displayName: presence.displayName,
+        role: presence.role,
+        joinedAt: presence.knownSince,
+        lastSeenAt: presence.location?.sample.recordedAt ?? presence.knownSince,
+        state: RideMembershipState.joined,
+        motorcycleStyle: presence.motorcycleStyle,
+        riderColor: presence.riderColor,
+        // A roster entry with no position yet is still internet-relay evidence:
+        // the relay named the rider.
+        transportEvidence: Set.unmodifiable(
+          evidence.isEmpty
+              ? const {RideTransportEvidence.internetRelay}
+              : evidence,
+        ),
+        isLocal: false,
+        knownFromRelayOnly: true,
+      );
+    }
+
     for (final event in ordered) {
       if (event.type != RideEventType.routeDeviationChanged &&
           event.type != RideEventType.routeAlertAcknowledged) {
@@ -250,28 +319,51 @@ class RideMembershipReducer {
     final result =
         participants.values
             .map((participant) {
-              if (participant.state == RideMembershipState.left) {
-                return participant;
+              final presence = presenceById[participant.riderId];
+              final resolved = presence == null
+                  ? participant
+                  : participant.copyWith(
+                      positionFreshness: presence.freshness,
+                      transportEvidence: Set.unmodifiable({
+                        ...participant.transportEvidence,
+                        ..._presenceEvidence(presence),
+                      }),
+                    );
+              if (resolved.state == RideMembershipState.left) {
+                return resolved;
               }
-              final age = now.difference(participant.lastSeenAt);
+              // A live presence position is current proof of reachability, so
+              // it counts as recent contact even if no journal event has
+              // arrived. Without this a demonstrably visible rider expires.
+              final presenceSeenAt =
+                  presence != null && presence.freshness.isTrackedAsContact
+                  ? presence.location?.sample.recordedAt
+                  : null;
+              final lastSeenAt =
+                  presenceSeenAt != null &&
+                      presenceSeenAt.isAfter(resolved.lastSeenAt)
+                  ? presenceSeenAt
+                  : resolved.lastSeenAt;
+              final age = now.difference(lastSeenAt);
               if (rideEndedAt != null || age >= expireAfter) {
-                return participant.copyWith(state: RideMembershipState.expired);
+                return resolved.copyWith(state: RideMembershipState.expired);
               }
               if (rideStartedAt == null) {
-                return participant.copyWith(state: RideMembershipState.joined);
+                return resolved.copyWith(state: RideMembershipState.joined);
               }
-              final activityAt = lastActivityAt[participant.riderId];
-              if (activityAt != null &&
-                  now.difference(activityAt) < inactiveAfter) {
-                return participant.copyWith(state: RideMembershipState.active);
+              final activityAt = lastActivityAt[resolved.riderId];
+              if ((activityAt != null &&
+                      now.difference(activityAt) < inactiveAfter) ||
+                  presenceSeenAt != null) {
+                return resolved.copyWith(state: RideMembershipState.active);
               }
-              final waitingSince = participant.joinedAt.isAfter(rideStartedAt)
-                  ? participant.joinedAt
+              final waitingSince = resolved.joinedAt.isAfter(rideStartedAt)
+                  ? resolved.joinedAt
                   : rideStartedAt;
               if (now.difference(waitingSince) < inactiveAfter) {
-                return participant.copyWith(state: RideMembershipState.joined);
+                return resolved.copyWith(state: RideMembershipState.joined);
               }
-              return participant.copyWith(state: RideMembershipState.inactive);
+              return resolved.copyWith(state: RideMembershipState.inactive);
             })
             .toList(growable: false)
           ..sort((left, right) {
@@ -281,6 +373,15 @@ class RideMembershipReducer {
           });
     return List.unmodifiable(result);
   }
+
+  static Set<RideTransportEvidence> _presenceEvidence(
+    LiveRiderPresence presence,
+  ) => {
+    if (presence.sources.contains(LivePresenceSource.internetPresence))
+      RideTransportEvidence.internetRelay,
+    if (presence.sources.contains(LivePresenceSource.nearbyPresence))
+      RideTransportEvidence.nearbyRelay,
+  };
 
   static bool _isActivity(RideEventType type) => switch (type) {
     RideEventType.rideCreated ||
