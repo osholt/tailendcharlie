@@ -1,6 +1,6 @@
 import '../domain/imported_route.dart';
 
-/// How a recorded trail is presented on the ride map.
+/// How a route or trail line is presented on the ride map.
 ///
 /// The kind only affects styling and never whether a trail exists: a rider who
 /// has left the planned route still has a trail, it simply reads as an
@@ -17,6 +17,12 @@ enum RiderTrailKind {
   /// A rider whose route alert says they are suspected off route, confirmed off
   /// route, or recovering.
   offRoute,
+
+  /// The advisory rejoin route computed for an off-course rider (#102). The one
+  /// kind that is not recorded history: it is where the routing engine says to
+  /// go next, which is why it is never produced by [RiderTrailRecorder] and is
+  /// published alongside the recorded trails instead.
+  rejoin,
 }
 
 /// One rider's travelled path, ready to be rendered.

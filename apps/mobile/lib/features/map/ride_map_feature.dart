@@ -2259,6 +2259,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // An off-route trail belongs on top of the plan: it is the deviation from
       // it.
       await _addTrailLayers(controller, RiderTrailKind.offRoute);
+      // The advisory rejoin route (#102) goes above everything else: it is the
+      // one line the affected rider is being asked to follow right now.
+      await _addTrailLayers(controller, RiderTrailKind.rejoin);
       await controller.addGeoJsonSource(
         _trailDirectionArrowSource,
         _trailDirectionArrowGeoJson(),
@@ -2634,9 +2637,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   static int _arrowPriority(RiderTrailKind kind) => switch (kind) {
-    RiderTrailKind.leader => 0,
-    RiderTrailKind.offRoute => 1,
-    RiderTrailKind.rider => 2,
+    // The rejoin route is the local rider's own live instruction, so its
+    // direction arrows are the last thing the budget may drop.
+    RiderTrailKind.rejoin => 0,
+    RiderTrailKind.leader => 1,
+    RiderTrailKind.offRoute => 2,
+    RiderTrailKind.rider => 3,
   };
 
   Map<String, dynamic> _trailDirectionArrowGeoJson() => MapGeoJson.points(

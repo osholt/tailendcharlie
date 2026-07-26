@@ -5,6 +5,7 @@ import '../domain/ride_role.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 import 'geo_calculations.dart';
+import 'leader_track_exemption.dart';
 
 class LeaderOffCourseAlert {
   const LeaderOffCourseAlert({
@@ -56,6 +57,40 @@ enum TecAvailability {
   tracking,
 }
 
+/// Who the Tail End Charlie is, how usable their position is, and their last
+/// known fix.
+///
+/// Resolved once by [LeaderRideStatusCalculator.resolveTecTarget] so the
+/// leader's TEC card and any feature that routes to the back-marker (rejoin
+/// routing for a massively off-course rider, #102) cannot disagree about
+/// whether there is a TEC or whether its position can be believed.
+class TecTarget {
+  const TecTarget({required this.availability, this.riderId, this.location});
+
+  final TecAvailability availability;
+
+  /// The rider holding the role, for every registered state including
+  /// [TecAvailability.awaitingLocation].
+  final String? riderId;
+
+  /// The TEC's newest known fix. Null for [TecAvailability.none] and
+  /// [TecAvailability.awaitingLocation]; deliberately still set for
+  /// [TecAvailability.stale] so a caller can decide for itself what an ageing
+  /// fix is good enough for.
+  final RiderLocation? location;
+
+  bool get hasRegisteredTec => availability != TecAvailability.none;
+
+  /// The fix a feature may navigate to: fresh only.
+  ///
+  /// A stale position is withheld here for the same reason the leader's gap is
+  /// withheld - it can no longer be trusted to say where the TEC is - so a
+  /// caller falls back to the ride leader rather than routing a rider to where
+  /// the TEC used to be.
+  RiderLocation? get navigableLocation =>
+      availability == TecAvailability.tracking ? location : null;
+}
+
 class LeaderRideStatus {
   const LeaderRideStatus({
     required this.offCourseAlerts,
@@ -102,12 +137,21 @@ class LeaderRideStatusCalculator {
     this.defaultMovingSpeedMetersPerSecond = 13.4,
     this.maximumOnRouteDistanceMeters = 250,
     this.staleAfter = const Duration(minutes: 2),
+    this.leaderTrackCorridorMeters = 120,
   });
 
   final double defaultMovingSpeedMetersPerSecond;
   final double maximumOnRouteDistanceMeters;
   final Duration staleAfter;
 
+  /// Corridor around the leader's own recorded track inside which a rider is
+  /// following the leader rather than off course. See [LeaderTrackExemption].
+  final double leaderTrackCorridorMeters;
+
+  /// [leaderTrail] is the leader's own recorded track. A rider inside its
+  /// corridor is following the leader and is never counted as off course, even
+  /// if a deviation alert for them arrived from a device that had not yet seen
+  /// the leader leave the GPX.
   LeaderRideStatus? calculate({
     required RideRole localRole,
     required String localRiderId,
@@ -115,6 +159,7 @@ class LeaderRideStatusCalculator {
     required List<RiderLocation> riderLocations,
     required List<RiderRouteAlert> routeAlerts,
     required List<GeoPoint> route,
+    List<GeoPoint> leaderTrail = const [],
     // Rider ids holding the TEC role in the reconciled membership model
     // (issue #27), which is the authoritative record of who is registered. A
     // TEC who has joined but not yet reported a position appears here and
@@ -131,6 +176,9 @@ class LeaderRideStatusCalculator {
     final currentRiderIds = riderLocations
         .map((location) => location.riderId)
         .toSet();
+    final locationsById = {
+      for (final location in riderLocations) location.riderId: location,
+    };
     final currentOffCourseAlerts = <String, RiderRouteAlert>{};
     for (final alert in routeAlerts) {
       if (alert.riderId == localRiderId ||
@@ -138,6 +186,16 @@ class LeaderRideStatusCalculator {
           alert.acknowledged ||
           alert.assessment.state != RouteTrackingState.offRoute ||
           !alert.assessment.coordinatorActionRequired) {
+        continue;
+      }
+      final location = locationsById[alert.riderId];
+      if (location != null &&
+          LeaderTrackExemption.isFollowingLeaderTrack(
+            position: location.sample.position,
+            accuracyMeters: location.sample.accuracyMeters,
+            leaderTrack: leaderTrail,
+            corridorMeters: leaderTrackCorridorMeters,
+          )) {
         continue;
       }
       final previous = currentOffCourseAlerts[alert.riderId];
@@ -167,40 +225,28 @@ class LeaderRideStatusCalculator {
                 : first.displayName.compareTo(second.displayName);
           });
 
-    final tecCandidates =
-        riderLocations
-            .where(
-              (location) =>
-                  location.riderId != localRiderId &&
-                  location.role == RideRole.tailEndCharlie,
-            )
-            .toList(growable: false)
-          ..sort(
-            (first, second) =>
-                second.sample.recordedAt.compareTo(first.sample.recordedAt),
-          );
-    final tec = tecCandidates.firstOrNull;
-    final registeredTecIds =
-        {
-            ...registeredTecRiderIds,
-            ...tecCandidates.map((location) => location.riderId),
-          }.where((riderId) => riderId != localRiderId).toList(growable: false)
-          ..sort();
-    if (registeredTecIds.isEmpty) {
+    final tecTarget = resolveTecTarget(
+      localRiderId: localRiderId,
+      riderLocations: riderLocations,
+      registeredTecRiderIds: registeredTecRiderIds,
+      now: evaluatedAt,
+    );
+    if (!tecTarget.hasRegisteredTec) {
       // No back-marker at all. Everything TEC-shaped stays null so no surface
       // can render an empty gap and no feature can take a null target.
       return LeaderRideStatus(offCourseAlerts: offCourseAlerts);
     }
+    final tec = tecTarget.location;
     if (tec == null) {
       return LeaderRideStatus(
         tecAvailability: TecAvailability.awaitingLocation,
-        tecRiderId: registeredTecIds.first,
+        tecRiderId: tecTarget.riderId,
         offCourseAlerts: offCourseAlerts,
       );
     }
 
     final age = tec.sample.ageAt(evaluatedAt);
-    if (age > staleAfter) {
+    if (tecTarget.availability == TecAvailability.stale) {
       return LeaderRideStatus(
         tecAvailability: TecAvailability.stale,
         tecRiderId: tec.riderId,
@@ -238,6 +284,57 @@ class LeaderRideStatusCalculator {
       estimatedTimeToTec: Duration(seconds: seconds),
       tecLocationAge: age,
       offCourseAlerts: offCourseAlerts,
+    );
+  }
+
+  /// Resolves the Tail End Charlie once, by the rules every TEC surface and
+  /// every TEC-targeting feature shares.
+  ///
+  /// [registeredTecRiderIds] is the authoritative membership record, which is
+  /// what separates "nobody is TEC" from "the TEC has not reported yet". A
+  /// rider carrying the role in [riderLocations] also counts, so a caller
+  /// holding only a location snapshot still resolves a TEC. [localRiderId] is
+  /// excluded throughout: a rider is never their own back-marker.
+  TecTarget resolveTecTarget({
+    required String localRiderId,
+    required List<RiderLocation> riderLocations,
+    required DateTime now,
+    Iterable<String> registeredTecRiderIds = const [],
+  }) {
+    final candidates =
+        riderLocations
+            .where(
+              (location) =>
+                  location.riderId != localRiderId &&
+                  location.role == RideRole.tailEndCharlie,
+            )
+            .toList(growable: false)
+          ..sort(
+            (first, second) =>
+                second.sample.recordedAt.compareTo(first.sample.recordedAt),
+          );
+    final registeredIds =
+        {
+            ...registeredTecRiderIds,
+            ...candidates.map((location) => location.riderId),
+          }.where((riderId) => riderId != localRiderId).toList(growable: false)
+          ..sort();
+    if (registeredIds.isEmpty) {
+      return const TecTarget(availability: TecAvailability.none);
+    }
+    final tec = candidates.firstOrNull;
+    if (tec == null) {
+      return TecTarget(
+        availability: TecAvailability.awaitingLocation,
+        riderId: registeredIds.first,
+      );
+    }
+    return TecTarget(
+      availability: tec.sample.ageAt(now) > staleAfter
+          ? TecAvailability.stale
+          : TecAvailability.tracking,
+      riderId: tec.riderId,
+      location: tec,
     );
   }
 

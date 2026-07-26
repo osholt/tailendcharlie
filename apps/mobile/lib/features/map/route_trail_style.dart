@@ -137,11 +137,13 @@ class RouteTrailStyle {
   );
 
   /// The live rejoin route from off-route rerouting (#102), which claimed this
-  /// cyan and renders it dashed. It is declared here so the palette stays one
-  /// table and the widths and dash runs stay distinct from every other line;
-  /// that work owns the layers. Slotting the kind in fully means adding a
-  /// [RiderTrailKind], mapping it in [forTrail], and - because MapLibre cannot
-  /// data-drive `line-dasharray` - giving it its own dashed line layer.
+  /// cyan and renders it dashed. Declared here so the palette stays one table
+  /// and the widths and dash runs stay distinct from every other line.
+  ///
+  /// Now slotted in fully: [RiderTrailKind.rejoin] maps to it in [forTrail],
+  /// and - because MapLibre cannot data-drive `line-dasharray` - it gets its own
+  /// dashed line layer from the same per-kind layer builder every other trail
+  /// uses.
   static const rejoinBreadcrumb = RouteLineStyle(
     color: Color(0xFF00E5FF),
     widthPixels: 4.5,
@@ -162,6 +164,7 @@ class RouteTrailStyle {
     RiderTrailKind.rider => travelled,
     RiderTrailKind.leader => leaderTrail,
     RiderTrailKind.offRoute => offRouteTrail,
+    RiderTrailKind.rejoin => rejoinBreadcrumb,
   };
 
   /// Every route and trail line, for the checks that must hold across all of

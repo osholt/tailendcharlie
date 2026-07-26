@@ -95,6 +95,33 @@ void main() {
     expect(find.text('Seen'), findsOneWidget);
   });
 
+  testWidgets('rejoin guidance is shown to the affected rider verbatim', (
+    tester,
+  ) async {
+    await controller.recordLocalLocation(_sample(51.002));
+    await tester.pumpWidget(
+      _app(
+        controller,
+        rejoinGuidance:
+            'You are off route by 220 m. Rejoin routing is unavailable, so no '
+            'route back is being drawn.',
+      ),
+    );
+
+    expect(find.byKey(const Key('rejoin-guidance-text')), findsOneWidget);
+    expect(
+      find.textContaining('Rejoin routing is unavailable'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('no rejoin guidance is shown when there is none', (tester) async {
+    await controller.recordLocalLocation(_sample(51));
+    await tester.pumpWidget(_app(controller));
+
+    expect(find.byKey(const Key('rejoin-guidance-text')), findsNothing);
+  });
+
   testWidgets('pre-start offers current position without promising a track', (
     tester,
   ) async {
@@ -174,9 +201,15 @@ void main() {
   );
 }
 
-Widget _app(SituationalAwarenessController controller) => MaterialApp(
+Widget _app(
+  SituationalAwarenessController controller, {
+  String? rejoinGuidance,
+}) => MaterialApp(
   theme: ThemeData.dark(useMaterial3: true),
-  home: SituationalAwarenessScreen(controller: controller),
+  home: SituationalAwarenessScreen(
+    controller: controller,
+    rejoinGuidance: rejoinGuidance,
+  ),
 );
 
 LocationSample _sample(double latitude) => LocationSample(
