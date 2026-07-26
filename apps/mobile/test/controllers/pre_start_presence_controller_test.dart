@@ -7,6 +7,7 @@ import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
+import 'package:ride_relay/relay/live_presence.dart';
 import 'package:ride_relay/relay/relay_presence.dart';
 
 void main() {
@@ -64,7 +65,14 @@ void main() {
       expect(api.calls.last.position?.sample.position.latitude, 51.2);
       expect(api.calls.last.clear, isFalse);
 
+      // Past the relay TTL a position is demoted, not deleted: a marker that
+      // silently vanishes is indistinguishable from one that was never there.
       now = now.add(const Duration(seconds: 46));
+      expect(
+        controller.presenceAt(now).map((entry) => entry.freshness),
+        everyElement(PresenceFreshness.ageing),
+      );
+      now = now.add(const Duration(minutes: 6));
       expect(controller.locations, isEmpty);
 
       await controller.clearLocalPosition();
@@ -122,6 +130,14 @@ void main() {
       expect(nearby.published.last.position?.riderId, 'local');
 
       now = now.add(const Duration(seconds: 46));
+      expect(
+        controller
+            .presenceAt(now)
+            .firstWhere((entry) => entry.riderId == 'remote')
+            .freshness,
+        PresenceFreshness.ageing,
+      );
+      now = now.add(const Duration(minutes: 6));
       expect(
         controller.locations.where((value) => value.riderId == 'remote'),
         isEmpty,

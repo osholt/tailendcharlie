@@ -35,7 +35,9 @@ import '../../services/navigation_guidance.dart';
 import '../../services/motorcycle_discovery.dart';
 import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
+import '../../services/navigation_heading.dart';
 import '../../services/offline_tile_cache.dart';
+import '../../services/rider_trail_recorder.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
@@ -49,6 +51,7 @@ import 'maneuver_symbol.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 import 'route_review_screen.dart';
+import 'route_trail_style.dart';
 
 @visibleForTesting
 bool shouldUseTiledGroupMiniMap({
@@ -80,7 +83,7 @@ class RideMapFeature extends StatefulWidget {
     this.currentPosition,
     this.navigationPosition,
     this.overlayMarkers,
-    this.offRouteTraces,
+    this.riderTrails,
     this.leaderStatus,
     this.groupRiderCount,
     this.onOpenRoster,
@@ -116,7 +119,7 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<GeoPoint?>? currentPosition,
     ValueListenable<MapNavigationPosition?>? navigationPosition,
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
-    ValueListenable<List<MapOverlayTrace>>? offRouteTraces,
+    ValueListenable<List<MapOverlayTrace>>? riderTrails,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
     int? groupRiderCount,
     VoidCallback? onOpenRoster,
@@ -146,7 +149,7 @@ class RideMapFeature extends StatefulWidget {
     currentPosition: currentPosition,
     navigationPosition: navigationPosition,
     overlayMarkers: overlayMarkers,
-    offRouteTraces: offRouteTraces,
+    riderTrails: riderTrails,
     leaderStatus: leaderStatus,
     groupRiderCount: groupRiderCount,
     onOpenRoster: onOpenRoster,
@@ -178,7 +181,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
-  final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
+  final ValueListenable<List<MapOverlayTrace>>? riderTrails;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
@@ -305,7 +308,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         currentPosition: widget.currentPosition,
         navigationPosition: widget.navigationPosition,
         overlayMarkers: widget.overlayMarkers,
-        offRouteTraces: widget.offRouteTraces,
+        riderTrails: widget.riderTrails,
         leaderStatus: widget.leaderStatus,
         groupRiderCount: widget.groupRiderCount,
         onOpenRoster: widget.onOpenRoster,
@@ -361,7 +364,7 @@ class RideMapScreen extends StatefulWidget {
     this.currentPosition,
     this.navigationPosition,
     this.overlayMarkers,
-    this.offRouteTraces,
+    this.riderTrails,
     this.leaderStatus,
     this.groupRiderCount,
     this.onOpenRoster,
@@ -401,7 +404,7 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
-  final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
+  final ValueListenable<List<MapOverlayTrace>>? riderTrails;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
@@ -438,7 +441,8 @@ class RideMapScreen extends StatefulWidget {
 class _RideMapScreenState extends State<RideMapScreen> {
   static const _remainingRouteSource = 'ride-relay-route-remaining';
   static const _riddenRouteSource = 'ride-relay-route-ridden';
-  static const _offRouteTraceSource = 'ride-relay-off-route-traces';
+  static const _riderTrailSource = 'ride-relay-rider-trails';
+  static const _casingHex = RouteTrailStyle.casingHex;
   static const _trailDirectionArrowSource = 'ride-relay-trail-direction-arrows';
   static const _waypointSource = 'ride-relay-waypoints';
   static const _positionSource = 'ride-relay-position';
@@ -485,6 +489,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
   double _lastHeadingDegrees = 0;
+  double _cameraBearingDegrees = 0;
+  final NavigationHeadingSmoother _headingSmoother =
+      NavigationHeadingSmoother();
+  // The map viewport and the bottom chrome band are measured from the last laid
+  // out frame so the camera's forward bias is derived from the real geometry
+  // rather than from assumed overlay heights.
+  final GlobalKey _mapViewportKey = GlobalKey();
+  final GlobalKey _bottomChromeKey = GlobalKey();
   double? _smoothedNavigationSpeedMetersPerSecond;
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
@@ -552,7 +564,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
-    widget.offRouteTraces?.addListener(_onOverlayDataChanged);
+    widget.riderTrails?.addListener(_onOverlayDataChanged);
     widget.leaderStatus?.addListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
     _observeSpeedLimit(_navigationFix);
@@ -581,9 +593,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       oldWidget.overlayMarkers?.removeListener(_onOverlayDataChanged);
       widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     }
-    if (oldWidget.offRouteTraces != widget.offRouteTraces) {
-      oldWidget.offRouteTraces?.removeListener(_onOverlayDataChanged);
-      widget.offRouteTraces?.addListener(_onOverlayDataChanged);
+    if (oldWidget.riderTrails != widget.riderTrails) {
+      oldWidget.riderTrails?.removeListener(_onOverlayDataChanged);
+      widget.riderTrails?.addListener(_onOverlayDataChanged);
     }
     if (oldWidget.leaderStatus != widget.leaderStatus) {
       oldWidget.leaderStatus?.removeListener(_onGroupPipDataChanged);
@@ -610,7 +622,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.currentPosition?.removeListener(_onPositionChanged);
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
-    widget.offRouteTraces?.removeListener(_onOverlayDataChanged);
+    widget.riderTrails?.removeListener(_onOverlayDataChanged);
     widget.leaderStatus?.removeListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
@@ -688,11 +700,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // the platform map's size and was the main source of visible flashing.
     final hideChrome =
         _route != null && (_navigationCanvasActive || markerOverviewActive);
+    // Notches, rounded corners and the home indicator are respected in every
+    // orientation, with or without the AppBar. Scaffold already removes the
+    // padding it consumed itself, so what is left is what the overlays owe.
     final safeInsets = MediaQuery.paddingOf(context);
-    final overlayTop = hideChrome ? safeInsets.top : 0.0;
-    final overlayLeft = hideChrome ? safeInsets.left : 0.0;
-    final overlayRight = hideChrome ? safeInsets.right : 0.0;
-    final overlayBottom = hideChrome ? safeInsets.bottom : 0.0;
+    final overlayLeft = safeInsets.left;
+    final overlayRight = safeInsets.right;
+    final overlayBottom = safeInsets.bottom;
     final compactDensity = landscape ? VisualDensity.compact : null;
     // The group mini-map owns its own ValueListenableBuilder below. This
     // avoids relying on a parent platform-map rebuild to notice rider updates,
@@ -702,28 +716,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final groupMiniMapWidth = landscape ? 196.0 : 150.0;
     final groupMiniMapHeight = landscape ? 116.0 : 104.0;
     final showRideMenu = hideChrome && widget.onOpenRideMenu != null;
-    final statusLeft =
-        overlayLeft +
-        (showRideMenu
-            ? 60
-            : landscape
-            ? 8
-            : 12);
-    final statusRight = landscape && canShowGroupMiniMap
-        ? overlayRight + groupMiniMapWidth + 16
-        : overlayRight + (landscape ? 68 : 12);
-    final statusTop = overlayTop + (_downloadProgress == null ? 8 : 72);
     // A route can contain manoeuvres before the device has a usable location.
-    // Reserve banner space only while guidance is actually visible; otherwise
-    // the TEC waiting state floats unnecessarily far down the map.
+    // The guidance banner is only composed into the band while guidance is
+    // actually visible, so nothing reserves space for a banner that is absent.
     final hasGuidance = _navigationGuidance.value != null;
-    // Guidance can include lane arrows and a closely following turn. Reserve
-    // enough overlay space so the leader status and group mini-map never
-    // cover those safety-critical lines.
-    final guidanceOffset = hasGuidance ? (landscape ? 112.0 : 136.0) : 0.0;
-    final leaderStatusTop = statusTop + guidanceOffset;
-    final emergencyBottom =
-        overlayBottom + (markerOverviewActive && !landscape ? 254.0 : 54.0);
     final showLeaveRide = _route != null && widget.onLeaveRide != null;
     return Scaffold(
       appBar: hideChrome
@@ -878,6 +874,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
               children: [
                 Positioned.fill(
                   child: Listener(
+                    key: _mapViewportKey,
                     behavior: HitTestBehavior.opaque,
                     onPointerDown: _onMapPointerDown,
                     onPointerMove: _onMapPointerMove,
@@ -887,235 +884,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     child: _buildMap(),
                   ),
                 ),
-                if (_downloadProgress case final progress?)
-                  Positioned(
-                    left: overlayLeft + 12,
-                    right: overlayRight + 12,
-                    top: overlayTop + 12,
-                    child: Card(
-                      child: _DownloadProgress(
-                        progress: progress,
-                        onCancel: _downloadCancellation?.cancel,
-                      ),
-                    ),
+                Positioned.fill(
+                  child: _buildRideChrome(
+                    landscape: landscape,
+                    hideChrome: hideChrome,
+                    markerOverviewActive: markerOverviewActive,
+                    hasGuidance: hasGuidance,
+                    showRideMenu: showRideMenu,
+                    showLeaveRide: showLeaveRide,
+                    canShowGroupMiniMap: canShowGroupMiniMap,
+                    groupMiniMapWidth: groupMiniMapWidth,
+                    groupMiniMapHeight: groupMiniMapHeight,
+                    safeLeft: overlayLeft,
+                    safeRight: overlayRight,
+                    safeBottom: overlayBottom,
                   ),
-                if (showRideMenu)
-                  Positioned(
-                    left: overlayLeft + 10,
-                    top: overlayTop + 8,
-                    child: FloatingActionButton.small(
-                      key: const Key('ride-menu-button'),
-                      heroTag: 'ride-relay-menu',
-                      tooltip: 'Ride menu',
-                      onPressed: widget.onOpenRideMenu,
-                      backgroundColor: const Color(0xE6252E39),
-                      foregroundColor: Colors.white,
-                      child: const Icon(Icons.menu),
-                    ),
-                  ),
-                if (widget.leaderStatus != null)
-                  Positioned(
-                    left: statusLeft,
-                    right: statusRight,
-                    top: leaderStatusTop,
-                    child: ValueListenableBuilder<LeaderRideStatus?>(
-                      valueListenable: widget.leaderStatus!,
-                      builder: (context, status, _) => status == null
-                          ? const SizedBox.shrink()
-                          : _LeaderMapStatus(
-                              status: status,
-                              compact: landscape || hideChrome,
-                              distanceUnit: widget.distanceUnit,
-                            ),
-                    ),
-                  ),
-                if (hasGuidance)
-                  Positioned(
-                    left: statusLeft,
-                    right: statusRight,
-                    top: statusTop,
-                    child: ValueListenableBuilder<NavigationGuidance?>(
-                      valueListenable: _navigationGuidance,
-                      builder: (context, guidance, _) => guidance == null
-                          ? const SizedBox.shrink()
-                          : _NavigationGuidanceBanner(
-                              guidance: guidance,
-                              distanceUnit: widget.distanceUnit,
-                              compact: landscape,
-                            ),
-                    ),
-                  ),
-                if (canShowGroupMiniMap)
-                  Positioned(
-                    key: const Key('group-mini-map-position'),
-                    right: overlayRight + 8,
-                    // In portrait the overview sits beneath the TEC card so
-                    // it does not compress the status text into an unusable
-                    // narrow strip.
-                    top: landscape
-                        ? statusTop
-                        : leaderStatusTop +
-                              (widget.leaderStatus == null
-                                  ? 24
-                                  : hideChrome
-                                  ? 52
-                                  : 96),
-                    child: ValueListenableBuilder<List<MapOverlayMarker>>(
-                      valueListenable: widget.overlayMarkers!,
-                      builder: (context, overlays, _) {
-                        final groupRiders = overlays
-                            .where((marker) => marker.id.startsWith('rider-'))
-                            .toList(growable: false);
-                        final inferredGroupSize =
-                            groupRiders.length +
-                            (_effectivePosition == null ? 0 : 1);
-                        // The participant count is a snapshot supplied by the
-                        // ride shell, while rider overlays are live. Taking
-                        // only the snapshot left the iOS mini-map hidden when
-                        // it still said "1" after remote positions arrived.
-                        final groupSize = math.max(
-                          widget.groupRiderCount ?? 0,
-                          inferredGroupSize,
-                        );
-                        if (groupSize <= 1) return const SizedBox.shrink();
-                        return _GroupMiniMap(
-                          width: groupMiniMapWidth,
-                          height: groupMiniMapHeight,
-                          routePaths:
-                              _route?.paths
-                                  .map((path) => path.points)
-                                  .where((points) => points.length >= 2)
-                                  .toList(growable: false) ??
-                              const [],
-                          currentPosition: _effectivePosition,
-                          riders: groupRiders,
-                          riderCount: groupSize,
-                          onTap: widget.onOpenRoster,
-                          showTiles: shouldUseTiledGroupMiniMap(
-                            mapLibreEnabled: _basemap.usesMapLibre,
-                            platform: defaultTargetPlatform,
-                          ),
-                          mapStyleString: widget.mapStyleString,
-                        );
-                      },
-                    ),
-                  ),
-                if (!markerOverviewActive)
-                  Positioned(
-                    key: const Key('posted-speed-limit-position'),
-                    right: overlayRight + 12,
-                    bottom:
-                        overlayBottom +
-                        (_route != null && !_navigationMode ? 76 : 12),
-                    child: AnimatedBuilder(
-                      animation: _speedLimitDisplay,
-                      builder: (context, _) {
-                        if (!_speedLimitDisplay.enabled) {
-                          return _SpeedLimitOptInChip(
-                            onPressed: _confirmEnableSpeedLimitDisplay,
-                          );
-                        }
-                        return _PostedSpeedLimitBadge(
-                          status: _speedLimitDisplay.status,
-                          outcome: _speedLimitDisplay.lastOutcome,
-                          limit: _speedLimitDisplay.limit,
-                        );
-                      },
-                    ),
-                  ),
-                if (localMarkerOverlay != null)
-                  Positioned(
-                    key: const Key('junction-marker-overlay-position'),
-                    left: overlayLeft + 12,
-                    right: overlayRight + 12,
-                    bottom: overlayBottom + 12,
-                    child: ValueListenableBuilder<MapJunctionMarkerOverlay?>(
-                      valueListenable: widget.junctionMarkerOverlay!,
-                      builder: (context, overlay, _) {
-                        if (overlay == null || !overlay.isLocalMarker) {
-                          return const SizedBox.shrink();
-                        }
-                        return LayoutBuilder(
-                          builder: (context, constraints) => Align(
-                            alignment: Alignment.bottomRight,
-                            child: _JunctionMarkerOverlay(
-                              overlay: overlay,
-                              compact: landscape,
-                              maxWidth: landscape
-                                  ? math.min(312.0, constraints.maxWidth)
-                                  : constraints.maxWidth,
-                              distanceUnit: widget.distanceUnit,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                if (_route != null && !_navigationMode && !markerOverviewActive)
-                  Positioned(
-                    right: overlayRight + 12,
-                    bottom: overlayBottom + 12,
-                    child: FloatingActionButton.extended(
-                      key: const Key('navigation-follow-button'),
-                      tooltip: 'Follow my location',
-                      onPressed: _toggleNavigationMode,
-                      backgroundColor: const Color(0xE6252E39),
-                      foregroundColor: Colors.white,
-                      icon: const Icon(Icons.navigation_outlined),
-                      label: const Text('Follow me'),
-                    ),
-                  ),
-                if (_route != null && widget.onEmergencyAlert != null)
-                  Positioned(
-                    left: overlayLeft + 12,
-                    bottom: emergencyBottom,
-                    child: FloatingActionButton.extended(
-                      key: const Key('emergency-alert-button'),
-                      heroTag: 'ride-relay-emergency-alert',
-                      tooltip: 'Alert leader and TEC',
-                      onPressed: _emergencyAlertSending
-                          ? null
-                          : _triggerEmergencyAlert,
-                      backgroundColor: const Color(0xFFD9304F),
-                      foregroundColor: Colors.white,
-                      icon: _emergencyAlertSending
-                          ? const SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Icon(
-                              _emergencyAlertSent
-                                  ? Icons.check_circle
-                                  : Icons.sos,
-                            ),
-                      label: Text(_emergencyAlertSent ? 'ALERT SENT' : 'ALERT'),
-                    ),
-                  ),
-                if (showLeaveRide)
-                  Positioned(
-                    left: overlayLeft + 12,
-                    bottom: emergencyBottom + 62,
-                    child: FloatingActionButton.extended(
-                      key: const Key('leave-ride-button'),
-                      heroTag: 'ride-relay-leave',
-                      tooltip: 'Stop sharing and leave this ride',
-                      onPressed: widget.onLeaveRide,
-                      backgroundColor: const Color(0xFF545F6E),
-                      foregroundColor: Colors.white,
-                      icon: const Icon(Icons.exit_to_app),
-                      label: const Text('LEAVE'),
-                    ),
-                  ),
-                if (_route != null && widget.ridePaused)
-                  Positioned(
-                    left: overlayLeft + 12,
-                    right: overlayRight + 12,
-                    top: statusTop + (showRideMenu ? 48 : 0),
-                    child: const _RidePausedBanner(),
-                  ),
+                ),
                 if (_route == null)
                   Positioned.fill(
                     child: widget.canEditRoute
@@ -1130,6 +914,349 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ),
               ],
             ),
+    );
+  }
+
+  /// Every persistent map overlay, anchored clear of the upper band.
+  ///
+  /// The top of the screen is where a rider on a mounted phone reads the road
+  /// ahead, so nothing persistent is allowed to live there. Portrait stacks the
+  /// surfaces into one bottom-anchored band; landscape splits them into a
+  /// bottom-left rail (guidance, status, actions) and a bottom-right rail
+  /// (group overview, speed limit, marker card) so the centre and upper
+  /// viewport stay clear. Because each rail is a single [Column], the
+  /// anchoring stays deterministic - the property #89 introduced - and no
+  /// surface can cover another at any simultaneous overlay count.
+  ///
+  /// Order within a rail runs from most urgent nearest the map to least urgent
+  /// nearest the screen edge, with the touch targets lowest where a gloved hand
+  /// naturally rests.
+  Widget _buildRideChrome({
+    required bool landscape,
+    required bool hideChrome,
+    required bool markerOverviewActive,
+    required bool hasGuidance,
+    required bool showRideMenu,
+    required bool showLeaveRide,
+    required bool canShowGroupMiniMap,
+    required double groupMiniMapWidth,
+    required double groupMiniMapHeight,
+    required double safeLeft,
+    required double safeRight,
+    required double safeBottom,
+  }) {
+    // Landscape rails stay narrow enough that a centred rider marker is never
+    // behind one, which is what lets the camera keep its full forward bias.
+    final railWidth = math.min(
+      360.0,
+      (MediaQuery.sizeOf(context).width - safeLeft - safeRight) * 0.42,
+    );
+    final compactStatus = landscape || hideChrome;
+
+    Widget compose(
+      LeaderRideStatus? leaderStatus,
+      List<MapOverlayMarker> overlays,
+    ) {
+      final downloadProgress = _downloadProgress;
+      final urgent = <Widget>[
+        if (_route != null && widget.ridePaused) const _RidePausedBanner(),
+        if (leaderStatus != null && leaderStatus.offCourseAlerts.isNotEmpty)
+          _OffCourseBanner(
+            alerts: leaderStatus.offCourseAlerts,
+            compact: compactStatus,
+            distanceUnit: widget.distanceUnit,
+          ),
+      ];
+      final guidance = hasGuidance
+          ? ValueListenableBuilder<NavigationGuidance?>(
+              valueListenable: _navigationGuidance,
+              builder: (context, guidance, _) => guidance == null
+                  ? const SizedBox.shrink()
+                  : _NavigationGuidanceBanner(
+                      guidance: guidance,
+                      distanceUnit: widget.distanceUnit,
+                      compact: landscape,
+                    ),
+            )
+          : null;
+      // With nobody holding the TEC role there is nothing honest to show, so
+      // the surface is hidden entirely and its space reclaimed rather than
+      // presenting an empty or zero gap. A registered TEC keeps the surface
+      // through its waiting, stale and tracking states.
+      final tecGap = leaderStatus != null && leaderStatus.hasRegisteredTec
+          ? _TecGapCard(
+              status: leaderStatus,
+              compact: compactStatus,
+              distanceUnit: widget.distanceUnit,
+            )
+          : null;
+      final miniMap = canShowGroupMiniMap
+          ? _buildGroupMiniMap(
+              overlays: overlays,
+              width: groupMiniMapWidth,
+              height: groupMiniMapHeight,
+            )
+          : null;
+      final junctionCard = markerOverviewActive
+          ? ValueListenableBuilder<MapJunctionMarkerOverlay?>(
+              key: const Key('junction-marker-overlay-position'),
+              valueListenable: widget.junctionMarkerOverlay!,
+              builder: (context, overlay, _) {
+                if (overlay == null || !overlay.isLocalMarker) {
+                  return const SizedBox.shrink();
+                }
+                return LayoutBuilder(
+                  builder: (context, constraints) => Align(
+                    alignment: Alignment.bottomRight,
+                    child: _JunctionMarkerOverlay(
+                      overlay: overlay,
+                      compact: landscape,
+                      maxWidth: landscape
+                          ? math.min(312.0, constraints.maxWidth)
+                          : constraints.maxWidth,
+                      distanceUnit: widget.distanceUnit,
+                    ),
+                  ),
+                );
+              },
+            )
+          : null;
+      final actions = <Widget>[
+        if (showRideMenu)
+          FloatingActionButton(
+            key: const Key('ride-menu-button'),
+            heroTag: 'ride-relay-menu',
+            tooltip: 'Ride menu',
+            onPressed: widget.onOpenRideMenu,
+            backgroundColor: const Color(0xE6252E39),
+            foregroundColor: Colors.white,
+            child: const Icon(Icons.menu),
+          ),
+        if (_route != null && widget.onEmergencyAlert != null)
+          FloatingActionButton.extended(
+            key: const Key('emergency-alert-button'),
+            heroTag: 'ride-relay-emergency-alert',
+            tooltip: 'Alert leader and TEC',
+            onPressed: _emergencyAlertSending ? null : _triggerEmergencyAlert,
+            backgroundColor: const Color(0xFFD9304F),
+            foregroundColor: Colors.white,
+            icon: _emergencyAlertSending
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Icon(_emergencyAlertSent ? Icons.check_circle : Icons.sos),
+            label: Text(_emergencyAlertSent ? 'ALERT SENT' : 'ALERT'),
+          ),
+        if (showLeaveRide)
+          FloatingActionButton.extended(
+            key: const Key('leave-ride-button'),
+            heroTag: 'ride-relay-leave',
+            tooltip: 'Stop sharing and leave this ride',
+            onPressed: widget.onLeaveRide,
+            backgroundColor: const Color(0xFF545F6E),
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.exit_to_app),
+            label: const Text('LEAVE'),
+          ),
+      ];
+      final controls = <Widget>[
+        if (!markerOverviewActive)
+          AnimatedBuilder(
+            key: const Key('posted-speed-limit-position'),
+            animation: _speedLimitDisplay,
+            builder: (context, _) => _speedLimitDisplay.enabled
+                ? _PostedSpeedLimitBadge(
+                    status: _speedLimitDisplay.status,
+                    outcome: _speedLimitDisplay.lastOutcome,
+                    limit: _speedLimitDisplay.limit,
+                  )
+                : _SpeedLimitOptInChip(
+                    onPressed: _confirmEnableSpeedLimitDisplay,
+                  ),
+          ),
+        if (_route != null && !_navigationMode && !markerOverviewActive)
+          FloatingActionButton.extended(
+            key: const Key('navigation-follow-button'),
+            tooltip: 'Follow my location',
+            onPressed: _toggleNavigationMode,
+            backgroundColor: const Color(0xE6252E39),
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.navigation_outlined),
+            label: const Text('Follow me'),
+          ),
+      ];
+
+      if (landscape) {
+        return Stack(
+          children: [
+            Positioned(
+              left: safeLeft + 10,
+              bottom: safeBottom + 10,
+              width: railWidth,
+              child: _chromeRail(
+                key: const Key('map-landscape-left-rail'),
+                alignment: CrossAxisAlignment.start,
+                children: [
+                  if (downloadProgress != null)
+                    Card(
+                      child: _DownloadProgress(
+                        progress: downloadProgress,
+                        onCancel: _downloadCancellation?.cancel,
+                      ),
+                    ),
+                  ...urgent,
+                  ?guidance,
+                  ?tecGap,
+                  if (actions.isNotEmpty) _chromeActions(actions),
+                ],
+              ),
+            ),
+            Positioned(
+              right: safeRight + 10,
+              bottom: safeBottom + 10,
+              width: railWidth,
+              child: _chromeRail(
+                key: const Key('map-landscape-right-rail'),
+                alignment: CrossAxisAlignment.end,
+                children: [
+                  ?miniMap,
+                  if (controls.isNotEmpty) _chromeActions(controls),
+                  ?junctionCard,
+                ],
+              ),
+            ),
+          ],
+        );
+      }
+
+      return Stack(
+        children: [
+          Positioned(
+            left: safeLeft + 12,
+            right: safeRight + 12,
+            bottom: safeBottom + 12,
+            child: _chromeRail(
+              key: _bottomChromeKey,
+              alignment: CrossAxisAlignment.stretch,
+              children: [
+                if (downloadProgress != null)
+                  Card(
+                    child: _DownloadProgress(
+                      progress: downloadProgress,
+                      onCancel: _downloadCancellation?.cancel,
+                    ),
+                  ),
+                ...urgent,
+                ?guidance,
+                if (tecGap != null || miniMap != null)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(child: tecGap ?? const SizedBox.shrink()),
+                      if (miniMap != null) ...[
+                        const SizedBox(width: 8),
+                        miniMap,
+                      ],
+                    ],
+                  ),
+                // One cluster in portrait: the band is too narrow to hold the
+                // safety actions and the map controls as separate left and
+                // right groups without squeezing a target below its gloved-hand
+                // size, so they share a wrapping run instead.
+                if (actions.isNotEmpty || controls.isNotEmpty)
+                  _chromeActions([...actions, ...controls]),
+                ?junctionCard,
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    Widget withOverlays(LeaderRideStatus? leaderStatus) =>
+        widget.overlayMarkers == null
+        ? compose(leaderStatus, const [])
+        : ValueListenableBuilder<List<MapOverlayMarker>>(
+            valueListenable: widget.overlayMarkers!,
+            builder: (context, overlays, _) => compose(leaderStatus, overlays),
+          );
+
+    // The leader status and rider overlays only reach the tree through their
+    // own listenables: rebuilding the parent platform map on every rider update
+    // resizes the native view and was a source of visible flashing.
+    return widget.leaderStatus == null
+        ? withOverlays(null)
+        : ValueListenableBuilder<LeaderRideStatus?>(
+            valueListenable: widget.leaderStatus!,
+            builder: (context, status, _) => withOverlays(status),
+          );
+  }
+
+  /// One bottom-anchored rail. Gaps only ever appear between surfaces that are
+  /// actually present, so a hidden surface reclaims its space.
+  static Widget _chromeRail({
+    required Key key,
+    required CrossAxisAlignment alignment,
+    required List<Widget> children,
+  }) => Column(
+    key: key,
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: alignment,
+    children: [
+      for (var index = 0; index < children.length; index += 1) ...[
+        if (index > 0) const SizedBox(height: 8),
+        children[index],
+      ],
+    ],
+  );
+
+  /// Action targets flow onto a second run rather than overflowing, so a small
+  /// screen showing every control at once still leaves each target its full
+  /// gloved-hand size.
+  static Widget _chromeActions(List<Widget> children) => Wrap(
+    spacing: 10,
+    runSpacing: 8,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    children: children,
+  );
+
+  Widget _buildGroupMiniMap({
+    required List<MapOverlayMarker> overlays,
+    required double width,
+    required double height,
+  }) {
+    final groupRiders = overlays
+        .where((marker) => marker.id.startsWith('rider-'))
+        .toList(growable: false);
+    final inferredGroupSize =
+        groupRiders.length + (_effectivePosition == null ? 0 : 1);
+    // The participant count is a snapshot supplied by the ride shell, while
+    // rider overlays are live. Taking only the snapshot left the iOS mini-map
+    // hidden when it still said "1" after remote positions arrived.
+    final groupSize = math.max(widget.groupRiderCount ?? 0, inferredGroupSize);
+    if (groupSize <= 1) return const SizedBox.shrink();
+    return _GroupMiniMap(
+      width: width,
+      height: height,
+      routePaths:
+          _route?.paths
+              .map((path) => path.points)
+              .where((points) => points.length >= 2)
+              .toList(growable: false) ??
+          const [],
+      currentPosition: _effectivePosition,
+      riders: groupRiders,
+      riderCount: groupSize,
+      onTap: widget.onOpenRoster,
+      showTiles: shouldUseTiledGroupMiniMap(
+        mapLibreEnabled: _basemap.usesMapLibre,
+        platform: defaultTargetPlatform,
+      ),
+      mapStyleString: widget.mapStyleString,
     );
   }
 
@@ -1217,42 +1344,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 )
                 .toList(growable: false),
           ),
-        if (route != null)
+        // Travelled trails are drawn whether or not a route is loaded, and the
+        // leader's trail sits under the planned route so both stay readable
+        // where they coincide.
+        if (route != null || _visibleRiderTrails.isNotEmpty)
           PolylineLayer(
             polylines: [
+              ..._trailPolylines(dashed: false),
               ..._progressGeometry.remainingPaths.map(
-                (path) => Polyline(
-                  points: path.map(_latLng).toList(growable: false),
-                  color: const Color(0xE63478F6),
-                  strokeWidth: 5,
-                  borderColor: const Color(0xFF10151C),
-                  borderStrokeWidth: 2,
-                  pattern: const StrokePattern.dotted(spacingFactor: 1.8),
-                ),
+                (path) => _routePolyline(path, RouteTrailStyle.routeAhead),
               ),
               ..._progressGeometry.riddenPaths.map(
-                (path) => Polyline(
-                  points: path.map(_latLng).toList(growable: false),
-                  color: const Color(0xFFFF7A1A),
-                  strokeWidth: 5,
-                  borderColor: const Color(0xFF10151C),
-                  borderStrokeWidth: 2,
-                ),
+                (path) => _routePolyline(path, RouteTrailStyle.travelled),
               ),
-              ...(widget.offRouteTraces?.value ?? const <MapOverlayTrace>[])
-                  .where((trace) => trace.points.length >= 2)
-                  .map(
-                    (trace) => Polyline(
-                      points: trace.points.map(_latLng).toList(growable: false),
-                      color: trace.color,
-                      strokeWidth: 5,
-                      borderColor: const Color(0xFF10151C),
-                      borderStrokeWidth: 2,
-                    ),
-                  ),
+              ..._trailPolylines(dashed: true),
             ],
           ),
-        if (route != null)
+        if (route != null || _visibleRiderTrails.isNotEmpty)
           MarkerLayer(
             key: const Key('trail-direction-arrow-layer'),
             markers: _trailDirectionArrows()
@@ -1449,6 +1557,44 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   bool get _isMoving => _navigationFix?.isMoving ?? false;
 
+  /// Speed used to decide whether the reported course can be trusted. A fix
+  /// without a speed still counts as moving when the position source says so;
+  /// otherwise a device that reports heading but no speed would never rotate.
+  double get _bearingSpeedMetersPerSecond {
+    final speed =
+        _smoothedNavigationSpeedMetersPerSecond ??
+        _navigationFix?.speedMetersPerSecond;
+    if (speed != null && speed.isFinite) return speed;
+    return _isMoving ? _headingSmoother.freezeBelowMetersPerSecond : 0;
+  }
+
+  /// The rotation deadband tightens inside this distance so the map bearing
+  /// cannot lag at the junction the rider is being told about.
+  static const _maneuverDeadbandTightenMeters = 150.0;
+
+  bool get _maneuverImminent {
+    final guidance = _navigationGuidance.value;
+    return guidance != null &&
+        guidance.distanceMeters <= _maneuverDeadbandTightenMeters;
+  }
+
+  /// Height of the map viewport as laid out, falling back to the screen height
+  /// before the first frame.
+  double get _mapViewportHeightPixels {
+    final height = _mapViewportKey.currentContext?.size?.height;
+    return height != null && height > 0
+        ? height
+        : MediaQuery.sizeOf(context).height;
+  }
+
+  /// Height of the portrait bottom chrome band as laid out, including the
+  /// margin below it. Zero in landscape, where the band is replaced by side
+  /// rails a centred marker never reaches.
+  double get _bottomChromeHeightPixels {
+    final height = _bottomChromeKey.currentContext?.size?.height;
+    return height == null ? 0 : height + 12;
+  }
+
   void _onPositionChanged() {
     if (!mounted) return;
     final position = _effectivePosition;
@@ -1464,16 +1610,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _lastHandledNavigationFix = null;
     }
     final suppliedHeading = _navigationFix?.headingDegrees;
+    double? observedHeading;
     if (suppliedHeading != null && suppliedHeading.isFinite) {
-      _lastHeadingDegrees = suppliedHeading;
+      observedHeading = suppliedHeading;
     } else if (position != null &&
         _previousNavigationPoint != null &&
         _pointsDiffer(position, _previousNavigationPoint!)) {
-      _lastHeadingDegrees = _bearingDegrees(
-        _previousNavigationPoint!,
-        position,
-      );
+      observedHeading = _bearingDegrees(_previousNavigationPoint!, position);
     }
+    if (observedHeading != null) _lastHeadingDegrees = observedHeading;
     _previousNavigationPoint = position;
     if (navigationFix?.speedMetersPerSecond case final speed?
         when speed.isFinite) {
@@ -1483,6 +1628,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ? boundedSpeed
           : previousSpeed * 0.72 + boundedSpeed * 0.28;
     }
+    // The camera follows a smoothed bearing, never the raw per-fix course. The
+    // marker keeps the raw heading: it is only drawn rotated while the map is
+    // north-up, where an honest arrow matters more than a stable one.
+    final smoothedBearing = _headingSmoother.update(
+      headingDegrees: observedHeading,
+      speedMetersPerSecond: _bearingSpeedMetersPerSecond,
+      at: navigationFix?.recordedAt ?? DateTime.now(),
+      maneuverImminent: _maneuverImminent,
+    );
+    if (smoothedBearing != null) _cameraBearingDegrees = smoothedBearing;
 
     final progressNow = navigationFix?.recordedAt ?? DateTime.now();
     final refreshProgress =
@@ -1682,7 +1837,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _navigationCanvasActive = true;
       _autoFollowSuppressed = false;
     });
-    unawaited(_followNavigationCamera(force: true));
+    // Re-centring is a change of framing, not a tracking update, so it is eased
+    // rather than run at the linear rate the per-fix updates use.
+    unawaited(
+      _followNavigationCamera(
+        force: true,
+        transitionDuration: const Duration(milliseconds: 700),
+      ),
+    );
   }
 
   void _stopFollowing({required bool suppressAutomatic}) {
@@ -1872,32 +2034,47 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _cameraUpdateInFlight = true;
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
-    // The camera centers on the rider's own live position, full stop - it
-    // previously aimed hundreds of metres ahead along the route (or, once
-    // more than 150m off-route, along route progress that had stopped
-    // advancing), which could push the rider's own marker off the visible
-    // viewport entirely, worst-case in landscape's steeper tilt/lower zoom.
-    // The tilt below still gives a forward-looking navigation feel through
-    // perspective, without moving the geometric centre away from the rider.
-    final target = position;
+    // The rider is anchored low in the frame so most of the screen is road
+    // ahead. The anchor is a documented fraction of the measured viewport
+    // height, pulled back far enough to keep the marker clear of the bottom
+    // chrome band, so a look-ahead can never push the rider's own marker off
+    // screen or under an overlay the way a fixed distance up the route once
+    // did.
+    final viewportHeight = _mapViewportHeightPixels;
     final cameraPlan = NavigationCameraPlanner.plan(
       speedMetersPerSecond:
           _smoothedNavigationSpeedMetersPerSecond ??
           _navigationFix?.speedMetersPerSecond,
       landscape: landscape,
+      viewportHeightPixels: viewportHeight,
+      latitudeDegrees: position.latitude,
+      bottomChromeFraction: landscape || viewportHeight <= 0
+          ? 0
+          : _bottomChromeHeightPixels / viewportHeight,
     );
     final cameraDuration = transitionDuration ?? _cameraTransitionDuration;
     try {
       if (_basemap.usesMapLibre) {
         final controller = _mapLibreController;
         if (controller == null) return;
+        // maplibre_gl exposes no camera padding, so the anchor is applied by
+        // aiming at the ground point that renders where the rider should not
+        // be. The distance comes from the tilt and viewport geometry, so the
+        // rider still lands at the planned viewport fraction.
+        final target = cameraPlan.lookAheadMeters == 0
+            ? position
+            : _pointAhead(
+                position,
+                _cameraBearingDegrees,
+                cameraPlan.lookAheadMeters,
+              );
         await controller.easeCamera(
           ml.CameraUpdate.newCameraPosition(
             ml.CameraPosition(
               target: ml.LatLng(target.latitude, target.longitude),
               zoom: cameraPlan.zoom,
               tilt: cameraPlan.tilt,
-              bearing: _lastHeadingDegrees,
+              bearing: _cameraBearingDegrees,
             ),
           ),
           duration: cameraDuration,
@@ -1907,10 +2084,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
         );
         return;
       }
+      // FlutterMap has no tilt, so the bias is a flat ground offset at its own
+      // scale. It goes into the target rather than into the call's screen-space
+      // `offset`, which is silently dropped whenever the bearing has not
+      // changed - the common case once the rotation deadband is holding.
+      final flatLookAhead = NavigationCameraPlanner.flatLookAheadMetersFor(
+        zoom: cameraPlan.zoom,
+        forwardBiasPixels: cameraPlan.forwardBiasPixels,
+        latitudeDegrees: position.latitude,
+      );
       _mapController.moveAndRotateAnimatedRaw(
-        _latLng(target),
+        _latLng(
+          flatLookAhead == 0
+              ? position
+              : _pointAhead(position, _cameraBearingDegrees, flatLookAhead),
+        ),
         cameraPlan.zoom,
-        _lastHeadingDegrees,
+        _cameraBearingDegrees,
         offset: Offset.zero,
         duration: cameraDuration,
         curve: transitionDuration == null
@@ -2004,6 +2194,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
           circleStrokeColor: '#10151C',
         ),
       );
+      // Solid trails are drawn before the planned route so the leader's wider
+      // trail reads as a corridor beneath it rather than hiding it.
+      await controller.addGeoJsonSource(
+        _riderTrailSource,
+        _riderTrailGeoJson(),
+      );
+      await _addTrailLayers(controller, RiderTrailKind.leader);
+      await _addTrailLayers(controller, RiderTrailKind.rider);
       await controller.addGeoJsonSource(
         _remainingRouteSource,
         _remainingRouteGeoJson(),
@@ -2011,11 +2209,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addLineLayer(
         _remainingRouteSource,
         'ride-relay-route-remaining-border',
-        const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineOpacity: 0.7,
-          lineWidth: 8,
-          lineDasharray: [0.1, 1.8],
+        ml.LineLayerProperties(
+          lineColor: _casingHex,
+          lineWidth: RouteTrailStyle.routeAhead.casingWidthPixels,
+          lineDasharray: RouteTrailStyle.routeAhead.maplibreCasingDashArray,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -2024,11 +2221,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addLineLayer(
         _remainingRouteSource,
         'ride-relay-route-remaining',
-        const ml.LineLayerProperties(
-          lineColor: '#3478F6',
-          lineOpacity: 0.9,
-          lineWidth: 5,
-          lineDasharray: [0.1, 1.8],
+        ml.LineLayerProperties(
+          lineColor: _hexColor(RouteTrailStyle.routeAhead.color),
+          lineWidth: RouteTrailStyle.routeAhead.widthPixels,
+          lineDasharray: RouteTrailStyle.routeAhead.maplibreDashArray,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -2041,9 +2237,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addLineLayer(
         _riddenRouteSource,
         'ride-relay-route-ridden-border',
-        const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineWidth: 9,
+        ml.LineLayerProperties(
+          lineColor: _casingHex,
+          lineWidth: RouteTrailStyle.travelled.casingWidthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -2052,40 +2248,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addLineLayer(
         _riddenRouteSource,
         'ride-relay-route-ridden',
-        const ml.LineLayerProperties(
-          lineColor: '#FF7A1A',
-          lineWidth: 5,
+        ml.LineLayerProperties(
+          lineColor: _hexColor(RouteTrailStyle.travelled.color),
+          lineWidth: RouteTrailStyle.travelled.widthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
         enableInteraction: false,
       );
-      await controller.addGeoJsonSource(
-        _offRouteTraceSource,
-        _offRouteTraceGeoJson(),
-      );
-      await controller.addLineLayer(
-        _offRouteTraceSource,
-        'ride-relay-off-route-border',
-        const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineWidth: 9,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      await controller.addLineLayer(
-        _offRouteTraceSource,
-        'ride-relay-off-route-line',
-        const ml.LineLayerProperties(
-          lineColor: ['get', 'color'],
-          lineWidth: 5,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
+      // An off-route trail belongs on top of the plan: it is the deviation from
+      // it.
+      await _addTrailLayers(controller, RiderTrailKind.offRoute);
       await controller.addGeoJsonSource(
         _trailDirectionArrowSource,
         _trailDirectionArrowGeoJson(),
@@ -2207,6 +2380,50 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  /// Adds one trail kind's casing and line layers.
+  ///
+  /// Every paint value is a constant per layer, filtered by kind, because
+  /// MapLibre cannot data-drive `line-dasharray` and a wrongly typed
+  /// data-driven paint value would fail the whole style set-up, not just one
+  /// layer. A new kind therefore means one more call here.
+  Future<void> _addTrailLayers(
+    ml.MapLibreMapController controller,
+    RiderTrailKind kind,
+  ) async {
+    final style = RouteTrailStyle.forTrail(kind);
+    final filter = <Object>[
+      '==',
+      ['get', 'kind'],
+      kind.name,
+    ];
+    await controller.addLineLayer(
+      _riderTrailSource,
+      'ride-relay-trail-${kind.name}-casing',
+      ml.LineLayerProperties(
+        lineColor: _casingHex,
+        lineWidth: style.casingWidthPixels,
+        lineDasharray: style.maplibreCasingDashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      filter: filter,
+      enableInteraction: false,
+    );
+    await controller.addLineLayer(
+      _riderTrailSource,
+      'ride-relay-trail-${kind.name}-line',
+      ml.LineLayerProperties(
+        lineColor: _hexColor(style.color),
+        lineWidth: style.widthPixels,
+        lineDasharray: style.maplibreDashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      filter: filter,
+      enableInteraction: false,
+    );
+  }
+
   Future<void> _syncMapLibreSources() async {
     final controller = _mapLibreController;
     if (!_mapLibreStyleReady || controller == null) return;
@@ -2228,8 +2445,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _riddenRouteGeoJson(),
       );
       await controller.setGeoJsonSource(
-        _offRouteTraceSource,
-        _offRouteTraceGeoJson(),
+        _riderTrailSource,
+        _riderTrailGeoJson(),
       );
       await controller.setGeoJsonSource(
         _trailDirectionArrowSource,
@@ -2303,8 +2520,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _discoveryPointGeoJson(),
         );
         await controller.setGeoJsonSource(
-          _offRouteTraceSource,
-          _offRouteTraceGeoJson(),
+          _riderTrailSource,
+          _riderTrailGeoJson(),
         );
         await controller.setGeoJsonSource(
           _markerPlanSource,
@@ -2337,6 +2554,37 @@ class _RideMapScreenState extends State<RideMapScreen> {
     idPrefix: 'remaining-route',
   );
 
+  /// Every rider's travelled trail with enough geometry to draw. Rendering is
+  /// deliberately independent of whether a route is loaded or matched (#100).
+  List<MapOverlayTrace> get _visibleRiderTrails =>
+      (widget.riderTrails?.value ?? const <MapOverlayTrace>[])
+          .where((trace) => trace.points.length >= 2)
+          .toList(growable: false);
+
+  Polyline _routePolyline(List<GeoPoint> path, RouteLineStyle style) =>
+      Polyline(
+        points: path.map(_latLng).toList(growable: false),
+        color: style.color,
+        strokeWidth: style.widthPixels,
+        borderColor: RouteTrailStyle.casing,
+        borderStrokeWidth: style.fallbackBorderWidthPixels,
+        pattern: style.dashPixels == null
+            ? const StrokePattern.solid()
+            : StrokePattern.dashed(segments: style.dashPixels!),
+      );
+
+  /// Trail polylines of one pattern, widest first so a wider trail never hides
+  /// a narrower one. MapLibre gets the same ordering from its per-kind layers.
+  Iterable<Polyline> _trailPolylines({required bool dashed}) =>
+      (_visibleRiderTrails
+              .where((trace) => trace.style.isDashed == dashed)
+              .toList()
+            ..sort(
+              (first, second) =>
+                  second.style.widthPixels.compareTo(first.style.widthPixels),
+            ))
+          .map((trace) => _routePolyline(trace.points, trace.style));
+
   List<_StyledTrailDirectionArrow> _trailDirectionArrows() {
     const maximumVisibleArrows = 240;
     final items = <_StyledTrailDirectionArrow>[];
@@ -2362,15 +2610,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
     addArrows(
       paths: _progressGeometry.riddenPaths,
-      color: const Color(0xFFFF7A1A),
+      color: RouteTrailStyle.travelled.color,
       idPrefix: 'ridden',
       semanticLabel: 'Travel direction',
     );
-    for (final trace
-        in widget.offRouteTraces?.value ?? const <MapOverlayTrace>[]) {
+    // Whole-group rides can hold more trail than the arrow budget allows, so
+    // the cues a rider needs to interpret someone else's path come first.
+    final byImportance = _visibleRiderTrails.toList()
+      ..sort(
+        (first, second) =>
+            _arrowPriority(first.kind).compareTo(_arrowPriority(second.kind)),
+      );
+    for (final trace in byImportance) {
       addArrows(
         paths: [trace.points],
-        color: trace.color,
+        color: trace.style.color,
         idPrefix: trace.id,
         semanticLabel: '${trace.label} direction',
       );
@@ -2378,6 +2632,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     return items;
   }
+
+  static int _arrowPriority(RiderTrailKind kind) => switch (kind) {
+    RiderTrailKind.leader => 0,
+    RiderTrailKind.offRoute => 1,
+    RiderTrailKind.rider => 2,
+  };
 
   Map<String, dynamic> _trailDirectionArrowGeoJson() => MapGeoJson.points(
     _trailDirectionArrows().map(
@@ -2437,27 +2697,25 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ),
   );
 
-  Map<String, dynamic> _offRouteTraceGeoJson() {
-    final traces = widget.offRouteTraces?.value ?? const <MapOverlayTrace>[];
-    return {
-      'type': 'FeatureCollection',
-      'features': [
-        for (final trace in traces.where((trace) => trace.points.length >= 2))
-          {
-            'type': 'Feature',
-            'id': trace.id,
-            'properties': {'color': _hexColor(trace.color)},
-            'geometry': {
-              'type': 'LineString',
-              'coordinates': [
-                for (final point in trace.points)
-                  [point.longitude, point.latitude],
-              ],
-            },
+  Map<String, dynamic> _riderTrailGeoJson() => {
+    'type': 'FeatureCollection',
+    'features': [
+      for (final trace in _visibleRiderTrails)
+        {
+          'type': 'Feature',
+          'id': trace.id,
+          // The kind selects the layer, which carries the whole style.
+          'properties': {'kind': trace.kind.name, 'label': trace.label},
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              for (final point in trace.points)
+                [point.longitude, point.latitude],
+            ],
           },
-      ],
-    };
-  }
+        },
+    ],
+  };
 
   Map<String, dynamic> _waypointGeoJson() => MapGeoJson.points(
     _route?.waypoints
@@ -3796,18 +4054,22 @@ class MapEmergencyContact {
   };
 }
 
+/// One rider's travelled trail, drawn from recorded position history rather
+/// than from any match against the planned route (#100).
 class MapOverlayTrace {
   const MapOverlayTrace({
     required this.id,
     required this.points,
     required this.label,
-    this.color = const Color(0xFFE244C7),
+    this.kind = RiderTrailKind.rider,
   });
 
   final String id;
   final List<GeoPoint> points;
   final String label;
-  final Color color;
+  final RiderTrailKind kind;
+
+  RouteLineStyle get style => RouteTrailStyle.forTrail(kind);
 }
 
 class _StyledTrailDirectionArrow {
@@ -4407,9 +4669,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       await controller.addLineLayer(
         _routeSource,
         'ride-relay-mini-route-border',
-        const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineWidth: 5,
+        ml.LineLayerProperties(
+          lineColor: RouteTrailStyle.casingHex,
+          lineWidth: RouteTrailStyle.miniMapRoute.casingWidthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -4418,9 +4680,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       await controller.addLineLayer(
         _routeSource,
         'ride-relay-mini-route-line',
-        const ml.LineLayerProperties(
-          lineColor: '#FF7A1A',
-          lineWidth: 3,
+        ml.LineLayerProperties(
+          lineColor: _hexColor(RouteTrailStyle.miniMapRoute.color),
+          lineWidth: RouteTrailStyle.miniMapRoute.widthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -4785,12 +5047,23 @@ class _GroupMiniMapPainter extends CustomPainter {
         final offset = project(route[index]);
         path.lineTo(offset.dx, offset.dy);
       }
+      // Opaque colour over a casing rather than a translucent line, matching
+      // the tiled mini-map and the main map's route ahead.
       canvas.drawPath(
         path,
         Paint()
-          ..color = const Color(0xE63478F6)
+          ..color = RouteTrailStyle.casing
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.5
+          ..strokeWidth = RouteTrailStyle.miniMapRoute.casingWidthPixels
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round,
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = RouteTrailStyle.miniMapRoute.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = RouteTrailStyle.miniMapRoute.widthPixels
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round,
       );
@@ -5304,44 +5577,6 @@ class _NavigationGuidanceBanner extends StatelessWidget {
   }
 }
 
-class _LeaderMapStatus extends StatelessWidget {
-  const _LeaderMapStatus({
-    required this.status,
-    required this.compact,
-    required this.distanceUnit,
-  });
-
-  final LeaderRideStatus status;
-  final bool compact;
-  final DistanceUnit distanceUnit;
-
-  @override
-  Widget build(BuildContext context) => Align(
-    alignment: Alignment.topCenter,
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 560),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (status.offCourseAlerts.isNotEmpty) ...[
-            _OffCourseBanner(
-              alerts: status.offCourseAlerts,
-              compact: compact,
-              distanceUnit: distanceUnit,
-            ),
-            SizedBox(height: compact ? 4 : 8),
-          ],
-          _TecGapCard(
-            status: status,
-            compact: compact,
-            distanceUnit: distanceUnit,
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
 class _OffCourseBanner extends StatelessWidget {
   const _OffCourseBanner({
     required this.alerts,
@@ -5412,21 +5647,29 @@ class _TecGapCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name = status.tecName;
+    // Only reached once a TEC is registered: the map hides this surface for
+    // TecAvailability.none. One branch per remaining state, so a TEC that has
+    // never reported a position is never dressed up as a fresh or merely stale
+    // one, and no state borrows an age it does not have.
+    final formatter = MeasurementFormatter(distanceUnit);
+    final name = status.tecName ?? 'Tail End Charlie';
     final distance = status.distanceToTecMeters;
     final eta = status.estimatedTimeToTec;
     final age = status.tecLocationAge;
-    final detail = name == null
-        ? 'Waiting for a Tail End Charlie location'
-        : distance == null || eta == null
-        ? '$name · last update ${_ageLabel(age)}'
-        : '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · about ${_durationLabel(eta)}';
+    final detail = switch (status.tecAvailability) {
+      TecAvailability.tracking when distance != null && eta != null =>
+        '$name · ${formatter.distance(distance)} · about ${_durationLabel(eta)}',
+      TecAvailability.stale when age != null =>
+        '$name · last update ${_ageLabel(age)}',
+      _ => '$name · waiting for location',
+    };
     if (compact) {
-      final compactDetail = name == null
-          ? 'waiting for location'
-          : distance == null || eta == null
-          ? '$name · ${_ageLabel(age)}'
-          : '$name · ${MeasurementFormatter(distanceUnit).distance(distance)} · ~${_durationLabel(eta)}';
+      final compactDetail = switch (status.tecAvailability) {
+        TecAvailability.tracking when distance != null && eta != null =>
+          '$name · ${formatter.distance(distance)} · ~${_durationLabel(eta)}',
+        TecAvailability.stale when age != null => '$name · ${_ageLabel(age)}',
+        _ => '$name · waiting for location',
+      };
       return Align(
         alignment: Alignment.centerLeft,
         child: ConstrainedBox(

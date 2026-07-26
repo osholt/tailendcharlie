@@ -1,5 +1,67 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
+
+const _portraitHeight = 844.0;
+const _landscapeHeight = 390.0;
+const _fieldOfView = 0.6435011087932844;
+
+/// Ground pixels between the camera target and a screen row [pixelsFromCentre]
+/// above it, for the same camera model the planner assumes. Used to check the
+/// planner's own geometry from the outside.
+double _groundPixelsFromCentre(
+  double pixelsFromCentre,
+  double tiltDegrees,
+  double viewportHeight,
+) {
+  final cameraToCentre = 0.5 * viewportHeight / math.tan(_fieldOfView / 2);
+  final tilt = tiltDegrees * math.pi / 180;
+  return cameraToCentre *
+      math.cos(tilt) *
+      (math.tan(tilt + math.atan(pixelsFromCentre / cameraToCentre)) -
+          math.tan(tilt));
+}
+
+double _metersPerPixel(double zoom, double latitude) =>
+    78271.5169 * math.cos(latitude * math.pi / 180) / math.pow(2, zoom);
+
+/// Visible ground distance ahead of and behind the rider for a plan.
+({double ahead, double behind}) _visibleDepth(
+  NavigationCameraPlan plan,
+  double viewportHeight,
+  double latitude,
+) {
+  final scale = _metersPerPixel(plan.zoom, latitude);
+  final rider = _groundPixelsFromCentre(
+    -plan.forwardBiasPixels,
+    plan.tilt,
+    viewportHeight,
+  );
+  final top = _groundPixelsFromCentre(
+    0.5 * viewportHeight,
+    plan.tilt,
+    viewportHeight,
+  );
+  final bottom = _groundPixelsFromCentre(
+    -0.5 * viewportHeight,
+    plan.tilt,
+    viewportHeight,
+  );
+  return (ahead: (top - rider) * scale, behind: (rider - bottom) * scale);
+}
+
+NavigationCameraPlan _plan(
+  double speed, {
+  required bool landscape,
+  double bottomChromeFraction = 0,
+}) => NavigationCameraPlanner.plan(
+  speedMetersPerSecond: speed,
+  landscape: landscape,
+  viewportHeightPixels: landscape ? _landscapeHeight : _portraitHeight,
+  latitudeDegrees: 53,
+  bottomChromeFraction: bottomChromeFraction,
+);
 
 void main() {
   test('widens and tilts gradually from rest to higher road speed', () {
@@ -51,7 +113,230 @@ void main() {
     );
 
     expect(invalid.zoom, missing.zoom);
+    expect(invalid.riderViewportFraction, missing.riderViewportFraction);
     expect(extreme.zoom, greaterThanOrEqualTo(13.8));
-    expect(extreme.tilt, lessThanOrEqualTo(56));
+    expect(extreme.tilt, lessThanOrEqualTo(navigationCameraMaximumTiltDegrees));
+    expect(
+      extreme.lookAheadMeters,
+      lessThanOrEqualTo(navigationCameraMaximumLookAheadMeters),
+    );
+  });
+
+  test('tilt stays inside the range MapLibre can actually render', () {
+    for (final landscape in [false, true]) {
+      for (var speed = 0.0; speed <= 40; speed += 0.5) {
+        final plan = _plan(speed, landscape: landscape);
+        // MapLibre Native clamps pitch at 60 degrees on both platforms.
+        expect(plan.tilt, lessThanOrEqualTo(58));
+        expect(plan.tilt, greaterThanOrEqualTo(51));
+      }
+    }
+  });
+
+  test('the rider is biased low in the frame, more so with speed', () {
+    final restPortrait = _plan(0, landscape: false);
+    final urbanPortrait = _plan(13, landscape: false);
+    final roadPortrait = _plan(29, landscape: false);
+
+    expect(restPortrait.riderViewportFraction, closeTo(0.56, 0.001));
+    expect(urbanPortrait.riderViewportFraction, closeTo(0.616, 0.005));
+    expect(roadPortrait.riderViewportFraction, closeTo(0.70, 0.005));
+    expect(roadPortrait.forwardBiasPixels, closeTo(168, 2));
+
+    final restLandscape = _plan(0, landscape: true);
+    final roadLandscape = _plan(29, landscape: true);
+    expect(restLandscape.riderViewportFraction, closeTo(0.58, 0.001));
+    expect(roadLandscape.riderViewportFraction, closeTo(0.72, 0.005));
+    // The landscape viewport is shorter, so the same fraction is fewer pixels.
+    expect(
+      roadLandscape.forwardBiasPixels,
+      lessThan(roadPortrait.forwardBiasPixels),
+    );
+
+    for (final landscape in [false, true]) {
+      var previous = 0.0;
+      for (var speed = 0.0; speed <= 30; speed += 0.5) {
+        final fraction = _plan(
+          speed,
+          landscape: landscape,
+        ).riderViewportFraction;
+        expect(fraction, greaterThanOrEqualTo(previous));
+        expect(fraction, greaterThanOrEqualTo(0.5));
+        expect(fraction, lessThanOrEqualTo(0.75));
+        previous = fraction;
+      }
+    }
+  });
+
+  test('look-ahead scales with speed and stays bounded', () {
+    for (final landscape in [false, true]) {
+      final rest = _plan(0, landscape: landscape);
+      final urban = _plan(13, landscape: landscape);
+      final road = _plan(29, landscape: landscape);
+
+      expect(rest.lookAheadMeters, greaterThan(0));
+      expect(urban.lookAheadMeters, greaterThan(rest.lookAheadMeters));
+      expect(road.lookAheadMeters, greaterThan(urban.lookAheadMeters));
+      expect(
+        road.lookAheadMeters,
+        lessThanOrEqualTo(navigationCameraMaximumLookAheadMeters),
+      );
+    }
+    expect(_plan(29, landscape: false).lookAheadMeters, closeTo(834, 15));
+    expect(_plan(29, landscape: true).lookAheadMeters, closeTo(589, 15));
+  });
+
+  test('the look-ahead lands the rider exactly on the planned fraction', () {
+    for (final landscape in [false, true]) {
+      final height = landscape ? _landscapeHeight : _portraitHeight;
+      for (final speed in [0.0, 8.0, 17.0, 29.0]) {
+        final plan = _plan(speed, landscape: landscape);
+        // Reconstruct the rider's screen row from the look-ahead distance the
+        // planner produced. It has to be the fraction that was asked for,
+        // otherwise the forward bias is a guess rather than geometry.
+        final scale = _metersPerPixel(plan.zoom, 53);
+        final lookAheadPixels = plan.lookAheadMeters / scale;
+        final cameraToCentre = 0.5 * height / math.tan(_fieldOfView / 2);
+        final tilt = plan.tilt * math.pi / 180;
+        final riderRayTangent =
+            math.tan(tilt) -
+            lookAheadPixels / (cameraToCentre * math.cos(tilt));
+        final riderAngle = math.atan(riderRayTangent) - tilt;
+        final riderPixelsBelowCentre = -cameraToCentre * math.tan(riderAngle);
+        expect(
+          0.5 + riderPixelsBelowCentre / height,
+          closeTo(plan.riderViewportFraction, 0.002),
+        );
+      }
+    }
+  });
+
+  test('most of the frame is road ahead at rest, urban and road speed', () {
+    for (final landscape in [false, true]) {
+      final height = landscape ? _landscapeHeight : _portraitHeight;
+      for (final speed in [0.0, 13.0, 29.0]) {
+        final depth = _visibleDepth(
+          _plan(speed, landscape: landscape),
+          height,
+          53,
+        );
+        expect(
+          depth.ahead,
+          greaterThan(depth.behind * 3),
+          reason: 'speed $speed landscape $landscape',
+        );
+      }
+    }
+  });
+
+  test(
+    'the bottom chrome band pulls the bias back, never under an overlay',
+    () {
+      // Portrait chrome sits directly under the rider, so a tall band has to
+      // reduce the bias rather than hide the marker.
+      final light = _plan(29, landscape: false, bottomChromeFraction: 0.2);
+      final medium = _plan(29, landscape: false, bottomChromeFraction: 0.3);
+      final heavy = _plan(29, landscape: false, bottomChromeFraction: 0.42);
+      final absurd = _plan(29, landscape: false, bottomChromeFraction: 0.9);
+
+      expect(light.riderViewportFraction, closeTo(0.70, 0.005));
+      expect(medium.riderViewportFraction, closeTo(0.64, 0.005));
+      expect(heavy.riderViewportFraction, closeTo(0.52, 0.005));
+      // A band tall enough to cover the centre of the frame gives up the
+      // forward bias entirely rather than hiding the rider's own marker.
+      expect(
+        absurd.riderViewportFraction,
+        navigationCameraMinimumRiderFraction,
+      );
+      expect(absurd.forwardBiasPixels, lessThan(0));
+      expect(absurd.lookAheadMeters, lessThan(0));
+
+      for (var chrome = 0.0; chrome <= 0.9; chrome += 0.01) {
+        final plan = _plan(29, landscape: false, bottomChromeFraction: chrome);
+        final visibleLimit = math.max(
+          navigationCameraMinimumRiderFraction,
+          1 - chrome - navigationCameraRiderChromeClearanceFraction,
+        );
+        expect(
+          plan.riderViewportFraction,
+          lessThanOrEqualTo(visibleLimit + 1e-9),
+          reason: 'chrome fraction $chrome',
+        );
+        // Whatever the band does, the marker stays well inside the viewport.
+        expect(plan.riderViewportFraction, greaterThan(0.3));
+        expect(plan.riderViewportFraction, lessThan(0.95));
+      }
+    },
+  );
+
+  test('the flat fallback bias is a straight ground offset at map scale', () {
+    // flutter_map is 2D and 256 pixel tiled, so the bias is simply the pixel
+    // offset times its own scale - no perspective term.
+    final plan = _plan(29, landscape: false);
+    final flat = NavigationCameraPlanner.flatLookAheadMetersFor(
+      zoom: plan.zoom,
+      forwardBiasPixels: plan.forwardBiasPixels,
+      latitudeDegrees: 53,
+    );
+    final expected =
+        plan.forwardBiasPixels *
+        156543.03392 *
+        math.cos(53 * math.pi / 180) /
+        math.pow(2, plan.zoom);
+    expect(flat, closeTo(expected, 0.5));
+    expect(flat, greaterThan(0));
+
+    // Grows with speed, vanishes without a bias, and follows the bias sign so a
+    // marker pushed above centre by a tall chrome band still frames correctly.
+    final slow = NavigationCameraPlanner.flatLookAheadMetersFor(
+      zoom: _plan(6, landscape: false).zoom,
+      forwardBiasPixels: _plan(6, landscape: false).forwardBiasPixels,
+      latitudeDegrees: 53,
+    );
+    expect(slow, lessThan(flat));
+    expect(
+      NavigationCameraPlanner.flatLookAheadMetersFor(
+        zoom: 14,
+        forwardBiasPixels: 0,
+        latitudeDegrees: 53,
+      ),
+      0,
+    );
+    expect(
+      NavigationCameraPlanner.flatLookAheadMetersFor(
+        zoom: 14,
+        forwardBiasPixels: -120,
+        latitudeDegrees: 53,
+      ),
+      lessThan(0),
+    );
+    expect(
+      NavigationCameraPlanner.flatLookAheadMetersFor(
+        zoom: 3,
+        forwardBiasPixels: 400,
+        latitudeDegrees: 53,
+      ),
+      navigationCameraMaximumLookAheadMeters,
+    );
+  });
+
+  test('the speed curve is continuous, with no snap at any threshold', () {
+    for (final landscape in [false, true]) {
+      var previous = _plan(0, landscape: landscape);
+      for (var speed = 0.05; speed <= 45; speed += 0.05) {
+        final plan = _plan(speed, landscape: landscape);
+        expect((plan.zoom - previous.zoom).abs(), lessThan(0.01));
+        expect((plan.tilt - previous.tilt).abs(), lessThan(0.05));
+        expect(
+          (plan.riderViewportFraction - previous.riderViewportFraction).abs(),
+          lessThan(0.002),
+        );
+        expect(
+          (plan.lookAheadMeters - previous.lookAheadMeters).abs(),
+          lessThan(6),
+        );
+        previous = plan;
+      }
+    }
   });
 }

@@ -11,7 +11,9 @@ import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
 import '../../domain/rider_color.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/build_identity.dart';
 import '../map/motorcycle_icon.dart';
+import 'about_build_sheet.dart';
 import 'rider_profile_sheet.dart';
 
 class UnitSettingsSheet extends StatelessWidget {
@@ -22,6 +24,8 @@ class UnitSettingsSheet extends StatelessWidget {
     required this.riderProfile,
     required this.speedLimitDisplay,
     this.currentRideActive = false,
+    this.lastRelaySync,
+    this.buildIdentity,
   });
 
   final DistanceUnitController controller;
@@ -30,6 +34,14 @@ class UnitSettingsSheet extends StatelessWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final bool currentRideActive;
 
+  /// Most recent successful relay sync, when the caller knows it. Shown on the
+  /// About & build sheet so a bug report can say whether the app was talking to
+  /// the relay at all.
+  final DateTime? lastRelaySync;
+
+  /// Injected in tests; production reads the stamped-in dart-defines.
+  final BuildIdentity? buildIdentity;
+
   static Future<void> show(
     BuildContext context,
     DistanceUnitController controller,
@@ -37,6 +49,8 @@ class UnitSettingsSheet extends StatelessWidget {
     RiderProfileController riderProfile, {
     required SpeedLimitDisplayController speedLimitDisplay,
     bool currentRideActive = false,
+    DateTime? lastRelaySync,
+    BuildIdentity? buildIdentity,
   }) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -47,6 +61,8 @@ class UnitSettingsSheet extends StatelessWidget {
       riderProfile: riderProfile,
       speedLimitDisplay: speedLimitDisplay,
       currentRideActive: currentRideActive,
+      lastRelaySync: lastRelaySync,
+      buildIdentity: buildIdentity,
     ),
   );
 
@@ -203,6 +219,10 @@ class UnitSettingsSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
+          _AboutBuildTile(
+            identity: buildIdentity ?? BuildIdentity.fromEnvironment(),
+            lastRelaySync: lastRelaySync,
+          ),
           Align(
             alignment: Alignment.centerLeft,
             child: Wrap(
@@ -227,6 +247,49 @@ class UnitSettingsSheet extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Settings row that both shows the running build and opens the full
+/// About & build detail. Two taps from the settings button, and the build
+/// number is legible without opening anything.
+class _AboutBuildTile extends StatelessWidget {
+  const _AboutBuildTile({required this.identity, this.lastRelaySync});
+
+  final BuildIdentity identity;
+  final DateTime? lastRelaySync;
+
+  @override
+  Widget build(BuildContext context) {
+    final updateLikely =
+        identity.updateStateAt(DateTime.now()) ==
+        TesterUpdateState.newerBuildLikely;
+    return ListTile(
+      key: const Key('open-about-build'),
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        updateLikely ? Icons.system_update_alt : Icons.info_outline,
+        color: updateLikely ? const Color(0xFFFFC857) : null,
+      ),
+      title: const Text('About & build'),
+      subtitle: Text(
+        updateLikely
+            ? '${identity.versionLabel} · a newer tester build is probably available'
+            : '${identity.versionLabel} · ${identity.track.label}',
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () {
+        final appContext = Navigator.of(context, rootNavigator: true).context;
+        Navigator.of(context).pop();
+        unawaited(
+          AboutBuildSheet.show(
+            appContext,
+            identity: identity,
+            lastRelaySync: lastRelaySync,
+          ),
+        );
+      },
+    );
+  }
 }
 
 Future<void> _openLegalPage(BuildContext context, String page) async {
