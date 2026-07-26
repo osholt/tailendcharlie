@@ -100,7 +100,125 @@ void main() {
     expect(controller.livePresence, isEmpty);
     expect(controller.participants, isEmpty);
   });
+
+  /// Issue #144: the departure propagated correctly and then erased the record.
+  /// The relay's roster keeps naming a rider who has left, which is how the row
+  /// survives even when their membership events never reached this journal.
+  group('a departed rider stays in the roster', () {
+    test('the row remains, out of the live count, and says when', () {
+      controller.observeLivePresence([_presence('bill', 'Bill', now)]);
+      expect(controller.liveParticipants.length, 2);
+      var notifications = 0;
+      controller.addListener(() => notifications += 1);
+
+      // What the relay reports the moment Bill leaves: no live presence for
+      // him, and a roster that still names him as departed.
+      controller.observeLivePresence(
+        const [],
+        roster: [
+          _rosterMember(
+            'bill',
+            'Bill',
+            joinedAt: now,
+            left: true,
+            leftAt: now.add(const Duration(minutes: 12)),
+          ),
+        ],
+      );
+
+      expect(notifications, 1);
+      final bill = controller.participants.singleWhere(
+        (participant) => participant.riderId == 'bill',
+      );
+      expect(bill.hasLeft, isTrue);
+      expect(bill.stateLabel, 'Left the ride at 09:12');
+      expect(bill.displayName, 'Bill');
+      // Out of the live group immediately, and off the map with it.
+      expect(controller.liveParticipants.length, 1);
+      expect(controller.liveView.renderedPositions, isEmpty);
+      expect(controller.liveView.isReconciled, isTrue);
+    });
+
+    test('a roster-only departure still reaches the roster', () {
+      controller.observeLivePresence([_presence('bill', 'Bill', now)]);
+      var notifications = 0;
+      controller.addListener(() => notifications += 1);
+
+      // The positions are unchanged; only the roster moved. The old no-churn
+      // check compared positions alone, so this notified nobody.
+      controller.observeLivePresence(
+        [_presence('bill', 'Bill', now)],
+        roster: [
+          _rosterMember(
+            'bill',
+            'Bill',
+            joinedAt: now,
+            left: true,
+            leftAt: now.add(const Duration(minutes: 12)),
+          ),
+        ],
+      );
+
+      expect(notifications, 1);
+    });
+
+    test('the record goes when the ride goes, and not before', () async {
+      controller.observeLivePresence(
+        const [],
+        roster: [
+          _rosterMember(
+            'bill',
+            'Bill',
+            joinedAt: now,
+            left: true,
+            leftAt: now.add(const Duration(minutes: 12)),
+          ),
+        ],
+      );
+      expect(
+        controller.participants.where(
+          (participant) => participant.riderId == 'bill',
+        ),
+        hasLength(1),
+      );
+
+      await controller.startRide();
+      await controller.endRide();
+
+      // Ending the ride does not remove the record: the ride's own data is still
+      // here for its retention window, and so is the rider who left.
+      expect(
+        controller.participants.where(
+          (participant) => participant.riderId == 'bill',
+        ),
+        hasLength(1),
+        reason: 'the lost-item lookup happens after the ride, not during it',
+      );
+
+      await controller.clearEndedRide();
+
+      // Removing the ride removes the record with it. There is nowhere else it
+      // is kept.
+      expect(controller.participants, isEmpty);
+      expect(controller.session, isNull);
+    });
+  });
 }
+
+PresenceRosterMember _rosterMember(
+  String riderId,
+  String displayName, {
+  required DateTime joinedAt,
+  bool left = false,
+  DateTime? leftAt,
+}) => PresenceRosterMember(
+  riderId: riderId,
+  displayName: displayName,
+  role: RideRole.rider,
+  joinedAt: joinedAt,
+  left: left,
+  leftAt: leftAt,
+);
 
 LiveRiderPresence _presence(
   String riderId,

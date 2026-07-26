@@ -309,6 +309,16 @@ void main() {
               'role': 'rider',
               'joinedAt': now.toIso8601String(),
               'left': true,
+              'leftAt': now.add(const Duration(minutes: 3)).toIso8601String(),
+            },
+            // An older relay reports the departure without a time. The rider is
+            // still gone; the roster simply cannot say when (#144).
+            {
+              'riderId': 'undated',
+              'displayName': 'Undated',
+              'role': 'rider',
+              'joinedAt': now.toIso8601String(),
+              'left': true,
             },
           ],
         },
@@ -317,8 +327,18 @@ void main() {
       expect(result.phase, RidePresencePhase.started);
       expect(result.livePresenceServed, isTrue);
       expect(result.legacyPeerRiderIds, {'bill'});
-      expect(result.roster.map((entry) => entry.riderId), ['bill', 'gone']);
+      expect(result.roster.map((entry) => entry.riderId), [
+        'bill',
+        'gone',
+        'undated',
+      ]);
+      expect(result.roster[1].left, isTrue);
+      expect(
+        result.roster[1].leftAt,
+        now.add(const Duration(minutes: 3)).toLocal(),
+      );
       expect(result.roster.last.left, isTrue);
+      expect(result.roster.last.leftAt, isNull);
     });
 
     test('ignores unknown response and roster fields', () async {

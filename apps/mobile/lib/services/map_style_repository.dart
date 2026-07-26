@@ -137,25 +137,268 @@ class MapStyleRepository {
     return jsonEncode(style);
   }
 
-  /// The fetched dark style renders most surfaces in near-black tones
-  /// (background rgb(12,12,12); some road fills as dark as #181818, or
-  /// interpolating to pure black at riding zoom levels) - working from its
-  /// own vector tiles rather than a hand-authored style, this is the only
-  /// point with the parsed layers in hand to lighten the specific layers
-  /// that made it hard to read at a glance, closer to the legible dark
-  /// theme common to turn-by-turn apps. Anything not listed here, and any
-  /// layer id no longer present, is left untouched.
-  static const _legibleDarkModePaint = <String, Map<String, Object>>{
-    'background': {'background-color': '#1c1c1e'},
-    'water': {'fill-color': '#15191f'},
-    'landuse_residential': {'fill-color': '#141414'},
-    'landuse_park': {'fill-color': '#242424'},
-    'landcover_wood': {'fill-color': '#242424'},
-    'highway_minor': {'line-color': '#3a3a3a'},
-    'highway_major_casing': {'line-color': 'rgba(70,70,70,0.6)'},
-    'highway_major_inner': {'line-color': '#484848'},
-    'highway_motorway_casing': {'line-color': 'rgba(80,80,80,0.6)'},
-    'highway_motorway_inner': {'line-color': '#565656'},
+  // The dark basemap palette, as one table, because the thing that made the
+  // fetched style illegible was never a single colour: it was that roads and
+  // ground occupied the same narrow band of near-black. Two bands, and every
+  // surface belongs to exactly one of them.
+  //
+  // Ground band. Uniform, near-black, and closed at the top: no ground surface
+  // reaches within 8 CIE L* of the dimmest road, and none is darker than
+  // [_ground], so the map has no black holes to compete with the roads. The
+  // fetched style violated both ends - buildings rgb(10,10,10), piers
+  // rgb(12,12,12) and the aeroway fills at pure black all sat *below* the
+  // background, while the airfield runway casing at rgba(60,60,60,0.8) sat
+  // *above* every minor road (1.06:1 against one, so a lane crossing an
+  // airfield disappeared into it). Colour here is reserved for meaning: the
+  // ground is achromatic-cool apart from a hint of green on vegetation and one
+  // blue for water, which leaves the whole saturated range to the route and
+  // hazard palette in `route_trail_style.dart`.
+  static const _ground = '#0F1319';
+  static const _groundResidential = '#12171D';
+  static const _groundAerowayArea = '#14181D';
+  static const _groundAerowayCasing = '#14191E';
+  static const _groundAerowayTaxiway = '#16191F';
+  static const _groundAerowayRunway = '#181C23';
+  static const _groundBuilding = '#171C22';
+  static const _groundPark = '#141A15';
+  static const _groundWood = '#141815';
+  static const _groundPier = '#191D24';
+  static const _groundIce = '#1B1E24';
+  static const _water = '#132434';
+  static const _waterway = '#152637';
+  static const _boundary = '#1F2125';
+
+  // Road band. A monotonic ramp with at least 3.4 CIE L* between adjacent
+  // classes, so the class of a road is readable from its fill rather than only
+  // from its width. The fetched dark style paints trunk, primary, secondary and
+  // tertiary from one layer in one colour - identical, 1.00:1 - which is why an
+  // A road and a lane looked the same at a glance; the light Liberty style has a
+  // layer per class and does not have this problem, which is why day worked and
+  // night did not.
+  static const _roadPath = '#22272C';
+  static const _roadRail = '#2A2F35';
+  static const _roadService = '#343A42';
+  static const _roadMinor = '#484F58';
+  static const _roadTertiary = '#545A64';
+  static const _roadSecondary = '#5D646D';
+  static const _roadPrimary = '#676D77';
+  static const _roadTrunk = '#71767F';
+  static const _roadMotorway = '#7A7F86';
+
+  /// Roads read as slabs with a dark edge rather than as outlines. The fetched
+  /// style did the opposite: a light casing around a black or near-black inner
+  /// fill, which is what made a motorway look like two thin grey lines.
+  static const _roadCasing = '#090C0F';
+
+  // Labels. Every one of them was effectively unreadable: road names at
+  // rgba(80,78,78,1) measured 1.38:1 against the road they sit on, a motorway
+  // ref 1.14:1 against its own motorway, and water names were pure black with a
+  // *light* halo. A rider who cannot read a road name gets no confirmation that
+  // the road they are on is the road they wanted.
+  static const _labelRoad = '#BCC1C9';
+  static const _labelMotorway = '#C9CCD1';
+  static const _labelPlace = '#B1B7BF';
+  static const _labelWater = '#748DB1';
+  static const _labelHalo = '#0B0E12';
+  static const _labelHaloSoft = 'rgba(11,14,18,0.85)';
+
+  /// `highway_minor` carries unclassified and residential roads - the lanes a
+  /// group actually rides - together with driveways and forest tracks. They are
+  /// not the same thing to a rider, so the fill is data-driven on `class`
+  /// instead of painting all three alike.
+  static const _minorClassColor = <Object>[
+    'match',
+    <Object>['get', 'class'],
+    <Object>['service', 'track'],
+    _roadService,
+    _roadMinor,
+  ];
+
+  /// The one layer the fetched style uses for trunk, primary, secondary and
+  /// tertiary, split back into four steps of the ramp.
+  static const _majorClassColor = <Object>[
+    'match',
+    <Object>['get', 'class'],
+    'trunk',
+    _roadTrunk,
+    'primary',
+    _roadPrimary,
+    'secondary',
+    _roadSecondary,
+    _roadTertiary,
+  ];
+
+  /// Every surface of the dark basemap as this app renders it, named, so the
+  /// hierarchy can be asserted as a ramp rather than colour by colour, and so
+  /// anything measuring an overlay against the basemap has one table to measure
+  /// against. `map_style_repository_test.dart` holds the bands apart.
+  static const darkBasemapPalette = <String, String>{
+    'background': _ground,
+    'residential landuse': _groundResidential,
+    'aeroway area': _groundAerowayArea,
+    'aeroway runway casing': _groundAerowayCasing,
+    'aeroway taxiway': _groundAerowayTaxiway,
+    'aeroway runway': _groundAerowayRunway,
+    'building': _groundBuilding,
+    'park': _groundPark,
+    'wood': _groundWood,
+    'pier': _groundPier,
+    'ice': _groundIce,
+    'water': _water,
+    'waterway': _waterway,
+    'boundary': _boundary,
+    'path': _roadPath,
+    'railway': _roadRail,
+    'service/track': _roadService,
+    'minor': _roadMinor,
+    'tertiary': _roadTertiary,
+    'secondary': _roadSecondary,
+    'primary': _roadPrimary,
+    'trunk': _roadTrunk,
+    'motorway': _roadMotorway,
+    'road casing': _roadCasing,
+  };
+
+  /// The road classes in ramp order, dimmest first, for the tests that hold the
+  /// hierarchy monotonic and separated.
+  static const darkBasemapRoadRamp = <String>[
+    'service/track',
+    'minor',
+    'tertiary',
+    'secondary',
+    'primary',
+    'trunk',
+    'motorway',
+  ];
+
+  /// The area surfaces a road is drawn on top of, so one test can hold the whole
+  /// ground band below the dimmest road.
+  ///
+  /// `path`, `railway` and `boundary` are deliberately in neither list: they are
+  /// linear context that sits between the two bands, above the ground a rider
+  /// cannot use and below the roads a rider can. So is `road casing`, which is
+  /// darker than the background on purpose.
+  static const darkBasemapGroundBand = <String>[
+    'background',
+    'residential landuse',
+    'aeroway area',
+    'aeroway runway casing',
+    'aeroway taxiway',
+    'aeroway runway',
+    'building',
+    'park',
+    'wood',
+    'pier',
+    'ice',
+    'water',
+    'waterway',
+  ];
+
+  /// The dark style is fetched rather than hand-authored, so this is the only
+  /// point with the parsed layers in hand at which to repaint it. A `null`
+  /// override removes the paint property instead of setting it. Anything not
+  /// listed here, and any layer id no longer present upstream, is left
+  /// untouched.
+  static const _legibleDarkModePaint = <String, Map<String, Object?>>{
+    // Ground.
+    'background': {'background-color': _ground},
+    'water': {'fill-color': _water},
+    'waterway': {'line-color': _waterway},
+    'landcover_ice_shelf': {'fill-color': _groundIce},
+    'landcover_glacier': {'fill-color': _groundIce},
+    'landuse_residential': {'fill-color': _groundResidential},
+    'landuse_park': {'fill-color': _groundPark},
+    // `fill-pattern` wins over `fill-color` wherever the sprite loads, so
+    // repainting woodland without dropping the pattern was a no-op.
+    'landcover_wood': {
+      'fill-color': _groundWood,
+      'fill-pattern': null,
+      'fill-opacity': 1,
+    },
+    'building': {'fill-color': _groundBuilding, 'fill-outline-color': _ground},
+    'road_area_pier': {'fill-color': _groundPier},
+    'road_pier': {'line-color': _groundPier},
+    // The airfield: the most prominent thing on a road-riding map before this,
+    // and the one the field report named. Pure-black runway and apron fills
+    // inside a light casing, all of it now inside the ground band.
+    'aeroway-area': {'fill-color': _groundAerowayArea},
+    'aeroway-runway': {'line-color': _groundAerowayRunway},
+    'aeroway-runway-casing': {'line-color': _groundAerowayCasing},
+    'aeroway-taxiway': {'line-color': _groundAerowayTaxiway},
+    // Roads.
+    'highway_path': {'line-color': _roadPath},
+    'highway_minor': {'line-color': _minorClassColor, 'line-opacity': 1},
+    'highway_major_casing': {'line-color': _roadCasing},
+    'highway_major_inner': {'line-color': _majorClassColor},
+    'highway_major_subtle': {'line-color': _roadSecondary},
+    'highway_motorway_casing': {'line-color': _roadCasing},
+    'highway_motorway_inner': {'line-color': _roadMotorway},
+    'highway_motorway_subtle': {'line-color': _roadMotorway},
+    'railway': {'line-color': _roadRail},
+    'railway_dashline': {'line-color': _ground},
+    'railway_minor': {'line-color': _roadRail},
+    'railway_minor_dashline': {'line-color': _ground},
+    'railway_transit': {'line-color': _roadRail},
+    'railway_transit_dashline': {'line-color': _ground},
+    'boundary_state': {'line-color': _boundary},
+    'boundary_country_z0-4': {'line-color': _boundary},
+    'boundary_country_z5-': {'line-color': _boundary},
+    // Labels.
+    'highway_name_other': {
+      'text-color': _labelRoad,
+      'text-halo-color': _labelHalo,
+      'text-halo-width': 1.2,
+    },
+    'highway_name_motorway': {
+      'text-color': _labelMotorway,
+      'text-halo-color': _labelHalo,
+      'text-halo-width': 1.2,
+    },
+    'water_name': {
+      'text-color': _labelWater,
+      'text-halo-color': _labelHalo,
+      'text-halo-width': 1.2,
+    },
+    'place_other': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_suburb': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_village': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_town': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_city': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_city_large': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_state': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_country_other': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_country_minor': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
+    'place_country_major': {
+      'text-color': _labelPlace,
+      'text-halo-color': _labelHaloSoft,
+    },
   };
 
   static void _repaintForLegibleDarkMode(Map<String, dynamic> style) {
@@ -169,7 +412,13 @@ class MapStyleRepository {
       final paint = Map<String, dynamic>.from(
         (updated['paint'] as Map?) ?? const {},
       );
-      paint.addAll(overrides);
+      for (final override in overrides.entries) {
+        if (override.value == null) {
+          paint.remove(override.key);
+        } else {
+          paint[override.key] = override.value;
+        }
+      }
       updated['paint'] = paint;
       layers[i] = updated;
     }

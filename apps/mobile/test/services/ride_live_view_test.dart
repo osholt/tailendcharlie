@@ -115,6 +115,42 @@ void main() {
     expect(view.isReconciled, isTrue);
   });
 
+  test('the record a departed rider keeps is never drawn as a marker', () {
+    // Issue #144 keeps the roster row and its last known position. That record
+    // is readable and it is not a marker: the rider is not there.
+    final view = RideLiveView.reconcile(
+      participants: [
+        _participant('leader', 'Lead', role: RideRole.lead),
+        _participant(
+          'gone',
+          'Gone',
+          state: RideMembershipState.left,
+          lastKnownLocation: _location(
+            'gone',
+            'Gone',
+            now.subtract(const Duration(minutes: 8)),
+          ),
+        ),
+      ],
+      presence: [
+        _presence('leader', 'Lead', location: _location('leader', 'Lead', now)),
+      ],
+    );
+
+    expect(view.liveRiderCount, 1);
+    expect(view.renderedPositions.map((position) => position.riderId), [
+      'leader',
+    ]);
+    expect(view.countedWithoutPosition, isEmpty);
+    expect(view.isReconciled, isTrue);
+    final gone = view.participants.singleWhere(
+      (participant) => participant.riderId == 'gone',
+    );
+    expect(gone.lastKnownPositionLabel, contains('51.20000, -2.40000'));
+    expect(gone.isEligibleForLivePosition, isFalse);
+    expect(gone.hasStatedPositionState, isTrue);
+  });
+
   test('a stale position is still rendered, and still counted', () {
     final view = RideLiveView.reconcile(
       participants: [
@@ -148,7 +184,9 @@ RideParticipant _participant(
   String displayName, {
   RideRole role = RideRole.rider,
   RideMembershipState state = RideMembershipState.active,
+  RiderLocation? lastKnownLocation,
 }) => RideParticipant(
+  lastKnownLocation: lastKnownLocation,
   riderId: riderId,
   displayName: displayName,
   role: role,

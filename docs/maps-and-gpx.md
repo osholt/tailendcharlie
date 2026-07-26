@@ -221,25 +221,38 @@ Because a dark basemap needs every one of these colours to be light, they cannot
 all separate by luminance, so each also has a unique width and dash pattern and
 stays identifiable in a greyscale render.
 
-| line | colour | width | pattern | dark worst | dark typical |
-| --- | --- | --- | --- | --- | --- |
-| route ahead | `#3DDC84` | 6 | long dash 22/11 | 4.11 | 9.54 |
-| travelled (plan behind you, and your own trail) | `#FF7A1A` | 5 | solid | 2.81 | 6.52 |
-| leader trail | `#D3B8FF` | 8 | solid | 4.22 | 9.78 |
-| off-route trail | `#FF5FD1` | 4 | dash 9/7 | 2.73 | 6.33 |
-| rejoin breadcrumb (owned by off-route rerouting) | `#00E5FF` | 4.5 | dash 12/8 | 4.77 | 11.06 |
+| line | colour | width | pattern | over ground | over motorway | over casing |
+| --- | --- | --- | --- | --- | --- | --- |
+| route ahead | `#3DDC84` | 6 | long dash 22/11 | 10.44 | 2.26 | 10.27 |
+| travelled (plan behind you, and your own trail) | `#FF7A1A` | 5 | solid | 7.14 | 1.55 | 7.02 |
+| leader trail | `#D3B8FF` | 8 | solid | 10.71 | 2.32 | 10.53 |
+| off-route trail | `#FF5FD1` | 4 | dash 9/7 | 6.93 | 1.50 | 6.81 |
+| rejoin breadcrumb (owned by off-route rerouting) | `#00E5FF` | 4.5 | dash 12/8 | 12.11 | 2.62 | 11.91 |
 
 Contrast is WCAG 2.1, measured against the dark basemap this app actually
-renders — the OpenFreeMap dark style after `MapStyleRepository` repaints its
-near-black layers. "Dark worst" is against the lightest of those surfaces (the
-`#565656` motorway fill), "dark typical" against the `#1C1C1E` background. The
-casing measures 16.74:1 against the Liberty background and 18.32:1 against its
-white road fills. The blue this replaced (`#3478F6`, dotted, 90% opacity)
-measured 1.80:1 at the worst case, which is why it disappeared through a visor in
-sunlight. The travelled orange is unchanged because the same field report found
-it legible; it is the floor the other lines are held against.
-`route_trail_style_test.dart` asserts these numbers. Numbers are not a substitute
-for the daylight photograph the field-test log still needs.
+renders: the OpenFreeMap dark style after `MapStyleRepository` repaints it. "Over
+ground" is against the `#0F1319` background, "over motorway" against the
+lightest road fill (`#7A7F86`), "over casing" against the line's own `#10151C`
+casing. The casing measures 16.74:1 against the Liberty background and 18.32:1
+against its white road fills. The blue this replaced (`#3478F6`, dotted, 90%
+opacity) measured 1.80:1 against the old basemap's lightest surface, which is why
+it disappeared through a visor in sunlight. The travelled orange is unchanged
+because the same field report found it legible; it is the floor the other lines
+are held against. `route_trail_style_test.dart` asserts the palette itself and
+`map_style_repository_test.dart` asserts these ratios against the basemap.
+Numbers are not a substitute for the daylight photograph the field-test log still
+needs.
+
+The "over motorway" column moved when #143 lifted the road fills, and it is the
+column to read carefully rather than to react to. A line never touches a road
+fill: it is drawn inside an opaque casing two logical pixels wider on each side,
+and at ride zoom the casing is wider than the whole carriageway. What changed
+adjacency is casing-against-road, which *improved* — 2.50:1 → 4.54:1 over a
+motorway, 1.61:1 → 2.21:1 over a lane. The floor that makes the bare column
+acceptable is the light basemap, which ships and is field-legible: its white and
+cream road fills put the worst of these five lines at 1.04:1, against 1.50:1 on
+the new dark basemap. Daylight is harsher on every one of these colours than
+night now is.
 
 ### The full ride-map ink audit
 
@@ -272,13 +285,13 @@ there is no badge where white wins — so `RouteTrailStyle.markerGlyph` is a fix
 dark colour rather than a per-badge choice, and `markerBadgeFills` is the list a
 test holds it against.
 
-**The dark basemap was investigated and deliberately left alone.** Its lightened
-road fills (`#3A3A3A`/`#484848`/`#565656`) do cap every *bare* overlay number at
-2.7–4.8:1, and darkening the lightest to `#3E3E3E` would lift them all by about
-45%. It was rejected: the overlays do not need it, because they sit inside
-casings, and it would cost the basemap 2.32:1 → 1.59:1 on road-against-ground and
-1.55:1 → 1.27:1 on minor-against-motorway. That trades away the legibility of the
-map itself to fix a problem the casings already solve.
+**The dark basemap was investigated for #133 and deliberately left alone.** That
+was the wrong call in one direction and the right call in the other, and #143
+settled it — see [the dark basemap](#the-dark-basemap) below. The change #133
+considered was *darkening* the lightest road fill to lift the bare overlay
+numbers, and rejecting that was correct: the overlays sit inside casings and do
+not need it. What #133 did not consider is that the basemap's own separation was
+already too low, not too high, and that the fix is to widen it.
 
 Chrome panels measure 1.0–1.8:1 against the basemap and are **not** offenders:
 a panel's job is to host text, and its text measures 4.7:1 to 19.1:1 against the
@@ -300,6 +313,142 @@ because the light basemap's trunk roads are already `#FFEEAA`: the line would
 vanish into the road it is drawn on. The closest remaining pairs by luminance
 alone are route ahead against rejoin (1.16) and route ahead against the leader
 trail (1.03); hue separates the first and width and pattern separate both.
+
+### The dark basemap
+
+The overlay palette was never the dark-mode complaint. The tester's words for
+#143 were that the map tiles themselves are "a pretty dark grey on top of a
+slightly darker grey", and that "the most legible bit is actually airfields as
+they are coloured in black". Both were measurably true.
+
+`MapStyleRepository` fetches OpenFreeMap's `dark` style and repaints it, because
+the style is served rather than authored here and there is no other point with the
+parsed layers in hand. Two things about the fetched style caused this:
+
+- It has **47 layers where the light Liberty style has 111**. Trunk, primary,
+  secondary and tertiary come from one layer in one colour — identical, 1.00:1,
+  ΔL\* 0.0 — so an A road and a country lane looked the same. Liberty has a layer
+  per class, which is why day worked and night did not.
+- Its roads are **outlines rather than slabs**: a light casing
+  (`rgba(60,60,60,0.8)`) around a black or near-black inner fill
+  (`hsl(0,0%,7%)`, interpolating to `#000` for motorways).
+
+#### Two bands
+
+Every surface now belongs to a **ground band** or a **road band**, and the bands
+do not overlap. The palette is one table, `MapStyleRepository.darkBasemapPalette`.
+
+Roads, before and after, against their own background. WCAG 2.1 and CIE L\*; the
+L\* column is the one to read, because WCAG's +0.05 flare term compresses every
+dark-on-dark pair towards 1:1 and will flatter any near-black style.
+
+| class | fill before | fill after | WCAG before | WCAG after | ΔL\* before | ΔL\* after |
+| --- | --- | --- | --- | --- | --- | --- |
+| motorway | `#565656` | `#7A7F86` | 2.32 | **4.62** | 26.2 | **47.2** |
+| trunk | `#484848` | `#71767F` | 1.86 | **4.08** | 20.3 | **43.7** |
+| primary | `#484848` | `#676D77` | 1.86 | **3.57** | 20.3 | **40.1** |
+| secondary | `#484848` | `#5D646D` | 1.86 | **3.11** | 20.3 | **36.3** |
+| tertiary | `#484848` | `#545A64` | 1.86 | **2.68** | 20.3 | **32.3** |
+| minor (unclassified, residential) | `#3A3A3A` | `#484F58` | 1.50 | **2.25** | 14.1 | **27.5** |
+| service, track | `#3A3A3A` | `#343A42` | 1.50 | 1.62 | 14.1 | 18.4 |
+
+The class a rider spends most of a ride on was the *worst* measured road on the
+map: a lane at 1.50:1 against the background, and 1.36:1 against a park or a
+wood. The one class that gained least on purpose is service and track — a driveway
+is not a road a group rides, and the fetched style painted it the same colour as a
+lane.
+
+Adjacent classes now separate by 3.5–9.1 ΔL\*, where four of them separated by
+0.0. WCAG puts those steps at 1.13–1.39:1, which is another reason not to read
+that column as the whole story.
+
+The ground band is **closed**: no non-road surface comes within 8 L\* of the
+dimmest road class, and nothing is darker than the background. The fetched style
+broke both ends — buildings `rgb(10,10,10)`, piers `rgb(12,12,12)` and both
+aeroway fills at pure black all sat *below* its background, so the map read as
+blotches rather than as ground with roads on it.
+
+| ground surface | before | after | L\* after |
+| --- | --- | --- | --- |
+| background | `#1C1C1E` | `#0F1319` | 5.8 |
+| residential landuse | `hsl(0,2%,5%)` | `#12171D` | 7.5 |
+| wood | `rgb(32,32,32)` + `wood-pattern` | `#141815` | 7.7 |
+| aeroway area (apron, taxiway polygons) | `#000` | `#14181D` | 8.0 |
+| aeroway runway casing | `rgba(60,60,60,0.8)` | `#14191E` | 8.5 |
+| park | `rgb(32,32,32)` | `#141A15` | 8.5 |
+| aeroway taxiway | `#181818` | `#16191F` | 8.7 |
+| building | `rgb(10,10,10)` | `#171C22` | 10.0 |
+| aeroway runway | `#000` | `#181C23` | 10.2 |
+| pier | `rgb(12,12,12)` | `#191D24` | 10.7 |
+| water | `rgb(27,27,29)` | `#132434` | 13.5 |
+| waterway | `rgb(27,27,29)` | `#152637` | 14.5 |
+
+Roads are slabs with a dark edge: both road casings are `#090C0F`, below the
+background, so a carriageway has a crisp outline and parallel streets do not merge
+into a blob in a town. Paths (`#22272C`), railways (`#2A2F35`) and admin
+boundaries (`#1F2125`) sit between the two bands as context.
+
+Colour is reserved for meaning. Every road fill is within 8% channel spread of
+neutral, the ground carries a hint of green on vegetation and one blue for water,
+and the whole saturated range stays with the route, trail and hazard palette.
+
+#### The airfield
+
+This is the defect the field report named, and it was not only the black fill. The
+runway *casing* composited to `#363636`, the **lightest ground surface on the
+map** — lighter than a minor road. A lane crossing an airfield measured **1.06:1,
+ΔL\* 1.8**, against the thing it crossed, while the runway itself was pure black
+at up to 50 pixels wide inside that light outline. The most contrast on the map
+belonged to the feature with the least meaning for a rider.
+
+Every aeroway surface is now inside the ground band, within 5 L\* of the
+background and below every ridable road class. `map_style_repository_test.dart`
+holds that as a rule rather than as four colours.
+
+#### Labels
+
+Unreadable labels were a large part of "dark grey on slightly darker grey": a road
+name gives a rider the confirmation that the road they are on is the road they
+wanted, and none of them could be read.
+
+| label | before | after |
+| --- | --- | --- |
+| road name, against the road it sits on | 1.38 | **4.58** |
+| road name, against the background | 2.06 | **10.30** |
+| motorway ref, against its own carriageway | 1.14 | **2.50** |
+| place name, against the background | 2.92 | **9.22** |
+| water name, against water | 1.22 | **4.65** |
+
+Each label keeps a near-black `#0B0E12` halo, so — like a route line and its
+casing — the halo is what the ink is measured against as well.
+
+#### What was rendered, and what was not checked
+
+The frames below are real OpenFreeMap vector tiles through the real style JSON in
+MapLibre, with only the paint table differing between before and after. The light
+style is included unchanged: `MapStyleRepository` only repaints when the resolved
+style URL is the configured dark one, so day is untouched by construction as well
+as by measurement.
+
+![Ride camera, before and after](images/dark-basemap-ride-zoom-before-after.png)
+
+![Blackbushe Airport and the A30](images/dark-basemap-airfield-before-after.png)
+
+![Guildford, the full road hierarchy](images/dark-basemap-town-before-after.png)
+
+![Hindhead, woodland and lanes](images/dark-basemap-countryside-before-after.png)
+
+![All five route lines over each basemap](images/dark-basemap-overlays-before-after.png)
+
+![The same lines crossing the M3](images/dark-basemap-overlays-on-motorway.png)
+
+Two layers are deliberately untouched: `road_oneway` and `road_oneway_opposite`
+draw a non-SDF sprite arrow, which a style cannot recolour. Everything else in the
+fetched dark style — 45 of its 47 layers — is now a deliberate value.
+
+**Not verified.** No frame here is a phone, and none is daylight. Ride-zoom
+legibility on a mounted screen, and the daylight-through-a-tinted-visor photograph
+that #107 still owes, cover this change too and remain outstanding.
 
 ## In-app maneuver guidance
 
@@ -502,18 +651,48 @@ field report saw `0` and `MOVE TO IDENTIFY ROAD` on a stationary phone.
 The caution the delay was reaching for is now a confidence test rather than a
 blanket wait:
 
-- A **travelled** trace — two fixes at least 4 metres apart — is sent as two
-  shape points. It tolerates up to 50-metre accuracy and a 40-metre road match,
-  because the travel heading has to agree with the matched road's heading to
-  within 50°. That is what separates the two carriageways of a dual
-  carriageway, and it is the one case where movement genuinely helps.
-- A **stationary** fix is sent as a single shape point and is treated as having
-  no heading *whatever course the platform reports*, for the same reason
+- A **travelled** trace — two fixes at least 4 metres apart — goes to
+  `trace_attributes` as two shape points. It tolerates up to 50-metre accuracy
+  and a 25-to-40-metre road match, because the travel heading has to agree with
+  the matched road's heading to within 50°. That is what separates the two
+  carriageways of a dual carriageway, and it is the one case where movement
+  genuinely helps.
+- A **stationary** fix goes to `locate`, and is treated as having no heading
+  *whatever course the platform reports*, for the same reason
   `NavigationHeadingSmoother` refuses a course below 1.5 m/s: a stationary GPS
-  course is noise. It is held instead to 25-metre accuracy and an 18-metre match,
-  because there is no direction to corroborate the snap with, so the snap itself
-  has to be convincing. A road the rider is probably not on is reported as
-  unmatched rather than guessed at: a wrong limit is worse than an absent one.
+  course is noise. It tolerates up to 40-metre accuracy and a **25-metre** road
+  match. A phone standing still beside buildings, in a car park or in a lay-by is
+  routinely displaced 10–25 metres by multipath and the rider is plainly on the
+  road they are parked beside, so a tighter bound reports nothing in the one place
+  riders look first. It is not widened past 25 metres because UK roads carrying
+  different limits are rarely that close together. A road the rider is probably
+  not on is reported as unmatched rather than guessed at: a wrong limit is worse
+  than an absent one.
+
+`trace_attributes` needs at least two shape points — a one-point shape is
+rejected with `error_code` 123, `Insufficient shape provided` — and it reports
+only the single edge it matched. Both facts matter at a ride start. The first is
+why a stationary lookup used to resolve to nothing at all; every trace the app
+sends now carries two points, and for a confirmation that means the same point
+twice. The second is why the stationary path leads with `locate`, which takes one
+point and lists every nearby road with its own distance, road class and posted
+limit.
+
+Where several roads are within tolerance, a **carriageway is preferred over a
+service way** — a car park aisle, driveway, alley or footpath — even when the
+service way is the nearer of the two, and among carriageways the higher road
+class is preferred. That is a judgement, not a fact: a rider setting off is on the
+road, not the alley beside it. It is bounded by agreement. If the preferred
+candidates still post different limits, as they do standing where a 30 becomes a
+50, the reading stays unconfirmed and resolves on the next fix or on movement
+using heading, rather than one of the two being chosen.
+
+`locate` reports no country of its own, so the GB requirement is met by a
+`trace_attributes` confirmation sent at the chosen road's own snapped position —
+and only when a number is actually about to be displayed. A position with nothing
+to show costs one request, not two, and the country that comes back belongs to
+the road on the sign rather than to whichever edge a map match happened to
+prefer.
 
 Ambiguity is stated, not hidden. Poor accuracy or an uncertain match resolves to
 `unconfirmedRoad` — named for the condition, not for a wait — which shows `GPS
@@ -528,11 +707,32 @@ Lookups are fed from the navigation fix rather than a bare position, because the
 confidence test is built on reported accuracy and heading and a position
 carrying neither cannot be tested at all.
 
-Only an OpenStreetMap `maxspeed` value reported by Valhalla as
-`speed_type=tagged` is displayed. A classified or inferred speed is deliberately
-treated as unknown. The UI uses mph and familiar UK sign styling, labels the
-reading `MAPPED`, and always warns that it is not live: temporary and variable
-limits may differ and roadside signs apply.
+Only an OpenStreetMap `maxspeed` value is displayed, and it is read from
+Valhalla's `speed_limit` attribute, documented as "the posted speed limit, if
+available" and as the attribute a navigation application should display. Valhalla
+sets it only from a `maxspeed` tag, so an untagged road omits it and stays
+unknown. It is **not** gated on `speed_type`, which describes something else: how
+the edge's *base routing speed* was assigned. The live FOSSGIS instance reports
+`speed_type: classified` on roads that carry a perfectly good explicit
+`maxspeed` — verified on the A4174 at 50 mph, the M4 at 70 mph and a residential
+20 mph street — so requiring `tagged` withheld every genuine posted limit and was
+the second half of the ride-start failure.
+
+The value must also convert to one of the six limits a UK sign carries (20, 30,
+40, 50, 60, 70 mph) or it is treated as unknown. That keeps an inferred or foreign
+value off the sign and fails safe on units: every UK limit read in the wrong unit
+falls outside the set rather than producing a plausible wrong number.
+
+The UI uses mph and familiar UK sign styling, labels the reading `MAPPED`, and
+always warns that it is not live: temporary and variable limits may differ and
+roadside signs apply.
+
+OpenStreetMap `maxspeed` coverage in the UK is real but patchy, and that sets a
+floor on what the feature can show. The bundled demo route's own start point is a
+worked example: the King's Oak Academy car park access road is untagged, and the
+nearest road, Brook Road 43 metres away, is untagged too, so no tolerance can
+honestly produce a number there. The A4174 ring road a few streets away is tagged
+throughout. Absent readings on minor urban roads are a data limitation, not a bug.
 
 The sign is drawn straight onto the map with no surrounding panel. The rider's
 own GPS speed appears directly beneath it at the sign's own font size, so the
@@ -565,6 +765,10 @@ The endpoint is replaceable without an app update:
 --dart-define=RIDE_RELAY_SPEED_LIMIT_URL=https://routing.example.com/trace_attributes
 ```
 
+The `locate` endpoint is derived from that URL by replacing its final path
+segment, so a self-hosted deployment cannot end up with the two halves of the
+lookup on different hosts. It is deliberately not separately configurable.
+
 Valhalla is MIT-licensed and its OpenStreetMap-derived road data is ODbL with
 attribution required. The app credits `© OpenStreetMap contributors` in the
 setting and reading detail. The FOSSGIS endpoint is a free public demo subject
@@ -582,6 +786,8 @@ production instance or selecting a commercial source has an unresolved cost.
 Provider references:
 
 - [Valhalla trace attributes and country/speed metadata](https://valhalla.github.io/valhalla/api/map-matching/api-reference/)
+- [Valhalla locate service, single-point candidates and `radius`](https://valhalla.github.io/valhalla/api/locate/api-reference/)
+- [Valhalla road classes, highest to lowest](https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/)
 - [Valhalla speed source semantics](https://valhalla.github.io/valhalla/concepts/speeds/)
 - [Valhalla data licences](https://valhalla.github.io/valhalla/contributing/data/data-sources/)
 - [Valhalla attribution requirements](https://valhalla.github.io/valhalla/mjolnir/attribution/)
