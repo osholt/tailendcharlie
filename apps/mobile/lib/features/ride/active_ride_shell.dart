@@ -63,6 +63,7 @@ import '../../services/ride_screen_awake.dart';
 import '../../services/enforcement_alert_detector.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
+import '../../services/rejoin_route_share.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_rejoin_planner.dart';
 import '../map/maneuver_list_screen.dart';
@@ -582,6 +583,22 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// route.
   List<MapOverlayTrace> _recordedTrailTraces = const [];
   MapOverlayTrace? _rejoinTrace;
+
+  /// Issue #128 part 2. Other riders' rejoin breadcrumbs, which only ever reach
+  /// the leader's own map: they are relayed addressed to the leader, and the
+  /// reducer drops anything this phone is not the recipient of. Held apart from
+  /// [_recordedTrailTraces] for the same reason the local rejoin route is —
+  /// they are intent, not recorded history.
+  List<MapOverlayTrace> _sharedRejoinTraces = const [];
+
+  /// Bounds how often the local rider's rejoin plan is relayed, independently of
+  /// how often #102 recomputes it locally.
+  final _rejoinRelayGate = RejoinRouteRelayGate();
+
+  /// TEC requests this phone has already put in front of the rider, so an
+  /// unanswered request does not reopen its dialog on every rebuild.
+  final _promptedTecRequestIds = <String>{};
+  bool _tecRequestPromptOpen = false;
 
   late final RideScreenAwakeCoordinator _screenAwakeCoordinator;
 
@@ -1248,6 +1265,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _rejoinTrace = null;
     _rejoinGuidance = null;
     _rejoinPlanner.reset();
+    // Issue #128: the relayed copy is discarded on the same trigger. A share
+    // already on the leader's map is retired by its own route revision no longer
+    // matching, so nothing is left drawn against a route it was not computed for.
+    _rejoinRelayGate.reset();
+    _sharedRejoinTraces = const [];
     _pushRiderTrails();
     controller.addListener(_onAwarenessChanged);
     if (session.role == RideRole.lead &&
@@ -1791,16 +1813,27 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               // following the leader, not off course, and must not be counted.
               leaderTrail: awareness.leaderTrail,
               registeredTecRiderIds: _registeredTecRiderIds,
+              // Issue #128: two riders can hold the role at once - one
+              // self-selected, one asked - and the group needs one answer, so
+              // the leader's own accepted request breaks the tie.
+              assignedTecRiderId: _assignedTecRiderId,
             );
     } else if (!widget.rideController.rideStarted) {
       _leaderStatus.value = null;
     }
+    _updateSharedRejoinTraces();
   }
 
   Set<String> get _registeredTecRiderIds => registeredTecRiderIds(
     simulatedRiders: _isSimulation ? _simulationController?.riders : null,
     liveParticipants: widget.rideController.liveParticipants,
   );
+
+  /// The rider the leader's most recently accepted TEC request names, if any.
+  /// Ride Lab drives its own virtual roster and has no relayed requests.
+  String? get _assignedTecRiderId => _isSimulation
+      ? null
+      : widget.rideController.tecRoleAssignments.acceptedTecRiderId;
 
   Future<void> _maybeAutomaticallyEndRide(
     SituationalAwarenessController awareness,
@@ -1974,8 +2007,59 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               )
             : null,
       );
+      await _relayRejoinPlanToLeader(plan, session);
     });
     return _rejoinChain;
+  }
+
+  /// Issue #128 part 2: relays the local rider's rejoin plan to the leader, and
+  /// to nobody else.
+  ///
+  /// The bound is [RejoinRouteRelayGate]'s, not #102's: one share per 120 s,
+  /// with a clear exempt so an expiry is prompt. The leader already learns that
+  /// this rider is off course, and how badly, from the unthrottled deviation
+  /// alert; this carries only the geometry.
+  Future<void> _relayRejoinPlanToLeader(
+    RouteRejoinPlan? plan,
+    RideSession session,
+  ) async {
+    if (_isSimulation) return;
+    final controller = widget.rideController;
+    // Nothing to address a leader-only event to, and a leader has their own plan
+    // already: in both cases the gate is still evaluated so a share already sent
+    // is cleared rather than left on the leader's map.
+    final hasLeaderRecipient =
+        controller.leaderRiderId != null &&
+        controller.leaderRiderId != session.localRiderId;
+    final decision = _rejoinRelayGate.evaluate(
+      plan: hasLeaderRecipient ? plan : null,
+      displayName: session.displayName,
+      routeRevisionNumber: controller.authoritativeRouteState.revisionNumber,
+      now: DateTime.now(),
+      rideEnded: controller.rideEnded,
+    );
+    final share = decision.share;
+    if (share == null) return;
+    final relayCanCarry =
+        _internetRelayController?.supportsCapability(
+          RelayProtocolCapabilities.rejoinRouteSharing,
+        ) ??
+        true;
+    final sent = await controller.shareRejoinRoute(
+      share,
+      relayCanCarryShare: relayCanCarry,
+    );
+    if (sent || !mounted) return;
+    // Only ever raised for a share, never for a clear: a clear that cannot be
+    // sent is covered by the share's own TTL expiring on the leader's phone.
+    if (decision.action == RejoinRouteRelayAction.share && !relayCanCarry) {
+      _rejoinRelayGate.reset();
+      if (_warnings.add(
+        PresenceLimitation.rejoinSharingUnsupportedByService.message,
+      )) {
+        setState(() {});
+      }
+    }
   }
 
   void _setRejoinPlan(String? guidance, MapOverlayTrace? trace) {
@@ -2033,13 +2117,58 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _pushRiderTrails();
   }
 
-  /// The rejoin breadcrumb is appended last so it draws above the trails in the
-  /// flutter_map fallback, matching the MapLibre layer order.
+  /// The rejoin breadcrumbs are appended last so they draw above the trails in
+  /// the flutter_map fallback, matching the MapLibre layer order. Shared
+  /// breadcrumbs from other riders sit under the local rider's own, which is the
+  /// only one that is guidance for this phone.
   void _pushRiderTrails() {
     _riderTrails.value = List.unmodifiable([
       ..._recordedTrailTraces,
+      ..._sharedRejoinTraces,
       ?_rejoinTrace,
     ]);
+  }
+
+  /// Issue #128 part 2: refreshes the rejoin breadcrumbs other riders have
+  /// shared with this phone.
+  ///
+  /// Every gate lives in [SharedRejoinRouteReducer] — addressed to this rider,
+  /// authored by the rider it describes, matching the current route revision,
+  /// inside its own TTL, not cleared, not from someone who has left — so a share
+  /// vanishing on rejoin, on a route change and at ride end all fall out of one
+  /// rule set rather than three UI checks. Ride Lab has no relay, so it has
+  /// nothing to show.
+  void _updateSharedRejoinTraces() {
+    final shares = _isSimulation
+        ? const <String, SharedRejoinRoute>{}
+        : widget.rideController.sharedRejoinRoutes;
+    final traces = <MapOverlayTrace>[
+      for (final share in shares.values)
+        MapOverlayTrace(
+          id: 'shared-rejoin-${share.riderId}',
+          points: _routePoints(share.breadcrumb),
+          label: share.mapLabel,
+          kind: RiderTrailKind.rejoin,
+        ),
+    ]..sort((left, right) => left.id.compareTo(right.id));
+    if (_sameTraces(_sharedRejoinTraces, traces)) return;
+    _sharedRejoinTraces = List.unmodifiable(traces);
+    _pushRiderTrails();
+  }
+
+  static bool _sameTraces(
+    List<MapOverlayTrace> current,
+    List<MapOverlayTrace> next,
+  ) {
+    if (current.length != next.length) return false;
+    for (var index = 0; index < current.length; index += 1) {
+      if (current[index].id != next[index].id ||
+          current[index].label != next[index].label ||
+          current[index].points.length != next[index].points.length) {
+        return false;
+      }
+    }
+    return true;
   }
 
   static bool _isOffRouteState(RouteTrackingState? state) =>
@@ -2131,6 +2260,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         unawaited(_pushNotificationController?.refreshRegistration());
       }
       _publishObserverSnapshot();
+      _updateSharedRejoinTraces();
+      unawaited(_promptPendingTecRequest());
     }
     if (widget.rideController.rideEnded && !_rideEndHandled) {
       unawaited(_handleRideEnded());
@@ -2919,7 +3050,89 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   void _openRoster() {
-    unawaited(RideRosterSheet.show(context, widget.rideController));
+    unawaited(
+      RideRosterSheet.show(
+        context,
+        widget.rideController,
+        relayCanCarryTecRequest:
+            _internetRelayController?.supportsCapability(
+              RelayProtocolCapabilities.tecRoleAssignment,
+            ) ??
+            true,
+        legacyPeerRiderIds: _legacyPeerRiderIds,
+      ),
+    );
+  }
+
+  /// Riders the live presence channel has already identified as running an
+  /// older build. Such a build predates the TEC-request event entirely, so it
+  /// will skip it — which is why the leader is told by name before asking rather
+  /// than watching the request sit unanswered.
+  Set<String> get _legacyPeerRiderIds => {
+    for (final limitation
+        in _preStartPresenceController?.limitations ?? const [])
+      if (limitation.kind == PresenceLimitationKind.peerAppOlder &&
+          limitation.riderId != null)
+        limitation.riderId!,
+  };
+
+  /// Issue #128 part 1: puts an unanswered TEC request in front of the rider it
+  /// names, once.
+  ///
+  /// The whole point of a request rather than a silent assignment is that the
+  /// rider knows. A request the rider never sees would be worse than no TEC,
+  /// because the leader would believe the back was covered.
+  Future<void> _promptPendingTecRequest() async {
+    if (_isSimulation || _tecRequestPromptOpen || !mounted) return;
+    final request = widget.rideController.pendingTecRoleRequestForLocalRider;
+    if (request == null) return;
+    if (!_promptedTecRequestIds.add(request.requestId)) return;
+    _tecRequestPromptOpen = true;
+    try {
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          key: const Key('tec-role-request'),
+          icon: const Icon(
+            Icons.shield_moon_outlined,
+            color: Color(0xFFB58CFF),
+          ),
+          title: const Text('Be Tail End Charlie?'),
+          content: const Text(
+            'The ride leader has asked you to ride at the back as Tail End '
+            'Charlie.\n\n'
+            'It means you are the back-marker: the group is complete when you '
+            'are there, the leader sees the distance back to you, and a rider '
+            'who falls a long way behind is routed to you.\n\n'
+            'Nobody covers the back until you accept.',
+          ),
+          actions: [
+            TextButton(
+              key: const Key('decline-tec-role-button'),
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Not me'),
+            ),
+            FilledButton(
+              key: const Key('accept-tec-role-button'),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('I will take it'),
+            ),
+          ],
+        ),
+      );
+      if (accepted == null) {
+        // Dismissed without answering: the request is still open, so let it be
+        // offered again rather than silently swallowing it.
+        _promptedTecRequestIds.remove(request.requestId);
+        return;
+      }
+      await widget.rideController.respondToTecRoleRequest(
+        requestId: request.requestId,
+        accepted: accepted,
+      );
+    } finally {
+      _tecRequestPromptOpen = false;
+    }
   }
 
   /// Opens the route's manoeuvre list while the map is in navigation mode and

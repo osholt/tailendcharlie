@@ -446,10 +446,23 @@ class InternetRelayWorker {
       RideEventType.routeRevisionChunk ||
       RideEventType.routeRevisionPublished ||
       RideEventType.routeCleared => RelayProtocolCapabilities.routeRevisions,
+      RideEventType.tecRoleRequested || RideEventType.tecRoleResponded =>
+        RelayProtocolCapabilities.tecRoleAssignment,
+      RideEventType.rejoinRouteShared =>
+        RelayProtocolCapabilities.rejoinRouteSharing,
       _ => null,
     };
     return capability == null || compatibility.supports(capability);
   }
+
+  /// Whether the negotiated relay can carry [capability] at all.
+  ///
+  /// Null before the first negotiation, so a caller can say "not checked yet"
+  /// instead of guessing. Used by the features whose whole point is a relayed
+  /// event — a leader-assigned TEC role and a leader-visible rejoin route — so
+  /// they can name the limitation rather than appear to have worked.
+  bool? supportsCapability(String capability) =>
+      _compatibility?.supports(capability);
 
   void wake() {
     if (!_running || _closed) return;

@@ -156,6 +156,9 @@ class RideRouteReducer {
         case RideEventType.rideEnded:
         case RideEventType.iceInfoShared:
         case RideEventType.iceInfoViewed:
+        case RideEventType.tecRoleRequested:
+        case RideEventType.tecRoleResponded:
+        case RideEventType.rejoinRouteShared:
           break;
       }
     }

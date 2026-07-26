@@ -70,6 +70,14 @@ abstract final class RelayProtocolCapabilities {
   static const trafficIncidents = 'traffic-incidents-v1';
   static const trafficReroutes = 'traffic-reroutes-v1';
 
+  /// The leader asking a named rider to take the Tail End Charlie role, and
+  /// that rider's answer (issue #128 part 1).
+  static const tecRoleAssignment = 'tec-role-assignment-v1';
+
+  /// A separated rider's advisory rejoin route, relayed to the ride leader only
+  /// (issue #128 part 2).
+  static const rejoinRouteSharing = 'rejoin-route-sharing-v1';
+
   static const current = {
     rideStart,
     membership,
@@ -80,6 +88,8 @@ abstract final class RelayProtocolCapabilities {
     observerAccess,
     trafficIncidents,
     trafficReroutes,
+    tecRoleAssignment,
+    rejoinRouteSharing,
   };
 }
 

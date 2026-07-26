@@ -12,7 +12,9 @@ CURRENT_CAPABILITIES = [
     "observer-access-v1",
     "pre-start-presence-v1",
     "push-notifications-v1",
+    "rejoin-route-sharing-v1",
     "route-revisions-v1",
+    "tec-role-assignment-v1",
     "traffic-incidents-v1",
     "traffic-reroutes-v1",
 ]

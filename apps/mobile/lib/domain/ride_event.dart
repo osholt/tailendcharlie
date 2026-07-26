@@ -23,6 +23,20 @@ enum RideEventType {
   rideEnded,
   iceInfoShared,
   iceInfoViewed,
+
+  // Appended, never reordered: an older build recognises a type by name and
+  // skips the ones it does not know (see `relay_event_compatibility.dart`).
+  /// The ride leader asks a named rider to take the Tail End Charlie role
+  /// (issue #128 part 1). A request, not an assignment: the role only changes
+  /// when the target answers.
+  tecRoleRequested,
+
+  /// The named target accepts or declines a [tecRoleRequested].
+  tecRoleResponded,
+
+  /// One rider's advisory rejoin route, addressed to the ride leader
+  /// (issue #128 part 2). Also carries the cleared form that expires it.
+  rejoinRouteShared,
 }
 
 enum EventPriority { routine, important, critical }

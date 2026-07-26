@@ -735,6 +735,15 @@ class _EventRow extends StatelessWidget {
       RideEventType.rideEnded => 'Ride ended',
       RideEventType.iceInfoShared => 'Emergency contact shared',
       RideEventType.iceInfoViewed => 'Emergency contact viewed',
+      RideEventType.tecRoleRequested => 'Tail End Charlie requested',
+      RideEventType.tecRoleResponded =>
+        event.payload['accepted'] == true
+            ? 'Tail End Charlie accepted'
+            : 'Tail End Charlie declined',
+      RideEventType.rejoinRouteShared =>
+        (event.payload['share'] as Map?)?['cleared'] == true
+            ? 'Rejoin route cleared'
+            : 'Rejoin route shared with the leader',
     };
     final time = TimeOfDay.fromDateTime(event.createdAt).format(context);
     return ListTile(

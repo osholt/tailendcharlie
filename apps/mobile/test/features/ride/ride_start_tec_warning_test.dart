@@ -178,7 +178,10 @@ void main() {
 
     expect(find.byKey(const Key('ride-roster-list')), findsOneWidget);
     expect(find.byKey(const Key('roster-missing-tec-notice')), findsOneWidget);
-    expect(find.textContaining('set their role to'), findsOneWidget);
+    // Issue #128 turned this signpost into an action: the leader can ask Alex
+    // directly. It stays a request, so the notice still says Alex must accept.
+    expect(find.byKey(const Key('ask-tec-alex')), findsOneWidget);
+    expect(find.textContaining('have to accept'), findsOneWidget);
     // Choosing to fix the gap does not start the ride.
     expect(harness.controller.rideStarted, isFalse);
   });

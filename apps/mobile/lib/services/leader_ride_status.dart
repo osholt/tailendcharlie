@@ -169,6 +169,10 @@ class LeaderRideStatusCalculator {
     // caller with only a location snapshot still resolves a TEC rather than
     // silently reporting none.
     Iterable<String> registeredTecRiderIds = const [],
+    // The rider the leader's own accepted TEC request names (#128). Breaks a
+    // two-riders-hold-the-role tie deterministically; ignored when that rider
+    // is not registered.
+    String? assignedTecRiderId,
     DateTime? now,
   }) {
     if (localRole != RideRole.lead) return null;
@@ -229,6 +233,7 @@ class LeaderRideStatusCalculator {
       localRiderId: localRiderId,
       riderLocations: riderLocations,
       registeredTecRiderIds: registeredTecRiderIds,
+      assignedTecRiderId: assignedTecRiderId,
       now: evaluatedAt,
     );
     if (!tecTarget.hasRegisteredTec) {
@@ -295,11 +300,19 @@ class LeaderRideStatusCalculator {
   /// rider carrying the role in [riderLocations] also counts, so a caller
   /// holding only a location snapshot still resolves a TEC. [localRiderId] is
   /// excluded throughout: a rider is never their own back-marker.
+  ///
+  /// [assignedTecRiderId] is the rider named by the leader's most recently
+  /// accepted TEC request (#128). Two riders can legitimately hold the role at
+  /// once - one self-selected, one asked - and the group needs one answer, so
+  /// the leader's own accepted request wins when that rider is registered. It is
+  /// only a tie-break: it never invents a TEC who is not registered, and with no
+  /// assignment the previous newest-fix-then-lowest-id ordering is unchanged.
   TecTarget resolveTecTarget({
     required String localRiderId,
     required List<RiderLocation> riderLocations,
     required DateTime now,
     Iterable<String> registeredTecRiderIds = const [],
+    String? assignedTecRiderId,
   }) {
     final candidates =
         riderLocations
@@ -322,11 +335,24 @@ class LeaderRideStatusCalculator {
     if (registeredIds.isEmpty) {
       return const TecTarget(availability: TecAvailability.none);
     }
-    final tec = candidates.firstOrNull;
+    final assigned = assignedTecRiderId != localRiderId
+        ? assignedTecRiderId
+        : null;
+    final preferred = assigned != null && registeredIds.contains(assigned)
+        ? assigned
+        : null;
+    // An assigned TEC with no position yet stays the TEC and reports
+    // awaitingLocation, rather than handing the role to whoever happens to have
+    // a fresher fix.
+    final tec = preferred == null
+        ? candidates.firstOrNull
+        : candidates
+              .where((location) => location.riderId == preferred)
+              .firstOrNull;
     if (tec == null) {
       return TecTarget(
         availability: TecAvailability.awaitingLocation,
-        riderId: registeredIds.first,
+        riderId: preferred ?? registeredIds.first,
       );
     }
     return TecTarget(

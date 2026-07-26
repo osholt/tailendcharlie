@@ -67,6 +67,26 @@ Nearby and internet acknowledgements remain separate. A server-acknowledged
 event is still eligible for nearby carriage, which lets a connected phone move
 events back into a group without coverage.
 
+### Capability-gated event types
+
+`RelayProtocolCapabilities` maps an event type to the capability that must be
+advertised before it is offered for upload. When a capability is missing, the
+events stay in the durable journal, the count surfaces as
+`PresenceLimitation.uploadCapabilityMissing`, and the feature that owns them
+raises its own named limitation. Two capabilities were added by #128:
+
+| Capability | Event types | Retention | Limitation when absent |
+| --- | --- | --- | --- |
+| `tec-role-assignment-v1` | `tecRoleRequested`, `tecRoleResponded` | 2 h | `tecAssignmentUnsupportedByService`, or `tecAssignmentUnsupportedByPeer` for a named rider |
+| `rejoin-route-sharing-v1` | `rejoinRouteShared` | 30 min, the same band as `riderLocationUpdated` | `rejoinSharingUnsupportedByService` |
+
+Both are additive in the direction that matters for mixed builds: an older client
+skips an unknown event type per event and keeps the rest of the batch or frame
+(`describeUnsupportedRelayEvent`), so a newer peer cannot stall it. The relay's
+own event-type allowlist stays closed — a type the server does not know is
+rejected with HTTP 400 rather than stored — so forward compatibility is the
+client's per-event skip, never a server that stores whatever it is sent.
+
 ### Pre-start assembly presence
 
 When a rider explicitly enables foreground location before the leader starts
