@@ -48,6 +48,27 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
     that nobody disappears or is duplicated across the start transition. Then
     run one device with a deliberately reduced capability set and confirm the
     other names the limitation instead of showing an unexplained gap.
+8b. Idle-device delivery (issue #132), the sequence that produced the field
+    failure and the one this evidence is still owed for. Both phones awake with
+    the map open and both **stationary on a desk**, so neither generates new GPS
+    fixes and neither has anything queued to send:
+    1. Leader creates the ride, follower joins, leader starts it.
+    2. Leave both phones untouched for two minutes. Confirm each shows the other
+       as active with a position, and that the rider count matches the number of
+       markers on both the main map and the mini-map.
+    3. Send a hazard report from the follower only. Confirm the leader shows it
+       without the leader having sent anything of its own first, and note the
+       delay. Then repeat in the other direction.
+    4. Swap the roles - the SE leads - and repeat 1 to 3. The result must be
+       identical: the failure must not follow either the role or the device.
+    5. On one phone, turn off automatic date and time and set the clock five
+       minutes wrong, in each direction. Confirm the other phone still shows that
+       rider live and advancing, names the clock difference in plain language,
+       and never shows them as inactive while they are reporting.
+    Record which phone was which, the build number, and the observed delay for
+    each direction. An idle phone receiving nothing until it happens to send
+    something is the defect; treat "it started working when I touched it" as a
+    failure, not a recovery.
 9. Repeat the start with one phone offline, duplicate delivery, app restart,
    reconnect, and a pre-start lead-role handover.
 10. Explicitly leave on one phone, verify it disappears from the current roster
@@ -106,6 +127,14 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
   visible after it, with one identity.
 - A rider who joins an already-started ride is visible to everyone within one
   poll interval, and sees them, with no restart, GPS toggle or alert.
+- A phone with nothing to send still receives. Delivery to a device never
+  depends on that device having an event of its own to upload, and an idle phone
+  is never behind by more than one poll interval plus one retry.
+- The rider count equals the number of drawn markers plus the riders whose row
+  states why they have no position. There is no rider in the count with neither.
+- Two phones whose clocks disagree still show each other as live. A rider is
+  never marked inactive while their reports are arriving, and a clock difference
+  is named on screen rather than being worked out from a missing marker.
 - A position that stops updating is demoted to ageing and then stale in wording
   as well as colour. It is never drawn as current, and never silently deleted -
   where a rider stopped is what the group needs to go back for them.

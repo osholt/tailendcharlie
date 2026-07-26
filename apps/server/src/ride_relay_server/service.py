@@ -141,23 +141,48 @@ class RelayService:
             if not hmac.compare_digest(ride.token_hash, token_hash(bearer_token)):
                 raise RelayServiceError(403, "Ride credential rejected")
 
-            replay = session.scalar(
-                select(IdempotencyReplay).where(
-                    IdempotencyReplay.ride_id == ride_id,
-                    IdempotencyReplay.idempotency_key == idempotency_key,
-                    IdempotencyReplay.expires_at > now,
+            # Idempotency covers the upload only. Upload and download share one
+            # request, and a device with nothing to send repeats a byte-identical
+            # body on every poll, so replaying the stored *download* made an idle
+            # phone permanently deaf to its peers: it received nothing until it
+            # happened to have an event of its own to send. The download is
+            # therefore rebuilt from this request's cursor every time, and an
+            # empty batch is never stored as a replay at all because it has
+            # nothing to be idempotent about.
+            replay = (
+                session.scalar(
+                    select(IdempotencyReplay).where(
+                        IdempotencyReplay.ride_id == ride_id,
+                        IdempotencyReplay.idempotency_key == idempotency_key,
+                        IdempotencyReplay.expires_at > now,
+                    )
                 )
+                if events
+                else None
             )
             if replay is not None:
                 if not hmac.compare_digest(replay.request_hash, request_hash):
                     raise RelayServiceError(409, "Idempotency key conflict")
-                value = self._cipher.decrypt_json(
+                stored = self._cipher.decrypt_json(
                     replay.response_ciphertext,
                     associated_data=self._replay_aad(ride_id, idempotency_key),
                 )
-                if not isinstance(value, dict):
+                accepted_ids = stored.get("acceptedEventIds") if isinstance(stored, dict) else None
+                if not isinstance(accepted_ids, list) or not all(
+                    isinstance(value, str) for value in accepted_ids
+                ):
                     raise RelayServiceError(500, "Stored replay is invalid")
-                return value
+                response = self._build_response(
+                    session,
+                    ride_id=ride_id,
+                    cursor_sequence=cursor_sequence,
+                    accepted_ids=accepted_ids,
+                    now=now,
+                )
+                ride.last_seen_at = now
+                if ride.ended_at is None:
+                    ride.delete_after = now + timedelta(hours=self._settings.ride_retention_hours)
+                return response
 
             self._validate_event_conflicts(session, ride_id, events)
             accepted_ids = self._store_events(session, ride, events, now)
@@ -173,18 +198,19 @@ class RelayService:
                 accepted_ids=accepted_ids,
                 now=now,
             )
-            replay_ciphertext = self._cipher.encrypt_json(
-                response,
-                associated_data=self._replay_aad(ride_id, idempotency_key),
-            )
-            self._store_replay(
-                session,
-                ride_id=ride_id,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                response_ciphertext=replay_ciphertext,
-                now=now,
-            )
+            if events:
+                replay_ciphertext = self._cipher.encrypt_json(
+                    response,
+                    associated_data=self._replay_aad(ride_id, idempotency_key),
+                )
+                self._store_replay(
+                    session,
+                    ride_id=ride_id,
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    response_ciphertext=replay_ciphertext,
+                    now=now,
+                )
             ride.last_seen_at = now
             if ride.ended_at is None:
                 ride.delete_after = now + timedelta(hours=self._settings.ride_retention_hours)
@@ -308,6 +334,9 @@ class RelayService:
             "positions": positions,
             "phase": phase,
             "members": members if live_presence else [],
+            # The clock every arrival stamp above was taken on, so a caller can
+            # age a peer's position without trusting that peer's own clock.
+            "serverTime": now.isoformat(),
         }
 
     @staticmethod

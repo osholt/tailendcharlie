@@ -46,12 +46,35 @@ extension PresenceFreshnessLabels on PresenceFreshness {
       this == PresenceFreshness.live || this == PresenceFreshness.ageing;
 }
 
+/// Which clock a position's age was measured on.
+///
+/// Two phones do not share a clock, so ageing a peer's position by this
+/// device's clock minus the *peer's* own timestamp measures the difference
+/// between two clocks as well as the age. A relay-stamped arrival time and the
+/// relay's own current time are one clock, so they can be subtracted honestly.
+enum PresenceClockBasis {
+  /// Aged on the relay's clock: its arrival stamp against its current time.
+  sharedRelayClock,
+
+  /// Aged on this device's clock against the publisher's own timestamp. Correct
+  /// for this phone's own fixes; for a peer it is only as good as their clock.
+  publisherClock,
+}
+
+extension PresenceClockBasisLabels on PresenceClockBasis {
+  String get label => switch (this) {
+    PresenceClockBasis.sharedRelayClock => 'Timed by the ride service',
+    PresenceClockBasis.publisherClock => "Timed by the rider's own phone",
+  };
+}
+
 /// The documented age thresholds for [PresenceFreshness].
 class PresenceFreshnessPolicy {
   const PresenceFreshnessPolicy({
     this.liveWithin = const Duration(seconds: 20),
     this.ageingWithin = const Duration(seconds: 60),
     this.retainFor = const Duration(minutes: 5),
+    this.publisherClockTolerance = const Duration(seconds: 30),
   });
 
   /// A position at most this old is [PresenceFreshness.live].
@@ -69,6 +92,12 @@ class PresenceFreshnessPolicy {
   /// stopped moving here" into "he was never here", which is the failure this
   /// whole model exists to remove.
   final Duration retainFor;
+
+  /// How far a publisher's own timestamp may sit from the relay's arrival stamp
+  /// before that phone's clock is treated as untrustworthy rather than its
+  /// position as old. Beyond this the disagreement is stated in words; it never
+  /// ages a reporting rider out silently.
+  final Duration publisherClockTolerance;
 
   PresenceFreshness classify(Duration age) {
     final bounded = age.isNegative ? Duration.zero : age;
@@ -144,6 +173,8 @@ class LiveRiderPresence {
     this.riderColor = riderColorDefault,
     this.location,
     this.age,
+    this.clockBasis = PresenceClockBasis.publisherClock,
+    this.publisherClockOffset,
   });
 
   final String riderId;
@@ -167,6 +198,22 @@ class LiveRiderPresence {
 
   /// Age of [location] at the moment of reconciliation.
   final Duration? age;
+
+  /// Which clock [age] was measured on.
+  final PresenceClockBasis clockBasis;
+
+  /// How far the publisher's own timestamp sits behind the relay's arrival stamp
+  /// for [location], when the relay stamped it. Positive means the publisher's
+  /// phone clock is behind the relay's.
+  ///
+  /// This is the difference between two clocks, not an age. It exists so a
+  /// rider whose clock is wrong is *told* that, instead of being aged out as if
+  /// they had stopped reporting.
+  final Duration? publisherClockOffset;
+
+  /// True when the publisher's clock disagrees with the relay's by more than the
+  /// policy tolerates, so their own timestamps cannot be used to judge freshness.
+  bool get publisherClockUntrusted => publisherClockOffset != null;
 
   bool get hasPosition => location != null;
 
@@ -213,6 +260,14 @@ enum PresenceLimitationKind {
   /// A peer's app is too old to publish continuous live positions.
   peerAppOlder,
 
+  /// A peer's phone clock disagrees with the ride service, so their own
+  /// timestamps cannot be used to judge how fresh their position is.
+  riderClockUntrusted,
+
+  /// Live positions arrived but could not be read, so they were skipped rather
+  /// than discarding the whole reply.
+  positionsUnreadable,
+
   /// Events this app does not understand arrived and were ignored.
   unsupportedEventsIgnored,
 
@@ -251,6 +306,35 @@ class PresenceLimitation {
     message:
         "$displayName's app is older — their live position will not appear "
         'once the ride starts until they update.',
+  );
+
+  /// Names a peer whose phone clock disagrees with the ride service.
+  ///
+  /// Their position is still shown and still counts as contact: it is timed by
+  /// the ride service instead of by their phone. Saying so is the alternative to
+  /// silently ageing out a rider who is reporting perfectly well.
+  static PresenceLimitation riderClockUntrusted({
+    required String riderId,
+    required String displayName,
+    required Duration offset,
+  }) => PresenceLimitation(
+    kind: PresenceLimitationKind.riderClockUntrusted,
+    riderId: riderId,
+    riderDisplayName: displayName,
+    message:
+        "$displayName's phone clock is ${formatPresenceAge(offset.abs())} "
+        '${offset.isNegative ? 'ahead of' : 'behind'} the ride service, so '
+        'their position is timed by the ride service instead. Their location '
+        'is still live.',
+  );
+
+  static PresenceLimitation positionsUnreadable(
+    int count,
+  ) => PresenceLimitation(
+    kind: PresenceLimitationKind.positionsUnreadable,
+    message:
+        '$count live position${count == 1 ? '' : 's'} could not be read and '
+        'were skipped. Every other rider is unaffected.',
   );
 
   static const serviceCapabilityMissing = PresenceLimitation(
@@ -327,6 +411,12 @@ class LivePresenceReconciler {
   /// [journal] is the durable post-start location history, [internetPresence]
   /// and [nearbyPresence] are the ephemeral channels, and [roster] names riders
   /// the transport has seen even when no position exists yet.
+  ///
+  /// [relayClockOffset] is the relay's clock minus this device's, measured on the
+  /// last successful presence sync. A remote rider's position that the relay
+  /// stamped is aged on the relay's clock — the only clock both phones share —
+  /// so a peer whose own clock is wrong is never aged out as if they had stopped
+  /// reporting. This device's own fixes are always aged on its own clock.
   List<LiveRiderPresence> reconcile({
     required DateTime now,
     required String localRiderId,
@@ -334,6 +424,7 @@ class LivePresenceReconciler {
     Iterable<RiderLocation> internetPresence = const [],
     Iterable<RiderLocation> nearbyPresence = const [],
     Iterable<PresenceRosterMember> roster = const [],
+    Duration relayClockOffset = Duration.zero,
   }) {
     final best = <String, _Candidate>{};
     void offer(RiderLocation location, LivePresenceSource source) {
@@ -352,6 +443,7 @@ class LivePresenceReconciler {
         existing.location.sample.recordedAt,
       )) {
         existing.location = location;
+        existing.newestSource = source;
       }
     }
 
@@ -400,7 +492,22 @@ class LivePresenceReconciler {
         continue;
       }
       final location = candidate.location;
-      final age = location.sample.ageAt(now);
+      // A remote position the relay stamped is aged on the relay's clock: its
+      // arrival stamp against the relay's current time. Both come from one
+      // clock, so the subtraction is an age and nothing else. This device's own
+      // fixes never travel through the relay before being drawn, so they stay on
+      // this device's clock.
+      final relayStamped =
+          !isLocal &&
+          candidate.newestSource == LivePresenceSource.internetPresence;
+      final publisherOffset = location.receivedAt.difference(
+        location.sample.recordedAt,
+      );
+      final age = relayStamped
+          ? _nonNegative(
+              now.add(relayClockOffset).difference(location.receivedAt),
+            )
+          : location.sample.ageAt(now);
       final freshness = policy.classify(age);
       final sources = {
         ...candidate.sources,
@@ -408,6 +515,14 @@ class LivePresenceReconciler {
       };
       result.add(
         LiveRiderPresence(
+          clockBasis: relayStamped
+              ? PresenceClockBasis.sharedRelayClock
+              : PresenceClockBasis.publisherClock,
+          publisherClockOffset:
+              relayStamped &&
+                  publisherOffset.abs() > policy.publisherClockTolerance
+              ? publisherOffset
+              : null,
           riderId: riderId,
           // The roster is the transport's authoritative identity when it has
           // one; a position payload is only self-described.
@@ -438,6 +553,7 @@ class LivePresenceReconciler {
     Iterable<RiderLocation> journal = const [],
     Iterable<RiderLocation> internetPresence = const [],
     Iterable<RiderLocation> nearbyPresence = const [],
+    Duration relayClockOffset = Duration.zero,
   }) => List.unmodifiable([
     for (final presence in reconcile(
       now: now,
@@ -445,16 +561,25 @@ class LivePresenceReconciler {
       journal: journal,
       internetPresence: internetPresence,
       nearbyPresence: nearbyPresence,
+      relayClockOffset: relayClockOffset,
     ))
       ?presence.location,
   ]);
 }
 
+Duration _nonNegative(Duration value) =>
+    value.isNegative ? Duration.zero : value;
+
 class _Candidate {
   _Candidate(this.location, this.sources)
-    : oldestSampleAt = location.sample.recordedAt;
+    : oldestSampleAt = location.sample.recordedAt,
+      newestSource = sources.first;
 
   RiderLocation location;
   final Set<LivePresenceSource> sources;
   DateTime oldestSampleAt;
+
+  /// Which channel supplied [location]. Only the internet presence channel
+  /// carries a relay-stamped arrival time.
+  LivePresenceSource newestSource;
 }
