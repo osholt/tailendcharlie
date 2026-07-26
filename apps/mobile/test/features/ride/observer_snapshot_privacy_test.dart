@@ -5,6 +5,7 @@ import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/ride/active_ride_shell.dart';
+import 'package:ride_relay/services/rejoin_route_share.dart';
 
 void main() {
   test('observer snapshot uses only the local device GPS sample', () {
@@ -80,5 +81,61 @@ void main() {
     );
 
     expect(snapshot.assistance, isNull);
+  });
+
+  test('a rejoin route shared with the leader never reaches an observer', () {
+    // Issue #128 part 2 shares a rider's intended path with the ride leader.
+    // Issue #36 observers are a separate authorisation decision, so the observer
+    // snapshot must carry no route geometry at all - not the planned route, not
+    // a rejoin breadcrumb, not a rejoin point.
+    final now = DateTime.utc(2026, 7, 26, 12);
+    final session = RideSession(
+      rideId: 'private-ride-id',
+      rideCode: '123456',
+      inviteSecret: 'private-invite-secret-012345',
+      joinToken: 'private-join-token',
+      localRiderId: 'local-rider',
+      displayName: 'Local rider',
+      role: RideRole.rider,
+      joinedAt: now,
+    );
+    final rejoin = SharedRejoinRoute(
+      riderId: 'local-rider',
+      displayName: 'Local rider',
+      computedAt: now,
+      expiresAt: now.add(const Duration(minutes: 10)),
+      routeRevisionNumber: 1,
+      breadcrumb: const [
+        GeoPoint(latitude: 52.9876, longitude: -1.2345),
+        GeoPoint(latitude: 52.9886, longitude: -1.2355),
+      ],
+      rejoinPoint: const GeoPoint(latitude: 52.99, longitude: -1.24),
+    );
+
+    final snapshot = buildLocalObserverSnapshot(
+      session: session,
+      snapshotGeneratedAt: now,
+      rideStatus: 'active',
+      statusUpdatedAt: now,
+      assistanceUpdatedAt: now,
+      localLocation: LocationSample(
+        position: const GeoPoint(latitude: 51.5, longitude: -0.1),
+        recordedAt: now,
+        accuracyMeters: 5,
+      ),
+      assistance: null,
+    );
+    final encoded = snapshot.toJson().toString();
+
+    // Only the last known position, which the rider consented to separately.
+    expect(snapshot.position?.latitude, 51.5);
+    expect(encoded, isNot(contains('52.98')));
+    expect(encoded, isNot(contains('breadcrumb')));
+    expect(encoded, isNot(contains('rejoin')));
+    // The share itself does carry the path - to the leader, and only there.
+    expect(rejoin.toJson().toString(), contains('52.98'));
+    // The snapshot builder takes no rejoin input at all, so there is no field
+    // for a future change to populate by accident.
+    expect(snapshot.toJson().keys, isNot(contains('rejoinRoute')));
   });
 }

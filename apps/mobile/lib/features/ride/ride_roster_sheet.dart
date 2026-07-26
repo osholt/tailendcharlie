@@ -3,24 +3,49 @@ import 'package:flutter/material.dart';
 import '../../controllers/ride_controller.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/rider_color.dart';
+import '../../relay/live_presence.dart';
 import '../../services/ride_membership.dart';
+import '../../services/tec_role_assignment.dart';
 import '../map/motorcycle_icon.dart';
 
 enum _RosterFilter { active, attention, all }
 
 class RideRosterSheet extends StatefulWidget {
-  const RideRosterSheet({super.key, required this.controller});
+  const RideRosterSheet({
+    super.key,
+    required this.controller,
+    this.relayCanCarryTecRequest = true,
+    this.legacyPeerRiderIds = const {},
+  });
 
   final RideController controller;
 
-  static Future<void> show(BuildContext context, RideController controller) =>
-      showModalBottomSheet<void>(
-        context: context,
-        useSafeArea: true,
-        isScrollControlled: true,
-        showDragHandle: true,
-        builder: (_) => RideRosterSheet(controller: controller),
-      );
+  /// The negotiated `tec-role-assignment-v1` capability. False means the leader
+  /// is told the request cannot be sent, rather than a request being recorded
+  /// that can never reach anybody.
+  final bool relayCanCarryTecRequest;
+
+  /// Riders whose build is known to be older than this one, from the live
+  /// presence channel. Their phone will skip the request, so the leader is told
+  /// by name before asking rather than watching it sit unanswered.
+  final Set<String> legacyPeerRiderIds;
+
+  static Future<void> show(
+    BuildContext context,
+    RideController controller, {
+    bool relayCanCarryTecRequest = true,
+    Set<String> legacyPeerRiderIds = const {},
+  }) => showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (_) => RideRosterSheet(
+      controller: controller,
+      relayCanCarryTecRequest: relayCanCarryTecRequest,
+      legacyPeerRiderIds: legacyPeerRiderIds,
+    ),
+  );
 
   @override
   State<RideRosterSheet> createState() => _RideRosterSheetState();
@@ -39,15 +64,13 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
           .length;
       final visible = all.where(_matchesFilter).toList(growable: false)
         ..sort(_compareParticipants);
-      // The leader cannot set another rider's role, so the honest action here
-      // is naming the gap and who can close it.
-      final showMissingTecNotice =
-          widget.controller.isLocalRideLeader &&
-          !all.any(
-            (participant) =>
-                participant.isIncludedInLiveCount &&
-                participant.role == RideRole.tailEndCharlie,
-          );
+      final isLeader = widget.controller.isLocalRideLeader;
+      final hasTec = all.any(
+        (participant) =>
+            participant.isIncludedInLiveCount &&
+            participant.role == RideRole.tailEndCharlie,
+      );
+      final assignment = widget.controller.tecRoleAssignments.latest;
       return FractionallySizedBox(
         heightFactor: 0.86,
         child: Column(
@@ -80,7 +103,9 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                 ],
               ),
             ),
-            if (showMissingTecNotice) const _MissingTecNotice(),
+            if (isLeader && !hasTec) const _MissingTecNotice(),
+            if (isLeader && assignment != null)
+              _TecRequestStatus(assignment: assignment),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -124,6 +149,12 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                       itemBuilder: (context, index) => _ParticipantTile(
                         participant: visible[index],
                         now: DateTime.now(),
+                        onAskToBeTec: _canAsk(visible[index])
+                            ? () => _askToBeTec(visible[index])
+                            : null,
+                        peerAppIsOlder: widget.legacyPeerRiderIds.contains(
+                          visible[index].riderId,
+                        ),
                       ),
                     ),
             ),
@@ -132,6 +163,57 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
       );
     },
   );
+
+  /// The leader may ask any live rider other than themselves who does not
+  /// already hold the role.
+  bool _canAsk(RideParticipant participant) =>
+      widget.controller.isLocalRideLeader &&
+      !participant.isLocal &&
+      participant.isIncludedInLiveCount &&
+      participant.role != RideRole.tailEndCharlie;
+
+  Future<void> _askToBeTec(RideParticipant participant) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    // Named before the request goes anywhere: this rider's build will skip it.
+    if (widget.legacyPeerRiderIds.contains(participant.riderId)) {
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            PresenceLimitation.tecAssignmentUnsupportedByPeer(
+              riderId: participant.riderId,
+              displayName: participant.displayName,
+            ).message,
+          ),
+        ),
+      );
+      return;
+    }
+    final outcome = await widget.controller.requestTecRole(
+      targetRiderId: participant.riderId,
+      targetDisplayName: participant.displayName,
+      relayCanCarryRequest: widget.relayCanCarryTecRequest,
+    );
+    if (!mounted) return;
+    final message = switch (outcome) {
+      TecRoleRequestOutcome.sent =>
+        'Asked ${participant.displayName} to be Tail End Charlie. They have to '
+            'accept before the back is covered.',
+      TecRoleRequestOutcome.relayUnsupported =>
+        PresenceLimitation.tecAssignmentUnsupportedByService.message,
+      TecRoleRequestOutcome.notLeader =>
+        'Only the current ride leader can ask a rider to be Tail End Charlie.',
+      TecRoleRequestOutcome.invalidTarget =>
+        '${participant.displayName} is no longer in the ride.',
+      TecRoleRequestOutcome.alreadyTailEndCharlie =>
+        '${participant.displayName} is already Tail End Charlie.',
+      TecRoleRequestOutcome.failed =>
+        widget.controller.errorMessage ??
+            'That request could not be saved. Please try again.',
+    };
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(key: const Key('tec-request-outcome'), content: Text(message)),
+    );
+  }
 
   bool _matchesFilter(RideParticipant participant) => switch (_filter) {
     _RosterFilter.active => participant.isIncludedInLiveCount,
@@ -154,9 +236,12 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
   }
 }
 
-/// Names the missing back-marker for the leader, and says exactly who can
-/// close the gap. Roles are self-selected in this app, so the leader cannot
-/// assign the role for someone else from here.
+/// Names the missing back-marker for the leader, and both ways to close the gap.
+///
+/// The leader can now ask a named rider directly (#128). It is still a request
+/// the rider accepts, not a silent assignment, so this deliberately says the
+/// rider has to accept: a rider who has not noticed they are TEC is worse than
+/// no TEC, because the group then believes the back is covered.
 class _MissingTecNotice extends StatelessWidget {
   const _MissingTecNotice();
 
@@ -190,8 +275,9 @@ class _MissingTecNotice extends StatelessWidget {
                   Text(
                     'Nobody is covering the back of this group, so there is no '
                     'distance to the back and nobody confirming everyone is '
-                    'still with you. Ask the last rider to set their role to '
-                    'Tail End Charlie on their own Ride tab.',
+                    'still with you. Ask a rider below to take it — they have '
+                    'to accept on their own phone — or they can set the role '
+                    'themselves on their Ride tab.',
                     style: TextStyle(color: Color(0xFFE4D9BC), height: 1.35),
                   ),
                 ],
@@ -204,11 +290,64 @@ class _MissingTecNotice extends StatelessWidget {
   );
 }
 
+/// Where the leader's most recent request has got to. Pending is stated as
+/// pending: until the rider accepts, the back is not covered.
+class _TecRequestStatus extends StatelessWidget {
+  const _TecRequestStatus({required this.assignment});
+
+  final TecRoleAssignment assignment;
+
+  @override
+  Widget build(BuildContext context) {
+    final accepted = assignment.isAccepted;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Card(
+        key: const Key('roster-tec-request-status'),
+        margin: EdgeInsets.zero,
+        color: accepted ? const Color(0xFF1E3326) : const Color(0xFF1F2A38),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          child: Row(
+            children: [
+              Icon(
+                accepted
+                    ? Icons.check_circle_outline
+                    : assignment.isPending
+                    ? Icons.hourglass_top_outlined
+                    : Icons.info_outline,
+                size: 20,
+                color: accepted
+                    ? const Color(0xFF59D18C)
+                    : const Color(0xFF9DC4FF),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  assignment.statusLabel,
+                  style: const TextStyle(height: 1.3),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ParticipantTile extends StatelessWidget {
-  const _ParticipantTile({required this.participant, required this.now});
+  const _ParticipantTile({
+    required this.participant,
+    required this.now,
+    this.onAskToBeTec,
+    this.peerAppIsOlder = false,
+  });
 
   final RideParticipant participant;
   final DateTime now;
+  final VoidCallback? onAskToBeTec;
+  final bool peerAppIsOlder;
 
   @override
   Widget build(BuildContext context) {
@@ -223,6 +362,7 @@ class _ParticipantTile extends StatelessWidget {
       'last seen $lastSeen',
       participant.transportLabel,
       ?attention,
+      if (peerAppIsOlder) 'app is older',
     ].join(', ');
     return Semantics(
       label: semanticLabel,
@@ -263,6 +403,13 @@ class _ParticipantTile extends StatelessWidget {
             ),
           ),
         ),
+        trailing: onAskToBeTec == null
+            ? null
+            : TextButton(
+                key: Key('ask-tec-${participant.riderId}'),
+                onPressed: onAskToBeTec,
+                child: const Text('Ask to be TEC'),
+              ),
       ),
     );
   }

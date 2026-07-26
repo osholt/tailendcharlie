@@ -98,14 +98,103 @@ back off geometrically to 6 minutes.
 Routing failure, no imported route, an unknown leader position, no rejoin in
 range and the ahead-of-the-leader refusal all fall back to the existing "you are
 off route by X" message with no breadcrumb — never a blank screen, and never
-invented geometry. Rejoin plans are computed on the affected rider's own device
-and are not relayed, so no other rider's breadcrumb reaches the group map. A
-leader opt-in to view another rider's rejoin route would need a new relayed
-event type and is deliberately not implemented yet.
+invented geometry.
 
 Thresholds and the recompute policy are development-alpha defaults. They are
 covered by unit tests but have **not** been calibrated against recorded field
 data, and no real off-route excursion has been ridden against this code.
+
+### Sharing a rejoin route with the leader (#128)
+
+A rejoin plan is still computed on the affected rider's own device, and it is
+still not group-visible. The one exception is the ride leader, who has a
+legitimate need to see where a separated rider is being sent:
+`RejoinRouteRelayGate` (`apps/mobile/lib/services/rejoin_route_share.dart`)
+relays it as a `rejoinRouteShared` event **addressed to the leader**, gated on
+the `rejoin-route-sharing-v1` capability.
+
+**Relay bound: one share per rider per 120 seconds, no exceptions. A clear is
+immediate and exempt.** This is deliberately independent of the 45 s local
+recompute floor above. A separated rider on poor coverage is exactly the wrong
+place to add event volume, and the geometry is the least urgent part of the
+picture: the leader already learns *that* a rider is off course, and how badly,
+from the unthrottled `routeDeviationChanged` alert. A breadcrumb two minutes old
+still answers "which way have they gone", so a severity escalation or a change of
+target does **not** buy an extra share — it takes the next slot. Measured worst
+case for the field report's ten-minute circling rider: five shares when fed at
+the 45 s recompute grid, six at the arithmetic ceiling, plus one clear. Both are
+asserted in `rejoin_route_share_test.dart` rather than claimed.
+
+The breadcrumb is resampled to at most 60 points (first and last always kept, so
+the line still starts at the rider and ends at the rejoin) at five decimal
+places, about 1.1 m — one decimal coarser than a rider's own position sample, and
+comfortably inside the 8 KiB per-event and 128-entry payload limits.
+
+Expiry has four independent triggers, all in one place
+(`SharedRejoinRouteReducer`): the rider rejoins or has no drawable plan (an
+immediate `cleared` share), the published route revision moves on (the share
+carries the revision it was computed against and is discarded on sight
+otherwise), the ride ends, and a hard 10-minute per-share TTL. Server retention
+for `rejoinRouteShared` is capped at 30 minutes — the same band as
+`riderLocationUpdated`, because a rider's intended path is as perishable as
+where they actually are.
+
+Privacy, stated exactly: "leader only" here means the same thing it means for an
+ICE share. The event names its intended recipient, the sharer refuses to record
+anything when no leader is known, and every consumer drops a share it is not
+addressed to — but the ride relay is ride-scoped rather than per-recipient
+encrypted, so this is not a cryptographic guarantee against another member who
+already holds the ride secret. Trusted observers (#36) get nothing: the observer
+snapshot has no field a route could travel in, the publish schema forbids extra
+fields, and both halves are asserted in
+`test/features/ride/observer_snapshot_privacy_test.dart` and
+`apps/server/tests/test_tec_role_and_rejoin_sharing.py`. Sharing to an observer
+would be a separate authorisation decision.
+
+## The Tail End Charlie role (#128)
+
+Roles are self-selected: `RideController.setRole` records a `roleChanged` event
+for the local device and the membership reducer keys role changes by
+`event.deviceId`. That is unchanged. What is new is that the leader can **ask** a
+named rider to take the back-marker role.
+
+It is a request the target accepts, not an assignment that takes effect
+immediately. A rider who has not noticed they are TEC is worse than no TEC,
+because the group then believes the back is covered when nobody is watching it,
+so the leader sees pending, accepted, declined, expired, superseded and
+target-left as distinct states (`TecRoleAssignmentReducer`,
+`apps/mobile/lib/services/tec_role_assignment.dart`). Accepting records the
+answer **and** the target's own `roleChanged`, so the role itself still has
+exactly one source of truth.
+
+Authority, matching how #99 rejects a forged departure:
+
+- a request is admissible only from a device whose latest signed role **at that
+  point in the journal** is `lead`, and only when the payload names its own
+  author as the leader;
+- an answer is admissible only from the device the request named;
+- a duplicate request id is ignored and only the first answer counts, so a
+  replayed frame changes nothing;
+- an answer may legitimately carry an earlier timestamp than its question (two
+  phones, two clocks) and still counts — the two halves are matched by request
+  id, never by journal position.
+
+Conflict resolution is deterministic: the newest request supersedes an
+unanswered earlier one, an unanswered request expires after 10 minutes rather
+than sitting on the leader's screen for the rest of the ride, a target who
+leaves stops being the TEC whether or not they had accepted, and a request
+issued while its author was leader survives a later handover while a former
+leader can no longer issue one. When two riders hold the role at once — one
+self-selected, one asked — `LeaderRideStatusCalculator.resolveTecTarget` takes
+the leader's most recently accepted request as the tie-break; with no assignment
+its previous newest-fix ordering is unchanged, and an assignment never invents a
+TEC who is not registered.
+
+Degradation is named in both directions. If the negotiated relay lacks
+`tec-role-assignment-v1` nothing is recorded at all and the leader is told the
+service cannot pass the request on; if live presence has already identified the
+target's build as older, the leader is told so by name before asking. Neither
+case leaves a request looking sent.
 
 ## Hazards
 

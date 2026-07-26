@@ -91,6 +91,41 @@ uv run python -m pytest
 Use `uv run python -m pytest` if the direct `uv run pytest` entry point has a
 stale virtual-environment shebang.
 
+## Branch `claude/issue-128-relayed-capabilities`
+
+Two capabilities, grouped because they are the same shape of change — a new
+relayed event type plus capability gating. Refs #128, #108, #102. Everything is
+additive: three appended `RideEventType` values, two new capability strings, two
+new reducers, no restructuring of anything already there. Written to merge
+cleanly after #132/#134 rework the transport.
+
+- **A leader can ask a named rider to be Tail End Charlie.** A request the target
+  accepts, not a silent assignment. `TecRoleAssignmentReducer` admits a request
+  only from a device whose signed role at that point in the journal is `lead`
+  and whose payload names its own author, and an answer only from the rider the
+  request named — the #99 forged-departure pattern. Accepting records the answer
+  **and** the target's own `roleChanged`, so roles stay self-selected and the
+  membership reducer is untouched. See `docs/situational-awareness.md` for the
+  conflict rules (supersede, 10-minute expiry, target-left, leader handover, and
+  the two-riders-hold-the-role tie-break in `resolveTecTarget`).
+- **A separated rider's rejoin route reaches the leader, and only the leader.**
+  `rejoinRouteShared` is addressed to the leader the same way an ICE share is;
+  every consumer drops a share it is not addressed to, and the reducer fails
+  closed on a share with no recipient list. **Relayed at most once per rider per
+  120 s**, deliberately independent of #102's 45 s local recompute floor, with a
+  clear exempt so an expiry is prompt. Ten-minute circling rider: five shares
+  measured, six at the ceiling, plus one clear. Bounded to 60 breadcrumb points
+  at five decimal places.
+- **No map file was touched.** The leader's shared breadcrumbs are published into
+  the shell's existing one trail channel as `MapOverlayTrace(kind: rejoin)`, so
+  `RouteTrailStyle.rejoinBreadcrumb` renders them with no change to
+  `ride_map_feature.dart` at all.
+- **Both skew directions are named, not silent.** A relay without either
+  capability makes the leader's request refuse to record and raises
+  `tecAssignmentUnsupportedByService`; a peer already known to be on an older
+  build is named before the leader asks. See
+  `test/internet/tec_and_rejoin_capability_skew_test.dart`.
+
 ## Parked, not forgotten
 
 Two free data sources were assessed on 2026-07-26 and parked on the P2 roadmap
@@ -129,6 +164,16 @@ Neither is started. The in-app warning surface they would feed already exists.
   speedometer, in daylight and at night, over both the day and night basemaps.
 - Exercise explicit leave/rejoin and roster/alert counts across mixed physical
   iOS and Android phones.
+- Ask a rider to be Tail End Charlie from a leader phone and accept on theirs,
+  over internet-only, nearby-only and mixed transports, then decline one, then
+  leave the ride while holding the role, then hand the lead over mid-request.
+  Nothing in #128 has been on two devices — the automated coverage is unit and
+  widget level only.
+- Ride a real off-route excursion with a leader watching, and confirm the cyan
+  rejoin breadcrumb appears on the leader's map only, is distinguishable from
+  every other line through a visor, and clears when the rider rejoins, when the
+  leader republishes the route, and at ride end. Count the relayed events over a
+  ten-minute excursion against the five-to-six bound.
 - Publish, replace and clear leader routes across late join, offline reconnect,
   restart and lead handover on both platforms.
 - Deploy the compatibility endpoint and test old-client/current-server plus
