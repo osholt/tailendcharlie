@@ -79,6 +79,14 @@ class Settings(BaseSettings):
             "observer-access-v1",
             "traffic-incidents-v1",
             "traffic-reroutes-v1",
+            # A leader asking a named rider to be Tail End Charlie, and that
+            # rider's answer. Both are ordinary journal events; the capability
+            # exists so a client can name the limitation instead of appearing to
+            # have asked somebody who was never asked.
+            "tec-role-assignment-v1",
+            # A separated rider's advisory rejoin route, addressed to the ride
+            # leader only.
+            "rejoin-route-sharing-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)

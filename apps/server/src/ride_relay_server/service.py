@@ -58,6 +58,12 @@ EVENT_TYPES = {
     "rideEnded",
     "iceInfoShared",
     "iceInfoViewed",
+    # Issue #128. Additive: an older client that does not know these names skips
+    # them per event and keeps the rest of the batch, so the relay may carry
+    # them for the clients that do.
+    "tecRoleRequested",
+    "tecRoleResponded",
+    "rejoinRouteShared",
 }
 PRIORITIES = {"routine", "important", "critical"}
 EVENT_FIELDS = {
@@ -918,6 +924,14 @@ class RelayService:
             # of the client-supplied expiry, not left to the 72h default.
             "iceInfoShared": timedelta(hours=2),
             "iceInfoViewed": timedelta(hours=2),
+            # A rider's intended path: the same retention band as where they
+            # actually are, capped here as well as on the client so a share
+            # cannot outlive its usefulness even if a client asks it to.
+            "rejoinRouteShared": timedelta(minutes=30),
+            # Who was asked to cover the back of the group, and what they said.
+            # Ride-scoped coordination, not history worth keeping for days.
+            "tecRoleRequested": timedelta(hours=2),
+            "tecRoleResponded": timedelta(hours=2),
         }.get(event_type, timedelta(hours=72))
 
     @staticmethod

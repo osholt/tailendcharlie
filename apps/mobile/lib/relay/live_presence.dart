@@ -222,6 +222,16 @@ enum PresenceLimitationKind {
   /// An event the service refuses was set aside so the rest of the ride keeps
   /// flowing.
   uploadQuarantined,
+
+  /// The ride service cannot carry a leader-issued Tail End Charlie request, so
+  /// the role has to be taken by the rider themselves.
+  tecAssignmentUnsupportedByService,
+
+  /// A named rider's app cannot read a leader-issued Tail End Charlie request.
+  tecAssignmentUnsupportedByPeer,
+
+  /// The ride service cannot carry a rider's rejoin route to the leader.
+  rejoinSharingUnsupportedByService,
 }
 
 /// A single named, user-readable limitation.
@@ -310,6 +320,41 @@ class PresenceLimitation {
     message:
         '$count ride update${count == 1 ? '' : 's'} were set aside because the '
         'ride service refused them. Joining, positions and alerts keep working.',
+  );
+
+  /// The outgoing direction for #128 part 1: this build can ask, the relay
+  /// cannot carry the question. Names the fallback rather than letting the
+  /// leader believe a rider was asked.
+  static const tecAssignmentUnsupportedByService = PresenceLimitation(
+    kind: PresenceLimitationKind.tecAssignmentUnsupportedByService,
+    message:
+        'The ride service is too old to pass on a Tail End Charlie request, so '
+        'nobody has been asked. The rider has to set the role themselves on '
+        'their own Ride tab.',
+  );
+
+  /// The incoming direction for #128 part 1: the request will reach that
+  /// rider's phone and their build will skip it, so the leader must be told
+  /// which rider, by name, rather than watching a request sit at "waiting".
+  static PresenceLimitation tecAssignmentUnsupportedByPeer({
+    required String riderId,
+    required String displayName,
+  }) => PresenceLimitation(
+    kind: PresenceLimitationKind.tecAssignmentUnsupportedByPeer,
+    riderId: riderId,
+    riderDisplayName: displayName,
+    message:
+        "$displayName's app is older — they will not see a Tail End Charlie "
+        'request until they update. Ask them to set the role themselves.',
+  );
+
+  /// #128 part 2. The rider keeps their own rejoin guidance either way; only the
+  /// leader's copy is lost, and the leader is told so.
+  static const rejoinSharingUnsupportedByService = PresenceLimitation(
+    kind: PresenceLimitationKind.rejoinSharingUnsupportedByService,
+    message:
+        'The ride service is too old to send your rejoin route to the ride '
+        'leader. You still have it on this phone; the leader will not see it.',
   );
 }
 
