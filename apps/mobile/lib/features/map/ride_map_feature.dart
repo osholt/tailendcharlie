@@ -39,6 +39,7 @@ import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
 import '../../services/navigation_heading.dart';
 import '../../services/offline_tile_cache.dart';
+import '../../services/received_quick_message.dart';
 import '../../services/rider_trail_recorder.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
@@ -100,6 +101,8 @@ class RideMapFeature extends StatefulWidget {
     this.onOpenRoster,
     this.junctionMarkerOverlay,
     this.enforcementAlert,
+    this.quickMessageAlerts,
+    this.onAcknowledgeQuickMessage,
     this.onReportHazard,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -138,6 +141,9 @@ class RideMapFeature extends StatefulWidget {
     VoidCallback? onOpenRoster,
     ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
     ValueListenable<EnforcementAlert?>? enforcementAlert,
+    ValueListenable<List<RideQuickMessageAlert>>? quickMessageAlerts,
+    Future<void> Function(ReceivedQuickMessage message)?
+    onAcknowledgeQuickMessage,
     Future<void> Function(HazardType type)? onReportHazard,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
@@ -170,6 +176,8 @@ class RideMapFeature extends StatefulWidget {
     onOpenRoster: onOpenRoster,
     junctionMarkerOverlay: junctionMarkerOverlay,
     enforcementAlert: enforcementAlert,
+    quickMessageAlerts: quickMessageAlerts,
+    onAcknowledgeQuickMessage: onAcknowledgeQuickMessage,
     onReportHazard: onReportHazard,
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
@@ -204,6 +212,14 @@ class RideMapFeature extends StatefulWidget {
   final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final ValueListenable<EnforcementAlert?>? enforcementAlert;
+
+  /// Quick messages other riders have raised, most urgent first, together with
+  /// where each sender is (#151). Null when the embedder has no ride behind it.
+  final ValueListenable<List<RideQuickMessageAlert>>? quickMessageAlerts;
+
+  /// Records that this rider has seen a quick message, so its sender is told.
+  final Future<void> Function(ReceivedQuickMessage message)?
+  onAcknowledgeQuickMessage;
   final Future<void> Function(HazardType type)? onReportHazard;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -333,6 +349,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onOpenRoster: widget.onOpenRoster,
         junctionMarkerOverlay: widget.junctionMarkerOverlay,
         enforcementAlert: widget.enforcementAlert,
+        quickMessageAlerts: widget.quickMessageAlerts,
+        onAcknowledgeQuickMessage: widget.onAcknowledgeQuickMessage,
         onReportHazard: widget.onReportHazard,
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
@@ -391,6 +409,8 @@ class RideMapScreen extends StatefulWidget {
     this.onOpenRoster,
     this.junctionMarkerOverlay,
     this.enforcementAlert,
+    this.quickMessageAlerts,
+    this.onAcknowledgeQuickMessage,
     this.onReportHazard,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -433,6 +453,14 @@ class RideMapScreen extends StatefulWidget {
   final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final ValueListenable<EnforcementAlert?>? enforcementAlert;
+
+  /// Quick messages other riders have raised, most urgent first, together with
+  /// where each sender is (#151). Null when the embedder has no ride behind it.
+  final ValueListenable<List<RideQuickMessageAlert>>? quickMessageAlerts;
+
+  /// Records that this rider has seen a quick message, so its sender is told.
+  final Future<void> Function(ReceivedQuickMessage message)?
+  onAcknowledgeQuickMessage;
   final Future<void> Function(HazardType type)? onReportHazard;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -538,6 +566,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
   // Dismissal is per hazard, so passing this one and approaching the next
   // still raises a fresh warning.
   String? _dismissedEnforcementAlertId;
+  // Quick messages whose full-screen interrupt this rider has already closed,
+  // and receipts of their own messages they have already read (#151). Per event
+  // id in both cases: closing one interrupt must not suppress the next rider's
+  // emergency, and the persistent row survives the interrupt either way, so
+  // nothing is lost by dismissing.
+  final Set<String> _dismissedQuickMessageInterrupts = {};
+  final Set<String> _dismissedQuickMessageReceipts = {};
+  String? _acknowledgingQuickMessageId;
   double _cameraBearingDegrees = 0;
   final NavigationHeadingSmoother _headingSmoother =
       NavigationHeadingSmoother();
@@ -1027,6 +1063,40 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       },
                     ),
                   ),
+                // Above even that: a rider asking the group for help outranks a
+                // speed camera. Critical only - "Need fuel" must not blank the
+                // map at 60 mph (#151) - and transient, so it never becomes a
+                // permanent surface anywhere, let alone in the upper band
+                // (#104). The persistent row in the bottom band is what survives
+                // it being closed.
+                if (widget.quickMessageAlerts != null)
+                  Positioned.fill(
+                    child: ValueListenableBuilder<List<RideQuickMessageAlert>>(
+                      valueListenable: widget.quickMessageAlerts!,
+                      builder: (context, alerts, _) {
+                        final alert = _interruptingQuickMessage(alerts);
+                        if (alert == null) return const SizedBox.shrink();
+                        return _QuickMessageInterruptOverlay(
+                          alert: alert,
+                          distanceUnit: widget.distanceUnit,
+                          acknowledging:
+                              _acknowledgingQuickMessageId ==
+                              alert.message.eventId,
+                          onAcknowledge:
+                              widget.onAcknowledgeQuickMessage == null
+                              ? null
+                              : () => unawaited(
+                                  _acknowledgeQuickMessage(alert.message),
+                                ),
+                          onDismiss: () => setState(
+                            () => _dismissedQuickMessageInterrupts.add(
+                              alert.message.eventId,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
               ],
             ),
     );
@@ -1078,8 +1148,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
     Widget compose(
       LeaderRideStatus? leaderStatus,
       List<MapOverlayMarker> overlays,
+      List<RideQuickMessageAlert> quickMessages,
     ) {
       final downloadProgress = _downloadProgress;
+      // At most one quick-message row, ever (#151). A group can raise several at
+      // once, and three stacked rows would undo the band #125 and #133 spent the
+      // day emptying - so the most urgent one is on screen with a count of what
+      // is behind it, and acknowledging it reveals the next. The band therefore
+      // grows by one row at its worst, not by one row per rider.
+      final quickMessage = _presentedQuickMessage(quickMessages);
       final urgent = <Widget>[
         // A paused ride is a ride-lifecycle state, not a route state (#124).
         if (widget.ridePaused) const _RidePausedBanner(),
@@ -1088,6 +1165,34 @@ class _RideMapScreenState extends State<RideMapScreen> {
             alerts: leaderStatus.offCourseAlerts,
             compact: compactStatus,
             distanceUnit: widget.distanceUnit,
+          ),
+        // Last in the urgent run, so it is the urgent surface nearest the
+        // rider's gaze and the targets their hand is already going to (#104's
+        // ordering). It is also the one urgent surface carrying a target of its
+        // own, and at the maximum overlay count in landscape - where #139
+        // recorded the rail already overflowing the top of a 390 px screen -
+        // being last means the paused banner and the off-course card give way
+        // before the alert does.
+        //
+        // It stays until acknowledged, so a rider who glances away does not lose
+        // it: the persistence the transient interrupt cannot provide.
+        if (quickMessage != null)
+          _QuickMessageAlertCard(
+            alert: quickMessage,
+            compact: compactStatus,
+            distanceUnit: widget.distanceUnit,
+            outstandingCount: _outstandingQuickMessageCount(quickMessages),
+            acknowledging:
+                _acknowledgingQuickMessageId == quickMessage.message.eventId,
+            onAcknowledge: widget.onAcknowledgeQuickMessage == null
+                ? null
+                : () =>
+                      unawaited(_acknowledgeQuickMessage(quickMessage.message)),
+            onDismissReceipt: () => setState(
+              () => _dismissedQuickMessageReceipts.add(
+                quickMessage.message.eventId,
+              ),
+            ),
           ),
       ];
       final guidance = hasGuidance
@@ -1192,6 +1297,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // changes what the control says without changing what it occupies. #139
       // let the label drive the width, and "ALERT SENT" widened SOS enough to
       // push REPORT out of the run.
+      //
+      // "ALERT SEEN" is #151's other half, and it costs no footprint: the point
+      // of raising an alert is that somebody sees it, and the control the rider
+      // already pressed is the cheapest place to tell them so. It is the state
+      // #142 calls "alert acknowledged", and it shares the reserved slot.
+      final emergencyAcknowledged =
+          _emergencyAlertSent &&
+          quickMessages.any(
+            (alert) =>
+                alert.message.raisedFromLocalRider &&
+                alert.message.isAcknowledged &&
+                alert.message.message == QuickMessage.emergencyStop,
+          );
       final sosButton = widget.onEmergencyAlert == null
           ? null
           : FloatingActionButton.extended(
@@ -1212,11 +1330,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         ),
                       )
                     : Icon(
-                        _emergencyAlertSent ? Icons.check_circle : Icons.sos,
+                        emergencyAcknowledged
+                            ? Icons.visibility
+                            : _emergencyAlertSent
+                            ? Icons.check_circle
+                            : Icons.sos,
                       ),
               ),
               label: _ActionLabel(
-                _emergencyAlertSent ? 'ALERT SENT' : 'ALERT',
+                emergencyAcknowledged
+                    ? 'ALERT SEEN'
+                    : _emergencyAlertSent
+                    ? 'ALERT SENT'
+                    : 'ALERT',
                 widest: 'ALERT SENT',
                 slotWidth: sosLabelSlot,
               ),
@@ -1498,12 +1624,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
     }
 
+    Widget withQuickMessages(
+      LeaderRideStatus? leaderStatus,
+      List<MapOverlayMarker> overlays,
+    ) => widget.quickMessageAlerts == null
+        ? compose(leaderStatus, overlays, const [])
+        : ValueListenableBuilder<List<RideQuickMessageAlert>>(
+            valueListenable: widget.quickMessageAlerts!,
+            builder: (context, quickMessages, _) =>
+                compose(leaderStatus, overlays, quickMessages),
+          );
+
     Widget withOverlays(LeaderRideStatus? leaderStatus) =>
         widget.overlayMarkers == null
-        ? compose(leaderStatus, const [])
+        ? withQuickMessages(leaderStatus, const [])
         : ValueListenableBuilder<List<MapOverlayMarker>>(
             valueListenable: widget.overlayMarkers!,
-            builder: (context, overlays, _) => compose(leaderStatus, overlays),
+            builder: (context, overlays, _) =>
+                withQuickMessages(leaderStatus, overlays),
           );
 
     // The leader status and rider overlays only reach the tree through their
@@ -2403,6 +2541,68 @@ class _RideMapScreenState extends State<RideMapScreen> {
       }
     }
     _scheduleCameraFramingRefresh();
+  }
+
+  /// The one quick message on screen, or null.
+  ///
+  /// Another rider's outstanding message always wins over this rider's own
+  /// receipt: somebody waiting for help outranks being told that somebody saw
+  /// you. The list arrives most-urgent-first, so this is a scan for the first
+  /// row that is still worth showing rather than a re-sort.
+  RideQuickMessageAlert? _presentedQuickMessage(
+    List<RideQuickMessageAlert> alerts,
+  ) {
+    for (final alert in alerts) {
+      if (!alert.message.raisedFromLocalRider) return alert;
+    }
+    for (final alert in alerts) {
+      if (alert.message.isAcknowledged &&
+          !_dismissedQuickMessageReceipts.contains(alert.message.eventId)) {
+        return alert;
+      }
+    }
+    return null;
+  }
+
+  /// How many other riders' messages are still waiting, so the row can say what
+  /// is behind it rather than hiding it.
+  int _outstandingQuickMessageCount(List<RideQuickMessageAlert> alerts) =>
+      alerts.where((alert) => !alert.message.raisedFromLocalRider).length;
+
+  /// The quick message that may take the screen over right now, if any.
+  ///
+  /// Critical only, never this rider's own, and never one whose interrupt has
+  /// already been closed. Closing it loses nothing: the persistent row in the
+  /// band stays until the message is acknowledged.
+  RideQuickMessageAlert? _interruptingQuickMessage(
+    List<RideQuickMessageAlert> alerts,
+  ) {
+    for (final alert in alerts) {
+      if (alert.message.interrupts &&
+          !alert.message.raisedFromLocalRider &&
+          !_dismissedQuickMessageInterrupts.contains(alert.message.eventId)) {
+        return alert;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _acknowledgeQuickMessage(ReceivedQuickMessage message) async {
+    final acknowledge = widget.onAcknowledgeQuickMessage;
+    if (acknowledge == null || _acknowledgingQuickMessageId != null) return;
+    setState(() => _acknowledgingQuickMessageId = message.eventId);
+    try {
+      await acknowledge(message);
+      if (!mounted) return;
+      setState(() {
+        _acknowledgingQuickMessageId = null;
+        _dismissedQuickMessageInterrupts.add(message.eventId);
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _acknowledgingQuickMessageId = null);
+      _showMessage('Could not acknowledge ${message.label}: $error');
+    }
   }
 
   Future<void> _triggerEmergencyAlert() async {
@@ -4985,7 +5185,7 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
                     onPressed: _sending
                         ? null
                         : () => unawaited(_selectIssue(message)),
-                    icon: Icon(_iconForIssue(message), size: 18),
+                    icon: Icon(quickMessageIcon(message), size: 18),
                     label: Text(message.label),
                   ),
               ],
@@ -5009,14 +5209,6 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
       ),
     );
   }
-
-  IconData _iconForIssue(QuickMessage message) => switch (message) {
-    QuickMessage.mechanical => Icons.build_outlined,
-    QuickMessage.assistance => Icons.volunteer_activism_outlined,
-    QuickMessage.routeBlocked => Icons.block_outlined,
-    QuickMessage.fuel => Icons.local_gas_station_outlined,
-    _ => Icons.info_outline,
-  };
 }
 
 class _GroupMiniMap extends StatefulWidget {
@@ -6634,6 +6826,390 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The icon for a received quick message.
+///
+/// Shared with `_EmergencyActionsSheet`'s picker so the kind a rider chose to
+/// send and the kind another rider is shown are the same symbol on both phones.
+IconData quickMessageIcon(QuickMessage? message) => switch (message) {
+  QuickMessage.mechanical => Icons.build_outlined,
+  QuickMessage.assistance => Icons.volunteer_activism_outlined,
+  QuickMessage.routeBlocked => Icons.block_outlined,
+  QuickMessage.fuel => Icons.local_gas_station_outlined,
+  QuickMessage.stopped => Icons.pan_tool_outlined,
+  QuickMessage.emergencyStop => Icons.emergency_outlined,
+  QuickMessage.allPassed => Icons.done_all_rounded,
+  QuickMessage.resolved => Icons.task_alt_rounded,
+  // A kind only a newer build knows. The sender's own label still reads, so the
+  // row says what they said with a neutral symbol rather than nothing at all.
+  null => Icons.campaign_outlined,
+};
+
+/// How long ago a message was raised, in the shortest honest form.
+String _quickMessageAge(DateTime raisedAt, DateTime now) {
+  final age = now.difference(raisedAt);
+  if (age.inSeconds < 45) return 'just now';
+  if (age.inMinutes < 60) return '${age.inMinutes} min ago';
+  return '${age.inHours} h ago';
+}
+
+/// Where the sender is, as a rider on a mount can read it in one glance.
+///
+/// Two forms, and never a third: "1.2 mi back" along the route, or "400 m NE"
+/// when a route distance would be a number that means nothing. Says so plainly
+/// when the sender has never reported a position, rather than showing a zero.
+String describeQuickMessageOrigin(
+  QuickMessageOrigin? origin,
+  DistanceUnit unit,
+) {
+  if (origin == null) return 'position not reported';
+  final distance = MeasurementFormatter(unit).distance(origin.distanceMeters);
+  if (origin.alongRoute) {
+    if (origin.distanceMeters < 40) return 'right here';
+    return origin.senderIsBehind == true ? '$distance back' : '$distance ahead';
+  }
+  final compass = origin.compassLabel;
+  return compass == null ? distance : '$distance $compass';
+}
+
+/// One received quick message, in the bottom band, until it is acknowledged.
+///
+/// The row a rider who glances away must not lose. It is the whole reason a
+/// transient interrupt is not enough on its own: the interrupt says something
+/// happened, this says what, who, when, where, and gives the rider the one
+/// action that ends it.
+///
+/// Its footprint is a function of the rail it sits in, never of its own text, so
+/// it cannot resize or reflow the targets below it (#142) - the rail is a
+/// bottom-anchored [Column] of fixed width, so this grows the band upwards and
+/// the action row does not move at all.
+class _QuickMessageAlertCard extends StatelessWidget {
+  const _QuickMessageAlertCard({
+    required this.alert,
+    required this.compact,
+    required this.distanceUnit,
+    required this.outstandingCount,
+    required this.acknowledging,
+    required this.onAcknowledge,
+    required this.onDismissReceipt,
+  });
+
+  final RideQuickMessageAlert alert;
+  final bool compact;
+  final DistanceUnit distanceUnit;
+
+  /// How many other riders' messages are outstanding, including this one.
+  final int outstandingCount;
+  final bool acknowledging;
+  final VoidCallback? onAcknowledge;
+  final VoidCallback onDismissReceipt;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = alert.message;
+    final receipt = message.raisedFromLocalRider;
+    // Critical takes the off-course banner's red, which #133 measured at 5.65:1
+    // for white body text - the same ink on the same fill, so no new colour has
+    // to be argued for. Everything else takes the panel the paused banner and
+    // REPORT already use, with the accent carrying the urgency instead of the
+    // fill: a routine "Need fuel" must read as information, not as an emergency.
+    final critical = message.interrupts && !receipt;
+    final fill = critical ? const Color(0xFFC42741) : const Color(0xF21C2530);
+    final accent = critical
+        ? Colors.white
+        : receipt
+        ? const Color(0xFF6ED89A)
+        : message.isPressing
+        ? const Color(0xFFFFC857)
+        : const Color(0xFF8FC4F5);
+    final headline = receipt
+        // Reads correctly whatever the label says: "saw your need fuel alert"
+        // does not, and a label can come from a build this one does not know.
+        ? '${message.firstAcknowledgement?.displayName ?? 'A rider'} saw: '
+              '${message.label}'
+        : message.headline;
+    final detail = receipt
+        ? _quickMessageAge(
+            message.firstAcknowledgement?.acknowledgedAt ?? message.raisedAt,
+            DateTime.now(),
+          )
+        : '${describeQuickMessageOrigin(alert.origin, distanceUnit)} · '
+              '${_quickMessageAge(message.raisedAt, DateTime.now())}';
+    final action = receipt
+        ? _QuickMessageActionButton(
+            key: const Key('quick-message-receipt-dismiss'),
+            label: 'OK',
+            onPressed: onDismissReceipt,
+            emphasised: false,
+          )
+        // An embedder with nowhere to record an acknowledgement gets no target
+        // rather than a dead one, and the row still says who needs what.
+        : onAcknowledge == null
+        ? null
+        : _QuickMessageActionButton(
+            key: const Key('quick-message-acknowledge'),
+            label: 'SEEN',
+            busy: acknowledging,
+            onPressed: acknowledging ? null : onAcknowledge,
+            emphasised: critical,
+          );
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: '$headline. $detail.',
+      child: Card(
+        key: const Key('quick-message-alert'),
+        color: fill,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: critical
+              ? BorderSide.none
+              : BorderSide(color: accent.withValues(alpha: 0.6)),
+        ),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 8 : 12,
+            vertical: compact ? 6 : 8,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                receipt
+                    ? Icons.visibility_rounded
+                    : quickMessageIcon(message.message),
+                color: accent,
+                size: compact ? 22 : 26,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      headline,
+                      key: const Key('quick-message-headline'),
+                      // Two lines are free: the row's height is set by the
+                      // glove-sized target beside it, not by the sentence.
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: compact ? 14 : 16,
+                        height: 1.15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      outstandingCount > 1 && !receipt
+                          ? '$detail · +${outstandingCount - 1} more'
+                          : detail,
+                      key: const Key('quick-message-detail'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: const Color(0xFFE4E9EF),
+                        fontSize: compact ? 12 : 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (action != null) ...[const SizedBox(width: 10), action],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A glove-sized target on a status card.
+///
+/// Fixed width in every state so a busy spinner replacing the word cannot change
+/// what the card occupies, the same contract `_ActionLabel` keeps for the action
+/// row (#142).
+class _QuickMessageActionButton extends StatelessWidget {
+  const _QuickMessageActionButton({
+    super.key,
+    required this.label,
+    required this.onPressed,
+    required this.emphasised,
+    this.busy = false,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final bool emphasised;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: emphasised ? Colors.white : const Color(0xFF3B4757),
+    borderRadius: BorderRadius.circular(12),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: onPressed,
+      child: SizedBox(
+        width: 72,
+        height: 48,
+        child: Center(
+          child: busy
+              ? SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: emphasised ? const Color(0xFFC42741) : Colors.white,
+                  ),
+                )
+              : Text(
+                  label,
+                  style: TextStyle(
+                    color: emphasised
+                        ? const Color(0xFFC42741)
+                        : const Color(0xFFF2F5F8),
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// The transient interrupt for a critical quick message.
+///
+/// Reserved for the critical band - an emergency stop or a rider asking for help
+/// - because #104 allows a genuinely urgent alert to interrupt provided it is
+/// transient and dismissible without fine interaction. Closing it leaves the
+/// persistent row in the band, so nothing is lost either way, and acknowledging
+/// from here is one large target: the rider who has just been interrupted should
+/// not have to find a second control to answer.
+class _QuickMessageInterruptOverlay extends StatelessWidget {
+  const _QuickMessageInterruptOverlay({
+    required this.alert,
+    required this.distanceUnit,
+    required this.acknowledging,
+    required this.onAcknowledge,
+    required this.onDismiss,
+  });
+
+  final RideQuickMessageAlert alert;
+  final DistanceUnit distanceUnit;
+  final bool acknowledging;
+  final VoidCallback? onAcknowledge;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = alert.message;
+    final origin = describeQuickMessageOrigin(alert.origin, distanceUnit);
+    return Semantics(
+      key: const Key('quick-message-interrupt'),
+      container: true,
+      liveRegion: true,
+      label: '${message.headline}, $origin.',
+      child: GestureDetector(
+        onTap: onDismiss,
+        behavior: HitTestBehavior.opaque,
+        child: ColoredBox(
+          // Fully opaque, like the enforcement warning: anything showing through
+          // competes with the alert at the moment the rider has least attention
+          // to spare.
+          color: const Color(0xFF7A0E1E),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    quickMessageIcon(message.message),
+                    size: 64,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(height: 10),
+                  FittedBox(
+                    child: Text(
+                      message.headline.toUpperCase(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 40,
+                        height: 1.05,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FittedBox(
+                    child: Text(
+                      origin.toUpperCase(),
+                      key: const Key('quick-message-interrupt-origin'),
+                      style: const TextStyle(
+                        // Secondary to the headline, unlike the enforcement
+                        // warning where the distance *is* the actionable number.
+                        // Here who and what outrank how far.
+                        color: Color(0xF2FFFFFF),
+                        fontSize: 30,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  if (onAcknowledge != null)
+                    SizedBox(
+                      height: 62,
+                      width: 240,
+                      child: FilledButton(
+                        key: const Key('quick-message-interrupt-acknowledge'),
+                        onPressed: acknowledging ? null : onAcknowledge,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xFF7A0E1E),
+                        ),
+                        child: acknowledging
+                            ? const SizedBox.square(
+                                dimension: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF7A0E1E),
+                                ),
+                              )
+                            : const Text(
+                                'I HAVE SEEN THIS',
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'TAP ANYWHERE TO DISMISS',
+                    style: TextStyle(
+                      color: Color(0x99FFFFFF),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

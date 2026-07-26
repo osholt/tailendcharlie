@@ -720,6 +720,11 @@ class _EventRow extends StatelessWidget {
       RideEventType.markerStarted => 'Marker started',
       RideEventType.markerPass => 'Rider passed marker',
       RideEventType.markerEnded => 'Marker finished',
+      // Also the acknowledgement of another rider's message, which is a
+      // `statusMessage` carrying `acknowledgesQuickMessageEventId` and the label
+      // "Seen: <what they raised>" (#151). One row either way: the log records
+      // what went into the journal, and the ride surface is where a rider is
+      // actually told (`_QuickMessageAlertCard` in the map).
       RideEventType.statusMessage =>
         event.payload['label'] as String? ?? 'Status message',
       RideEventType.riderLocationUpdated => 'Location updated',

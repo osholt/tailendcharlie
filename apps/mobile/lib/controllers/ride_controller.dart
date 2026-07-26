@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import '../domain/event_store.dart';
+import '../domain/geo_point.dart' as awareness_geo;
 import '../domain/ice_share.dart';
 import '../domain/imported_route.dart';
 import '../domain/completed_ride_store.dart';
@@ -26,6 +27,7 @@ import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
 import '../services/ride_lifecycle.dart';
 import '../services/ride_membership.dart';
+import '../services/received_quick_message.dart';
 import '../services/ride_route_reducer.dart';
 import '../services/rejoin_route_share.dart';
 import '../services/situation_event_factory.dart';
@@ -788,11 +790,22 @@ class RideController extends ChangeNotifier {
     return _errorMessage == null;
   }
 
+  /// Raises a quick message into the ride.
+  ///
+  /// [position] is where the sender is standing. It is relayed with the message
+  /// because "Bill needs fuel" is not actionable without "1.2 miles back"
+  /// (#151), and because a stopped rider's own location events age out of the
+  /// 30-minute retention band while the message itself lives for two hours.
+  /// [senderDisplayName] comes from the session for the same reason
+  /// `iceInfoShared` carries it: the recipient may not have this rider in their
+  /// roster yet.
   Future<void> sendQuickMessage(
     QuickMessage message, {
     Iterable<String> recipientRiderIds = const [],
+    awareness_geo.GeoPoint? position,
   }) async {
     await _run(() async {
+      final activeSession = _requireSession();
       final recipients = recipientRiderIds.toSet().toList(growable: false);
       await _record(
         type: RideEventType.statusMessage,
@@ -801,7 +814,56 @@ class RideController extends ChangeNotifier {
         payload: {
           'message': message.name,
           'label': message.label,
+          'senderDisplayName': activeSession.displayName,
+          if (position != null) 'position': position.toJson(),
           if (recipients.isNotEmpty) 'recipientRiderIds': recipients,
+        },
+      );
+    });
+  }
+
+  /// Quick messages this phone should be presenting, most urgent first.
+  ///
+  /// Includes this rider's own outstanding messages, so a sender can be shown
+  /// that theirs was seen — the whole point of raising one. Callers separate the
+  /// two on [ReceivedQuickMessage.raisedFromLocalRider].
+  List<ReceivedQuickMessage> get quickMessages {
+    final activeSession = _session;
+    if (activeSession == null) return const [];
+    return const ReceivedQuickMessageReducer().fromEvents(
+      rideId: activeSession.rideId,
+      inviteSecret: activeSession.inviteSecret,
+      events: _events,
+      localRiderId: activeSession.localRiderId,
+      now: _clock(),
+      displayNames: {
+        for (final participant in participants)
+          participant.riderId: participant.displayName,
+      },
+      departedRiderIds: participants
+          .where((participant) => !participant.isIncludedInLiveCount)
+          .map((participant) => participant.riderId),
+      rideEnded: rideEnded,
+    );
+  }
+
+  /// Records that this rider has seen [message], so its sender is told.
+  ///
+  /// A no-op when already recorded, the same guard [markIceInfoViewed] keeps: a
+  /// second tap must not put a second acknowledgement into the journal.
+  Future<void> acknowledgeQuickMessage(ReceivedQuickMessage message) async {
+    final localId = _session?.localRiderId;
+    if (localId == null || message.acknowledgedBy(localId)) return;
+    await _run(() async {
+      await _record(
+        type: RideEventType.statusMessage,
+        priority: EventPriority.important,
+        expiresAt: _clock().add(const Duration(hours: 2)),
+        payload: {
+          ...ReceivedQuickMessageReducer.acknowledgementPayload(
+            message: message,
+          ),
+          'senderDisplayName': _requireSession().displayName,
         },
       );
     });

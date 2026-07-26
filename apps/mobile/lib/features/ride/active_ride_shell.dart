@@ -55,6 +55,7 @@ import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/native_push_token_source.dart';
+import '../../services/received_quick_message.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
@@ -159,6 +160,64 @@ RouteStore? activeRideMapStoreWhenReady({
 }) {
   if (initializing) return null;
   return isSimulation ? simulationRouteStore : rideRouteStore;
+}
+
+/// What the ride map should present of the quick messages in the journal, and
+/// the most urgent one per sender so their marker can say what they raised.
+///
+/// [ReceivedQuickMessageReducer] decides what is admissible; this decides what
+/// is still *this rider's* to act on, and works out where each sender is:
+///
+/// * another rider's message stays until this phone acknowledges it, so a rider
+///   who glances away cannot lose it;
+/// * this rider's own message appears only once somebody has acknowledged it,
+///   as a receipt — nobody needs their own alert read back to them;
+/// * the sender's **live** fix is preferred, because where they are now is what
+///   a leader turning round needs, falling back to the fix relayed with the
+///   message. A rider stopped for fuel is not moving, and their location events
+///   age out of the 30-minute retention band long before the two-hour message
+///   does, so the relayed fix is what outlasts them.
+///
+/// Extracted so the decision a two-device test exercises is testable without
+/// two devices (#151).
+@visibleForTesting
+({
+  List<RideQuickMessageAlert> alerts,
+  Map<String, ReceivedQuickMessage> bySender,
+})
+presentableQuickMessageAlerts({
+  required Iterable<ReceivedQuickMessage> messages,
+  required String localRiderId,
+  required awareness_geo.GeoPoint? readerPosition,
+  Map<String, awareness_geo.GeoPoint> livePositions = const {},
+  List<awareness_geo.GeoPoint> route = const [],
+}) {
+  final alerts = <RideQuickMessageAlert>[];
+  final bySender = <String, ReceivedQuickMessage>{};
+  for (final message in messages) {
+    if (message.raisedFromLocalRider) {
+      if (!message.isAcknowledged) continue;
+    } else {
+      if (message.acknowledgedBy(localRiderId)) continue;
+      bySender.putIfAbsent(message.senderRiderId, () => message);
+    }
+    final live = livePositions[message.senderRiderId];
+    alerts.add(
+      RideQuickMessageAlert(
+        message: message,
+        origin: QuickMessageOrigin.between(
+          readerPosition: readerPosition,
+          senderPosition: live ?? message.raisedAtPosition,
+          route: route,
+          positionIsLive: live != null,
+        ),
+      ),
+    );
+  }
+  return (
+    alerts: List.unmodifiable(alerts),
+    bySender: Map.unmodifiable(bySender),
+  );
 }
 
 /// Riders holding the Tail End Charlie role right now.
@@ -567,6 +626,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
   final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
   final _enforcementAlert = ValueNotifier<EnforcementAlert?>(null);
+
+  /// Quick messages the ride map should be presenting, most urgent first (#151).
+  ///
+  /// Already filtered to what this rider still has to act on: another rider's
+  /// message drops out the moment this phone acknowledges it, and this rider's
+  /// own message only appears once somebody has acknowledged it, as a receipt.
+  final _quickMessageAlerts = ValueNotifier<List<RideQuickMessageAlert>>(
+    const [],
+  );
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -1674,6 +1742,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       _updateRiderTrails(awareness);
     }
 
+    // Issue #151. Resolved before the markers are built, because the rider who
+    // raised something is the rider whose marker has to say so.
+    final quickMessagesBySender = _refreshQuickMessageAlerts(
+      localLocation: localLocation,
+      visibleRiderLocations: visibleRiderLocations,
+      route: awareness.route,
+    );
     final overlays = <MapOverlayMarker>[
       ...awareness.activeHazards.map(
         (hazard) => MapOverlayMarker(
@@ -1741,7 +1816,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 freshnessByRider[location.riderId]?.freshnessLabel ??
                     freshness.label,
             };
-            final roleSuffix = needsAttention
+            // Issue #151's map companion, kept deliberately minimal: the rider
+            // who raised something already has a marker, so it says what they
+            // raised and takes the alert colour rather than a second symbol
+            // being invented beside it. #135 owns the hazard and enforcement
+            // symbol language and has not landed, and a dedicated quick-message
+            // pin should share whatever it establishes rather than pre-empt it.
+            final raised = quickMessagesBySender[location.riderId];
+            final roleSuffix = raised != null
+                ? raised.label
+                : needsAttention
                 ? 'check route'
                 : isTec
                 ? 'TEC'
@@ -1753,7 +1837,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               ?roleSuffix,
               ?ageSuffix,
             ].join(' · ');
-            final baseColor = needsAttention
+            final baseColor = raised != null
+                ? (raised.interrupts ? alertColor : const Color(0xFFFFC857))
+                : needsAttention
                 ? alertColor
                 : isTec
                 ? tailEndCharlieColor
@@ -1822,6 +1908,47 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       _leaderStatus.value = null;
     }
     _updateSharedRejoinTraces();
+  }
+
+  /// Publishes the quick messages the ride map has to present, and returns the
+  /// most urgent one per sender so their marker can say what they raised.
+  ///
+  /// The reducer decides what is admissible; this decides what is still *this
+  /// rider's* to act on, and works out where each sender is. Two position
+  /// sources, in that order:
+  ///
+  /// * the sender's live fix, when they are still reporting one — where they are
+  ///   now is what a leader turning round needs;
+  /// * otherwise the fix relayed with the message, which is where they were when
+  ///   they raised it. A rider stopped for fuel is not moving, and their location
+  ///   events age out of the 30-minute band long before the message does.
+  Map<String, ReceivedQuickMessage> _refreshQuickMessageAlerts({
+    required RiderLocation? localLocation,
+    required List<RiderLocation> visibleRiderLocations,
+    required List<awareness_geo.GeoPoint> route,
+  }) {
+    final localRiderId = widget.rideController.session?.localRiderId;
+    if (localRiderId == null) {
+      _quickMessageAlerts.value = const [];
+      return const {};
+    }
+    final presented = presentableQuickMessageAlerts(
+      messages: widget.rideController.quickMessages,
+      localRiderId: localRiderId,
+      readerPosition: localLocation?.sample.position,
+      livePositions: {
+        for (final location in visibleRiderLocations)
+          location.riderId: location.sample.position,
+      },
+      route: route,
+    );
+    _quickMessageAlerts.value = presented.alerts;
+    return presented.bySender;
+  }
+
+  Future<void> _acknowledgeQuickMessage(ReceivedQuickMessage message) async {
+    await widget.rideController.acknowledgeQuickMessage(message);
+    _updateMapOverlays(updateNavigationPosition: false);
   }
 
   Set<String> get _registeredTecRiderIds => registeredTecRiderIds(
@@ -2602,6 +2729,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onOpenRoster: _openRoster,
       junctionMarkerOverlay: _junctionMarkerOverlay,
       enforcementAlert: _enforcementAlert,
+      quickMessageAlerts: _quickMessageAlerts,
+      onAcknowledgeQuickMessage: _acknowledgeQuickMessage,
       onReportHazard: _awarenessController == null
           ? null
           : _reportHazardFromMap,
@@ -2716,14 +2845,26 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     await widget.rideController.sendQuickMessage(
       message,
       recipientRiderIds: recipients,
+      // Where the rider is standing, relayed with the message: "Bill needs fuel"
+      // is not actionable without "1.2 miles back" (#151).
+      position: _localQuickMessagePosition,
     );
     await _recordLocalObserverQuickMessage(message);
   }
 
   Future<void> _sendLocalQuickMessage(QuickMessage message) async {
-    await widget.rideController.sendQuickMessage(message);
+    await widget.rideController.sendQuickMessage(
+      message,
+      position: _localQuickMessagePosition,
+    );
     await _recordLocalObserverQuickMessage(message);
   }
+
+  /// The best fix this phone has for itself, journal-first and falling back to
+  /// the foreground sample a pre-movement rider has but has not yet recorded.
+  awareness_geo.GeoPoint? get _localQuickMessagePosition =>
+      _awarenessController?.localLocation?.sample.position ??
+      _locationController?.activeSample?.position;
 
   Future<void> _recordLocalObserverQuickMessage(QuickMessage message) async {
     if (message == QuickMessage.assistance ||
@@ -3500,6 +3641,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _mapNavigationPosition.dispose();
     _mapOverlays.dispose();
     _riderTrails.dispose();
+    _quickMessageAlerts.dispose();
     _leaderStatus.dispose();
     _junctionMarkerOverlay.dispose();
     _enforcementAlert.dispose();
