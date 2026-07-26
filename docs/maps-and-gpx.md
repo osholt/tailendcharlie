@@ -400,6 +400,40 @@ dropped:
 
 ![Roundabout right exit gap](images/roundabout-right-exit-gap.png)
 
+### The ride action row keeps its footprint
+
+Each of SOS, LEAVE and REPORT reserves the space its **widest state** needs up
+front, so a state change can never alter what a control occupies (#142). The
+label sits in a slot sized for the longest string it can ever show and the icon
+in a fixed 24 px square - an in-flight spinner is 20 px where a Material icon is
+24, which used to narrow SOS before its label had even changed. There is no
+`Wrap`: a `Wrap` decides its runs from its children's measured widths, which is
+how "ALERT SENT" pushed REPORT onto a run of its own the moment a rider raised an
+alert.
+
+The arrangement is a function of orientation alone. Portrait stacks SOS over
+LEAVE with REPORT alongside; landscape puts all three across one row, which is
+what fits a 280 px rail on the narrower evaluation phone and what keeps the rail
+short enough for an urgent banner to stay clear of the upper band #104 reserves
+for the road ahead. Landscape buys that width from the two labels rather than
+from REPORT's 62 px square, and every target stays at least 48 px in both
+dimensions.
+
+Rendered with a real font loaded, idle and after the alert is sent. Nothing moves
+but the word:
+
+![Ride actions, portrait, idle](images/ride-actions-portrait-idle.png)
+
+![Ride actions, portrait, alert sent](images/ride-actions-portrait-alert-sent.png)
+
+![Ride actions, landscape, idle](images/ride-actions-landscape-idle.png)
+
+![Ride actions, landscape, alert sent](images/ride-actions-landscape-alert-sent.png)
+
+`ride_map_feature_test.dart` asserts the three rects are identical across idle,
+in-flight and sent, in both orientations, that the arrangement is unchanged, and
+that every target stays glove-sized.
+
 ### Lane guidance and the manoeuvre list
 
 Lanes come from the engine's `intersections[].lanes`. Usable lanes are marked by
