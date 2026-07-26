@@ -103,17 +103,50 @@ shortest angular path, so crossing north rotates the short way.
 
 ### Overlay placement
 
-No persistent status surface is anchored to the top of the map: the upper band
+No persistent *status* surface is anchored to the top of the map: the upper band
 is where a rider on a mounted phone reads the road ahead. Portrait stacks every
 surface into one bottom-anchored band — urgent alerts, then the turn banner,
-then the TEC gap and group overview, then the action targets nearest the thumb.
-Landscape splits them into a bottom-left rail (turn banner, status, actions) and
-a bottom-right rail (group overview, speed limit, junction marker card), leaving
-the centre column and the upper viewport clear. Each rail is a single column, so
-placement stays deterministic and no surface can cover another at any
-simultaneous overlay count. Urgent alerts still interrupt, but they grow the
-band upwards rather than claiming the top band. Safe-area insets are respected
-in both orientations, with or without the app bar.
+then the TEC gap and group overview, then one action row of glove-sized targets
+nearest the thumb, then the speed sign hard right. Landscape splits them into a
+bottom-left rail (turn banner, status, actions) and a bottom-right rail (group
+overview, speed limit, junction marker card), leaving the centre column and the
+upper viewport clear. Each rail is a single column, so placement stays
+deterministic and no surface can cover another at any simultaneous overlay
+count. Urgent alerts still interrupt, but they grow the band upwards rather than
+claiming the top band. Safe-area insets are respected in both orientations, with
+or without the app bar.
+
+The **ride menu is the one exception**, in the top leading corner in both
+orientations: a single small control that a rider reaches for by feel and that
+obstructs nothing, rather than a status surface competing with the road. Nothing
+else is allowed up there.
+
+SOS, LEAVE and REPORT share one row. REPORT used to own a row of its own above
+the speed sign, which in portrait made four stacked rows below the turn banner
+and in landscape put it high in the left rail. Landscape tightens only the label
+padding on the two extended targets, never their height, so all three fit one
+run of a 42%-width rail: wrapping one onto a second run pushed an urgent banner
+off the top of a 390-pixel-tall screen.
+
+**Re-centre ("Follow me") is a recovery affordance, not chrome.** It appears when
+the rider has taken the camera over with a pan, a pinch or a route fit, or when
+there is no fix to follow yet, and it disappears the moment following resumes.
+The flag behind it is deliberately separate from the automatic-follow
+suppression, which clears as soon as the bike stops: the button has to survive
+stopping, because a rider who panned and then pulled over is exactly who needs
+it.
+
+The band the camera measures is the band a test measures: the portrait rail
+carries `portraitBottomChromeKey`, so the `bottomChromeFraction` below is
+asserted against the real layout rather than a sum of assumed overlay heights.
+Decluttering it moved a 390x844 portrait band from 431 to 342 logical pixels in
+ordinary riding — a turn banner, the action row and the speed sign — which takes
+the rider's viewport fraction from a clamped 0.429 to 0.535 and flips the
+forward bias from 60 pixels *behind* the bike to 29 ahead of it. At the absolute
+maximum overlay count the band fell from 683 to 594 pixels; that case still
+clamps to the 0.35 floor, because a paused-ride banner, an off-course alert, a
+turn banner with lane guidance, the TEC gap and the group overview all live at
+once, and shortening those belongs to the issues that own them.
 
 Landscape navigation also shows a compact group overview above the primary
 turn-by-turn map. It uses a second, throttled view of the configured MapLibre
@@ -275,16 +308,49 @@ or self-hosted proxy before scale testing. OSRM uses the driving profile, so it
 produces road-following routes but does not claim Calimoto-style motorcycle or
 curvy-road optimization.
 
-## Optional mapped speed-limit display
+## Mapped speed-limit display
 
-The map, map menu and Settings screen contain an opt-in UK speed-limit display.
-It is off by default. While it is off, a compact `Limits off` map control opens
-the location-data explanation before enabling the layer. When enabled, the app
-submits the current and a recent prior foreground GPS fix to a Valhalla
-`trace_attributes` endpoint no more often than every 15 seconds and after at
-least 25 metres of movement. It rejects fixes outside the UK, fixes with worse
-than 50-metre accuracy, distant road matches, and matches whose direction
-conflicts with travel.
+The map, map menu and Settings screen carry a UK speed-limit display. **It is on
+by default, and an explicit opt-out is respected.** The preference is only ever
+written by a rider toggling it, so an absent key means "never chose" and takes
+the default while a stored `false` stays off across an upgrade. A rider who has
+turned it off sees the compact `Limits off` map control, which opens the
+location-data explanation before re-enabling the layer.
+
+**A road is resolved from the current position, not from movement.** The first
+fix after the feature is enabled triggers a lookup immediately; the earlier
+`waitingForMovement` entry state is retired, because withholding the readout
+until the bike moved made a working feature look broken and was the reason the
+field report saw `0` and `MOVE TO IDENTIFY ROAD` on a stationary phone.
+
+The caution the delay was reaching for is now a confidence test rather than a
+blanket wait:
+
+- A **travelled** trace — two fixes at least 4 metres apart — is sent as two
+  shape points. It tolerates up to 50-metre accuracy and a 40-metre road match,
+  because the travel heading has to agree with the matched road's heading to
+  within 50°. That is what separates the two carriageways of a dual
+  carriageway, and it is the one case where movement genuinely helps.
+- A **stationary** fix is sent as a single shape point and is treated as having
+  no heading *whatever course the platform reports*, for the same reason
+  `NavigationHeadingSmoother` refuses a course below 1.5 m/s: a stationary GPS
+  course is noise. It is held instead to 25-metre accuracy and an 18-metre match,
+  because there is no direction to corroborate the snap with, so the snap itself
+  has to be convincing. A road the rider is probably not on is reported as
+  unmatched rather than guessed at: a wrong limit is worse than an absent one.
+
+Ambiguity is stated, not hidden. Poor accuracy or an uncertain match resolves to
+`unconfirmedRoad` — named for the condition, not for a wait — which shows `GPS
+accuracy too low` or `Road not confirmed` and is retried where the rider stands
+every 5 seconds, or immediately once the bike moves. A settled negative (no
+mapped limit on this road, outside the UK) waits for the bike to move rather than
+re-asking about a spot that cannot change; an unreachable service is retried on
+the ordinary 15-second interval. Once a limit is known, rechecking still needs
+both 25 metres of travel and 15 seconds.
+
+Lookups are fed from the navigation fix rather than a bare position, because the
+confidence test is built on reported accuracy and heading and a position
+carrying neither cannot be tested at all.
 
 Only an OpenStreetMap `maxspeed` value reported by Valhalla as
 `speed_type=tagged` is displayed. A classified or inferred speed is deliberately
@@ -301,6 +367,14 @@ speed already used for the navigation camera, it is never sent anywhere, and it
 shows `–` when the platform reports no usable speed. Labels outside the white
 sign face are stroked as well as shadowed so they stay legible over both the
 day and night basemaps.
+
+There is **no caption under the readout**. A red-ringed UK sign above a plain
+number is already unambiguous, and the nine-point
+`MPH · MAPPED LIMIT · GPS SPEED` line cost glance time on a moving bike without
+adding meaning. Its wording was not lost: the badge's accessibility label and
+tooltip still say which number is the sign and which is the rider, that the
+limit is mapped rather than live, how stale it is, and — when there is no
+reading — which condition is holding it up.
 
 `PostedSpeedLimit.checkedAt` is the lookup time, not the age of the underlying
 OpenStreetMap tag. The provider does not expose a reliable source-update time,

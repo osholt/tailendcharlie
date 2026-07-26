@@ -8,7 +8,15 @@ import '../services/speed_limit.dart';
 
 enum SpeedLimitDisplayStatus {
   disabled,
-  waitingForMovement,
+
+  /// Enabled, but no road has been confidently matched to the current position.
+  ///
+  /// Named for the condition rather than for a wait: this is a junction, a car
+  /// park, a poor fix or parallel carriageways, and it resolves on the next
+  /// better fix or as soon as the bike moves. It replaced a blanket
+  /// wait-for-movement entry state, which made the feature look broken to a
+  /// stationary rider (#126).
+  unconfirmedRoad,
   checking,
   known,
   unavailable,
@@ -22,12 +30,36 @@ class SpeedLimitDisplayController extends ChangeNotifier {
     required this._clock,
   }) : _enabled = enabled,
        _status = enabled
-           ? SpeedLimitDisplayStatus.waitingForMovement
+           ? SpeedLimitDisplayStatus.unconfirmedRoad
            : SpeedLimitDisplayStatus.disabled;
 
   static const preferenceKey = 'posted-speed-limit-enabled-v1';
+
+  /// On unless the rider has said otherwise.
+  ///
+  /// The preference is only ever written by an explicit toggle, so an absent key
+  /// means "never chose" and takes this default, while a stored `false` is a
+  /// rider who turned it off and stays off across the upgrade (#126).
+  static const defaultEnabled = true;
+
+  /// Minimum gap between lookups once a road is settled.
   static const lookupInterval = Duration(seconds: 15);
+
+  /// How far the bike must travel before a settled limit is rechecked.
   static const minimumLookupMovementMeters = 25.0;
+
+  /// How soon an unconfirmed road is retried without moving.
+  ///
+  /// Short, because this is the state a stationary rider is looking at: the
+  /// honest low-confidence readout is meant to be brief, not the resting state.
+  static const unconfirmedRetryInterval = Duration(seconds: 5);
+
+  /// Movement that makes a two-fix trace worth sending.
+  ///
+  /// Below this the pair is GPS jitter rather than travel, so the lookup is sent
+  /// as the single current fix and the provider skips heading disambiguation
+  /// instead of disambiguating on noise.
+  static const minimumTraceMovementMeters = 4.0;
 
   static Future<SpeedLimitDisplayController> load({
     SpeedLimitProvider? provider,
@@ -41,14 +73,14 @@ class SpeedLimitDisplayController extends ChangeNotifier {
           ValhallaSpeedLimitProvider(
             configuration: ValhallaSpeedLimitConfiguration.fromEnvironment(),
           ),
-      enabled: preferences.getBool(preferenceKey) ?? false,
+      enabled: preferences.getBool(preferenceKey) ?? defaultEnabled,
       clock: clock ?? DateTime.now,
     );
   }
 
   factory SpeedLimitDisplayController.inMemory({
     SpeedLimitProvider provider = const UnavailableSpeedLimitProvider(),
-    bool enabled = false,
+    bool enabled = defaultEnabled,
     DateTime Function()? clock,
   }) => SpeedLimitDisplayController._(
     preferences: null,
@@ -86,9 +118,11 @@ class SpeedLimitDisplayController extends ChangeNotifier {
     _lastLookupLocation = null;
     _lastLookupAt = null;
     _status = value
-        ? SpeedLimitDisplayStatus.waitingForMovement
+        ? SpeedLimitDisplayStatus.unconfirmedRoad
         : SpeedLimitDisplayStatus.disabled;
     notifyListeners();
+    // Written on every explicit toggle, including off, so [defaultEnabled] can
+    // tell "never chose" from "chose no".
     await _preferences?.setBool(preferenceKey, value);
   }
 
@@ -98,26 +132,66 @@ class SpeedLimitDisplayController extends ChangeNotifier {
       return;
     }
     _previousLocation = location;
-    if (!_enabled) return;
-    if (previous == null) {
-      _lastLookupLocation = location;
+    if (!_enabled || _lookupLoop != null) return;
+
+    final anchor = _lastLookupLocation;
+    if (anchor == null) {
+      // Nothing has been looked up yet, so resolve the road the rider is
+      // standing on from this single fix. Requiring movement first was the whole
+      // reason the readout sat at a dash on a stationary bike (#126).
+      _beginLookup(previous: null, current: location, generation: _generation);
       return;
     }
-    final movement = _distanceMeters(previous, location);
-    if (movement < 4) return;
-    final now = _clock();
+
+    final travelled = _distanceMeters(anchor, location);
+    final moved = travelled >= minimumLookupMovementMeters;
+    if (!moved && !_retryWhileStationary) return;
+    final interval = moved ? lookupInterval : _stationaryRetryInterval;
     final lastLookupAt = _lastLookupAt;
-    final lookupAnchor = _lastLookupLocation ?? previous;
-    if (_distanceMeters(lookupAnchor, location) < minimumLookupMovementMeters ||
-        (lastLookupAt != null &&
-            now.difference(lastLookupAt) < lookupInterval)) {
+    if (lastLookupAt != null && _clock().difference(lastLookupAt) < interval) {
       return;
     }
-    if (_lookupLoop != null) return;
-    final loop = _lookup(
-      previous: lookupAnchor,
+    _beginLookup(
+      // Once the bike has genuinely moved, the previous lookup point gives the
+      // travel heading that separates parallel carriageways - the one case where
+      // movement really does help. Stationary, there is no heading to give and
+      // the provider tightens its match test instead of inventing one.
+      previous: travelled >= minimumTraceMovementMeters ? anchor : null,
       current: location,
       generation: _generation,
+    );
+  }
+
+  /// Whether a stationary rider is still owed another attempt.
+  ///
+  /// An unconfirmed road resolves on a better fix and an unreachable service
+  /// recovers on its own, so both keep trying where they stand. A road with no
+  /// mapped limit, or a position outside the supported region, cannot change
+  /// until the bike does.
+  bool get _retryWhileStationary => switch (_lastOutcome) {
+    null ||
+    SpeedLimitLookupOutcome.poorAccuracy ||
+    SpeedLimitLookupOutcome.poorMatch ||
+    SpeedLimitLookupOutcome.unavailable => true,
+    SpeedLimitLookupOutcome.known ||
+    SpeedLimitLookupOutcome.noTaggedLimit ||
+    SpeedLimitLookupOutcome.unsupportedRegion => false,
+  };
+
+  Duration get _stationaryRetryInterval =>
+      _status == SpeedLimitDisplayStatus.unconfirmedRoad
+      ? unconfirmedRetryInterval
+      : lookupInterval;
+
+  void _beginLookup({
+    required SpeedLimitLocation? previous,
+    required SpeedLimitLocation current,
+    required int generation,
+  }) {
+    final loop = _lookup(
+      previous: previous,
+      current: current,
+      generation: generation,
     );
     _lookupLoop = loop;
     unawaited(
@@ -128,7 +202,7 @@ class SpeedLimitDisplayController extends ChangeNotifier {
   }
 
   Future<void> _lookup({
-    required SpeedLimitLocation previous,
+    required SpeedLimitLocation? previous,
     required SpeedLimitLocation current,
     required int generation,
   }) async {
@@ -147,9 +221,22 @@ class SpeedLimitDisplayController extends ChangeNotifier {
     if (_disposed || !_enabled || generation != _generation) return;
     _lastOutcome = result.outcome;
     _limit = result.limit;
-    _status = result.limit == null
-        ? SpeedLimitDisplayStatus.unavailable
-        : SpeedLimitDisplayStatus.known;
+    _status = switch (result.outcome) {
+      SpeedLimitLookupOutcome.known when result.limit != null =>
+        SpeedLimitDisplayStatus.known,
+      // Say the road is not confirmed rather than silently withholding: these
+      // are the ambiguous cases, and they are expected to be brief (#126).
+      SpeedLimitLookupOutcome.known ||
+      SpeedLimitLookupOutcome.poorAccuracy ||
+      SpeedLimitLookupOutcome.poorMatch =>
+        SpeedLimitDisplayStatus.unconfirmedRoad,
+      // Settled negatives: this road carries no mapped limit, the position is
+      // outside the supported region, or the service did not answer.
+      SpeedLimitLookupOutcome.noTaggedLimit ||
+      SpeedLimitLookupOutcome.unsupportedRegion ||
+      SpeedLimitLookupOutcome.unavailable =>
+        SpeedLimitDisplayStatus.unavailable,
+    };
     notifyListeners();
   }
 
