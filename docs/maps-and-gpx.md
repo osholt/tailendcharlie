@@ -225,6 +225,33 @@ roundabouts, and adjacent ring steps within 25 m are treated as one gyratory.
   case: U-turn, merge, fork, slip road, arrival, or an explicit
   "follow the route" where the engine gave nothing to state.
 
+#### How the roundabout symbol is drawn
+
+The ring is drawn as arcs with a gap where each road meets it, and the exit
+leaves through its gap. A rider glances at one arrow, so the symbol carries
+exactly one: the exit. There is no separate arrow for the direction of flow —
+in the UK every roundabout flows clockwise, so it told a rider nothing they
+needed while competing with the arrow that mattered.
+
+- Driving side still shapes the ring: the arc from the road in round to the exit
+  is the part the rider rides and is drawn heaviest, so a first exit is a short
+  arc and a last exit is nearly the whole ring. Where the engine reported no
+  driving side, no part of the ring is claimed as the ridden one.
+- Where the exit turns so far back that it would be drawn along the road in, the
+  road in swings to the other side of straight back, so a turn back on itself
+  leaves as a V beside the road it came in on.
+- Every part is placed inside the symbol's own box at every exit angle, so no
+  arrowhead is lost to a clip in the banner or the all-turns list.
+- `RoundaboutSymbolGeometry` works the shape out before anything is painted, so
+  the ring gap and the single arrowhead are asserted rather than eyeballed.
+  `test/features/map/maneuver_symbol_painter_test.dart` also rasterises every
+  direction, both driving sides and the unstated case at each size the app
+  draws, over both basemap panels, into `build/maneuver-symbols/`.
+
+![Roundabout symbol matrix](images/roundabout-symbol-matrix.png)
+
+![Roundabout symbol at each size](images/roundabout-symbol-sizes.png)
+
 ### Lane guidance and the manoeuvre list
 
 Lanes come from the engine's `intersections[].lanes`. Usable lanes are marked by
