@@ -41,6 +41,8 @@ void main() {
           ref: 'A1',
           exitNumber: 3,
           drivingSide: 'left',
+          bearingBeforeDegrees: 91,
+          bearingAfterDegrees: 182,
           lanes: [
             RouteLane(indications: ['left'], valid: false),
             RouteLane(indications: ['straight', 'right'], valid: true),
@@ -62,7 +64,42 @@ void main() {
     expect(restored.maneuvers.single.name, 'High Street');
     expect(restored.maneuvers.single.exitNumber, 3);
     expect(restored.maneuvers.single.drivingSide, 'left');
+    expect(restored.maneuvers.single.bearingBeforeDegrees, 91);
+    expect(restored.maneuvers.single.bearingAfterDegrees, 182);
     expect(restored.maneuvers.single.lanes, hasLength(2));
     expect(restored.maneuvers.single.lanes.last.valid, isTrue);
+  });
+
+  test('a route saved before bearings existed still loads', () {
+    final restored = ImportedRoute.fromJson({
+      'schemaVersion': 1,
+      'id': 'legacy',
+      'name': 'Legacy route',
+      'importedAt': '2026-07-01T00:00:00.000Z',
+      'sourceFileName': 'legacy.gpx',
+      'paths': [
+        {
+          'kind': 'track',
+          'points': [
+            {'latitude': 53.1, 'longitude': -1.4},
+            {'latitude': 53.2, 'longitude': -1.5},
+          ],
+        },
+      ],
+      'waypoints': const [],
+      'maneuvers': [
+        {
+          'latitude': 53.2,
+          'longitude': -1.5,
+          'type': 'roundabout',
+          'modifier': 'slight left',
+          'exitNumber': 2,
+        },
+      ],
+    });
+
+    expect(restored.maneuvers.single.bearingBeforeDegrees, isNull);
+    expect(restored.maneuvers.single.bearingAfterDegrees, isNull);
+    expect(restored.maneuvers.single.exitNumber, 2);
   });
 }
