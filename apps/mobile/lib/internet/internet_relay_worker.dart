@@ -4,6 +4,7 @@ import 'dart:math';
 import '../domain/event_store.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_session.dart';
+import '../relay/live_presence.dart';
 import '../services/ride_event_authenticator.dart';
 import 'internet_cursor_store.dart';
 import 'internet_relay_client.dart';
@@ -28,6 +29,10 @@ class InternetRelayStatus {
     this.nextAttemptAt,
     this.pendingEventCount = 0,
     this.actionUrl,
+    this.quarantinedEventCount = 0,
+    this.ignoredEventCount = 0,
+    this.unsupportedUploadCount = 0,
+    this.limitations = const [],
   });
 
   const InternetRelayStatus.stopped()
@@ -40,8 +45,27 @@ class InternetRelayStatus {
   final String message;
   final DateTime? lastSuccessfulSync;
   final DateTime? nextAttemptAt;
+
+  /// Events still eligible to upload. Quarantined events are excluded so the
+  /// count cannot grow forever behind one refused event.
   final int pendingEventCount;
   final Uri? actionUrl;
+
+  /// Events the relay refused outright, set aside so the rest of the ride keeps
+  /// synchronizing. They stay in the durable journal.
+  final int quarantinedEventCount;
+
+  /// Downloaded events this build could not understand and skipped.
+  final int ignoredEventCount;
+
+  /// Events withheld because the relay does not advertise their capability.
+  final int unsupportedUploadCount;
+
+  /// Named, user-readable degradations. Never carries a hostname or raw error
+  /// text.
+  final List<PresenceLimitation> limitations;
+
+  bool get isDegraded => limitations.isNotEmpty;
 }
 
 class InternetRetryPolicy {
@@ -111,9 +135,30 @@ class InternetRelayWorker {
   int _generation = 0;
   RelayCompatibilityResult? _compatibility;
 
+  /// Events the relay refused outright. They stay in the durable journal but
+  /// are never re-offered, so one refused event cannot block the queue head
+  /// forever and hide every later join and position.
+  final Set<String> _quarantinedEventIds = {};
+
+  /// Set to 1 while isolating which event in a refused batch is at fault.
+  int? _uploadProbeSize;
+
+  /// Forces the next attempt to download only. Receiving must never be held
+  /// hostage to sending: upload and download share one request, so a rejected
+  /// upload otherwise discards the batch that would have revealed a new rider.
+  bool _downloadOnlyNextAttempt = false;
+  int _ignoredEventCount = 0;
+  int _unsupportedUploadCount = 0;
+
   InternetRelayStatus get status => _status;
   Stream<InternetRelayStatus> get statuses => _statusController.stream;
   Stream<RideEvent> get receivedEvents => _receivedEventController.stream;
+
+  /// The negotiated relay contract, once checked.
+  RelayCompatibilityResult? get compatibility => _compatibility;
+
+  /// Event IDs the relay refused and this worker stopped offering.
+  Set<String> get quarantinedEventIds => Set.unmodifiable(_quarantinedEventIds);
 
   Future<void> start(RideSession session) async {
     if (_closed) throw StateError('Internet relay worker is closed.');
@@ -122,6 +167,11 @@ class InternetRelayWorker {
     _status = const InternetRelayStatus.stopped();
     _failureCount = 0;
     _compatibility = null;
+    _quarantinedEventIds.clear();
+    _uploadProbeSize = null;
+    _downloadOnlyNextAttempt = false;
+    _ignoredEventCount = 0;
+    _unsupportedUploadCount = 0;
     final configurationError = _api.configuration.configurationError;
     if (configurationError != null) {
       _emit(
@@ -154,6 +204,8 @@ class InternetRelayWorker {
     _timer = null;
     _syncing = true;
     var nextDelay = _pollInterval;
+    var uploadLimit = 0;
+    var upload = const <RideEvent>[];
     try {
       if (_compatibility == null && _api is RelayCompatibilityApi) {
         final result = await (_api as RelayCompatibilityApi)
@@ -176,17 +228,34 @@ class InternetRelayWorker {
         }
       }
       final pending = await _eventStore.pendingEvents(session.rideId);
-      final upload = pending
+      final offerable = pending
+          .where((event) => !_quarantinedEventIds.contains(event.id))
+          .toList(growable: false);
+      _unsupportedUploadCount = offerable
+          .where((event) => !_serverSupportsEvent(event))
+          .length;
+      final downloadOnly = _downloadOnlyNextAttempt;
+      _downloadOnlyNextAttempt = false;
+      uploadLimit = downloadOnly
+          ? 0
+          : (_uploadProbeSize ?? _api.configuration.maximumUploadEvents);
+      upload = offerable
           .where(_serverSupportsEvent)
-          .take(_api.configuration.maximumUploadEvents)
+          .take(uploadLimit)
           .toList(growable: false);
       if (!_isCurrent(generation, session)) return;
       _emit(
         InternetRelayStatus(
           phase: InternetRelayPhase.syncing,
-          message: 'Synchronizing queued ride events',
+          message: downloadOnly
+              ? 'Receiving ride updates while a refused update is isolated'
+              : 'Synchronizing queued ride events',
           lastSuccessfulSync: _status.lastSuccessfulSync,
-          pendingEventCount: pending.length,
+          pendingEventCount: offerable.length,
+          quarantinedEventCount: _quarantinedEventIds.length,
+          ignoredEventCount: _ignoredEventCount,
+          unsupportedUploadCount: _unsupportedUploadCount,
+          limitations: _limitations(),
         ),
       );
       final knownEventIds = (await _eventStore.eventsForRide(
@@ -225,16 +294,28 @@ class InternetRelayWorker {
       await _cursorStore.save(session.rideId, result.cursor);
       if (!_isCurrent(generation, session)) return;
       _failureCount = 0;
-      final remaining = await _eventStore.pendingEvents(session.rideId);
+      // A download-only attempt proves nothing about the batch, so the probe
+      // survives it; otherwise the same refused batch would be offered again
+      // and the isolation would never converge.
+      if (upload.isNotEmpty) _uploadProbeSize = null;
+      _ignoredEventCount += result.ignoredEventCount;
+      final remaining = (await _eventStore.pendingEvents(session.rideId))
+          .where((event) => !_quarantinedEventIds.contains(event.id))
+          .toList(growable: false);
       _emit(
         InternetRelayStatus(
           phase: InternetRelayPhase.synced,
           message: 'Last server sync succeeded',
           lastSuccessfulSync: _clock(),
           pendingEventCount: remaining.length,
+          quarantinedEventCount: _quarantinedEventIds.length,
+          ignoredEventCount: _ignoredEventCount,
+          unsupportedUploadCount: _unsupportedUploadCount,
+          limitations: _limitations(),
         ),
       );
-      if (remaining.isNotEmpty && result.acceptedEventIds.isNotEmpty) {
+      if (remaining.isNotEmpty &&
+          (result.acceptedEventIds.isNotEmpty || uploadLimit == 0)) {
         nextDelay = Duration.zero;
       }
     } on InternetRelayException catch (error) {
@@ -257,7 +338,10 @@ class InternetRelayWorker {
               ? InternetRelayPhase.retrying
               : InternetRelayPhase.failed,
       };
-      if (!error.retryable) {
+      final isolating = _isolateRefusedUpload(error, upload);
+      if (isolating) {
+        nextDelay = Duration.zero;
+      } else if (!error.retryable) {
         nextDelay = const Duration(minutes: 1);
       }
       _emit(
@@ -265,24 +349,37 @@ class InternetRelayWorker {
           phase: phase,
           message: cursorExpired
               ? 'Refreshing the ride history after a relay update'
+              : isolating
+              ? 'The ride service refused an update; isolating it so the rest '
+                    'of the ride keeps synchronizing'
               : error.message,
           lastSuccessfulSync: _status.lastSuccessfulSync,
           nextAttemptAt: _clock().add(nextDelay),
           pendingEventCount: _status.pendingEventCount,
           actionUrl: error.actionUrl,
+          quarantinedEventCount: _quarantinedEventIds.length,
+          ignoredEventCount: _ignoredEventCount,
+          unsupportedUploadCount: _unsupportedUploadCount,
+          limitations: _limitations(),
         ),
       );
-    } on Object catch (error) {
+    } on Object {
       if (!_isCurrent(generation, session)) return;
       _failureCount += 1;
       nextDelay = _boundedRetryDelay(null);
       _emit(
         InternetRelayStatus(
           phase: InternetRelayPhase.retrying,
-          message: 'Internet relay is temporarily unavailable: $error',
+          // Deliberately not interpolated: a transport or TLS error can carry
+          // the relay hostname and port.
+          message: 'Internet relay is temporarily unavailable.',
           lastSuccessfulSync: _status.lastSuccessfulSync,
           nextAttemptAt: _clock().add(nextDelay),
           pendingEventCount: _status.pendingEventCount,
+          quarantinedEventCount: _quarantinedEventIds.length,
+          ignoredEventCount: _ignoredEventCount,
+          unsupportedUploadCount: _unsupportedUploadCount,
+          limitations: _limitations(),
         ),
       );
     } finally {
@@ -292,6 +389,43 @@ class InternetRelayWorker {
       }
     }
   }
+
+  /// Keeps one refused event from wedging the whole ride.
+  ///
+  /// Upload and download share a single request, so a rejected batch discards
+  /// the download that would have carried a join or a position. On a refusal
+  /// the next attempt downloads only, then narrows the batch to one event, and
+  /// finally quarantines the single offender. Returns true while isolating.
+  bool _isolateRefusedUpload(
+    InternetRelayException error,
+    List<RideEvent> upload,
+  ) {
+    if (upload.isEmpty || error.retryable || error.unauthorized) return false;
+    // A negotiation verdict is about the whole client, not one event.
+    if (error.code == 'update_required' ||
+        error.code == 'server_upgrade_required' ||
+        error.code == 'invalid_cursor' ||
+        error.code == 'temporarily_unavailable') {
+      return false;
+    }
+    _downloadOnlyNextAttempt = true;
+    if (upload.length == 1) {
+      _quarantinedEventIds.add(upload.single.id);
+      _uploadProbeSize = null;
+    } else {
+      _uploadProbeSize = 1;
+    }
+    return true;
+  }
+
+  List<PresenceLimitation> _limitations() => [
+    if (_quarantinedEventIds.isNotEmpty)
+      PresenceLimitation.uploadQuarantined(_quarantinedEventIds.length),
+    if (_unsupportedUploadCount > 0)
+      PresenceLimitation.uploadCapabilityMissing(_unsupportedUploadCount),
+    if (_ignoredEventCount > 0)
+      PresenceLimitation.unsupportedEventsIgnored(_ignoredEventCount),
+  ];
 
   Duration _boundedRetryDelay(Duration? serverDelay) {
     if (serverDelay != null) {

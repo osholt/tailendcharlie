@@ -16,7 +16,11 @@ class RouteProgressGeometry {
       progressMeters = 0,
       totalMeters = 0;
 
+  /// The planned route behind the rider. This is a split of the *plan*, not a
+  /// record of where anyone has been: it is route geometry the rider is deemed
+  /// to have covered. Travelled trails come from `RiderTrailRecorder`.
   final List<List<GeoPoint>> riddenPaths;
+
   final List<List<GeoPoint>> remainingPaths;
   final double progressMeters;
   final double totalMeters;
@@ -26,6 +30,12 @@ class RouteProgressGeometry {
 ///
 /// A stateful tracker avoids a closed loop's finish point being mistaken for
 /// completed progress while the rider is still at its coincident start point.
+///
+/// Progress deliberately stops advancing while the rider is further than
+/// [maximumTrackingDistanceMeters] from the route: there is no route to be
+/// progressed along out there. Nothing about drawing where a rider has been may
+/// depend on this class - that mistake is what removed a leader's trail at the
+/// moment they left the plan (#100).
 class RouteProgressTracker {
   RouteProgressTracker({this.maximumTrackingDistanceMeters = 150});
 

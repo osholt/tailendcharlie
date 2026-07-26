@@ -7,6 +7,7 @@ import 'package:ride_relay/domain/imported_route.dart' as route_domain;
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/services/geo_calculations.dart';
+import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_rejoin_planner.dart';
 
@@ -270,6 +271,7 @@ void main() {
         assessment: _offRoute(at: now, distance: 3336, since: start),
         plannedRoute: route,
         leaderPosition: const GeoPoint(latitude: 51, longitude: -0.9),
+        tecAvailability: TecAvailability.tracking,
         tecPosition: const GeoPoint(latitude: 51, longitude: -0.94),
       );
 
@@ -316,12 +318,50 @@ void main() {
         assessment: _offRoute(at: now, distance: 3336, since: start),
         plannedRoute: route,
         leaderPosition: const GeoPoint(latitude: 51, longitude: -0.92),
-        // A stale or wild TEC fix, further along the route than the leader.
+        // A wild TEC fix, further along the route than the leader.
+        tecAvailability: TecAvailability.tracking,
         tecPosition: const GeoPoint(latitude: 51, longitude: -0.88),
       );
 
       expect(plan.target, RouteRejoinTarget.leader);
       expect(routing.calls.single.last.longitude, closeTo(-0.92, 1e-9));
+    });
+
+    test('an unusable TEC falls back to the ride leader', () async {
+      final now = start.add(const Duration(minutes: 2));
+
+      for (final availability in [
+        // Nobody holds the role.
+        TecAvailability.none,
+        // Registered, but has never reported a position.
+        TecAvailability.awaitingLocation,
+        // Last reported too long ago to be trusted to say where they are.
+        TecAvailability.stale,
+      ]) {
+        final routing = _StubRouting();
+        final plan = await RouteRejoinPlanner(routingService: routing).update(
+          riderId: 'rider',
+          sample: _sample(51.03, -0.9, now),
+          assessment: _offRoute(at: now, distance: 3336, since: start),
+          plannedRoute: route,
+          leaderPosition: const GeoPoint(latitude: 51, longitude: -0.92),
+          tecAvailability: availability,
+          // A position is supplied even for the unusable states: the
+          // availability, not the presence of a fix, is what decides.
+          tecPosition: const GeoPoint(latitude: 51, longitude: -0.94),
+        );
+
+        expect(
+          plan.target,
+          RouteRejoinTarget.leader,
+          reason: availability.name,
+        );
+        expect(
+          routing.calls.single.last.longitude,
+          closeTo(-0.92, 1e-9),
+          reason: availability.name,
+        );
+      }
     });
 
     test('a rider following the leader is not routed at all', () async {
@@ -540,62 +580,6 @@ void main() {
         now: now,
       );
       expect(planner.routingCallCount, 2);
-    });
-  });
-
-  group('leader-track exemption', () {
-    final leaderTrack = [
-      for (var index = 0; index <= 10; index += 1)
-        GeoPoint(latitude: 52, longitude: -1 + index * 0.01),
-    ];
-
-    test('a rider inside the corridor is following the leader', () {
-      expect(
-        LeaderTrackExemption.isFollowingLeaderTrack(
-          position: const GeoPoint(latitude: 52.0005, longitude: -0.95),
-          leaderTrack: leaderTrack,
-        ),
-        isTrue,
-      );
-    });
-
-    test('a rider outside the corridor is not', () {
-      expect(
-        LeaderTrackExemption.isFollowingLeaderTrack(
-          position: const GeoPoint(latitude: 52.01, longitude: -0.95),
-          leaderTrack: leaderTrack,
-        ),
-        isFalse,
-      );
-    });
-
-    test('an uncertain fix gets the benefit of its own accuracy', () {
-      const justOutside = GeoPoint(latitude: 52.0015, longitude: -0.95);
-      expect(
-        LeaderTrackExemption.isFollowingLeaderTrack(
-          position: justOutside,
-          leaderTrack: leaderTrack,
-        ),
-        isFalse,
-      );
-      expect(
-        LeaderTrackExemption.isFollowingLeaderTrack(
-          position: justOutside,
-          leaderTrack: leaderTrack,
-          accuracyMeters: 75,
-        ),
-        isTrue,
-      );
-    });
-
-    test('a leader with no track yet exempts nobody', () {
-      expect(
-        LeaderTrackExemption.isFollowingLeaderTrack(
-          position: const GeoPoint(latitude: 52, longitude: -1),
-          leaderTrack: const [GeoPoint(latitude: 52, longitude: -1)],
-        ),
-        isFalse,
-      );
     });
   });
 

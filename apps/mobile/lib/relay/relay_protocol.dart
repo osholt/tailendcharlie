@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 
 import '../domain/rider_location.dart';
 import '../domain/ride_event.dart';
+import 'relay_event_compatibility.dart';
 import 'relay_queue.dart';
 import 'relay_presence.dart';
 
@@ -20,6 +21,7 @@ class RelayFrame {
     this.events = const [],
     this.acknowledgedEventIds = const [],
     this.presence,
+    this.ignoredEventCount = 0,
   });
 
   final RelayFrameKind kind;
@@ -30,6 +32,10 @@ class RelayFrame {
   final List<QueuedRelayEvent> events;
   final List<String> acknowledgedEventIds;
   final RelayPresenceUpdate? presence;
+
+  /// Events in this frame that a newer peer sent and this build cannot read.
+  /// They were skipped; every other event in the frame was accepted.
+  final int ignoredEventCount;
 }
 
 class RelayProtocolException implements Exception {
@@ -250,6 +256,7 @@ class RelayProtocol {
       throw const RelayProtocolException('Invalid event list');
     }
     final events = <QueuedRelayEvent>[];
+    var ignoredEvents = 0;
     for (final raw in rawEvents) {
       if (raw is! Map<Object?, Object?>) {
         throw const RelayProtocolException('Invalid queued event');
@@ -260,9 +267,18 @@ class RelayProtocol {
           utf8.encode(jsonEncode(rawEvent)).length > maxEventBytes) {
         throw const RelayProtocolException('Invalid event body');
       }
+      final eventBody = Map<String, Object?>.from(rawEvent);
+      // A newer peer's event type or schema version is skipped, never allowed
+      // to discard the authenticated events beside it in the same frame. The
+      // frame signature has already been verified over the whole payload, so
+      // skipping an item cannot weaken authentication.
+      if (describeUnsupportedRelayEvent(eventBody) != null) {
+        ignoredEvents += 1;
+        continue;
+      }
       final RideEvent event;
       try {
-        event = RideEvent.fromJson(Map<String, Object?>.from(rawEvent));
+        event = RideEvent.fromJson(eventBody);
       } on Object {
         throw const RelayProtocolException('Event schema is invalid');
       }
@@ -297,6 +313,7 @@ class RelayProtocol {
       frameId: frameId,
       sentAt: sentAt,
       events: events,
+      ignoredEventCount: ignoredEvents,
     );
   }
 

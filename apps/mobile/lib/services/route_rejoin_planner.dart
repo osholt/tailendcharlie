@@ -8,6 +8,7 @@ import '../domain/imported_route.dart' as route_domain;
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 import 'geo_calculations.dart';
+import 'leader_ride_status.dart' show TecAvailability;
 import 'measurement_formatter.dart';
 import 'road_routing.dart' show RoadRouteManeuver, RoadRoutingService;
 
@@ -159,34 +160,6 @@ class RouteRejoinRecomputePolicy {
     final multiplier = math.min(1 << math.min(consecutiveFailures, 8), 16);
     final scaled = minimumInterval * multiplier;
     return scaled > maximumFailureBackoff ? maximumFailureBackoff : scaled;
-  }
-}
-
-/// A rider inside the corridor of the leader's *actual* recorded track is on
-/// route, whatever the planned GPX says. This is the single definition used for
-/// alert state, the leader's off-course count, the roster and the map, so a
-/// group following the leader down a diversion never reads as lost.
-abstract final class LeaderTrackExemption {
-  /// [leaderTrack] is the leader's recorded trail. Only the most recent
-  /// [recentPointLimit] points are considered: "following the leader" means
-  /// being near where the leader has recently been, not standing where the
-  /// leader passed two hours ago, and it keeps the check cheap enough to run on
-  /// every read.
-  static bool isFollowingLeaderTrack({
-    required GeoPoint position,
-    required List<GeoPoint> leaderTrack,
-    double accuracyMeters = 0,
-    double corridorMeters = 120,
-    int recentPointLimit = 600,
-  }) {
-    if (leaderTrack.length < 2) return false;
-    final recent = leaderTrack.length > recentPointLimit
-        ? leaderTrack.sublist(leaderTrack.length - recentPointLimit)
-        : leaderTrack;
-    final distance = GeoCalculations.distanceToPolylineMeters(position, recent);
-    // Give the rider the benefit of their own GPS error: an uncertain fix
-    // beside the leader's track must not be called off course.
-    return math.max(0, distance - accuracyMeters) <= corridorMeters;
   }
 }
 
@@ -494,6 +467,13 @@ class RouteRejoinPlanner {
   /// [assessment] is the deviation detector's verdict; the planner does not
   /// second-guess it. [followingLeaderTrack] is the leader-follow exemption:
   /// when true the rider is on route by definition and no rejoin is computed.
+  ///
+  /// [tecAvailability] is the one TEC model from `leader_ride_status.dart`, not
+  /// a null check on [tecPosition]. A massively off-course rider is sent to the
+  /// TEC only when it is [TecAvailability.tracking]; `none` (nobody holds the
+  /// role), `awaitingLocation` (registered but never reported) and `stale` (a
+  /// fix that can no longer be trusted to say where they are) all fall back to
+  /// the ride leader rather than a null or guessed target.
   Future<RouteRejoinPlan> update({
     required String riderId,
     required LocationSample sample,
@@ -501,6 +481,7 @@ class RouteRejoinPlanner {
     required List<GeoPoint> plannedRoute,
     bool followingLeaderTrack = false,
     GeoPoint? leaderPosition,
+    TecAvailability tecAvailability = TecAvailability.none,
     GeoPoint? tecPosition,
     DateTime? now,
   }) async {
@@ -590,14 +571,18 @@ class RouteRejoinPlanner {
             plannedRoute,
           ).distanceAlongRouteMeters;
 
-    // A massively off-course rider is sent to the TEC when there is one, and to
-    // the leader when there is not. The TEC is normally the back of the group,
-    // but a stale or wild TEC fix that projects ahead of the leader would send
-    // the rider past the group, so in that case the leader is used instead.
-    final tecProgress = tecPosition == null || !massivelyOffRoute
+    // A massively off-course rider is sent to the TEC when there is a usable
+    // one, and to the leader otherwise. Two independent gates: the TEC's
+    // position must be believable at all (tracking), and it must not project
+    // further along the route than the leader - a wild fix that does would send
+    // the rider past the group, which is the one thing this must never do.
+    final trackedTec = tecAvailability == TecAvailability.tracking
+        ? tecPosition
+        : null;
+    final tecProgress = trackedTec == null || !massivelyOffRoute
         ? null
         : GeoCalculations.projectOntoPolyline(
-            tecPosition,
+            trackedTec,
             plannedRoute,
           ).distanceAlongRouteMeters;
     final tecIsBehindLeader =
@@ -611,7 +596,7 @@ class RouteRejoinPlanner {
         ? RouteRejoinTarget.tailEndCharlie
         : RouteRejoinTarget.leader;
     final targetPosition = switch (target) {
-      RouteRejoinTarget.tailEndCharlie => tecPosition,
+      RouteRejoinTarget.tailEndCharlie => trackedTec,
       RouteRejoinTarget.leader => leaderPosition,
       RouteRejoinTarget.plannedRoute => null,
     };

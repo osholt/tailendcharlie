@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import '../domain/ride_event.dart';
 import '../domain/rider_location.dart';
 import '../domain/ride_session.dart';
+import '../relay/relay_event_compatibility.dart';
 
 class InternetRelayConfiguration {
   const InternetRelayConfiguration({
@@ -58,6 +59,11 @@ abstract final class RelayProtocolCapabilities {
   static const rideStart = 'ride-start-v1';
   static const membership = 'membership-v1';
   static const preStartPresence = 'pre-start-presence-v1';
+
+  /// Presence that spans the pre-start and started phases and reports a
+  /// cursor-independent ride roster. Supersedes [preStartPresence]; both are
+  /// advertised so an older relay keeps working.
+  static const livePresence = 'live-presence-v2';
   static const routeRevisions = 'route-revisions-v1';
   static const pushNotifications = 'push-notifications-v1';
   static const observerAccess = 'observer-access-v1';
@@ -68,6 +74,7 @@ abstract final class RelayProtocolCapabilities {
     rideStart,
     membership,
     preStartPresence,
+    livePresence,
     routeRevisions,
     pushNotifications,
     observerAccess,
@@ -85,25 +92,52 @@ class RelayClientDescriptor {
     required this.capabilities,
   });
 
+  /// The build's real identity.
+  ///
+  /// When a build channel does not inject `RIDE_RELAY_APP_VERSION` /
+  /// `RIDE_RELAY_APP_BUILD` the descriptor reports [unknownVersion] instead of
+  /// a plausible-looking constant. A wrong version is worse than an absent one:
+  /// it makes every version-conditional diagnostic silently misleading.
   factory RelayClientDescriptor.current() => RelayClientDescriptor(
     protocolVersion: 1,
     platform: defaultTargetPlatform.name,
-    appVersion: const String.fromEnvironment(
-      'RIDE_RELAY_APP_VERSION',
-      defaultValue: '1.0.1',
-    ),
-    appBuild: const String.fromEnvironment(
-      'RIDE_RELAY_APP_BUILD',
-      defaultValue: '22',
-    ),
+    appVersion: _declaredAppVersion,
+    appBuild: _declaredAppBuild,
     capabilities: RelayProtocolCapabilities.current,
   );
+
+  static const unknownVersion = 'unknown';
+
+  static const _rawAppVersion = String.fromEnvironment(
+    'RIDE_RELAY_APP_VERSION',
+  );
+  static const _rawAppBuild = String.fromEnvironment('RIDE_RELAY_APP_BUILD');
+
+  static String get _declaredAppVersion =>
+      _sanitiseDescriptorValue(_rawAppVersion);
+
+  static String get _declaredAppBuild => _sanitiseDescriptorValue(_rawAppBuild);
+
+  /// Keeps a dart-define out of the header set unless it is a plain, bounded
+  /// token, so a malformed injection can never smuggle header syntax.
+  static String _sanitiseDescriptorValue(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || trimmed.length > 40) return unknownVersion;
+    if (!RegExp(r'^[A-Za-z0-9._+-]+$').hasMatch(trimmed)) return unknownVersion;
+    return trimmed;
+  }
 
   final int protocolVersion;
   final String platform;
   final String appVersion;
   final String appBuild;
   final Set<String> capabilities;
+
+  /// False when the build channel did not inject its version, so callers can
+  /// say "this build does not report its version" instead of quoting a wrong
+  /// one.
+  bool get reportsAppVersion =>
+      appVersion != unknownVersion && appBuild != unknownVersion;
 
   Map<String, String> get headers => {
     'x-tailendcharlie-protocol': '$protocolVersion',
@@ -159,11 +193,22 @@ class InternetSyncResult {
     required this.cursor,
     required this.acceptedEventIds,
     required this.events,
+    this.ignoredEventCount = 0,
+    this.ignoredEventTypes = const {},
   });
 
   final String cursor;
   final Set<String> acceptedEventIds;
   final List<RideEvent> events;
+
+  /// Events in the batch this build does not understand. They are skipped, the
+  /// cursor still advances past them, and the rest of the batch is delivered:
+  /// one future event type must never stall the whole ride.
+  final int ignoredEventCount;
+
+  /// The sanitised type names that were skipped, for a named diagnostic. Only
+  /// short, alphanumeric names survive sanitisation.
+  final Set<String> ignoredEventTypes;
 }
 
 class InternetRelayException implements Exception {
@@ -213,11 +258,57 @@ abstract interface class PreStartPresenceApi {
   void close();
 }
 
+/// The ride phase the presence channel reports, so the client never has to
+/// infer continuity from its own journal cursor.
+enum RidePresencePhase { open, started, ended, unknown }
+
+/// One rider the presence channel says is in the ride.
+///
+/// Derived by the relay from durable membership events without consulting the
+/// caller's cursor, so a wedged or backed-off batch sync cannot hide a
+/// participant.
+class PresenceRosterEntry {
+  const PresenceRosterEntry({
+    required this.riderId,
+    required this.displayName,
+    required this.role,
+    required this.joinedAt,
+    this.left = false,
+  });
+
+  final String riderId;
+  final String displayName;
+  final String role;
+  final DateTime joinedAt;
+  final bool left;
+}
+
 class PreStartPresenceResult {
-  const PreStartPresenceResult({required this.locations, required this.ttl});
+  const PreStartPresenceResult({
+    required this.locations,
+    required this.ttl,
+    this.phase = RidePresencePhase.unknown,
+    this.roster = const [],
+    this.legacyPeerRiderIds = const {},
+    this.livePresenceServed = false,
+  });
 
   final List<RiderLocation> locations;
   final Duration ttl;
+
+  /// The phase the relay reports for this ride.
+  final RidePresencePhase phase;
+
+  /// Riders the relay knows about, independent of the event batch.
+  final List<PresenceRosterEntry> roster;
+
+  /// Riders whose presence was published by a build without live-presence
+  /// support, so their position will stop once the ride starts.
+  final Set<String> legacyPeerRiderIds;
+
+  /// True when the relay served positions under the live-presence contract
+  /// rather than the legacy pre-start-only one.
+  final bool livePresenceServed;
 }
 
 /// The short-lived server directory that turns a six-digit ride code into the
@@ -373,13 +464,11 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
         inviteSecret: secret,
         joinToken: returnedJoinToken,
       );
-    } on FormatException {
+    } on Object {
+      // Deliberately not interpolated: a transport or TLS error message can
+      // carry the relay hostname and port.
       throw const RideCodeDirectoryException(
         'Ride code service returned an invalid response.',
-      );
-    } on Object catch (error) {
-      throw RideCodeDirectoryException(
-        'Ride code service returned an invalid response: $error',
       );
     }
   }
@@ -695,32 +784,44 @@ class HttpInternetRelayClient
         }
         return value;
       }).toSet();
-      final remoteEvents = eventValues
-          .map((value) {
-            if (value is! Map) {
-              throw const FormatException('Invalid event object.');
-            }
-            final raw = Map<String, Object?>.from(value);
-            if (utf8.encode(jsonEncode(raw)).length >
-                configuration.maximumEventBytes) {
-              throw const FormatException(
-                'Response event exceeds the size limit.',
-              );
-            }
-            final event = RideEvent.fromJson(raw);
-            _validateEventForRide(event, session.rideId);
-            return event;
-          })
-          .toList(growable: false);
+      final remoteEvents = <RideEvent>[];
+      final ignoredTypes = <String>{};
+      var ignoredCount = 0;
+      for (final value in eventValues) {
+        if (value is! Map) {
+          throw const FormatException('Invalid event object.');
+        }
+        final raw = Map<String, Object?>.from(value);
+        if (utf8.encode(jsonEncode(raw)).length >
+            configuration.maximumEventBytes) {
+          throw const FormatException('Response event exceeds the size limit.');
+        }
+        // A newer peer's event type, schema version or added field must be
+        // skipped, not treated as a corrupt batch. Failing the whole response
+        // would stall the cursor forever and hide every rider.
+        final unsupported = describeUnsupportedRelayEvent(raw);
+        if (unsupported != null) {
+          ignoredCount += 1;
+          ignoredTypes.add(unsupported);
+          continue;
+        }
+        final event = RideEvent.fromJson(raw);
+        _validateEventForRide(event, session.rideId);
+        remoteEvents.add(event);
+      }
       return InternetSyncResult(
         cursor: responseCursor,
         acceptedEventIds: acceptedIds,
-        events: remoteEvents,
+        events: List.unmodifiable(remoteEvents),
+        ignoredEventCount: ignoredCount,
+        ignoredEventTypes: Set.unmodifiable(ignoredTypes),
       );
     } on InternetRelayException {
       rethrow;
-    } on Object catch (error) {
-      throw InternetRelayException('Invalid internet relay response: $error');
+    } on Object {
+      throw const InternetRelayException(
+        'Internet relay returned a response this app could not read.',
+      );
     }
   }
 
@@ -862,9 +963,13 @@ class HttpPreStartPresenceClient implements PreStartPresenceApi {
       cached: _cachedCompatibility,
     );
     _cachedCompatibility = compatibility;
-    if (!compatibility.supports(RelayProtocolCapabilities.preStartPresence)) {
+    final servesLivePresence = compatibility.supports(
+      RelayProtocolCapabilities.livePresence,
+    );
+    if (!servesLivePresence &&
+        !compatibility.supports(RelayProtocolCapabilities.preStartPresence)) {
       throw const InternetRelayException(
-        'This ride service does not support pre-start positions yet.',
+        'This ride service does not support live rider positions yet.',
         code: 'feature_unsupported',
       );
     }
@@ -978,34 +1083,95 @@ class HttpPreStartPresenceClient implements PreStartPresenceApi {
       final ttlSeconds = (decoded['ttlSeconds'] as int).clamp(15, 300);
       final values = decoded['positions'] as List;
       if (values.length > 1000) {
-        throw const FormatException('Too many pre-start positions.');
+        throw const FormatException('Too many live positions.');
       }
-      final locations = values
-          .map((value) {
-            if (value is! Map) {
-              throw const FormatException('Invalid pre-start position.');
-            }
-            final raw = Map<String, Object?>.from(value);
-            final expiresAt = DateTime.parse(raw['expiresAt']! as String);
-            if (!expiresAt.isAfter(_clock())) {
-              throw const FormatException(
-                'Expired pre-start position returned.',
-              );
-            }
-            return RiderLocation.fromJson(raw);
-          })
-          .toList(growable: false);
+      final locations = <RiderLocation>[];
+      final legacyPeers = <String>{};
+      for (final value in values) {
+        if (value is! Map) {
+          throw const FormatException('Invalid live position.');
+        }
+        final raw = Map<String, Object?>.from(value);
+        final expiresAt = DateTime.parse(raw['expiresAt']! as String);
+        if (!expiresAt.isAfter(_clock())) {
+          throw const FormatException('Expired live position returned.');
+        }
+        // Unknown response fields from a newer relay are ignored rather than
+        // rejected, so only the fields this build knows are decoded.
+        final location = RiderLocation.fromJson({
+          for (final field in _presenceLocationFields)
+            if (raw.containsKey(field)) field: raw[field],
+        });
+        if (raw['livePresence'] == false) legacyPeers.add(location.riderId);
+        locations.add(location);
+      }
       return PreStartPresenceResult(
         locations: List.unmodifiable(locations),
         ttl: Duration(seconds: ttlSeconds),
+        phase: _presencePhase(decoded['phase']),
+        roster: _presenceRoster(decoded['members']),
+        legacyPeerRiderIds: Set.unmodifiable(legacyPeers),
+        livePresenceServed: servesLivePresence,
       );
     } on InternetRelayException {
       rethrow;
-    } on Object catch (error) {
-      throw InternetRelayException(
-        'Invalid pre-start position response: $error',
+    } on Object {
+      throw const InternetRelayException(
+        'The live position service returned a response this app could not read.',
       );
     }
+  }
+
+  static const _presenceLocationFields = {
+    'riderId',
+    'displayName',
+    'role',
+    'sample',
+    'receivedAt',
+    'motorcycleStyle',
+    'riderColor',
+  };
+
+  /// An absent or unrecognised phase degrades to
+  /// [RidePresencePhase.unknown] rather than failing: an older relay does not
+  /// report one, and a newer relay may add one this build has never seen.
+  static RidePresencePhase _presencePhase(Object? value) => switch (value) {
+    'open' => RidePresencePhase.open,
+    'started' => RidePresencePhase.started,
+    'ended' => RidePresencePhase.ended,
+    _ => RidePresencePhase.unknown,
+  };
+
+  static List<PresenceRosterEntry> _presenceRoster(Object? value) {
+    if (value is! List) return const [];
+    final entries = <PresenceRosterEntry>[];
+    for (final item in value.take(1000)) {
+      if (item is! Map) continue;
+      final riderId = item['riderId'];
+      final displayName = item['displayName'];
+      final role = item['role'];
+      final joinedAt = DateTime.tryParse(item['joinedAt'] as String? ?? '');
+      if (riderId is! String ||
+          riderId.isEmpty ||
+          riderId.length > 128 ||
+          displayName is! String ||
+          displayName.isEmpty ||
+          displayName.length > 80 ||
+          role is! String ||
+          joinedAt == null) {
+        continue;
+      }
+      entries.add(
+        PresenceRosterEntry(
+          riderId: riderId,
+          displayName: displayName,
+          role: role,
+          joinedAt: joinedAt.toLocal(),
+          left: item['left'] == true,
+        ),
+      );
+    }
+    return List.unmodifiable(entries);
   }
 
   Uri _presenceUri(String rideId) {
@@ -1150,16 +1316,19 @@ Future<RelayCompatibilityResult> _fetchCompatibility({
       retryable: true,
       code: 'temporarily_unavailable',
     );
-  } on http.ClientException {
+  } on FormatException {
+    throw const InternetRelayException(
+      'The ride service compatibility response could not be read.',
+    );
+  } on Object {
+    // A transport or TLS failure message can name the relay host and port, so
+    // it is never surfaced. Treated as retryable because it is a connection
+    // class of failure, not a protocol disagreement.
     if (cached != null && now.isBefore(cached.validUntil)) return cached;
     throw const InternetRelayException(
       'Ride service is temporarily unavailable. Check your connection and try again.',
       retryable: true,
       code: 'temporarily_unavailable',
-    );
-  } on Object catch (error) {
-    throw InternetRelayException(
-      'Invalid ride service compatibility response: $error',
     );
   }
 }

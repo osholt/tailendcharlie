@@ -37,6 +37,18 @@ class InternetRelayStatusCard extends StatelessWidget {
                         color: const Color(0xFF9AA6B5),
                       ),
                     ),
+                    // A partial degradation is named here rather than left as an
+                    // unexplained gap in the group.
+                    for (final limitation in status.limitations)
+                      Padding(
+                        key: Key('relay-limitation-${limitation.kind.name}'),
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          limitation.message,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: const Color(0xFFFFC857)),
+                        ),
+                      ),
                   ],
                 ),
               ),

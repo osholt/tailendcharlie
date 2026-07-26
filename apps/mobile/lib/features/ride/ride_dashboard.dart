@@ -72,6 +72,7 @@ class RideDashboard extends StatelessWidget {
               riderProfile,
               speedLimitDisplay: speedLimitDisplay,
               currentRideActive: true,
+              lastRelaySync: internetRelayController?.status.lastSuccessfulSync,
             ),
             icon: const Icon(Icons.settings_outlined),
           ),

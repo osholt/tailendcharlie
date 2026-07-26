@@ -9,10 +9,11 @@ import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
+import '../relay/live_presence.dart';
 import '../services/external_hazard_provider.dart';
 import '../services/hazard_deduplicator.dart';
 import '../services/route_deviation_detector.dart';
-import '../services/route_rejoin_planner.dart' show LeaderTrackExemption;
+import '../services/leader_track_exemption.dart';
 import '../services/situation_event_factory.dart';
 
 class SituationalAwarenessController extends ChangeNotifier {
@@ -29,6 +30,7 @@ class SituationalAwarenessController extends ChangeNotifier {
     this.expiryPolicy = const HazardExpiryPolicy(),
     this.deduplicator = const HazardDeduplicator(),
     this.routeConfig = const RouteDeviationConfig(),
+    this.freshnessPolicy = const PresenceFreshnessPolicy(),
   }) : _route = List.unmodifiable(route),
        _routeSegments = List.unmodifiable(
          (routeSegments ?? [route]).map(
@@ -57,6 +59,11 @@ class SituationalAwarenessController extends ChangeNotifier {
   final HazardExpiryPolicy expiryPolicy;
   final HazardDeduplicator deduplicator;
   final RouteDeviationConfig routeConfig;
+
+  /// Documented age thresholds shared with the ephemeral presence channels, so
+  /// the journal side and the presence side cannot disagree about whether a
+  /// position is live, ageing or stale.
+  final PresenceFreshnessPolicy freshnessPolicy;
   late SituationEventFactory _eventFactory;
 
   final Map<String, RiderLocation> _locations = {};
@@ -87,6 +94,19 @@ class SituationalAwarenessController extends ChangeNotifier {
     );
     return List.unmodifiable(values);
   }
+
+  /// The journal's contribution to the reconciled live-position model.
+  ///
+  /// This controller owns the durable side only. Callers merge it with the
+  /// ephemeral presence channels through [LivePresenceReconciler] so one model
+  /// spans both ride phases and both transports; doing the merge here would
+  /// make an ephemeral snapshot look like ride history.
+  List<LiveRiderPresence> livePresenceAt(DateTime now) =>
+      LivePresenceReconciler(policy: freshnessPolicy).reconcile(
+        now: now,
+        localRiderId: _session.localRiderId,
+        journal: _locations.values,
+      );
 
   List<HazardReport> get activeHazards {
     final now = _clock();

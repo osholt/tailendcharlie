@@ -306,6 +306,69 @@ void main() {
     );
   });
 
+  test(
+    'a follower on the leader\'s detour emits no off-course deviation event',
+    () async {
+      // This device is a follower, not the leader, so the write-time exemption
+      // is the only thing standing between it and a relayed off-route alert
+      // about itself. Nothing may be appended that tells the rest of the group
+      // this rider is lost.
+      final follower = SituationalAwarenessController(
+        store,
+        _session.copyWith(role: RideRole.rider),
+        route: const [
+          GeoPoint(latitude: 51, longitude: -1),
+          GeoPoint(latitude: 51, longitude: -0.99),
+        ],
+        clock: () => now,
+        idFactory: () => 'follower-${nextId++}',
+        routeConfig: const RouteDeviationConfig(samplesToConfirmOffRoute: 1),
+      );
+      addTearDown(follower.dispose);
+      await follower.initialize();
+
+      // The leader abandons the GPX and rides a degree north.
+      await follower.ingestRemoteEvent(
+        _remoteLocationEvent(
+          riderId: 'leader',
+          role: RideRole.lead,
+          latitude: 51,
+          now: now,
+        ),
+      );
+      now = now.add(const Duration(seconds: 5));
+      await follower.ingestRemoteEvent(
+        _remoteLocationEvent(
+          riderId: 'leader',
+          role: RideRole.lead,
+          latitude: 52,
+          now: now,
+        ),
+      );
+
+      // This rider follows them there.
+      now = now.add(const Duration(seconds: 5));
+      await follower.recordLocalLocation(_sample(latitude: 52, at: now));
+
+      expect(follower.isFollowingLeaderTrack(_session.localRiderId), isTrue);
+      expect(
+        follower.alertFor(_session.localRiderId)?.assessment.state,
+        RouteTrackingState.onRoute,
+      );
+      final deviations = (await store.eventsForRide(_session.rideId))
+          .where((event) => event.type == RideEventType.routeDeviationChanged)
+          .map(
+            (event) => RiderRouteAlert.fromJson(
+              Map<String, Object?>.from(event.payload['alert']! as Map),
+            ),
+          );
+      expect(
+        deviations.map((alert) => alert.assessment.state),
+        isNot(contains(RouteTrackingState.offRoute)),
+      );
+    },
+  );
+
   test("another device's off-course alert is ignored for a rider following the "
       'leader', () async {
     await controller.recordLocalLocation(_sample(latitude: 51, at: now));

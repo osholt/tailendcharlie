@@ -17,10 +17,12 @@ import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/rider_color.dart';
 import '../../internet/plan_directory.dart';
+import '../../services/build_identity.dart';
 import '../../services/gpx_import_source.dart';
 import '../map/motorcycle_icon.dart';
 import '../ride/route_recorder_screen.dart';
 import '../ride/previous_rides_screen.dart';
+import '../settings/about_build_sheet.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
 
@@ -55,6 +57,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final _buildIdentity = BuildIdentity.fromEnvironment();
+
   @override
   void initState() {
     super.initState();
@@ -86,7 +90,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const _BrandMark(),
-                      const SizedBox(height: 56),
+                      const SizedBox(height: 24),
+                      TesterUpdateBanner(identity: _buildIdentity),
+                      const SizedBox(height: 32),
                       if (widget.sharedRoutes.pending case final file?) ...[
                         _PendingSharedRouteBanner(
                           fileName: file.name,
@@ -176,6 +182,26 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: TextStyle(
                           color: Color(0xFF7F8A98),
                           fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Center(
+                        child: TextButton(
+                          key: const Key('home-build-identity'),
+                          onPressed: () => unawaited(
+                            AboutBuildSheet.show(
+                              context,
+                              identity: _buildIdentity,
+                            ),
+                          ),
+                          child: Text(
+                            '${_buildIdentity.versionLabel} · '
+                            '${_buildIdentity.track.label}',
+                            style: const TextStyle(
+                              color: Color(0xFF7F8A98),
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
                       ),
                     ],

@@ -161,7 +161,10 @@ class RelayService:
 
             self._validate_event_conflicts(session, ride_id, events)
             accepted_ids = self._store_events(session, ride, events, now)
-            if any(event.event_type in {"rideStarted", "rideEnded"} for event in events):
+            # Only a finished ride discards live positions. Discarding them at
+            # `rideStarted` is what previously severed presence mid-ride and
+            # left a rider who joined afterwards with no live channel at all.
+            if any(event.event_type == "rideEnded" for event in events):
                 session.execute(delete(PreStartPosition).where(PreStartPosition.ride_id == ride_id))
             response = self._build_response(
                 session,
@@ -195,8 +198,18 @@ class RelayService:
         bearer_token: str,
         device_header: str,
         request: PresenceSyncRequest,
+        live_presence: bool = False,
+        client_protocol: int = 1,
         now: datetime | None = None,
     ) -> dict[str, Any]:
+        """Ephemeral live positions plus a cursor-independent ride roster.
+
+        ``live_presence`` is the caller's ``live-presence-v2`` capability. A
+        caller without it keeps exactly the old read behaviour (no positions
+        once the ride has started) but no longer *destroys* the rows a
+        live-presence peer depends on: a mixed-version group is the normal case,
+        so an older build must never be able to blank a newer one.
+        """
         now = now or datetime.now(UTC)
         self._validate_identity(ride_id, request.deviceId, device_header)
         if not TOKEN.fullmatch(bearer_token):
@@ -222,15 +235,9 @@ class RelayService:
                     PreStartPosition.expires_at <= now,
                 )
             )
-            lifecycle_event = session.scalar(
-                select(StoredEvent.event_type)
-                .where(
-                    StoredEvent.ride_id == ride_id,
-                    StoredEvent.event_type.in_(["rideStarted", "rideEnded"]),
-                )
-                .limit(1)
-            )
-            if lifecycle_event is not None:
+            phase = self._ride_presence_phase(session, ride_id)
+            members = self._presence_members(session, ride_id)
+            if phase == "ended":
                 session.execute(delete(PreStartPosition).where(PreStartPosition.ride_id == ride_id))
                 positions: list[dict[str, Any]] = []
             else:
@@ -251,7 +258,7 @@ class RelayService:
                         if (rider_count or 0) >= self._maximum_pre_start_presence_riders:
                             raise RelayServiceError(
                                 409,
-                                "Pre-start presence capacity reached",
+                                "Live presence capacity reached",
                             )
                     expires_at = now + self._pre_start_presence_ttl
                     snapshot = {
@@ -259,6 +266,8 @@ class RelayService:
                         "riderId": request.deviceId,
                         "receivedAt": now.isoformat(),
                         "expiresAt": expires_at.isoformat(),
+                        "livePresence": live_presence,
+                        "clientProtocol": client_protocol,
                     }
                     ciphertext = self._cipher.encrypt_json(
                         snapshot,
@@ -282,17 +291,88 @@ class RelayService:
                         existing.received_at = now
                         existing.expires_at = expires_at
                 session.flush()
-                rows = session.scalars(
-                    select(PreStartPosition)
-                    .where(PreStartPosition.ride_id == ride_id)
-                    .order_by(PreStartPosition.rider_id)
-                ).all()
-                positions = [self._decrypt_pre_start_position(row) for row in rows]
+                if phase == "started" and not live_presence:
+                    # A legacy caller reads nothing after the start, as before,
+                    # but the stored rows survive for live-presence peers.
+                    positions = []
+                else:
+                    rows = session.scalars(
+                        select(PreStartPosition)
+                        .where(PreStartPosition.ride_id == ride_id)
+                        .order_by(PreStartPosition.rider_id)
+                    ).all()
+                    positions = [self._decrypt_pre_start_position(row) for row in rows]
         return {
             "protocolVersion": 1,
             "ttlSeconds": int(self._pre_start_presence_ttl.total_seconds()),
             "positions": positions,
+            "phase": phase,
+            "members": members if live_presence else [],
         }
+
+    @staticmethod
+    def _ride_presence_phase(session: Session, ride_id: str) -> str:
+        lifecycle_types = set(
+            session.scalars(
+                select(StoredEvent.event_type).where(
+                    StoredEvent.ride_id == ride_id,
+                    StoredEvent.event_type.in_(["rideStarted", "rideEnded"]),
+                )
+            ).all()
+        )
+        if "rideEnded" in lifecycle_types:
+            return "ended"
+        return "started" if "rideStarted" in lifecycle_types else "open"
+
+    def _presence_members(self, session: Session, ride_id: str) -> list[dict[str, Any]]:
+        """The ride roster, read without consulting any caller's cursor.
+
+        Membership events are few and bounded, so this stays cheap. It exists
+        because ``riderJoined`` used to be visible only through the bulk event
+        batch: one wedged or backed-off sync then hid a participant entirely
+        from every other device.
+        """
+        rows = session.scalars(
+            select(StoredEvent)
+            .where(
+                StoredEvent.ride_id == ride_id,
+                StoredEvent.event_type.in_(["rideCreated", "riderJoined", "riderLeft"]),
+            )
+            .order_by(StoredEvent.sequence)
+            .limit(self._maximum_pre_start_presence_riders * 4)
+        ).all()
+        members: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                body = self._cipher.decrypt_json(
+                    row.body_ciphertext,
+                    associated_data=self._event_aad(ride_id, row.event_id),
+                )
+            except ValueError:
+                continue
+            if not isinstance(body, dict):
+                continue
+            payload = body.get("payload")
+            payload = payload if isinstance(payload, dict) else {}
+            if row.event_type == "riderLeft":
+                member = members.get(row.device_id)
+                if member is not None:
+                    member["left"] = True
+                continue
+            display_name = payload.get("displayName")
+            role = payload.get("role")
+            if not isinstance(display_name, str) or not display_name.strip():
+                continue
+            if not isinstance(role, str) or not role.strip():
+                continue
+            members[row.device_id] = {
+                "riderId": row.device_id,
+                "displayName": display_name.strip()[:80],
+                "role": role.strip()[:40],
+                "joinedAt": self._as_utc(row.created_at).isoformat(),
+                "left": False,
+            }
+        return list(members.values())
 
     @staticmethod
     def _pre_start_presence_aad(ride_id: str, rider_id: str) -> bytes:
