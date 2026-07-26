@@ -206,7 +206,7 @@ void main() {
     expect(sam.transportLabel, 'Nearby relay · joining');
   });
 
-  test('an omitted live presence leaves the roster exactly as before', () {
+  test('a counted rider with no presence still states why, not nothing', () {
     final events = [
       _joinEvent(
         id: 'joined-bill',
@@ -221,7 +221,14 @@ void main() {
 
     final bill = participants.firstWhere((entry) => entry.riderId == 'bill');
     expect(bill.positionFreshness, isNull);
-    expect(bill.stateLabel, 'Inactive · location is stale');
+    // Issue #132: "in the count, no marker, nothing said" is the defect. A
+    // rider with no position always carries the reason there is none.
+    expect(bill.positionAbsence, RidePositionAbsence.noPositionReported);
+    expect(
+      bill.stateLabel,
+      'Inactive · location is stale · no position reported yet',
+    );
+    expect(bill.hasStatedPositionState, isTrue);
     expect(bill.knownFromRelayOnly, isFalse);
   });
 }

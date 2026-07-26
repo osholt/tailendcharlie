@@ -75,6 +75,10 @@ class RideController extends ChangeNotifier {
   final Map<String, Set<RideTransportEvidence>> _transportByEventId = {};
   List<LiveRiderPresence> _livePresence = const [];
 
+  /// True when this device cannot currently receive live positions at all, so a
+  /// missing position is attributed to the transport rather than to the rider.
+  bool _positionChannelUnavailable = false;
+
   /// ICE shares the local rider has acted on (called/texted the contact).
   /// Kept in memory only, for this session: it gates which received shares
   /// survive the ride-end purge, not a durable record of anyone's own.
@@ -105,7 +109,18 @@ class RideController extends ChangeNotifier {
   /// The reconciled live presence most recently observed, keyed by rider.
   List<LiveRiderPresence> get livePresence => List.unmodifiable(_livePresence);
 
-  List<RideParticipant> get participants {
+  /// The one reconciled live model. The rider count, the roster, the main map
+  /// and the mini-map all derive from this, so no two of them can disagree about
+  /// whether a rider is present or where they are (#132).
+  RideLiveView get liveView => RideLiveView.reconcile(
+    participants: _participantsFromEvents(),
+    presence: _livePresence,
+    positionChannelUnavailable: _positionChannelUnavailable,
+  );
+
+  List<RideParticipant> get participants => liveView.participants;
+
+  List<RideParticipant> _participantsFromEvents() {
     final activeSession = _session;
     if (activeSession == null) return const [];
     return const RideMembershipReducer().fromEvents(
@@ -133,10 +148,17 @@ class RideController extends ChangeNotifier {
   /// wedged or backed-off journal sync cannot hide a reachable participant.
   /// The durable journal stays authoritative — a rider who has left is never
   /// resurrected by presence.
-  void observeLivePresence(Iterable<LiveRiderPresence> presence) {
+  void observeLivePresence(
+    Iterable<LiveRiderPresence> presence, {
+    bool positionChannelUnavailable = false,
+  }) {
     final next = presence.toList(growable: false);
-    if (_isSamePresence(_livePresence, next)) return;
+    if (_isSamePresence(_livePresence, next) &&
+        positionChannelUnavailable == _positionChannelUnavailable) {
+      return;
+    }
     _livePresence = next;
+    _positionChannelUnavailable = positionChannelUnavailable;
     notifyListeners();
   }
 
@@ -161,9 +183,7 @@ class RideController extends ChangeNotifier {
     return true;
   }
 
-  List<RideParticipant> get liveParticipants => participants
-      .where((participant) => participant.isIncludedInLiveCount)
-      .toList(growable: false);
+  List<RideParticipant> get liveParticipants => liveView.liveParticipants;
 
   RideParticipant? participantFor(String riderId) => participants
       .where((participant) => participant.riderId == riderId)
@@ -1107,6 +1127,7 @@ class RideController extends ChangeNotifier {
     _usedIceShareEventIds.clear();
     _transportByEventId.clear();
     _livePresence = const [];
+    _positionChannelUnavailable = false;
   }
 
   RideRole? _activeMarkerPreviousRole() {

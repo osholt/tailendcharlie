@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from ride_relay_server.models import Ride, StoredEvent
+from ride_relay_server.models import IdempotencyReplay, Ride, StoredEvent
 from ride_relay_server.service import purge_expired
 
 from .conftest import ride_token
@@ -117,7 +117,15 @@ def test_wrong_credential_cannot_read_claimed_ride(client, synchronize) -> None:
     assert rejected.json() == {"error": "Ride credential rejected"}
 
 
-def test_idempotency_replays_exact_original_response(client, synchronize, make_event) -> None:
+def test_idempotency_replays_the_upload_answer_but_not_the_download(
+    client, synchronize, make_event
+) -> None:
+    """A repeated upload is answered identically; its download is still fresh.
+
+    Replaying the stored *download* is what made an idle device deaf to its
+    peers (#132): upload and download share one request, so the same batch
+    offered twice must not resurrect the event list from the first attempt.
+    """
     ride_id = "ride-replay"
     first_event = make_event(ride_id, "event-1")
     first = synchronize(client, ride_id=ride_id, secret=SECRET, events=[first_event])
@@ -131,7 +139,77 @@ def test_idempotency_replays_exact_original_response(client, synchronize, make_e
     )
     replay = synchronize(client, ride_id=ride_id, secret=SECRET, events=[first_event])
 
-    assert replay.content == first.content
+    assert replay.status_code == 200
+    assert replay.json()["acceptedEventIds"] == first.json()["acceptedEventIds"] == ["event-1"]
+    assert [event["id"] for event in replay.json()["events"]] == ["event-1", "event-2"]
+    factory = client.app.state.session_factory
+    with factory() as session:
+        stored = session.scalars(
+            select(StoredEvent.event_id).where(StoredEvent.ride_id == ride_id)
+        ).all()
+        assert sorted(stored) == ["event-1", "event-2"]
+
+
+def test_idle_device_with_nothing_to_upload_still_receives_peer_events(
+    client, synchronize, make_event
+) -> None:
+    """The #132 field failure: a phone with an empty outbound queue.
+
+    A device with nothing to send repeats a byte-identical sync body on every
+    poll, so it used to be answered from the idempotency replay cache and
+    received nothing at all until it happened to have an event of its own.
+    """
+    ride_id = "ride-idle"
+    first = synchronize(client, ride_id=ride_id, secret=SECRET, device_id="device-a")
+    assert first.status_code == 200
+    cursor = first.json()["cursor"]
+
+    # A second, byte-identical idle poll: same cursor, same empty batch.
+    repeated = synchronize(
+        client, ride_id=ride_id, secret=SECRET, device_id="device-a", cursor=cursor
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["events"] == []
+
+    uploaded = make_event(ride_id, "event-b1", device_id="device-b")
+    assert (
+        synchronize(
+            client,
+            ride_id=ride_id,
+            secret=SECRET,
+            device_id="device-b",
+            events=[uploaded],
+        ).status_code
+        == 200
+    )
+
+    # Still idle, still byte-identical to the poll before the peer uploaded.
+    received = synchronize(
+        client, ride_id=ride_id, secret=SECRET, device_id="device-a", cursor=cursor
+    )
+
+    assert received.status_code == 200
+    assert [event["id"] for event in received.json()["events"]] == ["event-b1"]
+
+
+def test_idle_polling_does_not_accumulate_replay_records(client, synchronize) -> None:
+    """An empty batch has nothing to be idempotent about, so it stores nothing."""
+    ride_id = "ride-idle-replays"
+    cursor = None
+    for _ in range(4):
+        response = synchronize(
+            client, ride_id=ride_id, secret=SECRET, device_id="device-a", cursor=cursor
+        )
+        assert response.status_code == 200
+        cursor = response.json()["cursor"]
+    factory = client.app.state.session_factory
+    with factory() as session:
+        assert (
+            session.scalar(
+                select(func.count(IdempotencyReplay.id)).where(IdempotencyReplay.ride_id == ride_id)
+            )
+            == 0
+        )
 
 
 def test_conflicting_event_identity_is_rejected_atomically(client, synchronize, make_event) -> None:

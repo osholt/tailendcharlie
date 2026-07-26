@@ -271,7 +271,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('maneuver-list')), findsOneWidget);
-    expect(find.text('Roundabout, 2nd exit, straight on'), findsOneWidget);
+    expect(find.text('2nd exit, straight on'), findsOneWidget);
     expect(find.text('Arrive at the destination'), findsOneWidget);
   });
 
@@ -1501,10 +1501,19 @@ void main() {
         find.byKey(const Key('navigation-guidance-banner')),
         findsOneWidget,
       );
+      expect(find.textContaining('3rd exit, right'), findsOneWidget);
+      // The symbol beside it is a drawn roundabout, so the visible wording does
+      // not repeat the word, while the label a screen reader is given - which
+      // has no symbol to read - still names the junction.
+      expect(find.textContaining('Roundabout, 3rd'), findsNothing);
+      final semantics = tester.ensureSemantics();
       expect(
-        find.textContaining('Roundabout, 3rd exit, right'),
-        findsOneWidget,
+        tester
+            .getSemantics(find.byKey(const Key('navigation-guidance-banner')))
+            .label,
+        contains('Roundabout, 3rd exit, right'),
       );
+      semantics.dispose();
       // One instruction for one junction: the exit step is not announced again.
       expect(find.byKey(const Key('following-maneuver')), findsNothing);
       // The ring is drawn, not borrowed from a glyph that means the opposite.

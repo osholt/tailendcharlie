@@ -49,6 +49,11 @@ const _drivingSides = [null, 'left', 'right'];
 final _leftWord = RegExp(r'\bleft\b', caseSensitive: false);
 final _rightWord = RegExp(r'\bright\b', caseSensitive: false);
 
+/// A roundabout whose exit was counted but whose direction was not reported.
+final _exitNumberOnly = RegExp(
+  r'^(Roundabout, take the|Take the) \d+(st|nd|rd|th) exit$',
+);
+
 void main() {
   test('every symbol points the way its instruction reads', () {
     for (final type in _types) {
@@ -98,7 +103,7 @@ void main() {
       final instruction = straightOn(drivingSide);
       final symbol = maneuverSymbolFor(instruction);
 
-      expect(instruction.text, 'Roundabout, 2nd exit, straight on');
+      expect(instruction.text, '2nd exit, straight on');
       expect(symbol, isA<RoundaboutSymbol>());
       expect(symbol.side, ManeuverSide.ahead);
       expect(
@@ -228,46 +233,73 @@ void main() {
 
 void _expectAgreement(ManeuverInstruction instruction) {
   final symbol = maneuverSymbolFor(instruction);
-  final text = instruction.text;
   final reason =
       'type "${instruction.maneuver.type}" '
       'modifier "${instruction.maneuver.modifier}" '
       'driving side "${instruction.maneuver.drivingSide}" '
-      'gave "$text"';
+      'gave "${instruction.text}" '
+      'and "${instruction.standaloneText}"';
 
-  expect(text.trim(), isNotEmpty, reason: reason);
   expect(symbol.side, instruction.direction.side, reason: reason);
-  switch (symbol.side) {
-    case ManeuverSide.left:
-      expect(text, matches(_leftWord), reason: reason);
-      expect(text, isNot(matches(_rightWord)), reason: reason);
-    case ManeuverSide.right:
-      expect(text, matches(_rightWord), reason: reason);
-      expect(text, isNot(matches(_leftWord)), reason: reason);
-    case ManeuverSide.reverse:
-      expect(text.toLowerCase(), contains('u-turn'), reason: reason);
-      expect(text, isNot(matches(_leftWord)), reason: reason);
-      expect(text, isNot(matches(_rightWord)), reason: reason);
-    case ManeuverSide.ahead:
-      expect(text, isNot(matches(_leftWord)), reason: reason);
-      expect(text, isNot(matches(_rightWord)), reason: reason);
+  // The wording beside the symbol and the wording read where there is no symbol
+  // must both agree with the symbol: neither may point the other way.
+  for (final text in {instruction.text, instruction.standaloneText}) {
+    expect(text.trim(), isNotEmpty, reason: reason);
+    switch (symbol.side) {
+      case ManeuverSide.left:
+        expect(text, matches(_leftWord), reason: reason);
+        expect(text, isNot(matches(_rightWord)), reason: reason);
+      case ManeuverSide.right:
+        expect(text, matches(_rightWord), reason: reason);
+        expect(text, isNot(matches(_leftWord)), reason: reason);
+      case ManeuverSide.reverse:
+        expect(text.toLowerCase(), contains('u-turn'), reason: reason);
+        expect(text, isNot(matches(_leftWord)), reason: reason);
+        expect(text, isNot(matches(_rightWord)), reason: reason);
+      case ManeuverSide.ahead:
+        expect(text, isNot(matches(_leftWord)), reason: reason);
+        expect(text, isNot(matches(_rightWord)), reason: reason);
+    }
+    // Every instruction names a direction, states the exit it is known to take,
+    // or is a named special case. None of them is empty of instruction.
+    final named =
+        instruction.direction.isStated ||
+        _exitNumberOnly.hasMatch(text) ||
+        const {
+          // A roundabout with neither an exit number nor a direction has only
+          // the symbol to say what the junction is; the wording read without
+          // the symbol still names it.
+          'Follow the route',
+          'Roundabout ahead, follow the route',
+          'Junction ahead, follow the route',
+          'End of the road, follow the route',
+          'Merge with traffic',
+          'Fork ahead, follow the route',
+          'Take the slip road',
+          'Take the exit slip road',
+          'Stay in your lane',
+          'Start off',
+          'Arrive at the destination',
+        }.contains(text);
+    expect(named, isTrue, reason: reason);
   }
-  // Every instruction names a direction or is a named special case.
-  final named =
-      instruction.direction.isStated ||
-      const {
-        'Roundabout ahead, follow the route',
-        'Junction ahead, follow the route',
-        'End of the road, follow the route',
-        'Merge with traffic',
-        'Fork ahead, follow the route',
-        'Take the slip road',
-        'Take the exit slip road',
-        'Stay in your lane',
-        'Start off',
-        'Arrive at the destination',
-      }.contains(text);
-  expect(named, isTrue, reason: reason);
+
+  // The symbol carries the junction where it is drawn, and the wording carries
+  // it where it is not.
+  if (instruction.isRoundabout) {
+    expect(
+      instruction.text.toLowerCase(),
+      isNot(contains('roundabout')),
+      reason: reason,
+    );
+    expect(
+      instruction.standaloneText.toLowerCase(),
+      contains('roundabout'),
+      reason: reason,
+    );
+  } else {
+    expect(instruction.standaloneText, instruction.text, reason: reason);
+  }
 }
 
 ManeuverInstruction _instruction({

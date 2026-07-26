@@ -1,12 +1,41 @@
 import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/rider_color.dart';
+import '../domain/rider_location.dart';
 import '../features/map/motorcycle_icon.dart';
 import '../relay/live_presence.dart';
 import 'ride_event_authenticator.dart';
 import 'ride_lifecycle.dart';
 
 enum RideMembershipState { joined, active, inactive, left, expired }
+
+/// Why a rider who is counted in the live total has no position drawn.
+///
+/// Issue #132: the count and the marker were two separate judgements of the same
+/// rider, so a rider could be "one of 2 riders" and simultaneously have no
+/// position and no explanation. Every counted rider now resolves to exactly one
+/// of these, and only [hasPosition] means a marker is drawn.
+enum RidePositionAbsence {
+  /// A position is available and drawn.
+  hasPosition,
+
+  /// The rider is in the ride and no position has reached this phone yet.
+  noPositionReported,
+
+  /// Live positions cannot reach this phone at the moment, so the absence says
+  /// nothing about the rider. The transport's own named limitation says why.
+  positionChannelUnavailable,
+}
+
+extension RidePositionAbsenceLabels on RidePositionAbsence {
+  /// Wording for a roster row. Never colour, never silence.
+  String? get label => switch (this) {
+    RidePositionAbsence.hasPosition => null,
+    RidePositionAbsence.noPositionReported => 'no position reported yet',
+    RidePositionAbsence.positionChannelUnavailable =>
+      'live positions paused on this phone',
+  };
+}
 
 enum RideTransportEvidence { localDevice, internetRelay, nearbyRelay, journal }
 
@@ -26,6 +55,7 @@ class RideParticipant {
     this.attentionLabel,
     this.positionFreshness,
     this.knownFromRelayOnly = false,
+    this.positionAbsence = RidePositionAbsence.noPositionReported,
   });
 
   final String riderId;
@@ -50,10 +80,24 @@ class RideParticipant {
   /// durable journal yet. They are still a real, reachable participant.
   final bool knownFromRelayOnly;
 
+  /// Whether this rider's position is drawn, and if not, the stated reason.
+  ///
+  /// A rider in the live count with [RidePositionAbsence.hasPosition] must have
+  /// a rendered marker; any other value must be shown in words. There is no
+  /// third state.
+  final RidePositionAbsence positionAbsence;
+
   bool get isIncludedInLiveCount =>
       state != RideMembershipState.left && state != RideMembershipState.expired;
 
   bool get isEligibleForLivePosition => isIncludedInLiveCount;
+
+  /// True when this rider's position state is accounted for: either drawn, or
+  /// absent with a reason a rider can read. Asserted by [RideLiveView].
+  bool get hasStatedPositionState =>
+      !isIncludedInLiveCount ||
+      positionAbsence == RidePositionAbsence.hasPosition ||
+      positionAbsence.label != null;
 
   bool get isEligibleForRouteAlerts => state == RideMembershipState.active;
 
@@ -69,13 +113,13 @@ class RideParticipant {
         state == RideMembershipState.expired) {
       return base;
     }
-    // Stated in words, never by colour alone, and never silently absent: "no
-    // position" is a state a rider is told about.
+    // Stated in words, never by colour alone, and never silently absent: a
+    // counted rider with no position always says why.
     final suffix = switch (positionFreshness) {
-      null || PresenceFreshness.live => null,
+      PresenceFreshness.live => null,
       PresenceFreshness.ageing => 'position ageing',
       PresenceFreshness.stale => 'position stale',
-      PresenceFreshness.none => 'no position',
+      null || PresenceFreshness.none => positionAbsence.label,
     };
     return suffix == null ? base : '$base · $suffix';
   }
@@ -117,6 +161,7 @@ class RideParticipant {
     bool clearAttention = false,
     PresenceFreshness? positionFreshness,
     bool? knownFromRelayOnly,
+    RidePositionAbsence? positionAbsence,
   }) => RideParticipant(
     riderId: riderId,
     displayName: displayName ?? this.displayName,
@@ -134,7 +179,83 @@ class RideParticipant {
         : (attentionLabel ?? this.attentionLabel),
     positionFreshness: positionFreshness ?? this.positionFreshness,
     knownFromRelayOnly: knownFromRelayOnly ?? this.knownFromRelayOnly,
+    positionAbsence: positionAbsence ?? this.positionAbsence,
   );
+}
+
+/// The one reconciled live model: the rider count, the roster rows, the main map
+/// and the mini-map all derive from this and cannot disagree.
+///
+/// Issue #132: the count came from membership while the marker came from a
+/// separate freshness judgement, so a leader could count a follower and refuse
+/// to draw them with nothing said. [reconcile] makes that state unrepresentable:
+/// every counted rider is either in [renderedPositions] or in
+/// [countedWithoutPosition] with a stated reason, and never in both or neither.
+class RideLiveView {
+  RideLiveView._(this.participants, this.renderedPositions)
+    : assert(
+        participants.every((participant) => participant.hasStatedPositionState),
+        'A rider in the live count must have a position or a stated reason.',
+      );
+
+  /// Builds the reconciled view from the membership roster and the reconciled
+  /// live presence for the same rider set.
+  ///
+  /// [positionChannelUnavailable] is true when this device cannot currently
+  /// receive positions at all, so an absence is attributed to the transport
+  /// rather than to the rider.
+  factory RideLiveView.reconcile({
+    required Iterable<RideParticipant> participants,
+    required Iterable<LiveRiderPresence> presence,
+    bool positionChannelUnavailable = false,
+  }) {
+    final presenceById = {for (final entry in presence) entry.riderId: entry};
+    final resolved = <RideParticipant>[];
+    final positions = <RiderLocation>[];
+    for (final participant in participants) {
+      final location = presenceById[participant.riderId]?.location;
+      final absence = location != null
+          ? RidePositionAbsence.hasPosition
+          : positionChannelUnavailable
+          ? RidePositionAbsence.positionChannelUnavailable
+          : RidePositionAbsence.noPositionReported;
+      resolved.add(participant.copyWith(positionAbsence: absence));
+      if (location != null && participant.isEligibleForLivePosition) {
+        positions.add(location);
+      }
+    }
+    return RideLiveView._(
+      List.unmodifiable(resolved),
+      List.unmodifiable(positions),
+    );
+  }
+
+  /// Every rider in the ride, each carrying a resolved position state.
+  final List<RideParticipant> participants;
+
+  /// The positions to draw: one per counted rider that has one. Nothing else is
+  /// drawable, and nothing drawable is missing from the count.
+  final List<RiderLocation> renderedPositions;
+
+  List<RideParticipant> get liveParticipants => List.unmodifiable([
+    for (final participant in participants)
+      if (participant.isIncludedInLiveCount) participant,
+  ]);
+
+  int get liveRiderCount => liveParticipants.length;
+
+  /// Counted riders with no marker, each with a reason to show.
+  List<RideParticipant> get countedWithoutPosition => List.unmodifiable([
+    for (final participant in liveParticipants)
+      if (participant.positionAbsence != RidePositionAbsence.hasPosition)
+        participant,
+  ]);
+
+  /// The count and the drawn positions agree: every counted rider is accounted
+  /// for exactly once.
+  bool get isReconciled =>
+      renderedPositions.length + countedWithoutPosition.length ==
+      liveRiderCount;
 }
 
 class RideMembershipReducer {

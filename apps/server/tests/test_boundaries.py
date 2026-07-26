@@ -135,16 +135,26 @@ def test_active_ride_capacity_rejects_new_claims(settings, synchronize) -> None:
     assert rejected.json() == {"error": "Relay ride capacity reached"}
 
 
-def test_per_ride_replay_quota_is_atomic(settings, synchronize) -> None:
+def test_per_ride_replay_quota_is_atomic(settings, synchronize, make_event) -> None:
     bounded = settings.model_copy(update={"maximum_replays_per_ride": 1})
     ride_id = "ride-replay-quota"
+    # Only an upload is replay-protected, so only an upload consumes the quota.
     with TestClient(create_app(bounded)) as client:
-        assert synchronize(client, ride_id=ride_id, secret=SECRET).status_code == 200
+        assert (
+            synchronize(
+                client,
+                ride_id=ride_id,
+                secret=SECRET,
+                events=[make_event(ride_id, "event-a")],
+            ).status_code
+            == 200
+        )
         rejected = synchronize(
             client,
             ride_id=ride_id,
             secret=SECRET,
             device_id="device-b",
+            events=[make_event(ride_id, "event-b", device_id="device-b")],
         )
 
     assert rejected.status_code == 413

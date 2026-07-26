@@ -156,7 +156,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     expect(find.byKey(const Key('maneuver-list')), findsOneWidget);
-    expect(find.text('Roundabout, 2nd exit, straight on'), findsOneWidget);
+    expect(find.text('2nd exit, straight on'), findsOneWidget);
   });
 }
 
