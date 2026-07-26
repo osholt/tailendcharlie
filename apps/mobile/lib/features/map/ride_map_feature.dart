@@ -528,11 +528,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _markerOverviewVisible = false;
   bool _markerPlanVisible = false;
   bool _autoFollowSuppressed = false;
-  // Distinct from [_autoFollowSuppressed], which is cleared as soon as the bike
-  // stops so automatic following can re-arm. This one records that the rider
-  // took the camera over and survives stopping, because that is exactly when
-  // "Follow me" has to stay reachable (#125).
-  bool _followManuallyStopped = false;
+  // The last measurement of whether the map is framed on the rider, cached
+  // because taking it needs laid-out geometry and `BuildContext.size` cannot be
+  // read during build. Refreshed by [_refreshCameraFraming] from every camera
+  // move and every fix; it is a cache of a measurement, not a record of how the
+  // framing was lost. See [_cameraFramesRider].
+  bool _mapFramedOnRider = true;
+  bool _cameraFramingRefreshScheduled = false;
   bool _emergencyAlertSending = false;
   bool _emergencyAlertSent = false;
   bool _emergencyActionsOpen = false;
@@ -684,6 +686,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.leaderStatus?.removeListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
+    _mapLibreController?.removeListener(_scheduleCameraFramingRefresh);
     _mapController.dispose();
     _navigationGuidance.dispose();
     _riderSpeedMetersPerSecond.dispose();
@@ -728,6 +731,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
           if (mounted) unawaited(_showMarkerOverview());
         });
       }
+      // A route loaded on a standing bike frames the whole route, not the rider,
+      // so the way back has to be offered from the first frame (#133).
+      _scheduleCameraFramingRefresh();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -787,13 +793,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final hasGuidance = _navigationGuidance.value != null;
     // Leaving a ride is a ride-lifecycle action, not a route action (#124).
     final showLeaveRide = widget.onLeaveRide != null;
-    // "Follow me" is a recovery affordance, not permanent chrome (#125): it is
-    // earned by the rider taking the camera over, or by there being no fix to
-    // follow yet, and it disappears again the moment following resumes.
-    final showFollowMe =
-        !markerOverviewActive &&
-        !_navigationMode &&
-        (_followManuallyStopped || _effectivePosition == null);
+    // "Follow me" is a recovery affordance, not permanent chrome (#125), but the
+    // thing that earns it is the map not being framed on the rider - measured,
+    // not inferred from the gesture that did it (#133).
+    final showFollowMe = !markerOverviewActive && !_cameraFramesRider;
     return Scaffold(
       appBar: hideChrome
           ? null
@@ -1033,20 +1036,25 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
-  /// Every persistent map overlay, anchored clear of the upper band.
+  /// Every persistent map overlay, anchored clear of the road ahead.
   ///
-  /// The top of the screen is where a rider on a mounted phone reads the road
-  /// ahead, so nothing persistent is allowed to live there. Portrait stacks the
-  /// surfaces into one bottom-anchored band; landscape splits them into a
-  /// bottom-left rail (guidance, status, actions) and a bottom-right rail
-  /// (group overview, speed limit, marker card) so the centre and upper
-  /// viewport stay clear. Because each rail is a single [Column], the
-  /// anchoring stays deterministic - the property #89 introduced - and no
-  /// surface can cover another at any simultaneous overlay count.
+  /// #104's rule is that the band a rider reads the road in must stay clear of
+  /// persistent *status surfaces and popups*. What that leaves free is the
+  /// corners, and the corners now carry three small things - the ride menu
+  /// (#125), and, from #133, the group overview and, in landscape, the speed
+  /// sign. Each is hard against a screen edge, none is wider than a fifth of the
+  /// viewport, and the centre and upper-middle stay empty.
   ///
-  /// Order within a rail runs from most urgent nearest the map to least urgent
-  /// nearest the screen edge, with the touch targets lowest where a gloved hand
-  /// naturally rests.
+  /// Everything else is bottom-anchored: portrait into one band, landscape into a
+  /// left rail (guidance, status, actions) and a right rail (recovery, group
+  /// overview) so the centre column stays clear. Because each rail is a single
+  /// [Column], the anchoring stays deterministic - the property #89 introduced -
+  /// and no surface can cover another at any simultaneous overlay count.
+  ///
+  /// Order within a rail runs from least urgent at the top to the targets a
+  /// gloved hand reaches for at the bottom, with the turn banner immediately
+  /// above them: the rider's eye leaves the road for the banner and comes
+  /// straight back, so every pixel above it is map (#133).
   Widget _buildRideChrome({
     required bool landscape,
     required bool hideChrome,
@@ -1162,47 +1170,49 @@ class _RideMapScreenState extends State<RideMapScreen> {
       final actionPadding = landscape
           ? const EdgeInsets.symmetric(horizontal: 12)
           : null;
-      // Safety and ride-lifecycle targets, all glove-sized, all on one row:
-      // none of them is derived from a planned route (#124), and REPORT belongs
-      // beside them rather than on a row of its own (#125).
-      final actions = <Widget>[
-        if (widget.onEmergencyAlert != null)
-          FloatingActionButton.extended(
-            key: const Key('emergency-alert-button'),
-            extendedPadding: actionPadding,
-            heroTag: 'ride-relay-emergency-alert',
-            tooltip: 'Alert leader and TEC',
-            onPressed: _emergencyAlertSending ? null : _triggerEmergencyAlert,
-            backgroundColor: const Color(0xFFD9304F),
-            foregroundColor: Colors.white,
-            icon: _emergencyAlertSending
-                ? const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : Icon(_emergencyAlertSent ? Icons.check_circle : Icons.sos),
-            label: Text(_emergencyAlertSent ? 'ALERT SENT' : 'ALERT'),
-          ),
-        if (showLeaveRide)
-          FloatingActionButton.extended(
-            key: const Key('leave-ride-button'),
-            extendedPadding: actionPadding,
-            heroTag: 'ride-relay-leave',
-            tooltip: 'Stop sharing and leave this ride',
-            onPressed: widget.onLeaveRide,
-            backgroundColor: const Color(0xFF545F6E),
-            foregroundColor: Colors.white,
-            icon: const Icon(Icons.exit_to_app),
-            label: const Text('LEAVE'),
-          ),
-        // Reporting a camera or a patrol car is a ride action, not a route
-        // action, and it earns a place on the same row (#125).
-        if (widget.onReportHazard != null)
-          _ReportSightingButton(onPressed: _reportEnforcementSighting),
-      ];
+      // Safety and ride-lifecycle targets, all glove-sized: none of them is
+      // derived from a planned route (#124), and REPORT belongs beside them
+      // rather than on a row of its own (#125).
+      final sosButton = widget.onEmergencyAlert == null
+          ? null
+          : FloatingActionButton.extended(
+              key: const Key('emergency-alert-button'),
+              extendedPadding: actionPadding,
+              heroTag: 'ride-relay-emergency-alert',
+              tooltip: 'Alert leader and TEC',
+              onPressed: _emergencyAlertSending ? null : _triggerEmergencyAlert,
+              backgroundColor: const Color(0xFFD9304F),
+              foregroundColor: Colors.white,
+              icon: _emergencyAlertSending
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(_emergencyAlertSent ? Icons.check_circle : Icons.sos),
+              label: Text(_emergencyAlertSent ? 'ALERT SENT' : 'ALERT'),
+            );
+      final leaveButton = showLeaveRide
+          ? FloatingActionButton.extended(
+              key: const Key('leave-ride-button'),
+              extendedPadding: actionPadding,
+              heroTag: 'ride-relay-leave',
+              tooltip: 'Stop sharing and leave this ride',
+              onPressed: widget.onLeaveRide,
+              backgroundColor: const Color(0xFF545F6E),
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.exit_to_app),
+              label: const Text('LEAVE'),
+            )
+          : null;
+      // Reporting a camera or a patrol car is a ride action, not a route action,
+      // and it earns a place beside them (#125).
+      final reportButton = widget.onReportHazard == null
+          ? null
+          : _ReportSightingButton(onPressed: _reportEnforcementSighting);
+      final actions = <Widget>[?sosButton, ?leaveButton, ?reportButton];
       // The speed sign owns its own slot at the edge of the band, clear of the
       // action row: portrait puts it under the actions and hard right, landscape
       // in the right-hand rail away from the centre column (#125).
@@ -1249,6 +1259,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 top: safeTop + 10,
                 child: rideMenu,
               ),
+            // The speed sign is the third corner element (#133). It is the one
+            // surface a rider glances at repeatedly without acting on it, so it
+            // belongs where the eye already is rather than at the bottom of a
+            // rail beside the targets - and hard against the trailing edge, well
+            // clear of the centre column.
+            if (speedLimit != null)
+              Positioned(
+                right: safeRight + 10,
+                top: safeTop + 10,
+                child: speedLimit,
+              ),
             Positioned(
               left: safeLeft + 10,
               bottom: safeBottom + 10,
@@ -1266,8 +1287,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     ),
                   if (!_basemap.isConfigured) const _RouteOnlyBadge(),
                   ...urgent,
-                  ?guidance,
                   ?tecGap,
+                  // Last before the targets: see [_buildRideChrome] (#133).
+                  ?guidance,
                   if (actions.isNotEmpty) _chromeActions(actions),
                 ],
               ),
@@ -1279,17 +1301,63 @@ class _RideMapScreenState extends State<RideMapScreen> {
               child: _chromeRail(
                 key: const Key('map-landscape-right-rail'),
                 alignment: CrossAxisAlignment.end,
-                children: [?miniMap, ?followMe, ?speedLimit, ?junctionCard],
+                // The group overview sits at the very bottom right (#133): it is
+                // a glance, not a target, and the corner furthest from the road
+                // ahead is the cheapest place on the screen to put one.
+                children: [?followMe, ?junctionCard, ?miniMap],
               ),
             ),
           ],
         );
       }
 
+      // SOS above LEAVE rather than beside it (#133), with REPORT alongside the
+      // pair and the speed sign opposite. Stacking them costs no height: the
+      // two-high column and the 62 pixel REPORT square both fit inside the height
+      // the speed sign already needed, so a row that used to be an action run
+      // *plus* a sign run is now one run of the taller of the two. The rider gets
+      // targets that no longer sit shoulder to shoulder - a mis-hit next to SOS
+      // used to be LEAVE - and the band gets shorter.
+      final actionCluster = actions.isEmpty && speedLimit == null
+          ? null
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (sosButton != null || leaveButton != null)
+                  Column(
+                    key: const Key('map-portrait-safety-stack'),
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ?sosButton,
+                      if (sosButton != null && leaveButton != null)
+                        const SizedBox(height: 8),
+                      ?leaveButton,
+                    ],
+                  ),
+                if (reportButton != null) ...[
+                  const SizedBox(width: 10),
+                  reportButton,
+                ],
+                const Spacer(),
+                // Hard right, out of the way of the thumb reaching the stack.
+                ?speedLimit,
+              ],
+            );
       return Stack(
         children: [
           if (rideMenu != null)
             Positioned(left: safeLeft + 12, top: safeTop + 12, child: rideMenu),
+          // The group overview is the second corner element (#133), opposite the
+          // ride menu. It is a glance rather than a target, so the top trailing
+          // corner costs the rider nothing - and out of the bottom band it stops
+          // charging the camera's forward bias for a surface nobody acts on.
+          if (miniMap != null)
+            Positioned(
+              right: safeRight + 12,
+              top: safeTop + 12,
+              child: miniMap,
+            ),
           Positioned(
             left: safeLeft + 12,
             right: safeRight + 12,
@@ -1320,30 +1388,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       child: _RouteOnlyBadge(),
                     ),
                   ...urgent,
+                  ?tecGap,
+                  // The turn banner is the last thing above the targets, so
+                  // everything above it is map (#133). It used to have the TEC
+                  // gap and the group overview between it and them.
                   ?guidance,
-                  if (tecGap != null || miniMap != null)
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Expanded(child: tecGap ?? const SizedBox.shrink()),
-                        if (miniMap != null) ...[
-                          const SizedBox(width: 8),
-                          miniMap,
-                        ],
-                      ],
-                    ),
-                  // One action row (#125): SOS, LEAVE and REPORT side by side,
-                  // each still at its full gloved-hand size, with "Follow me"
-                  // joining only on the rare frames it is earned. The Wrap is
-                  // what keeps that promise at large text sizes - it flows onto
-                  // a second run rather than shrinking a target.
-                  if (actions.isNotEmpty || followMe != null)
-                    _chromeActions([...actions, ?followMe]),
-                  // The speed sign is last and hard right, so it neither sits in
-                  // the thumb's way nor drags the action row's height up to its
-                  // own (#125).
-                  if (speedLimit != null)
-                    Align(alignment: Alignment.centerRight, child: speedLimit),
+                  // Rare, and its own run: it appears only when the map is off
+                  // the rider, and the alternative was shrinking a target to fit
+                  // it beside three others.
+                  if (followMe != null)
+                    Align(alignment: Alignment.centerLeft, child: followMe),
+                  ?actionCluster,
                   ?junctionCard,
                 ],
               ),
@@ -1484,7 +1539,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     points: feature.points.map(_latLng).toList(growable: false),
                     color: _discoveryColour(feature.category),
                     strokeWidth: 4,
-                    borderColor: const Color(0xCC10151C),
+                    // Opaque, to match the MapLibre casing (#133).
+                    borderColor: RouteTrailStyle.casing,
                     borderStrokeWidth: 2,
                     pattern:
                         feature.category ==
@@ -1727,9 +1783,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   void _onMapLibreCreated(ml.MapLibreMapController controller) {
-    _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
+    final previous = _mapLibreController;
+    previous?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
+    previous?.removeListener(_scheduleCameraFramingRefresh);
     _mapLibreController = controller;
     controller.onFeatureTapped.add(_onMapLibreFeatureTapped);
+    // The controller notifies on every camera move, which is how a pan on the
+    // platform map reaches the measured "Follow me" test (#133). The measurement
+    // is deferred and only rebuilds when its answer changes, so the platform
+    // view is not resized mid-gesture.
+    controller.addListener(_scheduleCameraFramingRefresh);
   }
 
   MapNavigationPosition? get _navigationFix => widget.navigationPosition?.value;
@@ -1775,6 +1838,130 @@ class _RideMapScreenState extends State<RideMapScreen> {
   double get _bottomChromeHeightPixels {
     final height = _bottomChromeKey.currentContext?.size?.height;
     return height == null ? 0 : height + 12;
+  }
+
+  /// The camera framing following the rider would produce right now.
+  ///
+  /// Shared by [_followNavigationCamera], which drives the map to it, and by
+  /// [_measureMapFramedOnRider], which measures the map against it, so the
+  /// framing the camera aims for and the framing the map is judged by cannot
+  /// drift apart.
+  ({GeoPoint target, NavigationCameraPlan plan}) _followCameraFraming(
+    GeoPoint position,
+  ) {
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final viewportHeight = _mapViewportHeightPixels;
+    final plan = NavigationCameraPlanner.plan(
+      speedMetersPerSecond:
+          _smoothedNavigationSpeedMetersPerSecond ??
+          _navigationFix?.speedMetersPerSecond,
+      landscape: landscape,
+      viewportHeightPixels: viewportHeight,
+      latitudeDegrees: position.latitude,
+      bottomChromeFraction: landscape || viewportHeight <= 0
+          ? 0
+          : _bottomChromeHeightPixels / viewportHeight,
+    );
+    // MapLibre is tilted, so the bias is the perspective look-ahead the plan
+    // solved. FlutterMap is flat, so it is a straight ground offset at that
+    // renderer's own scale.
+    final lookAhead = _basemap.usesMapLibre
+        ? plan.lookAheadMeters
+        : NavigationCameraPlanner.flatLookAheadMetersFor(
+            zoom: plan.zoom,
+            forwardBiasPixels: plan.forwardBiasPixels,
+            latitudeDegrees: position.latitude,
+          );
+    return (
+      target: lookAhead == 0
+          ? position
+          : _pointAhead(position, _cameraBearingDegrees, lookAhead),
+      plan: plan,
+    );
+  }
+
+  /// Whether the map is framed on the rider, and therefore whether "Follow me"
+  /// has anything to recover.
+  ///
+  /// Two things make it true, and neither is a record of a past gesture:
+  ///
+  /// - the camera is being driven at the rider right now, in which case a
+  ///   mid-animation sample is not evidence the framing was lost;
+  /// - the map's own camera measurably sits on the framing following would
+  ///   choose, whether the bike is moving or standing still.
+  ///
+  /// #125 asked instead whether a pan had interrupted an active follow. Follow
+  /// mode needs movement, so a phone on a desk was never following, a pan
+  /// suppressed nothing, and the button never appeared on either tester's phone
+  /// (#133). Deriving it from the framing removes the whole class of bug: it
+  /// cannot matter how the map came to be somewhere else.
+  bool get _cameraFramesRider {
+    // No fix means nothing to be framed on, and the button is how the rider asks
+    // for one.
+    if (_effectivePosition == null) return false;
+    if (_navigationMode) return true;
+    return _mapFramedOnRider;
+  }
+
+  bool _measureMapFramedOnRider() {
+    final rider = _effectivePosition;
+    if (rider == null) return false;
+    final framing = _followCameraFraming(rider);
+    if (_basemap.usesMapLibre) {
+      final camera = _mapLibreController?.cameraPosition;
+      // Before the platform map reports a camera there is no framing to judge,
+      // and offering a recovery from an unknown state would be noise.
+      if (camera == null) return true;
+      return NavigationCameraPlanner.framesRider(
+        driftMeters: _mapDistanceMeters(
+          GeoPoint(
+            latitude: camera.target.latitude,
+            longitude: camera.target.longitude,
+          ),
+          framing.target,
+        ),
+        zoom: camera.zoom,
+        latitudeDegrees: rider.latitude,
+        tileSize: 512,
+      );
+    }
+    try {
+      final camera = _mapController.camera;
+      return NavigationCameraPlanner.framesRider(
+        driftMeters: _mapDistanceMeters(
+          GeoPoint(
+            latitude: camera.center.latitude,
+            longitude: camera.center.longitude,
+          ),
+          framing.target,
+        ),
+        zoom: camera.zoom,
+        latitudeDegrees: rider.latitude,
+        tileSize: 256,
+      );
+    } on Object {
+      // FlutterMap throws until it has been laid out once. As above: an
+      // unattached map has no framing to recover.
+      return true;
+    }
+  }
+
+  /// Re-measures the framing after the frame currently being built.
+  ///
+  /// Always deferred: the measurement reads laid-out sizes, and camera events
+  /// can arrive from inside a build or layout pass, where `BuildContext.size`
+  /// throws.
+  void _scheduleCameraFramingRefresh() {
+    if (_cameraFramingRefreshScheduled) return;
+    _cameraFramingRefreshScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _cameraFramingRefreshScheduled = false;
+      if (!mounted) return;
+      final framed = _measureMapFramedOnRider();
+      if (framed == _mapFramedOnRider) return;
+      setState(() => _mapFramedOnRider = framed);
+    });
   }
 
   void _onPositionChanged() {
@@ -1865,8 +2052,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         if (autoFollow) {
           _navigationMode = true;
           _navigationCanvasActive = true;
-          // Following resumed on its own, so the recovery affordance is spent.
-          _followManuallyStopped = false;
         }
       });
     }
@@ -1879,6 +2064,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         if (mounted) unawaited(_followNavigationCamera());
       });
     }
+    // A rider standing still with the map panned away gets no camera events at
+    // all, so the fix that arrives while they stand there is the one chance to
+    // notice the framing was lost (#133).
+    _scheduleCameraFramingRefresh();
     if (offerEmergencyActions) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_showEmergencyActions());
@@ -1945,8 +2134,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     setState(() {
       _markerOverviewVisible = visible;
       if (visible) {
-        // The junction overview owns the camera while it is up. That is not the
-        // rider taking it over, so it must not leave "Follow me" behind (#125).
+        // The junction overview owns the camera while it is up, and takes the
+        // whole screen with it: nothing is offered underneath it (#125).
         _navigationMode = false;
         _autoFollowSuppressed = false;
       } else if (_effectivePosition != null) {
@@ -1954,7 +2143,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _navigationMode = true;
         _navigationCanvasActive = true;
         _autoFollowSuppressed = false;
-        _followManuallyStopped = false;
       }
     });
     if (visible) {
@@ -1977,17 +2165,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   void _onFlutterMapEvent(MapEvent event) {
-    if (!_navigationMode ||
-        event.source == MapEventSource.mapController ||
-        event.source == MapEventSource.nonRotatedSizeChange) {
-      return;
-    }
-    if (event.source == MapEventSource.dragStart ||
-        event.source == MapEventSource.multiFingerGestureStart ||
-        event.source == MapEventSource.doubleTap ||
-        event.source == MapEventSource.scrollWheel) {
+    if (event.source == MapEventSource.nonRotatedSizeChange) return;
+    if (_navigationMode &&
+        event.source != MapEventSource.mapController &&
+        (event.source == MapEventSource.dragStart ||
+            event.source == MapEventSource.multiFingerGestureStart ||
+            event.source == MapEventSource.doubleTap ||
+            event.source == MapEventSource.scrollWheel)) {
       _stopFollowing(suppressAutomatic: _isMoving);
     }
+    // Every camera change, including the ones this app asked for: the framing is
+    // measured, so the button appears and disappears from where the map actually
+    // is rather than from which gesture moved it (#133).
+    _scheduleCameraFramingRefresh();
   }
 
   void _onMapPointerDown(PointerDownEvent event) {
@@ -2036,7 +2226,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _navigationMode = true;
       _navigationCanvasActive = true;
       _autoFollowSuppressed = false;
-      _followManuallyStopped = false;
     });
     // Re-centring is a change of framing, not a tracking update, so it is eased
     // rather than run at the linear rate the per-fix updates use.
@@ -2051,15 +2240,27 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// Hands the camera back to the rider.
   ///
   /// Every caller is a deliberate act - a pan, a pinch, a scroll, or fitting the
-  /// whole route - so this is also what earns "Follow me" its place on screen
-  /// (#125).
+  /// whole route. It does not decide whether "Follow me" is on screen: that is
+  /// measured from where the map ends up (#133), which is the only way a rider
+  /// who was never being followed still gets a way back.
   void _stopFollowing({required bool suppressAutomatic}) {
     if (!mounted) return;
     setState(() {
       _navigationMode = false;
       _autoFollowSuppressed = suppressAutomatic;
-      _followManuallyStopped = true;
     });
+    // FlutterMap does not cancel a controller-driven animation when a gesture
+    // starts, and each tick of that animation sets the camera outright - so a pan
+    // begun during a follow transition was silently dragged back onto the rider.
+    // Handing the camera over means letting go of it.
+    if (!_basemap.usesMapLibre) {
+      try {
+        _mapController.stopAnimationRaw();
+      } on Object {
+        // Nothing is attached yet, so nothing is animating.
+      }
+    }
+    _scheduleCameraFramingRefresh();
   }
 
   Future<void> _triggerEmergencyAlert() async {
@@ -2239,26 +2440,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     _lastCameraUpdateAt = now;
     _cameraUpdateInFlight = true;
-    final landscape =
-        MediaQuery.orientationOf(context) == Orientation.landscape;
     // The rider is anchored low in the frame so most of the screen is road
     // ahead. The anchor is a documented fraction of the measured viewport
     // height, pulled back far enough to keep the marker clear of the bottom
     // chrome band, so a look-ahead can never push the rider's own marker off
     // screen or under an overlay the way a fixed distance up the route once
-    // did.
-    final viewportHeight = _mapViewportHeightPixels;
-    final cameraPlan = NavigationCameraPlanner.plan(
-      speedMetersPerSecond:
-          _smoothedNavigationSpeedMetersPerSecond ??
-          _navigationFix?.speedMetersPerSecond,
-      landscape: landscape,
-      viewportHeightPixels: viewportHeight,
-      latitudeDegrees: position.latitude,
-      bottomChromeFraction: landscape || viewportHeight <= 0
-          ? 0
-          : _bottomChromeHeightPixels / viewportHeight,
-    );
+    // did. The same framing is what "Follow me" is measured against (#133).
+    final framing = _followCameraFraming(position);
+    final cameraPlan = framing.plan;
     final cameraDuration = transitionDuration ?? _cameraTransitionDuration;
     try {
       if (_basemap.usesMapLibre) {
@@ -2268,17 +2457,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
         // aiming at the ground point that renders where the rider should not
         // be. The distance comes from the tilt and viewport geometry, so the
         // rider still lands at the planned viewport fraction.
-        final target = cameraPlan.lookAheadMeters == 0
-            ? position
-            : _pointAhead(
-                position,
-                _cameraBearingDegrees,
-                cameraPlan.lookAheadMeters,
-              );
         await controller.easeCamera(
           ml.CameraUpdate.newCameraPosition(
             ml.CameraPosition(
-              target: ml.LatLng(target.latitude, target.longitude),
+              target: ml.LatLng(
+                framing.target.latitude,
+                framing.target.longitude,
+              ),
               zoom: cameraPlan.zoom,
               tilt: cameraPlan.tilt,
               bearing: _cameraBearingDegrees,
@@ -2295,17 +2480,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // scale. It goes into the target rather than into the call's screen-space
       // `offset`, which is silently dropped whenever the bearing has not
       // changed - the common case once the rotation deadband is holding.
-      final flatLookAhead = NavigationCameraPlanner.flatLookAheadMetersFor(
-        zoom: cameraPlan.zoom,
-        forwardBiasPixels: cameraPlan.forwardBiasPixels,
-        latitudeDegrees: position.latitude,
-      );
       _mapController.moveAndRotateAnimatedRaw(
-        _latLng(
-          flatLookAhead == 0
-              ? position
-              : _pointAhead(position, _cameraBearingDegrees, flatLookAhead),
-        ),
+        _latLng(framing.target),
         cameraPlan.zoom,
         _cameraBearingDegrees,
         offset: Offset.zero,
@@ -2364,12 +2540,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _discoveryLineSource,
         _discoveryLineGeoJson(),
       );
+      // Opaque, both of them. These were the only geometry on the map whose
+      // casing was translucent and whose line was drawn at 90%, which left them
+      // the only lines with nothing solid behind them: 1.80:1 for the good-biking
+      // blue over the dark motorway fill, against 4.12:1 once the casing is
+      // opaque (#133). #107 already ruled that route geometry uses opaque colour
+      // over a casing rather than translucency; this is the last place that had
+      // not caught up.
       await controller.addLineLayer(
         _discoveryLineSource,
         'ride-relay-discovery-line-casing',
         const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineOpacity: 0.75,
+          lineColor: RouteTrailStyle.casingHex,
           lineWidth: 7,
           lineCap: 'round',
           lineJoin: 'round',
@@ -2381,7 +2563,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         'ride-relay-discovery-lines',
         const ml.LineLayerProperties(
           lineColor: ['get', 'color'],
-          lineOpacity: 0.9,
           lineWidth: 4,
           lineCap: 'round',
           lineJoin: 'round',
@@ -2541,7 +2722,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
         'ride-relay-position-icon',
         ml.SymbolLayerProperties(
           iconImage: widget.localMotorcycleStyle.name,
-          iconColor: '#FFFFFF',
+          // Dark on a light badge: see [RouteTrailStyle.markerGlyph] (#133).
+          iconColor: RouteTrailStyle.markerGlyphHex,
           iconSize: 0.2,
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
@@ -2568,7 +2750,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
         'ride-relay-overlay-icons',
         const ml.SymbolLayerProperties(
           iconImage: ['get', 'iconImage'],
-          iconColor: '#FFFFFF',
+          // As above: the badge carries the colour, the glyph carries the shape,
+          // and a dark glyph is the only way the shape survives on a light badge.
+          iconColor: RouteTrailStyle.markerGlyphHex,
           iconSize: 0.19,
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
@@ -3992,6 +4176,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
       context: context,
       backgroundColor: const Color(0xFF161D26),
       showDragHandle: true,
+      // Without this the sheet is capped at nine sixteenths of the screen - 219
+      // pixels on a 390 pixel landscape phone - and two glove-sized targets plus
+      // a title and a cancel do not fit, so the second one fell below the fold
+      // and selecting police needed a scroll (#133). The sheet takes the height
+      // it needs instead of the targets being shrunk to fit a cap.
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
@@ -4010,20 +4200,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ),
                 ),
               ),
-              _ReportSightingOption(
-                optionKey: const Key('report-speed-camera-option'),
-                label: 'SPEED CAMERA',
-                icon: Icons.speed_rounded,
-                color: const Color(0xFF9B1B23),
-                onPressed: () =>
+              _ReportSightingOptions(
+                onSpeedCamera: () =>
                     Navigator.of(sheetContext).pop(HazardType.speedCamera),
-              ),
-              _ReportSightingOption(
-                optionKey: const Key('report-police-option'),
-                label: 'POLICE',
-                icon: Icons.local_police_rounded,
-                color: const Color(0xFF17497F),
-                onPressed: () =>
+                onPolice: () =>
                     Navigator.of(sheetContext).pop(HazardType.policeActivity),
               ),
               TextButton(
@@ -4784,131 +4964,142 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   Widget build(BuildContext context) {
     final riderCount = widget.riderCount;
     final visibleRoutePaths = _visibleRoutePaths(_snapshot());
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          key: const Key('group-mini-map'),
-          width: widget.width,
-          height: widget.height,
-          decoration: BoxDecoration(
-            color: const Color(0xF2111820),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF566273), width: 1.5),
-            boxShadow: const [
-              BoxShadow(
-                color: Colors.black54,
-                blurRadius: 8,
-                offset: Offset(0, 2),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: widget.showTiles
-                      ? _buildTileMap()
-                      : CustomPaint(
-                          painter: _GroupMiniMapPainter(
-                            routePaths: visibleRoutePaths,
-                            currentPosition: widget.currentPosition,
-                            riders: widget.riders,
-                            brightness: Theme.of(context).brightness,
-                          ),
-                        ),
+    // The rider count is in the layout rather than hung 22 pixels below the box
+    // by a negative offset. That trick assumed the overview always had rail
+    // beneath it to hang into; #133 puts it in a screen corner, where the caption
+    // fell off the edge. The key is on the whole footprint so an overlap test
+    // measures what is actually on screen, caption included.
+    return Semantics(
+      key: const Key('group-mini-map'),
+      button: widget.onTap != null,
+      label: widget.onTap == null
+          ? null
+          : 'Open ride roster, $riderCount riders',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildMiniMapCanvas(visibleRoutePaths),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 7),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xD90D1117),
+                  borderRadius: BorderRadius.circular(9),
                 ),
-                if (widget.showTiles)
-                  const Positioned(
-                    right: 3,
-                    bottom: 2,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(color: Color(0xB3000000)),
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 3,
-                          vertical: 1,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  child: Text(
+                    '$riderCount RIDERS',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniMapCanvas(List<List<GeoPoint>> visibleRoutePaths) => Stack(
+    children: [
+      Container(
+        key: const Key('group-mini-map-canvas'),
+        width: widget.width,
+        height: widget.height,
+        decoration: BoxDecoration(
+          color: const Color(0xF2111820),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF566273), width: 1.5),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black54,
+              blurRadius: 8,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: widget.showTiles
+                    ? _buildTileMap()
+                    : CustomPaint(
+                        painter: _GroupMiniMapPainter(
+                          routePaths: visibleRoutePaths,
+                          currentPosition: widget.currentPosition,
+                          riders: widget.riders,
+                          brightness: Theme.of(context).brightness,
                         ),
-                        child: Text(
-                          'OpenFreeMap · © OSM',
-                          style: TextStyle(color: Colors.white, fontSize: 6),
-                        ),
+                      ),
+              ),
+              if (widget.showTiles)
+                const Positioned(
+                  right: 3,
+                  bottom: 2,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(color: Color(0xB3000000)),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                      child: Text(
+                        'OpenFreeMap · © OSM',
+                        style: TextStyle(color: Colors.white, fontSize: 6),
                       ),
                     ),
                   ),
-                if (widget.currentPosition != null)
-                  const Positioned(
-                    left: 6,
-                    top: 6,
-                    child: _MiniMapBadge(
-                      key: Key('mini-map-you-legend'),
-                      label: 'YOU',
-                      dotColor: Color(0xFFFF7A1A),
-                    ),
-                  ),
-                if (!widget.showTiles)
-                  const Positioned(
-                    right: 6,
-                    top: 6,
-                    child: _MiniMapBadge(
-                      key: Key('mini-map-north-indicator'),
-                      label: 'N ↑',
-                    ),
-                  ),
-                if (!widget.showTiles)
-                  Positioned(
-                    left: 7,
-                    bottom: 6,
-                    child: _MiniMapScaleBar(
-                      width: widget.width,
-                      points: [
-                        ?widget.currentPosition,
-                        ...widget.riders.map((rider) => rider.point),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        Positioned(
-          left: 7,
-          bottom: -22,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: const Color(0xD90D1117),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              child: Text(
-                '$riderCount RIDERS',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
                 ),
-              ),
-            ),
+              if (widget.currentPosition != null)
+                const Positioned(
+                  left: 6,
+                  top: 6,
+                  child: _MiniMapBadge(
+                    key: Key('mini-map-you-legend'),
+                    label: 'YOU',
+                    dotColor: Color(0xFFFF7A1A),
+                  ),
+                ),
+              if (!widget.showTiles)
+                const Positioned(
+                  right: 6,
+                  top: 6,
+                  child: _MiniMapBadge(
+                    key: Key('mini-map-north-indicator'),
+                    label: 'N ↑',
+                  ),
+                ),
+              if (!widget.showTiles)
+                Positioned(
+                  left: 7,
+                  bottom: 6,
+                  child: _MiniMapScaleBar(
+                    width: widget.width,
+                    points: [
+                      ?widget.currentPosition,
+                      ...widget.riders.map((rider) => rider.point),
+                    ],
+                  ),
+                ),
+            ],
           ),
         ),
-        if (widget.onTap != null)
-          Positioned.fill(
-            bottom: -22,
-            child: Semantics(
-              button: true,
-              label: 'Open ride roster, $riderCount riders',
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.onTap,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
 
   Widget _buildTileMap() {
     final groupPoints = <GeoPoint?>[
@@ -5639,14 +5830,22 @@ class _ReportSightingButton extends StatelessWidget {
             children: [
               Icon(Icons.add_alert_rounded, size: 26, color: Color(0xFFFFD24A)),
               SizedBox(height: 2),
-              Text(
-                'REPORT',
-                style: TextStyle(
-                  color: Color(0xFFE4E9EF),
-                  fontSize: 9,
-                  height: 1,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.6,
+              // The target keeps its 62 pixels at every text size, so the caption
+              // is what gives way rather than the box overflowing: the icon is
+              // what a rider aims at, and the word underneath only names it.
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    'REPORT',
+                    style: TextStyle(
+                      color: Color(0xFFE4E9EF),
+                      fontSize: 9,
+                      height: 1,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -5657,7 +5856,75 @@ class _ReportSightingButton extends StatelessWidget {
   );
 }
 
-/// Full-width targets for a rider wearing gloves, on a moving bike.
+/// The two report targets, side by side wherever both fit.
+///
+/// Stacked, they needed 176 pixels of a sheet the framework caps at 219 on a
+/// landscape phone, so police fell below the fold and could only be reached by
+/// scrolling - unusable on a bike, and it defeated the two-tap design, which
+/// exists so a stray map tap cannot broadcast a warning to the whole group
+/// (#133). Neither target is shrunk to achieve it: the pair goes side by side
+/// when each half can still hold a full-size target, and stacks otherwise, which
+/// is what keeps the largest accessibility text sizes honest.
+class _ReportSightingOptions extends StatelessWidget {
+  const _ReportSightingOptions({
+    required this.onSpeedCamera,
+    required this.onPolice,
+  });
+
+  final VoidCallback onSpeedCamera;
+  final VoidCallback onPolice;
+
+  /// Width one option needs for its icon, its label at the current text scale,
+  /// and the padding a gloved hand needs around them.
+  static double _minimumOptionWidth(BuildContext context) =>
+      34 + 24 + MediaQuery.textScalerOf(context).scale(22) * 7.2;
+
+  @override
+  Widget build(BuildContext context) {
+    final camera = _ReportSightingOption(
+      optionKey: const Key('report-speed-camera-option'),
+      label: 'SPEED CAMERA',
+      icon: Icons.speed_rounded,
+      color: const Color(0xFF9B1B23),
+      onPressed: onSpeedCamera,
+    );
+    final police = _ReportSightingOption(
+      optionKey: const Key('report-police-option'),
+      label: 'POLICE',
+      icon: Icons.local_police_rounded,
+      color: const Color(0xFF17497F),
+      onPressed: onPolice,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.maxWidth;
+        final sideBySide =
+            available.isFinite &&
+            (available - 12) / 2 >= _minimumOptionWidth(context);
+        if (!sideBySide) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [camera, police],
+          );
+        }
+        return Row(
+          key: const Key('report-options-side-by-side'),
+          // Each option carries its own height, so the row must not try to
+          // stretch to a parent that has none to give.
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: camera),
+            const SizedBox(width: 12),
+            Expanded(child: police),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// One report target, sized for a rider wearing gloves, on a moving bike.
 class _ReportSightingOption extends StatelessWidget {
   const _ReportSightingOption({
     required this.optionKey,
@@ -5677,10 +5944,11 @@ class _ReportSightingOption extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: SizedBox(
-      // Both options must fit a landscape phone without scrolling; the sheet
-      // scrolls as a backstop, but a rider should never have to reach for it.
+      // Both options must be reachable on a landscape phone without scrolling;
+      // the sheet scrolls as a backstop, but a rider should never have to reach
+      // for it. This height is never traded away to make them fit - see
+      // [_ReportSightingOptions], which changes the arrangement instead.
       height: 76,
-      width: double.infinity,
       child: FilledButton.icon(
         key: optionKey,
         onPressed: onPressed,
@@ -6156,7 +6424,11 @@ class _OffCourseBanner extends StatelessWidget {
         : '${alerts.length} riders are clearly off course';
     return Card(
       key: const Key('leader-off-course-alert'),
-      color: const Color(0xFFE2445C),
+      // Darker than the #E2445C it replaces, which left its own white text at
+      // 4.03:1 - short of WCAG AA for body text, on the most urgent status
+      // surface on the map. #C42741 takes that to 5.65:1 without touching the
+      // hue, so the banner still reads as the same alert (#133).
+      color: const Color(0xFFC42741),
       margin: EdgeInsets.zero,
       child: Padding(
         padding: EdgeInsets.symmetric(
@@ -6399,9 +6671,12 @@ class _IconBadge extends StatelessWidget {
     decoration: BoxDecoration(
       color: badgeColor,
       shape: BoxShape.circle,
-      border: Border.all(color: const Color(0xFF10151C), width: 2),
+      border: Border.all(color: RouteTrailStyle.casing, width: 2),
     ),
-    child: Icon(icon, color: Colors.white, size: size * 0.56),
+    // Dark, not white: see [RouteTrailStyle.markerGlyph]. Every hazard badge
+    // fill is light, and the caution yellow measured 1.54:1 behind a white
+    // glyph (#133).
+    child: Icon(icon, color: RouteTrailStyle.markerGlyph, size: size * 0.56),
   );
 }
 
