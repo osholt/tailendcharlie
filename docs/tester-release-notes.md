@@ -13,11 +13,12 @@ number belongs to.
 ## How to add an entry
 
 The `Android internal testing` workflow prints a draft (version, build number,
-track, commit, run link and recent commits) to its **run summary** and uploads
-it as the `tailendcharlie-tester-release-notes` artefact. Copy the tester-facing
-parts into a new section here, newest first, using the template below, then
-commit it. Nothing publishes automatically - the workflow has read-only
-repository permissions by design.
+stamped track, commit, run link, whether closed testers can install it, and
+recent commits) to its **run summary** and uploads it as the
+`tailendcharlie-tester-release-notes` artefact. Copy the tester-facing parts into
+a new section here, newest first, using the template below, then commit it.
+Nothing publishes automatically - the workflow has read-only repository
+permissions by design.
 
 ```markdown
 ## Android build <version-code> — <version> — <date>
@@ -45,9 +46,18 @@ Changes merged but not yet in a tester build.
   distribution track, build date, relay host and last relay sync, with a
   one-tap copy for bug reports.
 - Non-blocking "a newer tester build is probably available" prompt on the home
-  screen with a direct route to the Play internal-testing listing (TestFlight on
-  iOS). The hard **App update required** gate is unchanged.
-- New tester guide: [tester-update-guide.md](./tester-update-guide.md).
+  screen with a direct route to the store page for the track the build was
+  released to (TestFlight on iOS). The hard **App update required** gate is
+  unchanged.
+- Android closed testers: the update button now opens the closed-testing opt-in
+  page, `https://play.google.com/apps/testing/app.tailendcharlie`, instead of the
+  public store listing - which does not offer the app to a closed tester who has
+  not opted in - and **About & build** reports `Play closed testing (alpha)`
+  rather than `Play internal testing`.
+- New tester guide: [tester-update-guide.md](./tester-update-guide.md), now
+  written for the closed track, with internal testing as a separate section.
+- A release that reaches the Android closed track emails the tester group with
+  the version, build number, commit, what changed and the opt-in link.
 
 ## Earlier
 

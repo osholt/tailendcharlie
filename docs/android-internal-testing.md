@@ -1,13 +1,28 @@
 # Android internal testing
 
-Tail End Charlie's immediate Android beta channel is Google Play's `internal`
-testing track, fed by a manual `Android internal testing` GitHub Actions workflow -
-the Android equivalent of [the TestFlight workflow](./server-runbook.md).
+Tail End Charlie's Android testers are on Google Play's **closed `alpha`**
+track. A release reaches them in one manual `Android internal testing` run: it
+uploads the App Bundle to `internal` and then promotes it to the closed track
+named by the `promote_to` input. `internal` remains the upload track and keeps
+its own cohort; `alpha` is where the tester group is.
 
 Testers do not need this document. Send them
 [the tester update guide](./tester-update-guide.md) instead, which covers
-joining internal testing, why Play may show no update immediately, how to force
+joining closed testing, why Play may show no update immediately, how to force
 a check, how to read a build number, and how to report which build a bug is on.
+
+Two things this pipeline used to get wrong, both from the #101 delivery
+investigation, both fixed in #122:
+
+- Promotion was a separate manual workflow, and it was missed: version code 24
+  was uploaded to `internal` on 24 July 2026 and never promoted, so no closed
+  tester ever received it while the run showed green. `promote_to` now promotes
+  in the same run, and the run summary states in plain words whether closed
+  testers can install the build.
+- Every build was stamped `internal`, so the About screen told `alpha` testers
+  they were on internal testing and its update button opened the public store
+  listing, which does not offer the app to a closed tester who has not opted in.
+  The build is now stamped with the track it is *destined* for.
 
 ## One-time external setup
 
@@ -53,15 +68,19 @@ first upload:
    - `ANDROID_KEY_ALIAS`
    - `ANDROID_KEY_PASSWORD`
    - `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` - the full JSON key content
-6. **Add the initial tester list** in Play Console's internal testing track
-   and publish the opt-in URL to testers, together with
-   [the tester update guide](./tester-update-guide.md).
-7. **Run the workflow once and verify**: install through the opt-in link on
-   a physical Android phone, not just the emulator. Then confirm on that phone
-   that **Settings → About & build** shows the same build number the workflow
-   uploaded, that **Open Google Play listing** lands on the internal-testing
-   page for `app.tailendcharlie`, and that the relay's access log shows that
-   build number in `x-tailendcharlie-app-build`. None of those three can be
+6. **Add the tester list to the closed `alpha` track** in Play Console and
+   publish its opt-in URL - `https://play.google.com/apps/testing/app.tailendcharlie` -
+   to testers, together with [the tester update guide](./tester-update-guide.md).
+   Keep the `internal` track's own tester list if you use it; promotion leaves
+   the internal release active.
+7. **Run the workflow once with `promote_to: alpha` and verify**: install
+   through the opt-in link on a physical Android phone, not just the emulator.
+   Then confirm on that phone that **Settings → About & build** shows the same
+   build number the workflow uploaded and `Play closed testing (alpha)` as the
+   distribution track, that **Open closed testing page** lands on the
+   `apps/testing` opt-in page for `app.tailendcharlie`, and that the relay's
+   access log shows that build number in `x-tailendcharlie-app-build` and
+   `alpha` in `x-tailendcharlie-distribution-track`. None of those can be
    verified from CI - they need Play Console access and a real phone.
 
 ## Repository behaviour
@@ -78,16 +97,31 @@ Version codes come from `inputs.build_number` or, by default,
 TestFlight workflow uses for iOS build numbers, so they never collide or go
 backwards.
 
-The optional `Promote Android testing release` workflow copies an existing
-version from `internal` to a closed `alpha` or `beta` track. Promotion must
-leave the source release active: the existing internal cohort and a closed
-tester group can be configured independently, and removing the internal
-release can otherwise leave those testers with no available update even
-though the promotion workflow succeeded. Promotion reuses the existing
-artefact and never rebuilds, so a promoted build keeps reporting the track it
-was *built* for (`Play internal testing`) rather than the track it now sits on.
-That is deliberate - the reported track identifies the binary, and a promoted
-binary is byte-for-byte the internal one.
+## Promotion
+
+`Android internal testing` takes a `promote_to` input - `alpha` (default),
+`beta`, or `none`:
+
+- `alpha`/`beta`: the App Bundle is uploaded to `internal`, then promoted with
+  `fastlane supply --track internal --track_promote_to <track>`. The build is
+  also *stamped* with that track, so the About screen and the relay headers name
+  the track testers install from.
+- `none`: upload only. Nothing reaches a closed tester, and the run summary says
+  so rather than reporting a bare success.
+
+Promotion leaves the source release active (`--deactivate_on_promote false`):
+the internal cohort and the closed tester group are configured independently, and
+deactivating the source can leave internal testers with no available update even
+though promotion succeeded.
+
+`Promote Android testing release` remains, for re-promoting a version code that
+is already in Play - after a rollback, or onto a second closed track. It sends no
+tester email: it cannot know which commit an arbitrary version code was built
+from, and a notification that guesses the commit is worse than none.
+
+Promotion reuses the uploaded artefact and never rebuilds. That is exactly why
+the destined track has to be stamped at build time - the only alternative is a
+binary that describes a track its testers cannot see.
 
 ## Build identity
 
@@ -107,15 +141,19 @@ the result to `$GITHUB_ENV`:
 | --- | --- | --- |
 | `RIDE_RELAY_APP_VERSION` | `version:` in `apps/mobile/pubspec.yaml` | Marketing version; also passed as `--build-name` so the artefact and the reported value cannot drift. |
 | `RIDE_RELAY_APP_BUILD` | `inputs.build_number` or `github.run_number` | The Play version code / iOS build number. Unchanged monotonic scheme. |
-| `RIDE_RELAY_DISTRIBUTION_TRACK` | `internal`, `testflight`, `ci`, or `local` | What the About screen shows as the distribution track. |
+| `RIDE_RELAY_DISTRIBUTION_TRACK` | `alpha`, `beta`, `internal`, `testflight`, `ci`, or `local` - the track the build is *destined for* | What the About screen shows as the distribution track, which store page its update button opens, and the `x-tailendcharlie-distribution-track` relay header. |
 | `RIDE_RELAY_BUILD_TIMESTAMP` | build time, UTC ISO-8601 | Drives the non-blocking "a newer tester build is probably available" prompt. |
 | `RIDE_RELAY_TESTER_NOTES_URL` | repository URL at the built commit | **What changed in this build** on the About screen. |
 | `RIDE_RELAY_TESTER_UPDATE_URL` | `RIDE_RELAY_TESTFLIGHT_INVITE_URL` repository variable (iOS only, optional) | Overrides the default store destination. Set it to the public TestFlight invitation link once App Store Connect has issued one; unset, iOS falls back to `https://testflight.apple.com/`. |
 
+The track drives the Android update destination: `alpha`/`beta` open
+`https://play.google.com/apps/testing/app.tailendcharlie`, anything else opens
+the store listing. `RIDE_RELAY_TESTER_UPDATE_URL` still overrides both.
+
 Prove the plumbing locally without waiting on a store upload:
 
 ```bash
-set -a; eval "$(tools/build-identity.sh apps/mobile/pubspec.yaml internal 4242)"; set +a
+set -a; eval "$(tools/build-identity.sh apps/mobile/pubspec.yaml alpha 4242)"; set +a
 cd apps/mobile
 flutter test test/services/build_identity_test.dart \
   --dart-define=RIDE_RELAY_APP_VERSION="$RIDE_RELAY_APP_VERSION" \
@@ -125,38 +163,99 @@ flutter test test/services/build_identity_test.dart \
   --dart-define=RIDE_RELAY_API_BASE_URL=https://relay.tailendcharlie.app/api
 ```
 
-The guarded test prints the resolved identity and asserts that the relay
-headers carry it:
+Two guarded tests then run instead of being skipped. The first prints the
+resolved identity and asserts the relay headers carry it; the second pumps the
+real About sheet and asserts the stamped track reaches both the screen and the
+headers:
 
 ```
-stamped build identity: Tail End Charlie 1.0.1+4242 · Play internal testing ·
-android · built 2026-07-25 22:28:51.000Z · relay relay.tailendcharlie.app
+stamped build identity: Tail End Charlie 1.0.1+4242 · Play closed testing
+(alpha) · android · built 2026-07-26 09:14:02.000Z · relay
+relay.tailendcharlie.app
+stamped track: Play closed testing (alpha) · header alpha · update
+https://play.google.com/apps/testing/app.tailendcharlie
 ```
 
-Without the defines that test is skipped and the unstamped fallback is asserted
+Without the defines both are skipped and the unstamped fallback is asserted
 instead, so plain `flutter test` still passes.
 
-The relay receives the same values as `x-tailendcharlie-app-version` and
-`x-tailendcharlie-app-build` on every request. The relay does not currently log
-or store them, so confirming them for a real upload means reading the reverse
-proxy's access log (see [server-runbook.md](./server-runbook.md)) rather than
-querying the relay.
+The relay receives the same values as `x-tailendcharlie-app-version`,
+`x-tailendcharlie-app-build` and `x-tailendcharlie-distribution-track` on every
+request. The relay does not currently log or store them, so confirming them for
+a real upload means reading the reverse proxy's access log (see
+[server-runbook.md](./server-runbook.md)) rather than querying the relay.
 
 ## Release cadence and tester notes
 
 `Android internal testing` writes a release summary - version, build number,
-track, build timestamp, commit, run link and the recent commits on the ref - to
-the workflow run summary, and uploads it as the
-`tailendcharlie-tester-release-notes` artefact. Copy the tester-facing parts
-into [tester-release-notes.md](./tester-release-notes.md) so a build number maps
-to changes; the workflow keeps `contents: read` and never commits or tags
+stamped track, build timestamp, commit, run link, whether closed testers can
+install it, and the recent commits on the ref - to the workflow run summary, and
+uploads it as the `tailendcharlie-tester-release-notes` artefact. Copy the
+tester-facing parts into [tester-release-notes.md](./tester-release-notes.md) so
+a build number maps to changes; the workflow keeps `contents: read` (plus
+`actions: read`, to find the previous release's commit) and never commits or tags
 anything itself.
+
+## Notifying the closed tester group
+
+After a *successful promotion*, the workflow runs
+`tools/tester_notify/notify_testers.py`, which renders one plain-text email:
+version, build number, platform and track, the commit it was built from, what
+changed since the previous released build, the closed-testing opt-in link, and
+the three values **Settings → About & build** must show afterwards. The mail is
+rendered into the run summary on every release, sent or not.
+
+There is no iOS equivalent, deliberately: TestFlight already notifies its own
+testers when a build arrives, and a second mail for the same release is noise.
+
+Configuration, all optional - with none of it set the step renders and skips:
+
+| Kind | Name | Purpose |
+| --- | --- | --- |
+| Variable | `RIDE_RELAY_ANDROID_TESTER_GROUP` | The closed-tester group address. **Unset means dry run** - the mail is rendered into the summary and nothing is sent. The tool never guesses a recipient. |
+| Variable | `RIDE_RELAY_TESTER_NOTIFY_FROM` | The From address. |
+| Variable | `RIDE_RELAY_TESTER_NOTIFY_SMTP_HOST` | SMTP host. |
+| Variable | `RIDE_RELAY_TESTER_NOTIFY_SMTP_PORT` | SMTP port; defaults to 587 (STARTTLS). 465 uses implicit TLS. Plaintext SMTP is never attempted. |
+| Secret | `RIDE_RELAY_TESTER_NOTIFY_SMTP_USERNAME` | SMTP username. |
+| Secret | `RIDE_RELAY_TESTER_NOTIFY_SMTP_PASSWORD` | SMTP password or app password. Never appears in the summary or the log. |
+
+Behaviour that the unit tests in `tools/tester_notify/tests/` pin down:
+
+- No recipient, or an incomplete sending identity: a `::notice::` naming exactly
+  what is missing, the full mail in the summary, exit 0.
+- `notification_mode: dry-run`: renders and sends nothing even when fully
+  configured.
+- A delivery failure: `::error::` annotation, exit 0. The step is also
+  `continue-on-error`, so a mail problem can never fail a release.
+- Only store and repository links may appear in the mail. The relay base URL,
+  which can carry a path or a token, is rejected before anything is sent - even
+  if it arrives through a commit subject in the changelog.
+- The summary masks the group address (`t***@example.com`); this repository is
+  public and its run summaries are public with it.
+
+To see the mail without configuring anything, run the tool directly:
+
+```bash
+git log --no-merges --max-count=5 --pretty='- %s (%h)' > /tmp/changes.md
+python3 tools/tester_notify/notify_testers.py \
+  --track alpha --app-version 1.0.1 --build-number 31 \
+  --commit "$(git rev-parse HEAD)" --repository osholt/tailendcharlie \
+  --run-url https://github.com/osholt/tailendcharlie/actions/runs/1 \
+  --changes-file /tmp/changes.md --changes-baseline 'build 28' \
+  --recipient '' --mode auto
+```
 
 ## Triggering a beta
 
 ```bash
-gh workflow run "Android internal testing" --ref <branch>
+gh workflow run "Android internal testing" --ref <branch> \
+  --field promote_to=alpha --field notification_mode=auto
 ```
+
+`promote_to` defaults to `alpha` and `notification_mode` to `auto`, so a plain
+`gh workflow run "Android internal testing" --ref <branch>` uploads, promotes to
+the closed track and notifies. Use `--field notification_mode=dry-run` for the
+first run after configuring the group, to read the mail before anyone else does.
 
 Needs the `RIDE_RELAY_API_BASE_URL` repository variable set first (see
 [server-runbook.md](./server-runbook.md)) - the build fails clearly if it's
@@ -174,5 +273,25 @@ and its review/propagation delay:
   Console review, install links usually work within minutes). Not wired up
   in this repository - `flutter build apk --release` plus the
   [Firebase CLI's `appdistribution:distribute`](https://firebase.google.com/docs/app-distribution/android/distribute-cli)
-  command is the manual path if this becomes useful before Play internal
+  command is the manual path if this becomes useful before Play closed
   testing is fully live.
+
+## What cannot be verified from CI
+
+Nothing in this repository can observe Google Play. These need Play Console
+access, and the last two need a physical Android phone on the tester list:
+
+- That the closed `alpha` track has the intended testers, and that its release
+  shows as `completed` rather than draft or in-review.
+- That the promotion in a given run actually moved the version code to `alpha`
+  in Play - the workflow reports `fastlane supply`'s exit status, which is
+  evidence of the API call succeeding, not of what a tester's Play app offers.
+- That `https://play.google.com/apps/testing/app.tailendcharlie` offers the new
+  build to an opted-in account, and how long Play takes to do so.
+- That **About & build** on the installed build shows the version, build number
+  and track the release email quotes.
+
+The email itself has never been sent from this repository. The first real send
+is a maintainer decision: configure the variables, run once with
+`notification_mode: dry-run`, read the rendered mail in the run summary, and only
+then switch to `auto`.
