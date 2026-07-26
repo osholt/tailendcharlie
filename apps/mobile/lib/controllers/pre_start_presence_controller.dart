@@ -375,6 +375,7 @@ class PreStartPresenceController extends ChangeNotifier {
               role: _roleFor(entry.role),
               joinedAt: entry.joinedAt,
               left: entry.left,
+              leftAt: entry.leftAt,
             ),
           ),
         ),

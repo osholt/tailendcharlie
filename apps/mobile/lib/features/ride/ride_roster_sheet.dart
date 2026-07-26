@@ -8,7 +8,7 @@ import '../../services/ride_membership.dart';
 import '../../services/tec_role_assignment.dart';
 import '../map/motorcycle_icon.dart';
 
-enum _RosterFilter { active, attention, all }
+enum _RosterFilter { active, attention, left, all }
 
 class RideRosterSheet extends StatefulWidget {
   const RideRosterSheet({
@@ -62,6 +62,7 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
       final liveCount = all
           .where((participant) => participant.isIncludedInLiveCount)
           .length;
+      final departed = all.where((participant) => participant.hasLeft).length;
       final visible = all.where(_matchesFilter).toList(growable: false)
         ..sort(_compareParticipants);
       final isLeader = widget.controller.isLocalRideLeader;
@@ -106,6 +107,13 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
             if (isLeader && !hasTec) const _MissingTecNotice(),
             if (isLeader && assignment != null)
               _TecRequestStatus(assignment: assignment),
+            // The record exists; say so where it is not being shown. A rider who
+            // has left is the rider a leader may need to look up afterwards.
+            if (departed > 0 && !visible.any((rider) => rider.hasLeft))
+              _DepartedRidersNotice(
+                departed: departed,
+                onShow: () => setState(() => _filter = _RosterFilter.left),
+              ),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -122,6 +130,11 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                     label: Text('Attention'),
                   ),
                   ButtonSegment(
+                    value: _RosterFilter.left,
+                    icon: Icon(Icons.logout_outlined),
+                    label: Text('Left'),
+                  ),
+                  ButtonSegment(
                     value: _RosterFilter.all,
                     icon: Icon(Icons.groups_outlined),
                     label: Text('All joined'),
@@ -135,10 +148,12 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
             const SizedBox(height: 8),
             Expanded(
               child: visible.isEmpty
-                  ? const Center(
+                  ? Center(
                       child: Text(
-                        'No riders match this filter.',
-                        style: TextStyle(color: Color(0xFF9DA8B6)),
+                        _filter == _RosterFilter.left
+                            ? 'Nobody has left this ride.'
+                            : 'No riders match this filter.',
+                        style: const TextStyle(color: Color(0xFF9DA8B6)),
                       ),
                     )
                   : ListView.separated(
@@ -220,10 +235,14 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
     _RosterFilter.attention =>
       participant.state == RideMembershipState.inactive ||
           participant.attentionLabel != null,
+    _RosterFilter.left => participant.hasLeft,
     _RosterFilter.all => true,
   };
 
   int _compareParticipants(RideParticipant left, RideParticipant right) {
+    // Riders still in the ride come first; a departed record is history, and it
+    // is kept rather than promoted.
+    if (left.hasLeft != right.hasLeft) return left.hasLeft ? 1 : -1;
     final leftAttention =
         left.state == RideMembershipState.inactive ||
         left.attentionLabel != null;
@@ -286,6 +305,45 @@ class _MissingTecNotice extends StatelessWidget {
           ],
         ),
       ),
+    ),
+  );
+}
+
+/// Says that a departed rider's record is still here, and how to reach it.
+///
+/// Issue #144: a rider leaving used to erase them from the list a leader was
+/// looking at, which is exactly the rider you go back to afterwards when a lost
+/// item or a question comes up. They are out of the live group; they are not out
+/// of the record.
+class _DepartedRidersNotice extends StatelessWidget {
+  const _DepartedRidersNotice({required this.departed, required this.onShow});
+
+  final int departed;
+  final VoidCallback onShow;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 0, 8, 6),
+    child: Row(
+      key: const Key('roster-departed-notice'),
+      children: [
+        const Icon(Icons.logout_outlined, size: 18, color: Color(0xFF9DA8B6)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            departed == 1
+                ? '1 rider has left. Their record is kept until this ride ends.'
+                : '$departed riders have left. Their records are kept until '
+                      'this ride ends.',
+            style: const TextStyle(color: Color(0xFF9DA8B6), height: 1.3),
+          ),
+        ),
+        TextButton(
+          key: const Key('roster-show-departed'),
+          onPressed: onShow,
+          child: const Text('Show'),
+        ),
+      ],
     ),
   );
 }
@@ -354,6 +412,13 @@ class _ParticipantTile extends StatelessWidget {
     final role = _roleLabel(participant.role);
     final lastSeen = _lastSeenLabel(participant.lastSeenAt, now);
     final attention = participant.attentionLabel;
+    // A departed rider's record is only useful if it says where they were last
+    // known to be, so an absent position is stated rather than left blank.
+    final lastKnownPosition = participant.hasLeft
+        ? participant.lastKnownPositionLabel ??
+              'No position for this rider reached this phone'
+        : null;
+    final rejoin = participant.rejoinLabel;
     final semanticLabel = [
       participant.displayName,
       if (participant.isLocal) 'you',
@@ -361,6 +426,8 @@ class _ParticipantTile extends StatelessWidget {
       participant.stateLabel,
       'last seen $lastSeen',
       participant.transportLabel,
+      ?rejoin,
+      ?lastKnownPosition,
       ?attention,
       if (peerAppIsOlder) 'app is older',
     ].join(', ');
@@ -393,6 +460,8 @@ class _ParticipantTile extends StatelessWidget {
             [
               '$role · ${participant.stateLabel}',
               'Last seen $lastSeen · ${participant.transportLabel}',
+              ?rejoin,
+              ?lastKnownPosition,
               ?attention,
             ].join('\n'),
             style: TextStyle(

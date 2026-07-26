@@ -101,6 +101,12 @@ class RideController extends ChangeNotifier {
   final Map<String, Set<RideTransportEvidence>> _transportByEventId = {};
   List<LiveRiderPresence> _livePresence = const [];
 
+  /// The relay's cursor-independent roster, including the riders it reports as
+  /// having left. Live presence drops a departed rider — they are not there —
+  /// so this is what keeps their roster record when their membership events
+  /// never reached this phone's journal (#144).
+  List<PresenceRosterMember> _presenceRoster = const [];
+
   /// True when this device cannot currently receive live positions at all, so a
   /// missing position is attributed to the transport rather than to the rider.
   bool _positionChannelUnavailable = false;
@@ -164,6 +170,7 @@ class RideController extends ChangeNotifier {
       rideEndedAt: _rideEndedAt,
       transportByEventId: _transportByEventId,
       livePresence: _livePresence,
+      presenceRoster: _presenceRoster,
     );
   }
 
@@ -174,18 +181,49 @@ class RideController extends ChangeNotifier {
   /// wedged or backed-off journal sync cannot hide a reachable participant.
   /// The durable journal stays authoritative — a rider who has left is never
   /// resurrected by presence.
+  ///
+  /// [roster] is the relay's own membership list, which unlike [presence] still
+  /// names the riders who have left. It is what keeps a departed rider's roster
+  /// record for the rest of the ride (#144); it never adds anybody to the live
+  /// count, because a departed rider is not counted anywhere.
   void observeLivePresence(
     Iterable<LiveRiderPresence> presence, {
+    Iterable<PresenceRosterMember> roster = const [],
     bool positionChannelUnavailable = false,
   }) {
     final next = presence.toList(growable: false);
+    final nextRoster = roster.toList(growable: false);
     if (_isSamePresence(_livePresence, next) &&
+        _isSameRoster(_presenceRoster, nextRoster) &&
         positionChannelUnavailable == _positionChannelUnavailable) {
       return;
     }
     _livePresence = next;
+    _presenceRoster = nextRoster;
     _positionChannelUnavailable = positionChannelUnavailable;
     notifyListeners();
+  }
+
+  /// A departure that arrives on the roster alone still has to reach the UI, so
+  /// the no-churn check covers the roster as well as the positions.
+  static bool _isSameRoster(
+    List<PresenceRosterMember> current,
+    List<PresenceRosterMember> next,
+  ) {
+    if (current.length != next.length) return false;
+    for (var index = 0; index < current.length; index += 1) {
+      final left = current[index];
+      final right = next[index];
+      if (left.riderId != right.riderId ||
+          left.displayName != right.displayName ||
+          left.role != right.role ||
+          left.joinedAt != right.joinedAt ||
+          left.left != right.left ||
+          left.leftAt != right.leftAt) {
+        return false;
+      }
+    }
+    return true;
   }
 
   static bool _isSamePresence(
@@ -1331,6 +1369,7 @@ class RideController extends ChangeNotifier {
     _usedIceShareEventIds.clear();
     _transportByEventId.clear();
     _livePresence = const [];
+    _presenceRoster = const [];
     _positionChannelUnavailable = false;
   }
 

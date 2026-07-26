@@ -9,6 +9,16 @@ import 'ride_lifecycle.dart';
 
 enum RideMembershipState { joined, active, inactive, left, expired }
 
+/// Wall-clock `HH:mm` for a roster row.
+///
+/// Formatted on the value exactly as held, which is the local clock: a journal
+/// event's `createdAt` is local whether this phone recorded it or decoded it
+/// from the relay. Deliberately not re-derived from a time zone here, so a
+/// departure time reads the same as the clock the rider looked at.
+String formatRideClockTime(DateTime value) =>
+    '${value.hour.toString().padLeft(2, '0')}:'
+    '${value.minute.toString().padLeft(2, '0')}';
+
 /// Why a rider who is counted in the live total has no position drawn.
 ///
 /// Issue #132: the count and the marker were two separate judgements of the same
@@ -52,6 +62,8 @@ class RideParticipant {
     required this.transportEvidence,
     required this.isLocal,
     this.leftAt,
+    this.rejoinedAfterLeavingAt,
+    this.lastKnownLocation,
     this.attentionLabel,
     this.positionFreshness,
     this.knownFromRelayOnly = false,
@@ -64,6 +76,23 @@ class RideParticipant {
   final DateTime joinedAt;
   final DateTime lastSeenAt;
   final DateTime? leftAt;
+
+  /// The departure this rider's current membership replaced, when they left and
+  /// came back (#27's rejoin rule). Non-null only while [leftAt] is null: one
+  /// identity, one row, and the history stays readable rather than becoming a
+  /// second row or vanishing.
+  final DateTime? rejoinedAfterLeavingAt;
+
+  /// The newest position this phone ever held for this rider, frozen at their
+  /// departure once they leave (#144).
+  ///
+  /// It exists so a rider who has left is still findable afterwards — a lost
+  /// item, a question — and it is read from the ride's own journal, so it lives
+  /// exactly as long as the ride and is deleted with it.
+  ///
+  /// **Never a marker source.** A departed rider is not there; only
+  /// [RideLiveView.renderedPositions] draws, and that comes from live presence.
+  final RiderLocation? lastKnownLocation;
   final RideMembershipState state;
   final MotorcycleIconStyle motorcycleStyle;
   final RiderColor riderColor;
@@ -101,12 +130,22 @@ class RideParticipant {
 
   bool get isEligibleForRouteAlerts => state == RideMembershipState.active;
 
+  /// True when this rider has left and their record is being kept for the rest
+  /// of the ride (#144).
+  bool get hasLeft => state == RideMembershipState.left;
+
   String get stateLabel {
+    final departedAt = leftAt;
     final base = switch (state) {
       RideMembershipState.joined => 'Joined · waiting to ride',
       RideMembershipState.active => 'Active now',
       RideMembershipState.inactive => 'Inactive · location is stale',
-      RideMembershipState.left => 'Left the ride',
+      // Its own state, with the time on it: "Left at 14:32" is neither active
+      // nor inactive, and the row stays until the ride is over.
+      RideMembershipState.left =>
+        departedAt == null
+            ? 'Left the ride'
+            : 'Left the ride at ${formatRideClockTime(departedAt)}',
       RideMembershipState.expired => 'Expired',
     };
     if (state == RideMembershipState.left ||
@@ -122,6 +161,26 @@ class RideParticipant {
       null || PresenceFreshness.none => positionAbsence.label,
     };
     return suffix == null ? base : '$base · $suffix';
+  }
+
+  /// One identity's visible history: they left, and they came back. Null when
+  /// there is nothing to say.
+  String? get rejoinLabel {
+    final previously = rejoinedAfterLeavingAt;
+    if (previously == null || hasLeft) return null;
+    return 'Rejoined after leaving at ${formatRideClockTime(previously)}';
+  }
+
+  /// Where this rider was last known to be, in words. Null when no position for
+  /// them ever reached this phone.
+  String? get lastKnownPositionLabel {
+    final location = lastKnownLocation;
+    if (location == null) return null;
+    final position = location.sample.position;
+    return 'Last known position '
+        '${position.latitude.toStringAsFixed(5)}, '
+        '${position.longitude.toStringAsFixed(5)} '
+        'at ${formatRideClockTime(location.sample.recordedAt)}';
   }
 
   String get transportLabel {
@@ -152,6 +211,8 @@ class RideParticipant {
     DateTime? lastSeenAt,
     DateTime? leftAt,
     bool clearLeftAt = false,
+    DateTime? rejoinedAfterLeavingAt,
+    RiderLocation? lastKnownLocation,
     RideMembershipState? state,
     MotorcycleIconStyle? motorcycleStyle,
     RiderColor? riderColor,
@@ -169,6 +230,9 @@ class RideParticipant {
     joinedAt: joinedAt ?? this.joinedAt,
     lastSeenAt: lastSeenAt ?? this.lastSeenAt,
     leftAt: clearLeftAt ? null : (leftAt ?? this.leftAt),
+    rejoinedAfterLeavingAt:
+        rejoinedAfterLeavingAt ?? this.rejoinedAfterLeavingAt,
+    lastKnownLocation: lastKnownLocation ?? this.lastKnownLocation,
     state: state ?? this.state,
     motorcycleStyle: motorcycleStyle ?? this.motorcycleStyle,
     riderColor: riderColor ?? this.riderColor,
@@ -282,6 +346,7 @@ class RideMembershipReducer {
     DateTime? rideEndedAt,
     Map<String, Set<RideTransportEvidence>> transportByEventId = const {},
     Iterable<LiveRiderPresence> livePresence = const [],
+    Iterable<PresenceRosterMember> presenceRoster = const [],
   }) {
     final ordered =
         events
@@ -307,9 +372,18 @@ class RideMembershipReducer {
       ),
     };
     final lastActivityAt = <String, DateTime>{};
+    // The newest journal position per rider, and the one frozen at a departure.
+    // Both come from the ride's own journal, so a retained record is deleted
+    // with the ride and nothing new is written to storage (#144).
+    final newestLocation = <String, RiderLocation>{};
+    final locationAtDeparture = <String, RiderLocation>{};
 
     for (final event in ordered) {
       final existing = participants[event.deviceId];
+      if (event.type == RideEventType.riderLocationUpdated) {
+        final location = _location(event);
+        if (location != null) newestLocation[event.deviceId] = location;
+      }
       if (event.type == RideEventType.rideCreated ||
           event.type == RideEventType.riderJoined) {
         final displayName = _nonEmptyString(event.payload['displayName']);
@@ -337,8 +411,51 @@ class RideMembershipReducer {
             transportByEventId: transportByEventId,
           ),
           isLocal: isLocal,
+          // One identity, one row: a rider who left and came back keeps the
+          // departure they came back from instead of becoming a second row or
+          // losing the history (#27).
+          rejoinedAfterLeavingAt:
+              existing?.leftAt ?? existing?.rejoinedAfterLeavingAt,
+          lastKnownLocation: existing?.lastKnownLocation,
         );
         lastActivityAt.remove(event.deviceId);
+        continue;
+      }
+      if (event.type == RideEventType.riderLeft) {
+        final payloadRiderId = event.payload['riderId'];
+        if (payloadRiderId != null && payloadRiderId != event.deviceId) {
+          continue;
+        }
+        // A departure is never dropped for want of a join event. Before #144 an
+        // unmatched `riderLeft` was ignored, and because live presence also
+        // drops a departed rider, the row disappeared altogether: exactly the
+        // record the field report needed afterwards.
+        final departing =
+            existing ??
+            _departedFromJournal(
+              event,
+              location: newestLocation[event.deviceId],
+              transportByEventId: transportByEventId,
+            );
+        if (departing == null) continue;
+        final atDeparture =
+            newestLocation[event.deviceId] ?? departing.lastKnownLocation;
+        if (atDeparture != null) {
+          locationAtDeparture[event.deviceId] = atDeparture;
+        }
+        participants[event.deviceId] = departing.copyWith(
+          lastSeenAt: event.createdAt,
+          leftAt: event.createdAt,
+          state: RideMembershipState.left,
+          transportEvidence: Set.unmodifiable({
+            ...departing.transportEvidence,
+            ..._evidenceFor(
+              event,
+              isLocal: departing.isLocal,
+              transportByEventId: transportByEventId,
+            ),
+          }),
+        );
         continue;
       }
       if (existing == null) continue;
@@ -350,19 +467,6 @@ class RideMembershipReducer {
           transportByEventId: transportByEventId,
         ),
       };
-      if (event.type == RideEventType.riderLeft) {
-        final payloadRiderId = event.payload['riderId'];
-        if (payloadRiderId != null && payloadRiderId != event.deviceId) {
-          continue;
-        }
-        participants[event.deviceId] = existing.copyWith(
-          lastSeenAt: event.createdAt,
-          leftAt: event.createdAt,
-          state: RideMembershipState.left,
-          transportEvidence: Set.unmodifiable(evidence),
-        );
-        continue;
-      }
       if (event.type == RideEventType.roleChanged) {
         final role = _role(event.payload['role']);
         if (role == null) continue;
@@ -413,6 +517,50 @@ class RideMembershipReducer {
       );
     }
 
+    // The mirror image of the loop above, for a rider who has *gone*. Live
+    // presence deliberately drops a departed rider — they are not there — so the
+    // relay's roster is the only channel that still names them when their
+    // membership events never made it into this phone's journal. Keeping the row
+    // here is what stops a departure erasing the record (#144).
+    for (final member in presenceRoster) {
+      if (!member.left || member.riderId == localRiderId) continue;
+      final existing = participants[member.riderId];
+      final departedAt = member.leftAt;
+      if (existing != null) {
+        // Already recorded as gone by the journal, which carries the time.
+        if (existing.hasLeft) continue;
+        // A relay without a departure time cannot be ordered against a rejoin,
+        // so it may only add a row it alone knows about, never overrule one the
+        // journal is maintaining. The journal's own `riderLeft` follows.
+        if (departedAt == null) continue;
+        // The journal has a later membership: they came back after this
+        // departure, and a stale roster flag must not resurrect the ghost.
+        if (existing.joinedAt.isAfter(departedAt)) continue;
+        participants[member.riderId] = existing.copyWith(
+          leftAt: departedAt,
+          lastSeenAt: existing.lastSeenAt.isAfter(departedAt)
+              ? existing.lastSeenAt
+              : departedAt,
+          state: RideMembershipState.left,
+        );
+        continue;
+      }
+      participants[member.riderId] = RideParticipant(
+        riderId: member.riderId,
+        displayName: member.displayName,
+        role: member.role,
+        joinedAt: member.joinedAt,
+        lastSeenAt: departedAt ?? member.joinedAt,
+        leftAt: departedAt,
+        state: RideMembershipState.left,
+        motorcycleStyle: member.motorcycleStyle,
+        riderColor: member.riderColor,
+        transportEvidence: const {RideTransportEvidence.internetRelay},
+        isLocal: false,
+        knownFromRelayOnly: true,
+      );
+    }
+
     for (final event in ordered) {
       if (event.type != RideEventType.routeDeviationChanged &&
           event.type != RideEventType.routeAlertAcknowledged) {
@@ -425,6 +573,10 @@ class RideMembershipReducer {
       final state = assessment is Map ? assessment['state'] : null;
       final participant = riderId is String ? participants[riderId] : null;
       if (participant == null) continue;
+      // A rider who has left is not off course, not being looked for, and not
+      // something the group can act on. Their record says they left; it must not
+      // also keep claiming an alert that stopped applying when they went.
+      if (participant.hasLeft) continue;
       final label = switch (state) {
         'offRoute' => 'Off course',
         'suspectedOffRoute' => 'Route check',
@@ -441,12 +593,21 @@ class RideMembershipReducer {
         participants.values
             .map((participant) {
               final presence = presenceById[participant.riderId];
+              // Where this rider was last known to be. A departed rider keeps
+              // the position frozen at their departure; nothing here is ever
+              // drawn, because only live presence produces a marker.
+              final recorded = participant.copyWith(
+                lastKnownLocation: participant.hasLeft
+                    ? locationAtDeparture[participant.riderId] ??
+                          newestLocation[participant.riderId]
+                    : newestLocation[participant.riderId],
+              );
               final resolved = presence == null
-                  ? participant
-                  : participant.copyWith(
+                  ? recorded
+                  : recorded.copyWith(
                       positionFreshness: presence.freshness,
                       transportEvidence: Set.unmodifiable({
-                        ...participant.transportEvidence,
+                        ...recorded.transportEvidence,
                         ..._presenceEvidence(presence),
                       }),
                     );
@@ -493,6 +654,54 @@ class RideMembershipReducer {
             return left.riderId.compareTo(right.riderId);
           });
     return List.unmodifiable(result);
+  }
+
+  /// The rider's own position from an authenticated journal location event, or
+  /// null when the payload is not one this build can read. A rider may only
+  /// report their own position, so anything else is discarded.
+  static RiderLocation? _location(RideEvent event) {
+    final raw = event.payload['location'];
+    if (raw is! Map) return null;
+    try {
+      final location = RiderLocation.fromJson(Map<String, Object?>.from(raw));
+      return location.riderId == event.deviceId ? location : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// A record for a rider whose departure reached this phone but whose join
+  /// never did.
+  ///
+  /// Null when there is no name to show from either the departure itself or a
+  /// position they reported: a row nobody can identify is worse than no row, and
+  /// #27 was raised partly over generic device labels. The role is taken from
+  /// their own last position when it is known.
+  static RideParticipant? _departedFromJournal(
+    RideEvent event, {
+    required RiderLocation? location,
+    required Map<String, Set<RideTransportEvidence>> transportByEventId,
+  }) {
+    final displayName =
+        _nonEmptyString(event.payload['displayName']) ?? location?.displayName;
+    if (displayName == null) return null;
+    return RideParticipant(
+      riderId: event.deviceId,
+      displayName: displayName,
+      role: location?.role ?? RideRole.rider,
+      joinedAt: location?.sample.recordedAt ?? event.createdAt,
+      lastSeenAt: event.createdAt,
+      state: RideMembershipState.left,
+      motorcycleStyle: location?.motorcycleStyle ?? motorcycleIconStyleDefault,
+      riderColor: location?.riderColor ?? riderColorDefault,
+      transportEvidence: _evidenceFor(
+        event,
+        isLocal: false,
+        transportByEventId: transportByEventId,
+      ),
+      isLocal: false,
+      lastKnownLocation: location,
+    );
   }
 
   static Set<RideTransportEvidence> _presenceEvidence(
