@@ -241,4 +241,115 @@ void main() {
       expect(result.limit, isNull);
     },
   );
+
+  test('matches a stationary fix without trusting a stale course', () async {
+    // #126: a rider parked on a known road gets the limit for that road. The
+    // trace is the single current fix, and the road's heading is not held
+    // against a bike that has not travelled - the reported course below points
+    // the opposite way, and a stationary course is noise.
+    late Map<String, Object?> requestBody;
+    final provider = ValhallaSpeedLimitProvider(
+      configuration: ValhallaSpeedLimitConfiguration(
+        lookupUri: Uri.parse(endpoint),
+      ),
+      client: MockClient((request) async {
+        requestBody = jsonDecode(request.body) as Map<String, Object?>;
+        return http.Response(
+          jsonEncode({
+            'units': 'kilometers',
+            'admins': [
+              {'country_code': 'GB'},
+            ],
+            'edges': [
+              {
+                'names': ['Church Lane'],
+                'speed_limit': 48,
+                'speed_type': 'tagged',
+                'begin_heading': 180,
+                'end_heading': 180,
+                'end_node': {'admin_index': 0},
+              },
+            ],
+            'matched_points': [
+              {
+                'type': 'matched',
+                'edge_index': 0,
+                'distance_from_trace_point': 3.0,
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+      clock: () => recordedAt,
+    );
+
+    final result = await provider.lookup(current: location(51.5000));
+
+    expect(result.outcome, SpeedLimitLookupOutcome.known);
+    expect(result.limit?.milesPerHour, 30);
+    expect(result.limit?.roadName, 'Church Lane');
+    expect(requestBody['shape'], hasLength(1));
+  });
+
+  test('will not name a road a stationary fix only nearly matches', () async {
+    // Never a limit for a road the rider is probably not on: with no heading to
+    // corroborate the snap, the snap itself has to be tight. The same distance
+    // is accepted once a travelled trace supplies a bearing.
+    String body() => jsonEncode({
+      'units': 'kilometers',
+      'admins': [
+        {'country_code': 'GB'},
+      ],
+      'edges': [
+        {
+          'speed_limit': 48,
+          'speed_type': 'tagged',
+          'begin_heading': 0,
+          'end_heading': 0,
+          'end_node': {'admin_index': 0},
+        },
+      ],
+      'matched_points': [
+        {'type': 'matched', 'edge_index': 0, 'distance_from_trace_point': 12.0},
+      ],
+    });
+    final provider = ValhallaSpeedLimitProvider(
+      configuration: ValhallaSpeedLimitConfiguration(
+        lookupUri: Uri.parse(endpoint),
+      ),
+      client: MockClient((_) async => http.Response(body(), 200)),
+      clock: () => recordedAt,
+    );
+
+    final stationary = await provider.lookup(current: location(51.5000));
+    final moving = await provider.lookup(
+      previous: location(51.5000),
+      current: location(51.5004),
+    );
+
+    expect(stationary.outcome, SpeedLimitLookupOutcome.poorMatch);
+    expect(stationary.limit, isNull);
+    expect(moving.outcome, SpeedLimitLookupOutcome.known);
+  });
+
+  test('holds a stationary fix to a tighter accuracy bound', () async {
+    var requests = 0;
+    final provider = ValhallaSpeedLimitProvider(
+      configuration: ValhallaSpeedLimitConfiguration(
+        lookupUri: Uri.parse(endpoint),
+      ),
+      client: MockClient((_) async {
+        requests += 1;
+        return http.Response('{}', 200);
+      }),
+    );
+
+    final result = await provider.lookup(
+      current: location(51.5000, accuracyMeters: 40),
+    );
+
+    expect(result.outcome, SpeedLimitLookupOutcome.poorAccuracy);
+    expect(requests, 0);
+  });
 }

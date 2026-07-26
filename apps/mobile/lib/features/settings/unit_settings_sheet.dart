@@ -192,9 +192,10 @@ class UnitSettingsSheet extends StatelessWidget {
             onChanged: speedLimitDisplay.setEnabled,
             title: const Text('Show mapped speed limit'),
             subtitle: const Text(
-              'Opt in to UK road matching using © OpenStreetMap contributors '
-              'via Valhalla. Mapped limits are not live; roadside signs '
-              'always apply.',
+              'On by default. Matches your position to a UK road using '
+              '© OpenStreetMap contributors via Valhalla. Mapped limits are '
+              'not live; roadside signs always apply. Turning this off is '
+              'remembered.',
             ),
           ),
           const SizedBox(height: 22),

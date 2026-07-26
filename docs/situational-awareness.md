@@ -167,10 +167,13 @@ Deliberate choices:
 
 ### Reporting a sighting
 
-A `REPORT` control sits on the ride map directly above the speed-limit sign,
-sharing its anchor so it stays put whatever height the sign and its labels
-take. It is 62 pt square — past the 48 dp minimum for a gloved thumb, and no
-larger, because it covers the map for the whole ride.
+A `REPORT` control sits on the ride map's single action row, beside `ALERT` and
+`LEAVE`: it is a ride action, not a route action, so it is present with or
+without a GPX. It is 62 pt square — past the 48 dp minimum for a gloved thumb,
+and no larger, because it covers the map for the whole ride. It used to own a row
+of its own above the speed sign, which cost a row in portrait and put it high in
+the landscape left rail; see the overlay-placement section of
+`docs/maps-and-gpx.md`.
 
 Tapping it opens a sheet with two full-width 76 pt targets, `SPEED CAMERA` and
 `POLICE`, plus cancel. Two taps rather than one is deliberate: a single

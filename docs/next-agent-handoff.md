@@ -4,15 +4,14 @@ Updated: 2026-07-26
 
 ## Current branch
 
-Active work is on `claude/waze-integration-speed-display-15b184`, draft
-[PR #116](https://github.com/osholt/tailendcharlie/pull/116): the map speed
-readout and the enforcement warnings described below. `origin/main` moved
-forward seven merges (#109, #113, #115, #118, #119, #120, #121) while that
-branch was open and has been merged into it; #115's bottom-anchored chrome
-rework overlapped the same map overlays, so re-read that resolution before
-touching the overlay layout again. Do not split or overwrite the user's
-unrelated local Xcode signing edit or the untracked
-`docs/carplay-entitlement-submission/` material.
+Active work is on `claude/issue-124-routeless-chrome`: #124 (a ride with no route
+kept losing SOS and Leave), #125 (declutter the ride-map chrome) and #126 (the
+mapped speed limit on by default, resolved from a stationary fix). All three land
+together because all three edit
+`apps/mobile/lib/features/map/ride_map_feature.dart` and splitting them would
+only manufacture conflicts. Do not split or overwrite the user's unrelated local
+Xcode signing edit or the untracked `docs/carplay-entitlement-submission/`
+material.
 
 ## Issue status
 
@@ -27,6 +26,30 @@ concurrent runs; `flutter test -j 1` is clean.
 
 ## This branch
 
+- **A ride with no GPX is a first-class mode.** `ride_map_feature.dart` gated
+  the emergency alert and the leave action behind `_route != null`, so a group
+  riding without a route had neither. Every safety, ride-lifecycle, camera and
+  presence surface is now independent of route presence; only genuinely
+  route-derived surfaces hide. Every remaining `_route` test in that file is
+  justified in a comment, and the doc comment on the `_route` field lists them —
+  read it before adding another, or the route-less ride quietly loses another
+  control. `ride_map_feature_test.dart` asserts SOS and Leave with `route == null`
+  and that the follow camera and re-centre work from position and heading alone.
+- **The chrome is one action row.** The ride menu moved to the top leading
+  corner — the single exception to #104, and the only thing allowed in the upper
+  band. SOS, LEAVE and REPORT share a row; the speed sign sits below it hard
+  right in portrait and in the right-hand rail in landscape; "Follow me" appears
+  only once the rider has taken the camera over; and the caption under the speed
+  readout is gone from the visual layer and preserved in the accessibility label.
+  The portrait band the #105 camera measures is now findable from a test via
+  `portraitBottomChromeKey`. See `docs/maps-and-gpx.md` for the measured
+  before/after and what still clamps.
+- **The mapped speed limit ships on and resolves where the rider stands.**
+  `waitingForMovement` is retired as the entry state; ambiguity is stated as
+  `unconfirmedRoad` and retried, rather than withheld. A stationary lookup is a
+  single-point trace held to a tighter accuracy and match bound because it has no
+  heading to corroborate it; heading disambiguation returns as soon as the bike
+  moves. A rider who previously turned the feature off stays off.
 - **Waze is closed.** A Waze for Cities relay reader was built on this branch
   and then removed: the programme is limited to government agencies and road
   operators, and this project applied and is not eligible. TomTom is again the
@@ -82,6 +105,18 @@ Neither is started. The in-app warning surface they would feed already exists.
 
 ## Remaining evidence
 
+- Ride a route-less ride on a mounted phone and confirm SOS, Leave, Report, the
+  ride menu, the follow camera and re-centre all work, and that no route-derived
+  surface appears empty or placeholdered.
+- Read the decluttered chrome on a mounted phone in both orientations, at the
+  largest supported text size, and confirm nothing overlaps and the ride menu is
+  reachable by feel without looking.
+- Stand a phone still on a known road and confirm the mapped limit appears within
+  one fix. Repeat beside a dual carriageway and at a junction, and confirm an
+  honest low-confidence state rather than the wrong road's limit. The stationary
+  path sends a **single-point** shape to Valhalla `trace_attributes`; that has
+  not been exercised against the live FOSSGIS instance from this branch, so
+  confirm it returns a match rather than an error before trusting the feature.
 - TomTom's written "Navigation Functionality" permission remains the only route
   to broad all-road live incidents, and is unchanged by the Waze outcome.
 - Ride past a known camera site and confirm the warning arms about a mile out,

@@ -10,6 +10,7 @@ export 'ride_map_feature.dart'
         RideMapScreen,
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
+        portraitBottomChromeKey,
         shouldUseTiledGroupMiniMap;
 export 'route_trail_style.dart'
     show RouteLineStyle, RouteTrailStyle, contrastRatio, relativeLuminance;

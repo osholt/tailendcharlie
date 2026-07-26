@@ -7,54 +7,152 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   final baseTime = DateTime.utc(2026, 7, 24, 10);
 
-  SpeedLimitLocation location(double latitude, DateTime recordedAt) =>
-      SpeedLimitLocation(
-        point: GeoPoint(latitude: latitude, longitude: -0.12),
-        recordedAt: recordedAt,
-        accuracyMeters: 5,
-        headingDegrees: 0,
-      );
+  SpeedLimitLocation location(
+    double latitude,
+    DateTime recordedAt, {
+    double? accuracyMeters = 5,
+    double? headingDegrees = 0,
+  }) => SpeedLimitLocation(
+    point: GeoPoint(latitude: latitude, longitude: -0.12),
+    recordedAt: recordedAt,
+    accuracyMeters: accuracyMeters,
+    headingDegrees: headingDegrees,
+  );
 
-  test('persists explicit opt-in', () async {
+  test('a fresh install shows mapped limits without being asked', () async {
+    // #126: the feature was invisible because it shipped off. Nothing is stored
+    // until a rider touches the toggle, so an absent key is "never chose".
     SharedPreferences.setMockInitialValues({});
     final controller = await SpeedLimitDisplayController.load(
       provider: _FakeSpeedLimitProvider(),
     );
 
-    expect(controller.enabled, isFalse);
-    await controller.setEnabled(true);
-
-    final preferences = await SharedPreferences.getInstance();
-    expect(
-      preferences.getBool(SpeedLimitDisplayController.preferenceKey),
-      isTrue,
-    );
+    expect(controller.enabled, isTrue);
+    expect(controller.status, SpeedLimitDisplayStatus.unconfirmedRoad);
     controller.dispose();
   });
 
-  test('waits for movement and publishes the matched limit', () async {
+  test('a rider who turned it off stays off across the upgrade', () async {
+    SharedPreferences.setMockInitialValues({
+      SpeedLimitDisplayController.preferenceKey: false,
+    });
+    final controller = await SpeedLimitDisplayController.load(
+      provider: _FakeSpeedLimitProvider(),
+    );
+
+    expect(controller.enabled, isFalse);
+    expect(controller.status, SpeedLimitDisplayStatus.disabled);
+    controller.dispose();
+  });
+
+  test(
+    'turning it off is recorded so the new default cannot undo it',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = await SpeedLimitDisplayController.load(
+        provider: _FakeSpeedLimitProvider(),
+      );
+      await controller.setEnabled(false);
+
+      final preferences = await SharedPreferences.getInstance();
+      expect(
+        preferences.getBool(SpeedLimitDisplayController.preferenceKey),
+        isFalse,
+      );
+      controller.dispose();
+    },
+  );
+
+  test('resolves the current road from one stationary fix', () async {
     final provider = _FakeSpeedLimitProvider();
     final controller = SpeedLimitDisplayController.inMemory(
       provider: provider,
-      enabled: true,
       clock: () => baseTime,
     );
 
     controller.observe(location(51.5000, baseTime));
-    expect(provider.calls, isEmpty);
-    controller.observe(
-      location(51.5001, baseTime.add(const Duration(seconds: 1))),
-    );
-    await controller.waitForIdle();
-    expect(provider.calls, isEmpty);
-    controller.observe(
-      location(51.5004, baseTime.add(const Duration(seconds: 2))),
-    );
     await controller.waitForIdle();
 
     expect(provider.calls, hasLength(1));
+    // Stationary: no origin fix, so the provider is told there is no heading to
+    // disambiguate with rather than being handed a bearing off GPS jitter.
+    expect(provider.calls.single.previous, isNull);
     expect(controller.status, SpeedLimitDisplayStatus.known);
     expect(controller.limit?.milesPerHour, 30);
+    controller.dispose();
+  });
+
+  test('uses heading once moving to separate parallel carriageways', () async {
+    final provider = _FakeSpeedLimitProvider();
+    var now = baseTime;
+    final controller = SpeedLimitDisplayController.inMemory(
+      provider: provider,
+      clock: () => now,
+    );
+
+    controller.observe(location(51.5000, baseTime));
+    await controller.waitForIdle();
+
+    now = baseTime.add(const Duration(seconds: 20));
+    controller.observe(location(51.5008, now));
+    await controller.waitForIdle();
+
+    expect(provider.calls, hasLength(2));
+    // The second lookup is a travelled trace, so a bearing exists even when the
+    // platform reports no course.
+    expect(provider.calls.last.previous?.point.latitude, 51.5000);
+    controller.dispose();
+  });
+
+  test('an ambiguous fix says so and resolves on the next good fix', () async {
+    final provider = _FakeSpeedLimitProvider(
+      results: [
+        const SpeedLimitLookupResult.unknown(
+          SpeedLimitLookupOutcome.poorAccuracy,
+        ),
+      ],
+    );
+    var now = baseTime;
+    final controller = SpeedLimitDisplayController.inMemory(
+      provider: provider,
+      clock: () => now,
+    );
+
+    controller.observe(location(51.5000, baseTime, accuracyMeters: 40));
+    await controller.waitForIdle();
+
+    expect(controller.status, SpeedLimitDisplayStatus.unconfirmedRoad);
+    expect(controller.lastOutcome, SpeedLimitLookupOutcome.poorAccuracy);
+    expect(controller.limit, isNull);
+
+    // Still standing in the same spot, but the fix improved: an unconfirmed road
+    // is retried where it stands rather than waiting for the bike to move.
+    now = baseTime.add(SpeedLimitDisplayController.unconfirmedRetryInterval);
+    controller.observe(location(51.5000, now));
+    await controller.waitForIdle();
+
+    expect(provider.calls, hasLength(2));
+    expect(controller.status, SpeedLimitDisplayStatus.known);
+    controller.dispose();
+  });
+
+  test('a settled road is not rechecked from a standstill', () async {
+    final provider = _FakeSpeedLimitProvider();
+    var now = baseTime;
+    final controller = SpeedLimitDisplayController.inMemory(
+      provider: provider,
+      clock: () => now,
+    );
+
+    controller.observe(location(51.5000, baseTime));
+    await controller.waitForIdle();
+    expect(controller.status, SpeedLimitDisplayStatus.known);
+
+    now = baseTime.add(const Duration(minutes: 5));
+    controller.observe(location(51.5000, now));
+    await controller.waitForIdle();
+
+    expect(provider.calls, hasLength(1));
     controller.dispose();
   });
 
@@ -65,7 +163,6 @@ void main() {
       var now = baseTime;
       final controller = SpeedLimitDisplayController.inMemory(
         provider: provider,
-        enabled: true,
         clock: () => now,
       );
 
@@ -94,7 +191,10 @@ void main() {
 
   test('does not look up limits while disabled', () async {
     final provider = _FakeSpeedLimitProvider();
-    final controller = SpeedLimitDisplayController.inMemory(provider: provider);
+    final controller = SpeedLimitDisplayController.inMemory(
+      provider: provider,
+      enabled: false,
+    );
 
     controller.observe(location(51.5000, baseTime));
     controller.observe(
@@ -109,15 +209,22 @@ void main() {
 }
 
 class _FakeSpeedLimitProvider implements SpeedLimitProvider {
-  final calls = <({SpeedLimitLocation previous, SpeedLimitLocation current})>[];
+  _FakeSpeedLimitProvider({this.results = const []});
+
+  /// Consumed in order; anything past the end matches at 30 mph.
+  final List<SpeedLimitLookupResult> results;
+  final calls =
+      <({SpeedLimitLocation? previous, SpeedLimitLocation current})>[];
   bool closed = false;
 
   @override
   Future<SpeedLimitLookupResult> lookup({
-    required SpeedLimitLocation previous,
     required SpeedLimitLocation current,
+    SpeedLimitLocation? previous,
   }) async {
+    final index = calls.length;
     calls.add((previous: previous, current: current));
+    if (index < results.length) return results[index];
     return SpeedLimitLookupResult.known(
       PostedSpeedLimit(
         milesPerHour: 30,

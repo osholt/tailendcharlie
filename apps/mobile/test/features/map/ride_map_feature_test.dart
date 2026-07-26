@@ -19,6 +19,7 @@ import 'package:ride_relay/services/enforcement_alert_detector.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/map_style_repository.dart';
+import 'package:ride_relay/services/navigation_camera.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/route_importer.dart';
 import 'package:ride_relay/services/road_routing.dart';
@@ -482,7 +483,11 @@ void main() {
     expect(find.byKey(const Key('leader-tec-gap')), findsNothing);
   });
 
-  testWidgets('map exposes an informed speed-limit opt-in', (tester) async {
+  testWidgets('a rider who turned limits off can turn them back on', (
+    tester,
+  ) async {
+    // #126 makes this on by default, so the map only offers the informed opt-in
+    // to a rider who has explicitly turned it off.
     final directory = Directory.systemTemp.createTempSync(
       'map-speed-limit-opt-in-test',
     );
@@ -494,6 +499,7 @@ void main() {
     );
     final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
       provider: _WidgetSpeedLimitProvider(),
+      enabled: false,
     );
     addTearDown(speedLimitDisplay.dispose);
 
@@ -522,17 +528,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('speed-limit-opt-in-chip')), findsNothing);
     expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
+    // No caption under the readout (#125); the state is carried by the
+    // accessibility label instead of nine-point text over the map.
+    expect(find.byKey(const Key('posted-speed-limit-caption')), findsNothing);
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('posted-speed-limit-caption')))
-          .data,
-      startsWith('MOVE TO IDENTIFY ROAD'),
+          .widget<Semantics>(find.byKey(const Key('posted-speed-limit-badge')))
+          .properties
+          .label,
+      allOf(
+        contains('Mapped speed limit unavailable'),
+        // Named for the condition, not for a wait to move (#126).
+        contains('Finding your road'),
+      ),
     );
   });
 
-  testWidgets('opt-in mapped speed limit appears in the map view', (
-    tester,
-  ) async {
+  testWidgets('the mapped speed limit appears in the map view', (tester) async {
     final directory = Directory.systemTemp.createTempSync(
       'map-speed-limit-test',
     );
@@ -554,7 +566,6 @@ void main() {
     addTearDown(navigation.dispose);
     final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
       provider: _WidgetSpeedLimitProvider(),
-      enabled: true,
       clock: () => now,
     );
     addTearDown(speedLimitDisplay.dispose);
@@ -584,11 +595,19 @@ void main() {
 
     expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
     expect(find.text('30'), findsOneWidget);
+    // The caption is gone from the visual layer and its wording lives in the
+    // accessibility label (#125).
+    expect(find.byKey(const Key('posted-speed-limit-caption')), findsNothing);
     expect(
       tester
-          .widget<Text>(find.byKey(const Key('posted-speed-limit-caption')))
-          .data,
-      'MPH · MAPPED LIMIT · GPS SPEED',
+          .widget<Semantics>(find.byKey(const Key('posted-speed-limit-badge')))
+          .properties
+          .label,
+      allOf(
+        contains('Mapped speed limit 30 miles per hour'),
+        contains('Mapped, not live'),
+        contains('You are riding at 45 miles per hour by GPS'),
+      ),
     );
     // 20 m/s is 45 mph, shown below the sign at the sign's own font size.
     final riderSpeed = tester.widget<Text>(
@@ -596,6 +615,14 @@ void main() {
     );
     expect(riderSpeed.data, '45');
     expect(riderSpeed.style?.fontSize, 26);
+
+    // This fix is moving, and since #124 a moving rider is followed with or
+    // without a route, so a camera animation is genuinely in flight here. Let it
+    // finish before the tree is torn down, or the map is disposed with an active
+    // ticker.
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets('reports a gloved enforcement sighting from the map', (
@@ -627,13 +654,18 @@ void main() {
     expect(button, findsOneWidget);
     // Comfortably past the 48dp minimum target, for gloves at speed.
     expect(tester.getSize(button).shortestSide, greaterThanOrEqualTo(56));
-    // The sighting button sits directly above the speed-limit control.
-    expect(
-      tester.getBottomLeft(button).dy,
-      lessThanOrEqualTo(
-        tester.getTopLeft(find.byKey(const Key('speed-limit-opt-in-chip'))).dy,
-      ),
+    // The default test window is landscape, where #125 moves REPORT down into
+    // the bottom-left rail with the other actions and pushes the speed sign into
+    // the right-hand rail, clear of the centre column.
+    final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+    final reportRect = tester.getRect(button);
+    final speedRect = tester.getRect(
+      find.byKey(const Key('posted-speed-limit-position')),
     );
+    expect(reportRect.left, lessThanOrEqualTo(size.width * 0.1));
+    expect(reportRect.bottom, greaterThanOrEqualTo(size.height * 0.8));
+    expect(speedRect.left, greaterThanOrEqualTo(size.width * 0.55));
+    expect(speedRect.right, closeTo(size.width - 10, 1));
 
     await tester.tap(button);
     await tester.pumpAndSettle();
@@ -1699,6 +1731,9 @@ void main() {
 
     // Alerts that may interrupt, versus chrome that is always on screen.
     const urgentKeys = {'ride-paused-banner', 'leader-off-course-alert'};
+    // #125's single, deliberate exception: one small corner control, which is
+    // the only thing allowed into the upper band.
+    const cornerKeys = {'ride-menu-button'};
     final overlayKeys = <String>[
       'navigation-guidance-banner',
       'leader-off-course-alert',
@@ -1707,7 +1742,8 @@ void main() {
       'ride-menu-button',
       'emergency-alert-button',
       'leave-ride-button',
-      'speed-limit-opt-in-chip',
+      'report-sighting-button',
+      'posted-speed-limit-position',
     ];
 
     Future<void> verifyLayout({required bool landscape}) async {
@@ -1731,11 +1767,21 @@ void main() {
         rects[key] = tester.getRect(finder);
       }
 
+      // No status surface is anchored to the top of the map: the upper band is
+      // where the rider reads the road ahead. #125 admits exactly one corner
+      // control, and it stays a corner control - small, and hard against the
+      // leading edge, so it obstructs nothing a rider needs to see.
+      final rideMenu = rects['ride-menu-button']!;
+      expect(rideMenu.top, lessThan(size.height / 3));
+      expect(rideMenu.width, lessThanOrEqualTo(48));
+      expect(rideMenu.height, lessThanOrEqualTo(48));
+      expect(rideMenu.left, lessThanOrEqualTo(size.width * 0.1));
+
       for (final entry in rects.entries) {
-        // Persistent chrome keeps out of the upper band, which is reserved for
-        // the road ahead. Urgent alerts are the one exception #104 allows: they
-        // interrupt by growing the band upwards, never by anchoring to the top.
-        if (!urgentKeys.contains(entry.key)) {
+        // Urgent alerts are #104's other exception: they interrupt by growing
+        // the band upwards, never by anchoring to the top.
+        if (!urgentKeys.contains(entry.key) &&
+            !cornerKeys.contains(entry.key)) {
           expect(
             entry.value.top,
             greaterThanOrEqualTo(size.height / 3),
@@ -1748,7 +1794,11 @@ void main() {
       }
 
       final persistentTop = rects.entries
-          .where((entry) => !urgentKeys.contains(entry.key))
+          .where(
+            (entry) =>
+                !urgentKeys.contains(entry.key) &&
+                !cornerKeys.contains(entry.key),
+          )
           .map((entry) => entry.value.top)
           .reduce((a, b) => a < b ? a : b);
       for (final key in urgentKeys) {
@@ -1758,6 +1808,10 @@ void main() {
           reason: '$key must stack inside the band, not float over the map',
         );
       }
+
+      // "Follow me" is absent unless the rider has earned it by taking the
+      // camera over (#125). Following is active here, so it must not be present.
+      expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
 
       // Nothing covers anything else at the maximum simultaneous overlay count.
       final entries = rects.entries.toList(growable: false);
@@ -1788,14 +1842,35 @@ void main() {
           );
         }
       } else {
+        // One action row, not three (#125): SOS, LEAVE and REPORT share a row,
+        // and the speed sign sits below it rather than dragging the row's height
+        // up to its own.
+        final actionRow = [
+          rects['emergency-alert-button']!,
+          rects['leave-ride-button']!,
+          rects['report-sighting-button']!,
+        ];
+        for (final action in actionRow.skip(1)) {
+          expect(
+            action.top,
+            closeTo(actionRow.first.top, actionRow.first.height),
+            reason: 'the safety actions must share one row in $size',
+          );
+        }
+        final speedLimit = rects['posted-speed-limit-position']!;
+        for (final action in actionRow) {
+          expect(action.bottom, lessThanOrEqualTo(speedLimit.top));
+        }
+        // Hard right, away from the thumb and the action row (#125).
+        expect(speedLimit.right, closeTo(size.width - 12, 1));
+
         // Portrait chrome is one measured band whose height the camera reads to
-        // clamp its forward bias. Every surface being live at once is the worst
-        // case and still leaves the upper third of the map clear; this guards
-        // against the band growing beyond that.
-        final bandTop = rects.values
-            .map((rect) => rect.top)
-            .reduce((a, b) => a < b ? a : b);
-        expect(size.height - bandTop, lessThan(size.height * 0.62));
+        // clamp its forward bias (#105). This is the absolute worst case - every
+        // surface live at once - and the number that must keep coming down
+        // rather than creeping back up. The same scenario measured 0.809 before
+        // #125; the ordinary riding case, and what the freed space buys the
+        // camera, is asserted in its own test below.
+        expect(_bottomChromeFraction(tester, size), lessThan(0.75));
       }
     }
 
@@ -1815,6 +1890,7 @@ void main() {
           onOpenRideMenu: () async {},
           onEmergencyAlert: () async {},
           onLeaveRide: () async {},
+          onReportHazard: (_) async {},
         ),
       ),
     );
@@ -1825,7 +1901,299 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
+
+  testWidgets('the decluttered portrait band lets the camera look ahead', (
+    tester,
+  ) async {
+    // #125 frees vertical space for #105's forward bias. Ordinary riding - a
+    // turn banner, the action row and the speed sign, no paused ride, no
+    // off-course alert, no group overview - is the case that has to stop
+    // clamping. The same scenario measured a 431 pixel band before this change,
+    // which held the rider at 0.429 of the viewport and aimed the camera 60
+    // pixels *behind* the bike.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-camera-band');
+    addTearDown(() => directory.deleteSync(recursive: true));
+
+    final route = ImportedRoute(
+      id: 'bias',
+      name: 'Bias route',
+      importedAt: DateTime.utc(2026, 7, 26),
+      sourceFileName: 'bias.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1.01),
+            GeoPoint(latitude: 53, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 53, longitude: -1.005),
+          type: 'roundabout',
+          modifier: 'right',
+          name: 'Station Road',
+          exitNumber: 3,
+          drivingSide: 'left',
+          lanes: [
+            RouteLane(indications: ['left'], valid: false),
+            RouteLane(indications: ['straight', 'right'], valid: true),
+          ],
+        ),
+      ],
+    );
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.015),
+        recordedAt: DateTime.utc(2026, 7, 26, 12),
+        speedMetersPerSecond: 13,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory();
+    addTearDown(speedLimitDisplay.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          distanceUnit: DistanceUnit.miles,
+          speedLimitDisplay: speedLimitDisplay,
+          onOpenRideMenu: () async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+    expect(find.byKey(const Key('navigation-guidance-banner')), findsOneWidget);
+    final bottomChromeFraction = _bottomChromeFraction(tester, size);
+    expect(bottomChromeFraction, lessThan(0.45));
+
+    final plan = NavigationCameraPlanner.plan(
+      speedMetersPerSecond: 13,
+      landscape: false,
+      viewportHeightPixels: size.height,
+      latitudeDegrees: 53,
+      bottomChromeFraction: bottomChromeFraction,
+    );
+    // Positive bias means the camera is aimed up the road rather than behind the
+    // rider, and the marker sits below the centre of the frame where #105 wants
+    // it. The band no longer pushes it past the middle.
+    expect(plan.forwardBiasPixels, greaterThan(0));
+    expect(plan.riderViewportFraction, greaterThan(0.5));
+    expect(
+      plan.riderViewportFraction,
+      greaterThan(
+        NavigationCameraPlanner.plan(
+          speedMetersPerSecond: 13,
+          landscape: false,
+          viewportHeightPixels: size.height,
+          latitudeDegrees: 53,
+          // The band this replaced.
+          bottomChromeFraction: 431 / size.height,
+        ).riderViewportFraction,
+      ),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('a ride with no route keeps SOS, Leave and the ride menu', (
+    tester,
+  ) async {
+    // #124's P0 regression: `_route != null` gated the emergency alert and the
+    // leave action, so a group riding without a GPX had neither. This is the one
+    // that must never come back.
+    final directory = Directory.systemTemp.createTempSync('map-routeless-ride');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final navigation = ValueNotifier<MapNavigationPosition?>(null);
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    var alerts = 0;
+    var leaves = 0;
+    var menus = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          // No route, and none arriving.
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          ridePaused: true,
+          onEmergencyAlert: () async => alerts += 1,
+          onLeaveRide: () async => leaves += 1,
+          onOpenRideMenu: () async => menus += 1,
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Before a fix arrives, and with no route: the safety actions are already
+    // there, and so is the paused-ride state.
+    expect(find.byKey(const Key('emergency-alert-button')), findsOneWidget);
+    expect(find.byKey(const Key('leave-ride-button')), findsOneWidget);
+    expect(find.byKey(const Key('report-sighting-button')), findsOneWidget);
+    expect(find.text('GROUP RIDE PAUSED'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('leave-ride-button')));
+    await tester.pump();
+    expect(leaves, 1);
+    // SOS second, because a stopped rider's alert opens the assistance sheet
+    // over the map. Dismiss it before carrying on.
+    await tester.tap(find.byKey(const Key('emergency-alert-button')));
+    await tester.pumpAndSettle();
+    expect(alerts, 1);
+    expect(find.text('You are stopped'), findsOneWidget);
+    Navigator.of(
+      tester.element(find.byKey(const Key('leave-ride-button'))),
+    ).pop();
+    await tester.pumpAndSettle();
+
+    // A moving fix with no route: the follow camera engages, the riding canvas
+    // takes the screen, and the ride menu appears in its corner. Route-derived
+    // surfaces stay absent rather than empty.
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 53, longitude: -1.015),
+      recordedAt: DateTime.utc(2026, 7, 26, 12),
+      speedMetersPerSecond: 13,
+      headingDegrees: 90,
+      accuracyMeters: 5,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.byType(AppBar), findsNothing);
+    expect(find.byKey(const Key('emergency-alert-button')), findsOneWidget);
+    expect(find.byKey(const Key('leave-ride-button')), findsOneWidget);
+    expect(find.byKey(const Key('ride-menu-button')), findsOneWidget);
+    expect(find.text('GROUP RIDE PAUSED'), findsOneWidget);
+    expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
+    // Not a nag: a route-less ride is a mode, not a state to prompt about.
+    expect(find.text('Choose a route'), findsNothing);
+    // Following the rider, so the recovery affordance is not on screen.
+    expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('ride-menu-button')));
+    await tester.pump();
+    expect(menus, 1);
+
+    // The camera is following a route-less rider, so let its animation finish
+    // before the tree is torn down.
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('a route-less rider can recover the camera after a pan', (
+    tester,
+  ) async {
+    // #124 plus #125: following works from position and heading alone, and
+    // "Follow me" is earned by a manual pan rather than sitting there all ride.
+    final directory = Directory.systemTemp.createTempSync('map-routeless-pan');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.015),
+        recordedAt: DateTime.utc(2026, 7, 26, 12),
+        speedMetersPerSecond: 13,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          onLeaveRide: () async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+
+    await tester.drag(find.byType(FlutterMap), const Offset(0, 90));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+
+    // Still off following, and now stopped: the affordance has to survive the
+    // bike stopping, because that is exactly when the rider needs it.
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 53, longitude: -1.014),
+      recordedAt: DateTime.utc(2026, 7, 26, 12, 1),
+      speedMetersPerSecond: 0,
+      headingDegrees: 90,
+      accuracyMeters: 5,
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+
+    await tester.tap(find.text('Follow me'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
 }
+
+/// #105's `bottomChromeFraction`: the portrait band, plus the margin below it,
+/// over the map viewport height.
+///
+/// Measured from the laid-out band rather than summed from assumed overlay
+/// heights, and deliberately measured with the unconfigured development basemap
+/// these tests use - its "route-only offline map" badge adds 36 pixels no rider
+/// ever sees, so every number here is the pessimistic one.
+double _bottomChromeFraction(WidgetTester tester, Size size) =>
+    (tester.getRect(find.byKey(portraitBottomChromeKey)).height + 12) /
+    size.height;
 
 class _NoFileSource implements GpxImportSource {
   const _NoFileSource();
@@ -1884,8 +2252,8 @@ class _StraightRoadRoutingService implements RoadRoutingService {
 class _WidgetSpeedLimitProvider implements SpeedLimitProvider {
   @override
   Future<SpeedLimitLookupResult> lookup({
-    required SpeedLimitLocation previous,
     required SpeedLimitLocation current,
+    SpeedLimitLocation? previous,
   }) async => SpeedLimitLookupResult.known(
     PostedSpeedLimit(
       milesPerHour: 30,
