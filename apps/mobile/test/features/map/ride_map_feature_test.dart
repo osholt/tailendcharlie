@@ -12,6 +12,7 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/geo_point.dart' as awareness_geo;
 import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
@@ -23,6 +24,7 @@ import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/map_style_repository.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
+import 'package:ride_relay/services/received_quick_message.dart';
 import 'package:ride_relay/services/route_importer.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/speed_limit.dart';
@@ -2835,7 +2837,584 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
+
+  test('every quick message kind has its own symbol on both phones', () {
+    // The kind a rider chose to send and the kind another rider is shown are
+    // the same symbol, and a kind only a newer build knows still gets one.
+    final icons = {
+      for (final message in QuickMessage.values)
+        message: quickMessageIcon(message),
+    };
+    expect(icons.values.toSet(), hasLength(QuickMessage.values.length));
+    expect(quickMessageIcon(null), isNotNull);
+    expect(icons.values.contains(quickMessageIcon(null)), isFalse);
+  });
+
+  test('where the sender is reads as one of two honest forms', () {
+    expect(
+      describeQuickMessageOrigin(
+        const QuickMessageOrigin(
+          distanceMeters: 1931,
+          alongRoute: true,
+          senderIsBehind: true,
+        ),
+        DistanceUnit.miles,
+      ),
+      '1.2 mi back',
+    );
+    expect(
+      describeQuickMessageOrigin(
+        const QuickMessageOrigin(
+          distanceMeters: 1931,
+          alongRoute: true,
+          senderIsBehind: false,
+        ),
+        DistanceUnit.miles,
+      ),
+      '1.2 mi ahead',
+    );
+    expect(
+      describeQuickMessageOrigin(
+        const QuickMessageOrigin(
+          distanceMeters: 400,
+          alongRoute: false,
+          bearingDegrees: 45,
+        ),
+        DistanceUnit.kilometres,
+      ),
+      '400 m NE',
+    );
+    // A rider standing beside you is not "0 m back".
+    expect(
+      describeQuickMessageOrigin(
+        const QuickMessageOrigin(
+          distanceMeters: 4,
+          alongRoute: true,
+          senderIsBehind: true,
+        ),
+        DistanceUnit.miles,
+      ),
+      'right here',
+    );
+    // And a sender who has never reported one is said to be unknown rather than
+    // drawn as though they were on top of you.
+    expect(
+      describeQuickMessageOrigin(null, DistanceUnit.miles),
+      'position not reported',
+    );
+  });
+
+  testWidgets('a routine quick message reaches a rider watching the map', (
+    tester,
+  ) async {
+    // #151: the send path always worked and nothing presented the result. A
+    // leader on the Map tab has to be told who, what, when and where, without
+    // going to look, and "Need fuel" must not blank the map to do it.
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-quick-message');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final alerts = ValueNotifier<List<RideQuickMessageAlert>>([
+      _quickMessageAlert(
+        eventId: 'fuel-1',
+        message: QuickMessage.fuel,
+        senderDisplayName: 'Bill',
+        origin: const QuickMessageOrigin(
+          distanceMeters: 1931,
+          alongRoute: true,
+          senderIsBehind: true,
+        ),
+      ),
+    ]);
+    addTearDown(alerts.dispose);
+    final acknowledged = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(
+            _testRoute(id: 'quick', name: 'Quick route'),
+          ),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          distanceUnit: DistanceUnit.miles,
+          quickMessageAlerts: alerts,
+          onAcknowledgeQuickMessage: (message) async =>
+              acknowledged.add(message.eventId),
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('quick-message-alert')), findsOneWidget);
+    expect(find.text('Bill needs fuel'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const Key('quick-message-detail'))).data,
+      startsWith('1.2 mi back · '),
+    );
+    // Routine does not take the screen over. That is what priority is for.
+    expect(find.byKey(const Key('quick-message-interrupt')), findsNothing);
+
+    // One target ends it, and the sender is told.
+    final button = tester.getRect(
+      find.byKey(const Key('quick-message-acknowledge')),
+    );
+    expect(button.shortestSide, greaterThanOrEqualTo(48));
+    await tester.tap(find.byKey(const Key('quick-message-acknowledge')));
+    await tester.pumpAndSettle();
+    expect(acknowledged, const ['fuel-1']);
+  });
+
+  testWidgets('an urgent quick message interrupts and leaves the row behind', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-quick-urgent');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final alerts = ValueNotifier<List<RideQuickMessageAlert>>([
+      _quickMessageAlert(
+        eventId: 'help-1',
+        message: QuickMessage.assistance,
+        senderDisplayName: 'Ana',
+        origin: const QuickMessageOrigin(
+          distanceMeters: 640,
+          alongRoute: false,
+          bearingDegrees: 225,
+        ),
+      ),
+    ]);
+    addTearDown(alerts.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(
+            _testRoute(id: 'quick', name: 'Quick route'),
+          ),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          distanceUnit: DistanceUnit.kilometres,
+          quickMessageAlerts: alerts,
+          onAcknowledgeQuickMessage: (_) async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('quick-message-interrupt')), findsOneWidget);
+    expect(find.text('ANA NEEDS HELP'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('quick-message-interrupt-origin')))
+          .data,
+      '640 M SW',
+    );
+
+    // Dismissing without acknowledging loses nothing: the persistent row is
+    // still there, so a rider who glances away has not lost the alert.
+    await tester.tapAt(
+      tester.getTopLeft(find.byKey(const Key('quick-message-interrupt'))) +
+          const Offset(12, 12),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('quick-message-interrupt')), findsNothing);
+    expect(find.byKey(const Key('quick-message-alert')), findsOneWidget);
+    expect(find.text('Ana needs help'), findsOneWidget);
+  });
+
+  testWidgets('the sender is shown that their own alert was seen', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-quick-receipt');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final alerts = ValueNotifier<List<RideQuickMessageAlert>>(const []);
+    addTearDown(alerts.dispose);
+    // Moving, so the assistance sheet a stopped rider gets after an alert stays
+    // out of the way of the surface under test.
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.455, longitude: -2.585),
+        recordedAt: DateTime.utc(2026, 7, 26, 12),
+        speedMetersPerSecond: 13,
+        headingDegrees: 45,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(
+            _testRoute(id: 'quick', name: 'Quick route'),
+          ),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          quickMessageAlerts: alerts,
+          onAcknowledgeQuickMessage: (_) async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('emergency-alert-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('ALERT SENT'), findsOneWidget);
+    final sent = tester.getRect(
+      find.byKey(const Key('emergency-alert-button')),
+    );
+
+    // The acknowledgement arrives. The control the rider already pressed says so,
+    // and a row spells out who saw it.
+    alerts.value = [
+      _quickMessageAlert(
+        eventId: 'own-sos',
+        message: QuickMessage.emergencyStop,
+        senderDisplayName: 'Me',
+        raisedFromLocalRider: true,
+        acknowledgedBy: 'Ana',
+      ),
+    ];
+    await tester.pumpAndSettle();
+
+    expect(find.text('ALERT SEEN'), findsOneWidget);
+    expect(
+      tester.getRect(find.byKey(const Key('emergency-alert-button'))),
+      sent,
+      reason: 'the acknowledged state must reuse the reserved slot (#142)',
+    );
+    expect(find.text('Ana saw: Emergency stop'), findsOneWidget);
+    // A receipt is not an alert: there is nothing to acknowledge, only to clear.
+    expect(find.byKey(const Key('quick-message-acknowledge')), findsNothing);
+    await tester.tap(find.byKey(const Key('quick-message-receipt-dismiss')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('quick-message-alert')), findsNothing);
+  });
+
+  testWidgets('several messages at once are one row and a count', (
+    tester,
+  ) async {
+    // Three riders raising something must not put three rows into the band #125
+    // and #133 emptied. The most urgent is on screen with a count behind it.
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-quick-count');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final alerts = ValueNotifier<List<RideQuickMessageAlert>>([
+      _quickMessageAlert(
+        eventId: 'blocked-1',
+        message: QuickMessage.routeBlocked,
+        senderDisplayName: 'Cal',
+        origin: const QuickMessageOrigin(
+          distanceMeters: 800,
+          alongRoute: true,
+          senderIsBehind: false,
+        ),
+      ),
+      _quickMessageAlert(
+        eventId: 'fuel-1',
+        message: QuickMessage.fuel,
+        senderDisplayName: 'Bill',
+      ),
+      _quickMessageAlert(
+        eventId: 'stopped-1',
+        message: QuickMessage.stopped,
+        senderDisplayName: 'Dee',
+      ),
+    ]);
+    addTearDown(alerts.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(
+            _testRoute(id: 'quick', name: 'Quick route'),
+          ),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          distanceUnit: DistanceUnit.miles,
+          quickMessageAlerts: alerts,
+          onAcknowledgeQuickMessage: (_) async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('quick-message-alert')), findsOneWidget);
+    expect(find.text('Cal says the route is blocked'), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const Key('quick-message-detail'))).data,
+      endsWith('+2 more'),
+    );
+  });
+
+  testWidgets('an incoming alert moves nothing and stays out of the road', (
+    tester,
+  ) async {
+    // #142's rule applied to a surface that arrives unbidden: the band grows
+    // upwards from its bottom anchor, so the targets a rider reaches for without
+    // looking do not move, resize or reflow when an alert lands on them. #104's
+    // rule applied to the same surface: it is not a corner element, so it stays
+    // out of the upper third, and in landscape out of the centre column.
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-quick-layout');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.015),
+        recordedAt: DateTime.utc(2026, 7, 26, 12),
+        speedMetersPerSecond: 13,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final leaderStatus = ValueNotifier<LeaderRideStatus?>(
+      const LeaderRideStatus(
+        tecName: 'Charlie',
+        distanceToTecMeters: 3200,
+        estimatedTimeToTec: Duration(minutes: 4),
+        tecLocationAge: Duration(seconds: 10),
+        offCourseAlerts: [
+          LeaderOffCourseAlert(
+            riderId: 'rider-alex',
+            displayName: 'Alex',
+            level: RouteAlertLevel.urgent,
+            distanceFromRouteMeters: 420,
+          ),
+        ],
+      ),
+    );
+    addTearDown(leaderStatus.dispose);
+    final alerts = ValueNotifier<List<RideQuickMessageAlert>>(const []);
+    addTearDown(alerts.dispose);
+
+    // The same route the chrome test uses, so the turn banner is live: a route
+    // the rider is on, with one manoeuvre ahead of them.
+    final route = ImportedRoute(
+      id: 'quick-chrome',
+      name: 'Quick chrome route',
+      importedAt: DateTime.utc(2026, 7, 26),
+      sourceFileName: 'quick-chrome.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1.01),
+            GeoPoint(latitude: 53, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 53, longitude: -1.005),
+          type: 'turn',
+          modifier: 'right',
+          name: 'Station Road',
+          drivingSide: 'left',
+        ),
+      ],
+    );
+
+    // Everything at once: a paused ride, an off-course rider, the TEC gap, the
+    // turn banner and the action row, and now an alert on top of all of it.
+    Widget screen() => MaterialApp(
+      theme: ThemeData.dark(useMaterial3: true),
+      home: RideMapScreen(
+        routeStore: InMemoryRouteStore(route),
+        routeImporter: RouteImporter(source: const _NoFileSource()),
+        offlineTileCache: cache,
+        navigationPosition: navigation,
+        leaderStatus: leaderStatus,
+        ridePaused: true,
+        distanceUnit: DistanceUnit.miles,
+        quickMessageAlerts: alerts,
+        onAcknowledgeQuickMessage: (_) async {},
+        onOpenRideMenu: () async {},
+        onEmergencyAlert: () async {},
+        onLeaveRide: () async {},
+        onReportHazard: (_) async {},
+      ),
+    );
+
+    const actionKeys = [
+      'emergency-alert-button',
+      'leave-ride-button',
+      'report-sighting-button',
+      'posted-speed-limit-position',
+    ];
+    Map<String, Rect> measureActions() => {
+      for (final key in actionKeys) key: tester.getRect(find.byKey(Key(key))),
+    };
+
+    Future<void> verify({required bool landscape}) async {
+      tester.view.physicalSize = landscape
+          ? const Size(852, 393)
+          : const Size(393, 852);
+      alerts.value = const [];
+      await tester.pumpWidget(screen());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+      final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+      final before = measureActions();
+
+      alerts.value = [
+        _quickMessageAlert(
+          eventId: 'fuel-1',
+          message: QuickMessage.fuel,
+          senderDisplayName: 'Bill',
+          origin: const QuickMessageOrigin(
+            distanceMeters: 1931,
+            alongRoute: true,
+            senderIsBehind: true,
+          ),
+        ),
+      ];
+      await tester.pumpAndSettle();
+      final orientation = landscape ? 'landscape' : 'portrait';
+      expect(find.byKey(const Key('quick-message-alert')), findsOneWidget);
+      expect(
+        measureActions(),
+        before,
+        reason: 'an incoming alert moved a target in $orientation',
+      );
+
+      final alert = tester.getRect(
+        find.byKey(const Key('quick-message-alert')),
+      );
+      expect(alert.left, greaterThanOrEqualTo(0));
+      expect(alert.right, lessThanOrEqualTo(size.width));
+      expect(alert.bottom, lessThanOrEqualTo(size.height));
+      // It grows the band upwards; the targets stay put underneath it.
+      expect(
+        alert.bottom,
+        lessThanOrEqualTo(before['emergency-alert-button']!.top),
+        reason: 'the alert must stack inside the band in $orientation',
+      );
+      // Nothing it shares the band with is covered.
+      for (final key in const [
+        'leader-off-course-alert',
+        'leader-tec-gap',
+        'navigation-guidance-banner',
+        ...actionKeys,
+      ]) {
+        expect(
+          alert.deflate(0.5).overlaps(tester.getRect(find.byKey(Key(key)))),
+          isFalse,
+          reason: 'the alert overlaps $key in $orientation',
+        );
+      }
+      if (landscape) {
+        // The centre column is where the rider's own marker and the road ahead
+        // are. A rail surface never crosses it (#133).
+        expect(
+          alert.right <= size.width * 0.45 || alert.left >= size.width * 0.55,
+          isTrue,
+          reason: 'the alert crosses the centre column in $orientation',
+        );
+      } else {
+        // The absolute worst case for #105's forward bias: every persistent
+        // surface plus an unacknowledged alert. Reported in the PR; acknowledging
+        // is one target away and hands the space straight back.
+        expect(_bottomChromeFraction(tester, size), lessThan(0.65));
+      }
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+
+    await verify(landscape: false);
+    await verify(landscape: true);
+  });
 }
+
+/// A received quick message as the ride shell publishes one.
+RideQuickMessageAlert _quickMessageAlert({
+  required String eventId,
+  required QuickMessage message,
+  required String senderDisplayName,
+  QuickMessageOrigin? origin,
+  bool raisedFromLocalRider = false,
+  String? acknowledgedBy,
+}) => RideQuickMessageAlert(
+  message: ReceivedQuickMessage(
+    eventId: eventId,
+    senderRiderId: 'rider-$eventId',
+    senderDisplayName: senderDisplayName,
+    label: message.label,
+    priority: message.priority,
+    raisedAt: DateTime.now().subtract(const Duration(minutes: 2)),
+    raisedFromLocalRider: raisedFromLocalRider,
+    message: message,
+    acknowledgements: [
+      if (acknowledgedBy != null)
+        QuickMessageAcknowledgement(
+          riderId: 'rider-ack',
+          displayName: acknowledgedBy,
+          acknowledgedAt: DateTime.now(),
+        ),
+    ],
+  ),
+  origin: origin,
+);
 
 /// #105's `bottomChromeFraction`: the portrait band, plus the margin below it,
 /// over the map viewport height.

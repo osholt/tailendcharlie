@@ -15,6 +15,8 @@ import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
+import 'package:ride_relay/services/received_quick_message.dart';
+import 'package:ride_relay/services/ride_event_authenticator.dart';
 import 'package:ride_relay/services/situation_event_factory.dart';
 
 void main() {
@@ -379,6 +381,89 @@ void main() {
     expect(message.payload['message'], 'emergencyStop');
     expect(message.payload['recipientRiderIds'], const ['lead', 'tec']);
   });
+
+  test('a quick message carries who raised it and where they were', () async {
+    // #151: "Bill needs fuel" is not actionable without "1.2 miles back", and a
+    // recipient may not have the sender in their roster yet.
+    await controller.createRide('Bill');
+    await controller.sendQuickMessage(
+      QuickMessage.fuel,
+      position: const GeoPoint(latitude: 53.1, longitude: -1.02),
+    );
+
+    final raised = controller.events.last;
+    expect(raised.payload['senderDisplayName'], 'Bill');
+    expect(raised.payload['position'], const {
+      'latitude': 53.1,
+      'longitude': -1.02,
+    });
+    // Group-visible: the dashboard grid addresses nobody in particular.
+    expect(raised.payload.containsKey('recipientRiderIds'), isFalse);
+  });
+
+  test(
+    'acknowledging a quick message is recorded once, for its sender',
+    () async {
+      await controller.createRide('Ana');
+      final session = controller.session!;
+      // A message from another rider, signed with the ride's own invite secret,
+      // exactly as one arrives over either transport.
+      final unsigned = RideEvent(
+        id: 'bill-fuel',
+        rideId: session.rideId,
+        deviceId: 'bill',
+        type: RideEventType.statusMessage,
+        priority: EventPriority.routine,
+        createdAt: DateTime.utc(2026, 7, 16, 11, 59),
+        expiresAt: DateTime.utc(2026, 7, 16, 13),
+        payload: const {
+          'message': 'fuel',
+          'label': 'Need fuel',
+          'senderDisplayName': 'Bill',
+        },
+        signature: '',
+      );
+      await eventStore.append(
+        RideEvent(
+          id: unsigned.id,
+          rideId: unsigned.rideId,
+          deviceId: unsigned.deviceId,
+          type: unsigned.type,
+          priority: unsigned.priority,
+          createdAt: unsigned.createdAt,
+          expiresAt: unsigned.expiresAt,
+          payload: unsigned.payload,
+          signature: RideEventAuthenticator.sign(
+            unsigned,
+            session.inviteSecret,
+          ),
+        ),
+      );
+      await controller.reloadEvents();
+
+      final received = controller.quickMessages.single;
+      expect(received.headline, 'Bill needs fuel');
+      expect(received.isAcknowledged, isFalse);
+
+      await controller.acknowledgeQuickMessage(received);
+      final acknowledgement = controller.events.last;
+      expect(
+        ReceivedQuickMessageReducer.isAcknowledgement(acknowledgement),
+        isTrue,
+      );
+      expect(acknowledgement.payload['recipientRiderIds'], const ['bill']);
+      expect(acknowledgement.payload['label'], 'Seen: Need fuel');
+
+      // Folded onto the message, and never recorded twice.
+      final folded = controller.quickMessages.single;
+      expect(folded.isAcknowledged, isTrue);
+      expect(folded.acknowledgedBy(session.localRiderId), isTrue);
+      expect(folded.firstAcknowledgement?.displayName, 'Ana');
+      final before = controller.events.length;
+      await controller.acknowledgeQuickMessage(folded);
+      expect(controller.events.length, before);
+    },
+  );
 
   test(
     'leader can pause and resume the shared ride without stopping GPS',

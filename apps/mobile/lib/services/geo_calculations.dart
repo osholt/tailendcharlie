@@ -20,6 +20,25 @@ abstract final class GeoCalculations {
     return earthRadiusMeters * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
 
+  /// Initial great-circle bearing from [from] to [to], in degrees clockwise
+  /// from true north and normalised to `[0, 360)`.
+  ///
+  /// Used where a distance on its own is not actionable: "400 m NE" tells a
+  /// rider which way to look, "400 m" does not (#151).
+  static double bearingDegrees(GeoPoint from, GeoPoint to) {
+    final latitude1 = _radians(from.latitude);
+    final latitude2 = _radians(to.latitude);
+    final longitudeDelta = _radians(
+      _normaliseLongitudeDelta(to.longitude - from.longitude),
+    );
+    final y = math.sin(longitudeDelta) * math.cos(latitude2);
+    final x =
+        math.cos(latitude1) * math.sin(latitude2) -
+        math.sin(latitude1) * math.cos(latitude2) * math.cos(longitudeDelta);
+    final degrees = math.atan2(y, x) * 180 / math.pi;
+    return (degrees + 360) % 360;
+  }
+
   static double distanceToPolylineMeters(
     GeoPoint point,
     List<GeoPoint> polyline,

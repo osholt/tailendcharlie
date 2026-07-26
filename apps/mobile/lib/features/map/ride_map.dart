@@ -8,9 +8,11 @@ export 'ride_map_feature.dart'
         MapOverlayTrace,
         RideMapFeature,
         RideMapScreen,
+        describeQuickMessageOrigin,
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
         portraitBottomChromeKey,
+        quickMessageIcon,
         shouldUseTiledGroupMiniMap;
 export 'route_trail_style.dart'
     show RouteLineStyle, RouteTrailStyle, contrastRatio, relativeLuminance;
