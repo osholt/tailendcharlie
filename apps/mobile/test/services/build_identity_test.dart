@@ -16,10 +16,11 @@ void main() {
       expect(headers['x-tailendcharlie-app-build'], identity.appBuild);
     });
 
-    test('falls back to the pubspec version when nothing is stamped in', () {
-      // Run without --dart-define, this is the fallback the field report saw
-      // reported for every build. `flutter test
-      // --dart-define=RIDE_RELAY_APP_VERSION=9.9.9
+    test('reports an unstamped build as unknown, never as a constant', () {
+      // The field report was a build 28 artefact whose app claimed 1.0.1+22,
+      // because both this class and the relay descriptor fell back to a
+      // plausible-looking constant. An unstamped build must now say it does not
+      // know. `flutter test --dart-define=RIDE_RELAY_APP_VERSION=9.9.9
       // --dart-define=RIDE_RELAY_APP_BUILD=4242` proves the stamped path.
       const stampedVersion = String.fromEnvironment('RIDE_RELAY_APP_VERSION');
       const stampedBuild = String.fromEnvironment('RIDE_RELAY_APP_BUILD');
@@ -27,9 +28,21 @@ void main() {
 
       expect(
         identity.appVersion,
-        stampedVersion.isEmpty ? '1.0.1' : stampedVersion,
+        stampedVersion.isEmpty
+            ? RelayClientDescriptor.unknownVersion
+            : stampedVersion,
       );
-      expect(identity.appBuild, stampedBuild.isEmpty ? '22' : stampedBuild);
+      expect(
+        identity.appBuild,
+        stampedBuild.isEmpty
+            ? RelayClientDescriptor.unknownVersion
+            : stampedBuild,
+      );
+      expect(identity.reportsVersion, stampedBuild.isNotEmpty);
+      if (stampedBuild.isEmpty) {
+        expect(identity.versionLabel, isNot(contains('1.0.1')));
+        expect(identity.bugReportLine, isNot(contains('1.0.1+22')));
+      }
     });
 
     // Proof that the workflow plumbing reaches the app. Skipped on an
