@@ -2,6 +2,29 @@
 
 Updated: 2026-07-26
 
+## Read this first: #132, a device only received when it sent
+
+`claude/issue-132-presence-asymmetry` fixes the defect behind #132 and the
+recurrence of #99. **Upload and download share one relay request, and the relay
+answered a repeated request from its idempotency replay cache — including the
+download half.** A phone with nothing to send repeats a byte-identical body on
+every poll (same device, same cursor, empty batch), so it was served the cached
+reply and received *nothing* until it happened to have an event of its own to
+upload. That is why the leader, lying still on a desk with no new GPS fix to
+send, counted the follower (its first poll was not yet cached) and never saw the
+follower's position, while the follower — still producing and receiving events,
+so never byte-identical twice — saw everything. **The failure follows whichever
+device has an empty outbound queue, not the role.**
+
+The fix is in `apps/server`: idempotency now covers the upload only, the download
+is rebuilt from the caller's cursor on every request, and an empty batch is never
+stored as a replay. **It therefore needs a relay deploy — the phones in testers'
+hands are fixed by deploying the server, with no app update.**
+
+Three further defects in the same area were fixed alongside it; see "This
+branch" below. Physical two-device evidence is still owed: run
+`docs/field-test-plan.md` step 8b.
+
 ## Current branch
 
 Active work is on `claude/issue-124-routeless-chrome`: #124 (a ride with no route
@@ -26,6 +49,45 @@ concurrent runs; `flutter test -j 1` is clean.
 
 ## This branch
 
+- **A download never depends on having something to upload** (#132). See the
+  section at the top. `apps/server/src/ride_relay_server/service.py`:
+  `synchronize` consults the replay cache only for a non-empty batch, replays the
+  stored `acceptedEventIds` rather than the stored events and cursor, and stores
+  no replay row for an idle poll. The replay path also refreshes `last_seen_at`,
+  which an idle-but-replaying device never used to do.
+  `test/internet/two_device_relay_sync_test.dart` is the harness that would have
+  caught it: two devices over the **real** HTTP client and worker against a fake
+  relay that keeps the replay rule, with one device idle throughout. Every
+  earlier harness stubbed the transport and always had something queued, so the
+  defect could not appear.
+- **Freshness is judged on a clock both devices share.** A peer's position used
+  to be aged by this phone's clock minus the *peer's* own timestamp, which
+  measures the difference between two clocks as well as the age: a rider whose
+  clock was a few minutes out was drawn as stale, marked `inactive`, and then
+  dropped entirely at the five-minute retention bound while reporting every four
+  seconds. The relay now reports `serverTime` beside the arrival stamps it
+  already put on every position, `PreStartPresenceController` measures the offset,
+  and `LivePresenceReconciler` ages a relay-stamped peer position on the relay's
+  clock (`PresenceClockBasis.sharedRelayClock`). A clock disagreement past
+  `publisherClockTolerance` is *named* — `PresenceLimitation.riderClockUntrusted`
+  — never used to age a rider out.
+- **One unreadable position no longer discards the whole reply.** The presence
+  decoder rejected the entire response — every position and the roster — if any
+  single row's `expiresAt` was not after the *local* clock. A phone whose clock
+  ran more than the 45 s TTL ahead of the relay hit that on every poll and was
+  told "the ride service cannot be reached" while it was answering perfectly.
+  Rows are now skipped individually and counted
+  (`PresenceLimitation.positionsUnreadable`), and expiry is judged on the relay's
+  clock — the relay has already deleted whatever it considers expired, so a local
+  re-check could only ever measure skew.
+- **The count, the roster and both maps derive from one model.** `RideLiveView`
+  in `lib/services/ride_membership.dart` reconciles membership with live presence
+  and asserts the invariant: every counted rider is either in
+  `renderedPositions` or in `countedWithoutPosition` with a stated reason
+  (`RidePositionAbsence`). `RideController.participants`/`liveParticipants` and
+  the ride map's `visibleRiderLocations` all come from it, so "counted but no
+  marker and nothing said" is now unrepresentable rather than merely unintended.
+  `test/services/ride_live_view_test.dart` asserts the agreement directly.
 - **A ride with no GPX is a first-class mode.** `ride_map_feature.dart` gated
   the emergency alert and the leave action behind `_route != null`, so a group
   riding without a route had neither. Every safety, ride-lifecycle, camera and
@@ -105,6 +167,12 @@ Neither is started. The in-app warning surface they would feed already exists.
 
 ## Remaining evidence
 
+- **Run `docs/field-test-plan.md` step 8b on the two physical phones** (#132):
+  both stationary on a desk with nothing to send, then a report from one side
+  only, then the roles reversed, then with one clock deliberately five minutes
+  wrong. Nothing on this branch is physical-device evidence; it is a proven
+  root cause with a server-side fix and simulated two-device coverage. The relay
+  must be deployed before that test means anything.
 - Ride a route-less ride on a mounted phone and confirm SOS, Leave, Report, the
   ride menu, the follow camera and re-centre all work, and that no route-derived
   surface appears empty or placeholdered.

@@ -1558,29 +1558,29 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }) {
     final awareness = _awarenessController;
     if (awareness == null) return;
+    // One reconciled model for both ride phases and both transports, so nobody
+    // disappears at the `rideStarted` transition, a late joiner appears at once,
+    // and the count can never disagree with the drawn markers (#132).
+    final livePresence = _isSimulation
+        ? const <LiveRiderPresence>[]
+        : _reconciledLivePresence();
+    if (!_isSimulation) _publishLivePresence(livePresence);
     final participants = {
       for (final participant in widget.rideController.participants)
         participant.riderId: participant,
     };
-    // One reconciled model for both ride phases and both transports, so nobody
-    // disappears at the `rideStarted` transition and a late joiner appears at
-    // once.
-    final livePresence = _isSimulation
-        ? const <LiveRiderPresence>[]
-        : _reconciledLivePresence();
     final freshnessByRider = {
       for (final presence in livePresence) presence.riderId: presence,
     };
-    final locationSource = _isSimulation
+    final visibleRiderLocations = _isSimulation
         ? awareness.riderLocations
-        : [for (final presence in livePresence) ?presence.location];
-    final visibleRiderLocations = locationSource
-        .where(
-          (location) =>
-              participants[location.riderId]?.isEligibleForLivePosition ??
-              false,
-        )
-        .toList(growable: false);
+              .where(
+                (location) =>
+                    participants[location.riderId]?.isEligibleForLivePosition ??
+                    false,
+              )
+              .toList(growable: false)
+        : widget.rideController.liveView.renderedPositions;
     final activeRiderIds = participants.values
         .where((participant) => participant.isEligibleForRouteAlerts)
         .map((participant) => participant.riderId)
@@ -2208,11 +2208,22 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     await _locationController?.stop();
   }
 
+  /// Hands the reconciled presence to the one model every surface reads, along
+  /// with whether this device can receive positions at all — so a missing marker
+  /// is attributed to the transport rather than silently to the rider.
+  void _publishLivePresence(List<LiveRiderPresence> presence) {
+    widget.rideController.observeLivePresence(
+      presence,
+      positionChannelUnavailable:
+          _preStartPresenceController?.unavailableReason != null,
+    );
+  }
+
   void _onPreStartPresenceChanged() {
     if (!mounted) return;
     // Presence is the channel that does not depend on the bulk event batch, so
     // it is what tells the roster a rider has joined.
-    widget.rideController.observeLivePresence(_reconciledLivePresence());
+    _publishLivePresence(_reconciledLivePresence());
     // A capability refusal, a rejected credential or an older peer used to turn
     // live positions off with no visible reason at all.
     var changed = false;
@@ -2238,6 +2249,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       internetPresence: presence?.internetLocations ?? const [],
       nearbyPresence: presence?.nearbyLocations ?? const [],
       roster: presence?.roster ?? const [],
+      // A peer's position is aged on the relay's clock, not this phone's.
+      relayClockOffset: presence?.relayClockOffset ?? Duration.zero,
     );
   }
 
