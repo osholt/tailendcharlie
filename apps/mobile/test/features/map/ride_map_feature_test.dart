@@ -194,6 +194,83 @@ void main() {
     expect(arrows.markers, isNotEmpty);
   });
 
+  testWidgets('the map menu lists every turn for the loaded route', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-maneuver-list-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'listed',
+      name: 'Listed route',
+      importedAt: DateTime.utc(2026, 7, 25),
+      sourceFileName: 'listed.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.46, longitude: -2.59),
+            GeoPoint(latitude: 51.47, longitude: -2.59),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.46, longitude: -2.59),
+          type: 'roundabout',
+          modifier: 'slight left',
+          name: 'Wells Road',
+          exitNumber: 2,
+          drivingSide: 'left',
+          bearingBeforeDegrees: 0,
+          bearingAfterDegrees: 300,
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.4602, longitude: -2.59),
+          type: 'exit roundabout',
+          modifier: 'slight left',
+          name: 'Wells Road',
+          drivingSide: 'left',
+          bearingBeforeDegrees: 40,
+          bearingAfterDegrees: 2,
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.47, longitude: -2.59),
+          type: 'arrive',
+        ),
+      ],
+    );
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('All turns for this route'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('maneuver-list')), findsOneWidget);
+    expect(find.text('Roundabout, 2nd exit, straight on'), findsOneWidget);
+    expect(find.text('Arrive at the destination'), findsOneWidget);
+  });
+
   testWidgets('turn guidance reduces the TEC gap to a single-line chip', (
     tester,
   ) async {
@@ -1087,17 +1164,30 @@ void main() {
         ],
         waypoints: const [],
         maneuvers: const [
+          // The engine reports joining the ring and leaving it separately, and
+          // the entry modifier describes the entry rather than the exit taken.
           RouteManeuver(
             position: GeoPoint(latitude: 53, longitude: -1.005),
             type: 'roundabout',
-            modifier: 'right',
+            modifier: 'slight left',
             name: 'Station Road',
             exitNumber: 3,
             drivingSide: 'left',
+            bearingBeforeDegrees: 90,
+            bearingAfterDegrees: 20,
             lanes: [
               RouteLane(indications: ['left'], valid: false),
               RouteLane(indications: ['straight', 'right'], valid: true),
             ],
+          ),
+          RouteManeuver(
+            position: GeoPoint(latitude: 53, longitude: -1.0048),
+            type: 'exit roundabout',
+            modifier: 'slight right',
+            name: 'Station Road',
+            drivingSide: 'left',
+            bearingBeforeDegrees: 150,
+            bearingAfterDegrees: 180,
           ),
         ],
       );
@@ -1137,8 +1227,15 @@ void main() {
         find.byKey(const Key('navigation-guidance-banner')),
         findsOneWidget,
       );
-      expect(find.textContaining('Take exit 3 right'), findsOneWidget);
-      expect(find.byIcon(Icons.roundabout_left), findsOneWidget);
+      expect(
+        find.textContaining('Roundabout, 3rd exit, right'),
+        findsOneWidget,
+      );
+      // One instruction for one junction: the exit step is not announced again.
+      expect(find.byKey(const Key('following-maneuver')), findsNothing);
+      // The ring is drawn, not borrowed from a glyph that means the opposite.
+      expect(find.byIcon(Icons.roundabout_left), findsNothing);
+      expect(find.byIcon(Icons.roundabout_right), findsNothing);
       expect(find.byKey(const Key('lane-guidance')), findsOneWidget);
       expect(find.text('Station Road'), findsOneWidget);
       final arrowLayer = tester.widget<MarkerLayer>(
@@ -1226,6 +1323,10 @@ void main() {
       await tester.pump();
       expect(find.byType(AppBar), findsNothing);
 
+      // Following the rider is throttled against the wall clock, so a camera
+      // animation can still be in flight here. Let it finish before the tree is
+      // torn down, or the map is disposed with an active ticker.
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
     },

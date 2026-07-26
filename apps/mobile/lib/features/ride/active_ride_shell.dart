@@ -62,6 +62,7 @@ import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
+import '../map/maneuver_list_screen.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
 import '../map/route_review_screen.dart';
@@ -197,6 +198,8 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.onOpenRoster,
     required this.onShareRoster,
     required this.onChangeRoute,
+    required this.maneuverCount,
+    required this.onShowManeuvers,
     required this.onEmergencyInfo,
     required this.onNotifications,
     required this.canManageObserverAccess,
@@ -219,6 +222,8 @@ class _RideNavigationMenu extends StatelessWidget {
   final VoidCallback onOpenRoster;
   final VoidCallback onShareRoster;
   final VoidCallback onChangeRoute;
+  final int maneuverCount;
+  final VoidCallback onShowManeuvers;
   final VoidCallback onEmergencyInfo;
   final VoidCallback onNotifications;
   final bool canManageObserverAccess;
@@ -271,6 +276,20 @@ class _RideNavigationMenu extends StatelessWidget {
                 onTap: () => onSelected(destination.index),
               ),
             const Divider(height: 20),
+            if (maneuverCount > 0)
+              ListTile(
+                key: const Key('ride-menu-maneuvers'),
+                leading: const Icon(Icons.list_alt),
+                title: const Text('All turns'),
+                subtitle: Text(
+                  '$maneuverCount instruction${maneuverCount == 1 ? '' : 's'} '
+                  'for this route',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  onShowManeuvers();
+                },
+              ),
             ListTile(
               key: const Key('ride-menu-open-roster'),
               leading: const Icon(Icons.groups_2_outlined),
@@ -2313,17 +2332,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     return 'Waiting for the ride leader to start';
   }
 
-  String? get _projectedGuidanceTitle {
-    final guidance = _latestNavigationGuidance;
-    if (guidance == null) return null;
-    final maneuver = guidance.maneuver;
-    final exit = maneuver.exitNumber == null
-        ? ''
-        : ' take exit ${maneuver.exitNumber}';
-    final modifier = maneuver.modifier?.trim();
-    final direction = modifier == null || modifier.isEmpty ? '' : ' $modifier';
-    return '${maneuver.type}$direction$exit'.trim();
-  }
+  /// Next instruction for the projected car surfaces.
+  ///
+  /// This is the same collapsed wording the phone banner shows, so a roundabout
+  /// is announced once, with its exit and direction, rather than as the engine's
+  /// separate entry and exit steps.
+  String? get _projectedGuidanceTitle =>
+      _latestNavigationGuidance?.instruction.text;
 
   String? get _projectedGuidanceDetail {
     final guidance = _latestNavigationGuidance;
@@ -2702,6 +2717,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         onOpenRoster: _openRoster,
         onShareRoster: _shareRoster,
         onChangeRoute: _requestRouteChange,
+        maneuverCount: const NavigationGuidancePlanner()
+            .instructions(_activeRoute)
+            .length,
+        onShowManeuvers: _openManeuverList,
         onEmergencyInfo: () =>
             EmergencyInfoSheet.show(context, widget.riderProfile),
         onNotifications: _openNotificationPreferences,
@@ -2725,6 +2744,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   void _openRoster() {
     unawaited(RideRosterSheet.show(context, widget.rideController));
+  }
+
+  /// Opens the route's manoeuvre list while the map is in navigation mode and
+  /// its own menu is hidden. It reads persisted route data only.
+  void _openManeuverList() {
+    unawaited(
+      ManeuverListScreen.show(
+        context,
+        route: _activeRoute,
+        distanceUnit: widget.distanceUnits.value,
+        riderPosition: _mapPosition.value,
+      ),
+    );
   }
 
   Future<void> _openObserverAccess() async {

@@ -58,6 +58,8 @@ class RoadRouteManeuver extends RouteManeuver {
     super.ref,
     super.exitNumber,
     super.drivingSide,
+    super.bearingBeforeDegrees,
+    super.bearingAfterDegrees,
     super.lanes,
   });
 
@@ -70,6 +72,7 @@ class RoadRouteManeuver extends RouteManeuver {
     'end of road',
     'roundabout',
     'rotary',
+    'roundabout turn',
     'merge',
     'on ramp',
     'off ramp',
@@ -93,6 +96,8 @@ class RoadRouteManeuver extends RouteManeuver {
       ref: json['ref'] as String?,
       exitNumber: (json['exitNumber'] as num?)?.toInt(),
       drivingSide: json['drivingSide'] as String?,
+      bearingBeforeDegrees: (json['bearingBeforeDegrees'] as num?)?.toDouble(),
+      bearingAfterDegrees: (json['bearingAfterDegrees'] as num?)?.toDouble(),
       lanes:
           (json['lanes'] as List?)
               ?.whereType<Map>()
@@ -236,14 +241,25 @@ class OsrmRoadRoutingService implements RoadRoutingService {
             modifier: rawManeuver['modifier'] as String?,
             name: step['name'] as String?,
             ref: step['ref'] as String?,
+            // OSRM documents `exit` as the roundabout/rotary exit count only.
             exitNumber: (rawManeuver['exit'] as num?)?.toInt(),
             drivingSide: step['driving_side'] as String?,
+            bearingBeforeDegrees: _bearing(rawManeuver['bearing_before']),
+            bearingAfterDegrees: _bearing(rawManeuver['bearing_after']),
             lanes: _parseLanes(step['intersections']),
           ),
         );
       }
     }
     return List.unmodifiable(maneuvers);
+  }
+
+  /// OSRM reports `bearing_before`/`bearing_after` in whole degrees clockwise
+  /// from true north. They are the manoeuvre's own geometry and are what the
+  /// app uses to state a direction, rather than the driving side.
+  static double? _bearing(Object? value) {
+    if (value is! num || !value.isFinite) return null;
+    return (value.toDouble() % 360 + 360) % 360;
   }
 
   static List<RouteLane> _parseLanes(Object? rawIntersections) {

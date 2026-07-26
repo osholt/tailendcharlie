@@ -131,6 +131,8 @@ class RouteManeuver {
     this.ref,
     this.exitNumber,
     this.drivingSide,
+    this.bearingBeforeDegrees,
+    this.bearingAfterDegrees,
     this.lanes = const [],
   });
 
@@ -139,13 +141,29 @@ class RouteManeuver {
   final String? modifier;
   final String? name;
   final String? ref;
+
+  /// Roundabout or rotary exit ordinal reported by the routing engine.
+  ///
+  /// The engine only counts exits for circular junctions, so this is never
+  /// invented for other manoeuvre types.
   final int? exitNumber;
 
   /// Route-engine traffic side (`left` or `right`) at this manoeuvre.
   ///
   /// This is deliberately stored with the route instead of inferred from the
-  /// phone locale: a rider can load a route for a different country.
+  /// phone locale: a rider can load a route for a different country. It only
+  /// decides which way round a roundabout ring is drawn; it must never be used
+  /// to decide which way the rider turns.
   final String? drivingSide;
+
+  /// Heading in degrees clockwise from true north immediately before and after
+  /// the manoeuvre, as reported by the routing engine.
+  ///
+  /// These give the manoeuvre's own geometry, which is the only reliable way to
+  /// state the direction a roundabout is left: the entry modifier describes
+  /// joining the ring, not the exit taken.
+  final double? bearingBeforeDegrees;
+  final double? bearingAfterDegrees;
   final List<RouteLane> lanes;
 
   Map<String, Object?> toJson() => {
@@ -157,6 +175,9 @@ class RouteManeuver {
     if (ref != null) 'ref': ref,
     if (exitNumber != null) 'exitNumber': exitNumber,
     if (drivingSide != null) 'drivingSide': drivingSide,
+    if (bearingBeforeDegrees != null)
+      'bearingBeforeDegrees': bearingBeforeDegrees,
+    if (bearingAfterDegrees != null) 'bearingAfterDegrees': bearingAfterDegrees,
     if (lanes.isNotEmpty)
       'lanes': lanes.map((lane) => lane.toJson()).toList(growable: false),
   };
@@ -172,6 +193,8 @@ class RouteManeuver {
     ref: _optionalString(json['ref']),
     exitNumber: (json['exitNumber'] as num?)?.toInt(),
     drivingSide: _optionalString(json['drivingSide']),
+    bearingBeforeDegrees: _optionalBearing(json['bearingBeforeDegrees']),
+    bearingAfterDegrees: _optionalBearing(json['bearingAfterDegrees']),
     lanes:
         (json['lanes'] as List?)
             ?.whereType<Map>()
@@ -335,6 +358,14 @@ String? _optionalString(Object? value) {
   }
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+double? _optionalBearing(Object? value) {
+  if (value == null) return null;
+  if (value is! num || !value.isFinite) {
+    throw const FormatException('Expected a finite bearing in degrees.');
+  }
+  return (value.toDouble() % 360 + 360) % 360;
 }
 
 DateTime? _optionalDateTime(Object? value) {

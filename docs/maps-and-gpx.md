@@ -190,8 +190,54 @@ distance, and road name or reference in a large banner. The banner advances only
 after the rider passes the maneuver, using the same monotonic route progress as
 the completed-route display. It is hidden when there is no maneuver-bearing
 route or the rider is substantially off route. Imported recorded GPX tracks do
-not invent directions from geometry alone. Route review explicitly reports
-**Visual turn-by-turn ready** when manoeuvres are present.
+not invent directions from geometry alone. Route review reports how many turn
+instructions a route carries.
+
+### Roundabouts, direction and symbols
+
+OSRM reports a roundabout as joining the ring and then leaving it, and the
+modifier on each step describes that step alone: the entry modifier is the turn
+onto the ring, which in the UK is usually a slight left whatever exit is taken.
+Announcing both steps produced two "slight left" instructions for a junction
+that is straight on.
+
+Tail End Charlie therefore collapses a `roundabout`/`rotary` step and its
+`exit roundabout`/`exit rotary` step into one instruction, and takes the
+direction from the manoeuvre's own geometry: the `bearing_before` of joining the
+ring compared with the `bearing_after` of the step that leaves it. Where the
+engine emits no separate exit step, the heading before the next manoeuvre is
+used if it is within 250 m. `rotary` and `roundabout turn` are presented as
+roundabouts, and adjacent ring steps within 25 m are treated as one gyratory.
+
+- The exit number is only ever the engine's own `exit` count for a circular
+  junction, and is dropped where two merged rings each counted their own exits.
+  With no count the instruction says *"Roundabout, take the exit straight on"*.
+- With no bearings — a route saved before they were stored — no direction is
+  claimed: the instruction says *"Roundabout, take the 2nd exit"* rather than
+  repeating the entry modifier.
+- The driving side reported by the engine only chooses clockwise or
+  anticlockwise ring rendering and the handedness of a U-turn glyph. It never
+  decides which way an instruction says to go.
+- Roundabout symbols are drawn rather than taken from Material's
+  `roundabout_left`/`roundabout_right`, which mean *which exit is taken* and
+  cannot show a straight-on exit or the ring's direction of flow.
+- Every instruction names a direction — left, right, straight on — or is a named
+  case: U-turn, merge, fork, slip road, arrival, or an explicit
+  "follow the route" where the engine gave nothing to state.
+
+### Lane guidance and the manoeuvre list
+
+Lanes come from the engine's `intersections[].lanes`. Usable lanes are marked by
+colour and an underline. Nothing is shown where the engine supplied no lanes, or
+where there are more lanes than fit legibly, because a truncated strip would put
+the usable lane on the wrong side of the road.
+
+An **All turns** screen lists every instruction for the current route in riding
+order with distance from the start, distance from the rider, direction, exit
+number, road name or reference and a lane summary. It is reachable from route
+review before a ride, from the map menu, and from the ride menu while the map is
+in navigation mode. It is built from the persisted route by the same planner that
+drives the banner, so the two sequences match and no routing call is made.
 
 This guidance complements the existing Google Maps, Waze, and GPX handoffs; it
 does not change or remove them. Spoken prompts are deferred until audio focus,
