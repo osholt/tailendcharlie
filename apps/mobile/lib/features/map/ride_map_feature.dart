@@ -528,12 +528,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _markerOverviewVisible = false;
   bool _markerPlanVisible = false;
   bool _autoFollowSuppressed = false;
-  // The last measurement of whether the map is framed on the rider, cached
-  // because taking it needs laid-out geometry and `BuildContext.size` cannot be
-  // read during build. Refreshed by [_refreshCameraFraming] from every camera
-  // move and every fix; it is a cache of a measurement, not a record of how the
-  // framing was lost. See [_cameraFramesRider].
-  bool _mapFramedOnRider = true;
   bool _cameraFramingRefreshScheduled = false;
   bool _emergencyAlertSending = false;
   bool _emergencyAlertSent = false;
@@ -711,6 +705,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
         // rider is driven by position and heading alone. A route changes what is
         // drawn, never whether the camera tracks the bike.
         _navigationMode = _isMoving && !_markerOverviewVisible;
+        // A route load reframes the map, so any viewport follow mode had is gone.
+        _releaseNavigationViewport();
         // Once we have a position, keep the map canvas at its navigation size.
         // Tying this to the instantaneous speed made the AppBar appear briefly
         // whenever a GPS update arrived while stopped.
@@ -793,10 +789,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final hasGuidance = _navigationGuidance.value != null;
     // Leaving a ride is a ride-lifecycle action, not a route action (#124).
     final showLeaveRide = widget.onLeaveRide != null;
-    // "Follow me" is a recovery affordance, not permanent chrome (#125), but the
-    // thing that earns it is the map not being framed on the rider - measured,
-    // not inferred from the gesture that did it (#133).
-    final showFollowMe = !markerOverviewActive && !_cameraFramesRider;
+    // "Follow me" is the way into the navigation viewport, and it is on screen
+    // whenever the camera is not locked into it (#141). The junction overview owns
+    // the whole screen while it is up, so nothing is offered underneath it.
+    final showFollowMe = !markerOverviewActive && !_navigationViewportLocked;
     return Scaffold(
       appBar: hideChrome
           ? null
@@ -1163,16 +1159,39 @@ class _RideMapScreenState extends State<RideMapScreen> {
               child: const Icon(Icons.menu),
             )
           : null;
-      // Landscape rails are narrow by design, and the action row has to hold
-      // three targets without wrapping one onto a run of its own - which pushes
-      // an urgent banner off the top of a 390 pixel screen. Tightening the label
-      // padding, never the target, keeps all three glove-sized.
+      // Landscape rails are narrow by design, and the maintainer's instruction
+      // for #142 is that landscape holds the three targets in **two rows at
+      // most**, making SOS and LEAVE smaller if that is what it takes. One row is
+      // what actually fits, and it is also what keeps the rail short enough for an
+      // urgent banner to stay out of the upper band on a 390 pixel screen: the
+      // stacked portrait arrangement added 58 px of rail and pushed the TEC gap
+      // into the band #104 reserves for the road ahead.
+      //
+      // So landscape tightens the label padding and the reserved label slots
+      // rather than the targets. Every landscape target stays at least 48 px in
+      // both dimensions, which is the smallest a gloved hand can be asked to hit.
       final actionPadding = landscape
-          ? const EdgeInsets.symmetric(horizontal: 12)
+          ? const EdgeInsets.symmetric(horizontal: 8)
           : null;
+      // Fixed, so the row's width is the same in every state and in every font:
+      // the label scales down inside its slot rather than widening it. Sized so
+      // the three targets and their two gaps come to 270 px, inside the 280 px
+      // rail of the narrower evaluation phone in landscape. The width comes out of
+      // the two labels the maintainer offered - SOS and LEAVE - and never out of
+      // REPORT, whose 62 px square is a deliberate glove size.
+      final sosLabelSlot = landscape ? 62.0 : null;
+      final leaveLabelSlot = landscape ? 34.0 : null;
+      final actionTargetHeight = landscape ? 48.0 : null;
       // Safety and ride-lifecycle targets, all glove-sized: none of them is
       // derived from a planned route (#124), and REPORT belongs beside them
       // rather than on a row of its own (#125).
+      //
+      // Every one of them reserves the space its widest state needs up front
+      // (#142): the label slot is sized for the longest string the control can
+      // ever show and the icon slot is a fixed square, so sending an alert
+      // changes what the control says without changing what it occupies. #139
+      // let the label drive the width, and "ALERT SENT" widened SOS enough to
+      // push REPORT out of the run.
       final sosButton = widget.onEmergencyAlert == null
           ? null
           : FloatingActionButton.extended(
@@ -1183,16 +1202,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
               onPressed: _emergencyAlertSending ? null : _triggerEmergencyAlert,
               backgroundColor: const Color(0xFFD9304F),
               foregroundColor: Colors.white,
-              icon: _emergencyAlertSending
-                  ? const SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
+              icon: _ActionIconSlot(
+                child: _emergencyAlertSending
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Icon(
+                        _emergencyAlertSent ? Icons.check_circle : Icons.sos,
                       ),
-                    )
-                  : Icon(_emergencyAlertSent ? Icons.check_circle : Icons.sos),
-              label: Text(_emergencyAlertSent ? 'ALERT SENT' : 'ALERT'),
+              ),
+              label: _ActionLabel(
+                _emergencyAlertSent ? 'ALERT SENT' : 'ALERT',
+                widest: 'ALERT SENT',
+                slotWidth: sosLabelSlot,
+              ),
             );
       final leaveButton = showLeaveRide
           ? FloatingActionButton.extended(
@@ -1203,8 +1230,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
               onPressed: widget.onLeaveRide,
               backgroundColor: const Color(0xFF545F6E),
               foregroundColor: Colors.white,
-              icon: const Icon(Icons.exit_to_app),
-              label: const Text('LEAVE'),
+              icon: const _ActionIconSlot(child: Icon(Icons.exit_to_app)),
+              // Portrait matches SOS's slot so the stacked pair reads as one
+              // column of equal targets. Landscape gives LEAVE only the width its
+              // own word needs, because the row has to fit three across.
+              label: _ActionLabel(
+                'LEAVE',
+                widest: landscape ? 'LEAVE' : 'ALERT SENT',
+                slotWidth: leaveLabelSlot,
+              ),
             )
           : null;
       // Reporting a camera or a patrol car is a ride action, not a route action,
@@ -1212,7 +1246,68 @@ class _RideMapScreenState extends State<RideMapScreen> {
       final reportButton = widget.onReportHazard == null
           ? null
           : _ReportSightingButton(onPressed: _reportEnforcementSighting);
-      final actions = <Widget>[?sosButton, ?leaveButton, ?reportButton];
+      final hasActions =
+          sosButton != null || leaveButton != null || reportButton != null;
+      // One arrangement per orientation, fixed for every state (#142). #139 used
+      // a `Wrap` in landscape, and a `Wrap` decides its runs from its children's
+      // measured widths - so the moment SOS said "ALERT SENT" the rail could no
+      // longer hold the row and REPORT reflowed onto a run of its own, at the
+      // exact moment the rider had just raised an alert. Neither arrangement here
+      // is a `Wrap`, so no label can change the shape of the cluster.
+      //
+      // Portrait stacks SOS over LEAVE with REPORT alongside (#133): the band has
+      // the height, and two targets that no longer sit shoulder to shoulder means
+      // a mis-hit next to SOS is no longer LEAVE. Landscape puts all three across
+      // one row, which is the arrangement that fits a rail 280 px wide and keeps
+      // the rail short enough to leave the upper band clear.
+      final sosSubtree = sosButton == null || actionTargetHeight == null
+          ? sosButton
+          : SizedBox(height: actionTargetHeight, child: sosButton);
+      final leaveSubtree = leaveButton == null || actionTargetHeight == null
+          ? leaveButton
+          : SizedBox(height: actionTargetHeight, child: leaveButton);
+      final reportSubtree = reportButton;
+      final safetyCluster = !hasActions
+          ? null
+          : landscape
+          ? Row(
+              key: const Key('map-action-cluster'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                ?sosSubtree,
+                if (sosSubtree != null && leaveSubtree != null)
+                  const SizedBox(width: 8),
+                ?leaveSubtree,
+                if (reportSubtree != null) ...[
+                  const SizedBox(width: 8),
+                  reportSubtree,
+                ],
+              ],
+            )
+          : Row(
+              key: const Key('map-action-cluster'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (sosSubtree != null || leaveSubtree != null)
+                  Column(
+                    key: const Key('map-portrait-safety-stack'),
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ?sosSubtree,
+                      if (sosSubtree != null && leaveSubtree != null)
+                        const SizedBox(height: 8),
+                      ?leaveSubtree,
+                    ],
+                  ),
+                if (reportSubtree != null) ...[
+                  const SizedBox(width: 10),
+                  reportSubtree,
+                ],
+              ],
+            );
       // The speed sign owns its own slot at the edge of the band, clear of the
       // action row: portrait puts it under the actions and hard right, landscape
       // in the right-hand rail away from the centre column (#125).
@@ -1241,6 +1336,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
       final followMe = showFollowMe
           ? FloatingActionButton.extended(
               key: const Key('navigation-follow-button'),
+              // Its own tag, like every other action here. Sharing the default
+              // with them put two heroes of the same tag on screen whenever this
+              // control was up, which is most of a ride now that it is the way
+              // into the navigation viewport (#141).
+              heroTag: 'ride-relay-follow-me',
               tooltip: 'Follow my location',
               onPressed: _toggleNavigationMode,
               backgroundColor: const Color(0xE6252E39),
@@ -1290,7 +1390,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ?tecGap,
                   // Last before the targets: see [_buildRideChrome] (#133).
                   ?guidance,
-                  if (actions.isNotEmpty) _chromeActions(actions),
+                  ?safetyCluster,
                 ],
               ),
             ),
@@ -1318,27 +1418,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // *plus* a sign run is now one run of the taller of the two. The rider gets
       // targets that no longer sit shoulder to shoulder - a mis-hit next to SOS
       // used to be LEAVE - and the band gets shorter.
-      final actionCluster = actions.isEmpty && speedLimit == null
+      //
+      // The same cluster landscape uses, so the arrangement is a function of
+      // orientation and nothing else (#142). The `Spacer` between it and the
+      // speed sign absorbs the sign's own width, so the targets keep their place
+      // whatever the sign says.
+      final actionCluster = !hasActions && speedLimit == null
           ? null
           : Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (sosButton != null || leaveButton != null)
-                  Column(
-                    key: const Key('map-portrait-safety-stack'),
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ?sosButton,
-                      if (sosButton != null && leaveButton != null)
-                        const SizedBox(height: 8),
-                      ?leaveButton,
-                    ],
-                  ),
-                if (reportButton != null) ...[
-                  const SizedBox(width: 10),
-                  reportButton,
-                ],
+                ?safetyCluster,
                 const Spacer(),
                 // Hard right, out of the way of the thumb reaching the stack.
                 ?speedLimit,
@@ -1443,16 +1533,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         children[index],
       ],
     ],
-  );
-
-  /// Action targets flow onto a second run rather than overflowing, so a small
-  /// screen showing every control at once still leaves each target its full
-  /// gloved-hand size.
-  static Widget _chromeActions(List<Widget> children) => Wrap(
-    spacing: 10,
-    runSpacing: 8,
-    crossAxisAlignment: WrapCrossAlignment.center,
-    children: children,
   );
 
   Widget _buildGroupMiniMap({
@@ -1770,6 +1850,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
             initialCameraPosition: initial,
             onMapCreated: _onMapLibreCreated,
             onStyleLoadedCallback: () => unawaited(_prepareMapLibreStyle()),
+            // Without this the platform never reports its camera, and
+            // `MapLibreMapController.cameraPosition` keeps the value it was
+            // constructed with for the whole ride: iOS returns early from
+            // `mapViewRegionIsChanging` on `if !trackCameraPosition`, sends
+            // `camera#onIdle` with an empty payload, and answers `getCamera`
+            // with nil; Android gates all three the same way. That is what beat
+            // both previous attempts at "Follow me" (#141). Read off an SE on
+            // 26 July 2026: through 79 pan events and both orientations the map
+            // reported exactly one camera, `51.467612,-2.506995 z=11.000`, so
+            // the framing was measured against where the map *opened* and the
+            // tolerance was derived from the opening zoom - 1333 m of ground at
+            // z=11. `framed` could not become false, and the button could not
+            // appear. The listener and the pan gestures were both arriving; only
+            // the camera value was frozen.
+            trackCameraPosition: true,
             logoEnabled: false,
             compassEnabled: true,
             minMaxZoomPreference: ml.MinMaxZoomPreference(
@@ -1788,10 +1883,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     previous?.removeListener(_scheduleCameraFramingRefresh);
     _mapLibreController = controller;
     controller.onFeatureTapped.add(_onMapLibreFeatureTapped);
-    // The controller notifies on every camera move, which is how a pan on the
-    // platform map reaches the measured "Follow me" test (#133). The measurement
-    // is deferred and only rebuilds when its answer changes, so the platform
-    // view is not resized mid-gesture.
+    // The controller notifies on every camera move, which is how the map's own
+    // camera reaches the arrival test (#141). It only ever *reports* that camera
+    // when `trackCameraPosition` is set - see [_buildMapLibreMap]. The
+    // measurement is deferred and only rebuilds when its answer changes, so the
+    // platform view is not resized mid-gesture.
     controller.addListener(_scheduleCameraFramingRefresh);
   }
 
@@ -1881,46 +1977,84 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
-  /// Whether the map is framed on the rider, and therefore whether "Follow me"
-  /// has anything to recover.
+  /// Whether the camera **is** the navigation viewport right now: follow mode
+  /// owns it, and the map has reported arriving at the framing follow commanded.
   ///
-  /// Two things make it true, and neither is a record of a past gesture:
+  /// This is the condition "Follow me" answers, and it is deliberately not "is
+  /// the rider roughly in frame". The maintainer's contract (#141) is that the
+  /// control is there whenever the camera has moved away from the navigation
+  /// viewport *at all*, that tapping it goes to that viewport - following the
+  /// rider icon, heading up, road ahead - and that it hides only once the camera
+  /// is genuinely locked into it.
   ///
-  /// - the camera is being driven at the rider right now, in which case a
-  ///   mid-animation sample is not evidence the framing was lost;
-  /// - the map's own camera measurably sits on the framing following would
-  ///   choose, whether the bike is moving or standing still.
+  /// Three attempts got here:
   ///
-  /// #125 asked instead whether a pan had interrupted an active follow. Follow
-  /// mode needs movement, so a phone on a desk was never following, a pan
-  /// suppressed nothing, and the button never appeared on either tester's phone
-  /// (#133). Deriving it from the framing removes the whole class of bug: it
-  /// cannot matter how the map came to be somewhere else.
-  bool get _cameraFramesRider {
-    // No fix means nothing to be framed on, and the button is how the rider asks
-    // for one.
+  /// - #125 asked whether a pan had interrupted an *active* follow. Follow mode
+  ///   needs movement, so a phone on a desk was never following, a pan suppressed
+  ///   nothing, and the button never appeared.
+  /// - #133 asked whether the rider was roughly in frame, against a freshly
+  ///   planned framing with a 56 px tolerance. Two things beat it on a phone, both
+  ///   measured on an SE on 26 July 2026: the MapLibre camera was frozen (see
+  ///   `trackCameraPosition` in [_buildMapLibreMap]), and once unfrozen that
+  ///   tolerance was 1363 m of ground at the zoom the map sat at, so a map panned
+  ///   468 m off the rider still reported itself framed.
+  /// - This one asks whether follow mode owns the camera and has arrived. Losing
+  ///   the viewport is not a distance judgement at all: a pan hands the camera
+  ///   over ([_stopFollowing]), and the control returns on the first 8 px of
+  ///   movement. Distance is only used to decide whether a camera follow mode is
+  ///   still easing has got there yet.
+  bool get _navigationViewportLocked {
     if (_effectivePosition == null) return false;
-    if (_navigationMode) return true;
-    return _mapFramedOnRider;
+    if (!_navigationMode) return false;
+    return _cameraArrivedAtCommandedViewport;
   }
 
-  bool _measureMapFramedOnRider() {
+  /// The framing [_followNavigationCamera] last drove the camera to.
+  ///
+  /// Compared against what the map reports, this answers "did the camera get
+  /// where we sent it". Comparing against a freshly *planned* framing instead is
+  /// what let a camera the app had never driven pass the test (#141).
+  ({GeoPoint target, double zoom})? _commandedViewport;
+
+  /// Sticky once the camera has arrived: while follow mode still owns the camera,
+  /// the only things that can take the viewport away are a gesture and another
+  /// surface claiming the camera, and both clear [_navigationMode]. Re-testing
+  /// the distance every frame would flicker the control on and off as the camera
+  /// chases a moving rider between commands.
+  bool _cameraArrivedAtCommandedViewport = false;
+
+  /// Forgets both the commanded viewport and the arrival, so nothing can report a
+  /// lock the camera no longer has. Called from every site that takes the camera
+  /// away from follow mode.
+  void _releaseNavigationViewport() {
+    _commandedViewport = null;
+    _cameraArrivedAtCommandedViewport = false;
+  }
+
+  bool _measureCameraArrival() {
     final rider = _effectivePosition;
     if (rider == null) return false;
-    final framing = _followCameraFraming(rider);
+    if (!_navigationMode) return false;
+    // Already locked, and follow mode still owns the camera.
+    if (_cameraArrivedAtCommandedViewport) return true;
+    final commanded = _commandedViewport;
+    // Follow mode has not driven the camera anywhere yet, so there is no
+    // viewport to be locked into.
+    if (commanded == null) return false;
     if (_basemap.usesMapLibre) {
       final camera = _mapLibreController?.cameraPosition;
-      // Before the platform map reports a camera there is no framing to judge,
-      // and offering a recovery from an unknown state would be noise.
-      if (camera == null) return true;
-      return NavigationCameraPlanner.framesRider(
+      // A camera the platform has not reported is not an arrival. #133 read the
+      // unknown case as "framed" and hid the control on the strength of it.
+      if (camera == null) return false;
+      return NavigationCameraPlanner.settledOnViewport(
         driftMeters: _mapDistanceMeters(
           GeoPoint(
             latitude: camera.target.latitude,
             longitude: camera.target.longitude,
           ),
-          framing.target,
+          commanded.target,
         ),
+        zoomDelta: camera.zoom - commanded.zoom,
         zoom: camera.zoom,
         latitudeDegrees: rider.latitude,
         tileSize: 512,
@@ -1928,26 +2062,27 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     try {
       final camera = _mapController.camera;
-      return NavigationCameraPlanner.framesRider(
+      return NavigationCameraPlanner.settledOnViewport(
         driftMeters: _mapDistanceMeters(
           GeoPoint(
             latitude: camera.center.latitude,
             longitude: camera.center.longitude,
           ),
-          framing.target,
+          commanded.target,
         ),
+        zoomDelta: camera.zoom - commanded.zoom,
         zoom: camera.zoom,
         latitudeDegrees: rider.latitude,
         tileSize: 256,
       );
     } on Object {
-      // FlutterMap throws until it has been laid out once. As above: an
-      // unattached map has no framing to recover.
-      return true;
+      // FlutterMap throws until it has been laid out once, and an unattached map
+      // has not arrived anywhere.
+      return false;
     }
   }
 
-  /// Re-measures the framing after the frame currently being built.
+  /// Re-tests the arrival after the frame currently being built.
   ///
   /// Always deferred: the measurement reads laid-out sizes, and camera events
   /// can arrive from inside a build or layout pass, where `BuildContext.size`
@@ -1958,9 +2093,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _cameraFramingRefreshScheduled = false;
       if (!mounted) return;
-      final framed = _measureMapFramedOnRider();
-      if (framed == _mapFramedOnRider) return;
-      setState(() => _mapFramedOnRider = framed);
+      final arrived = _measureCameraArrival();
+      if (arrived == _cameraArrivedAtCommandedViewport) return;
+      setState(() => _cameraArrivedAtCommandedViewport = arrived);
     });
   }
 
@@ -2138,6 +2273,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         // whole screen with it: nothing is offered underneath it (#125).
         _navigationMode = false;
         _autoFollowSuppressed = false;
+        _releaseNavigationViewport();
       } else if (_effectivePosition != null) {
         // Resuming needs a position, not a route (#124).
         _navigationMode = true;
@@ -2226,9 +2362,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _navigationMode = true;
       _navigationCanvasActive = true;
       _autoFollowSuppressed = false;
+      // Taking the camera is not arriving at the viewport. The control stays on
+      // screen until the map reports it got there (#141), because a rider
+      // watching the map ease across has not been given the viewport yet.
+      _releaseNavigationViewport();
     });
-    // Re-centring is a change of framing, not a tracking update, so it is eased
-    // rather than run at the linear rate the per-fix updates use.
+    // Going to the navigation viewport is a change of framing, not a tracking
+    // update, so it is eased rather than run at the linear rate the per-fix
+    // updates use.
     unawaited(
       _followNavigationCamera(
         force: true,
@@ -2240,14 +2381,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// Hands the camera back to the rider.
   ///
   /// Every caller is a deliberate act - a pan, a pinch, a scroll, or fitting the
-  /// whole route. It does not decide whether "Follow me" is on screen: that is
-  /// measured from where the map ends up (#133), which is the only way a rider
-  /// who was never being followed still gets a way back.
+  /// whole route. Giving the camera up is what puts "Follow me" back on screen
+  /// (#141): the control returns on the first 8 px of a pan, with no distance
+  /// judgement that could swallow it.
   void _stopFollowing({required bool suppressAutomatic}) {
     if (!mounted) return;
     setState(() {
       _navigationMode = false;
       _autoFollowSuppressed = suppressAutomatic;
+      _releaseNavigationViewport();
     });
     // FlutterMap does not cancel a controller-driven animation when a gesture
     // starts, and each tick of that animation sets the camera outright - so a pan
@@ -2449,6 +2591,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final framing = _followCameraFraming(position);
     final cameraPlan = framing.plan;
     final cameraDuration = transitionDuration ?? _cameraTransitionDuration;
+    // Recorded before the camera is driven, so the arrival test compares the map
+    // against what this app actually asked for rather than against a framing
+    // planned afresh from whatever the state happens to be (#141).
+    _commandedViewport = (target: framing.target, zoom: cameraPlan.zoom);
     try {
       if (_basemap.usesMapLibre) {
         final controller = _mapLibreController;
@@ -2496,6 +2642,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // The first position may arrive before FlutterMap has attached.
     } finally {
       _cameraUpdateInFlight = false;
+      // The command has been issued; whether the map got there is a separate
+      // question, re-asked from the camera the map reports (#141).
+      _scheduleCameraFramingRefresh();
       if (_cameraUpdateQueued) {
         _cameraUpdateQueued = false;
         if (mounted) unawaited(_followNavigationCamera(force: true));
@@ -4047,6 +4196,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             _navigationCanvasActive = false;
             _markerPlanVisible = false;
             _initialCameraPositioned = false;
+            _releaseNavigationViewport();
           });
           _navigationGuidance.value = null;
           widget.onNavigationGuidanceChanged?.call(null);
@@ -5799,6 +5949,80 @@ class _SpeedLimitOptInChip extends StatelessWidget {
   );
 }
 
+/// The fixed square every action target's leading glyph sits in.
+///
+/// A `CircularProgressIndicator` sized for a button is 20 pixels where a
+/// Material icon is 24, so sending an alert used to narrow SOS by four pixels
+/// before the label had even changed. The slot is the icon's own size, so no
+/// state can alter it (#142).
+class _ActionIconSlot extends StatelessWidget {
+  const _ActionIconSlot({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      SizedBox.square(dimension: 24, child: Center(child: child));
+}
+
+/// An action label in a slot sized for the widest string the control can show.
+///
+/// The width is measured from [widest] in the text style, font, locale and text
+/// scale actually in effect - the style a `FloatingActionButton` puts on its
+/// label reaches this widget through the enclosing `DefaultTextStyle` - so it is
+/// right on a device and in a test without a hard-coded pixel count, which would
+/// be wrong in one of the two. #139 let the current label drive the width, and
+/// SOS turning into "ALERT SENT" widened the control enough to push REPORT onto
+/// a run of its own (#142).
+///
+/// Beyond [_maximumSlotWidth] the text scales down inside the slot rather than
+/// widening it, which is the contract REPORT's caption already keeps: at the
+/// largest accessibility text sizes a rider keeps a full-size target and a
+/// smaller word, not a target that has shoved its neighbours off the rail.
+class _ActionLabel extends StatelessWidget {
+  const _ActionLabel(this.text, {required this.widest, this.slotWidth});
+
+  final String text;
+
+  /// The longest string this control can ever show, including the current one.
+  final String widest;
+
+  /// A slot width to use instead of measuring [widest]. Landscape sets one so the
+  /// three-across row's width is fixed in every font and at every text size; the
+  /// label scales down inside it rather than widening it, which is the contract
+  /// REPORT's caption already keeps.
+  final double? slotWidth;
+
+  /// The widest a measured slot may become before the label gives way instead.
+  /// Portrait has the room; this only guards the largest accessibility sizes.
+  static const double _maximumSlotWidth = 150;
+
+  @override
+  Widget build(BuildContext context) {
+    final fixed = slotWidth;
+    double width;
+    if (fixed != null) {
+      width = fixed;
+    } else {
+      final painter = TextPainter(
+        text: TextSpan(text: widest, style: DefaultTextStyle.of(context).style),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      width = math.min(painter.width, _maximumSlotWidth);
+      painter.dispose();
+    }
+    return SizedBox(
+      width: width,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(text, maxLines: 1, softWrap: false),
+      ),
+    );
+  }
+}
+
 /// Compact map control that opens the enforcement sighting picker.
 ///
 /// Deliberately small: it sits over the map for a whole ride, so it earns only
@@ -5808,6 +6032,11 @@ class _ReportSightingButton extends StatelessWidget {
   const _ReportSightingButton({required this.onPressed});
 
   final VoidCallback onPressed;
+
+  /// The square the target occupies, in every state and both orientations. #142
+  /// takes the width a narrow landscape rail needs out of the two labels, never
+  /// out of this: 62 px is a deliberate glove size, well past the 48 px minimum.
+  static const double side = 62;
 
   @override
   Widget build(BuildContext context) => Tooltip(
@@ -5822,10 +6051,10 @@ class _ReportSightingButton extends StatelessWidget {
       child: InkWell(
         key: const Key('report-sighting-button'),
         onTap: onPressed,
-        child: const SizedBox(
-          width: 62,
-          height: 62,
-          child: Column(
+        child: SizedBox(
+          width: side,
+          height: side,
+          child: const Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(Icons.add_alert_rounded, size: 26, color: Color(0xFFFFD24A)),
@@ -6204,8 +6433,14 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
       child: Tooltip(
         message:
             '$detail\n$riderSpeedLabel\n© OpenStreetMap contributors via Valhalla; temporary and variable limits may differ. Roadside signs apply.',
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 150),
+        // Exactly the sign's own width, in every state (#142): the readout under
+        // it carries one to three digits or a dash, and at large text sizes a
+        // three-digit speed was wide enough to widen the whole surface and move
+        // its left edge across the map. The number gives way inside the sign's
+        // width instead, which is the contract every other variable-length
+        // surface in this band keeps.
+        child: SizedBox(
+          width: 58,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

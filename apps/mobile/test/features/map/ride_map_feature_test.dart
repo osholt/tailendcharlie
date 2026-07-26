@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/geo_point.dart' as awareness_geo;
@@ -1525,7 +1527,12 @@ void main() {
         find.byKey(const Key('trail-direction-arrow-layer')),
       );
       expect(arrowLayer.markers, isNotEmpty);
-      expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+      // The maintainer's contract for #141: the control is on screen until the
+      // camera is *locked into* the navigation viewport, and a map showing the
+      // whole imported route is an overview rather than that viewport. #133 hid
+      // the control on `_navigationMode` alone, which is why a phone could sit on
+      // a route overview with no way to the viewport and nothing offering one.
+      expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
       await tester.tap(find.byKey(const Key('ride-menu-button')));
       await tester.pump();
       expect(menuOpens, 1);
@@ -1605,9 +1612,12 @@ void main() {
       expect(find.byTooltip('Follow my location'), findsOneWidget);
       expect(find.byType(AppBar), findsNothing);
 
+      // Tapping takes the camera and starts easing it to the viewport. One pump
+      // later it has not arrived, and a control that vanished the instant it was
+      // pressed would tell the rider they were locked in before they were (#141).
       await tester.tap(find.text('Follow me'));
       await tester.pump();
-      expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+      expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
 
       navigation.value = MapNavigationPosition(
         point: const GeoPoint(latitude: 53, longitude: -1.01),
@@ -2318,8 +2328,9 @@ void main() {
     expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
     // Not a nag: a route-less ride is a mode, not a state to prompt about.
     expect(find.text('Choose a route'), findsNothing);
-    // Following the rider, so the recovery affordance is not on screen.
-    expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+    // Follow mode has taken the camera but is still easing it into the viewport,
+    // and until it arrives the rider has not been given the viewport (#141).
+    expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('ride-menu-button')));
     await tester.pump();
@@ -2328,6 +2339,10 @@ void main() {
     // The camera is following a route-less rider, so let its animation finish
     // before the tree is torn down.
     await tester.pumpAndSettle();
+    // Arrived: the camera is the navigation viewport, so the way into it is not
+    // offered any more. This is the pair of assertions the contract asks for -
+    // present while easing, gone once locked.
+    expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
@@ -2401,13 +2416,17 @@ void main() {
   testWidgets('a stationary rider who pans away is offered the way back', (
     tester,
   ) async {
-    // The case that shipped broken (#133). #125 gated "Follow me" on a flag set
+    // The case that shipped broken twice. #125 gated "Follow me" on a flag set
     // only when a pan interrupted an *active* follow, and follow mode is driven
     // by movement - so on a phone standing on a desk, which is never following,
     // the pan suppressed nothing, the flag was never set, and the map could be
-    // pushed off the rider with no way back. Both testers' phones behaved this
-    // way. The button is now derived from the map not being framed on the rider,
-    // which is true whether or not the bike is moving.
+    // pushed off the rider with no way back. #133 replaced the flag with a
+    // positional comparison, which a route overview satisfies by accident.
+    //
+    // The condition is now whether the camera *is* the navigation viewport
+    // (#141): a standing bike is not following, so the control is there from the
+    // start, tapping it goes to the viewport and it goes away once the camera
+    // arrives, and a single pan brings it straight back.
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -2447,9 +2466,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
 
-    // The map opened on the rider, so there is nothing to recover yet.
+    // A standing bike is never following, so the camera is not the navigation
+    // viewport and the way into it is offered. This is the assertion the
+    // maintainer's third report turned around: #125 and #133 both wanted nothing
+    // here, and a rider on a desk had no way to a viewport they had never been in.
+    expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+
+    // Tapping goes to the viewport - following the rider icon at the planned
+    // zoom - and only then is the control done.
+    await tester.tap(find.text('Follow me'));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
 
+    // One pan is enough. No distance judgement stands between the rider and the
+    // way back: giving the camera up is what puts the control on screen.
     await tester.drag(find.byType(FlutterMap), const Offset(0, 140));
     await tester.pumpAndSettle();
 
@@ -2473,10 +2503,334 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
 
-    // And panning away a second time earns it again, from the same standstill.
-    await tester.drag(find.byType(FlutterMap), const Offset(0, 140));
+    // A pan of eight pixels - the smallest this recognises as deliberate - is
+    // enough. #133's 56 px band was 1363 m of ground at the zoom a phone actually
+    // sat at, measured on an SE, so a map pushed 468 m off the rider still called
+    // itself framed.
+    await tester.drag(find.byType(FlutterMap), const Offset(0, 9));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+
+    // Let the tooltip timers the taps above started run out before the tree goes.
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('the configured basemap gives the ride a tracked camera', (
+    tester,
+  ) async {
+    // #141, read off a phone. Every other test here runs on the unconfigured
+    // development basemap, which is `flutter_map` - and `flutter_map`'s
+    // `MapController.camera` is always live. A shipped build has a style URL, so
+    // the ride surface is MapLibre, and MapLibre only reports its camera when
+    // `trackCameraPosition` is set: iOS sends `camera#onMove` behind
+    // `if !trackCameraPosition { return }` and `camera#onIdle` with an empty
+    // payload, and Android gates both the same way. Without it
+    // `MapLibreMapController.cameraPosition` keeps the value it was constructed
+    // with for the whole ride.
+    //
+    // That is what defeated #133's measurement on the phone while its widget
+    // tests passed: the drift was computed against the camera the map opened on,
+    // never against the camera the rider had panned to, so "Follow me" was
+    // decided from a number that could not change. The two previous attempts
+    // were both verified on the render path a shipped build does not use.
+    final directory = Directory.systemTemp.createTempSync('map-tracked-camera');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.015),
+        recordedAt: DateTime.utc(2026, 7, 26, 12),
+        speedMetersPerSecond: 0,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    // The shape a shipped build has: a style URL and an attribution, which is
+    // what `usesMapLibre` asks for.
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(
+        styleUrl: 'https://tiles.example.com/styles/liberty',
+        attribution: 'Example contributors',
+      ),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          onLeaveRide: () async {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // The render path a shipped build actually uses.
+    expect(
+      find.byType(ml.MapLibreMap),
+      findsOneWidget,
+      reason: 'a configured basemap must put the ride on MapLibre',
+    );
+    expect(find.byType(FlutterMap), findsNothing);
+    expect(
+      tester
+          .widget<ml.MapLibreMap>(find.byType(ml.MapLibreMap))
+          .trackCameraPosition,
+      isTrue,
+      reason:
+          'the "Follow me" measurement reads MapLibreMapController.cameraPosition, '
+          'which the platform only ever updates when trackCameraPosition is set',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('an action target keeps its bounds through every state', (
+    tester,
+  ) async {
+    // #142: pressing SOS turned its label into "ALERT SENT", which widened the
+    // control, and in landscape the `Wrap` holding the three targets could no
+    // longer fit them across - so REPORT reflowed onto a run of its own at the
+    // exact moment the rider had just raised an alert. The controls a rider
+    // reaches for without looking must not move because one of them changed what
+    // it says.
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-action-bounds');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    // Moving, so the assistance sheet a stopped rider gets stays out of the way
+    // of the measurement.
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.015),
+        recordedAt: DateTime.utc(2026, 7, 26, 12),
+        speedMetersPerSecond: 13,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    const actionKeys = [
+      'emergency-alert-button',
+      'leave-ride-button',
+      'report-sighting-button',
+    ];
+
+    Map<String, Rect> measure() => {
+      for (final key in actionKeys) key: tester.getRect(find.byKey(Key(key))),
+    };
+
+    Future<void> verifyStableThroughStates({required bool landscape}) async {
+      // A held completer keeps the in-flight state on screen long enough to be
+      // measured: SOS is disabled and shows a spinner where its icon was, which
+      // is four pixels narrower than a Material icon and used to shrink the
+      // control before the label had even changed.
+      final sending = Completer<void>();
+      tester.view.physicalSize = landscape
+          ? const Size(852, 393)
+          : const Size(393, 852);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            navigationPosition: navigation,
+            onEmergencyAlert: () => sending.future,
+            onLeaveRide: () async {},
+            onOpenRideMenu: () async {},
+            onReportHazard: (_) async {},
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
+
+      final orientation = landscape ? 'landscape' : 'portrait';
+      final idle = measure();
+      expect(find.text('ALERT'), findsOneWidget);
+
+      // The arrangement itself, which is the property the `Wrap` gave up: one
+      // shape per orientation, and the same shape in every state.
+      //
+      // Portrait stacks SOS over LEAVE with REPORT alongside. Landscape puts all
+      // three across a single row, which is the maintainer's "two rows at most"
+      // with a row to spare and keeps the rail short enough for an urgent banner
+      // to stay out of the upper band.
+      void expectArrangement(Map<String, Rect> rects, String state) {
+        final sos = rects['emergency-alert-button']!;
+        final leave = rects['leave-ride-button']!;
+        final report = rects['report-sighting-button']!;
+        if (landscape) {
+          // One row means every target shares vertical space with every other,
+          // whatever their individual heights.
+          for (final other in [leave, report]) {
+            expect(
+              sos.top < other.bottom && other.top < sos.bottom,
+              isTrue,
+              reason: 'landscape must be one row in $state: $sos vs $other',
+            );
+          }
+          expect(
+            leave.left,
+            greaterThanOrEqualTo(sos.right),
+            reason: 'LEAVE must sit beside SOS in landscape/$state',
+          );
+          expect(
+            report.left,
+            greaterThanOrEqualTo(leave.right),
+            reason: 'REPORT must sit beside LEAVE in landscape/$state',
+          );
+        } else {
+          expect(
+            sos.bottom,
+            lessThanOrEqualTo(leave.top),
+            reason: 'SOS must stay above LEAVE in portrait/$state',
+          );
+          expect(
+            report.left,
+            greaterThanOrEqualTo(sos.right),
+            reason: 'REPORT must stay beside the pair in portrait/$state',
+          );
+          expect(
+            report.bottom,
+            closeTo(leave.bottom, 0.01),
+            reason: 'REPORT must share the run in portrait/$state',
+          );
+        }
+        // Glove-sized in every state and both orientations, whatever the labels
+        // had to give up to fit (#142).
+        for (final entry in rects.entries) {
+          expect(
+            entry.value.shortestSide,
+            greaterThanOrEqualTo(48),
+            reason: '${entry.key} is too small to hit in $orientation/$state',
+          );
+        }
+      }
+
+      expectArrangement(idle, 'idle');
+
+      await tester.tap(find.byKey(const Key('emergency-alert-button')));
+      await tester.pump();
+      expect(
+        measure(),
+        idle,
+        reason: 'sending an alert moved a target in $orientation',
+      );
+      expect(
+        tester
+            .widget<FloatingActionButton>(
+              find.byKey(const Key('emergency-alert-button')),
+            )
+            .onPressed,
+        isNull,
+        reason: 'SOS must be disabled while the alert is in flight',
+      );
+
+      sending.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('ALERT SENT'), findsOneWidget);
+      expect(
+        measure(),
+        idle,
+        reason: 'a sent alert moved a target in $orientation',
+      );
+      expectArrangement(measure(), 'alert sent');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+
+    await verifyStableThroughStates(landscape: false);
+    await verifyStableThroughStates(landscape: true);
+  });
+
+  testWidgets('a paused ride does not move the action targets', (tester) async {
+    // #142's other half: a control's own state must not move its neighbours, and
+    // the paused banner appearing above the targets must not move them either -
+    // the band grows upwards from a bottom anchor.
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-paused-bounds');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.015),
+        recordedAt: DateTime.utc(2026, 7, 26, 12),
+        speedMetersPerSecond: 13,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    Widget screen({required bool paused}) => MaterialApp(
+      theme: ThemeData.dark(useMaterial3: true),
+      home: RideMapScreen(
+        routeStore: InMemoryRouteStore(),
+        routeImporter: RouteImporter(source: const _NoFileSource()),
+        offlineTileCache: cache,
+        navigationPosition: navigation,
+        ridePaused: paused,
+        onEmergencyAlert: () async {},
+        onLeaveRide: () async {},
+        onReportHazard: (_) async {},
+      ),
+    );
+
+    await tester.pumpWidget(screen(paused: false));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    final running = {
+      for (final key in const [
+        'emergency-alert-button',
+        'leave-ride-button',
+        'report-sighting-button',
+      ])
+        key: tester.getRect(find.byKey(Key(key))),
+    };
+
+    await tester.pumpWidget(screen(paused: true));
+    await tester.pumpAndSettle();
+    expect(find.text('GROUP RIDE PAUSED'), findsOneWidget);
+    expect(
+      {
+        for (final key in const [
+          'emergency-alert-button',
+          'leave-ride-button',
+          'report-sighting-button',
+        ])
+          key: tester.getRect(find.byKey(Key(key))),
+      },
+      running,
+      reason: 'pausing the ride moved a target',
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
