@@ -17,6 +17,7 @@ from tools.tester_notify.notify_testers import (  # noqa: E402
     assert_safe,
     build_message,
     decide,
+    is_single_address,
     main,
     mask_recipient,
     read_changes,
@@ -167,6 +168,16 @@ class ConfigurationTest(unittest.TestCase):
 
     def test_dry_run_mode_wins_over_full_configuration(self) -> None:
         self.assertEqual(decide("dry-run", RECIPIENT, ()).action, "dry-run")
+
+    def test_refuses_a_recipient_that_is_not_one_plain_address(self) -> None:
+        for value in (
+            "one@example.invalid, two@example.invalid",
+            "one@example.invalid\nBcc: three@example.invalid",
+            "not-an-address",
+        ):
+            self.assertFalse(is_single_address(value), value)
+            self.assertEqual(decide("auto", value, ()).action, "skip")
+        self.assertTrue(is_single_address(" testers@example.invalid "))
 
     def test_names_the_missing_settings_rather_than_failing(self) -> None:
         settings, missing = smtp_settings({"TESTER_NOTIFY_FROM": "a@b.invalid"})

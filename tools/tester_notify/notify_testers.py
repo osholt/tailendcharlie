@@ -253,6 +253,14 @@ def smtp_settings(env: dict[str, str]) -> tuple[SmtpSettings | None, tuple[str, 
     )
 
 
+def is_single_address(value: str) -> bool:
+    """One plain address, so a stray newline cannot become a header."""
+    candidate = value.strip()
+    if any(character in candidate for character in "\r\n,; "):
+        return False
+    return candidate.count("@") == 1
+
+
 def decide(mode: str, recipient: str, missing_settings: Sequence[str]) -> Decision:
     if mode == "dry-run":
         return Decision("dry-run", "dry-run mode was requested, so nothing was sent.")
@@ -262,6 +270,13 @@ def decide(mode: str, recipient: str, missing_settings: Sequence[str]) -> Decisi
             "no tester group is configured. Set the "
             "RIDE_RELAY_ANDROID_TESTER_GROUP repository variable to send this "
             "mail; until then every run renders it here and sends nothing.",
+        )
+    if not is_single_address(recipient):
+        return Decision(
+            "skip",
+            "RIDE_RELAY_ANDROID_TESTER_GROUP is not a single plain address. "
+            "Set it to one group address; this tool will not split a list or "
+            "risk a header it did not build. Nothing was sent.",
         )
     if missing_settings:
         return Decision(
