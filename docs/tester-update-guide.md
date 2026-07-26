@@ -121,11 +121,16 @@ All of these are normal, not bugs:
 
 ## 4. Release emails
 
-When a build reaches the Android closed track, the tester group gets an email
-with the version, the build number, what changed since the previous release, the
-opt-in link, and the exact three values **About & build** must show once you have
-updated. Check those three values after updating: if they do not match the email,
-you are still on the old build.
+When a build reaches the Android closed track, the tester group -
+`tail-end-charlie-testers@googlegroups.com` - gets an email with the version, the
+build number, what changed since the previous release, the opt-in link, and the
+exact three values **About & build** must show once you have updated. Check those
+three values after updating: if they do not match the email, you are still on the
+old build.
+
+If you can install closed builds but never get the email, or the other way
+round, tell the maintainer: the Play tester list and the group are two separate
+lists, and they can drift apart.
 
 iOS testers do not get this email. TestFlight already notifies its own testers
 when a build is available, and two notifications for one release is noise.

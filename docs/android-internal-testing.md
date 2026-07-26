@@ -208,11 +208,17 @@ rendered into the run summary on every release, sent or not.
 There is no iOS equivalent, deliberately: TestFlight already notifies its own
 testers when a build arrives, and a second mail for the same release is noise.
 
+The closed testers are the Google Group
+**`tail-end-charlie-testers@googlegroups.com`**
+([group](https://groups.google.com/g/tail-end-charlie-testers)). That address
+lives in the `RIDE_RELAY_ANDROID_TESTER_GROUP` repository variable, never in a
+committed file, so it can change without a code change.
+
 Configuration, all optional - with none of it set the step renders and skips:
 
 | Kind | Name | Purpose |
 | --- | --- | --- |
-| Variable | `RIDE_RELAY_ANDROID_TESTER_GROUP` | The closed-tester group address. **Unset means dry run** - the mail is rendered into the summary and nothing is sent. The tool never guesses a recipient. |
+| Variable | `RIDE_RELAY_ANDROID_TESTER_GROUP` | The closed-tester group address - `tail-end-charlie-testers@googlegroups.com`. **Unset means dry run** - the mail is rendered into the summary and nothing is sent. The tool never guesses a recipient, and refuses anything that is not one plain address. |
 | Variable | `RIDE_RELAY_TESTER_NOTIFY_FROM` | The From address. |
 | Variable | `RIDE_RELAY_TESTER_NOTIFY_SMTP_HOST` | SMTP host. |
 | Variable | `RIDE_RELAY_TESTER_NOTIFY_SMTP_PORT` | SMTP port; defaults to 587 (STARTTLS). 465 uses implicit TLS. Plaintext SMTP is never attempted. |
@@ -232,6 +238,22 @@ Behaviour that the unit tests in `tools/tester_notify/tests/` pin down:
   if it arrives through a commit subject in the changelog.
 - The summary masks the group address (`t***@example.com`); this repository is
   public and its run summaries are public with it.
+
+### Two things that fail silently, and neither is visible from CI
+
+1. **The sending identity must be allowed to post to the group.** If
+   `tail-end-charlie-testers@googlegroups.com` only accepts posts from members
+   and `RIDE_RELAY_TESTER_NOTIFY_FROM` is not one, Google rejects the message or
+   holds it for moderation. The workflow sees a successful SMTP handover and
+   reports success. Add the sending identity to the group with posting rights,
+   or allow that specific address to post, and confirm the first real send
+   actually landed in the group's archive.
+2. **The group and Play Console's `alpha` tester list must be the same people.**
+   Play grants install access from whatever list the closed track is configured
+   with; the mail goes to this group. If the two diverge, the mail either
+   reaches people who cannot install the build or misses people who can. Nothing
+   in this repository can compare them - check both by hand whenever either
+   changes.
 
 To see the mail without configuring anything, run the tool directly:
 
@@ -283,6 +305,9 @@ access, and the last two need a physical Android phone on the tester list:
 
 - That the closed `alpha` track has the intended testers, and that its release
   shows as `completed` rather than draft or in-review.
+- That the `alpha` tester list and `tail-end-charlie-testers@googlegroups.com`
+  hold the same people, and that the sending identity may post to the group.
+  Both fail silently, and both are outside this repository.
 - That the promotion in a given run actually moved the version code to `alpha`
   in Play - the workflow reports `fastlane supply`'s exit status, which is
   evidence of the API call succeeding, not of what a tester's Play app offers.
