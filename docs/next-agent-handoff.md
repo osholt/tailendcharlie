@@ -1,70 +1,104 @@
 # Next-agent handoff
 
-Updated: 2026-07-23
+Updated: 2026-07-26
 
 ## Current branch
 
-Issue #34 and #38 work is on `codex/route-review-push` in
-[draft PR #52](https://github.com/osholt/tailendcharlie/pull/52), rebased on
-current `main` after PR #43, the pre-production routing hotfix in PR #55, the
-curvy-route calibration in PR #56 and the Android mini-map fallback in PR #45
-merged. The user's primary worktree still contains an unrelated local Xcode
-signing edit and untracked `docs/carplay-entitlement-submission/` material; this
-feature work was completed in a separate clean worktree and must not overwrite
-either item.
+Active work is on `claude/waze-integration-speed-display-15b184`, draft
+[PR #116](https://github.com/osholt/tailendcharlie/pull/116): the map speed
+readout and the enforcement warnings described below. `origin/main` moved
+forward seven merges (#109, #113, #115, #118, #119, #120, #121) while that
+branch was open and has been merged into it; #115's bottom-anchored chrome
+rework overlapped the same map overlays, so re-read that resolution before
+touching the overlay layout again. Do not split or overwrite the user's
+unrelated local Xcode signing edit or the untracked
+`docs/carplay-entitlement-submission/` material.
 
-PR #44 (`codex/turn-by-turn-guidance`) remains a separate open navigation
-branch.
+## Issue status
 
-## Current issue batch
+The issue list moved with those merges and is not re-audited here: check
+labels directly rather than trusting a snapshot. What holds is the shape from
+2026-07-25 — every issue that reached `status: ready for validation` is
+implemented and waiting on physical, deployment or commercial evidence rather
+than more code, with the credential and third-party gates being #38 (real
+APNs/FCM credentials) and #39 (written TomTom navigation permission).
+#117 tracks the flaky `ride_map_feature_test.dart` teardown seen in loaded
+concurrent runs; `flutter test -j 1` is clean.
 
-- #34: every calculated, imported, recorded, shared and demo route is reviewed
-  before it becomes authoritative. The screen fits the complete route, lists
-  ordered points, reports distance/duration and warnings, supports destination
-  stop editing/reordering/deletion and leaves the current route unchanged on
-  cancel.
-- #38: the relay now stores encrypted per-installation APNs/FCM registrations,
-  derives role targeting from the durable journal, deduplicates provider
-  attempts, minimises lock-screen data and exposes aggregate outcomes. The app
-  has native APNs/FCM bridges, registration rotation/revocation, tap routing and
-  ride-scoped notification preferences.
+## This branch
 
-Trusted external observers remain excluded from push targeting until their
-separate authorisation/privacy issue exists.
+- **Waze is closed.** A Waze for Cities relay reader was built on this branch
+  and then removed: the programme is limited to government agencies and road
+  operators, and this project applied and is not eligible. TomTom is again the
+  only traffic provider, and the multi-source scaffolding went with the reader
+  rather than being left dormant for a source that cannot arrive. Waze deep
+  links for destination handoff are unaffected. Do not re-open this without new
+  eligibility news.
+- Enforcement warnings are now a wanted feature, reversing the exclusion in
+  `docs/crowd-hazard-feed-decision.md` point 2. Police and camera alerts are
+  carried at any confidence and raise a full-screen warning a mile ahead; they
+  never trigger a route recalculation. See `docs/situational-awareness.md`.
+  Rider reports are the only source of them: no enforcement provider is
+  configured and none is eligible. The detector is source-agnostic, so a
+  licensed feed would need no new UI.
+- Riders can report enforcement themselves, from a `REPORT` control above the
+  speed sign on the ride map and from the existing hazard sheet. Rider-raised
+  enforcement expires faster than a road defect (two hours for a camera, one
+  for police) because a van or patrol car moves on.
+- The mapped speed-limit sign lost its surrounding panel and gained the
+  rider's live GPS speed directly beneath it at the sign's own font size, in
+  mph to match the sign. See `docs/maps-and-gpx.md`.
 
-## Verified
+## Narrow verification
 
 ```bash
 cd apps/mobile
-dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test
 flutter build apk --debug
-flutter build ios --simulator --debug
 ```
-
-The full Flutter suite passes (309 tests). Android also builds with a complete
-dummy FCM dart-define set, exercising generated Firebase resource values.
 
 ```bash
 cd apps/server
-uv sync --frozen --extra dev
 uv run ruff format --check .
 uv run ruff check .
-uv run python -m pytest -q
+uv run python -m pytest
 ```
 
-The full server suite passes (73 tests). Both deployment Compose files render,
-the changed workflow/deployment YAML parses, and `git diff --check` passes.
+Use `uv run python -m pytest` if the direct `uv run pytest` entry point has a
+stale virtual-environment shebang.
+
+## Parked, not forgotten
+
+Two free data sources were assessed on 2026-07-26 and parked on the P2 roadmap
+in `PLAN.md` as candidates for a later paid tier, with the detail in
+`docs/uk-enforcement-data-decision.md`:
+
+- an OpenStreetMap fixed-camera layer through the existing `tools/discovery`
+  generator (3,422 camera nodes, 597 enforcement relations, GB, ODbL, offline);
+- roadworks from DfT Street Manager, the only free feed reaching local roads.
+
+Neither is started. The in-app warning surface they would feed already exists.
 
 ## Remaining evidence
 
-- #34 still benefits from leader usability and mixed-device field feedback.
-- #38 must remain open until APNs/FCM credentials are configured in
-  pre-production and the real-device locked/background/terminated, denied
-  permission, reconnect and token-rotation matrix in
-  `docs/push-notifications.md` is recorded.
-- Simulator builds prove compilation only; they are not evidence of push
-  delivery or background reliability.
+- TomTom's written "Navigation Functionality" permission remains the only route
+  to broad all-road live incidents, and is unchanged by the Waze outcome.
+- Ride past a known camera site and confirm the warning arms about a mile out,
+  counts down, clears once passed, and does not fire for the opposite
+  carriageway.
+- Report a sighting wearing winter gloves, moving, on the largest supported
+  text size, and confirm the two-tap flow is reachable without stopping and
+  that a following rider receives the warning.
+- Read the rider speed readout on a moving motorcycle against a known
+  speedometer, in daylight and at night, over both the day and night basemaps.
+- Exercise explicit leave/rejoin and roster/alert counts across mixed physical
+  iOS and Android phones.
+- Publish, replace and clear leader routes across late join, offline reconnect,
+  restart and lead handover on both platforms.
+- Deploy the compatibility endpoint and test old-client/current-server plus
+  current-client/old-server rollout combinations.
+- Run onboarding with at least one person who has not used the app and record
+  accessibility observations at supported text sizes and with a screen reader.
 - The full Nearby, background, battery, route-alert and vehicle-interface gates
   in `PLAN.md` and `docs/field-test-plan.md` remain authoritative.

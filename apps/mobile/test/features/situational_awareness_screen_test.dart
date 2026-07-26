@@ -65,7 +65,7 @@ void main() {
     expect(find.textContaining('1 report'), findsOneWidget);
   });
 
-  testWidgets('does not offer enforcement report categories', (tester) async {
+  testWidgets('offers enforcement report categories', (tester) async {
     await controller.recordLocalLocation(_sample(51));
     await tester.pumpWidget(_app(controller));
 
@@ -74,8 +74,8 @@ void main() {
     await tester.tap(find.byKey(const Key('hazard-type-field')));
     await tester.pumpAndSettle();
 
-    expect(find.text(HazardType.policeActivity.label), findsNothing);
-    expect(find.text(HazardType.speedCamera.label), findsNothing);
+    expect(find.text(HazardType.policeActivity.label), findsOneWidget);
+    expect(find.text(HazardType.speedCamera.label), findsOneWidget);
     expect(find.text(HazardType.debris.label), findsOneWidget);
   });
 
@@ -88,7 +88,7 @@ void main() {
     expect(find.text('1 coordinator alert'), findsOneWidget);
     expect(find.text('Acknowledge'), findsOneWidget);
     expect(find.text('Waze reports'), findsOneWidget);
-    expect(find.textContaining('No supported general Waze'), findsOneWidget);
+    expect(find.textContaining('not eligible'), findsOneWidget);
 
     await tester.tap(find.text('Acknowledge'));
     await tester.pump();

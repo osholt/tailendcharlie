@@ -34,7 +34,10 @@ It exposes incident geometry, type, severity/delay, timing and report freshness.
 Alternatives use the official
 [Orbis Calculate Route v3](https://developer.tomtom.com/routing-api/documentation/tomtom-orbis-maps/v3/calculate-route)
 service with live traffic, bounded avoid rectangles and guidance instructions.
-Waze's public partner feed is not used as a read source.
+Waze is not a read source. Its partner data programme is limited to government
+agencies and road operators; Tail End Charlie applied and is not eligible, so
+there is no lawful route to Waze data. See
+[crowd-hazard-feed-decision.md](crowd-hazard-feed-decision.md).
 
 ## Licensing and enablement gate
 
@@ -78,9 +81,14 @@ reports and all offline ride functions continue to work.
 - Results are labelled TomTom with last fetch time and provider expiry.
 - A failed refresh leaves already journalled incidents visible until their
   stated expiry rather than replacing them with a false all-clear.
-- The feature is limited to UK route geometry and never adds police-presence or
-  speed-camera reports.
-- Only serious and critical route-matched incidents offer a reroute.
+- The feature is limited to UK route geometry. TomTom Orbis incident categories
+  carry no enforcement data, so nothing here surfaces cameras or police; those
+  come from rider reports, described in
+  [situational-awareness.md](situational-awareness.md).
+- Only serious and critical route-matched incidents offer a reroute, and
+  enforcement hazard types are excluded from that set regardless of severity. A
+  camera is warned about, never routed around: it is not an obstruction, and
+  the group's authoritative route is not the place to react to one.
 - Dismissing or accepting an offer suppresses the same incident set until its
   provider expiry. A different incident set can offer a new review.
 - If TomTom returns no path alternative, the current route is retained and the

@@ -44,6 +44,31 @@ The app must remain fully useful without either feed.
 Conclusion: Waze is not a supported source for this feature. Existing deep-link
 handoff remains the appropriate integration.
 
+**Amended 2026-07-26.** Two changes, one factual and one to the product
+decision.
+
+*Waze is closed, not merely undocumented.* The finding above concerned public
+interfaces. Waze for Cities Data is the one partner programme that does return a
+read feed of Waze alerts and jams, so it was worth pursuing. Tail End Charlie
+applied and **is not eligible**: the programme is limited to government
+agencies, private road operators and (on review) event and venue operators, and
+a consumer motorcycle app is none of those. A relay-side reader for that feed
+was implemented and has been removed again rather than left dormant. The only
+theoretical route left is an eligible authority sponsoring access and
+separately permitting redistribution to riders, which is not being pursued.
+Scraping and the Live Map iframe remain out: the iframe grants embedding, not
+data rights.
+
+*The enforcement exclusion in point 2 is superseded as a product decision.*
+Camera and police reports are a wanted feature, carried at any confidence level
+and given the most prominent warning in the app. What that decision was really
+protecting — not shipping provider data the project has no right to — still
+stands and is unchanged: with no eligible provider, the only source is a
+rider's own first-hand sighting, reported by the person who saw it. Licensed
+sources for fixed cameras and roadworks are parked on the roadmap in
+[PLAN.md](../PLAN.md) and assessed in
+[uk-enforcement-data-decision.md](uk-enforcement-data-decision.md).
+
 ### Google Maps Platform
 
 - The documented [Roads API](https://developers.google.com/maps/documentation/roads/overview)

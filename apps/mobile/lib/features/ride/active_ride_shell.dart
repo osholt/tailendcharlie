@@ -60,6 +60,7 @@ import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
+import '../../services/enforcement_alert_detector.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
 import '../../services/road_routing.dart';
@@ -564,6 +565,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
   final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
+  final _enforcementAlert = ValueNotifier<EnforcementAlert?>(null);
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -989,6 +991,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       'traffic-reroute-suppression:'
       '${widget.rideController.session?.rideId ?? 'none'}';
 
+  /// Publishes a rider's own enforcement sighting to the group.
+  ///
+  /// Reported as [HazardSeverity.serious] so it reaches the same advance
+  /// warning the provider feed drives; the shorter enforcement expiry in
+  /// [HazardExpiryPolicy] keeps a moved-on van from warning riders all day.
+  Future<void> _reportHazardFromMap(HazardType type) async {
+    final awareness = _awarenessController;
+    if (awareness == null) {
+      throw const FormatException('This ride is not tracking hazards yet.');
+    }
+    await awareness.reportHazard(type: type, severity: HazardSeverity.serious);
+  }
+
   List<HazardReport> get _trafficRerouteHazards {
     if (!widget.rideController.isLocalRideLeader ||
         !widget.rideController.rideStarted ||
@@ -1002,6 +1017,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               (hazard) =>
                   hazard.source == HazardSource.externalProvider &&
                   hazard.providerId == 'tomtom-traffic' &&
+                  // Enforcement is warned about, never routed around: a camera
+                  // is not an obstruction and the group's route is not the
+                  // place to act on one.
+                  !enforcementHazardTypes.contains(hazard.type) &&
                   hazard.severity.index >= HazardSeverity.serious.index,
             )
             .take(10)
@@ -1731,6 +1750,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           }),
     ];
     _mapOverlays.value = List.unmodifiable(overlays);
+    _enforcementAlert.value = const EnforcementAlertDetector().detect(
+      position: localLocation?.sample.position,
+      headingDegrees: localLocation?.sample.headingDegrees,
+      route: awareness.route,
+      hazards: awareness.activeHazards,
+      now: DateTime.now(),
+    );
     unawaited(
       _carPlayBridge?.publish(
             session: widget.rideController.session,
@@ -2424,6 +2450,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       groupRiderCount: widget.rideController.liveParticipants.length,
       onOpenRoster: _openRoster,
       junctionMarkerOverlay: _junctionMarkerOverlay,
+      enforcementAlert: _enforcementAlert,
+      onReportHazard: _awarenessController == null
+          ? null
+          : _reportHazardFromMap,
       emergencyContacts: _emergencyContacts,
       onEmergencyAlert: _sendEmergencyMapAlert,
       onEmergencyIssue: _sendEmergencyMapIssue,
@@ -3238,6 +3268,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _riderTrails.dispose();
     _leaderStatus.dispose();
     _junctionMarkerOverlay.dispose();
+    _enforcementAlert.dispose();
     unawaited(_carPlayBridge?.dispose());
     super.dispose();
   }

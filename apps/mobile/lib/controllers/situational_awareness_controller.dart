@@ -217,9 +217,7 @@ class SituationalAwarenessController extends ChangeNotifier {
     String? details,
   }) async {
     if (!type.isRiderReportable) {
-      throw const FormatException(
-        'Police and speed-camera reports are not supported.',
-      );
+      throw const FormatException('That hazard type cannot be reported.');
     }
     HazardReport? result;
     await _run(() async {

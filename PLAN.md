@@ -38,8 +38,9 @@ external data rather than more UI claims: Android/iPhone radio and background
 testing, foreground-route alert calibration, battery testing, per-device
 identity/application-layer encryption review, deployment of the included relay,
 and field-tested marker/pass detection. A basemap archive/style and licensed
-traffic provider are not configured. Waze is
-explicitly unavailable as a general hazard-read source. Manual six-character
+traffic provider are not configured. Waze is unavailable as a hazard-read
+source: its partner data programme is limited to government agencies and road
+operators, and this project applied and is not eligible. Manual six-character
 joining cannot start authenticated nearby or internet relay because it does not
 carry the high-entropy invitation secret; sharing and pasting the private invite
 is the supported alpha path. OS deep-link registration and an in-app QR scanner
@@ -106,8 +107,10 @@ server automatically when any rider regains connectivity.
 - **Live voice intercom.** Cardo/Sena-class audio is a different reliability and
   hardware problem. MVP supports preset messages and queued voice notes later.
 - **Reading Waze crowd hazards.** Waze has no general public read API for its
-  live user reports. Waze partnership is an optional enhancement, not a launch
-  dependency.
+  live user reports, and the partner programme that does return a feed is
+  limited to government agencies and road operators. This project is not
+  eligible, so Waze is closed as a data source rather than deferred. Rider
+  reports carry camera and police sightings instead.
 - **Guaranteed operation after force-quit.** iOS does not permit a promise of
   continuous peer discovery after the user terminates the app.
 - **Public social network, ride discovery, profiles, or feeds.** These dilute
@@ -287,8 +290,18 @@ Acceptance:
 
 ### P2 — future considerations
 
-- Waze Transport SDK partnership for app switching and limited route/ETA data.
-- Licensed roadworks, closure, camera, and traffic feeds.
+- **Fixed speed-camera layer from OpenStreetMap.** Assessed 2026-07-26 and
+  parked: 3,422 camera nodes and 597 enforcement relations across Great
+  Britain, ODbL, deliverable as a new layer in the existing review-gated
+  `tools/discovery` generator so it works offline. The in-app warning surface
+  is already built, so this is a dataset rather than a feature.
+- **Roadworks feeds.** Assessed 2026-07-26 and parked: DfT Street Manager
+  (OGL v3.0) is the only free source reaching local roads; National Highways,
+  Traffic Scotland and Traffic Wales cover the strategic network only.
+- Both of the above are candidates for a later paid tier rather than launch
+  features. Detail in `docs/uk-enforcement-data-decision.md`.
+- Licensed camera and traffic feeds where a free source will not do: Cyclops or
+  TomTom Safety Locations for the UK fixed and average-speed database.
 - Hardware handlebar/helmet controls.
 - Satellite messaging handoff where supported by platform APIs.
 - Multi-day rides, organisations, subscriptions, and fleet administration.
@@ -444,7 +457,7 @@ telemetry uses coarse, ride-scoped, pseudonymous counters.
 | Phones in pockets have poor radio/GPS | Missed passes and stale positions | Multi-signal reconciliation; uncertain state; field-test device matrix |
 | Battery drain | Riders disable the app | Adaptive sampling; compact events; four-hour battery gate |
 | False safety alerts | Loss of trust/distraction | Private-first escalation; accuracy/time/direction thresholds; easy resolve |
-| Waze/hazard licensing unavailable | Feature gap | No MVP dependency; Waze deep links; group-reported and licensed sources later |
+| Waze/hazard licensing unavailable | Realised 2026-07-26: not eligible for the Waze partner feed | No MVP dependency; Waze deep links still work for handoff; rider reports carry enforcement; OSM and licensed sources parked on the roadmap |
 | Route differs after import | Rider follows a different path | Include route and track; preview before ride; preserve source geometry |
 | Anonymous ride codes are guessed | Location disclosure | High-entropy invitation secret, rate limits, encryption, short expiry |
 | Two apps compete for audio/location | Poor Waze/helmet experience | Early coexistence tests; preset audio policy; native integration boundaries |
@@ -463,8 +476,8 @@ Blocking after Phase 0, not before it:
 Non-blocking:
 
 - Final name and visual identity.
-- Subscription model.
-- Waze Transport SDK application outcome.
+- Subscription model, including whether the parked camera and roadworks layers
+  become paid-tier features.
 - Which licensed hazard provider, if any, is used after v1.
 
 ## 14. First implementation backlog
@@ -486,7 +499,9 @@ Non-blocking:
   internet and offers a cluster topology for small mesh-like payload exchange:
   <https://developers.google.com/nearby> and
   <https://developers.google.com/nearby/connections/strategies>
-- Waze Transport SDK is partnership-gated and does not expose embedded maps,
+- Waze partner programmes are gated to government agencies and road operators;
+  this project applied and is not eligible, which closes both the Transport SDK
+  and the Waze for Cities data feed. The SDK also does not expose embedded maps,
   server-side traffic reports, or fleet-management functionality:
   <https://developers.google.com/waze/intro-transport>
 - Waze Deep Links are the non-partner fallback:

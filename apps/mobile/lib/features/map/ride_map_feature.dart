@@ -15,6 +15,7 @@ import '../../controllers/speed_limit_display_controller.dart';
 import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../domain/distance_unit.dart';
+import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
@@ -24,6 +25,7 @@ import '../../internet/plan_directory.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_suggestion_queue.dart';
+import '../../services/enforcement_alert_detector.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/group_pip_bridge.dart';
 import '../../services/leader_ride_status.dart';
@@ -88,6 +90,8 @@ class RideMapFeature extends StatefulWidget {
     this.groupRiderCount,
     this.onOpenRoster,
     this.junctionMarkerOverlay,
+    this.enforcementAlert,
+    this.onReportHazard,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
@@ -124,6 +128,8 @@ class RideMapFeature extends StatefulWidget {
     int? groupRiderCount,
     VoidCallback? onOpenRoster,
     ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
+    ValueListenable<EnforcementAlert?>? enforcementAlert,
+    Future<void> Function(HazardType type)? onReportHazard,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
     Future<void> Function(QuickMessage message)? onEmergencyIssue,
@@ -154,6 +160,8 @@ class RideMapFeature extends StatefulWidget {
     groupRiderCount: groupRiderCount,
     onOpenRoster: onOpenRoster,
     junctionMarkerOverlay: junctionMarkerOverlay,
+    enforcementAlert: enforcementAlert,
+    onReportHazard: onReportHazard,
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
     onEmergencyIssue: onEmergencyIssue,
@@ -186,6 +194,8 @@ class RideMapFeature extends StatefulWidget {
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
+  final ValueListenable<EnforcementAlert?>? enforcementAlert;
+  final Future<void> Function(HazardType type)? onReportHazard;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
@@ -313,6 +323,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         groupRiderCount: widget.groupRiderCount,
         onOpenRoster: widget.onOpenRoster,
         junctionMarkerOverlay: widget.junctionMarkerOverlay,
+        enforcementAlert: widget.enforcementAlert,
+        onReportHazard: widget.onReportHazard,
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
         onEmergencyIssue: widget.onEmergencyIssue,
@@ -369,6 +381,8 @@ class RideMapScreen extends StatefulWidget {
     this.groupRiderCount,
     this.onOpenRoster,
     this.junctionMarkerOverlay,
+    this.enforcementAlert,
+    this.onReportHazard,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
@@ -409,6 +423,8 @@ class RideMapScreen extends StatefulWidget {
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
+  final ValueListenable<EnforcementAlert?>? enforcementAlert;
+  final Future<void> Function(HazardType type)? onReportHazard;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
@@ -489,6 +505,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
   double _lastHeadingDegrees = 0;
+  // Dismissal is per hazard, so passing this one and approaching the next
+  // still raises a fresh warning.
+  String? _dismissedEnforcementAlertId;
   double _cameraBearingDegrees = 0;
   final NavigationHeadingSmoother _headingSmoother =
       NavigationHeadingSmoother();
@@ -498,6 +517,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   final GlobalKey _mapViewportKey = GlobalKey();
   final GlobalKey _bottomChromeKey = GlobalKey();
   double? _smoothedNavigationSpeedMetersPerSecond;
+  // The speed readout is its own notifier so a new fix repaints the badge
+  // without rebuilding the map: MapLibre keeps its platform view mounted and
+  // only calls setState when navigation mode changes.
+  final ValueNotifier<double?> _riderSpeedMetersPerSecond = ValueNotifier(null);
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
   GeoPoint? _lastHandledCurrentPosition;
@@ -628,6 +651,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapController.dispose();
     _navigationGuidance.dispose();
+    _riderSpeedMetersPerSecond.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     unawaited(_groupPipBridge.dispose());
     _routingClient.close();
@@ -912,6 +936,28 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           )
                         : const _WaitingForLeaderRoutePrompt(),
                   ),
+                // Last in the stack: an approaching camera or police report
+                // takes the screen over everything else on it.
+                if (widget.enforcementAlert != null)
+                  Positioned.fill(
+                    child: ValueListenableBuilder<EnforcementAlert?>(
+                      valueListenable: widget.enforcementAlert!,
+                      builder: (context, alert, _) {
+                        if (alert == null ||
+                            alert.hazard.id == _dismissedEnforcementAlertId) {
+                          return const SizedBox.shrink();
+                        }
+                        return _EnforcementAlertOverlay(
+                          alert: alert,
+                          distanceUnit: widget.distanceUnit,
+                          onDismiss: () => setState(
+                            () =>
+                                _dismissedEnforcementAlertId = alert.hazard.id,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
               ],
             ),
     );
@@ -1065,18 +1111,36 @@ class _RideMapScreenState extends State<RideMapScreen> {
       ];
       final controls = <Widget>[
         if (!markerOverviewActive)
-          AnimatedBuilder(
+          // One entry, not two: the surrounding chrome lays actions out in a
+          // Wrap, so the report button only stays directly above the speed sign
+          // by sharing its slot.
+          Column(
             key: const Key('posted-speed-limit-position'),
-            animation: _speedLimitDisplay,
-            builder: (context, _) => _speedLimitDisplay.enabled
-                ? _PostedSpeedLimitBadge(
-                    status: _speedLimitDisplay.status,
-                    outcome: _speedLimitDisplay.lastOutcome,
-                    limit: _speedLimitDisplay.limit,
-                  )
-                : _SpeedLimitOptInChip(
-                    onPressed: _confirmEnableSpeedLimitDisplay,
-                  ),
+            crossAxisAlignment: CrossAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.onReportHazard != null) ...[
+                _ReportSightingButton(onPressed: _reportEnforcementSighting),
+                const SizedBox(height: 10),
+              ],
+              AnimatedBuilder(
+                animation: _speedLimitDisplay,
+                builder: (context, _) => _speedLimitDisplay.enabled
+                    ? ValueListenableBuilder<double?>(
+                        valueListenable: _riderSpeedMetersPerSecond,
+                        builder: (context, riderSpeed, _) =>
+                            _PostedSpeedLimitBadge(
+                              status: _speedLimitDisplay.status,
+                              outcome: _speedLimitDisplay.lastOutcome,
+                              limit: _speedLimitDisplay.limit,
+                              riderSpeedMetersPerSecond: riderSpeed,
+                            ),
+                      )
+                    : _SpeedLimitOptInChip(
+                        onPressed: _confirmEnableSpeedLimitDisplay,
+                      ),
+              ),
+            ],
           ),
         if (_route != null && !_navigationMode && !markerOverviewActive)
           FloatingActionButton.extended(
@@ -1108,6 +1172,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         onCancel: _downloadCancellation?.cancel,
                       ),
                     ),
+                  if (!_basemap.isConfigured) const _RouteOnlyBadge(),
                   ...urgent,
                   ?guidance,
                   ?tecGap,
@@ -1149,6 +1214,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       progress: downloadProgress,
                       onCancel: _downloadCancellation?.cancel,
                     ),
+                  ),
+                // In the rail, not free-floating on the map: anchoring this
+                // independently at the same corner put it underneath the map
+                // controls.
+                if (!_basemap.isConfigured)
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: _RouteOnlyBadge(),
                   ),
                 ...urgent,
                 ?guidance,
@@ -1507,8 +1580,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         Positioned.fill(
           child: ColoredBox(color: const Color(0xFF111820), child: map),
         ),
-        if (!_basemap.isConfigured)
-          const Positioned(left: 12, bottom: 12, child: _RouteOnlyBadge()),
       ],
     );
   }
@@ -1627,6 +1698,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _smoothedNavigationSpeedMetersPerSecond = previousSpeed == null
           ? boundedSpeed
           : previousSpeed * 0.72 + boundedSpeed * 0.28;
+      _riderSpeedMetersPerSecond.value =
+          _smoothedNavigationSpeedMetersPerSecond;
+    } else if (navigationFix != null) {
+      // A fix without a usable speed must not leave a stale number on screen.
+      _riderSpeedMetersPerSecond.value = null;
     }
     // The camera follows a smoothed bearing, never the raw per-fix course. The
     // marker keeps the raw heading: it is only drawn rotated while the map is
@@ -3772,6 +3848,67 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
+  Future<void> _reportEnforcementSighting() async {
+    final report = widget.onReportHazard;
+    if (report == null) return;
+    final type = await showModalBottomSheet<HazardType>(
+      context: context,
+      backgroundColor: const Color(0xFF161D26),
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 14),
+                child: Text(
+                  'Tell the group',
+                  style: TextStyle(
+                    color: Color(0xFFE4E9EF),
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              _ReportSightingOption(
+                optionKey: const Key('report-speed-camera-option'),
+                label: 'SPEED CAMERA',
+                icon: Icons.speed_rounded,
+                color: const Color(0xFF9B1B23),
+                onPressed: () =>
+                    Navigator.of(sheetContext).pop(HazardType.speedCamera),
+              ),
+              _ReportSightingOption(
+                optionKey: const Key('report-police-option'),
+                label: 'POLICE',
+                icon: Icons.local_police_rounded,
+                color: const Color(0xFF17497F),
+                onPressed: () =>
+                    Navigator.of(sheetContext).pop(HazardType.policeActivity),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(sheetContext).pop(),
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (type == null || !mounted) return;
+    try {
+      await report(type);
+      _showMessage('${type.label} reported to the group.');
+    } on FormatException catch (error) {
+      _showMessage('Report not sent. ${error.message}');
+    } on Object {
+      _showMessage('Report not sent. Try again in a moment.');
+    }
+  }
+
   Future<void> _confirmEnableSpeedLimitDisplay() async {
     if (_speedLimitDisplay.enabled) return;
     final confirmed = await showDialog<bool>(
@@ -5332,22 +5469,301 @@ class _SpeedLimitOptInChip extends StatelessWidget {
   );
 }
 
+/// Compact map control that opens the enforcement sighting picker.
+///
+/// Deliberately small: it sits over the map for a whole ride, so it earns only
+/// as much space as a gloved thumb needs. The targets it opens are the large
+/// ones.
+class _ReportSightingButton extends StatelessWidget {
+  const _ReportSightingButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: 'Report a camera or police to the group',
+    child: Material(
+      color: const Color(0xF21C2530),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xFF5A6878)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const Key('report-sighting-button'),
+        onTap: onPressed,
+        child: const SizedBox(
+          width: 62,
+          height: 62,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.add_alert_rounded, size: 26, color: Color(0xFFFFD24A)),
+              SizedBox(height: 2),
+              Text(
+                'REPORT',
+                style: TextStyle(
+                  color: Color(0xFFE4E9EF),
+                  fontSize: 9,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.6,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// Full-width targets for a rider wearing gloves, on a moving bike.
+class _ReportSightingOption extends StatelessWidget {
+  const _ReportSightingOption({
+    required this.optionKey,
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final Key optionKey;
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: SizedBox(
+      // Both options must fit a landscape phone without scrolling; the sheet
+      // scrolls as a backstop, but a rider should never have to reach for it.
+      height: 76,
+      width: double.infinity,
+      child: FilledButton.icon(
+        key: optionKey,
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        icon: Icon(icon, size: 34),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _EnforcementAlertOverlay extends StatelessWidget {
+  const _EnforcementAlertOverlay({
+    required this.alert,
+    required this.distanceUnit,
+    required this.onDismiss,
+  });
+
+  final EnforcementAlert alert;
+  final DistanceUnit distanceUnit;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final camera = alert.hazard.type == HazardType.speedCamera;
+    final title = camera ? 'SPEED CAMERA' : 'POLICE';
+    final distance = MeasurementFormatter(
+      distanceUnit,
+    ).distance(alert.distanceMeters);
+    final details = alert.hazard.details;
+    return Semantics(
+      key: const Key('enforcement-alert-overlay'),
+      container: true,
+      liveRegion: true,
+      label: '$title ahead in $distance.',
+      button: true,
+      onTapHint: 'Dismiss',
+      child: GestureDetector(
+        onTap: onDismiss,
+        behavior: HitTestBehavior.opaque,
+        child: ColoredBox(
+          // Fully opaque: anything showing through competes with the warning
+          // at exactly the moment the rider has least attention to spare.
+          color: camera ? const Color(0xFF6E1015) : const Color(0xFF0F3560),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    camera ? Icons.speed_rounded : Icons.local_police_rounded,
+                    size: 76,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(height: 12),
+                  FittedBox(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 44,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  FittedBox(
+                    child: Text(
+                      key: const Key('enforcement-alert-distance'),
+                      distance,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 68,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'AHEAD',
+                    style: TextStyle(
+                      color: Color(0xCCFFFFFF),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                  if (details != null && details.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      details,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xE6FFFFFF),
+                        fontSize: 14,
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  const Text(
+                    'TAP TO DISMISS',
+                    style: TextStyle(
+                      color: Color(0x99FFFFFF),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// The badge sits directly on the map without a panel behind it, so every label
+// outside the white sign face carries its own shadow for legibility.
+const _mapOverlayTextShadows = [
+  Shadow(color: Color(0xCC0B0F14), blurRadius: 6),
+  Shadow(color: Color(0x990B0F14), blurRadius: 2, offset: Offset(0, 1)),
+];
+
+/// Light text drawn over an unknown map background.
+///
+/// A shadow alone washes out over a light daytime basemap, so the glyphs are
+/// painted twice: a dark stroke first, then the fill.
+class _MapOverlayLabel extends StatelessWidget {
+  const _MapOverlayLabel(
+    this.text, {
+    required this.style,
+    required this.strokeWidth,
+    this.fillKey,
+    this.maxLines,
+    this.textAlign,
+  });
+
+  final String text;
+  final TextStyle style;
+  final double strokeWidth;
+  final Key? fillKey;
+  final int? maxLines;
+  final TextAlign? textAlign;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      Text(
+        text,
+        maxLines: maxLines,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+        textAlign: textAlign,
+        style: style.copyWith(
+          shadows: const [],
+          foreground: Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = strokeWidth
+            ..strokeJoin = StrokeJoin.round
+            ..color = const Color(0xE60B0F14),
+        ),
+      ),
+      Text(
+        text,
+        key: fillKey,
+        maxLines: maxLines,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+        textAlign: textAlign,
+        style: style,
+      ),
+    ],
+  );
+}
+
 class _PostedSpeedLimitBadge extends StatelessWidget {
   const _PostedSpeedLimitBadge({
     required this.status,
     required this.outcome,
     required this.limit,
+    required this.riderSpeedMetersPerSecond,
   });
 
   final SpeedLimitDisplayStatus status;
   final SpeedLimitLookupOutcome? outcome;
   final PostedSpeedLimit? limit;
+  final double? riderSpeedMetersPerSecond;
 
   @override
   Widget build(BuildContext context) {
     final reading = limit;
     final known = status == SpeedLimitDisplayStatus.known && reading != null;
     final value = known ? '${reading.milesPerHour}' : '–';
+    // The readout sits under a UK mph sign, so it stays in mph whatever the
+    // rider's distance-unit preference is. Two units under one sign would
+    // invite a dangerous misread.
+    final speed = riderSpeedMetersPerSecond;
+    final riderMilesPerHour = speed != null && speed.isFinite && speed >= 0
+        ? (speed * 2.236936).round()
+        : null;
+    final speedValue = riderMilesPerHour == null ? '–' : '$riderMilesPerHour';
     final checkedAt = known
         ? MaterialLocalizations.of(
             context,
@@ -5367,11 +5783,15 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
               'Checking mapped road',
             _ => 'Move to identify road',
           };
+    final riderSpeedLabel = riderMilesPerHour == null
+        ? 'Your speed is unavailable.'
+        : 'You are riding at $riderMilesPerHour miles per hour by GPS.';
     final semanticLabel = known
         ? 'Mapped speed limit ${reading.milesPerHour} miles per hour'
               '${reading.roadName == null ? '' : ' on ${reading.roadName}'}. '
-              'Looked up at $checkedAt. Not live. Roadside signs apply.'
-        : '$detail. Roadside signs apply.';
+              'Looked up at $checkedAt. Not live. $riderSpeedLabel '
+              'Roadside signs apply.'
+        : '$detail. $riderSpeedLabel Roadside signs apply.';
     return Semantics(
       key: const Key('posted-speed-limit-badge'),
       container: true,
@@ -5380,22 +5800,9 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
       excludeSemantics: true,
       child: Tooltip(
         message:
-            '$detail\n© OpenStreetMap contributors via Valhalla; temporary and variable limits may differ. Roadside signs apply.',
-        child: Container(
+            '$detail\n$riderSpeedLabel\n© OpenStreetMap contributors via Valhalla; temporary and variable limits may differ. Roadside signs apply.',
+        child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 150),
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 7),
-          decoration: BoxDecoration(
-            color: const Color(0xE6252E39),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF445262)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x55000000),
-                blurRadius: 10,
-                offset: Offset(0, 3),
-              ),
-            ],
-          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -5412,6 +5819,13 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                         : const Color(0xFF8993A0),
                     width: 6,
                   ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x66000000),
+                      blurRadius: 8,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: status == SpeedLimitDisplayStatus.checking
                     ? const SizedBox.square(
@@ -5431,11 +5845,27 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                         ),
                       ),
               ),
-              const SizedBox(height: 5),
-              Text(
-                known ? 'MPH · MAPPED' : detail.toUpperCase(),
+              const SizedBox(height: 4),
+              _MapOverlayLabel(
+                speedValue,
+                fillKey: const Key('posted-speed-limit-rider-speed'),
+                strokeWidth: 4,
+                style: const TextStyle(
+                  color: Color(0xFFFFFFFF),
+                  fontSize: 26,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  shadows: _mapOverlayTextShadows,
+                ),
+              ),
+              const SizedBox(height: 3),
+              _MapOverlayLabel(
+                known
+                    ? 'MPH · MAPPED LIMIT · GPS SPEED'
+                    : '${detail.toUpperCase()} · MPH GPS SPEED',
+                fillKey: const Key('posted-speed-limit-caption'),
+                strokeWidth: 2,
                 maxLines: 2,
-                overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: Color(0xFFE4E9EF),
@@ -5443,6 +5873,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                   height: 1.15,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.5,
+                  shadows: _mapOverlayTextShadows,
                 ),
               ),
             ],
