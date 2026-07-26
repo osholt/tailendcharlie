@@ -468,18 +468,48 @@ field report saw `0` and `MOVE TO IDENTIFY ROAD` on a stationary phone.
 The caution the delay was reaching for is now a confidence test rather than a
 blanket wait:
 
-- A **travelled** trace — two fixes at least 4 metres apart — is sent as two
-  shape points. It tolerates up to 50-metre accuracy and a 40-metre road match,
-  because the travel heading has to agree with the matched road's heading to
-  within 50°. That is what separates the two carriageways of a dual
-  carriageway, and it is the one case where movement genuinely helps.
-- A **stationary** fix is sent as a single shape point and is treated as having
-  no heading *whatever course the platform reports*, for the same reason
+- A **travelled** trace — two fixes at least 4 metres apart — goes to
+  `trace_attributes` as two shape points. It tolerates up to 50-metre accuracy
+  and a 25-to-40-metre road match, because the travel heading has to agree with
+  the matched road's heading to within 50°. That is what separates the two
+  carriageways of a dual carriageway, and it is the one case where movement
+  genuinely helps.
+- A **stationary** fix goes to `locate`, and is treated as having no heading
+  *whatever course the platform reports*, for the same reason
   `NavigationHeadingSmoother` refuses a course below 1.5 m/s: a stationary GPS
-  course is noise. It is held instead to 25-metre accuracy and an 18-metre match,
-  because there is no direction to corroborate the snap with, so the snap itself
-  has to be convincing. A road the rider is probably not on is reported as
-  unmatched rather than guessed at: a wrong limit is worse than an absent one.
+  course is noise. It tolerates up to 40-metre accuracy and a **25-metre** road
+  match. A phone standing still beside buildings, in a car park or in a lay-by is
+  routinely displaced 10–25 metres by multipath and the rider is plainly on the
+  road they are parked beside, so a tighter bound reports nothing in the one place
+  riders look first. It is not widened past 25 metres because UK roads carrying
+  different limits are rarely that close together. A road the rider is probably
+  not on is reported as unmatched rather than guessed at: a wrong limit is worse
+  than an absent one.
+
+`trace_attributes` needs at least two shape points — a one-point shape is
+rejected with `error_code` 123, `Insufficient shape provided` — and it reports
+only the single edge it matched. Both facts matter at a ride start. The first is
+why a stationary lookup used to resolve to nothing at all; every trace the app
+sends now carries two points, and for a confirmation that means the same point
+twice. The second is why the stationary path leads with `locate`, which takes one
+point and lists every nearby road with its own distance, road class and posted
+limit.
+
+Where several roads are within tolerance, a **carriageway is preferred over a
+service way** — a car park aisle, driveway, alley or footpath — even when the
+service way is the nearer of the two, and among carriageways the higher road
+class is preferred. That is a judgement, not a fact: a rider setting off is on the
+road, not the alley beside it. It is bounded by agreement. If the preferred
+candidates still post different limits, as they do standing where a 30 becomes a
+50, the reading stays unconfirmed and resolves on the next fix or on movement
+using heading, rather than one of the two being chosen.
+
+`locate` reports no country of its own, so the GB requirement is met by a
+`trace_attributes` confirmation sent at the chosen road's own snapped position —
+and only when a number is actually about to be displayed. A position with nothing
+to show costs one request, not two, and the country that comes back belongs to
+the road on the sign rather than to whichever edge a map match happened to
+prefer.
 
 Ambiguity is stated, not hidden. Poor accuracy or an uncertain match resolves to
 `unconfirmedRoad` — named for the condition, not for a wait — which shows `GPS
@@ -494,11 +524,32 @@ Lookups are fed from the navigation fix rather than a bare position, because the
 confidence test is built on reported accuracy and heading and a position
 carrying neither cannot be tested at all.
 
-Only an OpenStreetMap `maxspeed` value reported by Valhalla as
-`speed_type=tagged` is displayed. A classified or inferred speed is deliberately
-treated as unknown. The UI uses mph and familiar UK sign styling, labels the
-reading `MAPPED`, and always warns that it is not live: temporary and variable
-limits may differ and roadside signs apply.
+Only an OpenStreetMap `maxspeed` value is displayed, and it is read from
+Valhalla's `speed_limit` attribute, documented as "the posted speed limit, if
+available" and as the attribute a navigation application should display. Valhalla
+sets it only from a `maxspeed` tag, so an untagged road omits it and stays
+unknown. It is **not** gated on `speed_type`, which describes something else: how
+the edge's *base routing speed* was assigned. The live FOSSGIS instance reports
+`speed_type: classified` on roads that carry a perfectly good explicit
+`maxspeed` — verified on the A4174 at 50 mph, the M4 at 70 mph and a residential
+20 mph street — so requiring `tagged` withheld every genuine posted limit and was
+the second half of the ride-start failure.
+
+The value must also convert to one of the six limits a UK sign carries (20, 30,
+40, 50, 60, 70 mph) or it is treated as unknown. That keeps an inferred or foreign
+value off the sign and fails safe on units: every UK limit read in the wrong unit
+falls outside the set rather than producing a plausible wrong number.
+
+The UI uses mph and familiar UK sign styling, labels the reading `MAPPED`, and
+always warns that it is not live: temporary and variable limits may differ and
+roadside signs apply.
+
+OpenStreetMap `maxspeed` coverage in the UK is real but patchy, and that sets a
+floor on what the feature can show. The bundled demo route's own start point is a
+worked example: the King's Oak Academy car park access road is untagged, and the
+nearest road, Brook Road 43 metres away, is untagged too, so no tolerance can
+honestly produce a number there. The A4174 ring road a few streets away is tagged
+throughout. Absent readings on minor urban roads are a data limitation, not a bug.
 
 The sign is drawn straight onto the map with no surrounding panel. The rider's
 own GPS speed appears directly beneath it at the sign's own font size, so the
@@ -531,6 +582,10 @@ The endpoint is replaceable without an app update:
 --dart-define=RIDE_RELAY_SPEED_LIMIT_URL=https://routing.example.com/trace_attributes
 ```
 
+The `locate` endpoint is derived from that URL by replacing its final path
+segment, so a self-hosted deployment cannot end up with the two halves of the
+lookup on different hosts. It is deliberately not separately configurable.
+
 Valhalla is MIT-licensed and its OpenStreetMap-derived road data is ODbL with
 attribution required. The app credits `© OpenStreetMap contributors` in the
 setting and reading detail. The FOSSGIS endpoint is a free public demo subject
@@ -548,6 +603,8 @@ production instance or selecting a commercial source has an unresolved cost.
 Provider references:
 
 - [Valhalla trace attributes and country/speed metadata](https://valhalla.github.io/valhalla/api/map-matching/api-reference/)
+- [Valhalla locate service, single-point candidates and `radius`](https://valhalla.github.io/valhalla/api/locate/api-reference/)
+- [Valhalla road classes, highest to lowest](https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/)
 - [Valhalla speed source semantics](https://valhalla.github.io/valhalla/concepts/speeds/)
 - [Valhalla data licences](https://valhalla.github.io/valhalla/contributing/data/data-sources/)
 - [Valhalla attribution requirements](https://valhalla.github.io/valhalla/mjolnir/attribution/)
