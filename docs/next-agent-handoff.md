@@ -4,31 +4,26 @@ Updated: 2026-07-26
 
 ## Current branch
 
-Active work is on `claude/waze-integration-speed-display-15b184`: the map speed
-readout and the enforcement warnings described below. Everything
-else described in the previous handoff (draft PR #43 and the UI/navigation,
-simulator, iOS crash, rider-count and screen-awake fixes) is merged; `main` at
-`2d3d8e5` is the frontier and no `codex/*` or `feature/*` branch holds
-unmerged content. Do not split or overwrite the user's unrelated local Xcode
-signing edit or the untracked `docs/carplay-entitlement-submission/` material.
+Active work is on `claude/waze-integration-speed-display-15b184`, draft
+[PR #116](https://github.com/osholt/tailendcharlie/pull/116): the map speed
+readout and the enforcement warnings described below. `origin/main` moved
+forward seven merges (#109, #113, #115, #118, #119, #120, #121) while that
+branch was open and has been merged into it; #115's bottom-anchored chrome
+rework overlapped the same map overlays, so re-read that resolution before
+touching the overlay layout again. Do not split or overwrite the user's
+unrelated local Xcode signing edit or the untracked
+`docs/carplay-entitlement-submission/` material.
 
 ## Issue status
 
-Every open issue is implemented and merged. None is blocked on more code; each
-is at `status: ready for validation` waiting on physical, deployment or
-commercial evidence:
-
-- Field/physical-device evidence: #27, #28, #29, #30, #31, #33, #35, #42, #50,
-  #51, #86 (mixed iOS/Android runs), #6 and #7 (Android Auto DHU / physical
-  CarPlay and a physical Android PiP run), #5 (Harley-Davidson GPX handoff on
-  the real app/device).
-- Deployment/rollout evidence: #37 — both relay endpoints are live and
-  advertise protocol 1; the old-client/current-server and
-  current-client/old-server matrix plus store update links remain.
-- Credentials and third-party terms: #38 (real APNs/FCM credentials),
-  #39 (written TomTom navigation permission).
-- Content approval: #64 — the generator has landed; the 48-item four-nation
-  content/safety review has not.
+The issue list moved with those merges and is not re-audited here: check
+labels directly rather than trusting a snapshot. What holds is the shape from
+2026-07-25 — every issue that reached `status: ready for validation` is
+implemented and waiting on physical, deployment or commercial evidence rather
+than more code, with the credential and third-party gates being #38 (real
+APNs/FCM credentials) and #39 (written TomTom navigation permission).
+#117 tracks the flaky `ride_map_feature_test.dart` teardown seen in loaded
+concurrent runs; `flutter test -j 1` is clean.
 
 ## This branch
 

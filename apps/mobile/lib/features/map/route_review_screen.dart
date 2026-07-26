@@ -6,7 +6,9 @@ import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/measurement_formatter.dart';
+import '../../services/navigation_guidance.dart';
 import '../../services/route_marker_plan.dart';
+import 'maneuver_list_screen.dart';
 import 'resolved_route_map_preview.dart';
 
 enum RouteReviewAction { cancel, edit, confirm }
@@ -88,6 +90,9 @@ class RouteReviewScreen extends StatelessWidget {
       ?materialWarning,
     ];
     final formatter = MeasurementFormatter(distanceUnit);
+    final maneuverCount = const NavigationGuidancePlanner()
+        .instructions(route)
+        .length;
 
     return Scaffold(
       appBar: AppBar(
@@ -287,10 +292,12 @@ class RouteReviewScreen extends StatelessWidget {
                         label:
                             '${reviewWaypoints.length} route point${reviewWaypoints.length == 1 ? '' : 's'}',
                       ),
-                      if (route.maneuvers.isNotEmpty)
-                        const _SummaryItem(
+                      if (maneuverCount > 0)
+                        _SummaryItem(
                           icon: Icons.turn_slight_right,
-                          label: 'Visual turn-by-turn ready',
+                          label:
+                              '$maneuverCount turn '
+                              'instruction${maneuverCount == 1 ? '' : 's'}',
                         ),
                       if (route.maneuvers.isNotEmpty)
                         _SummaryItem(
@@ -405,6 +412,19 @@ class RouteReviewScreen extends StatelessWidget {
                             : Text(entry.$2.description!),
                       ),
                   const SizedBox(height: 18),
+                  if (maneuverCount > 0) ...[
+                    OutlinedButton.icon(
+                      key: const Key('review-maneuver-list'),
+                      onPressed: () => ManeuverListScreen.show(
+                        context,
+                        route: route,
+                        distanceUnit: distanceUnit,
+                      ),
+                      icon: const Icon(Icons.list_alt),
+                      label: Text('All turns ($maneuverCount)'),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   if (canEditStops)
                     OutlinedButton.icon(
                       key: const Key('edit-reviewed-route'),

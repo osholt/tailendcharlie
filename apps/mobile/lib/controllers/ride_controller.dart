@@ -19,6 +19,7 @@ import '../domain/ride_session.dart';
 import '../domain/rider_color.dart';
 import '../domain/session_store.dart';
 import '../features/map/motorcycle_icon.dart';
+import '../relay/live_presence.dart';
 import '../services/nearby_bridge.dart';
 import '../services/completed_ride_archiver.dart';
 import '../services/marker_statistics.dart';
@@ -72,6 +73,7 @@ class RideController extends ChangeNotifier {
   RideLifecycle _lifecycle = const RideLifecycle();
   RideRouteState _routeState = const RideRouteState();
   final Map<String, Set<RideTransportEvidence>> _transportByEventId = {};
+  List<LiveRiderPresence> _livePresence = const [];
 
   /// ICE shares the local rider has acted on (called/texted the contact).
   /// Kept in memory only, for this session: it gates which received shares
@@ -100,6 +102,9 @@ class RideController extends ChangeNotifier {
   RideRouteState get authoritativeRouteState => _routeState;
   ImportedRoute? get authoritativeRoute => _routeState.route;
 
+  /// The reconciled live presence most recently observed, keyed by rider.
+  List<LiveRiderPresence> get livePresence => List.unmodifiable(_livePresence);
+
   List<RideParticipant> get participants {
     final activeSession = _session;
     if (activeSession == null) return const [];
@@ -117,7 +122,43 @@ class RideController extends ChangeNotifier {
       rideStartedAt: rideStartedAt,
       rideEndedAt: _rideEndedAt,
       transportByEventId: _transportByEventId,
+      livePresence: _livePresence,
     );
+  }
+
+  /// Records what the live-presence channels can currently see.
+  ///
+  /// This is how a join reaches the roster and the map without waiting for the
+  /// bulk event batch: presence is a separate request with no cursor, so a
+  /// wedged or backed-off journal sync cannot hide a reachable participant.
+  /// The durable journal stays authoritative — a rider who has left is never
+  /// resurrected by presence.
+  void observeLivePresence(Iterable<LiveRiderPresence> presence) {
+    final next = presence.toList(growable: false);
+    if (_isSamePresence(_livePresence, next)) return;
+    _livePresence = next;
+    notifyListeners();
+  }
+
+  static bool _isSamePresence(
+    List<LiveRiderPresence> current,
+    List<LiveRiderPresence> next,
+  ) {
+    if (current.length != next.length) return false;
+    for (var index = 0; index < current.length; index += 1) {
+      final left = current[index];
+      final right = next[index];
+      if (left.riderId != right.riderId ||
+          left.freshness != right.freshness ||
+          left.displayName != right.displayName ||
+          left.role != right.role ||
+          !setEquals(left.sources, right.sources) ||
+          left.location?.sample.recordedAt !=
+              right.location?.sample.recordedAt) {
+        return false;
+      }
+    }
+    return true;
   }
 
   List<RideParticipant> get liveParticipants => participants
@@ -1065,6 +1106,7 @@ class RideController extends ChangeNotifier {
     _roleBeforeMarker = null;
     _usedIceShareEventIds.clear();
     _transportByEventId.clear();
+    _livePresence = const [];
   }
 
   RideRole? _activeMarkerPreviousRole() {

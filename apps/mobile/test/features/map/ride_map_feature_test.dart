@@ -136,6 +136,144 @@ void main() {
     },
   );
 
+  testWidgets('draws rider and leader trails with no route imported', (
+    tester,
+  ) async {
+    // #100: trails come from position history, so nothing about them may depend
+    // on a route being loaded or matched.
+    final directory = Directory.systemTemp.createTempSync('map-no-route-trail');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final trails = ValueNotifier<List<MapOverlayTrace>>([
+      const MapOverlayTrace(
+        id: 'trail-blake',
+        label: 'Blake leader trail',
+        kind: RiderTrailKind.leader,
+        points: [
+          GeoPoint(latitude: 53, longitude: -1.02),
+          GeoPoint(latitude: 53.004, longitude: -1.014),
+        ],
+      ),
+      const MapOverlayTrace(
+        id: 'trail-me',
+        label: 'You trail',
+        points: [
+          GeoPoint(latitude: 53, longitude: -1.03),
+          GeoPoint(latitude: 53.004, longitude: -1.024),
+        ],
+      ),
+    ]);
+    addTearDown(trails.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          riderTrails: trails,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
+    expect(
+      layer.polylines.map((line) => line.color),
+      containsAll([
+        RouteTrailStyle.leaderTrail.color,
+        RouteTrailStyle.travelled.color,
+      ]),
+    );
+    // Direction cues follow the trails too, without a route (#31).
+    final arrows = tester.widget<MarkerLayer>(
+      find.byKey(const Key('trail-direction-arrow-layer')),
+    );
+    expect(arrows.markers, isNotEmpty);
+  });
+
+  testWidgets('the map menu lists every turn for the loaded route', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-maneuver-list-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'listed',
+      name: 'Listed route',
+      importedAt: DateTime.utc(2026, 7, 25),
+      sourceFileName: 'listed.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.46, longitude: -2.59),
+            GeoPoint(latitude: 51.47, longitude: -2.59),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.46, longitude: -2.59),
+          type: 'roundabout',
+          modifier: 'slight left',
+          name: 'Wells Road',
+          exitNumber: 2,
+          drivingSide: 'left',
+          bearingBeforeDegrees: 0,
+          bearingAfterDegrees: 300,
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.4602, longitude: -2.59),
+          type: 'exit roundabout',
+          modifier: 'slight left',
+          name: 'Wells Road',
+          drivingSide: 'left',
+          bearingBeforeDegrees: 40,
+          bearingAfterDegrees: 2,
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.47, longitude: -2.59),
+          type: 'arrive',
+        ),
+      ],
+    );
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('All turns for this route'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('maneuver-list')), findsOneWidget);
+    expect(find.text('Roundabout, 2nd exit, straight on'), findsOneWidget);
+    expect(find.text('Arrive at the destination'), findsOneWidget);
+  });
+
   testWidgets('turn guidance reduces the TEC gap to a single-line chip', (
     tester,
   ) async {
@@ -215,7 +353,7 @@ void main() {
     expect(tester.getSize(chip).width, lessThanOrEqualTo(360));
   });
 
-  testWidgets('TEC waiting state stays at the top without active guidance', (
+  testWidgets('a registered TEC without a position yet still says so', (
     tester,
   ) async {
     final directory = Directory.systemTemp.createTempSync(
@@ -246,11 +384,11 @@ void main() {
       ],
     );
     final navigation = ValueNotifier<MapNavigationPosition?>(null);
+    // A TEC that is registered but has never reported a position: no name, no
+    // distance, no estimate and no location age.
     final leaderStatus = ValueNotifier<LeaderRideStatus?>(
       const LeaderRideStatus(
-        tecName: null,
-        distanceToTecMeters: null,
-        estimatedTimeToTec: null,
+        tecAvailability: TecAvailability.awaitingLocation,
         offCourseAlerts: [],
       ),
     );
@@ -279,9 +417,69 @@ void main() {
 
     final chip = find.byKey(const Key('leader-tec-gap'));
     expect(chip, findsOneWidget);
-    expect(find.text('waiting for location'), findsOneWidget);
+    expect(
+      find.textContaining('Tail End Charlie · waiting for location'),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
-    expect(tester.getTopLeft(chip).dy, lessThan(120));
+    // The status band now lives in the lower part of the screen so the road
+    // ahead stays visible at the top.
+    final screenHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(tester.getTopLeft(chip).dy, greaterThan(screenHeight / 2));
+  });
+
+  testWidgets('no registered TEC hides the distance-to-TEC surface entirely', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('map-no-tec-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final leaderStatus = ValueNotifier<LeaderRideStatus?>(
+      // No TEC identity of any kind: nobody holds the role.
+      const LeaderRideStatus(offCourseAlerts: []),
+    );
+    addTearDown(leaderStatus.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(
+            _testRoute(id: 'no-tec', name: 'No TEC route'),
+          ),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          leaderStatus: leaderStatus,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('leader-tec-gap')), findsNothing);
+    expect(find.textContaining('waiting for location'), findsNothing);
+    expect(find.textContaining('Tail End Charlie'), findsNothing);
+
+    // Assigning a TEC mid-ride brings the surface back without a restart.
+    leaderStatus.value = const LeaderRideStatus(
+      tecAvailability: TecAvailability.stale,
+      tecName: 'Charlie',
+      tecLocationAge: Duration(minutes: 4),
+      offCourseAlerts: [],
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('leader-tec-gap')), findsOneWidget);
+    expect(find.textContaining('4 min ago'), findsOneWidget);
+
+    leaderStatus.value = const LeaderRideStatus(offCourseAlerts: []);
+    await tester.pump();
+
+    expect(find.byKey(const Key('leader-tec-gap')), findsNothing);
   });
 
   testWidgets('map exposes an informed speed-limit opt-in', (tester) async {
@@ -1074,11 +1272,21 @@ void main() {
       addTearDown(navigation.dispose);
       final traces = ValueNotifier<List<MapOverlayTrace>>([
         const MapOverlayTrace(
-          id: 'off-route-alex',
+          id: 'trail-alex',
           label: 'Alex off-route trace',
+          kind: RiderTrailKind.offRoute,
           points: [
             GeoPoint(latitude: 53, longitude: -1.01),
             GeoPoint(latitude: 53.001, longitude: -1.011),
+          ],
+        ),
+        const MapOverlayTrace(
+          id: 'trail-blake',
+          label: 'Blake leader trail',
+          kind: RiderTrailKind.leader,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53.002, longitude: -1.014),
           ],
         ),
       ]);
@@ -1113,17 +1321,30 @@ void main() {
         ],
         waypoints: const [],
         maneuvers: const [
+          // The engine reports joining the ring and leaving it separately, and
+          // the entry modifier describes the entry rather than the exit taken.
           RouteManeuver(
             position: GeoPoint(latitude: 53, longitude: -1.005),
             type: 'roundabout',
-            modifier: 'right',
+            modifier: 'slight left',
             name: 'Station Road',
             exitNumber: 3,
             drivingSide: 'left',
+            bearingBeforeDegrees: 90,
+            bearingAfterDegrees: 20,
             lanes: [
               RouteLane(indications: ['left'], valid: false),
               RouteLane(indications: ['straight', 'right'], valid: true),
             ],
+          ),
+          RouteManeuver(
+            position: GeoPoint(latitude: 53, longitude: -1.0048),
+            type: 'exit roundabout',
+            modifier: 'slight right',
+            name: 'Station Road',
+            drivingSide: 'left',
+            bearingBeforeDegrees: 150,
+            bearingAfterDegrees: 180,
           ),
         ],
       );
@@ -1144,7 +1365,7 @@ void main() {
             navigationPosition: navigation,
             overlayMarkers: riders,
             groupRiderCount: 1,
-            offRouteTraces: traces,
+            riderTrails: traces,
             onOpenRideMenu: () async => menuOpens += 1,
           ),
         ),
@@ -1163,8 +1384,15 @@ void main() {
         find.byKey(const Key('navigation-guidance-banner')),
         findsOneWidget,
       );
-      expect(find.textContaining('Take exit 3 right'), findsOneWidget);
-      expect(find.byIcon(Icons.roundabout_left), findsOneWidget);
+      expect(
+        find.textContaining('Roundabout, 3rd exit, right'),
+        findsOneWidget,
+      );
+      // One instruction for one junction: the exit step is not announced again.
+      expect(find.byKey(const Key('following-maneuver')), findsNothing);
+      // The ring is drawn, not borrowed from a glyph that means the opposite.
+      expect(find.byIcon(Icons.roundabout_left), findsNothing);
+      expect(find.byIcon(Icons.roundabout_right), findsNothing);
       expect(find.byKey(const Key('lane-guidance')), findsOneWidget);
       expect(find.text('Station Road'), findsOneWidget);
       final arrowLayer = tester.widget<MarkerLayer>(
@@ -1199,20 +1427,36 @@ void main() {
       tester.view.physicalSize = const Size(844, 390);
       await tester.pump();
       final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
+      Polyline lineWithColor(Color color) => layer.polylines.firstWhere(
+        (line) => line.color == color,
+        orElse: () => throw StateError('no $color line drawn'),
+      );
+      final ahead = lineWithColor(RouteTrailStyle.routeAhead.color);
       expect(
-        layer.polylines.any(
-          (line) =>
-              line.pattern == const StrokePattern.dotted(spacingFactor: 1.8),
-        ),
-        isTrue,
+        ahead.pattern,
+        StrokePattern.dashed(segments: RouteTrailStyle.routeAhead.dashPixels!),
+      );
+      expect(ahead.strokeWidth, RouteTrailStyle.routeAhead.widthPixels);
+      expect(ahead.borderColor, RouteTrailStyle.casing);
+      expect(ahead.color.a, 1.0);
+      final travelled = lineWithColor(RouteTrailStyle.travelled.color);
+      expect(travelled.pattern, const StrokePattern.solid());
+      // The leader's trail is the widest line and is drawn under the plan; an
+      // off-route trail is dashed and drawn over it.
+      final leader = lineWithColor(RouteTrailStyle.leaderTrail.color);
+      expect(leader.strokeWidth, RouteTrailStyle.leaderTrail.widthPixels);
+      expect(
+        layer.polylines.indexOf(leader),
+        lessThan(layer.polylines.indexOf(ahead)),
+      );
+      final offRoute = lineWithColor(RouteTrailStyle.offRouteTrail.color);
+      expect(
+        offRoute.pattern.segments,
+        RouteTrailStyle.offRouteTrail.dashPixels,
       );
       expect(
-        layer.polylines.any((line) => line.color == const Color(0xFFFF7A1A)),
-        isTrue,
-      );
-      expect(
-        layer.polylines.any((line) => line.color == const Color(0xFFE244C7)),
-        isTrue,
+        layer.polylines.indexOf(offRoute),
+        greaterThan(layer.polylines.indexOf(travelled)),
       );
 
       await tester.drag(find.byType(FlutterMap), const Offset(80, 0));
@@ -1236,6 +1480,10 @@ void main() {
       await tester.pump();
       expect(find.byType(AppBar), findsNothing);
 
+      // Following the rider is throttled against the wall clock, so a camera
+      // animation can still be in flight here. Let it finish before the tree is
+      // torn down, or the map is disposed with an active ticker.
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
     },
@@ -1360,6 +1608,219 @@ void main() {
     await tester.tap(find.byKey(const Key('leave-ride-button')));
     await tester.pump();
     expect(leaves, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('the maximum overlay set clears the upper band and itself', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-chrome-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'chrome',
+      name: 'Chrome route',
+      importedAt: DateTime.utc(2026, 7, 25),
+      sourceFileName: 'chrome.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1.01),
+            GeoPoint(latitude: 53, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 53, longitude: -1.005),
+          type: 'roundabout',
+          modifier: 'right',
+          name: 'Station Road',
+          exitNumber: 3,
+          drivingSide: 'left',
+          lanes: [
+            RouteLane(indications: ['left'], valid: false),
+            RouteLane(indications: ['straight', 'right'], valid: true),
+          ],
+        ),
+      ],
+    );
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.015),
+        recordedAt: DateTime.utc(2026, 7, 25, 12),
+        speedMetersPerSecond: 13,
+        headingDegrees: 90,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final leaderStatus = ValueNotifier<LeaderRideStatus?>(
+      const LeaderRideStatus(
+        tecName: 'Charlie',
+        distanceToTecMeters: 3200,
+        estimatedTimeToTec: Duration(minutes: 4),
+        tecLocationAge: Duration(seconds: 10),
+        offCourseAlerts: [
+          LeaderOffCourseAlert(
+            riderId: 'rider-alex',
+            displayName: 'Alex',
+            level: RouteAlertLevel.urgent,
+            distanceFromRouteMeters: 420,
+          ),
+        ],
+      ),
+    );
+    addTearDown(leaderStatus.dispose);
+    final riders = ValueNotifier<List<MapOverlayMarker>>([
+      const MapOverlayMarker(
+        id: 'rider-alex',
+        point: GeoPoint(latitude: 53, longitude: -1.011),
+        label: 'Alex',
+      ),
+      const MapOverlayMarker(
+        id: 'rider-charlie',
+        point: GeoPoint(latitude: 53, longitude: -1.017),
+        label: 'Charlie',
+      ),
+    ]);
+    addTearDown(riders.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    // Alerts that may interrupt, versus chrome that is always on screen.
+    const urgentKeys = {'ride-paused-banner', 'leader-off-course-alert'};
+    final overlayKeys = <String>[
+      'navigation-guidance-banner',
+      'leader-off-course-alert',
+      'leader-tec-gap',
+      'group-mini-map',
+      'ride-menu-button',
+      'emergency-alert-button',
+      'leave-ride-button',
+      'speed-limit-opt-in-chip',
+    ];
+
+    Future<void> verifyLayout({required bool landscape}) async {
+      tester.view.physicalSize = landscape
+          ? const Size(844, 390)
+          : const Size(390, 844);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+
+      final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect(find.byType(AppBar), findsNothing);
+      expect(find.text('GROUP RIDE PAUSED'), findsOneWidget);
+
+      final rects = <String, Rect>{
+        'ride-paused-banner': tester.getRect(find.text('GROUP RIDE PAUSED')),
+      };
+      for (final key in overlayKeys) {
+        final finder = find.byKey(Key(key));
+        expect(finder, findsOneWidget, reason: '$key is missing in $size');
+        rects[key] = tester.getRect(finder);
+      }
+
+      for (final entry in rects.entries) {
+        // Persistent chrome keeps out of the upper band, which is reserved for
+        // the road ahead. Urgent alerts are the one exception #104 allows: they
+        // interrupt by growing the band upwards, never by anchoring to the top.
+        if (!urgentKeys.contains(entry.key)) {
+          expect(
+            entry.value.top,
+            greaterThanOrEqualTo(size.height / 3),
+            reason: '${entry.key} intrudes into the upper band in $size',
+          );
+        }
+        expect(entry.value.left, greaterThanOrEqualTo(0));
+        expect(entry.value.right, lessThanOrEqualTo(size.width));
+        expect(entry.value.bottom, lessThanOrEqualTo(size.height));
+      }
+
+      final persistentTop = rects.entries
+          .where((entry) => !urgentKeys.contains(entry.key))
+          .map((entry) => entry.value.top)
+          .reduce((a, b) => a < b ? a : b);
+      for (final key in urgentKeys) {
+        expect(
+          rects[key]!.bottom,
+          lessThanOrEqualTo(persistentTop),
+          reason: '$key must stack inside the band, not float over the map',
+        );
+      }
+
+      // Nothing covers anything else at the maximum simultaneous overlay count.
+      final entries = rects.entries.toList(growable: false);
+      for (var first = 0; first < entries.length; first += 1) {
+        for (var second = first + 1; second < entries.length; second += 1) {
+          final a = entries[first].value.deflate(0.5);
+          final b = entries[second].value.deflate(0.5);
+          expect(
+            a.overlaps(b),
+            isFalse,
+            reason:
+                '${entries[first].key} overlaps ${entries[second].key} in $size',
+          );
+        }
+      }
+
+      if (landscape) {
+        // Landscape keeps the centre column clear so the rider's own marker
+        // and the road ahead are never behind chrome.
+        for (final entry in rects.entries) {
+          final clearsCentre =
+              entry.value.right <= size.width * 0.45 ||
+              entry.value.left >= size.width * 0.55;
+          expect(
+            clearsCentre,
+            isTrue,
+            reason: '${entry.key} crosses the centre column in $size',
+          );
+        }
+      } else {
+        // Portrait chrome is one measured band whose height the camera reads to
+        // clamp its forward bias. Every surface being live at once is the worst
+        // case and still leaves the upper third of the map clear; this guards
+        // against the band growing beyond that.
+        final bandTop = rects.values
+            .map((rect) => rect.top)
+            .reduce((a, b) => a < b ? a : b);
+        expect(size.height - bandTop, lessThan(size.height * 0.62));
+      }
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          leaderStatus: leaderStatus,
+          overlayMarkers: riders,
+          groupRiderCount: 3,
+          ridePaused: true,
+          distanceUnit: DistanceUnit.miles,
+          onOpenRideMenu: () async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+        ),
+      ),
+    );
+
+    await verifyLayout(landscape: false);
+    await verifyLayout(landscape: true);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/navigation_guidance.dart';
 
+import 'osrm_maneuver_fixtures.dart';
+
 void main() {
   const planner = NavigationGuidancePlanner();
 
@@ -128,6 +130,263 @@ void main() {
     expect(guidance?.maneuver.name, 'First turn');
     expect(guidance?.followingManeuver?.name, 'Second turn');
     expect(guidance?.followingDistanceMeters, closeTo(111, 5));
+  });
+
+  test('a UK roundabout ridden straight through is one instruction', () async {
+    final route = await routeFromOsrmResponse(ukRoundaboutStraightOnResponse());
+
+    final steps = planner.instructions(route);
+    final roundabout = steps.first.instruction;
+
+    // The engine reported joining the ring and leaving it, both as slight lefts.
+    expect(route.maneuvers.map((maneuver) => maneuver.type), [
+      'depart',
+      'roundabout',
+      'exit roundabout',
+      'arrive',
+    ]);
+    expect(steps.map((step) => step.instruction.text), [
+      'Roundabout, 2nd exit, straight on',
+      'Arrive at the destination',
+    ]);
+    expect(roundabout.kind, ManeuverKind.roundabout);
+    expect(roundabout.direction, ManeuverDirection.straight);
+    expect(roundabout.exitNumber, 2);
+    expect(roundabout.stepCount, 2);
+    // Driving side is kept for ring rendering only.
+    expect(roundabout.leftHandTraffic, isTrue);
+    expect(roundabout.lanes, hasLength(3));
+    expect(roundabout.roadLabel, 'Wells Road · A37');
+  });
+
+  test(
+    'a third-exit roundabout states the exit number and direction',
+    () async {
+      final route = await routeFromOsrmResponse(
+        roundaboutThirdExitRightResponse(),
+      );
+
+      final roundabout = planner.instructions(route).first.instruction;
+
+      expect(roundabout.text, 'Roundabout, 3rd exit, right');
+      expect(roundabout.direction, ManeuverDirection.right);
+      expect(roundabout.exitNumber, 3);
+      expect(roundabout.roadLabel, 'Redcliffe Way · A4');
+    },
+  );
+
+  test('a split gyratory ring collapses into a single roundabout', () async {
+    final route = await routeFromOsrmResponse(gyratoryResponse());
+
+    final steps = planner.instructions(route);
+
+    expect(route.maneuvers, hasLength(5));
+    expect(steps.map((step) => step.instruction.text), [
+      'Roundabout, 2nd exit, straight on',
+      'Arrive at the destination',
+    ]);
+    expect(steps.first.instruction.stepCount, 3);
+    expect(steps.first.instruction.roadLabel, 'West Street');
+  });
+
+  test('adjacent urban roundabouts each keep one instruction', () async {
+    final route = await routeFromOsrmResponse(multiRoundaboutUrbanResponse());
+
+    final steps = planner.instructions(route);
+
+    expect(steps.map((step) => step.instruction.text), [
+      'Roundabout, 3rd exit, right',
+      'Roundabout, 2nd exit, left',
+      'Roundabout, 4th exit, left',
+      'Turn right',
+      'Arrive at the destination',
+    ]);
+    expect(steps.map((step) => step.instruction.isRoundabout), [
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
+    // Distances increase along the route so the list reads in riding order.
+    final distances = steps
+        .map((step) => step.distanceFromStartMeters)
+        .toList(growable: false);
+    expect(distances, orderedEquals(<double>[...distances]..sort()));
+  });
+
+  test('no fixture route announces one roundabout twice', () async {
+    final responses = [
+      ukRoundaboutStraightOnResponse(),
+      roundaboutThirdExitRightResponse(),
+      gyratoryResponse(),
+      multiRoundaboutUrbanResponse(),
+    ];
+
+    for (final response in responses) {
+      final route = await routeFromOsrmResponse(response);
+      final steps = planner.instructions(route);
+      expect(
+        steps.every((step) => step.instruction.isGuidance),
+        isTrue,
+        reason: 'route bookkeeping steps must not be announced',
+      );
+      // Leaving a ring is never an instruction of its own.
+      expect(
+        steps.map((step) => step.maneuver.type),
+        everyElement(isNot(anyOf('exit roundabout', 'exit rotary'))),
+      );
+      for (var index = 1; index < steps.length; index += 1) {
+        final previous = steps[index - 1];
+        final current = steps[index];
+        if (!previous.instruction.isRoundabout ||
+            !current.instruction.isRoundabout) {
+          continue;
+        }
+        // Two roundabout instructions are only allowed where they are far
+        // enough apart to be different junctions.
+        expect(
+          current.distanceFromStartMeters - previous.distanceFromStartMeters,
+          greaterThan(60),
+          reason:
+              'two instructions for one junction: '
+              '"${previous.instruction.text}" then "${current.instruction.text}"',
+        );
+      }
+    }
+  });
+
+  test('live guidance announces the collapsed roundabout once', () async {
+    final route = await routeFromOsrmResponse(ukRoundaboutStraightOnResponse());
+
+    final approaching = planner.plan(
+      route: route,
+      position: route.paths.first.points.first,
+      progressMeters: 0,
+    );
+
+    expect(approaching?.instruction.text, 'Roundabout, 2nd exit, straight on');
+    expect(approaching?.maneuver.type, 'roundabout');
+    // The exit step must not resurface as the closely following manoeuvre.
+    expect(approaching?.followingInstruction?.text, isNot(contains('exit')));
+  });
+
+  test('a roundabout without engine bearings claims no direction', () {
+    final route = ImportedRoute(
+      id: 'legacy',
+      name: 'Legacy roundabout',
+      importedAt: DateTime.utc(2026, 7, 25),
+      sourceFileName: 'legacy.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.47, longitude: -2.59),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        // A route persisted before bearings were stored. The entry modifier
+        // describes joining the ring, so it must not be read as the exit.
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.46, longitude: -2.59),
+          type: 'roundabout',
+          modifier: 'slight left',
+          exitNumber: 2,
+          drivingSide: 'left',
+        ),
+      ],
+    );
+
+    final instruction = planner.instructions(route).single.instruction;
+
+    expect(instruction.text, 'Roundabout, take the 2nd exit');
+    expect(instruction.direction, ManeuverDirection.unstated);
+    expect(instruction.text, isNot(contains('left')));
+  });
+
+  test('a roundabout with no exit count still states the direction', () {
+    final instruction = collapseManeuvers(const [
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.46, longitude: -2.59),
+        type: 'roundabout',
+        modifier: 'slight left',
+        drivingSide: 'left',
+        bearingBeforeDegrees: 10,
+        bearingAfterDegrees: 300,
+      ),
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.4602, longitude: -2.59),
+        type: 'exit roundabout',
+        modifier: 'slight left',
+        bearingBeforeDegrees: 40,
+        bearingAfterDegrees: 12,
+      ),
+    ]).single;
+
+    expect(instruction.text, 'Roundabout, take the exit straight on');
+    expect(instruction.exitNumber, isNull);
+  });
+
+  test('merged gyratory rings do not invent a combined exit count', () {
+    final instruction = collapseManeuvers(const [
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.46, longitude: -2.59),
+        type: 'roundabout',
+        exitNumber: 2,
+        bearingBeforeDegrees: 270,
+        bearingAfterDegrees: 200,
+      ),
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.46, longitude: -2.5899),
+        type: 'roundabout',
+        exitNumber: 1,
+        bearingBeforeDegrees: 210,
+        bearingAfterDegrees: 190,
+      ),
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.4601, longitude: -2.5899),
+        type: 'exit roundabout',
+        bearingBeforeDegrees: 190,
+        bearingAfterDegrees: 268,
+      ),
+    ]).single;
+
+    expect(instruction.exitNumber, isNull);
+    expect(instruction.text, 'Roundabout, take the exit straight on');
+  });
+
+  test('a small roundabout reported as a turn keeps its own modifier', () {
+    final instruction = collapseManeuvers(const [
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.46, longitude: -2.59),
+        type: 'roundabout turn',
+        modifier: 'left',
+        drivingSide: 'left',
+      ),
+    ]).single;
+
+    expect(instruction.kind, ManeuverKind.roundabout);
+    expect(instruction.direction, ManeuverDirection.left);
+    expect(instruction.text, 'Roundabout, take the exit left');
+  });
+
+  test('progress along a route can be measured for review surfaces', () async {
+    final route = await routeFromOsrmResponse(multiRoundaboutUrbanResponse());
+
+    final progress = planner.progressMetersAt(
+      route,
+      route.paths.first.points[1],
+    );
+    final away = planner.progressMetersAt(
+      route,
+      const GeoPoint(latitude: 52.5, longitude: -2.55),
+    );
+
+    expect(progress, closeTo(333, 30));
+    expect(away, isNull);
   });
 }
 
