@@ -31,6 +31,9 @@ jobs:
         working-directory: ${{ env.MOBILE_DIR }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          # Enough history for the tester release summary to list what changed.
+          fetch-depth: 50
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
           distribution: temurin
@@ -61,9 +64,17 @@ jobs:
           keyAlias=$KEY_ALIAS
           keyPassword=$KEY_PASSWORD
           PROPERTIES
+      - name: Resolve build identity
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+        run: |
+          set -euo pipefail
+          "$GITHUB_WORKSPACE/tools/build-identity.sh" pubspec.yaml internal "$BUILD_NUMBER" \
+            | tee -a "$GITHUB_ENV"
       - name: Build App Bundle
         env:
           BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          TESTER_NOTES_URL: https://github.com/${{ github.repository }}/blob/${{ github.sha }}/docs/tester-release-notes.md
           RIDE_RELAY_API_BASE_URL: ${{ vars.RIDE_RELAY_API_BASE_URL }}
           RIDE_RELAY_FIREBASE_API_KEY: ${{ vars.RIDE_RELAY_FIREBASE_API_KEY }}
           RIDE_RELAY_FIREBASE_PROJECT_ID: ${{ vars.RIDE_RELAY_FIREBASE_PROJECT_ID }}
@@ -84,7 +95,13 @@ jobs:
           fi
           flutter pub get
           flutter build appbundle --release \
+            --build-name="$RIDE_RELAY_APP_VERSION" \
             --build-number="$BUILD_NUMBER" \
+            --dart-define=RIDE_RELAY_APP_VERSION="$RIDE_RELAY_APP_VERSION" \
+            --dart-define=RIDE_RELAY_APP_BUILD="$RIDE_RELAY_APP_BUILD" \
+            --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK="$RIDE_RELAY_DISTRIBUTION_TRACK" \
+            --dart-define=RIDE_RELAY_BUILD_TIMESTAMP="$RIDE_RELAY_BUILD_TIMESTAMP" \
+            --dart-define=RIDE_RELAY_TESTER_NOTES_URL="$TESTER_NOTES_URL" \
             --dart-define=RIDE_RELAY_API_BASE_URL="$RIDE_RELAY_API_BASE_URL" \
             --dart-define=RIDE_RELAY_PUSH_ENABLED="$push_enabled" \
             --dart-define=RIDE_RELAY_FIREBASE_API_KEY="$RIDE_RELAY_FIREBASE_API_KEY" \
@@ -103,9 +120,42 @@ jobs:
           releaseFiles: ${{ env.MOBILE_DIR }}/build/app/outputs/bundle/release/app-release.aab
           track: internal
           status: completed
+      - name: Publish tester release summary
+        if: always()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          app_version="${RIDE_RELAY_APP_VERSION:-unknown}"
+          app_build="${RIDE_RELAY_APP_BUILD:-unknown}"
+          track="${RIDE_RELAY_DISTRIBUTION_TRACK:-internal}"
+          built_at="${RIDE_RELAY_BUILD_TIMESTAMP:-unknown}"
+          notes="$RUNNER_TEMP/tester-release-notes.md"
+          {
+            printf '# Android internal testing build %s\n\n' "$app_build"
+            printf -- '- App version: `%s`\n' "$app_version"
+            printf -- '- Build number (Play version code): `%s`\n' "$app_build"
+            printf -- '- Track: `%s`\n' "$track"
+            printf -- '- Built: `%s`\n' "$built_at"
+            printf -- '- Commit: `%s`\n' "$GITHUB_SHA"
+            printf -- '- Workflow run: %s\n\n' "$RUN_URL"
+            printf 'Testers see this build identity under **Settings -> About & build**.\n\n'
+            printf '## Recent commits on this ref\n\n'
+            git log --no-merges --max-count=20 --pretty='- %s (%h)' || true
+            printf '\nCopy the tester-facing entry into `docs/tester-release-notes.md`'
+            printf ' so build %s maps to changes.\n' "$app_build"
+          } > "$notes"
+          cat "$notes" >> "$GITHUB_STEP_SUMMARY"
+          cp "$notes" "$GITHUB_WORKSPACE/tester-release-notes.md"
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: tailendcharlie-android-app-bundle
           path: ${{ env.MOBILE_DIR }}/build/app/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tailendcharlie-tester-release-notes
+          path: tester-release-notes.md
           if-no-files-found: ignore

@@ -89,7 +89,15 @@ def test_presence_is_shared_between_relay_processes(client, settings, synchroniz
     assert observed["positions"][0]["sample"]["position"]["latitude"] == 51.2
 
 
-def test_presence_expires_and_clears_when_the_ride_starts(client, synchronize) -> None:
+def test_presence_expires_on_ttl_and_a_legacy_client_reads_nothing_after_start(
+    client, synchronize
+) -> None:
+    """The legacy read contract is preserved without destroying stored rows.
+
+    A build that only advertises ``pre-start-presence-v1`` still sees nothing
+    once the ride has started, but the rows survive for live-presence peers. An
+    older phone in a mixed group must not be able to blank a newer one.
+    """
     ride_id = "ride-presence-lifecycle"
     assert synchronize(client, ride_id=ride_id, secret=SECRET).status_code == 200
     assert _presence(client, ride_id, "rider-a", position=_position(51.0)).json()["positions"]
@@ -128,8 +136,10 @@ def test_presence_expires_and_clears_when_the_ride_starts(client, synchronize) -
         == 200
     )
     with client.app.state.session_factory() as session:
-        assert session.scalar(select(func.count()).select_from(PreStartPosition)) == 0
-    assert _presence(client, ride_id, "leader").json()["positions"] == []
+        assert session.scalar(select(func.count()).select_from(PreStartPosition)) == 1
+    legacy = _presence(client, ride_id, "leader").json()
+    assert legacy["positions"] == []
+    assert legacy["phase"] == "started"
 
 
 def test_presence_requires_matching_authenticated_device(client, synchronize) -> None:

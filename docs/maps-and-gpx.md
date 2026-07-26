@@ -127,12 +127,60 @@ seen on affected Samsung-class devices while retaining route geometry, rider
 contrast, north indication, scale, and light/dark theme response. The iOS
 overview continues to use the configured MapLibre style when available.
 
-The primary route is split at the rider's monotonic along-route progress. The
-completed section is solid orange and the route ahead is a translucent dotted
-orange line. Suspected, confirmed, or recovering off-route riders receive a
-magenta trail with a dark outline so their actual path is visually distinct
-from the planned route. Rider trails are capped in memory and are not added to
-the imported GPX.
+The primary route is split at the rider's monotonic along-route progress. That
+split is a view of the *plan*: it is not a record of where anyone has been.
+
+Every rider's travelled trail is recorded from position history alone and is
+drawn whether or not a route is loaded, whether or not the rider matches it, and
+on every participant's device. Route matching drives route progress and alerts
+only. Each rider's history is bounded to the most recent 120 points, is dropped
+when a rider stops being eligible for live position sharing, is not retained
+before the ride starts, and is never added to the imported GPX. The leader's
+trail also draws on the leader history the awareness controller rebuilds from the
+durable journal, so it survives an app restart mid-ride as far as the journal
+allows.
+
+### Route and trail palette
+
+Defined once in `apps/mobile/lib/features/map/route_trail_style.dart` and shared
+by the MapLibre layers, the flutter_map fallback and the group mini-map. Every
+line is opaque over an opaque near-black casing (`#10151C`): the bright fill
+carries the contrast over a dark basemap, the casing carries it over a light one.
+Because a dark basemap needs every one of these colours to be light, they cannot
+all separate by luminance, so each also has a unique width and dash pattern and
+stays identifiable in a greyscale render.
+
+| line | colour | width | pattern | dark worst | dark typical |
+| --- | --- | --- | --- | --- | --- |
+| route ahead | `#3DDC84` | 6 | long dash 22/11 | 4.11 | 9.54 |
+| travelled (plan behind you, and your own trail) | `#FF7A1A` | 5 | solid | 2.81 | 6.52 |
+| leader trail | `#D3B8FF` | 8 | solid | 4.22 | 9.78 |
+| off-route trail | `#FF5FD1` | 4 | dash 9/7 | 2.73 | 6.33 |
+| rejoin breadcrumb (owned by off-route rerouting) | `#00E5FF` | 4.5 | dash 12/8 | 4.77 | 11.06 |
+
+Contrast is WCAG 2.1, measured against the dark basemap this app actually
+renders — the OpenFreeMap dark style after `MapStyleRepository` repaints its
+near-black layers. "Dark worst" is against the lightest of those surfaces (the
+`#565656` motorway fill), "dark typical" against the `#1C1C1E` background. The
+casing measures 16.74:1 against the Liberty background and 18.32:1 against its
+white road fills. The blue this replaced (`#3478F6`, dotted, 90% opacity)
+measured 1.80:1 at the worst case, which is why it disappeared through a visor in
+sunlight. The travelled orange is unchanged because the same field report found
+it legible; it is the floor the other lines are held against.
+`route_trail_style_test.dart` asserts these numbers. Numbers are not a substitute
+for the daylight photograph the field-test log still needs.
+
+The leader's trail is the widest line and is drawn beneath the planned route, so
+the group's ground truth stays visible without hiding the plan. Off-route trails
+are drawn above it, because they are the deviation from it.
+
+The route ahead is green rather than cyan because cyan belongs to the rejoin
+breadcrumb, and those are the two lines that both mean "go this way" and appear
+together during a reroute. Amber or yellow was rejected for the route ahead
+because the light basemap's trunk roads are already `#FFEEAA`: the line would
+vanish into the road it is drawn on. The closest remaining pairs by luminance
+alone are route ahead against rejoin (1.16) and route ahead against the leader
+trail (1.03); hue separates the first and width and pattern separate both.
 
 ## In-app maneuver guidance
 

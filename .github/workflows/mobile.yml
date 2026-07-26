@@ -61,8 +61,22 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Resolve build identity
+        run: |
+          set -euo pipefail
+          "$GITHUB_WORKSPACE/tools/build-identity.sh" pubspec.yaml ci "$GITHUB_RUN_NUMBER" \
+            | tee -a "$GITHUB_ENV"
       - run: flutter pub get
-      - run: flutter build apk --debug
+      - name: Build debug APK
+        run: |
+          set -euo pipefail
+          flutter build apk --debug \
+            --build-name="$RIDE_RELAY_APP_VERSION" \
+            --build-number="$RIDE_RELAY_APP_BUILD" \
+            --dart-define=RIDE_RELAY_APP_VERSION="$RIDE_RELAY_APP_VERSION" \
+            --dart-define=RIDE_RELAY_APP_BUILD="$RIDE_RELAY_APP_BUILD" \
+            --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK="$RIDE_RELAY_DISTRIBUTION_TRACK" \
+            --dart-define=RIDE_RELAY_BUILD_TIMESTAMP="$RIDE_RELAY_BUILD_TIMESTAMP"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ride-relay-android-debug
@@ -84,8 +98,22 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Resolve build identity
+        run: |
+          set -euo pipefail
+          "$GITHUB_WORKSPACE/tools/build-identity.sh" pubspec.yaml ci "$GITHUB_RUN_NUMBER" \
+            | tee -a "$GITHUB_ENV"
       - run: flutter pub get
-      - run: flutter build ios --debug --no-codesign
+      - name: Build unsigned debug app
+        run: |
+          set -euo pipefail
+          flutter build ios --debug --no-codesign \
+            --build-name="$RIDE_RELAY_APP_VERSION" \
+            --build-number="$RIDE_RELAY_APP_BUILD" \
+            --dart-define=RIDE_RELAY_APP_VERSION="$RIDE_RELAY_APP_VERSION" \
+            --dart-define=RIDE_RELAY_APP_BUILD="$RIDE_RELAY_APP_BUILD" \
+            --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK="$RIDE_RELAY_DISTRIBUTION_TRACK" \
+            --dart-define=RIDE_RELAY_BUILD_TIMESTAMP="$RIDE_RELAY_BUILD_TIMESTAMP"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ride-relay-ios-unsigned-debug

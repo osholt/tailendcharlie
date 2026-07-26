@@ -39,6 +39,15 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
           .length;
       final visible = all.where(_matchesFilter).toList(growable: false)
         ..sort(_compareParticipants);
+      // The leader cannot set another rider's role, so the honest action here
+      // is naming the gap and who can close it.
+      final showMissingTecNotice =
+          widget.controller.isLocalRideLeader &&
+          !all.any(
+            (participant) =>
+                participant.isIncludedInLiveCount &&
+                participant.role == RideRole.tailEndCharlie,
+          );
       return FractionallySizedBox(
         heightFactor: 0.86,
         child: Column(
@@ -71,6 +80,7 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                 ],
               ),
             ),
+            if (showMissingTecNotice) const _MissingTecNotice(),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -142,6 +152,56 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
     if (left.isLocal != right.isLocal) return left.isLocal ? -1 : 1;
     return left.displayName.compareTo(right.displayName);
   }
+}
+
+/// Names the missing back-marker for the leader, and says exactly who can
+/// close the gap. Roles are self-selected in this app, so the leader cannot
+/// assign the role for someone else from here.
+class _MissingTecNotice extends StatelessWidget {
+  const _MissingTecNotice();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+    child: Card(
+      key: const Key('roster-missing-tec-notice'),
+      margin: EdgeInsets.zero,
+      color: const Color(0xFF3A3320),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              Icons.warning_amber_rounded,
+              color: Color(0xFFFFC857),
+              size: 22,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Text(
+                    'No Tail End Charlie',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    'Nobody is covering the back of this group, so there is no '
+                    'distance to the back and nobody confirming everyone is '
+                    'still with you. Ask the last rider to set their role to '
+                    'Tail End Charlie on their own Ride tab.',
+                    style: TextStyle(color: Color(0xFFE4D9BC), height: 1.35),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _ParticipantTile extends StatelessWidget {

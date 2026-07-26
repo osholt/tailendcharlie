@@ -34,10 +34,20 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
 7. Join all phones before departure, opt in to foreground location, and verify
    that each fresh latest position converges over internet-only, nearby-only
    and mixed transport. Move a phone twice and confirm the first point is
-   replaced rather than drawn as a trace; wait 46 seconds and confirm it
-   expires.
+   replaced rather than drawn as a trace. Stop reporting on one phone and
+   confirm the others show it transition live -> ageing -> stale in wording as
+   well as colour, and never as a current position.
 8. Start once from the lead, then verify early joiners begin from the same start
    time; add a late joiner and verify it becomes active without restarting.
+8a. Live presence across the whole ride (issue #99), on a two-device
+    mixed-platform pair, run both ways round (iOS leader/Android joiner and the
+    reverse). In each of join-before-start, join-after-start,
+    rejoin-after-app-restart and rejoin-after-network-loss, verify both riders'
+    positions are visible and advancing within one poll interval, that the
+    leader's roster and map show the joiner with no action on either device, and
+    that nobody disappears or is duplicated across the start transition. Then
+    run one device with a deliberately reduced capability set and confirm the
+    other names the limitation instead of showing an unexplained gap.
 9. Repeat the start with one phone offline, duplicate delivery, app restart,
    reconnect, and a pre-start lead-role handover.
 10. Explicitly leave on one phone, verify it disappears from the current roster
@@ -71,15 +81,40 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
     dismissal suppresses the same incident until expiry, and acceptance
     publishes exactly one higher route revision that converges to the follower.
 
+20. Ride roughly 1 km off the imported GPX and back, on the leader phone and on
+    a follower phone, and repeat with no route imported at all. Verify each
+    rider's own trail and the leader's trail keep drawing throughout the
+    excursion, on every device, with no gap at the on-route/off-route/rejoined
+    transitions. Restart the app mid-ride and confirm the leader's trail is
+    still there.
+21. Mount a phone in daylight at maximum brightness, in the dark map style, and
+    photograph the screen through a tinted visor. The photograph is the evidence
+    for route legibility; the measured contrast ratios in `maps-and-gpx.md` are
+    not. Repeat in the light map style, and confirm the planned route, travelled
+    trail, leader trail and any off-route trail are still told apart in a
+    greyscale copy of the same photograph.
+
 ## Pass gates
 
 - 95% of priority events reach an in-range peer within 10 seconds while the app
   is in a supported active-ride state.
 - No duplicate marker count after 100 event replays.
 - Queued events converge without user repair after peers reunite.
-- No pre-start trace is retained; latest snapshots expire or clear at start,
-  and every early/late/reconnected phone uses the same authoritative ride
-  start.
+- No pre-start trace is retained; latest snapshots expire or clear at start, and
+  every early/late/reconnected phone uses the same authoritative ride start.
+  Live presence is continuous across that start: a rider visible before it stays
+  visible after it, with one identity.
+- A rider who joins an already-started ride is visible to everyone within one
+  poll interval, and sees them, with no restart, GPS toggle or alert.
+- A position that stops updating is demoted to ageing and then stale in wording
+  as well as colour. It is never drawn as current, and never silently deleted -
+  where a rider stopped is what the group needs to go back for them.
+- Every unavailable live-position channel names its reason on the affected
+  phone: capability negotiation, transport failure, permission or an
+  incompatible peer.
+- Every rider's travelled trail, and the leader's, keep drawing off the planned
+  route and with no planned route, and the planned route is legible in a
+  daylight photograph through a visor in both map styles.
 - Explicit leave/rejoin produces no ghost riders, roster/alert counts match the
   signed current membership, and route publish/replace/clear converges.
 - Four-hour screen-off consumption remains within the 45% planning limit.
