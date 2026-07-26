@@ -393,6 +393,11 @@ class RelayService:
                 member = members.get(row.device_id)
                 if member is not None:
                     member["left"] = True
+                    # The departure time travels with the flag so a caller can
+                    # show *when* a rider left, and can order the departure
+                    # against a later rejoin, without waiting for the bulk event
+                    # batch to deliver the membership events (issue #144).
+                    member["leftAt"] = self._as_utc(row.created_at).isoformat()
                 continue
             display_name = payload.get("displayName")
             role = payload.get("role")

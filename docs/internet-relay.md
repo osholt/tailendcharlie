@@ -106,6 +106,16 @@ the ride's cache when a `rideStarted` or `rideEnded` event is observed. These
 positions therefore do not create rider tracks, route progress, ride
 statistics, off-course alerts, summaries, or GPX data.
 
+A `live-presence-v2` caller also receives `members`: the ride roster derived
+from the durable membership events without consulting the caller's cursor, so a
+wedged or backed-off batch sync cannot hide a participant. A rider who has left
+stays in that list with `left: true` and `leftAt` (the departure's own time), and
+a later `riderJoined` clears both — one identity, and a client can order a
+departure against a rejoin without waiting for the batch. `leftAt` is additive:
+an older client reads `left` alone, and a relay that does not report it leaves it
+null. Departed members are roster history only; they are never live presence, so
+they carry no position and are drawn nowhere.
+
 The initial implementation is internet-relay-only and process-local. Run one
 relay worker until the cache is moved to a shared short-lived store; otherwise
 different workers can return different assembly snapshots. Nearby exchange is

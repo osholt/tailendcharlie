@@ -303,6 +303,7 @@ class PresenceRosterEntry {
     required this.role,
     required this.joinedAt,
     this.left = false,
+    this.leftAt,
   });
 
   final String riderId;
@@ -310,6 +311,10 @@ class PresenceRosterEntry {
   final String role;
   final DateTime joinedAt;
   final bool left;
+
+  /// When the relay recorded the departure. Absent from an older relay, which
+  /// reports [left] alone.
+  final DateTime? leftAt;
 }
 
 class PreStartPresenceResult {
@@ -1229,6 +1234,7 @@ class HttpPreStartPresenceClient implements PreStartPresenceApi {
           role: role,
           joinedAt: joinedAt.toLocal(),
           left: item['left'] == true,
+          leftAt: DateTime.tryParse(item['leftAt'] as String? ?? '')?.toLocal(),
         ),
       );
     }

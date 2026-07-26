@@ -128,7 +128,10 @@ void main() {
     final bill = participants.firstWhere((entry) => entry.riderId == 'bill');
     expect(bill.state, RideMembershipState.left);
     expect(bill.isIncludedInLiveCount, isFalse);
-    expect(bill.stateLabel, 'Left the ride');
+    // The row stays, and it says when they went (#144): 09:02 for a departure
+    // two minutes after this ride started.
+    expect(bill.stateLabel, 'Left the ride at 09:02');
+    expect(bill.leftAt, startedAt.add(const Duration(minutes: 2)));
   });
 
   test('the roster states the position age in words', () {
