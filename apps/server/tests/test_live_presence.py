@@ -438,3 +438,52 @@ def test_a_repeated_publish_replaces_rather_than_duplicating(client, synchronize
     assert len(observed) == 1
     with client.app.state.session_factory() as session:
         assert session.scalar(select(func.count()).select_from(PreStartPosition)) == 1
+
+
+def test_presence_reports_the_relay_clock_alongside_its_arrival_stamps(client, synchronize) -> None:
+    """Two phones share no clock, so the relay supplies the one they can both use.
+
+    Issue #132: a peer's position was aged by this phone's clock minus the peer's
+    own timestamp, which measures the difference between two clocks as well as
+    the age. The relay's arrival stamp and its current time are one clock, so a
+    caller can age a peer's position honestly.
+    """
+    ride_id = "ride-server-time"
+    assert (
+        synchronize(client, ride_id=ride_id, secret=SECRET, device_id="leader").status_code == 200
+    )
+    assert _presence(client, ride_id, "rider-a", position=_position(51.0)).status_code == 200
+
+    before = datetime.now(UTC)
+    body = _presence(client, ride_id, "leader").json()
+    after = datetime.now(UTC)
+
+    server_time = datetime.fromisoformat(body["serverTime"])
+    assert before - timedelta(seconds=5) <= server_time <= after + timedelta(seconds=5)
+    received_at = datetime.fromisoformat(body["positions"][0]["receivedAt"])
+    expires_at = datetime.fromisoformat(body["positions"][0]["expiresAt"])
+    # Every stamp in the reply is on that same clock.
+    assert received_at <= server_time < expires_at
+
+
+def test_presence_serves_a_position_whose_publisher_clock_is_behind(client, synchronize) -> None:
+    """A phone with a wrong clock still publishes, and is still served."""
+    ride_id = "ride-skewed-publisher"
+    assert (
+        synchronize(client, ride_id=ride_id, secret=SECRET, device_id="leader").status_code == 200
+    )
+    recorded_at = datetime.now(UTC) - timedelta(minutes=4)
+
+    published = _presence(
+        client,
+        ride_id,
+        "rider-a",
+        position=_position(51.0, recorded_at=recorded_at),
+    )
+
+    assert published.status_code == 200
+    served = _presence(client, ride_id, "leader").json()["positions"][0]
+    # The publisher's own timestamp is preserved, and the relay's arrival stamp
+    # is what a reader can age it by.
+    assert datetime.fromisoformat(served["sample"]["recordedAt"]) == recorded_at
+    assert datetime.fromisoformat(served["receivedAt"]) > recorded_at

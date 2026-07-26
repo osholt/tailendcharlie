@@ -310,10 +310,22 @@ class PreStartPresenceResult {
     this.roster = const [],
     this.legacyPeerRiderIds = const {},
     this.livePresenceServed = false,
+    this.serverTime,
+    this.unreadablePositionCount = 0,
   });
 
   final List<RiderLocation> locations;
   final Duration ttl;
+
+  /// The relay's own clock at the moment it built this reply, when it reports
+  /// one. It is the only clock two phones share, so it is what a peer's
+  /// relay-stamped position is aged against.
+  final DateTime? serverTime;
+
+  /// Positions in the reply this build could not decode. They are skipped
+  /// individually: one unreadable position must never discard the whole reply,
+  /// which is how a single bad row used to hide every rider at once.
+  final int unreadablePositionCount;
 
   /// The phase the relay reports for this ride.
   final RidePresencePhase phase;
@@ -1104,25 +1116,43 @@ class HttpPreStartPresenceClient implements PreStartPresenceApi {
       if (values.length > 1000) {
         throw const FormatException('Too many live positions.');
       }
+      final serverTime = DateTime.tryParse(
+        decoded['serverTime'] as String? ?? '',
+      )?.toLocal();
       final locations = <RiderLocation>[];
       final legacyPeers = <String>{};
+      var unreadable = 0;
       for (final value in values) {
+        // One unusable position is skipped, never fatal. Discarding the whole
+        // reply took every other rider's position and the roster with it, and a
+        // device whose clock ran ahead of the relay hit that on every single
+        // poll: the relay had already deleted every expired row on its own
+        // clock, so the local re-check could only ever be measuring skew.
         if (value is! Map) {
-          throw const FormatException('Invalid live position.');
+          unreadable += 1;
+          continue;
         }
         final raw = Map<String, Object?>.from(value);
-        final expiresAt = DateTime.parse(raw['expiresAt']! as String);
-        if (!expiresAt.isAfter(_clock())) {
-          throw const FormatException('Expired live position returned.');
+        try {
+          final expiresAt = DateTime.parse(raw['expiresAt']! as String);
+          final receivedAt = DateTime.parse(raw['receivedAt']! as String);
+          // Judged on the relay's own clock when it reports one, and otherwise
+          // not judged at all: only the relay can say what it has expired.
+          if (!expiresAt.isAfter(serverTime ?? receivedAt)) {
+            unreadable += 1;
+            continue;
+          }
+          // Unknown response fields from a newer relay are ignored rather than
+          // rejected, so only the fields this build knows are decoded.
+          final location = RiderLocation.fromJson({
+            for (final field in _presenceLocationFields)
+              if (raw.containsKey(field)) field: raw[field],
+          });
+          if (raw['livePresence'] == false) legacyPeers.add(location.riderId);
+          locations.add(location);
+        } on Object {
+          unreadable += 1;
         }
-        // Unknown response fields from a newer relay are ignored rather than
-        // rejected, so only the fields this build knows are decoded.
-        final location = RiderLocation.fromJson({
-          for (final field in _presenceLocationFields)
-            if (raw.containsKey(field)) field: raw[field],
-        });
-        if (raw['livePresence'] == false) legacyPeers.add(location.riderId);
-        locations.add(location);
       }
       return PreStartPresenceResult(
         locations: List.unmodifiable(locations),
@@ -1131,6 +1161,8 @@ class HttpPreStartPresenceClient implements PreStartPresenceApi {
         roster: _presenceRoster(decoded['members']),
         legacyPeerRiderIds: Set.unmodifiable(legacyPeers),
         livePresenceServed: servesLivePresence,
+        serverTime: serverTime,
+        unreadablePositionCount: unreadable,
       );
     } on InternetRelayException {
       rethrow;

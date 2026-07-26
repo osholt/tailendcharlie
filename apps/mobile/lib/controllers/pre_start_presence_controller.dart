@@ -39,6 +39,8 @@ class PreStartPresenceController extends ChangeNotifier {
   final Map<String, RelayPresenceUpdate> _nearbyLocations = {};
   final Map<String, PresenceRosterMember> _roster = {};
   Set<String> _legacyPeerRiderIds = const {};
+  Duration _relayClockOffset = Duration.zero;
+  int _unreadablePositionCount = 0;
   RelayPresenceGateway? _nearby;
   StreamSubscription<RelayPresenceUpdate>? _nearbySubscription;
   Duration _ttl = const Duration(seconds: 45);
@@ -90,6 +92,13 @@ class PreStartPresenceController extends ChangeNotifier {
   List<PresenceRosterMember> get roster =>
       List.unmodifiable(_roster.values.toList()..sort(_byJoinedAt));
 
+  /// The relay's clock minus this device's, from the last successful sync.
+  ///
+  /// Zero until the relay reports its own time. A peer's position is aged
+  /// against the relay's clock rather than this phone's, because that is the
+  /// only clock the two phones share.
+  Duration get relayClockOffset => _relayClockOffset;
+
   /// Every named degradation currently affecting live positions.
   List<PresenceLimitation> get limitations {
     final channel = switch (_availability) {
@@ -106,6 +115,11 @@ class PreStartPresenceController extends ChangeNotifier {
       _ => null,
     };
     final result = <PresenceLimitation>[?channel];
+    if (_unreadablePositionCount > 0) {
+      result.add(
+        PresenceLimitation.positionsUnreadable(_unreadablePositionCount),
+      );
+    }
     for (final riderId in _legacyPeerRiderIds) {
       if (riderId == _session?.localRiderId) continue;
       final name =
@@ -114,6 +128,19 @@ class PreStartPresenceController extends ChangeNotifier {
       if (name == null) continue;
       result.add(
         PresenceLimitation.peerAppOlder(riderId: riderId, displayName: name),
+      );
+    }
+    // A rider whose own clock disagrees with the relay is named rather than
+    // quietly aged out. Their position is still live: it is timed by the relay.
+    for (final presence in presenceAt(_clock())) {
+      final offset = presence.publisherClockOffset;
+      if (offset == null || presence.isLocal) continue;
+      result.add(
+        PresenceLimitation.riderClockUntrusted(
+          riderId: presence.riderId,
+          displayName: presence.displayName,
+          offset: offset,
+        ),
       );
     }
     return List.unmodifiable(result);
@@ -131,7 +158,7 @@ class PreStartPresenceController extends ChangeNotifier {
   /// Retained positions from the internet presence channel only, so a caller
   /// merging in the journal can still attribute each source correctly.
   List<RiderLocation> get internetLocations =>
-      List.unmodifiable(_retained(_internetLocations.values, _clock()));
+      List.unmodifiable(_retainedInternet(_clock()));
 
   /// Retained positions from the nearby presence channel only.
   List<RiderLocation> get nearbyLocations {
@@ -145,9 +172,10 @@ class PreStartPresenceController extends ChangeNotifier {
       LivePresenceReconciler(policy: freshnessPolicy).reconcile(
         now: now,
         localRiderId: _session?.localRiderId ?? '',
-        internetPresence: _retained(_internetLocations.values, now),
+        internetPresence: _retainedInternet(now),
         nearbyPresence: _retained(_nearbyPositions(now), now),
         roster: _roster.values,
+        relayClockOffset: _relayClockOffset,
       );
 
   Iterable<RiderLocation> _retained(
@@ -156,6 +184,23 @@ class PreStartPresenceController extends ChangeNotifier {
   ) => locations.where(
     (location) => location.sample.ageAt(now) <= freshnessPolicy.retainFor,
   );
+
+  /// Retention for the internet channel is measured on the relay's clock for a
+  /// peer, because their position carries the relay's arrival stamp. Measuring it
+  /// against their own timestamp discarded riders whose phone clock was wrong
+  /// while they were still reporting every few seconds.
+  Iterable<RiderLocation> _retainedInternet(DateTime now) {
+    final localRiderId = _session?.localRiderId;
+    final relayNow = now.add(_relayClockOffset);
+    return _internetLocations.values.where((location) {
+      if (location.riderId == localRiderId) {
+        return location.sample.ageAt(now) <= freshnessPolicy.retainFor;
+      }
+      final relayAge = relayNow.difference(location.receivedAt);
+      return (relayAge.isNegative ? Duration.zero : relayAge) <=
+          freshnessPolicy.retainFor;
+    });
+  }
 
   Iterable<RiderLocation> _nearbyPositions(DateTime now) => [
     for (final update in _nearbyLocations.values)
@@ -238,6 +283,11 @@ class PreStartPresenceController extends ChangeNotifier {
       _clearOnNextSync = false;
       _ttl = result.ttl;
       _phase = result.phase;
+      final serverTime = result.serverTime;
+      if (serverTime != null) {
+        _relayClockOffset = serverTime.difference(_clock());
+      }
+      _unreadablePositionCount = result.unreadablePositionCount;
       _applyInternetResult(result, session);
       _availability = PresenceAvailability.live;
       notifyListeners();
@@ -276,6 +326,8 @@ class PreStartPresenceController extends ChangeNotifier {
     _nearbyLocations.clear();
     _roster.clear();
     _legacyPeerRiderIds = const {};
+    _relayClockOffset = Duration.zero;
+    _unreadablePositionCount = 0;
     notifyListeners();
     if (clearRemote) {
       await Future.wait([
@@ -337,10 +389,13 @@ class PreStartPresenceController extends ChangeNotifier {
       for (final entry in result.roster)
         if (entry.left) entry.riderId,
     };
+    final retained = _retainedInternet(
+      now,
+    ).map((location) => location.riderId).toSet();
     _internetLocations.removeWhere(
       (riderId, location) =>
           (departed.contains(riderId) && riderId != session.localRiderId) ||
-          location.sample.ageAt(now) > freshnessPolicy.retainFor,
+          !retained.contains(riderId),
     );
     _nearbyLocations.removeWhere((riderId, update) {
       final position = update.position;
