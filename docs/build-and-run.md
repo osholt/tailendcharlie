@@ -16,8 +16,17 @@ Companion documents, all of which this one links into rather than duplicates:
 - [tester-update-guide.md](./tester-update-guide.md) — the tester-facing guide.
 - [server-runbook.md](./server-runbook.md) — the relay this build talks to.
 
-## The four rules
+## The five rules
 
+0. **Deploy the relay at the same commit as any app build you install.** The app
+   and `apps/server` are one system: several fixes live entirely or partly on the
+   server, so an app build alone can leave a defect looking unfixed. On 26 July
+   the relay sat on a commit two days behind `main` while three app builds were
+   installed and tested, and the presence and alert failures that were re-reported
+   each time were the undeployed server. Check with
+   `ssh <relay-host> 'cd /opt/tailendcharlie && git log --oneline -1'` before
+   concluding an app-side fix did not work, and see
+   [server-runbook.md](./server-runbook.md) for the deploy.
 1. **A build you intend to launch by tapping its icon must be `--profile`.** An
    iOS Flutter *debug* build only runs while Flutter tooling or Xcode is
    attached. Tapping the icon afterwards crashes it. This is iOS policy, not a
