@@ -2496,11 +2496,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   /// Next instruction for the projected car surfaces.
   ///
-  /// This is the same collapsed wording the phone banner shows, so a roundabout
-  /// is announced once, with its exit and direction, rather than as the engine's
-  /// separate entry and exit steps.
+  /// This is the same collapsed instruction the phone banner shows, so a
+  /// roundabout is announced once, with its exit and direction, rather than as
+  /// the engine's separate entry and exit steps. The car rows are plain text
+  /// with no symbol beside them, so they name the junction.
   String? get _projectedGuidanceTitle =>
-      _latestNavigationGuidance?.instruction.text;
+      _latestNavigationGuidance?.instruction.standaloneText;
 
   String? get _projectedGuidanceDetail {
     final guidance = _latestNavigationGuidance;

@@ -61,13 +61,14 @@ class ManeuverInstruction {
     required this.kind,
     required this.direction,
     required this.text,
+    String? standaloneText,
     this.exitNumber,
     this.roadName,
     this.roadRef,
     this.lanes = const [],
     this.leftHandTraffic,
     this.stepCount = 1,
-  });
+  }) : standaloneText = standaloneText ?? text;
 
   /// The engine step the rider acts on. Retained so route progress, positions
   /// and object identity stay tied to the original persisted manoeuvre.
@@ -75,8 +76,21 @@ class ManeuverInstruction {
   final ManeuverKind kind;
   final ManeuverDirection direction;
 
-  /// Full instruction wording, always naming a direction where one is known.
+  /// Wording shown beside the manoeuvre symbol, always naming a direction where
+  /// one is known.
+  ///
+  /// A roundabout is not named here: the symbol beside it is a drawn roundabout,
+  /// and repeating the word spends the glance a rider has on something they can
+  /// already see.
   final String text;
+
+  /// Wording for surfaces that show no symbol, where the junction is named
+  /// because nothing else there says what it is.
+  ///
+  /// Used for the banner's accessibility label, which a rider who cannot see the
+  /// symbol depends on, and for the CarPlay and Android Auto rows, which are
+  /// plain text. Identical to [text] for every manoeuvre drawn from a glyph.
+  final String standaloneText;
 
   /// Roundabout or rotary exit ordinal, only when the engine counted exits.
   final int? exitNumber;
@@ -370,6 +384,12 @@ ManeuverInstruction _roundaboutInstruction({
       direction: direction,
       exitNumber: exitNumber,
     ),
+    standaloneText: _instructionText(
+      kind: ManeuverKind.roundabout,
+      direction: direction,
+      exitNumber: exitNumber,
+      namesJunction: true,
+    ),
     exitNumber: exitNumber,
     // The road the rider ends up on is named by the step that leaves the ring.
     roadName: last.name ?? entry.name,
@@ -529,6 +549,7 @@ String _instructionText({
   required ManeuverKind kind,
   required ManeuverDirection direction,
   int? exitNumber,
+  bool namesJunction = false,
 }) {
   final label = direction.label;
   switch (kind) {
@@ -540,13 +561,33 @@ String _instructionText({
       final ordinal = exitNumber == null || exitNumber <= 0
           ? null
           : _ordinal(exitNumber);
+      // Beside the banner and the all-turns list is a drawn roundabout, so the
+      // wording there leaves the junction to the symbol and states only what a
+      // rider still needs: which exit, and which way it goes. Where no symbol
+      // is shown - a screen reader, CarPlay, Android Auto - it is named.
       if (ordinal != null && direction.isStated) {
-        return 'Roundabout, $ordinal exit, $label';
+        return namesJunction
+            ? 'Roundabout, $ordinal exit, $label'
+            : '$ordinal exit, $label';
       }
-      if (ordinal != null) return 'Roundabout, take the $ordinal exit';
-      if (direction == ManeuverDirection.uTurn) return 'Roundabout, U-turn';
-      if (direction.isStated) return 'Roundabout, take the exit $label';
-      return 'Roundabout ahead, follow the route';
+      if (ordinal != null) {
+        return namesJunction
+            ? 'Roundabout, take the $ordinal exit'
+            : 'Take the $ordinal exit';
+      }
+      if (direction == ManeuverDirection.uTurn) {
+        return namesJunction ? 'Roundabout, U-turn' : 'Make a U-turn';
+      }
+      if (direction.isStated) {
+        return namesJunction
+            ? 'Roundabout, take the exit $label'
+            : 'Take the exit $label';
+      }
+      // Neither an exit number nor a direction was reported, so nothing is
+      // claimed about either. The symbol says which junction it is.
+      return namesJunction
+          ? 'Roundabout ahead, follow the route'
+          : 'Follow the route';
     case ManeuverKind.turn:
     case ManeuverKind.endOfRoad:
     case ManeuverKind.merge:

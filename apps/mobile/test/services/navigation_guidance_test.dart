@@ -146,7 +146,7 @@ void main() {
       'arrive',
     ]);
     expect(steps.map((step) => step.instruction.text), [
-      'Roundabout, 2nd exit, straight on',
+      '2nd exit, straight on',
       'Arrive at the destination',
     ]);
     expect(roundabout.kind, ManeuverKind.roundabout);
@@ -168,7 +168,7 @@ void main() {
 
       final roundabout = planner.instructions(route).first.instruction;
 
-      expect(roundabout.text, 'Roundabout, 3rd exit, right');
+      expect(roundabout.text, '3rd exit, right');
       expect(roundabout.direction, ManeuverDirection.right);
       expect(roundabout.exitNumber, 3);
       expect(roundabout.roadLabel, 'Redcliffe Way · A4');
@@ -182,7 +182,7 @@ void main() {
 
     expect(route.maneuvers, hasLength(5));
     expect(steps.map((step) => step.instruction.text), [
-      'Roundabout, 2nd exit, straight on',
+      '2nd exit, straight on',
       'Arrive at the destination',
     ]);
     expect(steps.first.instruction.stepCount, 3);
@@ -195,9 +195,9 @@ void main() {
     final steps = planner.instructions(route);
 
     expect(steps.map((step) => step.instruction.text), [
-      'Roundabout, 3rd exit, right',
-      'Roundabout, 2nd exit, left',
-      'Roundabout, 4th exit, left',
+      '3rd exit, right',
+      '2nd exit, left',
+      '4th exit, left',
       'Turn right',
       'Arrive at the destination',
     ]);
@@ -265,7 +265,7 @@ void main() {
       progressMeters: 0,
     );
 
-    expect(approaching?.instruction.text, 'Roundabout, 2nd exit, straight on');
+    expect(approaching?.instruction.text, '2nd exit, straight on');
     expect(approaching?.maneuver.type, 'roundabout');
     // The exit step must not resurface as the closely following manoeuvre.
     expect(approaching?.followingInstruction?.text, isNot(contains('exit')));
@@ -302,9 +302,62 @@ void main() {
 
     final instruction = planner.instructions(route).single.instruction;
 
-    expect(instruction.text, 'Roundabout, take the 2nd exit');
+    expect(instruction.text, 'Take the 2nd exit');
+    expect(instruction.standaloneText, 'Roundabout, take the 2nd exit');
     expect(instruction.direction, ManeuverDirection.unstated);
     expect(instruction.text, isNot(contains('left')));
+  });
+
+  test('a roundabout names itself only where no symbol is shown', () {
+    ManeuverInstruction roundabout({int? exitNumber, bool bearings = true}) =>
+        collapseManeuvers([
+          RouteManeuver(
+            position: const GeoPoint(latitude: 51.46, longitude: -2.59),
+            type: 'roundabout',
+            modifier: 'slight left',
+            drivingSide: 'left',
+            exitNumber: exitNumber,
+            bearingBeforeDegrees: bearings ? 0 : null,
+            bearingAfterDegrees: bearings ? 290 : null,
+          ),
+          RouteManeuver(
+            position: const GeoPoint(latitude: 51.4602, longitude: -2.59),
+            type: 'exit roundabout',
+            modifier: 'slight left',
+            bearingBeforeDegrees: bearings ? 200 : null,
+            bearingAfterDegrees: bearings ? 90 : null,
+          ),
+        ]).single;
+
+    // Beside the drawn ring the wording states the exit and the direction only.
+    // A rider who cannot see the ring is told which junction it is.
+    final counted = roundabout(exitNumber: 3);
+    expect(counted.text, '3rd exit, right');
+    expect(counted.standaloneText, 'Roundabout, 3rd exit, right');
+
+    final uncounted = roundabout();
+    expect(uncounted.text, 'Take the exit right');
+    expect(uncounted.standaloneText, 'Roundabout, take the exit right');
+
+    // Neither an exit number nor a direction: nothing is invented, and the
+    // wording still reads as an instruction rather than as nothing at all.
+    final bare = roundabout(bearings: false);
+    expect(bare.direction, ManeuverDirection.unstated);
+    expect(bare.exitNumber, isNull);
+    expect(bare.text, 'Follow the route');
+    expect(bare.standaloneText, 'Roundabout ahead, follow the route');
+
+    // Every other manoeuvre reads the same either way: only a roundabout has a
+    // drawn symbol standing in for a word.
+    final turn = collapseManeuvers(const [
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.46, longitude: -2.59),
+        type: 'turn',
+        modifier: 'right',
+      ),
+    ]).single;
+    expect(turn.text, 'Turn right');
+    expect(turn.standaloneText, turn.text);
   });
 
   test('a roundabout with no exit count still states the direction', () {
@@ -326,7 +379,7 @@ void main() {
       ),
     ]).single;
 
-    expect(instruction.text, 'Roundabout, take the exit straight on');
+    expect(instruction.text, 'Take the exit straight on');
     expect(instruction.exitNumber, isNull);
   });
 
@@ -355,7 +408,7 @@ void main() {
     ]).single;
 
     expect(instruction.exitNumber, isNull);
-    expect(instruction.text, 'Roundabout, take the exit straight on');
+    expect(instruction.text, 'Take the exit straight on');
   });
 
   test('a small roundabout reported as a turn keeps its own modifier', () {
@@ -370,7 +423,7 @@ void main() {
 
     expect(instruction.kind, ManeuverKind.roundabout);
     expect(instruction.direction, ManeuverDirection.left);
-    expect(instruction.text, 'Roundabout, take the exit left');
+    expect(instruction.text, 'Take the exit left');
   });
 
   test('progress along a route can be measured for review surfaces', () async {

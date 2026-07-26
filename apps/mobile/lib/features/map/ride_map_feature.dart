@@ -6027,11 +6027,14 @@ class _NavigationGuidanceBanner extends StatelessWidget {
     final followingDistance = guidance.followingDistanceMeters == null
         ? null
         : formatter.distance(guidance.followingDistanceMeters!);
+    // Spoken rather than seen, so the wording names the junction the symbol
+    // shows: standaloneText, not the text drawn beside the symbol.
     final semanticLabel = [
-      '${instruction.text} in $distance.',
+      '${instruction.standaloneText} in $distance.',
       if (showLanes) maneuverLaneSummary(instruction.lanes),
       if (following != null)
-        'Then ${following.text}${followingDistance == null ? '' : ' after $followingDistance'}.',
+        'Then ${following.standaloneText}'
+            '${followingDistance == null ? '' : ' after $followingDistance'}.',
       guidance.roadLabel,
     ].join(' ');
     return Semantics(
