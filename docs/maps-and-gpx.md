@@ -56,11 +56,64 @@ not override a rider manually locking the phone, keep the app running after a
 force-quit, or grant background CPU execution.
 
 The map uses foreground GPS speed, heading, and remaining route geometry to
-enter a heading-up follow view while moving. Landscape uses a wider zoom and a
-route-aware look-ahead point so bends and substantially more road ahead remain
-visible while the rider stays safely on screen. Landscape navigation menus use
-a narrow left rail. Manual pan or zoom suspends camera following and shows a
-**Re-centre** action instead of snapping back on the next GPS update.
+enter a heading-up follow view while moving. Landscape uses a wider zoom.
+Manual pan or zoom suspends camera following and shows a **Re-centre** action
+instead of snapping back on the next GPS update.
+
+### Forward-looking framing
+
+`NavigationCameraPlanner` drives zoom, tilt and forward bias from one
+smoothstep curve on smoothed road speed, so the value and the gradient are
+continuous and nothing snaps as the rider crosses a speed. The curve saturates
+at 30 m/s.
+
+- **Tilt** runs 51° to 58° in portrait and 53° to 58° in landscape. MapLibre
+  Native clamps pitch at 60° on both Android and iOS, so 58° is the working
+  ceiling with margin; a plan the platform silently clamps would end a
+  transition somewhere other than where it was aimed.
+- **Forward bias** puts the rider low in the frame rather than at its centre:
+  0.56 to 0.70 of the viewport height in portrait, 0.58 to 0.72 in landscape,
+  measured from the top edge. `maplibre_gl` exposes no camera padding, so the
+  bias is applied by aiming the camera at a ground point ahead of the rider,
+  computed from the tilt, zoom and measured viewport height, which lands the
+  rider on the planned fraction rather than guessing a look-ahead distance. On
+  the `flutter_map` fallback the same bias is a screen-space anchor offset.
+- Portrait chrome sits in a band directly under the rider, so the bias is
+  pulled back to keep the marker clear of the measured band height. With every
+  overlay live at once the framing degrades towards a centred follow camera and,
+  in the extreme, above centre: keeping the rider's own marker visible always
+  beats keeping the bias. Landscape chrome is confined to side rails, so
+  landscape keeps its full bias.
+
+### Rotation
+
+`NavigationHeadingSmoother` drives the map bearing. GPS course over ground is
+the only authoritative source, and only at or above 1.5 m/s; below that the last
+stable bearing is held, because a stationary GPS course is noise. The device
+compass is deliberately never blended in — a phone mounted on a steel
+motorcycle sits inside the bike's own magnetic field — and the only bearing
+taken at rest is the first of a ride, in place of an arbitrary north-up map.
+A course change is low-passed with a 0.9 s time constant, held entirely inside a
+9° deadband so ordinary road curvature produces no rotation, tightened to 3°
+when a manoeuvre is within 150 m, and rate limited to 45°/s so a 90° junction
+settles in about two seconds without overshoot. Changes beyond 95° are rejected
+until a following fix corroborates them, so GPS noise and tunnel re-acquisition
+cost one update of latency instead of spinning the map. All comparisons take the
+shortest angular path, so crossing north rotates the short way.
+
+### Overlay placement
+
+No persistent status surface is anchored to the top of the map: the upper band
+is where a rider on a mounted phone reads the road ahead. Portrait stacks every
+surface into one bottom-anchored band — urgent alerts, then the turn banner,
+then the TEC gap and group overview, then the action targets nearest the thumb.
+Landscape splits them into a bottom-left rail (turn banner, status, actions) and
+a bottom-right rail (group overview, speed limit, junction marker card), leaving
+the centre column and the upper viewport clear. Each rail is a single column, so
+placement stays deterministic and no surface can cover another at any
+simultaneous overlay count. Urgent alerts still interrupt, but they grow the
+band upwards rather than claiming the top band. Safe-area insets are respected
+in both orientations, with or without the app bar.
 
 Landscape navigation also shows a compact group overview above the primary
 turn-by-turn map. It uses a second, throttled view of the configured MapLibre
