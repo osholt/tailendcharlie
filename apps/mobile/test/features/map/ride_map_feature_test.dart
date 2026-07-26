@@ -133,6 +133,67 @@ void main() {
     },
   );
 
+  testWidgets('draws rider and leader trails with no route imported', (
+    tester,
+  ) async {
+    // #100: trails come from position history, so nothing about them may depend
+    // on a route being loaded or matched.
+    final directory = Directory.systemTemp.createTempSync('map-no-route-trail');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final trails = ValueNotifier<List<MapOverlayTrace>>([
+      const MapOverlayTrace(
+        id: 'trail-blake',
+        label: 'Blake leader trail',
+        kind: RiderTrailKind.leader,
+        points: [
+          GeoPoint(latitude: 53, longitude: -1.02),
+          GeoPoint(latitude: 53.004, longitude: -1.014),
+        ],
+      ),
+      const MapOverlayTrace(
+        id: 'trail-me',
+        label: 'You trail',
+        points: [
+          GeoPoint(latitude: 53, longitude: -1.03),
+          GeoPoint(latitude: 53.004, longitude: -1.024),
+        ],
+      ),
+    ]);
+    addTearDown(trails.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          riderTrails: trails,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
+    expect(
+      layer.polylines.map((line) => line.color),
+      containsAll([
+        RouteTrailStyle.leaderTrail.color,
+        RouteTrailStyle.travelled.color,
+      ]),
+    );
+    // Direction cues follow the trails too, without a route (#31).
+    final arrows = tester.widget<MarkerLayer>(
+      find.byKey(const Key('trail-direction-arrow-layer')),
+    );
+    expect(arrows.markers, isNotEmpty);
+  });
+
   testWidgets('turn guidance reduces the TEC gap to a single-line chip', (
     tester,
   ) async {
@@ -917,11 +978,21 @@ void main() {
       addTearDown(navigation.dispose);
       final traces = ValueNotifier<List<MapOverlayTrace>>([
         const MapOverlayTrace(
-          id: 'off-route-alex',
+          id: 'trail-alex',
           label: 'Alex off-route trace',
+          kind: RiderTrailKind.offRoute,
           points: [
             GeoPoint(latitude: 53, longitude: -1.01),
             GeoPoint(latitude: 53.001, longitude: -1.011),
+          ],
+        ),
+        const MapOverlayTrace(
+          id: 'trail-blake',
+          label: 'Blake leader trail',
+          kind: RiderTrailKind.leader,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53.002, longitude: -1.014),
           ],
         ),
       ]);
@@ -987,7 +1058,7 @@ void main() {
             navigationPosition: navigation,
             overlayMarkers: riders,
             groupRiderCount: 1,
-            offRouteTraces: traces,
+            riderTrails: traces,
             onOpenRideMenu: () async => menuOpens += 1,
           ),
         ),
@@ -1042,20 +1113,36 @@ void main() {
       tester.view.physicalSize = const Size(844, 390);
       await tester.pump();
       final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
+      Polyline lineWithColor(Color color) => layer.polylines.firstWhere(
+        (line) => line.color == color,
+        orElse: () => throw StateError('no $color line drawn'),
+      );
+      final ahead = lineWithColor(RouteTrailStyle.routeAhead.color);
       expect(
-        layer.polylines.any(
-          (line) =>
-              line.pattern == const StrokePattern.dotted(spacingFactor: 1.8),
-        ),
-        isTrue,
+        ahead.pattern,
+        StrokePattern.dashed(segments: RouteTrailStyle.routeAhead.dashPixels!),
+      );
+      expect(ahead.strokeWidth, RouteTrailStyle.routeAhead.widthPixels);
+      expect(ahead.borderColor, RouteTrailStyle.casing);
+      expect(ahead.color.a, 1.0);
+      final travelled = lineWithColor(RouteTrailStyle.travelled.color);
+      expect(travelled.pattern, const StrokePattern.solid());
+      // The leader's trail is the widest line and is drawn under the plan; an
+      // off-route trail is dashed and drawn over it.
+      final leader = lineWithColor(RouteTrailStyle.leaderTrail.color);
+      expect(leader.strokeWidth, RouteTrailStyle.leaderTrail.widthPixels);
+      expect(
+        layer.polylines.indexOf(leader),
+        lessThan(layer.polylines.indexOf(ahead)),
+      );
+      final offRoute = lineWithColor(RouteTrailStyle.offRouteTrail.color);
+      expect(
+        offRoute.pattern.segments,
+        RouteTrailStyle.offRouteTrail.dashPixels,
       );
       expect(
-        layer.polylines.any((line) => line.color == const Color(0xFFFF7A1A)),
-        isTrue,
-      );
-      expect(
-        layer.polylines.any((line) => line.color == const Color(0xFFE244C7)),
-        isTrue,
+        layer.polylines.indexOf(offRoute),
+        greaterThan(layer.polylines.indexOf(travelled)),
       );
 
       await tester.drag(find.byType(FlutterMap), const Offset(80, 0));

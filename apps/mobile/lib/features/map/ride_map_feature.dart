@@ -36,6 +36,7 @@ import '../../services/motorcycle_discovery.dart';
 import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
 import '../../services/offline_tile_cache.dart';
+import '../../services/rider_trail_recorder.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
@@ -47,6 +48,7 @@ import 'destination_route_sheet.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 import 'route_review_screen.dart';
+import 'route_trail_style.dart';
 
 @visibleForTesting
 bool shouldUseTiledGroupMiniMap({
@@ -78,7 +80,7 @@ class RideMapFeature extends StatefulWidget {
     this.currentPosition,
     this.navigationPosition,
     this.overlayMarkers,
-    this.offRouteTraces,
+    this.riderTrails,
     this.leaderStatus,
     this.groupRiderCount,
     this.onOpenRoster,
@@ -114,7 +116,7 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<GeoPoint?>? currentPosition,
     ValueListenable<MapNavigationPosition?>? navigationPosition,
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
-    ValueListenable<List<MapOverlayTrace>>? offRouteTraces,
+    ValueListenable<List<MapOverlayTrace>>? riderTrails,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
     int? groupRiderCount,
     VoidCallback? onOpenRoster,
@@ -144,7 +146,7 @@ class RideMapFeature extends StatefulWidget {
     currentPosition: currentPosition,
     navigationPosition: navigationPosition,
     overlayMarkers: overlayMarkers,
-    offRouteTraces: offRouteTraces,
+    riderTrails: riderTrails,
     leaderStatus: leaderStatus,
     groupRiderCount: groupRiderCount,
     onOpenRoster: onOpenRoster,
@@ -176,7 +178,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
-  final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
+  final ValueListenable<List<MapOverlayTrace>>? riderTrails;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
@@ -303,7 +305,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         currentPosition: widget.currentPosition,
         navigationPosition: widget.navigationPosition,
         overlayMarkers: widget.overlayMarkers,
-        offRouteTraces: widget.offRouteTraces,
+        riderTrails: widget.riderTrails,
         leaderStatus: widget.leaderStatus,
         groupRiderCount: widget.groupRiderCount,
         onOpenRoster: widget.onOpenRoster,
@@ -359,7 +361,7 @@ class RideMapScreen extends StatefulWidget {
     this.currentPosition,
     this.navigationPosition,
     this.overlayMarkers,
-    this.offRouteTraces,
+    this.riderTrails,
     this.leaderStatus,
     this.groupRiderCount,
     this.onOpenRoster,
@@ -399,7 +401,7 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
-  final ValueListenable<List<MapOverlayTrace>>? offRouteTraces;
+  final ValueListenable<List<MapOverlayTrace>>? riderTrails;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
@@ -436,7 +438,8 @@ class RideMapScreen extends StatefulWidget {
 class _RideMapScreenState extends State<RideMapScreen> {
   static const _remainingRouteSource = 'ride-relay-route-remaining';
   static const _riddenRouteSource = 'ride-relay-route-ridden';
-  static const _offRouteTraceSource = 'ride-relay-off-route-traces';
+  static const _riderTrailSource = 'ride-relay-rider-trails';
+  static const _casingHex = RouteTrailStyle.casingHex;
   static const _trailDirectionArrowSource = 'ride-relay-trail-direction-arrows';
   static const _waypointSource = 'ride-relay-waypoints';
   static const _positionSource = 'ride-relay-position';
@@ -550,7 +553,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
-    widget.offRouteTraces?.addListener(_onOverlayDataChanged);
+    widget.riderTrails?.addListener(_onOverlayDataChanged);
     widget.leaderStatus?.addListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
     _observeSpeedLimit(_navigationFix);
@@ -579,9 +582,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       oldWidget.overlayMarkers?.removeListener(_onOverlayDataChanged);
       widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     }
-    if (oldWidget.offRouteTraces != widget.offRouteTraces) {
-      oldWidget.offRouteTraces?.removeListener(_onOverlayDataChanged);
-      widget.offRouteTraces?.addListener(_onOverlayDataChanged);
+    if (oldWidget.riderTrails != widget.riderTrails) {
+      oldWidget.riderTrails?.removeListener(_onOverlayDataChanged);
+      widget.riderTrails?.addListener(_onOverlayDataChanged);
     }
     if (oldWidget.leaderStatus != widget.leaderStatus) {
       oldWidget.leaderStatus?.removeListener(_onGroupPipDataChanged);
@@ -608,7 +611,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.currentPosition?.removeListener(_onPositionChanged);
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
-    widget.offRouteTraces?.removeListener(_onOverlayDataChanged);
+    widget.riderTrails?.removeListener(_onOverlayDataChanged);
     widget.leaderStatus?.removeListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
@@ -1206,42 +1209,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 )
                 .toList(growable: false),
           ),
-        if (route != null)
+        // Travelled trails are drawn whether or not a route is loaded, and the
+        // leader's trail sits under the planned route so both stay readable
+        // where they coincide.
+        if (route != null || _visibleRiderTrails.isNotEmpty)
           PolylineLayer(
             polylines: [
+              ..._trailPolylines(dashed: false),
               ..._progressGeometry.remainingPaths.map(
-                (path) => Polyline(
-                  points: path.map(_latLng).toList(growable: false),
-                  color: const Color(0xE63478F6),
-                  strokeWidth: 5,
-                  borderColor: const Color(0xFF10151C),
-                  borderStrokeWidth: 2,
-                  pattern: const StrokePattern.dotted(spacingFactor: 1.8),
-                ),
+                (path) => _routePolyline(path, RouteTrailStyle.routeAhead),
               ),
               ..._progressGeometry.riddenPaths.map(
-                (path) => Polyline(
-                  points: path.map(_latLng).toList(growable: false),
-                  color: const Color(0xFFFF7A1A),
-                  strokeWidth: 5,
-                  borderColor: const Color(0xFF10151C),
-                  borderStrokeWidth: 2,
-                ),
+                (path) => _routePolyline(path, RouteTrailStyle.travelled),
               ),
-              ...(widget.offRouteTraces?.value ?? const <MapOverlayTrace>[])
-                  .where((trace) => trace.points.length >= 2)
-                  .map(
-                    (trace) => Polyline(
-                      points: trace.points.map(_latLng).toList(growable: false),
-                      color: trace.color,
-                      strokeWidth: 5,
-                      borderColor: const Color(0xFF10151C),
-                      borderStrokeWidth: 2,
-                    ),
-                  ),
+              ..._trailPolylines(dashed: true),
             ],
           ),
-        if (route != null)
+        if (route != null || _visibleRiderTrails.isNotEmpty)
           MarkerLayer(
             key: const Key('trail-direction-arrow-layer'),
             markers: _trailDirectionArrows()
@@ -1993,6 +1977,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
           circleStrokeColor: '#10151C',
         ),
       );
+      // Solid trails are drawn before the planned route so the leader's wider
+      // trail reads as a corridor beneath it rather than hiding it.
+      await controller.addGeoJsonSource(
+        _riderTrailSource,
+        _riderTrailGeoJson(),
+      );
+      await _addTrailLayers(controller, RiderTrailKind.leader);
+      await _addTrailLayers(controller, RiderTrailKind.rider);
       await controller.addGeoJsonSource(
         _remainingRouteSource,
         _remainingRouteGeoJson(),
@@ -2000,11 +1992,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addLineLayer(
         _remainingRouteSource,
         'ride-relay-route-remaining-border',
-        const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineOpacity: 0.7,
-          lineWidth: 8,
-          lineDasharray: [0.1, 1.8],
+        ml.LineLayerProperties(
+          lineColor: _casingHex,
+          lineWidth: RouteTrailStyle.routeAhead.casingWidthPixels,
+          lineDasharray: RouteTrailStyle.routeAhead.maplibreCasingDashArray,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -2013,11 +2004,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addLineLayer(
         _remainingRouteSource,
         'ride-relay-route-remaining',
-        const ml.LineLayerProperties(
-          lineColor: '#3478F6',
-          lineOpacity: 0.9,
-          lineWidth: 5,
-          lineDasharray: [0.1, 1.8],
+        ml.LineLayerProperties(
+          lineColor: _hexColor(RouteTrailStyle.routeAhead.color),
+          lineWidth: RouteTrailStyle.routeAhead.widthPixels,
+          lineDasharray: RouteTrailStyle.routeAhead.maplibreDashArray,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -2030,9 +2020,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addLineLayer(
         _riddenRouteSource,
         'ride-relay-route-ridden-border',
-        const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineWidth: 9,
+        ml.LineLayerProperties(
+          lineColor: _casingHex,
+          lineWidth: RouteTrailStyle.travelled.casingWidthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -2041,40 +2031,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addLineLayer(
         _riddenRouteSource,
         'ride-relay-route-ridden',
-        const ml.LineLayerProperties(
-          lineColor: '#FF7A1A',
-          lineWidth: 5,
+        ml.LineLayerProperties(
+          lineColor: _hexColor(RouteTrailStyle.travelled.color),
+          lineWidth: RouteTrailStyle.travelled.widthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
         enableInteraction: false,
       );
-      await controller.addGeoJsonSource(
-        _offRouteTraceSource,
-        _offRouteTraceGeoJson(),
-      );
-      await controller.addLineLayer(
-        _offRouteTraceSource,
-        'ride-relay-off-route-border',
-        const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineWidth: 9,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      await controller.addLineLayer(
-        _offRouteTraceSource,
-        'ride-relay-off-route-line',
-        const ml.LineLayerProperties(
-          lineColor: ['get', 'color'],
-          lineWidth: 5,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
+      // An off-route trail belongs on top of the plan: it is the deviation from
+      // it.
+      await _addTrailLayers(controller, RiderTrailKind.offRoute);
       await controller.addGeoJsonSource(
         _trailDirectionArrowSource,
         _trailDirectionArrowGeoJson(),
@@ -2196,6 +2163,50 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  /// Adds one trail kind's casing and line layers.
+  ///
+  /// Every paint value is a constant per layer, filtered by kind, because
+  /// MapLibre cannot data-drive `line-dasharray` and a wrongly typed
+  /// data-driven paint value would fail the whole style set-up, not just one
+  /// layer. A new kind therefore means one more call here.
+  Future<void> _addTrailLayers(
+    ml.MapLibreMapController controller,
+    RiderTrailKind kind,
+  ) async {
+    final style = RouteTrailStyle.forTrail(kind);
+    final filter = <Object>[
+      '==',
+      ['get', 'kind'],
+      kind.name,
+    ];
+    await controller.addLineLayer(
+      _riderTrailSource,
+      'ride-relay-trail-${kind.name}-casing',
+      ml.LineLayerProperties(
+        lineColor: _casingHex,
+        lineWidth: style.casingWidthPixels,
+        lineDasharray: style.maplibreCasingDashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      filter: filter,
+      enableInteraction: false,
+    );
+    await controller.addLineLayer(
+      _riderTrailSource,
+      'ride-relay-trail-${kind.name}-line',
+      ml.LineLayerProperties(
+        lineColor: _hexColor(style.color),
+        lineWidth: style.widthPixels,
+        lineDasharray: style.maplibreDashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      filter: filter,
+      enableInteraction: false,
+    );
+  }
+
   Future<void> _syncMapLibreSources() async {
     final controller = _mapLibreController;
     if (!_mapLibreStyleReady || controller == null) return;
@@ -2217,8 +2228,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _riddenRouteGeoJson(),
       );
       await controller.setGeoJsonSource(
-        _offRouteTraceSource,
-        _offRouteTraceGeoJson(),
+        _riderTrailSource,
+        _riderTrailGeoJson(),
       );
       await controller.setGeoJsonSource(
         _trailDirectionArrowSource,
@@ -2292,8 +2303,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _discoveryPointGeoJson(),
         );
         await controller.setGeoJsonSource(
-          _offRouteTraceSource,
-          _offRouteTraceGeoJson(),
+          _riderTrailSource,
+          _riderTrailGeoJson(),
         );
         await controller.setGeoJsonSource(
           _markerPlanSource,
@@ -2326,6 +2337,37 @@ class _RideMapScreenState extends State<RideMapScreen> {
     idPrefix: 'remaining-route',
   );
 
+  /// Every rider's travelled trail with enough geometry to draw. Rendering is
+  /// deliberately independent of whether a route is loaded or matched (#100).
+  List<MapOverlayTrace> get _visibleRiderTrails =>
+      (widget.riderTrails?.value ?? const <MapOverlayTrace>[])
+          .where((trace) => trace.points.length >= 2)
+          .toList(growable: false);
+
+  Polyline _routePolyline(List<GeoPoint> path, RouteLineStyle style) =>
+      Polyline(
+        points: path.map(_latLng).toList(growable: false),
+        color: style.color,
+        strokeWidth: style.widthPixels,
+        borderColor: RouteTrailStyle.casing,
+        borderStrokeWidth: style.fallbackBorderWidthPixels,
+        pattern: style.dashPixels == null
+            ? const StrokePattern.solid()
+            : StrokePattern.dashed(segments: style.dashPixels!),
+      );
+
+  /// Trail polylines of one pattern, widest first so a wider trail never hides
+  /// a narrower one. MapLibre gets the same ordering from its per-kind layers.
+  Iterable<Polyline> _trailPolylines({required bool dashed}) =>
+      (_visibleRiderTrails
+              .where((trace) => trace.style.isDashed == dashed)
+              .toList()
+            ..sort(
+              (first, second) =>
+                  second.style.widthPixels.compareTo(first.style.widthPixels),
+            ))
+          .map((trace) => _routePolyline(trace.points, trace.style));
+
   List<_StyledTrailDirectionArrow> _trailDirectionArrows() {
     const maximumVisibleArrows = 240;
     final items = <_StyledTrailDirectionArrow>[];
@@ -2351,15 +2393,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
     addArrows(
       paths: _progressGeometry.riddenPaths,
-      color: const Color(0xFFFF7A1A),
+      color: RouteTrailStyle.travelled.color,
       idPrefix: 'ridden',
       semanticLabel: 'Travel direction',
     );
-    for (final trace
-        in widget.offRouteTraces?.value ?? const <MapOverlayTrace>[]) {
+    // Whole-group rides can hold more trail than the arrow budget allows, so
+    // the cues a rider needs to interpret someone else's path come first.
+    final byImportance = _visibleRiderTrails.toList()
+      ..sort(
+        (first, second) =>
+            _arrowPriority(first.kind).compareTo(_arrowPriority(second.kind)),
+      );
+    for (final trace in byImportance) {
       addArrows(
         paths: [trace.points],
-        color: trace.color,
+        color: trace.style.color,
         idPrefix: trace.id,
         semanticLabel: '${trace.label} direction',
       );
@@ -2367,6 +2415,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     return items;
   }
+
+  static int _arrowPriority(RiderTrailKind kind) => switch (kind) {
+    RiderTrailKind.leader => 0,
+    RiderTrailKind.offRoute => 1,
+    RiderTrailKind.rider => 2,
+  };
 
   Map<String, dynamic> _trailDirectionArrowGeoJson() => MapGeoJson.points(
     _trailDirectionArrows().map(
@@ -2426,27 +2480,25 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ),
   );
 
-  Map<String, dynamic> _offRouteTraceGeoJson() {
-    final traces = widget.offRouteTraces?.value ?? const <MapOverlayTrace>[];
-    return {
-      'type': 'FeatureCollection',
-      'features': [
-        for (final trace in traces.where((trace) => trace.points.length >= 2))
-          {
-            'type': 'Feature',
-            'id': trace.id,
-            'properties': {'color': _hexColor(trace.color)},
-            'geometry': {
-              'type': 'LineString',
-              'coordinates': [
-                for (final point in trace.points)
-                  [point.longitude, point.latitude],
-              ],
-            },
+  Map<String, dynamic> _riderTrailGeoJson() => {
+    'type': 'FeatureCollection',
+    'features': [
+      for (final trace in _visibleRiderTrails)
+        {
+          'type': 'Feature',
+          'id': trace.id,
+          // The kind selects the layer, which carries the whole style.
+          'properties': {'kind': trace.kind.name, 'label': trace.label},
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              for (final point in trace.points)
+                [point.longitude, point.latitude],
+            ],
           },
-      ],
-    };
-  }
+        },
+    ],
+  };
 
   Map<String, dynamic> _waypointGeoJson() => MapGeoJson.points(
     _route?.waypoints
@@ -3765,18 +3817,22 @@ class MapEmergencyContact {
   };
 }
 
+/// One rider's travelled trail, drawn from recorded position history rather
+/// than from any match against the planned route (#100).
 class MapOverlayTrace {
   const MapOverlayTrace({
     required this.id,
     required this.points,
     required this.label,
-    this.color = const Color(0xFFE244C7),
+    this.kind = RiderTrailKind.rider,
   });
 
   final String id;
   final List<GeoPoint> points;
   final String label;
-  final Color color;
+  final RiderTrailKind kind;
+
+  RouteLineStyle get style => RouteTrailStyle.forTrail(kind);
 }
 
 class _StyledTrailDirectionArrow {
@@ -4376,9 +4432,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       await controller.addLineLayer(
         _routeSource,
         'ride-relay-mini-route-border',
-        const ml.LineLayerProperties(
-          lineColor: '#10151C',
-          lineWidth: 5,
+        ml.LineLayerProperties(
+          lineColor: RouteTrailStyle.casingHex,
+          lineWidth: RouteTrailStyle.miniMapRoute.casingWidthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -4387,9 +4443,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       await controller.addLineLayer(
         _routeSource,
         'ride-relay-mini-route-line',
-        const ml.LineLayerProperties(
-          lineColor: '#FF7A1A',
-          lineWidth: 3,
+        ml.LineLayerProperties(
+          lineColor: _hexColor(RouteTrailStyle.miniMapRoute.color),
+          lineWidth: RouteTrailStyle.miniMapRoute.widthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -4754,12 +4810,23 @@ class _GroupMiniMapPainter extends CustomPainter {
         final offset = project(route[index]);
         path.lineTo(offset.dx, offset.dy);
       }
+      // Opaque colour over a casing rather than a translucent line, matching
+      // the tiled mini-map and the main map's route ahead.
       canvas.drawPath(
         path,
         Paint()
-          ..color = const Color(0xE63478F6)
+          ..color = RouteTrailStyle.casing
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.5
+          ..strokeWidth = RouteTrailStyle.miniMapRoute.casingWidthPixels
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round,
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = RouteTrailStyle.miniMapRoute.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = RouteTrailStyle.miniMapRoute.widthPixels
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round,
       );
