@@ -189,6 +189,81 @@ void main() {
     },
   );
 
+  test('a start point with nothing mapped nearby stops asking', () async {
+    // #145: a ride often starts in a car park whose aisle and neighbouring roads
+    // carry no mapped limit at all - the bundled demo route's own start point is
+    // one. That cannot change while the bike is still, so it settles rather than
+    // re-asking a fair-use service every few seconds, and it resolves on movement.
+    final provider = _FakeSpeedLimitProvider(
+      results: [
+        const SpeedLimitLookupResult.unknown(
+          SpeedLimitLookupOutcome.noTaggedLimit,
+        ),
+      ],
+    );
+    var now = baseTime;
+    final controller = SpeedLimitDisplayController.inMemory(
+      provider: provider,
+      clock: () => now,
+    );
+
+    controller.observe(location(51.5000, baseTime));
+    await controller.waitForIdle();
+
+    expect(controller.status, SpeedLimitDisplayStatus.unavailable);
+    expect(controller.limit, isNull);
+
+    now = baseTime.add(const Duration(minutes: 5));
+    controller.observe(location(51.5000, now));
+    await controller.waitForIdle();
+    expect(provider.calls, hasLength(1));
+
+    // Setting off resolves it, and the travelled pair now carries a heading.
+    now = baseTime.add(const Duration(minutes: 6));
+    controller.observe(location(51.5004, now));
+    await controller.waitForIdle();
+
+    expect(provider.calls, hasLength(2));
+    expect(provider.calls.last.previous?.point.latitude, 51.5000);
+    expect(controller.status, SpeedLimitDisplayStatus.known);
+    controller.dispose();
+  });
+
+  test('an ambiguous junction keeps trying where the bike stands', () async {
+    // #145: candidates that genuinely disagree - standing where a 30 becomes a
+    // 50 - report the unconfirmed state rather than one of the two limits, and
+    // the rider is not left looking at it.
+    final provider = _FakeSpeedLimitProvider(
+      results: [
+        const SpeedLimitLookupResult.unknown(SpeedLimitLookupOutcome.poorMatch),
+        const SpeedLimitLookupResult.unknown(SpeedLimitLookupOutcome.poorMatch),
+      ],
+    );
+    var now = baseTime;
+    final controller = SpeedLimitDisplayController.inMemory(
+      provider: provider,
+      clock: () => now,
+    );
+
+    controller.observe(location(51.5000, baseTime));
+    await controller.waitForIdle();
+    expect(controller.status, SpeedLimitDisplayStatus.unconfirmedRoad);
+
+    now = baseTime.add(SpeedLimitDisplayController.unconfirmedRetryInterval);
+    controller.observe(location(51.5000, now));
+    await controller.waitForIdle();
+    expect(provider.calls, hasLength(2));
+    expect(controller.status, SpeedLimitDisplayStatus.unconfirmedRoad);
+
+    now = now.add(SpeedLimitDisplayController.unconfirmedRetryInterval);
+    controller.observe(location(51.5000, now));
+    await controller.waitForIdle();
+
+    expect(provider.calls, hasLength(3));
+    expect(controller.status, SpeedLimitDisplayStatus.known);
+    controller.dispose();
+  });
+
   test('does not look up limits while disabled', () async {
     final provider = _FakeSpeedLimitProvider();
     final controller = SpeedLimitDisplayController.inMemory(
