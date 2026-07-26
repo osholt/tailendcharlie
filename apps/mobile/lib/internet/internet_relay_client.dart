@@ -90,6 +90,7 @@ class RelayClientDescriptor {
     required this.appVersion,
     required this.appBuild,
     required this.capabilities,
+    this.distributionTrack = unknownVersion,
   });
 
   /// The build's real identity.
@@ -104,6 +105,7 @@ class RelayClientDescriptor {
     appVersion: _declaredAppVersion,
     appBuild: _declaredAppBuild,
     capabilities: RelayProtocolCapabilities.current,
+    distributionTrack: _declaredDistributionTrack,
   );
 
   static const unknownVersion = 'unknown';
@@ -112,11 +114,17 @@ class RelayClientDescriptor {
     'RIDE_RELAY_APP_VERSION',
   );
   static const _rawAppBuild = String.fromEnvironment('RIDE_RELAY_APP_BUILD');
+  static const _rawDistributionTrack = String.fromEnvironment(
+    'RIDE_RELAY_DISTRIBUTION_TRACK',
+  );
 
   static String get _declaredAppVersion =>
       _sanitiseDescriptorValue(_rawAppVersion);
 
   static String get _declaredAppBuild => _sanitiseDescriptorValue(_rawAppBuild);
+
+  static String get _declaredDistributionTrack =>
+      _sanitiseDescriptorValue(_rawDistributionTrack);
 
   /// Keeps a dart-define out of the header set unless it is a plain, bounded
   /// token, so a malformed injection can never smuggle header syntax.
@@ -133,6 +141,16 @@ class RelayClientDescriptor {
   final String appBuild;
   final Set<String> capabilities;
 
+  /// The distribution track the build was destined for, as stamped in by the
+  /// release workflow, or [unknownVersion] on an unstamped build.
+  ///
+  /// Sent to the relay so the reverse proxy's access log answers "which track
+  /// is this tester on" without asking the tester, which is exactly the
+  /// question the #101 delivery investigation could not answer. Parsed into
+  /// [DistributionTrack] by `BuildIdentity.fromEnvironment`, so the About
+  /// screen and this header can never disagree.
+  final String distributionTrack;
+
   /// False when the build channel did not inject its version, so callers can
   /// say "this build does not report its version" instead of quoting a wrong
   /// one.
@@ -144,6 +162,7 @@ class RelayClientDescriptor {
     'x-tailendcharlie-platform': platform,
     'x-tailendcharlie-app-version': appVersion,
     'x-tailendcharlie-app-build': appBuild,
+    'x-tailendcharlie-distribution-track': distributionTrack,
     'x-tailendcharlie-capabilities': (capabilities.toList()..sort()).join(','),
   };
 }

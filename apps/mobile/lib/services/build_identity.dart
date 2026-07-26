@@ -5,8 +5,12 @@ import '../internet/internet_relay_client.dart';
 /// Where an installed build came from.
 ///
 /// The value is stamped at build time by the workflow that produced the
-/// artefact, so it describes the channel the binary was *built for* rather
-/// than any track it was later promoted to.
+/// artefact, and names the track the build is *destined for* - the track a
+/// tester can install it from once the workflow finishes. A build uploaded to
+/// `internal` and promoted to `alpha` in the same run is stamped `alpha`,
+/// because `alpha` is where its testers get it; promotion never rebuilds, so
+/// stamping the upload track instead would tell every closed tester they are
+/// on a track they cannot see.
 enum DistributionTrack {
   /// A local `flutter run`/`flutter build` with no track stamped in.
   local('Local build'),
@@ -17,6 +21,12 @@ enum DistributionTrack {
   /// Google Play internal testing.
   playInternal('Play internal testing'),
 
+  /// Google Play closed testing, `alpha` track - where the tester group is.
+  playClosedAlpha('Play closed testing (alpha)'),
+
+  /// Google Play closed testing, `beta` track.
+  playClosedBeta('Play closed testing (beta)'),
+
   /// Apple TestFlight.
   testFlight('TestFlight');
 
@@ -24,13 +34,24 @@ enum DistributionTrack {
 
   final String label;
 
-  static DistributionTrack parse(String value) =>
-      switch (value.trim().toLowerCase()) {
-        'internal' || 'play-internal' || 'play_internal' => playInternal,
-        'testflight' || 'test-flight' => testFlight,
-        'ci' || 'continuous-integration' => continuousIntegration,
-        _ => local,
-      };
+  /// True for the Play tracks a tester reaches through the closed-testing
+  /// opt-in page rather than the public store listing.
+  bool get isPlayClosedTesting =>
+      this == playClosedAlpha || this == playClosedBeta;
+
+  static DistributionTrack parse(String value) => switch (value
+      .trim()
+      .toLowerCase()) {
+    'internal' || 'play-internal' || 'play_internal' => playInternal,
+    'alpha' ||
+    'closed-alpha' ||
+    'closed_alpha' ||
+    'play-alpha' => playClosedAlpha,
+    'beta' || 'closed-beta' || 'closed_beta' || 'play-beta' => playClosedBeta,
+    'testflight' || 'test-flight' => testFlight,
+    'ci' || 'continuous-integration' => continuousIntegration,
+    _ => local,
+  };
 }
 
 /// How stale the running tester build looks.
@@ -78,12 +99,11 @@ class BuildIdentity {
     // an unstamped build must report `unknown` on both rather than a
     // plausible-looking constant.
     final declared = RelayClientDescriptor.current();
+    final track = DistributionTrack.parse(declared.distributionTrack);
     return BuildIdentity(
       appVersion: declared.appVersion,
       appBuild: declared.appBuild,
-      track: DistributionTrack.parse(
-        const String.fromEnvironment('RIDE_RELAY_DISTRIBUTION_TRACK'),
-      ),
+      track: track,
       platform: resolvedPlatform,
       builtAt: _parseTimestamp(
         const String.fromEnvironment('RIDE_RELAY_BUILD_TIMESTAMP'),
@@ -92,7 +112,7 @@ class BuildIdentity {
         const String.fromEnvironment('RIDE_RELAY_API_BASE_URL'),
       ),
       updateUri: overriddenUpdateUrl.trim().isEmpty
-          ? defaultUpdateUriFor(resolvedPlatform)
+          ? defaultUpdateUriFor(resolvedPlatform, track)
           : _secureUri(overriddenUpdateUrl),
       testerNotesUri: _secureUri(
         const String.fromEnvironment(
@@ -114,6 +134,15 @@ class BuildIdentity {
   /// have not see the public listing and must accept the invitation first.
   static const playListingUrl =
       'https://play.google.com/store/apps/details?id=app.tailendcharlie';
+
+  /// The closed-testing opt-in page for the Android package.
+  ///
+  /// A closed (`alpha`/`beta`) tester who has not opted in on the device's
+  /// Google account is not offered the app by [playListingUrl] at all, so the
+  /// store listing is the wrong destination for a closed-track build. This page
+  /// both enrols the account and links straight through to the install/update.
+  static const playClosedTestingOptInUrl =
+      'https://play.google.com/apps/testing/app.tailendcharlie';
 
   /// TestFlight's own landing page. A build-specific TestFlight invitation link
   /// can only be issued from App Store Connect, so it is supplied per build
@@ -143,12 +172,20 @@ class BuildIdentity {
   /// telling the tester to check for a newer one.
   final Duration testerBuildLifetime;
 
-  static Uri? defaultUpdateUriFor(TargetPlatform platform) =>
-      switch (platform) {
-        TargetPlatform.android => Uri.parse(playListingUrl),
-        TargetPlatform.iOS => Uri.parse(testFlightUrl),
-        _ => null,
-      };
+  /// Where the update action should send a tester on this platform and track.
+  ///
+  /// Track-aware on Android: a closed-track build points at the opt-in page,
+  /// everything else at the store listing.
+  static Uri? defaultUpdateUriFor(
+    TargetPlatform platform,
+    DistributionTrack track,
+  ) => switch (platform) {
+    TargetPlatform.android => Uri.parse(
+      track.isPlayClosedTesting ? playClosedTestingOptInUrl : playListingUrl,
+    ),
+    TargetPlatform.iOS => Uri.parse(testFlightUrl),
+    _ => null,
+  };
 
   /// `1.0.1 (build 42)` - the identity to quote in a bug report.
   /// False when this build channel did not stamp its version in, so the app
@@ -188,8 +225,12 @@ class BuildIdentity {
     return days < 0 ? 0 : days;
   }
 
-  /// How a tester gets the newer build on this platform.
+  /// How a tester gets the newer build on this platform and track.
   String get updateInstruction => switch (platform) {
+    TargetPlatform.android when track.isPlayClosedTesting =>
+      'Open the closed-testing opt-in page with the Google account you test '
+          'with, then follow "Download it on Google Play" and choose Update. '
+          'Play can take a few minutes to offer a new closed-testing build.',
     TargetPlatform.android =>
       'Open Google Play, then Manage apps & device → Updates available. '
           'Play can take a few minutes to show a new internal-testing build.',
@@ -197,6 +238,16 @@ class BuildIdentity {
       'Open TestFlight and pull to refresh, then choose Update for Tail End '
           'Charlie.',
     _ => 'Reinstall the build from the channel it was distributed on.',
+  };
+
+  /// Label for the button that opens [updateUri]. Shared by the About sheet and
+  /// the home-screen banner so a tester is never sent to the closed-testing
+  /// opt-in page by a button that says "Google Play listing".
+  String get updateActionLabel => switch (platform) {
+    TargetPlatform.iOS => 'Open TestFlight',
+    TargetPlatform.android when track.isPlayClosedTesting =>
+      'Open closed testing page',
+    _ => 'Open Google Play listing',
   };
 
   static DateTime? _parseTimestamp(String value) {
