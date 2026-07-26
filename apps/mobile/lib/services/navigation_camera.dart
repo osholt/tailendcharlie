@@ -42,15 +42,31 @@ const double navigationCameraMinimumRiderFraction = 0.35;
 /// unusually shallow latitude from throwing the camera kilometres up the road.
 const double navigationCameraMaximumLookAheadMeters = 1200;
 
-/// How far the map may sit from the framing that following the rider would
-/// produce before the rider is offered a way back to it.
+/// How close the map has to be to the framing follow mode asked for before the
+/// camera counts as having *arrived* at the navigation viewport.
+///
+/// This is an arrival test, not a licence to drift. It answers only "has the
+/// camera reached the framing this app just commanded", so the rider is not
+/// offered a way back to a viewport the camera is still easing into (#141).
+/// Losing the viewport is never decided by distance: it happens when follow mode
+/// gives the camera up, which a single pan does immediately.
 ///
 /// Logical pixels rather than metres, because the same ground distance is a
-/// whole screen at navigation zoom and a thumbnail at route-overview zoom, and
-/// what a rider notices is the marker leaving the middle of the screen. Well
-/// under the shortest deliberate pan a gloved hand makes, and well over the lag
-/// between a moving rider and a camera easing after them.
-const double navigationCameraFramedOnRiderTolerancePixels = 56;
+/// whole screen at navigation zoom and a thumbnail at route-overview zoom. 12 px
+/// sits above the ~5 px a camera easing after a moving rider lags by, and far
+/// below the tens of pixels of the shortest deliberate pan.
+///
+/// #133 used 56 px against a *freshly planned* framing rather than against the
+/// commanded one. Read off an SE on 26 July 2026, that tolerance was 1363 m of
+/// ground at the zoom the map actually sat at, so a map panned 468 m off the
+/// rider still reported itself framed.
+const double navigationCameraViewportSettleTolerancePixels = 12;
+
+/// How far the reported zoom may sit from the commanded zoom and still count as
+/// arrived. Small on purpose: a route overview and a navigation viewport differ
+/// by whole zoom levels, and the point of checking is that an overview can never
+/// pass for the viewport.
+const double navigationCameraViewportSettleZoomTolerance = 0.08;
 
 /// A camera framing for one ride update.
 class NavigationCameraPlan {
@@ -246,28 +262,39 @@ abstract final class NavigationCameraPlanner {
     );
   }
 
-  /// Whether a map whose camera sits [driftMeters] from the target following
-  /// would have chosen still counts as framed on the rider.
+  /// Whether a camera reported [driftMeters] and [zoomDelta] away from the
+  /// framing this app commanded has arrived at that framing.
   ///
-  /// This is the whole test behind the "Follow me" affordance, and it is a
-  /// measurement rather than a record of how the map got there. #125 gated the
-  /// button on a flag set only when a pan interrupted an *active* follow, so a
-  /// stationary phone - which is never following, because following is driven by
-  /// movement - could be panned off the rider with the flag never set and the
-  /// button never shown (#133). A rider who cannot see themselves does not care
-  /// which gesture lost them.
+  /// The question "Follow me" asks is whether the camera *is* the navigation
+  /// viewport - following the rider icon, at the planned zoom, showing the road
+  /// ahead - not whether the rider happens to be somewhere in frame. #125 asked
+  /// instead whether a pan had interrupted an active follow, and follow mode
+  /// needs movement, so a phone on a desk was never following and the button
+  /// never appeared (#133). #133 asked whether the rider was roughly in frame,
+  /// which a route overview satisfies by accident (#141).
+  ///
+  /// Both parts matter. Comparing against the commanded framing rather than a
+  /// freshly planned one means the answer cannot be satisfied by a camera the app
+  /// never drove, and requiring the zoom to match means an overview cannot pass
+  /// for a viewport.
   ///
   /// [tileSize] is the renderer's tile scheme, since the same zoom number means
   /// a different scale on each: 512 for MapLibre, 256 for `flutter_map`.
-  static bool framesRider({
+  static bool settledOnViewport({
     required double driftMeters,
+    required double zoomDelta,
     required double zoom,
     required double latitudeDegrees,
     required int tileSize,
   }) {
-    if (!driftMeters.isFinite || !zoom.isFinite) return true;
+    if (!driftMeters.isFinite || !zoom.isFinite || !zoomDelta.isFinite) {
+      return false;
+    }
+    if (zoomDelta.abs() > navigationCameraViewportSettleZoomTolerance) {
+      return false;
+    }
     final tolerance =
-        navigationCameraFramedOnRiderTolerancePixels *
+        navigationCameraViewportSettleTolerancePixels *
         _metersPerPixel(zoom, latitudeDegrees, tileSize: tileSize);
     return tolerance.isFinite && driftMeters.abs() <= tolerance;
   }

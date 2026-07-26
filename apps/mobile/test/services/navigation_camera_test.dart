@@ -320,15 +320,18 @@ void main() {
     );
   });
 
-  group('framesRider', () {
-    // The measurement behind "Follow me" (#133). It answers "is the map where
-    // following would have put it", so it must be blind to how the map got
-    // there and scale with zoom rather than fixing a ground distance.
+  group('settledOnViewport', () {
+    // The arrival test behind "Follow me" (#141). It answers only "did the camera
+    // get to the framing this app commanded", so it scales with zoom rather than
+    // fixing a ground distance, and an overview zoom can never pass for a
+    // navigation viewport.
     test('scales its tolerance with the zoom, not with a ground distance', () {
-      // ~2.3 m per logical pixel at zoom 14.33 on MapLibre's 512 pixel scheme.
+      // ~2.3 m per logical pixel at zoom 14.33 on MapLibre's 512 pixel scheme, so
+      // the 12 px arrival window is about 28 m.
       expect(
-        NavigationCameraPlanner.framesRider(
-          driftMeters: 60,
+        NavigationCameraPlanner.settledOnViewport(
+          driftMeters: 20,
+          zoomDelta: 0,
           zoom: 14.33,
           latitudeDegrees: 53,
           tileSize: 512,
@@ -336,20 +339,49 @@ void main() {
         isTrue,
       );
       expect(
-        NavigationCameraPlanner.framesRider(
-          driftMeters: 400,
+        NavigationCameraPlanner.settledOnViewport(
+          driftMeters: 60,
+          zoomDelta: 0,
           zoom: 14.33,
           latitudeDegrees: 53,
           tileSize: 512,
         ),
         isFalse,
       );
-      // The same 400 m is a handful of pixels on a route overview, where the
-      // rider is still plainly on screen and centred.
+      // #133's 56 px band called this framed. Measured on an SE, that band was
+      // 1363 m at the zoom the phone sat at, so a map panned hundreds of metres
+      // off the rider reported itself framed and offered nothing (#141).
       expect(
-        NavigationCameraPlanner.framesRider(
-          driftMeters: 400,
-          zoom: 9,
+        NavigationCameraPlanner.settledOnViewport(
+          driftMeters: 468,
+          zoomDelta: 0,
+          zoom: 10.9,
+          latitudeDegrees: 51.47,
+          tileSize: 512,
+        ),
+        isFalse,
+      );
+    });
+
+    test('a route overview never passes for the navigation viewport', () {
+      // The camera can be exactly on the commanded ground point and still be the
+      // wrong viewport: a whole-route overview is three zoom levels out, showing
+      // no road ahead. This is the accident #133's positional test allowed.
+      expect(
+        NavigationCameraPlanner.settledOnViewport(
+          driftMeters: 0,
+          zoomDelta: -3.3,
+          zoom: 11,
+          latitudeDegrees: 53,
+          tileSize: 512,
+        ),
+        isFalse,
+      );
+      expect(
+        NavigationCameraPlanner.settledOnViewport(
+          driftMeters: 0,
+          zoomDelta: 0.05,
+          zoom: 14.33,
           latitudeDegrees: 53,
           tileSize: 512,
         ),
@@ -361,10 +393,11 @@ void main() {
       // FlutterMap's 256 pixel scheme is twice the ground scale at the same zoom
       // number, so it tolerates twice the drift. Getting this backwards would
       // make one renderer offer the button constantly and the other never.
-      const drift = 250.0;
+      const drift = 40.0;
       expect(
-        NavigationCameraPlanner.framesRider(
+        NavigationCameraPlanner.settledOnViewport(
           driftMeters: drift,
+          zoomDelta: 0,
           zoom: 13.87,
           latitudeDegrees: 53,
           tileSize: 256,
@@ -372,8 +405,9 @@ void main() {
         isTrue,
       );
       expect(
-        NavigationCameraPlanner.framesRider(
+        NavigationCameraPlanner.settledOnViewport(
           driftMeters: drift,
+          zoomDelta: 0,
           zoom: 13.87,
           latitudeDegrees: 53,
           tileSize: 512,
@@ -382,12 +416,12 @@ void main() {
       );
     });
 
-    test('a deliberate pan always exceeds a following camera lag', () {
-      // The tolerance sits between two real quantities at every riding speed: the
-      // ground a bike covers inside one 560 ms camera transition, which the
-      // easing camera is always that far behind, and the shortest pan a rider
-      // makes on purpose. The lag is a handful of pixels at every speed because
-      // the camera zooms out as the bike speeds up; a pan is tens of them.
+    test('a camera easing after a moving rider still counts as arrived', () {
+      // The window has to clear the ground a bike covers inside one 560 ms camera
+      // transition at every riding speed, or the control would flicker back on
+      // during ordinary following. The lag stays a handful of pixels because the
+      // camera zooms out as the bike speeds up. A deliberate pan is tens of
+      // pixels and must never be inside the window.
       for (var speed = 0.0; speed <= 30; speed += 2) {
         for (final landscape in [false, true]) {
           final plan = _plan(speed, landscape: landscape);
@@ -397,50 +431,65 @@ void main() {
                 math.cos(53 * math.pi / 180) /
                 math.pow(2, plan.zoom);
             expect(
-              NavigationCameraPlanner.framesRider(
+              NavigationCameraPlanner.settledOnViewport(
                 driftMeters: speed * 0.56,
+                zoomDelta: 0,
                 zoom: plan.zoom,
                 latitudeDegrees: 53,
                 tileSize: tileSize,
               ),
               isTrue,
-              reason: 'a $speed m/s follow lag must not look like a pan',
+              reason: 'a $speed m/s follow lag must still count as arrived',
             );
             expect(
-              NavigationCameraPlanner.framesRider(
-                driftMeters: 84 * metresPerPixel,
+              NavigationCameraPlanner.settledOnViewport(
+                driftMeters: 20 * metresPerPixel,
+                zoomDelta: 0,
                 zoom: plan.zoom,
                 latitudeDegrees: 53,
                 tileSize: tileSize,
               ),
               isFalse,
-              reason: 'an 84 pixel pan at $speed m/s must be noticed',
+              reason: 'a 20 pixel pan at $speed m/s must not read as arrived',
             );
           }
         }
       }
     });
 
-    test('an unmeasurable framing is never reported as lost', () {
-      // A map that has not reported a camera yet cannot be judged, and offering
-      // a recovery from an unknown state would be noise.
+    test('an unmeasurable camera has not arrived', () {
+      // #133 read the unknown case as "framed" and hid the control on the strength
+      // of it, which is how a MapLibre map that had never reported a camera
+      // suppressed the only way back (#141). Unknown is not arrived.
       expect(
-        NavigationCameraPlanner.framesRider(
+        NavigationCameraPlanner.settledOnViewport(
           driftMeters: double.nan,
+          zoomDelta: 0,
           zoom: 14,
           latitudeDegrees: 53,
           tileSize: 512,
         ),
-        isTrue,
+        isFalse,
       );
       expect(
-        NavigationCameraPlanner.framesRider(
-          driftMeters: 4000,
+        NavigationCameraPlanner.settledOnViewport(
+          driftMeters: 4,
+          zoomDelta: 0,
           zoom: double.nan,
           latitudeDegrees: 53,
           tileSize: 512,
         ),
-        isTrue,
+        isFalse,
+      );
+      expect(
+        NavigationCameraPlanner.settledOnViewport(
+          driftMeters: 4,
+          zoomDelta: double.nan,
+          zoom: 14,
+          latitudeDegrees: 53,
+          tileSize: 512,
+        ),
+        isFalse,
       );
     });
   });
