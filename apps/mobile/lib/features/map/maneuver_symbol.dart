@@ -140,58 +140,246 @@ class ManeuverSymbolView extends StatelessWidget {
   }
 }
 
-/// Paints a roundabout with the exit pointing where the rider actually goes.
-class RoundaboutSymbolPainter extends CustomPainter {
-  const RoundaboutSymbolPainter({required this.symbol, required this.color});
+/// What one drawn arc of the ring means to the rider.
+enum RoundaboutRingSegment {
+  /// The part of the ring the rider rides, from where they join to where they
+  /// leave, in the direction traffic flows on the reported driving side.
+  ridden,
 
-  final RoundaboutSymbol symbol;
-  final Color color;
+  /// The rest of the ring, which carries traffic the rider does not follow.
+  beyond,
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    final extent = size.shortestSide;
-    final stroke = math.max(1.6, extent * 0.1);
-    final centre = Offset(size.width / 2, size.height * 0.44);
-    final radius = extent * 0.26;
-    final line = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round;
-    final ring = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke * 0.85;
+  /// No driving side was reported, so no part of the ring is claimed as the
+  /// part the rider rides.
+  undirected,
+}
 
-    // The road the rider is on, entering from the bottom.
-    canvas.drawLine(
-      Offset(centre.dx, size.height - stroke / 2),
-      Offset(centre.dx, centre.dy + radius),
-      line,
-    );
-    canvas.drawCircle(centre, radius, ring);
+/// One drawn arc of the ring, measured like the exit: degrees clockwise from
+/// straight ahead, with a positive sweep running clockwise on screen.
+@immutable
+class RoundaboutRingArc {
+  const RoundaboutRingArc({
+    required this.startDegrees,
+    required this.sweepDegrees,
+    required this.segment,
+  });
 
-    final exitDegrees = _exitDegrees(symbol);
-    if (exitDegrees != null) {
-      final radians = exitDegrees * math.pi / 180;
-      final unit = Offset(math.sin(radians), -math.cos(radians));
-      final start = centre + unit * radius;
-      final end = centre + unit * (radius + extent * 0.3);
-      canvas.drawLine(start, end, line);
-      _drawArrowHead(canvas, line, end, unit, extent * 0.2);
-    }
+  final double startDegrees;
+  final double sweepDegrees;
+  final RoundaboutRingSegment segment;
 
-    final clockwise = symbol.leftHandTraffic;
-    if (clockwise != null) {
-      // Clockwise flow passes the west side of the ring heading north, and
-      // anticlockwise flow passes the east side heading north.
-      final anchor = Offset(
-        centre.dx + (clockwise ? -radius : radius),
-        centre.dy,
-      );
-      _drawArrowHead(canvas, line, anchor, const Offset(0, -1), extent * 0.155);
-    }
+  double get startRadians => (startDegrees - 90) * math.pi / 180;
+  double get sweepRadians => sweepDegrees * math.pi / 180;
+  double get endDegrees => startDegrees + sweepDegrees;
+}
+
+/// The one arrowhead a roundabout symbol carries, at the end of the exit road.
+@immutable
+class RoundaboutArrowHead {
+  const RoundaboutArrowHead({
+    required this.tip,
+    required this.direction,
+    required this.length,
+    required this.halfWidth,
+  });
+
+  /// Where the arrow points, which is where the rider is going.
+  final Offset tip;
+
+  /// Unit vector from the ring towards [tip].
+  final Offset direction;
+  final double length;
+  final double halfWidth;
+
+  Offset get base => tip - direction * length;
+
+  List<Offset> get barbs {
+    final normal = Offset(-direction.dy, direction.dx);
+    return [base + normal * halfWidth, base - normal * halfWidth];
   }
+
+  Path toPath() {
+    final corners = barbs;
+    return Path()
+      ..moveTo(tip.dx, tip.dy)
+      ..lineTo(corners.first.dx, corners.first.dy)
+      ..lineTo(corners.last.dx, corners.last.dy)
+      ..close();
+  }
+}
+
+/// The exit the rider takes: a road leaving through the break in the ring, and
+/// the symbol's only arrowhead at the end of it.
+@immutable
+class RoundaboutExitRoad {
+  const RoundaboutExitRoad({
+    required this.start,
+    required this.end,
+    required this.head,
+  });
+
+  /// On the ring, so the road reads as leaving through the break in it.
+  final Offset start;
+
+  /// Where the drawn road stops, inside [head] so no cap shows past the point.
+  final Offset end;
+  final RoundaboutArrowHead head;
+}
+
+/// Every part of a roundabout symbol, worked out before anything is drawn.
+///
+/// The shape is separated from the painting so it can be asserted rather than
+/// only eyeballed: that the ring is broken where each road meets it, and that
+/// the symbol carries exactly one arrowhead, on the exit.
+@immutable
+class RoundaboutSymbolGeometry {
+  const RoundaboutSymbolGeometry._({
+    required this.centre,
+    required this.radius,
+    required this.roadStrokeWidth,
+    required this.entryRoadStrokeWidth,
+    required this.riddenRingStrokeWidth,
+    required this.beyondRingStrokeWidth,
+    required this.ringGapHalfDegrees,
+    required this.exitCasingWidth,
+    required this.entryDegrees,
+    required this.entryRoadStart,
+    required this.entryRoadEnd,
+    required this.ringArcs,
+    required this.exit,
+  });
+
+  /// Works out how [symbol] is drawn into a box of [size].
+  ///
+  /// Every part is placed within the box at every direction, so no arrowhead is
+  /// lost to a clip in the banner or in the all-turns list.
+  factory RoundaboutSymbolGeometry.of(RoundaboutSymbol symbol, Size size) {
+    final extent = size.shortestSide;
+    final centre = Offset(size.width / 2, size.height / 2);
+    final road = math.max(_minimumRoadStroke, extent * _roadStrokeFraction);
+    final radius = extent * _radiusFraction;
+    final reach = extent * _reachFraction;
+    final exitDegrees = _exitDegrees(symbol);
+    final entryDegrees = _entryDegrees(exitDegrees);
+    final entryUnit = _unitAt(entryDegrees);
+    final gapHalfDegrees = _ringGapHalfDegrees(road: road, radius: radius);
+    return RoundaboutSymbolGeometry._(
+      centre: centre,
+      radius: radius,
+      roadStrokeWidth: road,
+      entryRoadStrokeWidth: road * _entryRoadFraction,
+      riddenRingStrokeWidth: road * _riddenRingFraction,
+      beyondRingStrokeWidth: road * _beyondRingFraction,
+      ringGapHalfDegrees: gapHalfDegrees,
+      exitCasingWidth: road * _exitCasingFraction,
+      entryDegrees: entryDegrees,
+      entryRoadStart: centre + entryUnit * reach,
+      // Roads stop on the ring itself, so a rounded end fills the break in the
+      // ring without reaching into the middle of it.
+      entryRoadEnd: centre + entryUnit * radius,
+      ringArcs: _ringArcs(
+        entryDegrees: entryDegrees,
+        exitDegrees: exitDegrees,
+        gapHalfDegrees: gapHalfDegrees,
+        leftHandTraffic: symbol.leftHandTraffic,
+      ),
+      exit: exitDegrees == null
+          ? null
+          : _exitRoad(
+              centre: centre,
+              extent: extent,
+              exitDegrees: exitDegrees,
+              radius: radius,
+            ),
+    );
+  }
+
+  static RoundaboutExitRoad _exitRoad({
+    required Offset centre,
+    required double extent,
+    required double exitDegrees,
+    required double radius,
+  }) {
+    final unit = _unitAt(exitDegrees);
+    final headLength = extent * _arrowHeadLengthFraction;
+    final tip = centre + unit * (extent * _reachFraction);
+    return RoundaboutExitRoad(
+      start: centre + unit * radius,
+      end: tip - unit * (headLength * _roadIntoHeadFraction),
+      head: RoundaboutArrowHead(
+        tip: tip,
+        direction: unit,
+        length: headLength,
+        halfWidth: extent * _arrowHeadHalfWidthFraction,
+      ),
+    );
+  }
+
+  /// Straight back the way the rider came, where the road in normally meets the
+  /// ring: at the bottom of the box, opposite a straight-ahead exit.
+  static const _straightBackDegrees = 180.0;
+
+  /// Least angle kept between the road in and the exit, so a turn back on
+  /// itself leaves the ring beside the road in rather than along it.
+  static const _minimumRoadSeparationDegrees = 36.0;
+
+  static const _minimumRoadStroke = 1.6;
+  static const _roadStrokeFraction = 0.095;
+  static const _radiusFraction = 0.215;
+
+  /// Furthest any ink sits from the centre, which keeps the arrow point inside
+  /// the box at every exit angle, including straight ahead and square across.
+  static const _reachFraction = 0.45;
+  static const _arrowHeadLengthFraction = 0.145;
+  static const _arrowHeadHalfWidthFraction = 0.088;
+  static const _roadIntoHeadFraction = 0.6;
+
+  /// The road in is context rather than instruction, so it is drawn lighter
+  /// than the exit and never competes with it.
+  static const _entryRoadFraction = 0.7;
+  static const _riddenRingFraction = 0.85;
+  static const _beyondRingFraction = 0.58;
+  static const _exitCasingFraction = 0.42;
+
+  /// Shorter arcs than this are dropped into the gap beside them: a stub that
+  /// small reads as a speck rather than as part of the ring.
+  static const _minimumArcDegrees = 12.0;
+
+  final Offset centre;
+  final double radius;
+  final double roadStrokeWidth;
+  final double entryRoadStrokeWidth;
+  final double riddenRingStrokeWidth;
+  final double beyondRingStrokeWidth;
+
+  /// Half the angle each road clears from the ring, so the road passes through
+  /// daylight on both sides rather than butting into an unbroken circle.
+  final double ringGapHalfDegrees;
+
+  /// Daylight kept around the exit, so that where it runs close to the road in
+  /// the two read as two roads rather than as one blob.
+  final double exitCasingWidth;
+
+  /// Where the road in meets the ring, in degrees clockwise from straight ahead.
+  final double entryDegrees;
+
+  final Offset entryRoadStart;
+  final Offset entryRoadEnd;
+  final List<RoundaboutRingArc> ringArcs;
+
+  /// The exit, or `null` where the engine reported no direction to draw.
+  final RoundaboutExitRoad? exit;
+
+  /// How much of the ring is drawn. Always short of a full turn.
+  double get ringSweepDegrees =>
+      ringArcs.fold(0, (total, arc) => total + arc.sweepDegrees.abs());
+
+  /// How much of the ring is left open for the roads to pass through.
+  double get ringGapDegrees => 360 - ringSweepDegrees;
+
+  /// The number of arrowheads drawn, which is one wherever a direction is
+  /// stated and none where the engine stated none.
+  int get arrowHeadCount => exit == null ? 0 : 1;
 
   /// Exit angle in degrees clockwise from straight ahead, or `null` when the
   /// engine reported no direction to draw.
@@ -210,17 +398,190 @@ class RoundaboutSymbolPainter extends CustomPainter {
         ManeuverDirection.unstated => null,
       };
 
-  static void _drawArrowHead(
-    Canvas canvas,
-    Paint paint,
-    Offset tip,
-    Offset direction,
-    double length,
-  ) {
-    final back = -direction;
-    final normal = Offset(-direction.dy, direction.dx);
-    canvas.drawLine(tip, tip + back * length + normal * length * 0.62, paint);
-    canvas.drawLine(tip, tip + back * length - normal * length * 0.62, paint);
+  /// Where the road in meets the ring, in the same degrees as the exit.
+  ///
+  /// It comes straight up from the bottom, except where the exit turns so far
+  /// back that the two would be drawn along each other: the road in then swings
+  /// to the other side of straight back, so a turn back on itself reads as
+  /// leaving by the exit beside the one the rider came in by.
+  static double _entryDegrees(double? exitDegrees) {
+    if (exitDegrees == null) return _straightBackDegrees;
+    final fromStraightBack = _halfTurn(exitDegrees - _straightBackDegrees);
+    if (fromStraightBack.abs() >= _minimumRoadSeparationDegrees) {
+      return _straightBackDegrees;
+    }
+    final aside = _minimumRoadSeparationDegrees - fromStraightBack.abs();
+    return _straightBackDegrees -
+        (fromStraightBack.isNegative ? -aside : aside);
+  }
+
+  static Offset _unitAt(double degrees) {
+    final radians = degrees * math.pi / 180;
+    return Offset(math.sin(radians), -math.cos(radians));
+  }
+
+  /// Half the ring gap, as the angle whose chord is one road width: the road
+  /// takes half of that, leaving half a road width of daylight beside it.
+  static double _ringGapHalfDegrees({
+    required double road,
+    required double radius,
+  }) => math.asin(math.min(0.92, road / radius)) * 180 / math.pi;
+
+  static List<RoundaboutRingArc> _ringArcs({
+    required double entryDegrees,
+    required double? exitDegrees,
+    required double gapHalfDegrees,
+    required bool? leftHandTraffic,
+  }) {
+    if (exitDegrees == null) {
+      // No direction was reported, so the ring breaks only where the rider
+      // joins it and nothing claims where they leave.
+      return [
+        RoundaboutRingArc(
+          startDegrees: entryDegrees + gapHalfDegrees,
+          sweepDegrees: 360 - gapHalfDegrees * 2,
+          segment: RoundaboutRingSegment.undirected,
+        ),
+      ];
+    }
+    // Traffic runs clockwise where riders keep left. Driving side shapes the
+    // ring by deciding which way round the rider reaches the exit: the first
+    // exit is a short arc, the last one nearly the whole ring.
+    final flow = leftHandTraffic == false ? -1.0 : 1.0;
+    final ridden = _turn(flow * (exitDegrees - entryDegrees));
+    final riddenSweep = ridden - gapHalfDegrees * 2;
+    final beyondSweep = 360 - ridden - gapHalfDegrees * 2;
+    final drawsRidden = riddenSweep >= _minimumArcDegrees;
+    final drawsBeyond = beyondSweep >= _minimumArcDegrees;
+    // One part cannot be emphasised over another that is not there, and a ring
+    // whose flow was never reported claims no ridden part at all.
+    final emphasised = drawsRidden && drawsBeyond && leftHandTraffic != null;
+    return [
+      if (drawsRidden)
+        RoundaboutRingArc(
+          startDegrees: entryDegrees + flow * gapHalfDegrees,
+          sweepDegrees: flow * riddenSweep,
+          segment: emphasised
+              ? RoundaboutRingSegment.ridden
+              : RoundaboutRingSegment.undirected,
+        ),
+      if (drawsBeyond)
+        RoundaboutRingArc(
+          startDegrees: exitDegrees + flow * gapHalfDegrees,
+          sweepDegrees: flow * beyondSweep,
+          segment: emphasised
+              ? RoundaboutRingSegment.beyond
+              : RoundaboutRingSegment.undirected,
+        ),
+    ];
+  }
+
+  /// Reduces an angle to the turn it describes, from 0 up to a full circle.
+  static double _turn(double degrees) => (degrees % 360 + 360) % 360;
+
+  /// Reduces an angle to the shortest turn it describes, either way round.
+  static double _halfTurn(double degrees) {
+    final turn = _turn(degrees);
+    return turn > 180 ? turn - 360 : turn;
+  }
+}
+
+/// Paints a roundabout with the exit pointing where the rider actually goes.
+///
+/// The ring is broken where the roads meet it and the exit carries the only
+/// arrowhead, so the one arrow a rider glances at is the one they follow.
+class RoundaboutSymbolPainter extends CustomPainter {
+  const RoundaboutSymbolPainter({required this.symbol, required this.color});
+
+  /// How much of the ink is kept on the part of the ring the rider leaves
+  /// behind: enough to read as a ring, plainly less than the ridden part.
+  static const _beyondRingOpacity = 0.7;
+
+  final RoundaboutSymbol symbol;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final geometry = RoundaboutSymbolGeometry.of(symbol, size);
+    // Painted into a layer so the exit can be cut clear of whatever it crosses,
+    // whichever colour the map or the banner puts behind the symbol.
+    canvas.saveLayer(Offset.zero & size, Paint());
+
+    // The road the rider is on, entering from the bottom of the box.
+    canvas.drawLine(
+      geometry.entryRoadStart,
+      geometry.entryRoadEnd,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = geometry.entryRoadStrokeWidth
+        ..strokeCap = StrokeCap.round,
+    );
+
+    final bounds = Rect.fromCircle(
+      center: geometry.centre,
+      radius: geometry.radius,
+    );
+    for (final arc in geometry.ringArcs) {
+      // Butt caps, so each gap is as wide on screen as it is in the geometry.
+      canvas.drawArc(
+        bounds,
+        arc.startRadians,
+        arc.sweepRadians,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = arc.segment == RoundaboutRingSegment.beyond
+              ? geometry.beyondRingStrokeWidth
+              : geometry.riddenRingStrokeWidth
+          ..color = arc.segment == RoundaboutRingSegment.beyond
+              ? color.withValues(alpha: color.a * _beyondRingOpacity)
+              : color,
+      );
+    }
+
+    final exit = geometry.exit;
+    if (exit == null) {
+      canvas.restore();
+      return;
+    }
+    final head = exit.head.toPath();
+    // Daylight first, so the exit reads as passing in front of the road in
+    // where a turn back on itself runs the two of them side by side.
+    canvas.drawLine(
+      exit.start,
+      exit.end,
+      Paint()
+        ..blendMode = BlendMode.clear
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = geometry.roadStrokeWidth + geometry.exitCasingWidth * 2
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawPath(
+      head,
+      Paint()
+        ..blendMode = BlendMode.clear
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = geometry.exitCasingWidth * 2
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    canvas.drawLine(
+      exit.start,
+      exit.end,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = geometry.roadStrokeWidth
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawPath(
+      head,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.fill,
+    );
+    canvas.restore();
   }
 
   @override
