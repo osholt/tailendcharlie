@@ -320,6 +320,131 @@ void main() {
     );
   });
 
+  group('framesRider', () {
+    // The measurement behind "Follow me" (#133). It answers "is the map where
+    // following would have put it", so it must be blind to how the map got
+    // there and scale with zoom rather than fixing a ground distance.
+    test('scales its tolerance with the zoom, not with a ground distance', () {
+      // ~2.3 m per logical pixel at zoom 14.33 on MapLibre's 512 pixel scheme.
+      expect(
+        NavigationCameraPlanner.framesRider(
+          driftMeters: 60,
+          zoom: 14.33,
+          latitudeDegrees: 53,
+          tileSize: 512,
+        ),
+        isTrue,
+      );
+      expect(
+        NavigationCameraPlanner.framesRider(
+          driftMeters: 400,
+          zoom: 14.33,
+          latitudeDegrees: 53,
+          tileSize: 512,
+        ),
+        isFalse,
+      );
+      // The same 400 m is a handful of pixels on a route overview, where the
+      // rider is still plainly on screen and centred.
+      expect(
+        NavigationCameraPlanner.framesRider(
+          driftMeters: 400,
+          zoom: 9,
+          latitudeDegrees: 53,
+          tileSize: 512,
+        ),
+        isTrue,
+      );
+    });
+
+    test('reads the same drift differently on each tile scheme', () {
+      // FlutterMap's 256 pixel scheme is twice the ground scale at the same zoom
+      // number, so it tolerates twice the drift. Getting this backwards would
+      // make one renderer offer the button constantly and the other never.
+      const drift = 250.0;
+      expect(
+        NavigationCameraPlanner.framesRider(
+          driftMeters: drift,
+          zoom: 13.87,
+          latitudeDegrees: 53,
+          tileSize: 256,
+        ),
+        isTrue,
+      );
+      expect(
+        NavigationCameraPlanner.framesRider(
+          driftMeters: drift,
+          zoom: 13.87,
+          latitudeDegrees: 53,
+          tileSize: 512,
+        ),
+        isFalse,
+      );
+    });
+
+    test('a deliberate pan always exceeds a following camera lag', () {
+      // The tolerance sits between two real quantities at every riding speed: the
+      // ground a bike covers inside one 560 ms camera transition, which the
+      // easing camera is always that far behind, and the shortest pan a rider
+      // makes on purpose. The lag is a handful of pixels at every speed because
+      // the camera zooms out as the bike speeds up; a pan is tens of them.
+      for (var speed = 0.0; speed <= 30; speed += 2) {
+        for (final landscape in [false, true]) {
+          final plan = _plan(speed, landscape: landscape);
+          for (final tileSize in [256, 512]) {
+            final metresPerPixel =
+                (tileSize == 256 ? 156543.03392 : 78271.5169) *
+                math.cos(53 * math.pi / 180) /
+                math.pow(2, plan.zoom);
+            expect(
+              NavigationCameraPlanner.framesRider(
+                driftMeters: speed * 0.56,
+                zoom: plan.zoom,
+                latitudeDegrees: 53,
+                tileSize: tileSize,
+              ),
+              isTrue,
+              reason: 'a $speed m/s follow lag must not look like a pan',
+            );
+            expect(
+              NavigationCameraPlanner.framesRider(
+                driftMeters: 84 * metresPerPixel,
+                zoom: plan.zoom,
+                latitudeDegrees: 53,
+                tileSize: tileSize,
+              ),
+              isFalse,
+              reason: 'an 84 pixel pan at $speed m/s must be noticed',
+            );
+          }
+        }
+      }
+    });
+
+    test('an unmeasurable framing is never reported as lost', () {
+      // A map that has not reported a camera yet cannot be judged, and offering
+      // a recovery from an unknown state would be noise.
+      expect(
+        NavigationCameraPlanner.framesRider(
+          driftMeters: double.nan,
+          zoom: 14,
+          latitudeDegrees: 53,
+          tileSize: 512,
+        ),
+        isTrue,
+      );
+      expect(
+        NavigationCameraPlanner.framesRider(
+          driftMeters: 4000,
+          zoom: double.nan,
+          latitudeDegrees: 53,
+          tileSize: 512,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   test('the speed curve is continuous, with no snap at any threshold', () {
     for (final landscape in [false, true]) {
       var previous = _plan(0, landscape: landscape);

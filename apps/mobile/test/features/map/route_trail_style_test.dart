@@ -269,6 +269,67 @@ void main() {
     );
   });
 
+  group('marker glyph', () {
+    // #133's audit measured every ride-map ink against the dark basemap and found
+    // the route palette #107 fixed was fine - every line and pin sits inside an
+    // opaque casing worth 4.7-12:1 - while the glyph *inside* a marker badge, the
+    // one ink with nothing behind it, ran from 1.53:1 to 3.87:1. That is the
+    // symbol that says which rider and how bad a hazard, so it was the least
+    // legible thing on the surface.
+    test('is dark, and beats white on every badge in the palette', () {
+      for (final entry in RouteTrailStyle.markerBadgeFills.entries) {
+        final dark = contrastRatio(RouteTrailStyle.markerGlyph, entry.value);
+        final white = contrastRatio(const Color(0xFFFFFFFF), entry.value);
+        expect(
+          dark,
+          greaterThan(white),
+          reason:
+              '${entry.key}: a white glyph would read better, so this badge '
+              'needs its own glyph colour rather than the shared dark one',
+        );
+        // WCAG AA for a graphical object. The worst case is the rider's own blue
+        // badge at 4.74:1; the caution yellow is 12.00:1.
+        expect(
+          dark,
+          greaterThanOrEqualTo(3.0),
+          reason: '${entry.key}: glyph on badge',
+        );
+      }
+    });
+
+    test('the badge fills themselves stay findable on the dark basemap', () {
+      // Each badge carries an opaque casing-coloured stroke, so the number that
+      // matters is badge against that stroke rather than against a road fill the
+      // badge never touches. This is the rule a new badge has to satisfy - #135's
+      // reported camera and police symbols included.
+      for (final entry in RouteTrailStyle.markerBadgeFills.entries) {
+        expect(
+          contrastRatio(entry.value, RouteTrailStyle.casing),
+          greaterThanOrEqualTo(4.5),
+          reason: '${entry.key}: badge against its own stroke',
+        );
+      }
+    });
+
+    test('the worst and best cases are the documented ones', () {
+      final ratios = {
+        for (final entry in RouteTrailStyle.markerBadgeFills.entries)
+          entry.key: contrastRatio(RouteTrailStyle.markerGlyph, entry.value),
+      };
+      expect(ratios['own rider'], closeTo(4.74, 0.01));
+      expect(ratios['rider yellow'], closeTo(12.00, 0.01));
+      expect(ratios['hazard caution'], closeTo(11.91, 0.01));
+      // What each of those measured behind a white glyph before the change.
+      expect(
+        contrastRatio(
+          const Color(0xFFFFFFFF),
+          RouteTrailStyle.markerBadgeFills['rider yellow']!,
+        ),
+        closeTo(1.53, 0.01),
+      );
+    });
+  });
+
   test('relative luminance matches the WCAG reference points', () {
     expect(relativeLuminance(const Color(0xFF000000)), 0);
     expect(relativeLuminance(const Color(0xFFFFFFFF)), closeTo(1, 1e-9));

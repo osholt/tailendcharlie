@@ -104,49 +104,87 @@ shortest angular path, so crossing north rotates the short way.
 ### Overlay placement
 
 No persistent *status* surface is anchored to the top of the map: the upper band
-is where a rider on a mounted phone reads the road ahead. Portrait stacks every
-surface into one bottom-anchored band — urgent alerts, then the turn banner,
-then the TEC gap and group overview, then one action row of glove-sized targets
-nearest the thumb, then the speed sign hard right. Landscape splits them into a
-bottom-left rail (turn banner, status, actions) and a bottom-right rail (group
-overview, speed limit, junction marker card), leaving the centre column and the
-upper viewport clear. Each rail is a single column, so placement stays
-deterministic and no surface can cover another at any simultaneous overlay
-count. Urgent alerts still interrupt, but they grow the band upwards rather than
-claiming the top band. Safe-area insets are respected in both orientations, with
-or without the app bar.
+is where a rider on a mounted phone reads the road ahead. What that rule leaves
+free is the corners, and **three small things live in them**:
 
-The **ride menu is the one exception**, in the top leading corner in both
-orientations: a single small control that a rider reaches for by feel and that
-obstructs nothing, rather than a status surface competing with the road. Nothing
-else is allowed up there.
+| corner | portrait | landscape |
+| --- | --- | --- |
+| top leading | ride menu | ride menu |
+| top trailing | group overview | speed sign |
+| bottom trailing | — | group overview |
 
-SOS, LEAVE and REPORT share one row. REPORT used to own a row of its own above
-the speed sign, which in portrait made four stacked rows below the turn banner
-and in landscape put it high in the left rail. Landscape tightens only the label
-padding on the two extended targets, never their height, so all three fit one
-run of a 42%-width rail: wrapping one onto a second run pushed an urgent banner
-off the top of a 390-pixel-tall screen.
+Each is hard against a screen edge, none is wider than 45% or taller than 40% of
+the viewport, and the centre and upper-middle stay empty — the layout test
+asserts all of that per corner rather than trusting the placement. The ride menu
+is a control a rider reaches for by feel; the other two are *glances*, never
+targets, which is why the corner furthest from the road ahead is the cheapest
+place on the screen for them. Moving the group overview out of the bottom band
+also stops the camera's forward bias paying for a surface nobody acts on.
 
-**Re-centre ("Follow me") is a recovery affordance, not chrome.** It appears when
-the rider has taken the camera over with a pan, a pinch or a route fit, or when
-there is no fix to follow yet, and it disappears the moment following resumes.
-The flag behind it is deliberately separate from the automatic-follow
-suppression, which clears as soon as the bike stops: the button has to survive
-stopping, because a rider who panned and then pulled over is exactly who needs
-it.
+Everything else is bottom-anchored. Portrait is one band: urgent alerts, the TEC
+gap, then the turn banner, then the targets. Landscape splits into a left rail
+(urgent alerts, TEC gap, turn banner, actions) and a right rail (recovery,
+junction marker card, group overview), leaving the centre column clear. Each rail
+is a single column, so placement stays deterministic and no surface can cover
+another at any simultaneous overlay count. Urgent alerts still interrupt, but
+they grow the band upwards rather than claiming the top band. Safe-area insets
+are respected in both orientations, with or without the app bar.
+
+**The turn banner is the last surface above the targets.** The TEC gap used to
+sit between them; now everything above the banner is map, so a rider's eye leaves
+the road for the banner and comes straight back. The test asserts that nothing
+else occupies the space between the banner and the first target.
+
+**SOS sits above LEAVE, with REPORT alongside the pair and the speed sign
+opposite.** Stacking them costs no height — the two-high column and the 62-pixel
+REPORT square both fit inside the height the speed sign already needed, so a run
+of actions *plus* a run for the sign became one run of the taller of the two —
+and it separates two targets that used to sit shoulder to shoulder, where a
+mis-hit reaching for SOS landed on LEAVE and dropped the rider out of the ride.
+Landscape keeps all three on one row and tightens only the label padding, never
+the target height.
+
+**Re-centre ("Follow me") is a recovery affordance, not chrome — and it is
+*measured*, not inferred.** It appears whenever the map is not framed on the
+rider, and tapping it re-centres and hides it again. The measurement compares the
+map's own camera against the framing following would produce, in logical pixels
+at the current zoom rather than in ground metres, with the tolerance in
+`navigationCameraFramedOnRiderTolerancePixels`.
+
+This replaced a flag set only when a pan interrupted an *active* follow. Follow
+mode is driven by movement, so a phone standing still is never following: a pan
+suppressed nothing, the flag was never set, and the map could be pushed off the
+rider with no way back — on both testers' phones, because both were on a desk.
+Deriving the button from the framing removes the whole class of bug, because it
+cannot matter how the map came to be somewhere else. `ride_map_feature_test.dart`
+covers panning away **while stationary**, which is the case that shipped broken.
+
+Handing the camera over now also stops any camera animation in flight.
+`flutter_map` does not cancel a controller-driven animation when a gesture
+starts, and each tick of that animation sets the camera outright, so a pan begun
+during a follow transition was silently dragged back onto the rider.
 
 The band the camera measures is the band a test measures: the portrait rail
 carries `portraitBottomChromeKey`, so the `bottomChromeFraction` below is
 asserted against the real layout rather than a sum of assumed overlay heights.
-Decluttering it moved a 390x844 portrait band from 431 to 342 logical pixels in
-ordinary riding — a turn banner, the action row and the speed sign — which takes
-the rider's viewport fraction from a clamped 0.429 to 0.535 and flips the
-forward bias from 60 pixels *behind* the bike to 29 ahead of it. At the absolute
-maximum overlay count the band fell from 683 to 594 pixels; that case still
-clamps to the 0.35 floor, because a paused-ride banner, an off-course alert, a
-turn banner with lane guidance, the TEC gap and the group overview all live at
-once, and shortening those belongs to the issues that own them.
+Two rounds of decluttering have taken a 390x844 portrait band in ordinary riding
+— a turn banner, the targets and the speed sign — from **431 to 342 to 296
+logical pixels**, and the camera's forward bias with it:
+
+| band | rider viewport fraction | forward bias | look-ahead at 13 m/s |
+| --- | --- | --- | --- |
+| 431 px (before #125) | 0.429 (clamped) | 60 px *behind* | 247 m behind |
+| 342 px (after #125) | 0.535 (clamped) | 29 px ahead | 110 m ahead |
+| 296 px (after #133) | 0.589 (clamped) | 75 px ahead | 270 m ahead |
+
+At rest the band no longer clamps the bias at all: the rider sits at the full
+`navigationCameraRestRiderFractionPortrait` of 0.56, where 431 and 342 pixel
+bands both held them above centre. At road speed it still clamps, because the
+preferred fraction keeps rising with speed. At the absolute maximum overlay count
+the band is 484 pixels (0.573 of the viewport, from 0.809 before #125 and 0.704
+after it) and still clamps to the 0.35 floor, because a paused-ride banner, an
+off-course alert, a turn banner with lane guidance and the TEC gap all live at
+once; shortening those belongs to the issues that own them.
 
 Landscape navigation also shows a compact group overview above the primary
 turn-by-turn map. It uses a second, throttled view of the configured MapLibre
@@ -202,6 +240,54 @@ sunlight. The travelled orange is unchanged because the same field report found
 it legible; it is the floor the other lines are held against.
 `route_trail_style_test.dart` asserts these numbers. Numbers are not a substitute
 for the daylight photograph the field-test log still needs.
+
+### The full ride-map ink audit
+
+Every ink on the ride surface was measured against the dark basemap for #133,
+because a tester reported the dark mode still wrong after #107. The result was
+that **the route palette was not the problem**. Two rules explain the whole
+surface, and anything added to the map — #135's reported camera and police
+symbols included — has to satisfy one of them:
+
+1. **Geometry is protected by its casing.** Every route line, trail, rider badge,
+   hazard pin and waypoint carries an opaque `#10151C` casing, stroke or halo. The
+   number that matters is the ink against *that*, not against a road fill the ink
+   never touches. Measured 4.7:1 to 12.0:1 across the whole set.
+2. **Anything with no casing has to earn its own contrast.**
+
+Only three inks failed, and none of them was a route line:
+
+| ink | before | after | why |
+| --- | --- | --- | --- |
+| marker glyph on a badge | **1.53–3.87** | 4.74–12.00 | white glyph on a badge that is light by design |
+| discovery route lines | **1.80–2.38** | 4.12–5.50 | the only geometry with a *translucent* casing |
+| off-course banner text | **4.03** | 5.65 | short of WCAG AA on the most urgent surface |
+
+The marker glyph was the worst ink on the map, and it is on the symbols that say
+*which rider* and *how bad a hazard*: 1.53:1 on the caution yellow, 1.76:1 on the
+default rider green, never better than 3.87:1 on any badge. Badge fills are light
+because they have to be found on a dark basemap, so a white glyph on top had
+almost nothing behind it. Dark ink reverses it on every badge in the palette —
+there is no badge where white wins — so `RouteTrailStyle.markerGlyph` is a fixed
+dark colour rather than a per-badge choice, and `markerBadgeFills` is the list a
+test holds it against.
+
+**The dark basemap was investigated and deliberately left alone.** Its lightened
+road fills (`#3A3A3A`/`#484848`/`#565656`) do cap every *bare* overlay number at
+2.7–4.8:1, and darkening the lightest to `#3E3E3E` would lift them all by about
+45%. It was rejected: the overlays do not need it, because they sit inside
+casings, and it would cost the basemap 2.32:1 → 1.59:1 on road-against-ground and
+1.55:1 → 1.27:1 on minor-against-motorway. That trades away the legibility of the
+map itself to fix a problem the casings already solve.
+
+Chrome panels measure 1.0–1.8:1 against the basemap and are **not** offenders:
+a panel's job is to host text, and its text measures 4.7:1 to 19.1:1 against the
+panel. Reading the panel-fill column as a defect is the mistake to avoid. The
+demoted stale and lost rider colours measure low on purpose.
+
+The five route lines are separated by only 1.03–1.75:1 in luminance, which is
+unavoidable when a dark basemap needs every one of them light. Width and dash
+pattern carry that separation and must not be flattened.
 
 The leader's trail is the widest line and is drawn beneath the planned route, so
 the group's ground truth stays visible without hiding the plan. Off-route trails

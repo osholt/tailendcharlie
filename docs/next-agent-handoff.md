@@ -27,14 +27,43 @@ branch" below. Physical two-device evidence is still owed: run
 
 ## Current branch
 
-Active work is on `claude/issue-124-routeless-chrome`: #124 (a ride with no route
-kept losing SOS and Leave), #125 (declutter the ride-map chrome) and #126 (the
-mapped speed limit on by default, resolved from a stationary fix). All three land
-together because all three edit
-`apps/mobile/lib/features/map/ride_map_feature.dart` and splitting them would
-only manufacture conflicts. Do not split or overwrite the user's unrelated local
-Xcode signing edit or the untracked `docs/carplay-entitlement-submission/`
-material.
+Active work is on `claude/issue-133-chrome-contrast`: #133 (the "Follow me"
+regression, the portrait and landscape chrome positions, and the dark-mode
+contrast audit) plus the landscape report-sheet layout from the same physical
+evaluation. They land together because they all edit
+`apps/mobile/lib/features/map/ride_map_feature.dart`. Do not split or overwrite
+the user's unrelated local Xcode signing edit or the untracked
+`docs/carplay-entitlement-submission/` material.
+
+### What #133 changed, and the one thing to read first
+
+- **"Follow me" is measured, not inferred.** #125 gated it on a flag set only
+  when a pan interrupted an *active* follow. Follow mode needs movement, so a
+  stationary phone was never following, a pan suppressed nothing, and the button
+  never appeared — the map could be pushed off the rider with no way back on both
+  testers' phones, because both were on a desk. It is now derived from the map's
+  own camera against the framing following would produce
+  (`NavigationCameraPlanner.framesRider`). **Do not reintroduce a flag that
+  records how the framing was lost**; that is precisely what shipped broken. The
+  test that proves it is "a stationary rider who pans away is offered the way
+  back", and it fails on the pre-fix code.
+- Handing the camera over now also calls `stopAnimationRaw`: `flutter_map` does
+  not cancel a controller-driven animation on a gesture, so a pan begun during a
+  follow transition was being dragged back onto the rider.
+- **The corners carry three small things**: ride menu top-leading in both
+  orientations, group overview top-trailing in portrait and bottom-trailing in
+  landscape, speed sign top-trailing in landscape. The layout test asserts each
+  stays against an edge and stays small. Everything else is bottom-anchored, and
+  the turn banner is the last surface above the targets.
+- **The dark-mode diagnosis is in `docs/maps-and-gpx.md`, and it is not what it
+  looks like.** The route palette was fine; the worst ink on the map was the
+  *white glyph inside a marker badge* at 1.53:1. The basemap was investigated and
+  deliberately left alone, with the measured reason recorded. Read that section
+  before changing any map colour — in particular, the chrome panel fills measure
+  1.0–1.8:1 against the basemap and are **not** defects.
+- The portrait band is 296 logical pixels in ordinary riding (431 before #125,
+  342 after), which takes the camera's forward bias from 29 to 75 pixels ahead
+  and stops it clamping at all at rest.
 
 ## Issue status
 
@@ -173,6 +202,18 @@ Neither is started. The in-app warning surface they would feed already exists.
   wrong. Nothing on this branch is physical-device evidence; it is a proven
   root cause with a server-side fix and simulated two-device coverage. The relay
   must be deployed before that test means anything.
+- Pan the map away on a **mounted** phone, standing still and moving, in both
+  orientations, and confirm "Follow me" appears every time and that tapping it
+  re-centres. This was verified in widget tests and in rendered frames only.
+- Read the repositioned chrome on a mounted phone in both orientations and confirm
+  the group overview in its corner does not obscure anything a rider needs, and
+  that the stacked SOS/LEAVE pair is reachable without looking.
+- Report a sighting in landscape wearing gloves and confirm both options are
+  reachable without scrolling.
+- Photograph the dark map through a tinted visor in daylight. #107's outstanding
+  evidence is unchanged, and #133 now adds the marker glyphs to it: the numbers
+  say a dark glyph is 3–8 times better on every badge, but only a photograph shows
+  whether a rider can pick their own bike out of a group at a glance.
 - Ride a route-less ride on a mounted phone and confirm SOS, Leave, Report, the
   ride menu, the follow camera and re-centre all work, and that no route-derived
   surface appears empty or placeholdered.

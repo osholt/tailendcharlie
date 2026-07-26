@@ -92,6 +92,26 @@ class RouteTrailStyle {
   /// [casing] as a MapLibre paint string; asserted to match in tests.
   static const casingHex = '#10151C';
 
+  /// Ink for the symbol drawn *inside* a marker badge - the motorcycle glyph on
+  /// a rider, the warning glyph on a hazard.
+  ///
+  /// The same dark ink as [casing], and for the same reason: every badge fill is
+  /// deliberately light, because it has to be found on a dark basemap. A white
+  /// glyph on a light badge is the one ink on this map with nothing behind it,
+  /// and #133 measured it at 1.53:1 on the caution yellow, 1.76:1 on the default
+  /// rider green, and never better than 3.87:1 on any badge in the palette - so
+  /// the marker that says *which rider* and *how bad* was the least legible
+  /// thing on the surface, while the route lines #107 fixed were fine.
+  ///
+  /// Dark ink reverses it: 4.74:1 at worst (the rider's own blue badge) and
+  /// 12.00:1 on the caution yellow. Every badge colour in the app measures
+  /// better this way than with white - there is no case where white wins - so
+  /// this is a fixed colour rather than a per-badge choice.
+  static const markerGlyph = casing;
+
+  /// [markerGlyph] as a MapLibre paint string.
+  static const markerGlyphHex = casingHex;
+
   /// Green rather than cyan: cyan belongs to the rejoin breadcrumb (#102), and
   /// the route ahead and a live rejoin appear together, so those two must not be
   /// the pair that looks alike. Green also survives the light basemap, whose road
@@ -165,6 +185,30 @@ class RouteTrailStyle {
     RiderTrailKind.leader => leaderTrail,
     RiderTrailKind.offRoute => offRouteTrail,
     RiderTrailKind.rejoin => rejoinBreadcrumb,
+  };
+
+  /// Every badge fill a marker glyph is drawn on, so one test can hold the whole
+  /// set against [markerGlyph] rather than each caller asserting its own.
+  ///
+  /// Anything that adds a new badge - #135's reported camera and police symbols,
+  /// for one - belongs in here, so the glyph rule is checked against it too.
+  static const markerBadgeFills = <String, Color>{
+    'own rider': Color(0xFF2F80ED),
+    'rider green': Color(0xFF6ED89A),
+    'rider orange': Color(0xFFFF9F5A),
+    'rider yellow': Color(0xFFE8D24C),
+    'rider teal': Color(0xFF4FC7C7),
+    'rider pink': Color(0xFFE87FC0),
+    'rider cyan': Color(0xFF5AC8FA),
+    'rider amber': Color(0xFFD9A441),
+    'rider crimson': Color(0xFFD9607A),
+    'lead role': Color(0xFFB58CFF),
+    'tail end charlie role': Color(0xFF68A9FF),
+    'alerting rider': Color(0xFFFF5D73),
+    'hazard advisory': Color(0xFF8EA7C4),
+    'hazard caution': Color(0xFFFFC857),
+    'hazard serious': Color(0xFFFF8A4C),
+    'hazard critical': Color(0xFFFF5D73),
   };
 
   /// Every route and trail line, for the checks that must hold across all of
