@@ -271,7 +271,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('maneuver-list')), findsOneWidget);
-    expect(find.text('Roundabout, 2nd exit, straight on'), findsOneWidget);
+    expect(find.text('2nd exit, straight on'), findsOneWidget);
     expect(find.text('Arrive at the destination'), findsOneWidget);
   });
 
@@ -673,11 +673,96 @@ void main() {
     expect(option, findsOneWidget);
     expect(tester.getSize(option).height, greaterThanOrEqualTo(72));
 
+    // Both targets are reachable without scrolling (#133). Stacked, the second
+    // one fell below a sheet the framework caps at nine sixteenths of a landscape
+    // screen, so reporting police needed a scroll.
+    final police = find.byKey(const Key('report-police-option'));
+    expect(
+      find.byKey(const Key('report-options-side-by-side')),
+      findsOneWidget,
+    );
+    for (final target in [option, police]) {
+      final rect = tester.getRect(target);
+      expect(rect.height, greaterThanOrEqualTo(72));
+      expect(rect.width, greaterThanOrEqualTo(160));
+      expect(
+        rect.bottom,
+        lessThanOrEqualTo(size.height),
+        reason: 'a report target must not fall below the fold',
+      );
+      expect(rect.top, greaterThanOrEqualTo(0));
+    }
+    // Side by side, not overlapping, and both above the control that opened them
+    // so a second stray tap cannot land on one.
+    final cameraRect = tester.getRect(option);
+    final policeRect = tester.getRect(police);
+    expect(policeRect.left, greaterThanOrEqualTo(cameraRect.right));
+    expect(cameraRect.top, closeTo(policeRect.top, 1));
+    expect(cameraRect.bottom, lessThanOrEqualTo(reportRect.top));
+
     await tester.tap(option);
     await tester.pumpAndSettle();
 
     expect(reported, [HazardType.speedCamera]);
     expect(find.textContaining('Speed camera reported'), findsOneWidget);
+  });
+
+  testWidgets('the report sheet stacks rather than shrink a target', (
+    tester,
+  ) async {
+    // The other half of #133's report fix. Side by side is only right while each
+    // half can still hold a full-size target: a portrait phone is too narrow, and
+    // so is a landscape one once the text is large enough, because the width one
+    // option needs scales with its label. The answer in both cases is to stack and
+    // let the sheet grow - never to shrink a target a gloved hand has to hit.
+    // Portrait is the case a rider meets every ride.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-report-narrow');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('report-sighting-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('report-options-side-by-side')), findsNothing);
+    final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+    final camera = tester.getRect(
+      find.byKey(const Key('report-speed-camera-option')),
+    );
+    final police = tester.getRect(
+      find.byKey(const Key('report-police-option')),
+    );
+    expect(camera.bottom, lessThanOrEqualTo(police.top));
+    for (final rect in [camera, police]) {
+      expect(rect.height, greaterThanOrEqualTo(72), reason: 'a target shrank');
+      expect(rect.top, greaterThanOrEqualTo(0));
+      // Still reachable without scrolling: stacking is only acceptable because
+      // the sheet is now free to grow to the height it needs (#133).
+      expect(rect.bottom, lessThanOrEqualTo(size.height));
+    }
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets('the map has no report control outside a ride', (tester) async {
@@ -1416,10 +1501,19 @@ void main() {
         find.byKey(const Key('navigation-guidance-banner')),
         findsOneWidget,
       );
+      expect(find.textContaining('3rd exit, right'), findsOneWidget);
+      // The symbol beside it is a drawn roundabout, so the visible wording does
+      // not repeat the word, while the label a screen reader is given - which
+      // has no symbol to read - still names the junction.
+      expect(find.textContaining('Roundabout, 3rd'), findsNothing);
+      final semantics = tester.ensureSemantics();
       expect(
-        find.textContaining('Roundabout, 3rd exit, right'),
-        findsOneWidget,
+        tester
+            .getSemantics(find.byKey(const Key('navigation-guidance-banner')))
+            .label,
+        contains('Roundabout, 3rd exit, right'),
       );
+      semantics.dispose();
       // One instruction for one junction: the exit step is not announced again.
       expect(find.byKey(const Key('following-maneuver')), findsNothing);
       // The ring is drawn, not borrowed from a glyph that means the opposite.
@@ -1443,8 +1537,20 @@ void main() {
         find.byKey(const Key('group-mini-map')),
       );
       expect(portraitMiniMap.width, 150);
-      expect(portraitMiniMap.height, 104);
-      expect(portraitMiniMap.top, greaterThanOrEqualTo(104));
+      // The 104 pixel canvas plus the rider-count caption, which is now in the
+      // layout rather than hung below the box on a negative offset (#133) - so
+      // this rect is the whole footprint an overlap test has to respect.
+      expect(portraitMiniMap.height, 128);
+      expect(
+        tester.getRect(find.byKey(const Key('group-mini-map-canvas'))).height,
+        104,
+      );
+      // Top trailing corner in portrait (#133), opposite the ride menu, and out
+      // of the bottom band the camera's forward bias pays for.
+      final portraitSize =
+          tester.view.physicalSize / tester.view.devicePixelRatio;
+      expect(portraitMiniMap.top, lessThan(portraitSize.height / 3));
+      expect(portraitMiniMap.right, closeTo(portraitSize.width - 12, 1));
       riders.value = [
         ...riders.value,
         const MapOverlayMarker(
@@ -1731,9 +1837,16 @@ void main() {
 
     // Alerts that may interrupt, versus chrome that is always on screen.
     const urgentKeys = {'ride-paused-banner', 'leader-off-course-alert'};
-    // #125's single, deliberate exception: one small corner control, which is
-    // the only thing allowed into the upper band.
-    const cornerKeys = {'ride-menu-button'};
+    // The corners. #104 keeps *status surfaces and popups* out of the band the
+    // rider reads the road in; a small thing hard against a screen edge is not
+    // one. #125 admitted the ride menu; #133 admits the group overview, and in
+    // landscape the speed sign. Each is asserted below to stay small, to stay
+    // against its edge, and to leave the centre alone.
+    Set<String> cornersFor({required bool landscape}) => {
+      'ride-menu-button',
+      'group-mini-map',
+      if (landscape) 'posted-speed-limit-position',
+    };
     final overlayKeys = <String>[
       'navigation-guidance-banner',
       'leader-off-course-alert',
@@ -1768,14 +1881,44 @@ void main() {
       }
 
       // No status surface is anchored to the top of the map: the upper band is
-      // where the rider reads the road ahead. #125 admits exactly one corner
-      // control, and it stays a corner control - small, and hard against the
-      // leading edge, so it obstructs nothing a rider needs to see.
+      // where the rider reads the road ahead. The ride menu stays a corner
+      // control - small, and hard against the leading edge, so it obstructs
+      // nothing a rider needs to see.
+      final cornerKeys = cornersFor(landscape: landscape);
       final rideMenu = rects['ride-menu-button']!;
       expect(rideMenu.top, lessThan(size.height / 3));
       expect(rideMenu.width, lessThanOrEqualTo(48));
       expect(rideMenu.height, lessThanOrEqualTo(48));
       expect(rideMenu.left, lessThanOrEqualTo(size.width * 0.1));
+
+      // The corner exceptions earn the name: each touches a corner and is small
+      // enough that the middle of the screen is untouched. Anything that grew or
+      // drifted past this would be a status surface in the band #104 reserves for
+      // the road ahead.
+      for (final key in cornerKeys) {
+        final corner = rects[key]!;
+        expect(
+          corner.left <= size.width * 0.12 || corner.right >= size.width * 0.88,
+          isTrue,
+          reason: '$key is not against a side edge in $size',
+        );
+        expect(
+          corner.top <= size.height * 0.12 ||
+              corner.bottom >= size.height * 0.88,
+          isTrue,
+          reason: '$key is not against the top or bottom edge in $size',
+        );
+        expect(
+          corner.width,
+          lessThanOrEqualTo(size.width * 0.45),
+          reason: '$key is too wide to be a corner element in $size',
+        );
+        expect(
+          corner.height,
+          lessThanOrEqualTo(size.height * 0.40),
+          reason: '$key is too tall to be a corner element in $size',
+        );
+      }
 
       for (final entry in rects.entries) {
         // Urgent alerts are #104's other exception: they interrupt by growing
@@ -1841,36 +1984,103 @@ void main() {
             reason: '${entry.key} crosses the centre column in $size',
           );
         }
+        // The group overview goes to the bottom right and the speed sign to the
+        // top right (#133): the two right-hand corners, furthest from the road
+        // ahead, with the left rail keeping the targets.
+        final miniMap = rects['group-mini-map']!;
+        final speedLimit = rects['posted-speed-limit-position']!;
+        expect(miniMap.right, closeTo(size.width - 10, 1));
+        expect(miniMap.bottom, closeTo(size.height - 10, 1));
+        expect(speedLimit.right, closeTo(size.width - 10, 1));
+        expect(speedLimit.top, closeTo(10, 1));
+        expect(speedLimit.bottom, lessThan(miniMap.top));
+        // The turn banner is still the last surface above the targets.
+        final guidance = rects['navigation-guidance-banner']!;
+        expect(
+          guidance.bottom,
+          lessThanOrEqualTo(rects['leave-ride-button']!.top),
+        );
+        expect(
+          rects['leader-tec-gap']!.bottom,
+          lessThanOrEqualTo(guidance.top),
+          reason: 'the TEC gap must sit above the turn banner in $size',
+        );
       } else {
-        // One action row, not three (#125): SOS, LEAVE and REPORT share a row,
-        // and the speed sign sits below it rather than dragging the row's height
-        // up to its own.
-        final actionRow = [
-          rects['emergency-alert-button']!,
-          rects['leave-ride-button']!,
-          rects['report-sighting-button']!,
-        ];
-        for (final action in actionRow.skip(1)) {
+        // SOS above LEAVE (#133), not shoulder to shoulder: a mis-hit reaching
+        // for SOS used to land on LEAVE and drop the rider out of the ride.
+        final sos = rects['emergency-alert-button']!;
+        final leave = rects['leave-ride-button']!;
+        final report = rects['report-sighting-button']!;
+        expect(
+          sos.bottom,
+          lessThanOrEqualTo(leave.top),
+          reason: 'SOS must sit above LEAVE, not beside it, in $size',
+        );
+        expect(
+          sos.left,
+          closeTo(leave.left, 1),
+          reason: 'the safety stack must be one column in $size',
+        );
+        // REPORT keeps its place beside the pair (#125) rather than adding a run.
+        expect(report.left, greaterThanOrEqualTo(sos.right));
+        expect(report.top, greaterThanOrEqualTo(sos.top));
+        expect(report.bottom, lessThanOrEqualTo(leave.bottom + 1));
+        // Every target stays glove-sized: stacking must not have shrunk one to
+        // buy the height back.
+        for (final target in [sos, leave, report]) {
+          expect(target.height, greaterThanOrEqualTo(48));
+          expect(target.width, greaterThanOrEqualTo(48));
+        }
+        // The speed sign shares that row instead of owning one below it, hard
+        // right and clear of the hand reaching for the stack.
+        final speedLimit = rects['posted-speed-limit-position']!;
+        expect(speedLimit.right, closeTo(size.width - 12, 1));
+        for (final target in [sos, leave, report]) {
           expect(
-            action.top,
-            closeTo(actionRow.first.top, actionRow.first.height),
-            reason: 'the safety actions must share one row in $size',
+            speedLimit.left,
+            greaterThanOrEqualTo(target.right),
+            reason: 'the speed sign must stay clear of the targets in $size',
           );
         }
-        final speedLimit = rects['posted-speed-limit-position']!;
-        for (final action in actionRow) {
-          expect(action.bottom, lessThanOrEqualTo(speedLimit.top));
+
+        // The turn banner is the last surface above the targets (#133), so all
+        // the map above it is map. Nothing status-like may come between them.
+        final guidance = rects['navigation-guidance-banner']!;
+        expect(
+          guidance.bottom,
+          lessThanOrEqualTo(sos.top),
+          reason:
+              'the turn banner must sit directly above the targets in $size',
+        );
+        const targetKeys = {
+          'emergency-alert-button',
+          'leave-ride-button',
+          'report-sighting-button',
+          'posted-speed-limit-position',
+        };
+        for (final entry in rects.entries) {
+          if (cornerKeys.contains(entry.key) ||
+              targetKeys.contains(entry.key) ||
+              entry.key == 'navigation-guidance-banner') {
+            continue;
+          }
+          expect(
+            entry.value.bottom,
+            lessThanOrEqualTo(guidance.top),
+            reason:
+                '${entry.key} sits between the turn banner and the targets '
+                'in $size',
+          );
         }
-        // Hard right, away from the thumb and the action row (#125).
-        expect(speedLimit.right, closeTo(size.width - 12, 1));
 
         // Portrait chrome is one measured band whose height the camera reads to
         // clamp its forward bias (#105). This is the absolute worst case - every
         // surface live at once - and the number that must keep coming down
         // rather than creeping back up. The same scenario measured 0.809 before
-        // #125; the ordinary riding case, and what the freed space buys the
-        // camera, is asserted in its own test below.
-        expect(_bottomChromeFraction(tester, size), lessThan(0.75));
+        // #125, 0.704 after it, and 0.573 now that the group overview has left
+        // the band (#133); the ordinary riding case, and what the freed space
+        // buys the camera, is asserted in its own test below.
+        expect(_bottomChromeFraction(tester, size), lessThan(0.60));
       }
     }
 
@@ -1991,7 +2201,7 @@ void main() {
     final size = tester.view.physicalSize / tester.view.devicePixelRatio;
     expect(find.byKey(const Key('navigation-guidance-banner')), findsOneWidget);
     final bottomChromeFraction = _bottomChromeFraction(tester, size);
-    expect(bottomChromeFraction, lessThan(0.45));
+    expect(bottomChromeFraction, lessThan(0.38));
 
     final plan = NavigationCameraPlanner.plan(
       speedMetersPerSecond: 13,
@@ -2005,19 +2215,24 @@ void main() {
     // it. The band no longer pushes it past the middle.
     expect(plan.forwardBiasPixels, greaterThan(0));
     expect(plan.riderViewportFraction, greaterThan(0.5));
-    expect(
-      plan.riderViewportFraction,
-      greaterThan(
-        NavigationCameraPlanner.plan(
-          speedMetersPerSecond: 13,
-          landscape: false,
-          viewportHeightPixels: size.height,
-          latitudeDegrees: 53,
-          // The band this replaced.
-          bottomChromeFraction: 431 / size.height,
-        ).riderViewportFraction,
-      ),
-    );
+    // Each round of decluttering has to buy the camera real look-ahead, so both
+    // previous bands are held against this one: 431 pixels before #125, 342
+    // after it, 296 now that the group overview has left the band (#133).
+    for (final previousBand in [431.0, 342.0]) {
+      final previous = NavigationCameraPlanner.plan(
+        speedMetersPerSecond: 13,
+        landscape: false,
+        viewportHeightPixels: size.height,
+        latitudeDegrees: 53,
+        bottomChromeFraction: previousBand / size.height,
+      );
+      expect(
+        plan.riderViewportFraction,
+        greaterThan(previous.riderViewportFraction),
+        reason: 'the band must keep buying look-ahead, not give it back',
+      );
+      expect(plan.lookAheadMeters, greaterThan(previous.lookAheadMeters));
+    }
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -2178,6 +2393,90 @@ void main() {
     await tester.tap(find.text('Follow me'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('a stationary rider who pans away is offered the way back', (
+    tester,
+  ) async {
+    // The case that shipped broken (#133). #125 gated "Follow me" on a flag set
+    // only when a pan interrupted an *active* follow, and follow mode is driven
+    // by movement - so on a phone standing on a desk, which is never following,
+    // the pan suppressed nothing, the flag was never set, and the map could be
+    // pushed off the rider with no way back. Both testers' phones behaved this
+    // way. The button is now derived from the map not being framed on the rider,
+    // which is true whether or not the bike is moving.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-still-pan');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    // Standing still: a real fix, a real heading, and no movement at all.
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.015),
+        recordedAt: DateTime.utc(2026, 7, 26, 12),
+        speedMetersPerSecond: 0,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          onLeaveRide: () async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    // The map opened on the rider, so there is nothing to recover yet.
+    expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+
+    await tester.drag(find.byType(FlutterMap), const Offset(0, 140));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+    expect(find.text('Follow me'), findsOneWidget);
+
+    // A further fix from the same standing bike must not clear it: nothing about
+    // standing still puts the map back on the rider.
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 53, longitude: -1.015),
+      recordedAt: DateTime.utc(2026, 7, 26, 12, 1),
+      speedMetersPerSecond: 0,
+      headingDegrees: 90,
+      accuracyMeters: 5,
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
+
+    await tester.tap(find.text('Follow me'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('navigation-follow-button')), findsNothing);
+
+    // And panning away a second time earns it again, from the same standstill.
+    await tester.drag(find.byType(FlutterMap), const Offset(0, 140));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

@@ -206,7 +206,18 @@ load or refresh; clearing creates a durable event.
 Riders can raise every hazard type, enforcement included. A rider-reported
 camera or police sighting is a first-hand observation by the person reporting
 it, which is a different thing from redistributing a provider's data, and it is
-the report the group most wants. Enforcement a rider raises expires faster than
+the report the group most wants.
+
+The ride-map REPORT control opens a sheet with two large targets, camera and
+police. **They go side by side whenever both halves can still hold a full-size
+target, and stack otherwise** — and the sheet is scroll-controlled, so it takes
+the height it needs. Stacked in a sheet the framework caps at nine sixteenths of
+the screen, the second target fell below the fold on a landscape phone and
+reporting police needed a scroll: unusable on a bike, and it defeated the two-tap
+design, which exists so a stray map tap cannot broadcast a warning to the whole
+group. The arrangement changes, never the target size — a portrait phone is too
+narrow for side by side, and so is a landscape one at the largest text sizes,
+because the width one option needs scales with its label. Enforcement a rider raises expires faster than
 a road defect — two hours for a camera, one for police — because it is usually
 a mobile van or a patrol car that moves on, and a stale sighting would raise a
 full-screen warning for the whole group.

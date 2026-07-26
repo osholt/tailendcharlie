@@ -42,6 +42,16 @@ const double navigationCameraMinimumRiderFraction = 0.35;
 /// unusually shallow latitude from throwing the camera kilometres up the road.
 const double navigationCameraMaximumLookAheadMeters = 1200;
 
+/// How far the map may sit from the framing that following the rider would
+/// produce before the rider is offered a way back to it.
+///
+/// Logical pixels rather than metres, because the same ground distance is a
+/// whole screen at navigation zoom and a thumbnail at route-overview zoom, and
+/// what a rider notices is the marker leaving the middle of the screen. Well
+/// under the shortest deliberate pan a gloved hand makes, and well over the lag
+/// between a moving rider and a camera easing after them.
+const double navigationCameraFramedOnRiderTolerancePixels = 56;
+
 /// A camera framing for one ride update.
 class NavigationCameraPlan {
   const NavigationCameraPlan({
@@ -234,6 +244,32 @@ abstract final class NavigationCameraPlanner {
       -navigationCameraMaximumLookAheadMeters,
       navigationCameraMaximumLookAheadMeters,
     );
+  }
+
+  /// Whether a map whose camera sits [driftMeters] from the target following
+  /// would have chosen still counts as framed on the rider.
+  ///
+  /// This is the whole test behind the "Follow me" affordance, and it is a
+  /// measurement rather than a record of how the map got there. #125 gated the
+  /// button on a flag set only when a pan interrupted an *active* follow, so a
+  /// stationary phone - which is never following, because following is driven by
+  /// movement - could be panned off the rider with the flag never set and the
+  /// button never shown (#133). A rider who cannot see themselves does not care
+  /// which gesture lost them.
+  ///
+  /// [tileSize] is the renderer's tile scheme, since the same zoom number means
+  /// a different scale on each: 512 for MapLibre, 256 for `flutter_map`.
+  static bool framesRider({
+    required double driftMeters,
+    required double zoom,
+    required double latitudeDegrees,
+    required int tileSize,
+  }) {
+    if (!driftMeters.isFinite || !zoom.isFinite) return true;
+    final tolerance =
+        navigationCameraFramedOnRiderTolerancePixels *
+        _metersPerPixel(zoom, latitudeDegrees, tileSize: tileSize);
+    return tolerance.isFinite && driftMeters.abs() <= tolerance;
   }
 
   /// Ground metres per logical pixel. MapLibre uses a 512 pixel tile scheme,

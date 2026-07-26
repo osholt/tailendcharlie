@@ -31,9 +31,9 @@ void main() {
     expect(find.byKey(const Key('maneuver-list')), findsOneWidget);
     expect(find.text('5 manoeuvres · Fixture route'), findsOneWidget);
     expect(_titles(tester), [
-      'Roundabout, 3rd exit, right',
-      'Roundabout, 2nd exit, left',
-      'Roundabout, 4th exit, left',
+      '3rd exit, right',
+      '2nd exit, left',
+      '4th exit, left',
       'Turn right',
       'Arrive at the destination',
     ]);

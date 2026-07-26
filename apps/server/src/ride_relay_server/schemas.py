@@ -110,6 +110,12 @@ class PresenceSyncResponse(BaseModel):
     phase: Literal["open", "started", "ended"] = "open"
     members: list[PresenceMemberResponse] = Field(default_factory=list)
 
+    # The relay's own current time, alongside the arrival stamps it puts on every
+    # position. Two phones do not share a clock, so a peer's position can only be
+    # aged honestly against the clock that stamped its arrival. Additive: an older
+    # client ignores it and keeps using its own clock.
+    serverTime: datetime | None = None
+
 
 class PushPreferences(BaseModel):
     model_config = ConfigDict(extra="forbid")

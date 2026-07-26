@@ -49,6 +49,19 @@ void main() {
         reason: why,
       );
 
+      // No arc is drawn so short that it reads as something left in the gap
+      // rather than as part of the ring.
+      for (final arc in geometry.ringArcs) {
+        final stroke = arc.segment == RoundaboutRingSegment.beyond
+            ? geometry.beyondRingStrokeWidth
+            : geometry.riddenRingStrokeWidth;
+        expect(
+          arc.sweepRadians.abs() * geometry.radius,
+          greaterThan(stroke * 3 - 0.01),
+          reason: '$why: a ring arc is barely longer than it is thick',
+        );
+      }
+
       // Every gap is where a road is, and every road has daylight either side.
       final roads = <double>[
         geometry.entryDegrees,
@@ -179,6 +192,11 @@ void main() {
           reason: '$why drew ${canvas.filledPaths} filled paths',
         );
         expect(canvas.drawnLines, states ? 2 : 1, reason: why);
+        // Plain strokes and fills into the canvas it was given: no layer, and
+        // no blend mode whose result differs between the renderer these tests
+        // rasterise with and the one on the phone.
+        expect(canvas.calls, isNot(contains(#saveLayer)), reason: why);
+        expect(canvas.blendModes, everyElement(BlendMode.srcOver), reason: why);
       }
     },
   );
@@ -203,16 +221,45 @@ void main() {
       return arc.sweepDegrees.abs();
     }
 
-    // Keeping left, the first exit is the left one and the right exit is nearly
-    // the whole way round. Keeping right, it is the other way about.
+    // Keeping left, a slight right is reached nearly the whole way round the
+    // ring, and a slight left almost at once. Keeping right, the other way.
     expect(
-      ridden(ManeuverDirection.left, leftHandTraffic: true),
-      lessThan(ridden(ManeuverDirection.left, leftHandTraffic: false)),
+      ridden(ManeuverDirection.slightRight, leftHandTraffic: true),
+      greaterThan(
+        ridden(ManeuverDirection.slightRight, leftHandTraffic: false),
+      ),
     );
     expect(
-      ridden(ManeuverDirection.right, leftHandTraffic: true),
-      greaterThan(ridden(ManeuverDirection.right, leftHandTraffic: false)),
+      ridden(ManeuverDirection.slightLeft, leftHandTraffic: true),
+      lessThan(ridden(ManeuverDirection.slightLeft, leftHandTraffic: false)),
     );
+
+    // A square left or right exit sits so close to the road in that the arc
+    // between them is shorter than the ring is thick. It is left out, the ring
+    // becomes one arc at full strength, and both roads leave through a single
+    // wide opening - which is what the ring can honestly show at that angle,
+    // rather than a speck beside the exit. Driving side is then carried by the
+    // wording and the arrow alone.
+    for (final direction in [ManeuverDirection.left, ManeuverDirection.right]) {
+      for (final leftHandTraffic in <bool?>[true, false, null]) {
+        final geometry = RoundaboutSymbolGeometry.of(
+          RoundaboutSymbol(
+            direction: direction,
+            leftHandTraffic: leftHandTraffic,
+          ),
+          const Size(38, 38),
+        );
+        expect(geometry.ringArcs, hasLength(1));
+        expect(
+          geometry.ringArcs.single.segment,
+          RoundaboutRingSegment.undirected,
+        );
+        expect(
+          geometry.ringGapDegrees,
+          greaterThan(geometry.ringGapHalfDegrees * 4),
+        );
+      }
+    }
 
     // With no driving side reported, no part of the ring is claimed as ridden.
     for (final direction in ManeuverDirection.values) {
@@ -441,6 +488,7 @@ class _Pixels {
 class _RecordingCanvas implements Canvas {
   final List<Symbol> calls = [];
   final List<double> arcSweeps = [];
+  final List<BlendMode> blendModes = [];
   int filledPaths = 0;
   int drawnLines = 0;
 
@@ -454,25 +502,27 @@ class _RecordingCanvas implements Canvas {
   ) {
     calls.add(#drawArc);
     arcSweeps.add(sweepAngle);
+    blendModes.add(paint.blendMode);
   }
 
   @override
-  void drawCircle(Offset centre, double radius, Paint paint) =>
-      calls.add(#drawCircle);
+  void drawCircle(Offset centre, double radius, Paint paint) {
+    calls.add(#drawCircle);
+    blendModes.add(paint.blendMode);
+  }
 
   @override
   void drawLine(Offset from, Offset to, Paint paint) {
     calls.add(#drawLine);
-    if (paint.blendMode != BlendMode.clear) drawnLines += 1;
+    blendModes.add(paint.blendMode);
+    drawnLines += 1;
   }
 
   @override
   void drawPath(Path path, Paint paint) {
     calls.add(#drawPath);
-    if (paint.style == PaintingStyle.fill &&
-        paint.blendMode != BlendMode.clear) {
-      filledPaths += 1;
-    }
+    blendModes.add(paint.blendMode);
+    if (paint.style == PaintingStyle.fill) filledPaths += 1;
   }
 
   @override

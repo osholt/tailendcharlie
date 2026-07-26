@@ -10,6 +10,24 @@ repository contains a Flutter mobile client, native Swift/Kotlin transport
 bridges, a FastAPI/PostgreSQL relay, deployment configuration, and a static
 Cloudflare Pages website.
 
+## Before you build or run anything
+
+Read [docs/build-and-run.md](docs/build-and-run.md) **first** if the task
+involves building, running on a device or simulator, signing, TestFlight, or a
+store upload. It states which configuration to use for which purpose, the
+`--dart-define` values a device build needs, the exact commands, and a
+symptom-first index of the ways a device build goes wrong. Four points that have
+each cost hours:
+
+- An iOS **debug** build cannot be launched from the home screen; a device build
+  a person is meant to tap must be `--profile`.
+- On iOS, `--release` is signed for the App Store and will not install on a
+  development device. `--profile` is the device configuration.
+- The CarPlay entitlement and the CarPlay scene declaration in `Info.plist` are a
+  matched pair. Removing either alone makes iOS kill the app at launch, and
+  automatic signing can never work for this target.
+- CI signing is already correct and evidenced on both platforms. Do not "fix" it.
+
 ## Entry points
 
 - `PLAN.md` — product scope, acceptance criteria, and release gates.

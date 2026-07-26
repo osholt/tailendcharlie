@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
+import 'route_trail_style.dart';
+
 /// Rider-selectable bike silhouettes, generated as flat single-colour art
 /// (see assets/icons/motorcycles) so they can be tinted per role exactly like
 /// the Icon widgets they replace.
@@ -111,8 +113,9 @@ class RiderMarkerBadge extends StatelessWidget {
     required this.style,
     required this.badgeColor,
     this.size = 34,
-    this.borderColor = const Color(0xFF10151C),
+    this.borderColor = RouteTrailStyle.casing,
     this.borderWidth = 2,
+    this.glyphColor = RouteTrailStyle.markerGlyph,
   });
 
   final MotorcycleIconStyle style;
@@ -120,6 +123,9 @@ class RiderMarkerBadge extends StatelessWidget {
   final double size;
   final Color borderColor;
   final double borderWidth;
+
+  /// Ink for the motorcycle glyph inside the badge.
+  final Color glyphColor;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -135,7 +141,11 @@ class RiderMarkerBadge extends StatelessWidget {
     child: Center(
       child: MotorcycleIcon(
         style: style,
-        color: Colors.white,
+        // Dark, not white. Every badge fill is light because it has to be found
+        // on a dark basemap, so a white glyph on top had almost no contrast at
+        // all - 1.76:1 on the default rider green, 1.53:1 on yellow. See
+        // `RouteTrailStyle.markerGlyph`, which owns the measurement (#133).
+        color: glyphColor,
         size: size * 0.62,
       ),
     ),
