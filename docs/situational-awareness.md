@@ -50,21 +50,24 @@ full-screen warning for the whole group.
 
 External sources implement `ExternalHazardProvider` and must expose an honest
 state (`unavailable`, `needsConfiguration`, `configured`, `loading`, `ready`, or
-`failed`). `WazeReadHazardProvider` is deliberately unavailable: Waze exposes no
-client-side read API, so any Waze data reaches the app through the relay rather
-than by direct access. The app neither scrapes Waze nor labels a source live
-without a working provider implementation and appropriate rights.
+`failed`). `WazeReadHazardProvider` is permanently unavailable rather than
+merely unconfigured: Waze exposes no client-side read API, and Tail End Charlie
+is not eligible for the partner programme that does return a feed. The app
+neither scrapes Waze nor labels a source live without a working provider
+implementation and appropriate rights.
 
 `RelayTrafficHazardProvider` is the supported live UK path. A leader sends only
-bounded route viewports to the Tail End Charlie relay, which keeps the provider
-credentials server-side; the app then rejects incidents outside the route
+bounded route viewports to the Tail End Charlie relay, which keeps the TomTom
+Orbis key server-side; the app then rejects incidents outside the route
 corridor. Configuration, privacy limits and deployment gates are documented in
 [live-traffic-incidents.md](./live-traffic-incidents.md).
 
 ## Enforcement warnings
 
 Hazards typed `speedCamera` or `policeActivity` get the most prominent
-treatment in the app. `EnforcementAlertDetector` watches the rider's own
+treatment in the app. Rider reports are currently the only source of them: no
+enforcement provider is configured and none is eligible, so the detector below
+is deliberately source-agnostic and a licensed feed would need no new UI. `EnforcementAlertDetector` watches the rider's own
 position and raises `EnforcementAlert` for the nearest one **ahead** within one
 mile; the map then covers itself with a full-screen warning showing the type
 and a live distance countdown, dismissible by tapping.
@@ -79,7 +82,9 @@ Deliberate choices:
   carriageway stops warning. Without a route it falls back to comparing the
   bearing against the direction of travel. A fix with no usable heading warns
   anyway — a false warning costs a glance, a missed one costs more.
-- **Any confidence.** Enforcement bypasses the provider confidence floor.
+- **Any confidence.** A sighting warns regardless of how many riders have
+  confirmed it. A licensed feed, if one is ever configured, should likewise be
+  exempt from any confidence floor it applies to ordinary hazards.
 - **Never a reroute trigger.** Enforcement types are excluded from the
   leader's traffic-reroute candidates at both the shell and the provider. The
   rider is warned; the group's authoritative route is not redrawn around it.

@@ -503,7 +503,7 @@ void main() {
 
     alert.value = EnforcementAlert(
       hazard: HazardReport(
-        id: 'waze-alert-camera-1',
+        id: 'tomtom-camera-1',
         rideId: 'ride-1',
         type: HazardType.speedCamera,
         severity: HazardSeverity.serious,
@@ -517,7 +517,7 @@ void main() {
         reporterId: 'relay-traffic',
         source: HazardSource.externalProvider,
         providerId: 'relay-traffic',
-        details: 'Mobile speed camera · Waze · updated just now',
+        details: 'Mobile speed camera · TomTom · updated just now',
       ),
       distanceMeters: 1207,
     );

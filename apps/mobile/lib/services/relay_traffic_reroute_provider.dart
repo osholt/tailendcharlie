@@ -8,7 +8,6 @@ import '../domain/hazard.dart';
 import '../domain/imported_route.dart';
 import '../internet/internet_relay_client.dart';
 import 'enforcement_alert_detector.dart';
-import 'relay_traffic_hazard_provider.dart';
 
 typedef TrafficHttpPost =
     Future<http.Response> Function(
@@ -139,7 +138,7 @@ class RelayTrafficRerouteProvider {
         .where(
           (hazard) =>
               hazard.source == HazardSource.externalProvider &&
-              liveTrafficHazardProviderIds.contains(hazard.providerId) &&
+              hazard.providerId == 'tomtom-traffic' &&
               // Enforcement reports warn the rider; they never justify
               // recalculating the group's route around them.
               !enforcementHazardTypes.contains(hazard.type) &&

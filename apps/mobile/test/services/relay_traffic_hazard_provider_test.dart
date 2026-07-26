@@ -88,98 +88,12 @@ void main() {
       expect(hazard.type, HazardType.roadworks);
       expect(hazard.severity, HazardSeverity.critical);
       expect(hazard.source, HazardSource.externalProvider);
-      expect(hazard.providerId, 'relay-traffic');
+      expect(hazard.providerId, 'tomtom-traffic');
       expect(hazard.confirmations, 4);
       expect(hazard.details, contains('TomTom'));
       expect(result.status.message, '1 route-relevant incident · TomTom');
     },
   );
-
-  test(
-    'accepts a Waze-sourced relay response with its own attribution',
-    () async {
-      final provider = RelayTrafficHazardProvider(
-        configuration: configuration,
-        clock: () => now,
-        httpGet: (uri, {headers}) async => http.Response.bytes(
-          utf8.encode(
-            jsonEncode({
-              'provider': 'waze-for-cities',
-              'fetchedAt': '2026-07-24T19:59:00Z',
-              'incidents': [
-                {
-                  'id': 'alert-closure-1',
-                  'type': 'roadworks',
-                  'severity': 'critical',
-                  'description': 'Road closed for an event · A48',
-                  'geometry': [
-                    {'latitude': 51.5003, 'longitude': -3.1500},
-                  ],
-                  'observedAt': '2026-07-24T19:58:00Z',
-                  'expiresAt': '2026-07-24T20:09:00Z',
-                  'reportCount': 4,
-                },
-              ],
-            }),
-          ),
-          200,
-          headers: {'content-type': 'application/json'},
-        ),
-      );
-
-      final result = await provider.fetch(
-        ExternalHazardQuery(
-          rideId: 'ride-1',
-          route: const [
-            GeoPoint(latitude: 51.5, longitude: -3.16),
-            GeoPoint(latitude: 51.5, longitude: -3.13),
-          ],
-          requestedAt: now,
-          corridorMeters: 1000,
-        ),
-      );
-
-      final hazard = result.hazards.single;
-      expect(hazard.id, 'waze-alert-closure-1');
-      expect(hazard.providerId, 'relay-traffic');
-      expect(hazard.details, contains('Waze'));
-      expect(hazard.details, isNot(contains('TomTom')));
-      expect(result.status.message, '1 route-relevant incident · Waze');
-    },
-  );
-
-  test('rejects a relay response from an unknown traffic source', () async {
-    final provider = RelayTrafficHazardProvider(
-      configuration: configuration,
-      clock: () => now,
-      httpGet: (uri, {headers}) async => http.Response.bytes(
-        utf8.encode(
-          jsonEncode({
-            'provider': 'unattributed-source',
-            'fetchedAt': '2026-07-24T19:59:00Z',
-            'incidents': <Object?>[],
-          }),
-        ),
-        200,
-        headers: {'content-type': 'application/json'},
-      ),
-    );
-
-    final result = await provider.fetch(
-      ExternalHazardQuery(
-        rideId: 'ride-1',
-        route: const [
-          GeoPoint(latitude: 51.5, longitude: -3.16),
-          GeoPoint(latitude: 51.5, longitude: -3.13),
-        ],
-        requestedAt: now,
-        corridorMeters: 1000,
-      ),
-    );
-
-    expect(result.status.state, ExternalHazardProviderState.failed);
-    expect(result.hazards, isEmpty);
-  });
 
   test('reports relay configuration without attempting a request', () async {
     var requested = false;

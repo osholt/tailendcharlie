@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 from functools import lru_cache
-from urllib.parse import urlparse
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -108,10 +107,6 @@ class Settings(BaseSettings):
     observer_create_rate_limit_window_seconds: int = Field(default=3600, ge=60, le=86400)
     maximum_observer_grants_per_ride: int = Field(default=50, ge=1, le=500)
     tomtom_traffic_api_key: SecretStr | None = None
-    # The Waze for Cities feed URL embeds the partner token, so it is a secret.
-    waze_traffic_feed_url: SecretStr | None = None
-    # Waze asks partners not to poll the feed faster than its own refresh.
-    waze_traffic_feed_cache_seconds: int = Field(default=120, ge=60, le=600)
     traffic_provider_timeout_seconds: int = Field(default=8, ge=2, le=30)
     traffic_incident_cache_seconds: int = Field(default=60, ge=30, le=300)
     traffic_incident_rate_limit_requests: int = Field(default=60, ge=10, le=1000)
@@ -158,7 +153,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "tomtom_traffic_api_key",
-        "waze_traffic_feed_url",
         "apns_private_key_base64",
         "fcm_private_key_base64",
         mode="before",
@@ -168,19 +162,6 @@ class Settings(BaseSettings):
         if value is None or value == "":
             return None
         return value
-
-    @field_validator("waze_traffic_feed_url")
-    @classmethod
-    def validate_waze_traffic_feed_url(cls, value: SecretStr | None) -> SecretStr | None:
-        if value is None:
-            return None
-        raw = value.get_secret_value().strip()
-        parsed = urlparse(raw)
-        if parsed.scheme != "https" or not parsed.hostname:
-            raise ValueError("must be an https Waze for Cities feed URL")
-        if not parsed.hostname.endswith(".waze.com") and parsed.hostname != "waze.com":
-            raise ValueError("must be a waze.com feed URL")
-        return SecretStr(raw)
 
     @model_validator(mode="after")
     def push_provider_settings_are_complete(self) -> Settings:

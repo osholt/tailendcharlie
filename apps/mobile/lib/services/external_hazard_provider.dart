@@ -113,19 +113,20 @@ class UnconfiguredExternalHazardProvider implements ExternalHazardProvider {
       ExternalHazardFetchResult(status: status);
 }
 
-/// Explicit placeholder for direct Waze access from the app.
+/// Explicit placeholder for Waze read data.
 ///
-/// Waze exposes no client-side read API for its crowd reports. Where a Waze
-/// for Cities partner feed is available it is read by the relay, which holds
-/// the credential and serves the result through the live traffic provider, so
-/// the app never talks to Waze itself.
+/// Waze exposes no client-side read API for its crowd reports, and the partner
+/// programme that does return a feed is limited to government agencies and road
+/// operators. Tail End Charlie applied and is not eligible, so there is no
+/// lawful route to this data and the provider stays permanently unavailable
+/// rather than pretending to be unconfigured.
 class WazeReadHazardProvider extends UnavailableExternalHazardProvider {
   const WazeReadHazardProvider()
     : super(
         id: 'waze-read',
         displayName: 'Waze reports',
         reason:
-            'Waze reports reach this app only through the relay traffic '
-            'feed, never by direct app access.',
+            'Tail End Charlie is not eligible for the Waze partner feed, and '
+            'Waze has no other read API.',
       );
 }

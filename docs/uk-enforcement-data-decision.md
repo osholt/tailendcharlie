@@ -28,21 +28,40 @@ attribution, UK-only filtering and redistribution to Tail End Charlie users.
 There is no public anonymous endpoint that can safely be embedded in tonight's
 build.
 
-## Update 2026-07-25
+## Update 2026-07-26
 
-Enforcement warnings are now a headline rider feature, not a deferred one. The
-display side is built and provider-neutral: any hazard typed `speedCamera` or
-`policeActivity` raises a full-screen warning a mile out, described in
-[situational-awareness.md](situational-awareness.md). The relay's Waze for
-Cities reader is the first source wired into it and supplies police alerts and
-mobile-camera subtypes at any confidence.
+Enforcement warnings are a shipped rider feature. The display side is built and
+provider-neutral: any hazard typed `speedCamera` or `policeActivity` raises a
+full-screen warning a mile out, described in
+[situational-awareness.md](situational-awareness.md).
 
-This does not replace the Cyclops decision. Waze carries crowd-reported mobile
-cameras and police sightings; it does not carry the UK's fixed, average-speed
-and red-light camera database, which is the larger and more reliable half of
-the picture. Cyclops (or TomTom Safety Locations) remains the plan for that,
-and it now has a display surface waiting for it — the integration work left is
-the feed itself, not the alert.
+**The only current source is rider reports.** Waze for Cities was pursued as a
+source of crowd-reported mobile cameras and police sightings; Tail End Charlie
+is not eligible for that programme, so it supplies nothing and its reader has
+been removed. No licensed provider is configured.
+
+Two free sources were assessed on 2026-07-26 and **parked on the roadmap** as
+candidates for a later paid tier rather than built now:
+
+- **OpenStreetMap fixed cameras.** An Overpass count on the 2026-07-02 OSM base
+  found 3,422 `highway=speed_camera` nodes and 597 `enforcement`
+  (`maxspeed`/`average_speed`) relations across Great Britain, ODbL with
+  attribution the app already carries. The natural delivery route is a new layer
+  in the existing review-gated generator in
+  [tools/discovery](../tools/discovery/README.md): a pinned Geofabrik extract,
+  no live Overpass dependency, and it works offline, which suits fixed cameras
+  better than any live feed. It maps housings rather than which are switched
+  on, and mobile sites are largely absent.
+- **Roadworks.** Free options are trunk-road shaped and so a poor fit for the
+  B-roads this app exists for: National Highways covers the strategic road
+  network only, as do Traffic Scotland and the free Traffic Wales RSS feed. DfT
+  Street Manager is the exception, reaching every English highway authority
+  including local roads under OGL v3.0, delivered by AWS SNS push; whether a
+  non-authority may subscribe to its open-data route is unconfirmed.
+
+Cyclops or TomTom Safety Locations remain the route to the UK fixed,
+average-speed and red-light database. The alert surface is already built, so
+that work is a feed rather than a feature.
 
 ## Alternatives
 

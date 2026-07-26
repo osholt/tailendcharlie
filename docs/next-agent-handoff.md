@@ -1,11 +1,11 @@
 # Next-agent handoff
 
-Updated: 2026-07-25
+Updated: 2026-07-26
 
 ## Current branch
 
-Active work is on `claude/waze-integration-speed-display-15b184`: the Waze for
-Cities traffic reader and the map speed readout described below. Everything
+Active work is on `claude/waze-integration-speed-display-15b184`: the map speed
+readout and the enforcement warnings described below. Everything
 else described in the previous handoff (draft PR #43 and the UI/navigation,
 simulator, iOS crash, rider-count and screen-awake fixes) is merged; `main` at
 `2d3d8e5` is the frontier and no `codex/*` or `feature/*` branch holds
@@ -26,25 +26,26 @@ commercial evidence:
   advertise protocol 1; the old-client/current-server and
   current-client/old-server matrix plus store update links remain.
 - Credentials and third-party terms: #38 (real APNs/FCM credentials),
-  #39 (written TomTom navigation permission, and now also the Waze for Cities
-  partner agreement before any feed URL is configured).
+  #39 (written TomTom navigation permission).
 - Content approval: #64 — the generator has landed; the 48-item four-nation
   content/safety review has not.
 
 ## This branch
 
-- Waze for Cities is a second relay-side incident source, preferred over
-  TomTom for incidents when its feed URL is configured, with TomTom as the
-  fallback. Waze publishes no routing API, so alternatives stay on TomTom and
-  the reroute endpoint reports itself unconfigured when only Waze is present.
-  See `docs/live-traffic-incidents.md`. No feed URL is configured; nothing is
-  claimed as available.
+- **Waze is closed.** A Waze for Cities relay reader was built on this branch
+  and then removed: the programme is limited to government agencies and road
+  operators, and this project applied and is not eligible. TomTom is again the
+  only traffic provider, and the multi-source scaffolding went with the reader
+  rather than being left dormant for a source that cannot arrive. Waze deep
+  links for destination handoff are unaffected. Do not re-open this without new
+  eligibility news.
 - Enforcement warnings are now a wanted feature, reversing the exclusion in
   `docs/crowd-hazard-feed-decision.md` point 2. Police and camera alerts are
   carried at any confidence and raise a full-screen warning a mile ahead; they
   never trigger a route recalculation. See `docs/situational-awareness.md`.
-  The detector is provider-neutral, so the Cyclops fixed-camera database in
-  `docs/uk-enforcement-data-decision.md` needs only its feed, not new UI.
+  Rider reports are the only source of them: no enforcement provider is
+  configured and none is eligible. The detector is source-agnostic, so a
+  licensed feed would need no new UI.
 - Riders can report enforcement themselves, from a `REPORT` control above the
   speed sign on the ride map and from the existing hazard sheet. Rider-raised
   enforcement expires faster than a road defect (two hours for a camera, one
@@ -72,13 +73,22 @@ uv run python -m pytest
 Use `uv run python -m pytest` if the direct `uv run pytest` entry point has a
 stale virtual-environment shebang.
 
+## Parked, not forgotten
+
+Two free data sources were assessed on 2026-07-26 and parked on the P2 roadmap
+in `PLAN.md` as candidates for a later paid tier, with the detail in
+`docs/uk-enforcement-data-decision.md`:
+
+- an OpenStreetMap fixed-camera layer through the existing `tools/discovery`
+  generator (3,422 camera nodes, 597 enforcement relations, GB, ODbL, offline);
+- roadworks from DfT Street Manager, the only free feed reaching local roads.
+
+Neither is started. The in-app warning surface they would feed already exists.
+
 ## Remaining evidence
 
-- Record the Waze for Cities partner agreement terms (display, caching,
-  redistribution, attribution) before configuring a feed URL, then capture a
-  staged closure test and a provider-failure test against the real feed.
-  Confirm specifically whether the agreement permits redistributing `POLICE`
-  and camera alerts, since that is the part most likely to be restricted.
+- TomTom's written "Navigation Functionality" permission remains the only route
+  to broad all-road live incidents, and is unchanged by the Waze outcome.
 - Ride past a known camera site and confirm the warning arms about a mile out,
   counts down, clears once passed, and does not fire for the opposite
   carriageway.

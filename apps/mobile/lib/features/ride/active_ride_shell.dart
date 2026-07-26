@@ -935,7 +935,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             .where(
               (hazard) =>
                   hazard.source == HazardSource.externalProvider &&
-                  liveTrafficHazardProviderIds.contains(hazard.providerId) &&
+                  hazard.providerId == 'tomtom-traffic' &&
                   // Enforcement is warned about, never routed around: a camera
                   // is not an obstruction and the group's route is not the
                   // place to act on one.
