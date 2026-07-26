@@ -117,12 +117,19 @@ void main() {
       participants.where((participant) => participant.riderId == 'same-rider'),
       hasLength(1),
     );
-    expect(
-      participants
-          .singleWhere((participant) => participant.riderId == 'same-rider')
-          .state,
-      RideMembershipState.joined,
+    final rider = participants.singleWhere(
+      (participant) => participant.riderId == 'same-rider',
     );
+    expect(rider.state, RideMembershipState.joined);
+    // One row, and the history is on it rather than lost or duplicated (#144).
+    expect(rider.leftAt, isNull);
+    expect(rider.hasLeft, isFalse);
+    expect(
+      rider.rejoinedAfterLeavingAt,
+      joinedAt.add(const Duration(minutes: 1)),
+    );
+    expect(rider.rejoinLabel, 'Rejoined after leaving at 10:01');
+    expect(rider.isIncludedInLiveCount, isTrue);
   });
 
   test('a forged departure cannot remove a participant', () {

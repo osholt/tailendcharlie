@@ -57,8 +57,8 @@ class SpeedLimitDisplayController extends ChangeNotifier {
   /// Movement that makes a two-fix trace worth sending.
   ///
   /// Below this the pair is GPS jitter rather than travel, so the lookup is sent
-  /// as the single current fix and the provider skips heading disambiguation
-  /// instead of disambiguating on noise.
+  /// with no origin fix and the provider resolves the road as a standstill rather
+  /// than disambiguating on noise.
   static const minimumTraceMovementMeters = 4.0;
 
   static Future<SpeedLimitDisplayController> load({
@@ -154,8 +154,8 @@ class SpeedLimitDisplayController extends ChangeNotifier {
     _beginLookup(
       // Once the bike has genuinely moved, the previous lookup point gives the
       // travel heading that separates parallel carriageways - the one case where
-      // movement really does help. Stationary, there is no heading to give and
-      // the provider tightens its match test instead of inventing one.
+      // movement really does help. Stationary, there is no heading to give, and
+      // the provider compares the roads around the fix instead of inventing one.
       previous: travelled >= minimumTraceMovementMeters ? anchor : null,
       current: location,
       generation: _generation,

@@ -145,6 +145,7 @@ class PresenceRosterMember {
     required this.role,
     required this.joinedAt,
     this.left = false,
+    this.leftAt,
     this.motorcycleStyle = motorcycleIconStyleDefault,
     this.riderColor = riderColorDefault,
   });
@@ -154,6 +155,13 @@ class PresenceRosterMember {
   final RideRole role;
   final DateTime joinedAt;
   final bool left;
+
+  /// When the relay recorded this rider's departure, when it reports it.
+  ///
+  /// Null from a relay that does not, in which case the departure is still
+  /// authoritative but cannot be ordered against a later rejoin, so the roster
+  /// may only add a departed row it alone knows about (#144).
+  final DateTime? leftAt;
   final MotorcycleIconStyle motorcycleStyle;
   final RiderColor riderColor;
 }

@@ -2345,6 +2345,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   void _publishLivePresence(List<LiveRiderPresence> presence) {
     widget.rideController.observeLivePresence(
       presence,
+      // The roster still names the riders who have left, which is how their
+      // record survives a departure even if their membership events never
+      // reached this phone's journal (#144). It adds nobody to the live count.
+      roster: _preStartPresenceController?.roster ?? const [],
       positionChannelUnavailable:
           _preStartPresenceController?.unavailableReason != null,
     );
@@ -2463,7 +2467,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             children: [
               _PreStartRidePanel(
                 rideCode: session.rideCode,
-                participants: widget.rideController.participants,
+                // Who is here, not who has been here: the waiting-to-start
+                // lobby is a live list, and a rider who has left keeps their
+                // record in the ride roster instead (#144).
+                participants: widget.rideController.liveParticipants,
                 isLeader: session.role == RideRole.lead,
                 busy: widget.rideController.busy || _loading,
                 routeName: _activeRoute?.name,

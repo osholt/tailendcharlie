@@ -100,6 +100,12 @@ class PresenceMemberResponse(BaseModel):
     joinedAt: datetime
     left: bool = False
 
+    # When the departure was recorded, so a caller can say *when* a rider left
+    # and can order that departure against a later rejoin without waiting for
+    # the bulk event batch (issue #144). Absent unless ``left`` is true;
+    # additive, so an older client simply ignores it.
+    leftAt: datetime | None = None
+
 
 class PresenceSyncResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")

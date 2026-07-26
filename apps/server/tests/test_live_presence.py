@@ -206,6 +206,47 @@ def test_rider_left_marks_the_member_rather_than_hiding_the_history(client, sync
     assert len(members) == 1
     assert members[0]["riderId"] == "rider-a"
     assert members[0]["left"] is True
+    # Issue #144: the record a departed rider leaves behind has to say *when*
+    # they went, and a caller must be able to order the departure against a later
+    # rejoin without waiting for the bulk event batch to deliver either.
+    assert members[0]["leftAt"] is not None
+    assert members[0]["leftAt"] >= members[0]["joinedAt"]
+
+
+def test_a_rejoin_clears_the_departure_and_its_time(client, synchronize) -> None:
+    ride_id = "ride-left-then-back"
+    assert (
+        synchronize(client, ride_id=ride_id, secret=SECRET, device_id="leader").status_code == 200
+    )
+    assert (
+        synchronize(
+            client,
+            ride_id=ride_id,
+            secret=SECRET,
+            device_id="rider-a",
+            events=[
+                _membership_event(ride_id, "joined-a", "rider-a", "Alex", "rider"),
+                event(
+                    ride_id,
+                    "left-a",
+                    device_id="rider-a",
+                    event_type="riderLeft",
+                    payload={"riderId": "rider-a", "reason": "left"},
+                ),
+                _membership_event(ride_id, "rejoined-a", "rider-a", "Alex", "rider"),
+            ],
+        ).status_code
+        == 200
+    )
+
+    members = _presence(client, ride_id, "leader").json()["members"]
+
+    # One identity, and it is not carrying a stale departure that would let a
+    # client mark a rider who is back as gone.
+    assert len(members) == 1
+    assert members[0]["riderId"] == "rider-a"
+    assert members[0]["left"] is False
+    assert members[0]["leftAt"] is None
 
 
 def test_ride_ended_discards_live_positions(client, synchronize) -> None:
