@@ -3,21 +3,35 @@
 
 from __future__ import annotations
 
-import argparse
-import hashlib
-import itertools
-import json
-import math
-import shutil
-import sqlite3
-import subprocess
-import tempfile
-import tomllib
-from collections import Counter, defaultdict
-from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
+import sys
+
+MINIMUM_PYTHON = (3, 11)
+if sys.version_info < MINIMUM_PYTHON:  # pragma: no cover - guard for old interpreters
+    required = ".".join(str(part) for part in MINIMUM_PYTHON)
+    running = ".".join(str(part) for part in sys.version_info[:3])
+    raise SystemExit(
+        f"tools/discovery/generate_catalogue.py requires Python {required} or newer "
+        f"(it reads the release manifest with the standard-library tomllib module, "
+        f"added in {required}). This interpreter is Python {running} at "
+        f"{sys.executable}. Re-run it with an explicit interpreter, for example "
+        f"`python3.12 tools/discovery/generate_catalogue.py ...`."
+    )
+
+import argparse  # noqa: E402 - imported after the interpreter version guard
+import hashlib  # noqa: E402
+import itertools  # noqa: E402
+import json  # noqa: E402
+import math  # noqa: E402
+import shutil  # noqa: E402
+import sqlite3  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+import tomllib  # noqa: E402
+from collections import Counter, defaultdict  # noqa: E402
+from collections.abc import Iterable, Iterator, Mapping, Sequence  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from datetime import datetime  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 EARTH_RADIUS_METRES = 6_371_000.0
 ALLOWED_HIGHWAYS = {"primary", "secondary", "tertiary", "unclassified"}
@@ -49,6 +63,14 @@ LAYER_FILENAMES = {
     "mountain_pass": "mountain-passes.geojson",
     "good_biking_road": "good-biking-roads.geojson",
 }
+REVIEW_SAMPLE_REGIONS = ("England", "Scotland", "Wales", "Northern Ireland")
+# Highest-consequence layer first. Mountain passes are reviewed exhaustively:
+# there are few of them and seasonal closure, one of the four review criteria,
+# is almost exclusively a pass concern.
+REVIEW_CATEGORY_ORDER = ("mountain_pass", "twisty_highlight", "good_biking_road")
+REVIEW_EXHAUSTIVE_CATEGORIES = frozenset({"mountain_pass"})
+REVIEW_SAMPLE_PER_NATION = 12
+UNASSIGNED_REVIEW_REGION = "unassigned-border-area"
 WARNINGS = {
     "twisty_highlight": (
         "Descriptive bend highlight only; not a speed target or safety "
@@ -174,8 +196,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.layer_directory is not None:
         write_layers(args.layer_directory, collection)
     if args.review_sample is not None:
-        write_review_sample(args.review_sample, collection)
+        report_review_sample(write_review_sample(args.review_sample, collection))
     return 0
+
+
+def report_review_sample(sampling: Mapping[str, object]) -> None:
+    quota = sampling["quotaPerNationPerCategory"]
+    print(f"Review sample: {sampling['selected']} candidates")
+    for category, counts in sampling["countsByCategoryAndRegion"].items():
+        exhaustive = category in sampling["exhaustiveCategories"]
+        target = "reviewed exhaustively" if exhaustive else f"target {quota} per nation"
+        summary = ", ".join(f"{region} {count}" for region, count in counts.items())
+        print(f"  {category} ({target}): {summary}")
+    for shortfall in sampling["shortfalls"]:
+        print(
+            f"  SHORT: {shortfall['category']} in {shortfall['reviewRegion']} has "
+            f"{shortfall['selected']} candidates, below the quota of "
+            f"{shortfall['requested']}; not padded from another nation."
+        )
 
 
 def validate_pbf(path: Path, manifest: ReleaseManifest) -> None:
@@ -771,39 +809,135 @@ def write_layers(directory: Path, collection: Mapping[str, object]) -> None:
     )
 
 
-def write_review_sample(
-    destination: Path,
+def build_review_sample(
     collection: Mapping[str, object],
-) -> None:
-    regions = ("England", "Scotland", "Wales", "Northern Ireland")
-    sample: list[dict[str, object]] = []
-    for region in regions:
-        candidates = [
-            feature
-            for feature in collection["features"]
-            if review_region(feature_anchor(feature)) == region
-        ]
-        candidates.sort(
-            key=lambda feature: (
-                -(feature["properties"]["score"] or 0),
-                feature["properties"]["id"],
-            )
+    *,
+    per_nation: int = REVIEW_SAMPLE_PER_NATION,
+) -> dict[str, object]:
+    """Stratify the review sample by category as well as nation.
+
+    A sample that only covers one category certifies one layer, so every
+    category present in the catalogue is sampled separately. Quota categories
+    take up to ``per_nation`` candidates from each non-overlapping nation core;
+    exhaustive categories take every candidate, including any that falls in a
+    deliberately excluded border area, because their consequence is highest.
+    """
+    if per_nation < 1:
+        raise ValueError("The per-nation review quota must be positive")
+    catalogued = sorted({feature["properties"]["category"] for feature in collection["features"]})
+    unsampled = [category for category in catalogued if category not in REVIEW_CATEGORY_ORDER]
+    if unsampled:
+        raise ValueError(
+            "Every catalogued category must be sampled; REVIEW_CATEGORY_ORDER is "
+            f"missing: {', '.join(unsampled)}"
         )
-        for feature in candidates[:12]:
-            clone = json.loads(json.dumps(feature))
-            clone["properties"]["reviewRegion"] = region
-            clone["properties"]["manualReview"] = "pending"
-            sample.append(clone)
-    review = {
+
+    by_category: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for feature in collection["features"]:
+        by_category[feature["properties"]["category"]].append(feature)
+
+    sample: list[dict[str, object]] = []
+    counts: dict[str, dict[str, int]] = {}
+    shortfalls: list[dict[str, object]] = []
+    for category in REVIEW_CATEGORY_ORDER:
+        exhaustive = category in REVIEW_EXHAUSTIVE_CATEGORIES
+        grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
+        for feature in by_category.get(category, []):
+            region = review_region(feature_anchor(feature))
+            if region is None:
+                # Border areas are excluded from the quota categories rather
+                # than guessed; an exhaustively reviewed category keeps them
+                # under an explicit label so nothing is silently dropped.
+                if not exhaustive:
+                    continue
+                region = UNASSIGNED_REVIEW_REGION
+            grouped[region].append(feature)
+        regions = REVIEW_SAMPLE_REGIONS
+        if exhaustive:
+            regions = (*regions, UNASSIGNED_REVIEW_REGION)
+        category_counts: dict[str, int] = {}
+        for region in regions:
+            candidates = sorted(grouped.get(region, []), key=review_sample_rank)
+            chosen = candidates if exhaustive else candidates[:per_nation]
+            category_counts[region] = len(chosen)
+            if not exhaustive and len(chosen) < per_nation:
+                shortfalls.append(
+                    {
+                        "category": category,
+                        "reviewRegion": region,
+                        "requested": per_nation,
+                        "selected": len(chosen),
+                        "note": (
+                            "Fewer candidates exist in this nation core than the "
+                            "quota; the shortfall was neither padded from another "
+                            "nation nor dropped from the report."
+                        ),
+                    }
+                )
+            for feature in chosen:
+                clone = json.loads(json.dumps(feature))
+                clone["properties"]["reviewRegion"] = region
+                clone["properties"]["manualReview"] = "pending"
+                sample.append(clone)
+        counts[category] = category_counts
+        if exhaustive and sum(category_counts.values()) != len(by_category.get(category, [])):
+            raise ValueError(
+                f"Exhaustive review category {category} lost candidates while sampling"
+            )
+
+    sampled_ids = [feature["properties"]["id"] for feature in sample]
+    if len(sampled_ids) != len(set(sampled_ids)):
+        raise ValueError("The review sample must not repeat a candidate")
+    return {
         "type": "FeatureCollection",
         "properties": {
             "catalogueVersion": collection["properties"]["catalogueVersion"],
-            "purpose": "Deterministic four-nation manual review sample",
+            "purpose": (
+                "Deterministic manual review sample, stratified by category and "
+                "by non-overlapping nation core"
+            ),
             "publicationStatus": "not-for-publication",
+            "sampling": {
+                "quotaPerNationPerCategory": per_nation,
+                "quotaCategories": [
+                    category
+                    for category in REVIEW_CATEGORY_ORDER
+                    if category not in REVIEW_EXHAUSTIVE_CATEGORIES
+                ],
+                "exhaustiveCategories": [
+                    category
+                    for category in REVIEW_CATEGORY_ORDER
+                    if category in REVIEW_EXHAUSTIVE_CATEGORIES
+                ],
+                "nationCores": list(REVIEW_SAMPLE_REGIONS),
+                "unassignedRegionLabel": UNASSIGNED_REVIEW_REGION,
+                "selected": len(sample),
+                "countsByCategoryAndRegion": counts,
+                "shortfalls": shortfalls,
+                "note": (
+                    "Nation cores are non-overlapping review buckets, not "
+                    "administrative boundaries. Border areas are excluded from "
+                    "the quota categories rather than guessed, and any shortfall "
+                    "is reported here instead of being padded from another nation."
+                ),
+            },
         },
         "features": sample,
     }
+
+
+def review_sample_rank(feature: Mapping[str, object]) -> tuple[float, str]:
+    properties = feature["properties"]
+    return (-(properties["score"] or 0), properties["id"])
+
+
+def write_review_sample(
+    destination: Path,
+    collection: Mapping[str, object],
+) -> Mapping[str, object]:
+    review = build_review_sample(collection)
     write_bytes(destination, encode_collection(review))
+    return review["properties"]["sampling"]
 
 
 def review_region(anchor: tuple[float, float]) -> str | None:
