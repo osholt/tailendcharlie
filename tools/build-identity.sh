@@ -12,10 +12,16 @@
 # locally to construct the matching --dart-define arguments:
 #
 #   tools/build-identity.sh apps/mobile/pubspec.yaml internal 123
+#
+# The track is the one the build is *destined for*, not necessarily the one it
+# is uploaded to: an Android release uploaded to `internal` and promoted to
+# `alpha` in the same run is stamped `alpha`, because that is the track its
+# testers install from. Promotion never rebuilds, so this is the only chance to
+# get the label right.
 set -euo pipefail
 
 pubspec="${1:?pubspec.yaml path required}"
-track="${2:?distribution track required (local|ci|internal|testflight)}"
+track="${2:?distribution track required (local|ci|internal|alpha|beta|testflight)}"
 build_number="${3:-}"
 
 if [ ! -f "$pubspec" ]; then
@@ -24,7 +30,7 @@ if [ ! -f "$pubspec" ]; then
 fi
 
 case "$track" in
-  local | ci | internal | testflight) ;;
+  local | ci | internal | alpha | beta | testflight) ;;
   *)
     echo "build-identity: unknown track '$track'" >&2
     exit 1
