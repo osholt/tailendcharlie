@@ -128,10 +128,13 @@ binary that describes a track its testers cannot see.
 `RelayClientDescriptor.current()` and the in-app **About & build** screen both
 read the same `--dart-define` values, and
 `apps/mobile/test/services/build_identity_test.dart` fails if the two ever
-disagree. Every build channel must stamp them in, or the app falls back to the
-hardcoded `1.0.1+22` in `internet_relay_client.dart` and every diagnostic,
-support conversation and bug report becomes ambiguous about which code it
-describes.
+disagree. Every build channel must stamp them in, or the app reports its version
+and build number as `unknown` and its track as `Local build` -
+`RelayClientDescriptor` deliberately maps an absent or malformed define to
+`unknown` rather than a plausible-looking constant, because a wrong version makes
+every version-conditional diagnostic silently misleading. A local device build
+has to stamp them too; see
+[build-and-run.md](./build-and-run.md#what-a-device-build-must-have-stamped-in).
 
 `tools/build-identity.sh <pubspec> <track> [build-number]` derives them from
 `pubspec.yaml` plus the build number, and every workflow calls it and appends
