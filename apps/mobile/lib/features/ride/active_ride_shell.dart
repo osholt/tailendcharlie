@@ -2758,6 +2758,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onEmergencyAlert: _sendEmergencyMapAlert,
       onEmergencyIssue: _sendEmergencyMapIssue,
       ridePaused: widget.rideController.ridePaused,
+      rideHasNoLeader: widget.rideController.rideHasNoLeader,
       onLeaveRide: _confirmLeaveRideFromMap,
       onOpenRideMenu: _openRideMenu,
       onRouteCommitted: _onRouteChanged,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../controllers/ride_controller.dart';
@@ -104,6 +106,15 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                 ],
               ),
             ),
+            // Shown to everyone, unlike the TEC notice: there is no leader to
+            // show it to, and every remaining rider needs to know (#176).
+            if (widget.controller.rideHasNoLeader)
+              _MissingLeaderNotice(
+                onTakeLead: () async {
+                  await widget.controller.setRole(RideRole.lead);
+                  if (context.mounted) Navigator.pop(context);
+                },
+              ),
             if (isLeader && !hasTec) const _MissingTecNotice(),
             if (isLeader && assignment != null)
               _TecRequestStatus(assignment: assignment),
@@ -261,6 +272,68 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
 /// the rider accepts, not a silent assignment, so this deliberately says the
 /// rider has to accept: a rider who has not noticed they are TEC is worse than
 /// no TEC, because the group then believes the back is covered.
+/// Shown when a running ride has nobody holding the lead role (#176).
+///
+/// Offers rather than assigns. Roles in this app are self-selected - the
+/// precedent #128 set for the TEC role, where a leader *asks* and the target's
+/// own `roleChanged` is what counts - so the group cannot be handed a leader it
+/// did not choose, and the app cannot pick one on the strength of who happens to
+/// be nearest the front.
+class _MissingLeaderNotice extends StatelessWidget {
+  const _MissingLeaderNotice({required this.onTakeLead});
+
+  final Future<void> Function() onTakeLead;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+    child: Card(
+      key: const Key('roster-missing-leader-notice'),
+      margin: EdgeInsets.zero,
+      color: const Color(0xFF3A2320),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              Icons.warning_amber_rounded,
+              color: Color(0xFFFF8A6B),
+              size: 22,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'This ride has no leader',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 3),
+                  const Text(
+                    'The leader has left. Nobody is setting the pace, the Tail '
+                    'End Charlie has no line to follow, and route changes '
+                    'cannot be published until somebody takes the lead.',
+                    style: TextStyle(color: Color(0xFFE4D6D2), height: 1.35),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    key: const Key('roster-take-the-lead-button'),
+                    onPressed: () => unawaited(onTakeLead()),
+                    icon: const Icon(Icons.flag_outlined, size: 18),
+                    label: const Text('Take the lead'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _MissingTecNotice extends StatelessWidget {
   const _MissingTecNotice();
 

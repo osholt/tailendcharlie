@@ -108,6 +108,7 @@ class RideMapFeature extends StatefulWidget {
     this.onEmergencyAlert,
     this.onEmergencyIssue,
     this.ridePaused = false,
+    this.rideHasNoLeader = false,
     this.onLeaveRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
@@ -149,6 +150,7 @@ class RideMapFeature extends StatefulWidget {
     Future<void> Function()? onEmergencyAlert,
     Future<void> Function(QuickMessage message)? onEmergencyIssue,
     bool ridePaused = false,
+    bool rideHasNoLeader = false,
     Future<void> Function()? onLeaveRide,
     Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
@@ -183,6 +185,7 @@ class RideMapFeature extends StatefulWidget {
     onEmergencyAlert: onEmergencyAlert,
     onEmergencyIssue: onEmergencyIssue,
     ridePaused: ridePaused,
+    rideHasNoLeader: rideHasNoLeader,
     onLeaveRide: onLeaveRide,
     onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
@@ -225,6 +228,7 @@ class RideMapFeature extends StatefulWidget {
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
   final bool ridePaused;
+  final bool rideHasNoLeader;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
@@ -356,6 +360,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onEmergencyAlert: widget.onEmergencyAlert,
         onEmergencyIssue: widget.onEmergencyIssue,
         ridePaused: widget.ridePaused,
+        rideHasNoLeader: widget.rideHasNoLeader,
         onLeaveRide: widget.onLeaveRide,
         onOpenRideMenu: widget.onOpenRideMenu,
         canEditRoute: widget.canEditRoute,
@@ -416,6 +421,7 @@ class RideMapScreen extends StatefulWidget {
     this.onEmergencyAlert,
     this.onEmergencyIssue,
     this.ridePaused = false,
+    this.rideHasNoLeader = false,
     this.onLeaveRide,
     this.onOpenRideMenu,
     this.canEditRoute = true,
@@ -466,6 +472,7 @@ class RideMapScreen extends StatefulWidget {
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
   final bool ridePaused;
+  final bool rideHasNoLeader;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
   final bool canEditRoute;
@@ -1160,6 +1167,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       final urgent = <Widget>[
         // A paused ride is a ride-lifecycle state, not a route state (#124).
         if (widget.ridePaused) const _RidePausedBanner(),
+        if (widget.rideHasNoLeader) const _NoLeaderBanner(),
         if (leaderStatus != null && leaderStatus.offCourseAlerts.isNotEmpty)
           _OffCourseBanner(
             alerts: leaderStatus.offCourseAlerts,
@@ -7505,6 +7513,41 @@ class _RouteOnlyBadge extends StatelessWidget {
       borderRadius: BorderRadius.circular(9),
     ),
     child: const Text('ROUTE-ONLY OFFLINE MAP', style: TextStyle(fontSize: 10)),
+  );
+}
+
+/// Shown on the map when a running ride has nobody holding the lead role (#176).
+///
+/// In the urgent run beside the paused banner rather than only in the roster: a
+/// rider does not open the roster to discover a fact nobody told them, and a
+/// leader leaving is a ride-wide event. The roster is where the role is taken.
+class _NoLeaderBanner extends StatelessWidget {
+  const _NoLeaderBanner();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xE6252E39),
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: const Color(0xFFFF8A6B)),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.flag_outlined, color: Color(0xFFFF8A6B)),
+            SizedBox(width: 8),
+            Text(
+              'NO RIDE LEADER',
+              key: Key('no-leader-banner'),
+              style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.7),
+            ),
+          ],
+        ),
+      ),
+    ),
   );
 }
 
