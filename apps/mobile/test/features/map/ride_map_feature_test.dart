@@ -1700,6 +1700,12 @@ void main() {
 
     expect(alerts, 1);
     expect(find.text('You are stopped'), findsOneWidget);
+    // #173: the label has to name the recipient problem. An empty To: field on
+    // iOS, and an Android chooser offering WhatsApp an empty number, both read
+    // as a fault when nothing at the control says the rider picks who to text.
+    expect(find.text('Text someone from your contacts'), findsOneWidget);
+    expect(find.text('Open Messages'), findsNothing);
+    expect(find.textContaining('pick who to text'), findsOneWidget);
     await tester.tap(find.text('Mechanical'));
     await tester.pumpAndSettle();
     expect(sentIssues, ['mechanical']);

@@ -2660,13 +2660,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _showMessage('${message.label} sent to ${_emergencyContactLabel()}.');
   }
 
+  /// Opens the phone's messaging app with a body ready, and **no recipient**.
+  ///
+  /// Deliberately no recipient: a ride invite carries a code, never a phone
+  /// number, so the app has none for the leader, the TEC or anyone else. They
+  /// have already been told in-app by the alert that opened this sheet; this is
+  /// the rider's route to somebody outside the ride, and they choose who.
+  ///
+  /// It read as broken because nothing said so at the point of use. On iOS an
+  /// empty To: field looks like a bug, and on Android an empty `sms:` is offered
+  /// to every messaging app, so picking WhatsApp produced "that phone number is
+  /// not registered with WhatsApp" (#173). The control now says what it does,
+  /// and the body carries where the rider is, which is the thing worth sending.
   Future<void> _openEmergencyMessages() async {
     final opened = await launchUrl(
       Uri(
         scheme: 'sms',
-        queryParameters: {
-          'body': 'Tail End Charlie: I have stopped and need assistance.',
-        },
+        queryParameters: {'body': emergencyMessageBody(_effectivePosition)},
       ),
       mode: LaunchMode.externalApplication,
     );
@@ -4851,13 +4861,11 @@ class MapEmergencyContact {
     required this.riderId,
     required this.displayName,
     required this.role,
-    this.phoneNumber,
   });
 
   final String riderId;
   final String displayName;
   final RideRole role;
-  final String? phoneNumber;
 
   String get shortRoleLabel => switch (role) {
     RideRole.lead => 'the leader',
@@ -5105,6 +5113,28 @@ class _WaitingForLeaderRoutePrompt extends StatelessWidget {
   );
 }
 
+/// The body a rider sends when they have stopped and need help.
+///
+/// Top-level and testable because it is the part that matters: the words go to
+/// somebody outside the ride who has none of its context, and a position is the
+/// one thing they cannot work out for themselves. Six decimal places is about
+/// 0.1 m - finer than any phone fix justifies, and short enough to read aloud
+/// over a bad line.
+///
+/// A missing fix says so rather than sending a message that looks complete and
+/// locates nobody (#173).
+@visibleForTesting
+String emergencyMessageBody(GeoPoint? position) {
+  const opening = 'Tail End Charlie: I have stopped and need assistance.';
+  if (position == null) {
+    return '$opening I do not have a GPS position to send.';
+  }
+  final latitude = position.latitude.toStringAsFixed(6);
+  final longitude = position.longitude.toStringAsFixed(6);
+  return '$opening I am at $latitude, $longitude '
+      '(https://www.openstreetmap.org/?mlat=$latitude&mlon=$longitude).';
+}
+
 class _EmergencyActionsSheet extends StatefulWidget {
   const _EmergencyActionsSheet({
     required this.contacts,
@@ -5195,12 +5225,17 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
               key: const Key('emergency-open-messages-button'),
               onPressed: _sending ? null : () => unawaited(_openMessages()),
               icon: const Icon(Icons.sms_outlined),
-              label: const Text('Open Messages'),
+              // Names the recipient problem in the label, not only in the note
+              // below it: a rider who has stopped and needs help does not read
+              // 12 px of grey text, and an empty To: field looked like a fault
+              // rather than a choice (#173).
+              label: const Text('Text someone from your contacts'),
             ),
             const SizedBox(height: 6),
             const Text(
-              'Contact numbers are not shared by the ride invite. Choose the '
-              'leader or TEC from your phone contacts if you need to call.',
+              'Your position is filled in ready to send. A ride invite carries '
+              'no phone numbers, so pick who to text - the leader and TEC have '
+              'already had the alert in the app.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
             ),
