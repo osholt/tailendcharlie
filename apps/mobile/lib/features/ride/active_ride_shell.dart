@@ -67,6 +67,7 @@ import '../../services/relay_traffic_reroute_provider.dart';
 import '../../services/rejoin_route_share.dart';
 import '../../services/road_routing.dart';
 import '../../services/ride_connectivity_summary.dart';
+import '../../services/tec_gap_trend.dart';
 import '../../services/route_rejoin_planner.dart';
 import '../../services/trail_display_simplifier.dart';
 import '../map/maneuver_list_screen.dart';
@@ -645,6 +646,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _trailSimplifier = const TrailDisplaySimplifier();
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
+
+  /// Which way the gap to the TEC is going (#181). Owned here because a trend
+  /// needs history, and this is where each leader status is computed.
+  final _tecGapTrendTracker = TecGapTrendTracker();
+  final _tecGapTrend = ValueNotifier<TecGapTrend>(TecGapTrend.unknown);
+  String? _trendedTecRiderId;
   final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
   final _enforcementAlert = ValueNotifier<EnforcementAlert?>(null);
 
@@ -1929,8 +1936,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               // the leader's own accepted request breaks the tie.
               assignedTecRiderId: _assignedTecRiderId,
             );
+      _updateTecGapTrend(awareness);
     } else if (!widget.rideController.rideStarted) {
       _leaderStatus.value = null;
+      _tecGapTrendTracker.reset();
+      _tecGapTrend.value = TecGapTrend.unknown;
     }
     _updateSharedRejoinTraces();
   }
@@ -2170,6 +2180,36 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       await _relayRejoinPlanToLeader(plan, session);
     });
     return _rejoinChain;
+  }
+
+  /// Feeds the current gap into the trend tracker.
+  ///
+  /// The history is dropped when the role moves to a different rider: the
+  /// previous TEC's gap says nothing about the new one's, and carrying it over
+  /// would report a trend for a rider who has only just been asked.
+  void _updateTecGapTrend(SituationalAwarenessController awareness) {
+    final status = _leaderStatus.value;
+    if (status == null) {
+      _tecGapTrendTracker.reset();
+      _tecGapTrend.value = TecGapTrend.unknown;
+      return;
+    }
+    if (status.tecRiderId != _trendedTecRiderId) {
+      _trendedTecRiderId = status.tecRiderId;
+      _tecGapTrendTracker.reset();
+    }
+    final tecPosition = status.tecRiderId == null
+        ? null
+        : awareness.riderLocations
+              .where((rider) => rider.riderId == status.tecRiderId)
+              .map((rider) => rider.sample.position)
+              .firstOrNull;
+    _tecGapTrend.value = _tecGapTrendTracker.update(
+      availability: status.tecAvailability,
+      gapMeters: status.distanceToTecMeters,
+      tecPosition: tecPosition,
+      now: DateTime.now(),
+    );
   }
 
   /// Issue #128 part 2: relays the local rider's rejoin plan to the leader, and
@@ -2776,6 +2816,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       overlayMarkers: _mapOverlays,
       riderTrails: _riderTrails,
       leaderStatus: _leaderStatus,
+      tecGapTrend: _tecGapTrend,
       groupRiderCount: widget.rideController.liveParticipants.length,
       onOpenRoster: _openRoster,
       junctionMarkerOverlay: _junctionMarkerOverlay,
@@ -3714,6 +3755,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _riderTrails.dispose();
     _quickMessageAlerts.dispose();
     _leaderStatus.dispose();
+    _tecGapTrend.dispose();
     _junctionMarkerOverlay.dispose();
     _enforcementAlert.dispose();
     unawaited(_carPlayBridge?.dispose());
