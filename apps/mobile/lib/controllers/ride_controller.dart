@@ -674,6 +674,18 @@ class RideController extends ChangeNotifier {
       .map((participant) => participant.riderId)
       .firstOrNull;
 
+  /// True when a running ride has nobody holding the lead role.
+  ///
+  /// A leader who leaves takes the group's pace, the line the TEC is following
+  /// and the route authority with them, and until #176 nothing said so: a tester
+  /// left as leader to see what would happen and the ride carried on, with the
+  /// remaining riders untold and nobody offered the role.
+  ///
+  /// Only while the ride is running. Before the start there is always a creator
+  /// holding lead, and after the end there is nothing left to lead.
+  bool get rideHasNoLeader =>
+      rideStarted && !rideEnded && leaderRiderId == null;
+
   /// Asks [targetRiderId] to take the Tail End Charlie role.
   ///
   /// [relayCanCarryRequest] is the negotiated `tec-role-assignment-v1`
