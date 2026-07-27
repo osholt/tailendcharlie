@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:xml/xml.dart';
@@ -172,14 +173,19 @@ class GpxParser {
       if (!duplicate) waypoints.add(routeWaypoint);
     }
 
-    if (paths.isEmpty && waypoints.isEmpty) {
+    final selectedPaths = _withoutDuplicateRepresentations(paths);
+
+    if (selectedPaths.isEmpty && waypoints.isEmpty) {
       throw const GpxFormatException(
         'The GPX file contains no tracks, routes, or waypoints.',
       );
     }
     final metadata = _children(root, 'metadata').firstOrNull;
     final metadataName = metadata == null ? null : _childText(metadata, 'name');
-    final firstPathName = paths.map((path) => path.name).nonNulls.firstOrNull;
+    final firstPathName = selectedPaths
+        .map((path) => path.name)
+        .nonNulls
+        .firstOrNull;
 
     return ImportedRoute(
       id: routeId,
@@ -190,10 +196,101 @@ class GpxParser {
       description: metadata == null ? null : _childText(metadata, 'desc'),
       importedAt: importedAt.toUtc(),
       sourceFileName: sourceFileName,
-      paths: paths,
+      paths: selectedPaths,
       waypoints: List.unmodifiable(waypoints),
     );
   }
+}
+
+/// Drops a route path that describes the same journey as a track path.
+///
+/// MyRoute-app exports one `<trk>` of calculated road geometry *and* one `<rte>`
+/// of the waypoints it was calculated from - for the route this was found on,
+/// 709 track points and 8 route points over the same 37.7 km. Keeping both meant
+/// the ride was measured twice, so the app showed 47.4 mi for a 23.4 mi route,
+/// and the sparse 8-point line drawn across the dense one read as loops wherever
+/// the two diverged (#180).
+///
+/// `_routesForImport` already applies this principle among Scenic's three `<rte>`
+/// representations; this extends it across the track/route boundary. Only a
+/// genuine duplicate is dropped: every one of its points must lie within
+/// [_duplicateRepresentationCorridorMeters] of a denser track path, so a `<trk>`
+/// recording of a different ride alongside a planned `<rte>` keeps both. The
+/// dropped path's `rtept`s have already been harvested as waypoints, with their
+/// via and shaping semantics, so nothing is lost but the redundant line.
+List<RoutePath> _withoutDuplicateRepresentations(List<RoutePath> paths) {
+  final tracks = paths
+      .where(
+        (path) => path.kind == RoutePathKind.track && path.points.length >= 2,
+      )
+      .toList(growable: false);
+  if (tracks.isEmpty) return List.unmodifiable(paths);
+  final kept = <RoutePath>[];
+  for (final path in paths) {
+    final duplicated =
+        path.kind == RoutePathKind.route &&
+        path.points.length >= 2 &&
+        tracks.any(
+          // A sparser line only: a route carrying more detail than the track is
+          // not the representation to throw away.
+          (track) =>
+              track.points.length > path.points.length &&
+              path.points.every(
+                (point) =>
+                    _metresFromPath(point, track.points) <=
+                    _duplicateRepresentationCorridorMeters,
+              ),
+        );
+    if (!duplicated) kept.add(path);
+  }
+  return List.unmodifiable(kept);
+}
+
+/// How far a route point may sit from the track and still be the same journey.
+///
+/// 250 m: a shaping point is snapped to the road the router chose, so in practice
+/// these land within metres. The margin is for a junction the router resolved
+/// differently from where the point was dropped, and it is far tighter than any
+/// separation between two genuinely different rides.
+const _duplicateRepresentationCorridorMeters = 250.0;
+
+/// Shortest distance from [point] to the polyline [path], in metres.
+///
+/// Local flat-earth arithmetic rather than `GeoCalculations`, which speaks the
+/// other `GeoPoint`: converting every track point for every route point would
+/// cost more than the comparison. Over the few hundred metres that decide this,
+/// the projection error is centimetres.
+double _metresFromPath(GeoPoint point, List<GeoPoint> path) {
+  const metresPerDegreeLatitude = 111132.0;
+  final metresPerDegreeLongitude =
+      metresPerDegreeLatitude * math.cos(point.latitude * math.pi / 180).abs();
+  var nearest = double.infinity;
+  for (var index = 0; index < path.length - 1; index += 1) {
+    final startX =
+        (path[index].longitude - point.longitude) * metresPerDegreeLongitude;
+    final startY =
+        (path[index].latitude - point.latitude) * metresPerDegreeLatitude;
+    final endX =
+        (path[index + 1].longitude - point.longitude) *
+        metresPerDegreeLongitude;
+    final endY =
+        (path[index + 1].latitude - point.latitude) * metresPerDegreeLatitude;
+    final spanX = endX - startX;
+    final spanY = endY - startY;
+    final spanLengthSquared = spanX * spanX + spanY * spanY;
+    final fraction = spanLengthSquared == 0
+        ? 0.0
+        : (-(startX * spanX + startY * spanY) / spanLengthSquared).clamp(
+            0.0,
+            1.0,
+          );
+    final nearestX = startX + fraction * spanX;
+    final nearestY = startY + fraction * spanY;
+    final distance = math.sqrt(nearestX * nearestX + nearestY * nearestY);
+    if (distance < nearest) nearest = distance;
+    if (nearest == 0) return 0;
+  }
+  return nearest;
 }
 
 class GpxFormatException implements FormatException {
