@@ -1,0 +1,209 @@
+# Takes the app off any publicly available Google Play track.
+#
+# Open testing (`beta`) is public: anyone with the link may join and install.
+# On 27 July 2026 it was found live on version code 7 while closed testing was
+# on 30 - the app was generally available by accident, almost certainly because
+# turning managed publishing off published a stale open-testing release that had
+# been sitting in the Console queue.
+#
+# This workflow is deliberately manual, deliberately narrow, and requires a
+# typed confirmation. It does not touch `internal` or `alpha`.
+name: Close public Play tracks
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type close-public-tracks to confirm a write to Google Play
+        required: true
+        type: string
+      halt_open_testing:
+        description: Halt the live open-testing (beta) release
+        required: true
+        default: true
+        type: boolean
+      delete_production_draft:
+        description: Delete the draft production release
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-play-write
+  cancel-in-progress: false
+
+jobs:
+  close:
+    name: Close public tracks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The Play service account is an environment secret, not a repository one.
+    environment: android-internal
+    env:
+      PACKAGE_NAME: app.tailendcharlie
+    steps:
+      - name: Require typed confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          test "$CONFIRM" = "close-public-tracks" || {
+            echo "Refusing: confirm must be exactly close-public-tracks." >&2
+            exit 1
+          }
+      - name: Validate Play service account secret
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: test -n "$SERVICE_ACCOUNT_JSON"
+      - name: Install the Google API client
+        run: pip install --quiet google-auth google-auth-httplib2 google-api-python-client
+      - name: Close the public tracks
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          HALT_OPEN_TESTING: ${{ inputs.halt_open_testing }}
+          DELETE_PRODUCTION_DRAFT: ${{ inputs.delete_production_draft }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play.json"
+          python - <<'PY'
+          import os
+
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.errors import HttpError
+
+          package = os.environ["PACKAGE_NAME"]
+          halt_beta = os.environ["HALT_OPEN_TESTING"] == "true"
+          delete_production = os.environ["DELETE_PRODUCTION_DRAFT"] == "true"
+          credentials = service_account.Credentials.from_service_account_file(
+              os.path.join(os.environ["RUNNER_TEMP"], "play.json"),
+              scopes=["https://www.googleapis.com/auth/androidpublisher"],
+          )
+          service = build("androidpublisher", "v3", credentials=credentials)
+          edits = service.edits()
+
+
+          def describe(tracks):
+              for track in sorted(tracks, key=lambda item: item["track"]):
+                  for release in track.get("releases", []) or [{}]:
+                      print(
+                          f"  {track['track']:12s} "
+                          f"status={release.get('status', '-'):10s} "
+                          f"codes={','.join(release.get('versionCodes') or []) or '-'}"
+                      )
+
+
+          edit_id = edits.insert(packageName=package, body={}).execute()["id"]
+          committed = False
+          try:
+              tracks = (
+                  edits.tracks()
+                  .list(packageName=package, editId=edit_id)
+                  .execute()
+                  .get("tracks", [])
+              )
+              print("before:")
+              describe(tracks)
+              by_name = {track["track"]: track for track in tracks}
+              changed = []
+
+              if halt_beta:
+                  beta = by_name.get("beta")
+                  live = [
+                      release
+                      for release in (beta or {}).get("releases", [])
+                      if release.get("status") in {"completed", "inProgress"}
+                  ]
+                  if not live:
+                      print("beta: nothing live to halt")
+                  else:
+                      edits.tracks().update(
+                          packageName=package,
+                          editId=edit_id,
+                          track="beta",
+                          body={
+                              "track": "beta",
+                              "releases": [
+                                  {
+                                      "name": release.get("name"),
+                                      "versionCodes": release.get("versionCodes"),
+                                      "status": "halted",
+                                  }
+                                  for release in live
+                              ],
+                          },
+                      ).execute()
+                      changed.append("halted beta")
+
+              if delete_production:
+                  production = by_name.get("production")
+                  drafts = [
+                      release
+                      for release in (production or {}).get("releases", [])
+                      if release.get("status") == "draft"
+                  ]
+                  others = [
+                      release
+                      for release in (production or {}).get("releases", [])
+                      if release.get("status") != "draft"
+                  ]
+                  if others:
+                      # A live production release is a different decision from
+                      # deleting a draft. Refuse rather than guess.
+                      raise SystemExit(
+                          "Refusing: production has a non-draft release. "
+                          "Halting a live production release is a separate, "
+                          "deliberate decision."
+                      )
+                  if not drafts:
+                      print("production: no draft to delete")
+                  else:
+                      edits.tracks().update(
+                          packageName=package,
+                          editId=edit_id,
+                          track="production",
+                          body={"track": "production", "releases": []},
+                      ).execute()
+                      changed.append("deleted production draft")
+
+              if not changed:
+                  print("nothing to change; abandoning the edit")
+                  raise SystemExit(0)
+
+              try:
+                  edits.commit(packageName=package, editId=edit_id).execute()
+              except HttpError as error:
+                  # An app that has never been published to production cannot
+                  # send an edit for review; that is not a failure here.
+                  if "changesNotSentForReview" not in str(error):
+                      raise
+                  print("retrying commit with changesNotSentForReview=true")
+                  edits.commit(
+                      packageName=package,
+                      editId=edit_id,
+                      changesNotSentForReview=True,
+                  ).execute()
+              committed = True
+              print("committed: " + ", ".join(changed))
+          finally:
+              if not committed:
+                  try:
+                      edits.delete(packageName=package, editId=edit_id).execute()
+                  except HttpError:
+                      pass
+
+          verify_id = edits.insert(packageName=package, body={}).execute()["id"]
+          try:
+              print("after:")
+              describe(
+                  edits.tracks()
+                  .list(packageName=package, editId=verify_id)
+                  .execute()
+                  .get("tracks", [])
+              )
+          finally:
+              edits.delete(packageName=package, editId=verify_id).execute()
+          PY

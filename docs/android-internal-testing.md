@@ -376,6 +376,41 @@ choosing where a build goes:
 | Open testing | `beta` |
 | Production | `production` |
 
-Closed testers are on `alpha`. `beta` is open testing — public, anyone may join —
-and is currently **paused** holding an old release. Do not promote to `beta`
-expecting it to reach the closed group.
+Closed testers are on `alpha`. `beta` is open testing — public, anyone may join.
+Do not promote to `beta` expecting it to reach the closed group.
+
+## Open testing was live by accident
+
+`beta` was believed to be paused on an old release. It was not: on 27 July 2026
+the API reported it `completed` on version code **7** while closed testing was on
+30, which means the app was generally available to anyone with the link, running a
+build from weeks earlier.
+
+The likely cause is the same managed-publishing queue described above. Turning
+managed publishing off released everything that had been queued — including the
+stale open-testing release nobody had published. Turning the trap off published
+the thing the trap was holding back.
+
+Two lessons:
+
+- **Never infer a track's state.** Run `Play track status`; the Console's
+  "paused" wording and the API's `status` are not the same thing, and a belief
+  written into a document outlives the state it described. This document said
+  "paused" and that is what stopped anyone looking.
+- **Check every track after changing publishing settings**, not just the one you
+  were promoting to.
+
+### Closing a public track
+
+```bash
+gh workflow run "Close public tracks" --ref main \
+  -f confirm=close-public-tracks \
+  -f halt_open_testing=true \
+  -f delete_production_draft=false
+```
+
+It halts any live open-testing release and, optionally, deletes a draft
+production release. It refuses to touch a non-draft production release — halting a
+live production release is a separate, deliberate decision — and never touches
+`internal` or `alpha`. Halting stops further distribution; riders who already
+installed the halted build keep it and simply receive no updates on that track.
