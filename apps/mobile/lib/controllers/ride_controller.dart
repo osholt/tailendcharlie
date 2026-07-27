@@ -154,6 +154,12 @@ class RideController extends ChangeNotifier {
 
   List<RideParticipant> get participants => liveView.participants;
 
+  /// Whether this phone can receive live positions at all.
+  ///
+  /// Exposed so one surface can reconcile it with the event batch's own status
+  /// instead of two cards contradicting each other (#174).
+  bool get positionChannelUnavailable => _positionChannelUnavailable;
+
   List<RideParticipant> _participantsFromEvents() {
     final activeSession = _session;
     if (activeSession == null) return const [];

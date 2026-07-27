@@ -12,8 +12,10 @@ import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../domain/quick_message.dart';
+
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
+import '../../services/ride_connectivity_summary.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
@@ -36,6 +38,7 @@ class RideDashboard extends StatelessWidget {
     this.onSendQuickMessage,
     this.localObserverAssistanceActive = false,
     this.serviceWarning,
+    this.connectivity,
     this.summarySharer,
   });
 
@@ -52,6 +55,9 @@ class RideDashboard extends StatelessWidget {
   final Future<void> Function(QuickMessage)? onSendQuickMessage;
   final bool localObserverAssistanceActive;
   final String? serviceWarning;
+
+  /// The reconciled answer to "is the group seeing where I am".
+  final RideConnectivitySummary? connectivity;
   final RideSummarySharer? summarySharer;
 
   @override
@@ -114,6 +120,13 @@ class RideDashboard extends StatelessWidget {
                   controller: controller,
                   onOpenRoster: onOpenRoster,
                 ),
+                // One answer above the per-channel cards (#174). Three accurate
+                // cards that disagreed left a rider unable to tell whether the
+                // app was working; the channels keep their own detail below.
+                if (connectivity case final connectivity?) ...[
+                  const SizedBox(height: 14),
+                  _ConnectivitySummaryCard(summary: connectivity),
+                ],
                 if (relayController case final relayController?) ...[
                   const SizedBox(height: 14),
                   RelayStatusCard(controller: relayController),
@@ -363,6 +376,46 @@ class _ConnectionCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The one connectivity answer, above the channels that produced it (#174).
+class _ConnectivitySummaryCard extends StatelessWidget {
+  const _ConnectivitySummaryCard({required this.summary});
+
+  final RideConnectivitySummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, colour) = switch (summary.state) {
+      RideConnectivityState.reaching => (
+        Icons.check_circle_outline,
+        const Color(0xFF6ED89A),
+      ),
+      RideConnectivityState.degraded => (
+        Icons.access_time,
+        const Color(0xFFFFC857),
+      ),
+      RideConnectivityState.notReaching => (
+        Icons.error_outline,
+        const Color(0xFFFF5D73),
+      ),
+      RideConnectivityState.inactive => (
+        Icons.cloud_off_outlined,
+        const Color(0xFF8D98A7),
+      ),
+    };
+    return Card(
+      key: const Key('ride-connectivity-summary'),
+      child: ListTile(
+        leading: Icon(icon, color: colour),
+        title: Text(
+          summary.headline,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(summary.detail),
       ),
     );
   }
