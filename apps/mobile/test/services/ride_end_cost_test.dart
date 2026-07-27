@@ -64,7 +64,10 @@ void main() {
     });
 
     test('appending an event authenticates only what is new', () {
-      final events = _journal(session, locationEvents: 400);
+      // A realistic ride, not a fixture: 12,000 fixes is a two-hour ride at the
+      // 10 m platform distance filter. The bug was invisible at fixture scale,
+      // which is why it reached a rider.
+      final events = _journal(session, locationEvents: 12000);
       RideLifecycleReducer.fromEvents(
         rideId: session.rideId,
         inviteSecret: session.inviteSecret,
