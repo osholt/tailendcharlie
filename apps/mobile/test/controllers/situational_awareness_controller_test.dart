@@ -264,21 +264,36 @@ void main() {
     );
   });
 
-  test(
-    "the leader is never flagged off-route once their own trail exists",
-    () async {
-      await controller.recordLocalLocation(_sample(latitude: 51, at: now));
-      now = now.add(const Duration(seconds: 5));
-      // The leader detours far from the planned route - e.g. a road closure.
-      await controller.recordLocalLocation(_sample(latitude: 52, at: now));
+  // This test previously asserted the opposite: that a leader is *never*
+  // flagged off route once their own trail exists. That was wrong, and it is why
+  // #102's rerouting never fired for a leader in the field. The leader's own
+  // trail was included in the segments the leader was compared against, and a
+  // leader is always at the end of their own trail, so the geometry answered
+  // "on route" from anywhere - Kingswood to Chippenham, 27 July 2026:
+  //
+  //   "There was no rerouting navigation when I went off course."
+  //
+  // A leader who leaves the plan has left the plan. Followers are still judged
+  // against where the leader actually went - the test below this one - because
+  // that is what the leader-follow exemption is for. The leader is judged
+  // against the plan, because nothing else can tell them they have left it.
+  test('the leader is flagged off-route against the planned route', () async {
+    await controller.recordLocalLocation(_sample(latitude: 51, at: now));
+    expect(
+      controller.alertFor(_session.localRiderId)?.assessment.state,
+      RouteTrackingState.onRoute,
+    );
 
-      expect(
-        controller.alertFor(_session.localRiderId)?.assessment.state,
-        RouteTrackingState.onRoute,
-      );
-      expect(controller.leaderTrail, hasLength(2));
-    },
-  );
+    now = now.add(const Duration(seconds: 5));
+    // The leader detours far from the planned route - e.g. a road closure.
+    await controller.recordLocalLocation(_sample(latitude: 52, at: now));
+
+    expect(
+      controller.alertFor(_session.localRiderId)?.assessment.state,
+      RouteTrackingState.offRoute,
+    );
+    expect(controller.leaderTrail, hasLength(2));
+  });
 
   test("a follower on the leader's detour is not flagged off-route", () async {
     await controller.recordLocalLocation(_sample(latitude: 51, at: now));
