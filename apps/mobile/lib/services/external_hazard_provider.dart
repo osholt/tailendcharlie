@@ -10,6 +10,22 @@ enum ExternalHazardProviderState {
   failed,
 }
 
+extension ExternalHazardProviderStateLabel on ExternalHazardProviderState {
+  /// What a rider reads. `state.name.toUpperCase()` put `NEEDSCONFIGURATION` on
+  /// a rider-facing badge, and a tester reported the screen as faulty (#175).
+  ///
+  /// Exhaustive on purpose: a new state added without a label is a compile
+  /// error rather than another raw enum name reaching the screen.
+  String get label => switch (this) {
+    ExternalHazardProviderState.unavailable => 'Unavailable',
+    ExternalHazardProviderState.needsConfiguration => 'Not set up',
+    ExternalHazardProviderState.configured => 'Ready to fetch',
+    ExternalHazardProviderState.loading => 'Checking',
+    ExternalHazardProviderState.ready => 'Live',
+    ExternalHazardProviderState.failed => 'Failed',
+  };
+}
+
 class ExternalHazardProviderStatus {
   const ExternalHazardProviderStatus({
     required this.state,

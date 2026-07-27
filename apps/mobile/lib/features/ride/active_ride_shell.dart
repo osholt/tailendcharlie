@@ -1286,8 +1286,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final awarenessEventStore = _isSimulation
         ? InMemoryEventStore()
         : widget.eventStore;
+    // Waze is deliberately absent. #111 closed it as ineligible for the partner
+    // feed with no other read API, so its card could never become available and
+    // a tester reported the permanently-unavailable row as a fault (#175). The
+    // adapter itself stays in the repository, where a closed investigation
+    // belongs, and is exercised by its own test.
     final externalProviders = <ExternalHazardProvider>[
-      const WazeReadHazardProvider(),
       if (session.role == RideRole.lead && !_isSimulation)
         RelayTrafficHazardProvider(
           configuration: InternetRelayConfiguration.fromEnvironment(),
