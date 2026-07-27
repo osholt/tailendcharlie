@@ -458,17 +458,37 @@ class RouteReviewScreen extends StatelessWidget {
   }
 }
 
+/// How far the rider will actually travel: the length of the path that will be
+/// ridden and tracked, not the sum of every path in the file.
+///
+/// Summing them reported a 23.4 mi MyRoute-app route as 47.4 mi, because that
+/// export carries the journey twice - a dense calculated track and the sparse
+/// waypoint route it came from (#180). The importer now drops a duplicate
+/// representation, so in practice there is one path; this measures the primary
+/// one regardless, because a file with two genuinely different paths must not
+/// add them together either. A rider reads one number and rides one route.
+///
+/// "Primary" is the longest path, the same choice `RouteProgressTracker` makes,
+/// so the distance shown and the distance progress is measured against cannot
+/// disagree.
 double routeLengthMeters(ImportedRoute route) {
+  var longest = 0.0;
+  for (final path in route.paths) {
+    final length = _pathLengthMeters(path.points);
+    if (length > longest) longest = length;
+  }
+  return longest;
+}
+
+double _pathLengthMeters(List<GeoPoint> points) {
   const distance = Distance();
   var total = 0.0;
-  for (final path in route.paths) {
-    for (var index = 1; index < path.points.length; index += 1) {
-      total += distance.as(
-        LengthUnit.Meter,
-        _latLng(path.points[index - 1]),
-        _latLng(path.points[index]),
-      );
-    }
+  for (var index = 1; index < points.length; index += 1) {
+    total += distance.as(
+      LengthUnit.Meter,
+      _latLng(points[index - 1]),
+      _latLng(points[index]),
+    );
   }
   return total;
 }
