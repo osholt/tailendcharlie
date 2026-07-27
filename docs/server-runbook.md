@@ -56,7 +56,69 @@ If push delivery is enabled, add the APNs/FCM credentials described in
 [push-notifications.md](./push-notifications.md). A partially configured
 provider intentionally prevents startup.
 
-## Deploy and verify
+## Redeploying the live relay
+
+The routine case: `main` has moved and the relay needs to catch up. This is
+Rule 0 in [build-and-run.md](./build-and-run.md) — the relay must be on the same
+commit as any app build you install, and the one time it was not, three app
+builds were tested against a two-day-old server and the same failures were
+re-reported each time.
+
+**Host details are deliberately not in this repository.** It is public. The
+operator's `~/.ssh/config` defines an alias with the address, user and key; every
+command below uses that alias, so nothing here identifies the machine. If the
+alias is missing, the details are in the operator's own notes, not here.
+
+```bash
+# 1. What is deployed right now, before changing anything.
+ssh oracle-relay 'cd /opt/tailendcharlie && git log --oneline -1'
+
+# 2. Is a deploy even needed? Only server-side commits matter.
+git diff --stat <deployed-commit>..origin/main -- apps/server deploy
+```
+
+An empty diff means the relay is functionally current however many app commits
+`main` is ahead — worth checking before blaming the server for an app-side
+defect, and worth *saying* when reporting that a fix did not work.
+
+```bash
+# 3. Deploy.
+ssh oracle-relay '
+  set -euo pipefail
+  cd /opt/tailendcharlie
+  git fetch --quiet origin
+  git checkout --quiet --detach origin/main
+  git log --oneline -1
+  docker compose --env-file deploy/.env -f deploy/compose.yaml config >/dev/null
+  docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
+'
+
+# 4. Verify from outside, not from the box.
+curl --fail --max-time 15 https://relay.example.com/health/live
+ssh oracle-relay 'cd /opt/tailendcharlie && docker compose --env-file deploy/.env -f deploy/compose.yaml ps'
+```
+
+Things worth knowing before you run it:
+
+- **The checkout is a detached HEAD at a pinned commit**, not a branch. That is
+  deliberate: `git log --oneline -1` on the box then answers "what is deployed"
+  exactly, with no chance of a stale local branch pointer lying about it.
+- **Migrations run themselves.** The server image's entrypoint is
+  `alembic upgrade head && exec ride-relay-server` (`apps/server/Dockerfile`), so
+  a schema change is applied when the container starts. There is no separate
+  migration step to forget — but it also means a bad migration stops the server
+  coming up rather than failing later, so watch step 4.
+- **`docker` needs no `sudo`** for the deploy user.
+- `RIDE_RELAY_AUTO_CREATE_SCHEMA` is `false` in production. Alembic is the only
+  thing that may touch the schema.
+- `--build` rebuilds the server image from `apps/server`. Caddy and Postgres are
+  pinned images and are not rebuilt.
+- Health checks are the gate for anything downstream: do not build an app
+  against a relay whose `/health/live` is not answering 200.
+
+Rollback is below, and is the same procedure with an older commit.
+
+## First deployment
 
 ```bash
 docker compose --env-file deploy/.env -f deploy/compose.yaml config
