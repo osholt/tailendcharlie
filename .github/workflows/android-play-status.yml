@@ -1,0 +1,115 @@
+# Reports what Google Play is actually serving on every track.
+#
+# Releases were promoted to a track and testers still saw a build from days
+# earlier, and nothing in the pipeline could answer "what have testers actually
+# got?" without opening the Play Console. A release pipeline that cannot report
+# its own outcome is how that goes unnoticed.
+name: Play track status
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - play-status/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-play-status
+  cancel-in-progress: false
+
+jobs:
+  status:
+    name: Report Play track status
+    runs-on: ubuntu-latest
+    # The Play service account is an environment secret, not a repository one,
+    # so a workflow that omits this reads it as empty.
+    environment: android-internal
+    env:
+      PACKAGE_NAME: app.tailendcharlie
+    steps:
+      - name: Validate Play service account secret
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: test -n "$SERVICE_ACCOUNT_JSON"
+      - name: Install the Google API client
+        run: pip install --quiet google-auth google-auth-httplib2 google-api-python-client
+      - name: Report every track
+        env:
+          SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play.json"
+          python - <<'PY'
+          import json
+          import os
+
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+
+          package = os.environ["PACKAGE_NAME"]
+          credentials = service_account.Credentials.from_service_account_file(
+              os.path.join(os.environ["RUNNER_TEMP"], "play.json"),
+              scopes=["https://www.googleapis.com/auth/androidpublisher"],
+          )
+          service = build("androidpublisher", "v3", credentials=credentials)
+          edits = service.edits()
+          edit_id = edits.insert(packageName=package, body={}).execute()["id"]
+          try:
+              tracks = edits.tracks().list(
+                  packageName=package, editId=edit_id
+              ).execute().get("tracks", [])
+          finally:
+              # Read-only: never commit the edit.
+              edits.delete(packageName=package, editId=edit_id).execute()
+
+          if not tracks:
+              print("no tracks returned")
+              raise SystemExit(1)
+
+          print(f"{package}: {len(tracks)} tracks\n")
+          summary = []
+          for track in sorted(tracks, key=lambda t: t["track"]):
+              name = track["track"]
+              releases = track.get("releases", [])
+              print(f"=== {name} ===")
+              if not releases:
+                  print("  no releases\n")
+                  summary.append((name, None, None, None))
+                  continue
+              for release in releases:
+                  codes = release.get("versionCodes") or []
+                  status = release.get("status")
+                  fraction = release.get("userFraction")
+                  print(f"  name:          {release.get('name')}")
+                  print(f"  status:        {status}")
+                  print(f"  versionCodes:  {codes}")
+                  if fraction is not None:
+                      print(f"  userFraction:  {fraction}")
+                  notes = release.get("releaseNotes") or []
+                  for note in notes:
+                      text = (note.get("text") or "").strip().replace("\n", " ")
+                      print(f"  notes[{note.get('language')}]: {text[:120]}")
+                  print()
+                  summary.append((name, status, codes, fraction))
+
+          # A one-line-per-track digest, so the answer is visible without
+          # unfolding the log.
+          print("--- digest ---")
+          for name, status, codes, fraction in summary:
+              codes_text = ",".join(codes) if codes else "-"
+              rollout = "" if fraction is None else f" rollout={fraction}"
+              print(f"{name:24s} status={status or '-':12s} codes={codes_text}{rollout}")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as handle:
+              handle.write("| Track | Status | Version codes | Rollout |\n")
+              handle.write("| --- | --- | --- | --- |\n")
+              for name, status, codes, fraction in summary:
+                  codes_text = ", ".join(codes) if codes else "—"
+                  rollout = "—" if fraction is None else str(fraction)
+                  handle.write(
+                      f"| `{name}` | {status or '—'} | {codes_text} | {rollout} |\n"
+                  )
+          PY
