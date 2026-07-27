@@ -441,7 +441,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Ride summary ready'), findsOneWidget);
-    expect(find.text('Remove ride from this phone'), findsOneWidget);
+    // Renamed in #156: the button files the ride to Previous rides, and the old
+    // label said it was removed from the phone.
+    expect(find.text('Finish and file in Previous rides'), findsOneWidget);
     expect(controller.rideEnded, isTrue);
     expect(controller.hasActiveRide, isTrue);
 
