@@ -14,6 +14,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/features/map/maneuver_symbol.dart';
 import 'package:ride_relay/services/navigation_guidance.dart';
@@ -77,6 +78,7 @@ Future<void> _writeGrid({
     final symbol = RoundaboutSymbol(
       direction: entry.value,
       leftHandTraffic: leftHandTraffic,
+      exitNumber: index + 1,
     );
     RoundaboutSymbolPainter(
       symbol: symbol,
@@ -119,7 +121,11 @@ Future<void> _writeLarge(String key, ManeuverDirection direction) async {
   canvas.drawLine(Offset(centre.dx, 0), Offset(centre.dx, _largeTile), guide);
   canvas.drawLine(Offset(0, centre.dy), Offset(_largeTile, centre.dy), guide);
   RoundaboutSymbolPainter(
-    symbol: RoundaboutSymbol(direction: direction, leftHandTraffic: true),
+    symbol: RoundaboutSymbol(
+      direction: direction,
+      leftHandTraffic: true,
+      exitNumber: 2,
+    ),
     color: const Color(0xFFFFFFFF),
   ).paint(canvas, const Size(_largeTile, _largeTile));
   final image = await recorder.endRecording().toImage(
@@ -155,6 +161,7 @@ Future<void> _writeActualSizes() async {
       symbol: const RoundaboutSymbol(
         direction: ManeuverDirection.right,
         leftHandTraffic: true,
+        exitNumber: 3,
       ),
       color: const Color(0xFF68A9FF),
     ).paint(canvas, Size(size, size));
@@ -172,8 +179,33 @@ Future<void> _writeActualSizes() async {
   stdout.writeln('wrote ${file.path}');
 }
 
+/// Loads a real font so the exit number renders as a digit.
+///
+/// `flutter test` ships no fonts, so any text draws as a filled rectangle. That
+/// is fine for layout assertions and useless for judging legibility, which is the
+/// entire point of this harness.
+Future<void> _loadFont() async {
+  for (final path in [
+    '/System/Library/Fonts/Supplemental/Arial.ttf',
+    '/Library/Fonts/Arial Unicode.ttf',
+  ]) {
+    final file = File(path);
+    if (!file.existsSync()) continue;
+    final bytes = await file.readAsBytes();
+    final loader = FontLoader('Roboto')
+      ..addFont(Future.value(ByteData.sublistView(bytes)));
+    await loader.load();
+    stdout.writeln('loaded font from $path');
+    return;
+  }
+  stdout.writeln('WARNING no system font found; digits will draw as boxes');
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('render roundabout symbols for visual inspection', () async {
+    await _loadFont();
     for (final key in [
       'straight',
       'slight-right',

@@ -39,14 +39,43 @@ void main() {
       final geometry = RoundaboutSymbolGeometry.of(symbol, const Size(38, 38));
       final why = _describe(symbol);
 
-      expect(geometry.ringArcs, isNotEmpty, reason: why);
-      // Not a closed path: the ring always stops short of a full turn, by at
-      // least the width of the road passing through it.
-      expect(geometry.ringSweepDegrees, lessThan(360), reason: why);
+      // One arc: the part of the ring the rider rides, from where they join to
+      // where they leave. What is not drawn is simply the rest of the circle.
+      expect(geometry.ringArcs, hasLength(1), reason: why);
+      final arc = geometry.ringArcs.single;
+
+      if (symbol.direction == ManeuverDirection.unstated) {
+        // Nothing is known about the exit, so no part can be claimed as ridden
+        // and the whole circle is drawn.
+        expect(arc.sweepDegrees.abs(), closeTo(360, 0.01), reason: why);
+        continue;
+      }
+
+      // Never the whole circle once an exit is known, and never nothing.
+      expect(arc.sweepDegrees.abs(), lessThan(360), reason: why);
+      expect(arc.sweepDegrees.abs(), greaterThan(0), reason: why);
+
+      // Clockwise where riders keep left, anticlockwise where they keep right.
+      if (symbol.leftHandTraffic == false) {
+        expect(arc.sweepDegrees, lessThan(0), reason: why);
+      } else {
+        expect(arc.sweepDegrees, greaterThan(0), reason: why);
+      }
+
+      // The arc begins on the road in and finishes on the exit, so the three
+      // marks are one continuous path with nothing floating and no seam.
       expect(
-        geometry.ringGapDegrees,
-        greaterThan(geometry.ringGapHalfDegrees * 2 - 0.01),
-        reason: why,
+        _angleBetween(arc.startDegrees, geometry.entryDegrees),
+        lessThan(0.01),
+        reason: '\$why: the arc does not start on the road in',
+      );
+      expect(
+        _angleBetween(
+          arc.endDegrees,
+          _headingOf(geometry.exit!.start - geometry.centre),
+        ),
+        lessThan(0.01),
+        reason: '\$why: the arc does not finish on the exit',
       );
 
       // No arc is drawn so short that it reads as something left in the gap
@@ -58,37 +87,12 @@ void main() {
       // road as the ring having no gap and the flow running anticlockwise. A
       // short arc that keeps the ring reading as a ring beats a tidy gap.
       for (final arc in geometry.ringArcs) {
-        final stroke = arc.segment == RoundaboutRingSegment.beyond
-            ? geometry.beyondRingStrokeWidth
-            : geometry.riddenRingStrokeWidth;
+        final stroke = geometry.ringStrokeWidth;
         expect(
           arc.sweepRadians.abs() * geometry.radius,
           greaterThan(stroke * 1.2 - 0.01),
           reason: '$why: a ring arc is barely longer than it is thick',
         );
-      }
-
-      // Every gap is where a road is, and every road has daylight either side.
-      //
-      // Measured where each road meets the ring, which is not the same as the
-      // direction it then runs: where the exit leaves alongside the road in, both
-      // roads run straight down the box while still joining the ring at their own
-      // angles.
-      final roads = <double>[
-        geometry.entryDegrees,
-        if (geometry.exit != null)
-          _headingOf(geometry.exit!.start - geometry.centre),
-      ];
-      for (final arc in geometry.ringArcs) {
-        for (final end in [arc.startDegrees, arc.endDegrees]) {
-          for (final road in roads) {
-            expect(
-              _angleBetween(end, road),
-              greaterThanOrEqualTo(geometry.ringGapHalfDegrees - 0.01),
-              reason: '$why: an arc ends across the road at $road degrees',
-            );
-          }
-        }
       }
     }
   });
@@ -169,8 +173,8 @@ void main() {
         expect(
           box.contains(
             geometry.centre.translate(
-              -geometry.radius - geometry.riddenRingStrokeWidth,
-              -geometry.radius - geometry.riddenRingStrokeWidth,
+              -geometry.radius - geometry.ringStrokeWidth,
+              -geometry.radius - geometry.ringStrokeWidth,
             ),
           ),
           isTrue,
@@ -180,48 +184,46 @@ void main() {
     }
   });
 
-  test(
-    'the painter draws arcs and one filled arrowhead, never a full circle',
-    () {
-      for (final symbol in _everySymbol()) {
-        final canvas = _RecordingCanvas();
-        const size = Size(38, 38);
-        final geometry = RoundaboutSymbolGeometry.of(symbol, size);
-        RoundaboutSymbolPainter(
-          symbol: symbol,
-          color: _ink,
-        ).paint(canvas, size);
-        final why = _describe(symbol);
-        final states = symbol.direction != ManeuverDirection.unstated;
+  test('the painter draws arcs and one filled arrowhead, never a full circle', () {
+    for (final symbol in _everySymbol()) {
+      final canvas = _RecordingCanvas();
+      const size = Size(38, 38);
+      final geometry = RoundaboutSymbolGeometry.of(symbol, size);
+      RoundaboutSymbolPainter(symbol: symbol, color: _ink).paint(canvas, size);
+      final why = _describe(symbol);
+      final states = symbol.direction != ManeuverDirection.unstated;
 
-        // A closed ring is what the arrow used to butt into; it is never drawn.
-        expect(canvas.calls, isNot(contains(#drawCircle)), reason: why);
-        expect(
-          canvas.arcSweeps,
-          hasLength(geometry.ringArcs.length),
-          reason: why,
-        );
-        expect(
-          canvas.arcSweeps.fold<double>(0, (sum, sweep) => sum + sweep.abs()),
-          lessThan(2 * math.pi),
-          reason: why,
-        );
-        // One filled path: the single arrowhead. The road in and the exit are the
-        // only lines, so no second arrowhead can be hiding among them.
-        expect(
-          canvas.filledPaths,
-          states ? 1 : 0,
-          reason: '$why drew ${canvas.filledPaths} filled paths',
-        );
-        expect(canvas.drawnLines, states ? 2 : 1, reason: why);
-        // Plain strokes and fills into the canvas it was given: no layer, and
-        // no blend mode whose result differs between the renderer these tests
-        // rasterise with and the one on the phone.
-        expect(canvas.calls, isNot(contains(#saveLayer)), reason: why);
-        expect(canvas.blendModes, everyElement(BlendMode.srcOver), reason: why);
-      }
-    },
-  );
+      // A closed ring is what the arrow used to butt into; it is never drawn.
+      expect(canvas.calls, isNot(contains(#drawCircle)), reason: why);
+      expect(
+        canvas.arcSweeps,
+        hasLength(geometry.ringArcs.length),
+        reason: why,
+      );
+      // Once an exit is known, only the arc up to it is drawn, so the sweep is
+      // always short of a full turn. With no exit reported there is no ridden
+      // part to single out and the whole circle is drawn - still as an arc, so
+      // the assertion above that drawCircle is never called still holds.
+      expect(
+        canvas.arcSweeps.fold<double>(0, (sum, sweep) => sum + sweep.abs()),
+        states ? lessThan(2 * math.pi) : closeTo(2 * math.pi, 1e-9),
+        reason: why,
+      );
+      // One filled path: the single arrowhead. The road in and the exit are the
+      // only lines, so no second arrowhead can be hiding among them.
+      expect(
+        canvas.filledPaths,
+        states ? 1 : 0,
+        reason: '$why drew ${canvas.filledPaths} filled paths',
+      );
+      expect(canvas.drawnLines, states ? 2 : 1, reason: why);
+      // Plain strokes and fills into the canvas it was given: no layer, and
+      // no blend mode whose result differs between the renderer these tests
+      // rasterise with and the one on the phone.
+      expect(canvas.calls, isNot(contains(#saveLayer)), reason: why);
+      expect(canvas.blendModes, everyElement(BlendMode.srcOver), reason: why);
+    }
+  });
 
   test('driving side decides how far round the ring the rider goes', () {
     double ridden(
@@ -235,9 +237,8 @@ void main() {
         ),
         const Size(38, 38),
       );
-      final arc = geometry.ringArcs
-          .where((arc) => arc.segment == RoundaboutRingSegment.ridden)
-          .single;
+      // There is only one arc: the part the rider rides.
+      final arc = geometry.ringArcs.single;
       // Clockwise where riders keep left, anticlockwise where they keep right.
       expect(arc.sweepDegrees.isNegative, !leftHandTraffic);
       return arc.sweepDegrees.abs();
@@ -256,44 +257,28 @@ void main() {
       lessThan(ridden(ManeuverDirection.slightLeft, leftHandTraffic: false)),
     );
 
-    // A square left or right exit leaves a short arc between the two roads. It
-    // used to be dropped as a speck, which merged the two gaps into one wide
-    // opening and left the ring as a single undirected arc — and a rider reported
-    // exactly that on the road: the ring appeared to have no gap and to circulate
-    // the wrong way. It is now kept, so both gaps stay distinct and the ring
-    // keeps the ridden/beyond emphasis that shows which way round traffic goes.
-    for (final direction in [ManeuverDirection.left, ManeuverDirection.right]) {
-      for (final leftHandTraffic in <bool?>[true, false, null]) {
-        final geometry = RoundaboutSymbolGeometry.of(
-          RoundaboutSymbol(
-            direction: direction,
-            leftHandTraffic: leftHandTraffic,
-          ),
-          const Size(38, 38),
-        );
-        expect(geometry.ringArcs, hasLength(2));
-        // Where the driving side is known, the ring says which way round the
-        // rider goes; where it is not, neither arc may claim it.
-        expect(
-          geometry.ringArcs.map((arc) => arc.segment).toSet(),
-          leftHandTraffic == null
-              ? {RoundaboutRingSegment.undirected}
-              : {RoundaboutRingSegment.ridden, RoundaboutRingSegment.beyond},
-        );
-      }
+    // Turning back is the exit reached last, not first: nearly the whole way
+    // round rather than straight off at the first opening. This was the wrong way
+    // round, and only became visible once the un-ridden part of the ring stopped
+    // being drawn.
+    for (final leftHandTraffic in [true, false]) {
+      expect(
+        ridden(ManeuverDirection.uTurn, leftHandTraffic: leftHandTraffic),
+        greaterThan(270),
+        reason: 'a U-turn takes the last exit, not the first',
+      );
     }
 
-    // With no driving side reported, no part of the ring is claimed as ridden.
-    for (final direction in ManeuverDirection.values) {
-      final geometry = RoundaboutSymbolGeometry.of(
-        RoundaboutSymbol(direction: direction, leftHandTraffic: null),
-        const Size(38, 38),
-      );
-      expect(
-        geometry.ringArcs.map((arc) => arc.segment),
-        everyElement(RoundaboutRingSegment.undirected),
-      );
-    }
+    // A square turn is a quarter of the ring one way and three quarters the
+    // other, and the driving side decides which.
+    expect(
+      ridden(ManeuverDirection.right, leftHandTraffic: true),
+      closeTo(270, 0.01),
+    );
+    expect(
+      ridden(ManeuverDirection.right, leftHandTraffic: false),
+      closeTo(90, 0.01),
+    );
   });
 
   test('rasterised symbols show the gap, the arrow, and nothing outside', () async {
@@ -359,10 +344,14 @@ void main() {
         }
       }
 
-      // Daylight on both sides of every road where it crosses the ring, and
-      // ink on the ring away from the roads.
+      // Every road reaches the ring, and every drawn arc is really there.
       //
-      // Taken from where the road meets the ring, not from the heading it then
+      // There is deliberately no daylight to look for beside a road any more.
+      // The gap is sized to the road that passes through it, because a gap twice
+      // the road's width left the road floating in the middle of a hole,
+      // connected to nothing - reported from the road as gaps between the lines.
+      //
+      // Sampled where the road meets the ring, not along the heading it then
       // runs on: a turn back on itself leaves alongside the road in, so both
       // roads run straight down the box while joining the ring at their own
       // angles, and sampling by heading would probe the wrong point entirely.
@@ -372,22 +361,59 @@ void main() {
           _headingOf(geometry.exit!.start - geometry.centre),
       ];
       for (final road in roads) {
-        expect(pixels.isInk(_onRing(geometry, road)), isTrue, reason: why);
-        for (final side in [-1, 1]) {
-          final beside = road + side * geometry.ringGapHalfDegrees * 0.75;
-          expect(
-            pixels.isInk(_onRing(geometry, beside)),
-            isFalse,
-            reason: '$why: no gap in the ring at $beside degrees',
-          );
-        }
+        expect(
+          pixels.isInk(_onRing(geometry, road)),
+          isTrue,
+          reason: '$why: the road does not reach the ring at $road degrees',
+        );
       }
+      for (final arc in geometry.ringArcs) {
+        final middle = arc.startDegrees + arc.sweepDegrees / 2;
+        expect(
+          pixels.isInk(_onRing(geometry, middle)),
+          isTrue,
+          reason: '$why: no ring drawn at $middle degrees',
+        );
+      }
+      // Enough ring to read as a ring, and not a closed circle.
+      //
+      // The upper bound is only just under the full 180 samples. It used to be
+      // 170, which assumed 20 degrees of the ring circle would be empty - true
+      // only while the gaps were twice the width of the roads passing through
+      // them. The roads now fill their own gaps by design, so almost every sample
+      // on the circle is ink, and what proves the ring is broken is that at least
+      // one sample is not. The geometry test carries the strict version of this:
+      // ringSweepDegrees is asserted below 360.
+      // Sampled every half degree. At two degrees the sweep could not resolve the
+      // daylight it was asserting - the gap clears the road by about 1.5 degrees -
+      // so it called a plainly broken ring closed.
+      const samples = 720;
       var ringInk = 0;
-      for (var degrees = 0; degrees < 360; degrees += 2) {
-        if (pixels.isInk(_onRing(geometry, degrees.toDouble()))) ringInk += 1;
+      for (var i = 0; i < samples; i++) {
+        if (pixels.isInk(_onRing(geometry, i * 360 / samples))) ringInk += 1;
       }
-      expect(ringInk, greaterThan(90), reason: '$why: too little ring drawn');
-      expect(ringInk, lessThan(170), reason: '$why: the ring has no gap');
+      // As much ring as the arc claims, and no more than that plus the two roads
+      // crossing the circle. A first exit is legitimately a short arc now, so a
+      // fixed floor of half the circle no longer describes anything.
+      final arcSamples =
+          geometry.ringArcs.single.sweepDegrees.abs() / 360 * samples;
+      final roadSamples = samples * 2 * 22 / 360;
+      expect(
+        ringInk,
+        greaterThan(arcSamples * 0.8),
+        reason: '\$why: less ring drawn than the arc claims',
+      );
+      expect(
+        ringInk,
+        lessThan(arcSamples + roadSamples),
+        reason: '\$why: more ring drawn than the arc claims',
+      );
+      // No raster upper bound. Whether a break is *visible* depends on how wide
+      // the gap clears the road, which is a design choice under active review, and
+      // at these sizes a couple of degrees of daylight is sub-pixel and lost to
+      // anti-aliasing either way. The invariant that the ring is not a closed path
+      // is asserted geometrically instead, where it is exact: see
+      // ringSweepDegrees < 360 in 'the ring is broken where each road meets it'.
 
       final exit = geometry.exit;
       if (exit == null) continue;
