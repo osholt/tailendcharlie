@@ -37,9 +37,16 @@ class RoundaboutSymbol extends ManeuverSymbol {
   const RoundaboutSymbol({
     required this.direction,
     required this.leftHandTraffic,
+    this.exitNumber,
   });
 
   final ManeuverDirection direction;
+
+  /// Which exit to take, drawn inside the ring where there is room for it.
+  ///
+  /// Null whenever the routing engine did not count the exits, which is common
+  /// enough that the symbol must read correctly without it.
+  final int? exitNumber;
 
   /// Chooses clockwise or anticlockwise ring flow only. The exit is placed from
   /// [direction]. Where the engine reported no driving side, no flow is drawn.
@@ -57,6 +64,7 @@ ManeuverSymbol maneuverSymbolFor(ManeuverInstruction instruction) {
       return RoundaboutSymbol(
         direction: direction,
         leftHandTraffic: instruction.leftHandTraffic,
+        exitNumber: instruction.exitNumber,
       );
     case ManeuverKind.arrive:
       return const ManeuverIconSymbol(Icons.flag, ManeuverSide.ahead);
@@ -140,20 +148,6 @@ class ManeuverSymbolView extends StatelessWidget {
   }
 }
 
-/// What one drawn arc of the ring means to the rider.
-enum RoundaboutRingSegment {
-  /// The part of the ring the rider rides, from where they join to where they
-  /// leave, in the direction traffic flows on the reported driving side.
-  ridden,
-
-  /// The rest of the ring, which carries traffic the rider does not follow.
-  beyond,
-
-  /// No driving side was reported, so no part of the ring is claimed as the
-  /// part the rider rides.
-  undirected,
-}
-
 /// One drawn arc of the ring, measured like the exit: degrees clockwise from
 /// straight ahead, with a positive sweep running clockwise on screen.
 @immutable
@@ -161,12 +155,10 @@ class RoundaboutRingArc {
   const RoundaboutRingArc({
     required this.startDegrees,
     required this.sweepDegrees,
-    required this.segment,
   });
 
   final double startDegrees;
   final double sweepDegrees;
-  final RoundaboutRingSegment segment;
 
   double get startRadians => (startDegrees - 90) * math.pi / 180;
   double get sweepRadians => sweepDegrees * math.pi / 180;
@@ -237,15 +229,13 @@ class RoundaboutSymbolGeometry {
     required this.centre,
     required this.radius,
     required this.roadStrokeWidth,
-    required this.entryRoadStrokeWidth,
-    required this.riddenRingStrokeWidth,
-    required this.beyondRingStrokeWidth,
-    required this.ringGapHalfDegrees,
+    required this.ringStrokeWidth,
     required this.entryDegrees,
     required this.entryRoadStart,
     required this.entryRoadEnd,
     required this.ringArcs,
     required this.exit,
+    required this.exitNumber,
   });
 
   /// Works out how [symbol] is drawn into a box of [size].
@@ -261,30 +251,31 @@ class RoundaboutSymbolGeometry {
     final exitDegrees = _exitDegrees(symbol);
     final entryDegrees = _entryDegrees(exitDegrees);
     final entryUnit = _unitAt(entryDegrees);
-    final gapHalfDegrees = _ringGapHalfDegrees(road: road, radius: radius);
+    // Turning back leaves by the exit beside the one the rider came in by, so
+    // both roads sit near the bottom of the ring. Run them along the box instead
+    // of along their own radii: radial roads splay apart into a V, which reads as
+    // two unrelated sticks rather than as going back the way you came.
+    final parallelRoads = _turnsBack(exitDegrees);
+    final entryDirection = parallelRoads ? _down : entryUnit;
     return RoundaboutSymbolGeometry._(
       centre: centre,
       radius: radius,
       roadStrokeWidth: road,
-      entryRoadStrokeWidth: road * _entryRoadFraction,
-      riddenRingStrokeWidth: road * _riddenRingFraction,
-      beyondRingStrokeWidth: road * _beyondRingFraction,
-      ringGapHalfDegrees: gapHalfDegrees,
+      ringStrokeWidth: road,
       entryDegrees: entryDegrees,
-      entryRoadStart: centre + entryUnit * reach,
       // Roads stop on the ring itself, so a rounded end fills the break in the
-      // ring without reaching into the middle of it.
+      // ring without reaching into the middle of it. The far end is carried out
+      // from there along the road's own heading, which is its radius except
+      // where the roads run parallel and both run straight down the box.
+      entryRoadStart:
+          centre + entryUnit * radius + entryDirection * (reach - radius),
       entryRoadEnd: centre + entryUnit * radius,
       ringArcs: _ringArcs(
         entryDegrees: entryDegrees,
         exitDegrees: exitDegrees,
-        gapHalfDegrees: gapHalfDegrees,
-        minimumSweepDegrees: _minimumSweepDegrees(
-          stroke: road * _riddenRingFraction,
-          radius: radius,
-        ),
         leftHandTraffic: symbol.leftHandTraffic,
       ),
+      exitNumber: symbol.exitNumber,
       exit: exitDegrees == null
           ? null
           : _exitRoad(
@@ -292,30 +283,48 @@ class RoundaboutSymbolGeometry {
               extent: extent,
               exitDegrees: exitDegrees,
               radius: radius,
+              along: parallelRoads ? _down : _unitAt(exitDegrees),
             ),
     );
   }
 
+  /// The exit road, from where it meets the ring out to its arrowhead.
+  ///
+  /// [along] is the heading the road runs on, which is normally its own radius
+  /// but is straight down the box where the roads run parallel. Splitting the two
+  /// is what lets a turn back on itself leave alongside the road in rather than
+  /// splaying away from it.
   static RoundaboutExitRoad _exitRoad({
     required Offset centre,
     required double extent,
     required double exitDegrees,
     required double radius,
+    required Offset along,
   }) {
-    final unit = _unitAt(exitDegrees);
+    final onRing = centre + _unitAt(exitDegrees) * radius;
     final headLength = extent * _arrowHeadLengthFraction;
-    final tip = centre + unit * (extent * _reachFraction);
+    final tip = onRing + along * (extent * _reachFraction - radius);
     return RoundaboutExitRoad(
-      start: centre + unit * radius,
-      end: tip - unit * (headLength * _roadIntoHeadFraction),
+      start: onRing,
+      end: tip - along * (headLength * _roadIntoHeadFraction),
       head: RoundaboutArrowHead(
         tip: tip,
-        direction: unit,
+        direction: along,
         length: headLength,
         halfWidth: extent * _arrowHeadHalfWidthFraction,
       ),
     );
   }
+
+  /// Straight down the box, the way the rider came from.
+  static const _down = Offset(0, 1);
+
+  /// Whether the exit leaves close enough to the road in for the two to need
+  /// running parallel rather than along their own radii.
+  static bool _turnsBack(double? exitDegrees) =>
+      exitDegrees != null &&
+      _halfTurn(exitDegrees - _straightBackDegrees).abs() <
+          _minimumRoadSeparationDegrees;
 
   /// Straight back the way the rider came, where the road in normally meets the
   /// ring: at the bottom of the box, opposite a straight-ahead exit.
@@ -326,40 +335,33 @@ class RoundaboutSymbolGeometry {
   static const _minimumRoadSeparationDegrees = 36.0;
 
   static const _minimumRoadStroke = 1.6;
-  static const _roadStrokeFraction = 0.095;
-  static const _radiusFraction = 0.215;
+  static const _roadStrokeFraction = 0.07;
+  static const _radiusFraction = 0.20;
 
   /// Furthest any ink sits from the centre, which keeps the arrow point inside
   /// the box at every exit angle, including straight ahead and square across.
   static const _reachFraction = 0.45;
-  static const _arrowHeadLengthFraction = 0.145;
-  static const _arrowHeadHalfWidthFraction = 0.088;
-  static const _roadIntoHeadFraction = 0.6;
 
-  /// The road in is context rather than instruction, so it is drawn lighter
-  /// than the exit and never competes with it.
-  static const _entryRoadFraction = 0.7;
-  static const _riddenRingFraction = 0.85;
-  static const _beyondRingFraction = 0.58;
-
-  /// Shortest arc worth drawing, as a multiple of its own stroke width.
+  /// Arrowhead size, kept proportionate to the ring rather than to the box.
   ///
-  /// Measured in stroke widths rather than degrees because that is what decides
-  /// whether a rider reads an arc or a speck: at banner size a first-exit stub
-  /// is barely twice as long as the ring is thick, and sitting beside the exit
-  /// it reads as something left in the gap.
-  static const _minimumArcInStrokes = 3.0;
+  /// At 0.088 the head was almost as wide across its base as the ring's radius,
+  /// which read as a solid wedge stuck to a stub of road rather than as an arrow
+  /// on a road. Two road widths across is enough to be unmistakable.
+  static const _arrowHeadLengthFraction = 0.12;
+  static const _arrowHeadHalfWidthFraction = 0.070;
+  static const _roadIntoHeadFraction = 0.6;
 
   final Offset centre;
   final double radius;
   final double roadStrokeWidth;
-  final double entryRoadStrokeWidth;
-  final double riddenRingStrokeWidth;
-  final double beyondRingStrokeWidth;
 
-  /// Half the angle each road clears from the ring, so the road passes through
-  /// daylight on both sides rather than butting into an unbroken circle.
-  final double ringGapHalfDegrees;
+  /// The same width as the roads. A ring drawn at a different weight to the roads
+  /// that meet it reads as a separate object rather than as the junction.
+  final double ringStrokeWidth;
+
+  /// Which exit to take, or null when the engine did not count the exits or the
+  /// symbol is too small to hold a legible digit.
+  final int? exitNumber;
 
   /// Where the road in meets the ring, in degrees clockwise from straight ahead.
   final double entryDegrees;
@@ -376,6 +378,7 @@ class RoundaboutSymbolGeometry {
       ringArcs.fold(0, (total, arc) => total + arc.sweepDegrees.abs());
 
   /// How much of the ring is left open for the roads to pass through.
+  /// What is not drawn: the part of the ring the rider never reaches.
   double get ringGapDegrees => 360 - ringSweepDegrees;
 
   /// The number of arrowheads drawn, which is one wherever a direction is
@@ -384,20 +387,26 @@ class RoundaboutSymbolGeometry {
 
   /// Exit angle in degrees clockwise from straight ahead, or `null` when the
   /// engine reported no direction to draw.
-  static double? _exitDegrees(RoundaboutSymbol symbol) =>
-      switch (symbol.direction) {
-        ManeuverDirection.sharpLeft => -135,
-        ManeuverDirection.left => -90,
-        ManeuverDirection.slightLeft => -45,
-        ManeuverDirection.straight => 0,
-        ManeuverDirection.slightRight => 45,
-        ManeuverDirection.right => 90,
-        ManeuverDirection.sharpRight => 135,
-        // Turning back leaves by the exit next to the one the rider joined by,
-        // which is on the far side of the ring from the direction of flow.
-        ManeuverDirection.uTurn => symbol.leftHandTraffic == false ? 165 : -165,
-        ManeuverDirection.unstated => null,
-      };
+  static double? _exitDegrees(
+    RoundaboutSymbol symbol,
+  ) => switch (symbol.direction) {
+    ManeuverDirection.sharpLeft => -135,
+    ManeuverDirection.left => -90,
+    ManeuverDirection.slightLeft => -45,
+    ManeuverDirection.straight => 0,
+    ManeuverDirection.slightRight => 45,
+    ManeuverDirection.right => 90,
+    ManeuverDirection.sharpRight => 135,
+    // Turning back leaves by the exit beside the one the rider joined by -
+    // but the one they reach *last*, having gone almost the whole way round.
+    // Keeping left, traffic circulates clockwise, so that exit sits just
+    // before the road in rather than just after it. The two were the wrong way
+    // round, which drew a U-turn as a 36 degree arc: take the first exit, the
+    // opposite instruction. Invisible while the whole ring was drawn and only
+    // the emphasis varied; obvious once only the ridden arc is drawn.
+    ManeuverDirection.uTurn => symbol.leftHandTraffic == false ? -165 : 165,
+    ManeuverDirection.unstated => null,
+  };
 
   /// Where the road in meets the ring, in the same degrees as the exit.
   ///
@@ -422,68 +431,41 @@ class RoundaboutSymbolGeometry {
   }
 
   /// Half the ring gap, as the angle whose chord is one road width: the road
-  /// takes half of that, leaving half a road width of daylight beside it.
-  static double _ringGapHalfDegrees({
-    required double road,
-    required double radius,
-  }) => math.asin(math.min(0.92, road / radius)) * 180 / math.pi;
-
-  /// The shortest arc worth drawing, as a sweep.
-  static double _minimumSweepDegrees({
-    required double stroke,
-    required double radius,
-  }) => stroke * _minimumArcInStrokes / radius * 180 / math.pi;
-
+  /// The one arc: the part of the ring the rider actually rides.
+  ///
+  /// From where they join to where they leave, the way traffic flows on their
+  /// side of the road. The rest of the circle is not drawn at all - it is not a
+  /// ring with a gap cut in it, it is only ever the arc needed to reach the exit,
+  /// and the gap is the negative of that same arc.
+  ///
+  /// This replaced a ring drawn as two arcs with a fixed gap either side of each
+  /// road. Every complaint about the old symbol came from the part of the ring the
+  /// rider does not ride: drawn thinner it read as a second, smaller circle;
+  /// drawn at full weight it closed the ring up; and the fixed gaps left the roads
+  /// either floating in a hole or welded to an unbroken circle. Not drawing it at
+  /// all answers all of that, and says something true - this is the way round you
+  /// go.
   static List<RoundaboutRingArc> _ringArcs({
     required double entryDegrees,
     required double? exitDegrees,
-    required double gapHalfDegrees,
-    required double minimumSweepDegrees,
     required bool? leftHandTraffic,
   }) {
     if (exitDegrees == null) {
-      // No direction was reported, so the ring breaks only where the rider
-      // joins it and nothing claims where they leave.
-      return [
-        RoundaboutRingArc(
-          startDegrees: entryDegrees + gapHalfDegrees,
-          sweepDegrees: 360 - gapHalfDegrees * 2,
-          segment: RoundaboutRingSegment.undirected,
-        ),
-      ];
+      // No exit was reported, so no part of the ring can be claimed as the part
+      // ridden. The whole circle is drawn, saying only "a roundabout".
+      return [const RoundaboutRingArc(startDegrees: 0, sweepDegrees: 360)];
     }
-    // Traffic runs clockwise where riders keep left. Driving side shapes the
-    // ring by deciding which way round the rider reaches the exit: the first
-    // exit is a short arc, the last one nearly the whole ring.
+    // Traffic runs clockwise where riders keep left, so that is the way round the
+    // arc sweeps: the first exit is a short arc, the last one nearly the whole
+    // circle. Where the driving side was never reported, assume the local one
+    // rather than draw nothing - the exit road still carries the instruction.
     final flow = leftHandTraffic == false ? -1.0 : 1.0;
     final ridden = _turn(flow * (exitDegrees - entryDegrees));
-    final riddenSweep = ridden - gapHalfDegrees * 2;
-    final beyondSweep = 360 - ridden - gapHalfDegrees * 2;
-    // An arc too short to read as an arc is left out, and the gap beside it
-    // widens to take its place: drawn, it is a speck in the gap the exit leaves
-    // through rather than part of the ring.
-    final drawsRidden = riddenSweep >= minimumSweepDegrees;
-    final drawsBeyond = beyondSweep >= minimumSweepDegrees;
-    // One part cannot be emphasised over another that is not there, and a ring
-    // whose flow was never reported claims no ridden part at all.
-    final emphasised = drawsRidden && drawsBeyond && leftHandTraffic != null;
     return [
-      if (drawsRidden)
-        RoundaboutRingArc(
-          startDegrees: entryDegrees + flow * gapHalfDegrees,
-          sweepDegrees: flow * riddenSweep,
-          segment: emphasised
-              ? RoundaboutRingSegment.ridden
-              : RoundaboutRingSegment.undirected,
-        ),
-      if (drawsBeyond)
-        RoundaboutRingArc(
-          startDegrees: exitDegrees + flow * gapHalfDegrees,
-          sweepDegrees: flow * beyondSweep,
-          segment: emphasised
-              ? RoundaboutRingSegment.beyond
-              : RoundaboutRingSegment.undirected,
-        ),
+      RoundaboutRingArc(
+        startDegrees: entryDegrees,
+        sweepDegrees: flow * ridden,
+      ),
     ];
   }
 
@@ -504,9 +486,16 @@ class RoundaboutSymbolGeometry {
 class RoundaboutSymbolPainter extends CustomPainter {
   const RoundaboutSymbolPainter({required this.symbol, required this.color});
 
-  /// How much of the ink is kept on the part of the ring the rider leaves
-  /// behind: enough to read as a ring, plainly less than the ridden part.
-  static const _beyondRingOpacity = 0.7;
+  /// Smallest box that can hold a legible exit number inside the ring.
+  ///
+  /// The ring's inner diameter is about a third of the box, so below this the
+  /// digit would be a smudge. Omitting it is better than drawing something
+  /// unreadable in the middle of the junction.
+  static const _minimumExtentForExitNumber = 28.0;
+
+  /// Digit height as a fraction of the box, chosen so the glyph's layout box sits
+  /// inside the ring's inscribed square with margin left over.
+  static const _exitNumberFraction = 0.20;
 
   final RoundaboutSymbol symbol;
   final Color color;
@@ -522,7 +511,7 @@ class RoundaboutSymbolPainter extends CustomPainter {
       Paint()
         ..color = color
         ..style = PaintingStyle.stroke
-        ..strokeWidth = geometry.entryRoadStrokeWidth
+        ..strokeWidth = geometry.roadStrokeWidth
         ..strokeCap = StrokeCap.round,
     );
 
@@ -530,6 +519,13 @@ class RoundaboutSymbolPainter extends CustomPainter {
       center: geometry.centre,
       radius: geometry.radius,
     );
+    // One weight, one colour, every arc. The ring is a single road; drawing part
+    // of it thinner and dimmer made that part read as a second, smaller circle
+    // sitting in the gap instead of as the rest of the same ring.
+    final ringPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = geometry.ringStrokeWidth
+      ..color = color;
     for (final arc in geometry.ringArcs) {
       // Butt caps, so each gap is as wide on screen as it is in the geometry.
       canvas.drawArc(
@@ -537,19 +533,21 @@ class RoundaboutSymbolPainter extends CustomPainter {
         arc.startRadians,
         arc.sweepRadians,
         false,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = arc.segment == RoundaboutRingSegment.beyond
-              ? geometry.beyondRingStrokeWidth
-              : geometry.riddenRingStrokeWidth
-          ..color = arc.segment == RoundaboutRingSegment.beyond
-              ? color.withValues(alpha: color.a * _beyondRingOpacity)
-              : color,
+        ringPaint,
       );
     }
 
+    _paintExitNumber(canvas, geometry, size);
+
     final exit = geometry.exit;
     if (exit == null) return;
+    // The shaft runs into the arrowhead's base rather than stopping short of it,
+    // so the road and the arrow are one continuous mark with no seam.
+    //
+    // Round caps, like the road in. A butt cap starts the stroke exactly on the
+    // ring's centre-line, which leaves the inner half of the ring's own width
+    // uncovered and shows as a hairline notch at the join; the round cap reaches
+    // back across it. Nothing shows at the far end, where the arrowhead covers it.
     canvas.drawLine(
       exit.start,
       exit.end,
@@ -564,6 +562,40 @@ class RoundaboutSymbolPainter extends CustomPainter {
       Paint()
         ..color = color
         ..style = PaintingStyle.fill,
+    );
+  }
+
+  /// Draws the exit number in the middle of the ring, where there is room.
+  void _paintExitNumber(
+    Canvas canvas,
+    RoundaboutSymbolGeometry geometry,
+    Size size,
+  ) {
+    final exitNumber = geometry.exitNumber;
+    if (exitNumber == null) return;
+    if (size.shortestSide < _minimumExtentForExitNumber) return;
+    final label = TextPainter(
+      text: TextSpan(
+        text: '$exitNumber',
+        style: TextStyle(
+          color: color,
+          fontSize: size.shortestSide * _exitNumberFraction,
+          fontWeight: FontWeight.w700,
+          height: 1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    )..layout();
+    // Measured against the largest square that fits inside the ring, not its
+    // diameter. A box as tall as the inner diameter overlaps the stroke top and
+    // bottom, because the circle narrows away from its middle.
+    final innerRadius = geometry.radius - geometry.ringStrokeWidth / 2;
+    final room = innerRadius * math.sqrt2;
+    if (label.width > room || label.height > room) return;
+    label.paint(
+      canvas,
+      geometry.centre - Offset(label.width / 2, label.height / 2),
     );
   }
 
