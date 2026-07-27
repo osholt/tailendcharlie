@@ -23,6 +23,9 @@ jobs:
   status:
     name: Report Play track status
     runs-on: ubuntu-latest
+    # The Play service account is an environment secret, not a repository one,
+    # so a workflow that omits this reads it as empty.
+    environment: android-internal
     env:
       PACKAGE_NAME: app.tailendcharlie
     steps:
