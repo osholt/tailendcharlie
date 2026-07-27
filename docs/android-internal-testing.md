@@ -323,3 +323,59 @@ The email itself has never been sent from this repository. The first real send
 is a maintainer decision: configure the variables, run once with
 `notification_mode: dry-run`, read the rendered mail in the run summary, and only
 then switch to `auto`.
+
+## Managed publishing will silently strand testers
+
+**Managed publishing must stay off.** With it on, every track change the API
+commits sits in a Console queue until a human clicks **Publish**, and nothing in
+the pipeline can tell:
+
+- `fastlane supply` exits 0.
+- The Play Developer API reports the release `status: completed` on the track.
+- Testers keep whatever was last published, indefinitely.
+
+That happened. Version code 29 was uploaded to `internal` and promoted to
+`alpha` on 27 July 2026, both reported success, and the closed testers' opt-in
+page still offered a build from **21 July** — the date of the last manual
+publish. The queue held two changes: the `alpha` promotion nobody had published,
+and a stale open-testing release from the previous week.
+
+It is off now. If it is ever turned back on, every tester release needs a Console
+publish, and the CI reporting is not evidence that testers got anything.
+
+### Checking what testers actually have
+
+Run the **Play track status** workflow. It lists every track with its release
+name, status and version codes, so the question "what have testers actually got?"
+is answerable without opening the Console:
+
+```bash
+gh workflow run "Play track status" --ref main
+```
+
+It is read-only: it opens an edit to list the tracks and always deletes it.
+
+Two details that cost time when this was first written:
+
+- The Play service account is an **environment** secret on `android-internal`,
+  not a repository secret. A workflow that omits `environment: android-internal`
+  reads it as an empty string.
+- Version codes must increase monotonically and the tracks are already well ahead
+  of `github.run_number`, so pass `build_number` explicitly on every release.
+  Without it the upload is rejected for not letting existing users upgrade.
+
+### Track names
+
+The Console's labels and the API's track ids do not match, which matters when
+choosing where a build goes:
+
+| Console | API track |
+| --- | --- |
+| Internal testing | `internal` |
+| Closed testing - Alpha | `alpha` |
+| Open testing | `beta` |
+| Production | `production` |
+
+Closed testers are on `alpha`. `beta` is open testing — public, anyone may join —
+and is currently **paused** holding an old release. Do not promote to `beta`
+expecting it to reach the closed group.
