@@ -325,6 +325,9 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
     );
     await RideRecapScreen.show(
       context,
+      // The real configuration, not the empty default: without a style there is
+      // no basemap to snapshot and the recap falls back to the outline (#157).
+      basemapConfiguration: BasemapConfiguration.fromEnvironment(),
       summary: summary,
       routePoints:
           ride.traveledRoute?.paths.expand((path) => path.points).toList() ??
