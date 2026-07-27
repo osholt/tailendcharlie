@@ -441,6 +441,96 @@ void main() {
     expect(progress, closeTo(333, 30));
     expect(away, isNull);
   });
+
+  // #163: "The double roundabout on New Cheltenham Road in Kingswood didn't show
+  // up on the navigation directions."
+  //
+  // Ground truth from OpenStreetMap: the pair is two mini-roundabouts, mapped as
+  // `highway=mini_roundabout` nodes at 51.46705,-2.50050 and 51.46721,-2.50106 -
+  // **41 m apart**. That is outside the 25 m gyratory threshold as ring centres,
+  // and easily inside it measured from the first ring's exit to the second's
+  // entry, which is what the collapse used to compare.
+  group('the New Cheltenham Road double roundabout', () {
+    const firstRing = GeoPoint(latitude: 51.46705, longitude: -2.50050);
+    const secondRing = GeoPoint(latitude: 51.46721, longitude: -2.50106);
+    // Leaving the first ring puts the rider most of the way to the second, which
+    // is exactly why an exit-to-entry measurement reads as one junction.
+    const firstExit = GeoPoint(latitude: 51.46714, longitude: -2.50085);
+    const secondExit = GeoPoint(latitude: 51.46728, longitude: -2.50126);
+
+    test('both roundabouts survive as separate instructions', () {
+      final instructions = collapseManeuvers(const [
+        RouteManeuver(
+          position: firstRing,
+          type: 'roundabout',
+          modifier: 'right',
+          exitNumber: 2,
+        ),
+        RouteManeuver(position: firstExit, type: 'exit roundabout'),
+        RouteManeuver(
+          position: secondRing,
+          type: 'roundabout',
+          modifier: 'straight',
+          exitNumber: 1,
+        ),
+        RouteManeuver(position: secondExit, type: 'exit roundabout'),
+      ]);
+
+      expect(
+        instructions.where((item) => item.kind == ManeuverKind.roundabout),
+        hasLength(2),
+        reason: 'a rider meets two junctions and needs telling about both',
+      );
+      expect(instructions.first.exitNumber, 2);
+      expect(instructions.last.exitNumber, 1);
+    });
+
+    test('a genuine gyratory inside 25 m is still one instruction', () {
+      // The behaviour the threshold exists for, kept: adjacent rings of one
+      // gyratory, 15 m apart.
+      final instructions = collapseManeuvers(const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.46705, longitude: -2.50050),
+          type: 'roundabout',
+          modifier: 'right',
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.467063, longitude: -2.500285),
+          type: 'roundabout',
+          modifier: 'straight',
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.46707, longitude: -2.50020),
+          type: 'exit roundabout',
+        ),
+      ]);
+
+      expect(
+        instructions.where((item) => item.kind == ManeuverKind.roundabout),
+        hasLength(1),
+      );
+    });
+
+    test('an exit from a distant later ring is not absorbed', () {
+      // The unconditional absorption this replaced: any exit joined the current
+      // group however far away it was.
+      final instructions = collapseManeuvers(const [
+        RouteManeuver(
+          position: firstRing,
+          type: 'roundabout',
+          modifier: 'right',
+        ),
+        RouteManeuver(
+          // ~2 km along the road.
+          position: GeoPoint(latitude: 51.48500, longitude: -2.50050),
+          type: 'exit roundabout',
+        ),
+      ]);
+
+      expect(instructions, hasLength(2));
+      expect(instructions.first.kind, ManeuverKind.roundabout);
+    });
+  });
 }
 
 ImportedRoute _route() => ImportedRoute(

@@ -310,6 +310,13 @@ const _exitBearingReachMeters = 250.0;
 /// Two ring entries this close together are one gyratory, not two junctions.
 const _gyratoryMergeMeters = 25.0;
 
+/// How far from its entry a ring exit may be and still belong to that ring.
+///
+/// Generous, because a large gyratory or a rotary can carry a rider a long way
+/// between joining and leaving - but not unbounded, which is what let an exit
+/// belonging to a later roundabout be absorbed into an earlier one.
+const _ringExitMeters = 400.0;
+
 /// Collapses routing-engine steps into rider-facing instructions.
 ///
 /// A roundabout or rotary is reported as joining the ring and then leaving it.
@@ -327,8 +334,10 @@ List<ManeuverInstruction> collapseManeuvers(List<RouteManeuver> maneuvers) {
       continue;
     }
     var last = index;
+    // Always compared against the group's entry, so the thresholds mean what
+    // they say rather than measuring hop to hop (#163).
     while (last + 1 < maneuvers.length &&
-        _absorbsIntoRing(maneuvers[last], maneuvers[last + 1])) {
+        _absorbsIntoRing(entry, maneuvers[last + 1])) {
       last += 1;
     }
     final follower = last + 1 < maneuvers.length ? maneuvers[last + 1] : null;
@@ -343,15 +352,29 @@ List<ManeuverInstruction> collapseManeuvers(List<RouteManeuver> maneuvers) {
   return List.unmodifiable(instructions);
 }
 
-/// Whether [candidate] describes the same ring as [previous].
-bool _absorbsIntoRing(RouteManeuver previous, RouteManeuver candidate) {
-  if (_isRingExit(candidate.type)) return true;
-  // A gyratory can be split into adjacent rings. Only merge entries close
-  // enough together to be one junction; separate roundabouts keep separate
-  // instructions and their own exit counts.
+/// Whether [candidate] describes the same ring as the group that starts at
+/// [entry].
+///
+/// Measured from the group's **entry**, not from whatever manoeuvre happens to
+/// precede the candidate. The threshold is documented as separating one gyratory
+/// from two junctions, which is a statement about ring positions - but comparing
+/// an exit against the next entry measures the gap between leaving one ring and
+/// joining the next, which is much shorter than the distance between the rings.
+/// The double roundabout on New Cheltenham Road is a pair of mini-roundabouts
+/// **41 m apart** (OpenStreetMap nodes 51.46705,-2.50050 and 51.46721,-2.50106),
+/// comfortably outside the 25 m threshold as centres and easily inside it as
+/// exit-to-entry. Merging them announces one junction where a rider meets two
+/// (#163).
+///
+/// An exit is likewise only absorbed while it plausibly belongs to this ring. It
+/// used to be absorbed unconditionally, so an exit from a later, distant
+/// roundabout could be pulled into an earlier group.
+bool _absorbsIntoRing(RouteManeuver entry, RouteManeuver candidate) {
+  if (_isRingExit(candidate.type)) {
+    return _distance(entry.position, candidate.position) <= _ringExitMeters;
+  }
   if (!_isRingEntry(candidate.type)) return false;
-  return _distance(previous.position, candidate.position) <=
-      _gyratoryMergeMeters;
+  return _distance(entry.position, candidate.position) <= _gyratoryMergeMeters;
 }
 
 ManeuverInstruction _roundaboutInstruction({
