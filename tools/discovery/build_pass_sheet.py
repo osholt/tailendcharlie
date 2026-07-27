@@ -13,16 +13,17 @@ use, not bulk download.
 import base64
 import html
 import json
-import os
 import math
+import os
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-OUT = os.environ.get('DISCOVERY_WORK_DIR', '/private/tmp/discovery-out')
+OUT = os.environ.get("DISCOVERY_WORK_DIR", "/private/tmp/discovery-out")
 ZOOM = 13
 TILE = 256
-USER_AGENT = 'tailendcharlie-discovery-review/1.0 (+https://github.com/osholt/tailendcharlie)'
+TILE_HOST = "https://tile.openstreetmap.org"
+USER_AGENT = "tailendcharlie-discovery-review/1.0 (+https://github.com/osholt/tailendcharlie)"
 
 _cache = {}
 
@@ -39,13 +40,19 @@ def fetch_tile(z, x, y):
     key = (z, x, y)
     if key in _cache:
         return _cache[key]
-    url = f'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
-    request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
+    url = f"{TILE_HOST}/{z}/{x}/{y}.png"
+    # ruff S310 is right to ask: urlopen honours file: and other schemes, so a
+    # tainted URL here would read local files. The coordinates are integers we
+    # computed and the host is a constant, but assert the scheme anyway so the
+    # guarantee lives next to the call rather than in a reader's head.
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing to fetch a non-HTTPS tile URL: {url}")
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
             data = response.read()
     except Exception as error:
-        print(f'  tile {z}/{x}/{y} failed: {error}')
+        print(f"  tile {z}/{x}/{y} failed: {error}")
         data = None
     _cache[key] = data
     time.sleep(0.05)
@@ -70,23 +77,19 @@ def tile_mosaic(lon, lat):
 def data_uri(png):
     if png is None:
         return None
-    return 'data:image/png;base64,' + base64.b64encode(png).decode('ascii')
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
 
 def main():
-    catalogue = json.load(open(f'{OUT}/discovery-catalogue.geojson'))
-    enrichment = json.load(open(f'{OUT}/enrichment-deterministic.json'))
-    overlay = json.load(open(f'{OUT}/editorial-overlay.json'))['entries']
+    catalogue = json.load(open(f"{OUT}/discovery-catalogue.geojson"))
+    enrichment = json.load(open(f"{OUT}/enrichment-deterministic.json"))
+    overlay = json.load(open(f"{OUT}/editorial-overlay.json"))["entries"]
 
-    passes = [
-        f
-        for f in catalogue['features']
-        if f['properties']['category'] == 'mountain_pass'
-    ]
+    passes = [f for f in catalogue["features"] if f["properties"]["category"] == "mountain_pass"]
 
     def elevation(feature):
         try:
-            return float(feature['properties'].get('sourceElevation') or 0)
+            return float(feature["properties"].get("sourceElevation") or 0)
         except (TypeError, ValueError):
             return 0.0
 
@@ -95,22 +98,22 @@ def main():
     # Warm the tile cache in parallel; the mosaics overlap between nearby passes.
     wanted = set()
     for feature in passes:
-        lon, lat = feature['geometry']['coordinates']
+        lon, lat = feature["geometry"]["coordinates"]
         tiles, *_ = tile_mosaic(lon, lat)
         wanted.update(tiles)
-    print(f'fetching {len(wanted)} tiles at z{ZOOM}...')
+    print(f"fetching {len(wanted)} tiles at z{ZOOM}...")
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda t: fetch_tile(ZOOM, t[0], t[1]), sorted(wanted)))
     got = sum(1 for v in _cache.values() if v)
-    print(f'  {got}/{len(wanted)} tiles retrieved')
+    print(f"  {got}/{len(wanted)} tiles retrieved")
 
     cards = []
     for index, feature in enumerate(passes, 1):
-        props = feature['properties']
-        lon, lat = feature['geometry']['coordinates']
-        enriched = enrichment[props['id']]
-        editorial = overlay[props['id']]
-        status = editorial['researchStatus']
+        props = feature["properties"]
+        lon, lat = feature["geometry"]["coordinates"]
+        enriched = enrichment[props["id"]]
+        editorial = overlay[props["id"]]
+        status = editorial["researchStatus"]
 
         tiles, mx, my, x0, y0 = tile_mosaic(lon, lat)
         images = []
@@ -120,66 +123,73 @@ def main():
             top = (ty - y0) * TILE
             if uri:
                 images.append(
-                    f'<image href="{uri}" x="{left}" y="{top}" '
-                    f'width="{TILE}" height="{TILE}"/>'
+                    f'<image href="{uri}" x="{left}" y="{top}" width="{TILE}" height="{TILE}"/>'
                 )
 
-        limit = enriched['speedLimit']
-        if limit['value']:
+        limit = enriched["speedLimit"]
+        if limit["value"]:
             speed = f"{limit['value']}"
-            if limit['provenance'] != 'tagged':
+            if limit["provenance"] != "tagged":
                 speed += ' <span class="prov">(inferred)</span>'
-            if limit.get('mixed'):
-                lo, hi = limit['range']
-                speed = f'{lo}–{hi} <span class="prov">(varies)</span>'
+            if limit.get("mixed"):
+                lo, hi = limit["range"]
+                speed = f'{lo}-{hi} <span class="prov">(varies)</span>'
         else:
             speed = '<span class="unknown">not mapped</span>'
 
-        average = enriched['averageSpeedCheck']
-        if average.get('present'):
-            enforcement = 'Average speed check'
-        elif enriched['fixedSpeedCameras']:
+        average = enriched["averageSpeedCheck"]
+        if average.get("present"):
+            enforcement = "Average speed check"
+        elif enriched["fixedSpeedCameras"]:
             enforcement = f"{enriched['fixedSpeedCameras']} fixed camera(s) nearby"
         else:
             enforcement = '<span class="unknown">none in OSM</span>'
 
-        locality = enriched.get('locality') or {}
-        peak = enriched.get('nearestPeak') or {}
+        locality = enriched.get("locality") or {}
+        peak = enriched.get("nearestPeak") or {}
 
-        name = html.escape(editorial.get('name') or props['name'])
+        place_cell = (
+            f"{html.escape(locality.get('name', '-'))} "
+            f'<span class="prov">{locality.get("distanceMetres", "")}'
+            "&thinsp;m</span>"
+        )
+        peak_cell = (
+            f"{html.escape(peak.get('name', '-'))} "
+            f'<span class="prov">{peak.get("elevation", "")}</span>'
+        )
+        roads_cell = html.escape(", ".join(enriched["roadRefs"] + enriched["roadNames"]) or "-")
+        name = html.escape(editorial.get("name") or props["name"])
         badge = {
-            'researched': ('ok', 'researched'),
-            'pending': ('warn', 'research pending'),
-            'classification-rejected': ('bad', editorial.get('verdict', 'rejected')),
+            "researched": ("ok", "researched"),
+            "pending": ("warn", "research pending"),
+            "classification-rejected": ("bad", editorial.get("verdict", "rejected")),
         }[status]
 
         body = []
-        if status == 'classification-rejected':
-            body.append(
-                f'<p class="verdict-note">{html.escape(editorial["reason"])}</p>'
-            )
-        elif status == 'researched':
+        if status == "classification-rejected":
+            body.append(f'<p class="verdict-note">{html.escape(editorial["reason"])}</p>')
+        elif status == "researched":
             body.append(f'<p class="note">{html.escape(editorial["riderNote"])}</p>')
             body.append(
                 '<p class="busy"><b>Busy:</b> '
-                + html.escape(editorial.get('busyPeriods', '—'))
-                + '</p>'
+                + html.escape(editorial.get("busyPeriods", "-"))
+                + "</p>"
             )
-            if editorial.get('enforcementNote'):
+            if editorial.get("enforcementNote"):
                 body.append(
                     '<p class="busy"><b>Enforcement:</b> '
-                    + html.escape(editorial['enforcementNote'])
-                    + '</p>'
+                    + html.escape(editorial["enforcementNote"])
+                    + "</p>"
                 )
-            links = ' · '.join(
+            links = " · ".join(
                 f'<a href="{html.escape(u)}">{html.escape(u.split("/")[2])}</a>'
-                for u in editorial.get('sources', [])
+                for u in editorial.get("sources", [])
             )
             body.append(f'<p class="sources">{links}</p>')
         else:
             body.append(
                 '<p class="note pending">No online cross-check yet. Name is the raw '
-                'OpenStreetMap value; no rider description written.</p>'
+                "OpenStreetMap value; no rider description written.</p>"
             )
 
         cards.append(f"""
@@ -191,35 +201,36 @@ def main():
  </header>
  <div class="split">
   <svg class="map" viewBox="0 0 {TILE * 2} {TILE * 2}" width="{TILE * 2}" height="{TILE * 2}">
-   {''.join(images)}
+   {"".join(images)}
    <circle cx="{mx:.1f}" cy="{my:.1f}" r="9" class="pin-outer"/>
    <circle cx="{mx:.1f}" cy="{my:.1f}" r="4" class="pin-inner"/>
   </svg>
   <div class="facts">
    <dl>
-    <dt>Elevation</dt><dd>{html.escape(str(props.get('sourceElevation') or '—'))} m</dd>
+    <dt>Elevation</dt><dd>{html.escape(str(props.get("sourceElevation") or "-"))} m</dd>
     <dt>Speed limit</dt><dd>{speed}</dd>
     <dt>Enforcement</dt><dd>{enforcement}</dd>
-    <dt>Nearest place</dt><dd>{html.escape(locality.get('name', '—'))} <span class="prov">{locality.get('distanceMetres', '')}&thinsp;m</span></dd>
-    <dt>Nearest peak</dt><dd>{html.escape(peak.get('name', '—'))} <span class="prov">{peak.get('elevation', '')}</span></dd>
-    <dt>Roads</dt><dd>{html.escape(', '.join(enriched['roadRefs'] + enriched['roadNames']) or '—')}</dd>
+    <dt>Nearest place</dt><dd>{place_cell}</dd>
+    <dt>Nearest peak</dt><dd>{peak_cell}</dd>
+    <dt>Roads</dt><dd>{roads_cell}</dd>
     <dt>Coordinates</dt><dd class="mono">{lat:.4f}, {lon:.4f}</dd>
    </dl>
-   {''.join(body)}
+   {"".join(body)}
   </div>
  </div>
 </article>""")
 
     researched = sum(
-        1 for f in passes if overlay[f['properties']['id']]['researchStatus'] == 'researched'
+        1 for f in passes if overlay[f["properties"]["id"]]["researchStatus"] == "researched"
     )
     rejected = sum(
         1
         for f in passes
-        if overlay[f['properties']['id']]['researchStatus'] == 'classification-rejected'
+        if overlay[f["properties"]["id"]]["researchStatus"] == "classification-rejected"
     )
 
-    document = f"""<title>Mountain pass review — {html.escape(catalogue['properties']['catalogueVersion'])}</title>
+    version = html.escape(catalogue["properties"]["catalogueVersion"])
+    document = f"""<title>Mountain pass review - {version}</title>
 <style>
 :root {{ color-scheme: light dark; --bg:#fff; --fg:#17181c; --muted:#6b7280;
   --line:#e3e5ea; --card:#fff; --ok:#0a7d3f; --warn:#9a6700; --bad:#b3261e; }}
@@ -268,7 +279,7 @@ dd {{ margin:0; font-size:14px; }}
 footer {{ margin-top:28px; padding-top:16px; border-top:1px solid var(--line);
   color:var(--muted); font-size:12.5px; }}
 </style>
-<h1>Mountain pass review — {html.escape(catalogue['properties']['catalogueVersion'])}</h1>
+<h1>Mountain pass review - {version}</h1>
 <p class="lede">All {len(passes)} <code>mountain_pass</code> candidates, highest first.
 Speed limits and enforcement are derived from the OpenStreetMap extract. Names,
 rider notes and busy periods are hand-researched and cited; anything not yet checked
@@ -279,19 +290,21 @@ says so rather than guessing.</p>
  <div><b>{len(passes) - researched - rejected}</b> research pending</div>
  <div><b>{rejected}</b> wrong category</div>
 </div>
-{''.join(cards)}
+{"".join(cards)}
 <footer>Basemap &copy; OpenStreetMap contributors, ODbL. Candidate data derived from
-the {html.escape(catalogue['properties']['catalogueVersion'])} extract. Tiles are
+the {version} extract. Tiles are
 inlined, so this file needs no network access.</footer>
 """
 
-    path = f'{OUT}/pass-review-sheet.html'
-    open(path, 'w').write(document)
+    path = f"{OUT}/pass-review-sheet.html"
+    open(path, "w").write(document)
     size = len(document.encode()) / 1e6
-    print(f'\nwrote {path} ({size:.1f} MB)')
-    print(f'  {researched} researched, {rejected} wrong category, '
-          f'{len(passes) - researched - rejected} pending')
+    print(f"\nwrote {path} ({size:.1f} MB)")
+    print(
+        f"  {researched} researched, {rejected} wrong category, "
+        f"{len(passes) - researched - rejected} pending"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

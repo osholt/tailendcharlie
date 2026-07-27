@@ -19,18 +19,18 @@ are the same defence: a limit is `tagged` only when OSM actually says so.
 """
 
 import json
-import os
 import math
+import os
 import re
 from collections import Counter
 
-OUT = os.environ.get('DISCOVERY_WORK_DIR', '/private/tmp/discovery-out')
+OUT = os.environ.get("DISCOVERY_WORK_DIR", "/private/tmp/discovery-out")
 
 # osmium's OPL format escapes a character as a percent sign, its hex codepoint, and
 # a *terminating* percent sign: a space is `%20%`, not `%20`. Decoding it as bare
 # `%20` silently leaves the terminator behind, turning `40 mph` into `40 %mph` — and
 # every speed limit then fails to parse while looking almost right in a log.
-_ESCAPE = re.compile(r'%([0-9a-fA-F]+)%')
+_ESCAPE = re.compile(r"%([0-9a-fA-F]+)%")
 
 
 def unescape(text):
@@ -39,28 +39,28 @@ def unescape(text):
 
 def parse_opl(path):
     """Yield (type, id, tags, lon, lat, members) for each OPL line."""
-    for line in open(path, encoding='utf-8'):
-        line = line.rstrip('\n')
+    for line in open(path, encoding="utf-8"):
+        line = line.rstrip("\n")
         if not line:
             continue
         kind = line[0]
-        fields = line.split(' ')
+        fields = line.split(" ")
         tags, lon, lat, members = {}, None, None, []
         for field in fields[1:]:
             if len(field) < 2:
                 continue
             code, rest = field[0], field[1:]
-            if code == 'T':
-                for pair in rest.split(','):
-                    if '=' in pair:
-                        key, value = pair.split('=', 1)
+            if code == "T":
+                for pair in rest.split(","):
+                    if "=" in pair:
+                        key, value = pair.split("=", 1)
                         tags[unescape(key)] = unescape(value)
-            elif code == 'x':
+            elif code == "x":
                 lon = float(rest)
-            elif code == 'y':
+            elif code == "y":
                 lat = float(rest)
-            elif code == 'M':
-                members = rest.split(',')
+            elif code == "M":
+                members = rest.split(",")
         yield kind, fields[0][1:], tags, lon, lat, members
 
 
@@ -70,13 +70,13 @@ def parse_opl(path):
 # explicit maxspeed:type tag — never to guess at an untagged road, which is the
 # difference between reporting a fact and inventing one.
 NSL = {
-    'GB:nsl_single': '60 mph',
-    'GB:nsl_dual': '70 mph',
-    'GB:motorway': '70 mph',
-    'GB:nsl_restricted': '30 mph',
-    'GB:zone20': '20 mph',
-    'GB:zone30': '30 mph',
-    'GB:zone40': '40 mph',
+    "GB:nsl_single": "60 mph",
+    "GB:nsl_dual": "70 mph",
+    "GB:motorway": "70 mph",
+    "GB:nsl_restricted": "30 mph",
+    "GB:zone20": "20 mph",
+    "GB:zone30": "30 mph",
+    "GB:zone40": "40 mph",
 }
 
 
@@ -85,12 +85,12 @@ def normalise_speed(raw):
     if not raw:
         return None
     value = raw.strip()
-    if value.endswith(' mph'):
+    if value.endswith(" mph"):
         head = value[:-4].strip()
-        return f'{head} mph' if head.isdigit() else None
+        return f"{head} mph" if head.isdigit() else None
     if value.isdigit():
         # A bare number in OSM means km/h. Convert so the catalogue is one unit.
-        return f'{round(int(value) / 1.609344 / 5) * 5} mph'
+        return f"{round(int(value) / 1.609344 / 5) * 5} mph"
     return None
 
 
@@ -98,37 +98,37 @@ def speed_limit_for(ways):
     """Aggregate the mapped limit across a candidate's member ways."""
     tagged, inferred = Counter(), Counter()
     for tags in ways:
-        direct = normalise_speed(tags.get('maxspeed'))
+        direct = normalise_speed(tags.get("maxspeed"))
         if direct:
             tagged[direct] += 1
             continue
-        implied = NSL.get(tags.get('maxspeed:type', ''))
+        implied = NSL.get(tags.get("maxspeed:type", ""))
         if implied:
             inferred[implied] += 1
 
     if tagged:
-        values, provenance = tagged, 'tagged'
+        values, provenance = tagged, "tagged"
         # A candidate spanning both tagged and inferred sections is still tagged
         # overall, but the inferred sections should not vanish from the range.
         values = values + inferred
     elif inferred:
-        values, provenance = inferred, 'inferred-from-maxspeed-type'
+        values, provenance = inferred, "inferred-from-maxspeed-type"
     else:
         return {
-            'value': None,
-            'provenance': 'unknown',
-            'note': 'OpenStreetMap does not record a limit for this road.',
+            "value": None,
+            "provenance": "unknown",
+            "note": "OpenStreetMap does not record a limit for this road.",
         }
 
     ordered = sorted(values, key=lambda v: int(v.split()[0]))
     predominant = values.most_common(1)[0][0]
     result = {
-        'value': predominant,
-        'provenance': provenance,
-        'mixed': len(ordered) > 1,
+        "value": predominant,
+        "provenance": provenance,
+        "mixed": len(ordered) > 1,
     }
     if len(ordered) > 1:
-        result['range'] = [ordered[0], ordered[-1]]
+        result["range"] = [ordered[0], ordered[-1]]
     return result
 
 
@@ -147,14 +147,14 @@ def haversine(lon1, lat1, lon2, lat2):
 
 def coordinates_of(feature):
     """Flatten a candidate's geometry to a list of (lon, lat)."""
-    geometry = feature['geometry']
-    kind = geometry['type']
-    if kind == 'Point':
-        return [tuple(geometry['coordinates'])]
-    if kind == 'LineString':
-        return [tuple(c) for c in geometry['coordinates']]
-    if kind == 'MultiLineString':
-        return [tuple(c) for line in geometry['coordinates'] for c in line]
+    geometry = feature["geometry"]
+    kind = geometry["type"]
+    if kind == "Point":
+        return [tuple(geometry["coordinates"])]
+    if kind == "LineString":
+        return [tuple(c) for c in geometry["coordinates"]]
+    if kind == "MultiLineString":
+        return [tuple(c) for line in geometry["coordinates"] for c in line]
     return []
 
 
@@ -205,67 +205,65 @@ class Grid:
 
 
 def main():
-    catalogue = json.load(open(f'{OUT}/discovery-catalogue.geojson'))
-    features = catalogue['features']
+    catalogue = json.load(open(f"{OUT}/discovery-catalogue.geojson"))
+    features = catalogue["features"]
 
     # Parsed here with the same decoder as everything else, rather than read from a
     # side file written by a second parser.
     way_tags = {}
-    for kind, oid, tags, _, _, _ in parse_opl(f'{OUT}/candidate-objects.opl'):
+    for kind, oid, tags, _, _, _ in parse_opl(f"{OUT}/candidate-objects.opl"):
         way_tags[f"{'way' if kind == 'w' else 'node'}/{oid}"] = tags
-    print(f'candidate objects {len(way_tags)}')
+    print(f"candidate objects {len(way_tags)}")
 
     # Average speed enforcement: OSM models these as type=enforcement relations
     # with the covered carriageway as `section` members, so this is an exact id
     # join rather than a spatial guess.
     average_speed_ways = {}
-    for kind, oid, tags, _, _, members in parse_opl(f'{OUT}/enforcement.opl'):
-        if kind != 'r' or tags.get('enforcement') != 'average_speed':
+    for kind, oid, tags, _, _, members in parse_opl(f"{OUT}/enforcement.opl"):
+        if kind != "r" or tags.get("enforcement") != "average_speed":
             continue
         detail = {
-            'relation': f'relation/{oid}',
-            'enforcedLimit': normalise_speed(tags.get('maxspeed')),
-            'description': tags.get('description') or tags.get('note'),
+            "relation": f"relation/{oid}",
+            "enforcedLimit": normalise_speed(tags.get("maxspeed")),
+            "description": tags.get("description") or tags.get("note"),
         }
         for member in members:
-            if member.startswith('w'):
+            if member.startswith("w"):
                 average_speed_ways[f"way/{member[1:].split('@')[0]}"] = detail
 
     cameras = Grid(
         [
             (lon, lat, tags)
-            for kind, _, tags, lon, lat, _ in parse_opl(f'{OUT}/enforcement.opl')
-            if kind == 'n' and lon is not None and tags.get('highway') == 'speed_camera'
+            for kind, _, tags, lon, lat, _ in parse_opl(f"{OUT}/enforcement.opl")
+            if kind == "n" and lon is not None and tags.get("highway") == "speed_camera"
         ]
     )
 
     settlements, peaks = [], []
-    for kind, _, tags, lon, lat, _ in parse_opl(f'{OUT}/places.opl'):
-        if kind != 'n' or lon is None or not tags.get('name'):
+    for kind, _, tags, lon, lat, _ in parse_opl(f"{OUT}/places.opl"):
+        if kind != "n" or lon is None or not tags.get("name"):
             continue
-        if tags.get('place'):
+        if tags.get("place"):
             settlements.append((lon, lat, tags))
-        elif tags.get('natural') == 'peak':
+        elif tags.get("natural") == "peak":
             peaks.append((lon, lat, tags))
     settlement_grid, peak_grid = Grid(settlements), Grid(peaks)
-    print(f'settlements {len(settlements)}  peaks {len(peaks)}')
+    print(f"settlements {len(settlements)}  peaks {len(peaks)}")
 
     enrichment = {}
     stats = Counter()
     for feature in features:
-        props = feature['properties']
-        ids = props.get('sourceFeatureIds') or [props.get('sourceFeatureId')]
+        props = feature["properties"]
+        ids = props.get("sourceFeatureIds") or [props.get("sourceFeatureId")]
         ids = [i for i in ids if i]
         ways = [way_tags[i] for i in ids if i in way_tags]
 
         limit = speed_limit_for(ways)
         stats[f"speed:{limit['provenance']}"] += 1
 
-        average = next(
-            (average_speed_ways[i] for i in ids if i in average_speed_ways), None
-        )
+        average = next((average_speed_ways[i] for i in ids if i in average_speed_ways), None)
         if average:
-            stats['average-speed-check'] += 1
+            stats["average-speed-check"] += 1
 
         points = coordinates_of(feature)
         midpoint = points[len(points) // 2] if points else None
@@ -282,45 +280,45 @@ def main():
                         seen.add(key)
                         nearby_cameras.append(camera[2])
         if nearby_cameras:
-            stats['fixed-cameras'] += 1
+            stats["fixed-cameras"] += 1
 
         record = {
-            'speedLimit': limit,
-            'averageSpeedCheck': average or {'present': False},
-            'fixedSpeedCameras': len(nearby_cameras),
-            'roadRefs': sorted({t['ref'] for t in ways if t.get('ref')}),
-            'roadNames': sorted({t['name'] for t in ways if t.get('name')}),
-            'roadClasses': sorted({t['highway'] for t in ways if t.get('highway')}),
-            'surfaces': sorted({t['surface'] for t in ways if t.get('surface')}),
-            'wayCount': len(ways),
+            "speedLimit": limit,
+            "averageSpeedCheck": average or {"present": False},
+            "fixedSpeedCameras": len(nearby_cameras),
+            "roadRefs": sorted({t["ref"] for t in ways if t.get("ref")}),
+            "roadNames": sorted({t["name"] for t in ways if t.get("name")}),
+            "roadClasses": sorted({t["highway"] for t in ways if t.get("highway")}),
+            "surfaces": sorted({t["surface"] for t in ways if t.get("surface")}),
+            "wayCount": len(ways),
         }
         if average:
-            record['averageSpeedCheck']['present'] = True
+            record["averageSpeedCheck"]["present"] = True
 
         if midpoint:
             place, distance = settlement_grid.nearest(*midpoint)
             if place:
-                record['locality'] = {
-                    'name': place[2]['name'],
-                    'kind': place[2].get('place'),
-                    'distanceMetres': round(distance),
+                record["locality"] = {
+                    "name": place[2]["name"],
+                    "kind": place[2].get("place"),
+                    "distanceMetres": round(distance),
                 }
-            if props.get('category') == 'mountain_pass':
+            if props.get("category") == "mountain_pass":
                 peak, peak_distance = peak_grid.nearest(*midpoint)
                 if peak and peak_distance < 5000:
-                    record['nearestPeak'] = {
-                        'name': peak[2]['name'],
-                        'elevation': peak[2].get('ele'),
-                        'distanceMetres': round(peak_distance),
+                    record["nearestPeak"] = {
+                        "name": peak[2]["name"],
+                        "elevation": peak[2].get("ele"),
+                        "distanceMetres": round(peak_distance),
                     }
 
-        enrichment[props['id']] = record
+        enrichment[props["id"]] = record
 
-    json.dump(enrichment, open(f'{OUT}/enrichment-deterministic.json', 'w'), indent=1)
-    print(f'\nwrote enrichment for {len(enrichment)} candidates')
+    json.dump(enrichment, open(f"{OUT}/enrichment-deterministic.json", "w"), indent=1)
+    print(f"\nwrote enrichment for {len(enrichment)} candidates")
     for key in sorted(stats):
-        print(f'  {key:36s} {stats[key]}')
+        print(f"  {key:36s} {stats[key]}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
