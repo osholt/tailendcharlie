@@ -5240,63 +5240,73 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
         : contacts.map((contact) => contact.shortRoleLabel).join(' and ');
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'You are stopped',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 6),
-            Text('The emergency alert has been sent to $recipientLabel.'),
-            const SizedBox(height: 20),
-            Text(
-              'What do you need?',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final message in const [
-                  QuickMessage.mechanical,
-                  QuickMessage.assistance,
-                  QuickMessage.routeBlocked,
-                  QuickMessage.fuel,
-                ])
-                  OutlinedButton.icon(
-                    onPressed: _sending
-                        ? null
-                        : () => unawaited(_selectIssue(message)),
-                    icon: Icon(quickMessageIcon(message), size: 18),
-                    label: Text(message.label),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            OutlinedButton.icon(
-              key: const Key('emergency-open-messages-button'),
-              onPressed: _sending ? null : () => unawaited(_openMessages()),
-              icon: const Icon(Icons.sms_outlined),
-              // Names the recipient problem in the label, not only in the note
-              // below it: a rider who has stopped and needs help does not read
-              // 12 px of grey text, and an empty To: field looked like a fault
-              // rather than a choice (#173).
-              label: const Text('Text someone from your contacts'),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Your position is filled in ready to send. A ride invite carries '
-              'no phone numbers, so pick who to text - the leader and TEC have '
-              'already had the alert in the app.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
-            ),
-          ],
+      // Scrolls rather than scales. A rider reads and taps this sheet, so
+      // shrinking the type is the wrong give: at 390 px of landscape height -
+      // any current iPhone held sideways - the fixed content overran the bottom
+      // by 58 px and the framework clipped whatever was last (#193).
+      //
+      // The order already puts what matters first: the four issue buttons, then
+      // the messaging control, then the explanatory note. So the note is what
+      // goes below the fold, which is the right thing to lose.
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'You are stopped',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 6),
+              Text('The emergency alert has been sent to $recipientLabel.'),
+              const SizedBox(height: 20),
+              Text(
+                'What do you need?',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final message in const [
+                    QuickMessage.mechanical,
+                    QuickMessage.assistance,
+                    QuickMessage.routeBlocked,
+                    QuickMessage.fuel,
+                  ])
+                    OutlinedButton.icon(
+                      onPressed: _sending
+                          ? null
+                          : () => unawaited(_selectIssue(message)),
+                      icon: Icon(quickMessageIcon(message), size: 18),
+                      label: Text(message.label),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              OutlinedButton.icon(
+                key: const Key('emergency-open-messages-button'),
+                onPressed: _sending ? null : () => unawaited(_openMessages()),
+                icon: const Icon(Icons.sms_outlined),
+                // Names the recipient problem in the label, not only in the note
+                // below it: a rider who has stopped and needs help does not read
+                // 12 px of grey text, and an empty To: field looked like a fault
+                // rather than a choice (#173).
+                label: const Text('Text someone from your contacts'),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Your position is filled in ready to send. A ride invite carries '
+                'no phone numbers, so pick who to text - the leader and TEC have '
+                'already had the alert in the app.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
+              ),
+            ],
+          ),
         ),
       ),
     );
