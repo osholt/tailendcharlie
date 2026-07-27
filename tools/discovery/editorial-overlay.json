@@ -1,0 +1,386 @@
+{
+ "schemaVersion": 1,
+ "catalogueVersion": "uk-osm-2026-07-23-v1",
+ "note": "Hand-researched editorial content. Merged into the generated catalogue at build time; never written by the generator. Entries are re-matched by sourceFeatureId if candidate ids change.",
+ "entries": {
+  "osm-mountain-pass-0294170e7982ca2f": {
+   "sourceFeatureId": "node/1484579221",
+   "category": "mountain_pass",
+   "name": "Horseshoe Pass (A542)",
+   "riderNote": "The A542 between Llangollen and Llandegla, topping out at 417 m. The Ponderosa caf\u00e9 at the summit is one of the best-known biker meeting points in north Wales.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Very busy with bikes on fine weekends, which is the appeal and also the risk \u2014 expect oncoming riders using the whole road.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Horseshoe_Pass",
+    "https://www.devittinsurance.com/guides/biker-cafes/wales/ponderosa-cafe/",
+    "https://www.bestbikingroads.com/motorcycle-roads/united-kingdom/north-wales/ride/a542-horseshoe-pass-llangollen-llandegla"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-0487edfe6a27cbd3": {
+   "sourceFeatureId": "node/2953157691",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Honister Pass"
+  },
+  "osm-mountain-pass-0756e026f085fa16": {
+   "sourceFeatureId": "node/5060079480",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Clee Hill Pass"
+  },
+  "osm-mountain-pass-0852ddb9cc7e50e1": {
+   "sourceFeatureId": "node/10678902429",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Windy Gap"
+  },
+  "osm-mountain-pass-199be36cc57bff57": {
+   "sourceFeatureId": "node/767200159",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Grindleton Fell"
+  },
+  "osm-mountain-pass-1a61bdf3ce3c509c": {
+   "sourceFeatureId": "node/253383148",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Whinlatter Pass"
+  },
+  "osm-mountain-pass-24b250cb63ae5a0c": {
+   "sourceFeatureId": "node/732132339",
+   "category": "mountain_pass",
+   "verdict": "reject",
+   "reason": "Glasnakille Road (U4838), a dead-end single-track lane on Skye at 100 m. Not a pass, and it leads nowhere a group ride would route through.",
+   "researchStatus": "classification-rejected"
+  },
+  "osm-mountain-pass-25eef4305e36b32b": {
+   "sourceFeatureId": "node/2308216337",
+   "category": "mountain_pass",
+   "verdict": "reclassify-good-biking-road",
+   "name": "A4113 Mocktree Turnpike",
+   "riderNote": "A hill crossing on the A4113 between Ludlow and Knighton, at 242 m on the Shropshire/Herefordshire border. Worth riding, but not a pass.",
+   "reason": "A4113 Mocktree Turnpike at 242 m on the Shropshire/Herefordshire border. A genuinely good A-road hill crossing, but not a mountain pass.",
+   "researchStatus": "classification-rejected"
+  },
+  "osm-mountain-pass-3065197c08081161": {
+   "sourceFeatureId": "node/767201770",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Bowland Knotts"
+  },
+  "osm-mountain-pass-309fb201a2d838f8": {
+   "sourceFeatureId": "node/348565976",
+   "category": "mountain_pass",
+   "name": "Gospel Pass",
+   "riderNote": "The highest road pass in Wales at 550 m, crossing the Black Mountains between Hay-on-Wye and Llanthony. Largely single-track with grass down the middle in places and open sheep grazing.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Heavily used on summer weekends and bank holidays; the single-track sections back up badly with oncoming cars.",
+   "sources": [
+    "https://www.visitwales.com/things-do/adventure-and-activities/five-must-ride-motorbike-routes-wales",
+    "https://roadskin.co.uk/blogs/news/wales-on-two-wheels-top-motorcycle-routes-biker-friendly-hangouts"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-3337fe91b9e7d4af": {
+   "sourceFeatureId": "node/292028601",
+   "category": "mountain_pass",
+   "name": "Buttertubs Pass",
+   "riderNote": "Roughly 5.3 miles of open moorland road between Hawes and Thwaite in the Yorkshire Dales, named for the limestone potholes near the summit that resemble butter churns.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Popular on summer weekends; unfenced with livestock on the road.",
+   "sources": [
+    "https://motorcycletourer.com/most-scenic-motorcycle-roads-uk/",
+    "https://www.bennetts.co.uk/bikesocial/news-and-views/features/travel/what-are-the-best-motorcycle-routes-in-the-uk"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-35fdaa4d7b985688": {
+   "sourceFeatureId": "node/8983659412",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Witchie Knowe"
+  },
+  "osm-mountain-pass-3de8a70b8a3862f9": {
+   "sourceFeatureId": "node/2308216342",
+   "category": "mountain_pass",
+   "verdict": "reject",
+   "reason": "Unclassified lane (LX24A) near Shelderton at 278 m, with only tracks and footways around it. Too minor to offer as a destination road.",
+   "researchStatus": "classification-rejected"
+  },
+  "osm-mountain-pass-4243a6a10085c394": {
+   "sourceFeatureId": "node/54128523",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Trough of Bowland"
+  },
+  "osm-mountain-pass-4316c5bf2f66837c": {
+   "sourceFeatureId": "node/1350736035",
+   "category": "mountain_pass",
+   "name": "Bwlch y Groes (Hellfire Pass)",
+   "riderNote": "The second highest paved pass in Wales at 546 m, running from Llanymawddwy to Llanuwchllyn. Known as Hellfire Pass for the sustained steep climb; it forms part of the Welsh Super 10 route.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Quiet by Welsh-pass standards; busiest on fine summer weekends.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Bwlch_y_Groes",
+    "https://roadskin.co.uk/blogs/news/wales-on-two-wheels-top-motorcycle-routes-biker-friendly-hangouts"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-53bcc4de0eb56a8d": {
+   "sourceFeatureId": "node/280187024",
+   "category": "mountain_pass",
+   "verdict": "reclassify-good-biking-road",
+   "name": "A928 over Finlarg Hill",
+   "riderNote": "A 261 m crossing of Finlarg Hill on the A928 in Angus, north of Dundee. A reasonable moorland-edge road rather than a pass.",
+   "reason": "A928 hill crossing in Angus at 261 m. A reasonable road, not a pass.",
+   "researchStatus": "classification-rejected"
+  },
+  "osm-mountain-pass-60b73bcc324866fd": {
+   "sourceFeatureId": "node/271799539",
+   "category": "mountain_pass",
+   "verdict": "reclassify-good-biking-road",
+   "name": "A859 at Bun Abhainn Eadarra",
+   "riderNote": "On the A859, the spine road of Harris, at Bun Abhainn Eadarra where the B897 branches off. Genuinely worth riding for the landscape; not a named pass.",
+   "reason": "A859/B897 on Harris at Bun Abhainn Eadarra. The Harris spine road is well worth riding, but this point is not a named pass.",
+   "researchStatus": "classification-rejected"
+  },
+  "osm-mountain-pass-67089b4de30ca775": {
+   "sourceFeatureId": "node/7907862990",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Newlands Pass"
+  },
+  "osm-mountain-pass-69c478fbd704733b": {
+   "sourceFeatureId": "node/3759122715",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Bwlch-y-maen"
+  },
+  "osm-mountain-pass-72974bf7b019ec99": {
+   "sourceFeatureId": "node/2621623765",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "The Gap"
+  },
+  "osm-mountain-pass-731b90be58af1992": {
+   "sourceFeatureId": "node/6342911505",
+   "category": "mountain_pass",
+   "name": "Cairnwell Pass (A93)",
+   "riderNote": "At 670 m the highest main road in the UK, carrying the A93 Old Military Road between Spittal of Glenshee and Braemar past the Glenshee Ski Centre at the summit. The Devil's Elbow double hairpin sits about a mile south of the top.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Ski-centre traffic in winter and snowgate closures; tourist coaches on the Snow Roads route in summer.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Cairnwell_Pass",
+    "https://www.ordnancesurvey.co.uk/news/highest-and-lowest-roads",
+    "https://www.epikdrives.com/best-drives/snow-roads-old-military-road-scotland"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-783a9c26c4d1ccad": {
+   "sourceFeatureId": "node/8500938038",
+   "category": "mountain_pass",
+   "verdict": "reclassify-good-biking-road",
+   "name": "B9120 over the Hill of Garvock",
+   "riderNote": "The B9120 crossing the Hill of Garvock in Aberdeenshire, an asphalt secondary road at 60 mph. A pleasant ride; the summit is not a pass.",
+   "reason": "B9120 over the Hill of Garvock, Aberdeenshire. A pleasant secondary road; the summit is not a pass.",
+   "researchStatus": "classification-rejected"
+  },
+  "osm-mountain-pass-7c9a1e3e4cb0b8b1": {
+   "sourceFeatureId": "node/8092142261",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Swinhope Head"
+  },
+  "osm-mountain-pass-80bd39d23e8e26b2": {
+   "sourceFeatureId": "node/247065407",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Clay Bank Top"
+  },
+  "osm-mountain-pass-88917e92f3e549d0": {
+   "sourceFeatureId": "node/33624619",
+   "category": "mountain_pass",
+   "verdict": "reject",
+   "reason": "Bonchurch/Cowleaze Hill on the Isle of Wight at 152 m, off the A3055. Offering this as a mountain pass would discredit the whole layer.",
+   "researchStatus": "classification-rejected"
+  },
+  "osm-mountain-pass-8afd88e9efcac81b": {
+   "sourceFeatureId": "node/1574085914",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Merrybent Hill"
+  },
+  "osm-mountain-pass-8c03b5b2e9ec0832": {
+   "sourceFeatureId": "node/981662272",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Harthope Head"
+  },
+  "osm-mountain-pass-953706efc8fa2a93": {
+   "sourceFeatureId": "node/986522892",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Scarth Nick"
+  },
+  "osm-mountain-pass-9c59901e0c5dead8": {
+   "sourceFeatureId": "node/262362922",
+   "category": "mountain_pass",
+   "name": "Snake Pass (A57)",
+   "riderNote": "The A57 over the Pennines between Glossop and Ladybower, carrying around 30,000 vehicles a week between Manchester and Sheffield. Repeated landslips at Doctor's Gate, Alport, Gillot Hey and Wood Cottage have closed it for extended periods, so check it is open before committing.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Commuter-heavy on weekdays and busy with leisure traffic on weekends. Closures and weight limits recur \u2014 verify before setting off.",
+   "enforcementNote": "The Peak District authority has considered average speed cameras here, and \u00a37.6m of Safer Roads Fund work included motorcyclist-friendly barriers. OSM does not yet record an enforcement relation.",
+   "sources": [
+    "https://www.derbyshire.gov.uk/transport-roads/roads-traffic/landslips/snake-pass/a57-snake-pass.aspx",
+    "https://democracy.peakdistrict.gov.uk/documents/s63558/Appendix%201%20A57%20Snake%20Pass%20Average%20Speed%20Camera%20Proposals.pdf",
+    "https://www.derbyshiretimes.co.uk/news/transport/a57-snake-pass-busy-derbyshire-a-road-closes-today-for-three-weeks-amid-series-of-landslips-along-challenging-route-8729202"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-9f9a6bf868219e7d": {
+   "sourceFeatureId": "node/288590949",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Cairn O' Mount Pass"
+  },
+  "osm-mountain-pass-9ff8ee5e7fcc30dc": {
+   "sourceFeatureId": "node/4324845956",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Barnes Gap"
+  },
+  "osm-mountain-pass-ac43e95f49145483": {
+   "sourceFeatureId": "node/618402900",
+   "category": "mountain_pass",
+   "name": "Mam Ratagan",
+   "riderNote": "Climbs to around 335 m on the single-track road from Shiel Bridge to Glenelg, with a series of hairpins and a long drop down Glen More to sea level. Often ridden with the Glenelg\u2013Skye ferry and Bealach Udal.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Ferry traffic in season; the ferry runs summer only, so plan the link to Skye around it.",
+   "sources": [
+    "https://www.madornomad.com/the-best-motorcycle-routes-in-scotland/",
+    "https://www.undiscoveredscotland.co.uk/glenelg/glenelg/index.html"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-b1160b7f216f2055": {
+   "sourceFeatureId": "node/3906229915",
+   "category": "mountain_pass",
+   "verdict": "reject",
+   "reason": "A927/B954 near Hatton, Angus, at 147 m. An ordinary rural junction area with no pass character.",
+   "researchStatus": "classification-rejected"
+  },
+  "osm-mountain-pass-b323fed09353c81c": {
+   "sourceFeatureId": "node/2980402128",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Kidstones Pass"
+  },
+  "osm-mountain-pass-b7d17cb20bc3068f": {
+   "sourceFeatureId": "node/767190747",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Nick O'Pendle"
+  },
+  "osm-mountain-pass-c75db7e461241e4c": {
+   "sourceFeatureId": "node/767200157",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Cross O'Greet (Tatham Fell)"
+  },
+  "osm-mountain-pass-c7cf27a01d29b7b2": {
+   "sourceFeatureId": "node/965860060",
+   "category": "mountain_pass",
+   "name": "Kirkstone Pass (A592)",
+   "riderNote": "At 454 m the highest Lake District pass with a road over it, carrying the A592 from Ambleside to Patterdale and Ullswater. The Ambleside climb is known locally as The Struggle and approaches 1 in 4.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Busy with Lake District tourist traffic through the summer.",
+   "sources": [
+    "https://en.wikipedia.org/wiki/Kirkstone_Pass",
+    "https://www.visitcumbria.com/amb/kirkstone-pass/",
+    "https://www.bestbikingroads.com/motorcycle-roads/united-kingdom/north-west-england/ride/a592-kirkstone-pass-windermere-penrith"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-c88ed185daeb9a44": {
+   "sourceFeatureId": "node/13647525631",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Tullybaccart"
+  },
+  "osm-mountain-pass-cc76df3713d35fda": {
+   "sourceFeatureId": "node/31810305",
+   "category": "mountain_pass",
+   "name": "Wrynose Pass",
+   "riderNote": "Three miles of narrow, steep pass linking Little Langdale towards the Duddon Valley, almost always ridden as a pair with Hardknott. Sharp hairpins with 1 in 3 and 1 in 4 sections.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Same as Hardknott \u2014 congested on spring and summer weekends.",
+   "sources": [
+    "https://www.bestbikingroads.com/motorcycle-roads/united-kingdom/north-west-england/ride/wrynose-pass-hardknott-pass-eskdale-green-little-langdale",
+    "https://motorcycletourer.com/most-scenic-motorcycle-roads-uk/"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-d088739b65302cb0": {
+   "sourceFeatureId": "node/3759791159",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Pen-y-Pass"
+  },
+  "osm-mountain-pass-d151fc22c5e1ce67": {
+   "sourceFeatureId": "node/767200156",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Waddington Fell"
+  },
+  "osm-mountain-pass-d71d38d41218d2d0": {
+   "sourceFeatureId": "node/771987101",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Top o'Dent"
+  },
+  "osm-mountain-pass-d813357d9d494042": {
+   "sourceFeatureId": "node/2301524979",
+   "category": "mountain_pass",
+   "name": "Bealach Udal",
+   "riderNote": "The steep pass on the Kylerhea road on Skye, reached from the Glenelg ferry. Ranked the fifth hardest climb in Scotland by Simon Warren, it is narrow with passing places rather than a two-lane pass.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Tied to the seasonal Glenelg ferry; otherwise lightly used.",
+   "sources": [
+    "https://pjammcycling.com/climb/5527.Bealach-Udal",
+    "https://www.madornomad.com/the-best-motorcycle-routes-in-scotland/"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-e86bd88912b12d5f": {
+   "sourceFeatureId": "node/3435361360",
+   "category": "mountain_pass",
+   "name": "Hardknott Pass",
+   "riderNote": "Shares the title of steepest road in Britain at 1 in 3, with 33% gradients on several hairpins and an undulating surface. Barely one car wide in places, connecting Eskdale with the Duddon Valley.",
+   "motorcycleEvidence": "established",
+   "busyPeriods": "Avoid summer weekends \u2014 much of it is single track and it jams with cars and cyclists. A weekday is a different road.",
+   "sources": [
+    "https://www.adventurebikerider.com/abrs-weekend-ride-the-challenging-hardknott-pass/",
+    "https://www.bestbikingroads.com/motorcycle-roads/united-kingdom/north-west-england/ride/wrynose-pass-hardknott-pass-eskdale-green-little-langdale"
+   ],
+   "researchStatus": "researched",
+   "researchedOn": "2026-07-27"
+  },
+  "osm-mountain-pass-f0a2a2097066d2d9": {
+   "sourceFeatureId": "node/6738123979",
+   "category": "mountain_pass",
+   "researchStatus": "pending",
+   "name": "Killhope Cross"
+  }
+ }
+}
