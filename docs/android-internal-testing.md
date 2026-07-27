@@ -429,5 +429,21 @@ The second and third are the dangerous ones: they report success. That is why th
 workflow verifies rather than trusting `commit`.
 
 **Open testing can only be stopped in the Play Console:** Testing → Open testing
-→ **Pause track**. There is no API equivalent. Run `Play track status` afterwards
-to confirm `beta` no longer reports `completed`.
+→ **Pause track**. There is no API equivalent.
+
+### A paused track is invisible to the API
+
+Do not try to confirm the pause with `Play track status`. The Play Developer
+API's `Track` resource has no field for whether a track is paused, so a paused
+open-testing track goes on reporting its release as `completed` — `beta` still
+reads `completed` on code 7 after being paused, and that is not evidence the
+pause failed. The opt-in page cannot settle it either: it requires a Google
+sign-in, so it cannot be checked anonymously.
+
+Which means **the only place the pause is visible is the Console**. Say plainly
+that a pause was performed and when, because nothing in this repository can
+observe it. An earlier version of this section told the reader to confirm the
+pause by checking that `beta` no longer reports `completed` — that check cannot
+succeed, and following it would suggest a pause had failed when it had not. The
+same mistake as recording `beta` as paused in the first place: asserting a state
+no tool here can see.
