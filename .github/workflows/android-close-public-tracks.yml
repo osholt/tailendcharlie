@@ -111,11 +111,29 @@ jobs:
                       )
 
 
+          def still_live(track_name):
+              for track in read_tracks():
+                  if track["track"] != track_name:
+                      continue
+                  return [
+                      release
+                      for release in track.get("releases", [])
+                      if release.get("status") in {"completed", "inProgress"}
+                  ]
+              return []
+
+
           def attempt(description, track, releases):
               """One track change in its own edit, committed or wholly abandoned.
 
               Each change gets its own edit so a rejection of one does not roll
               back another, and so a partial success is still a success.
+
+              A committed edit is not evidence of anything. Play accepts
+              `releases: []` on a live track, commits it, and serves the same
+              release afterwards - the same shape of lie as managed publishing.
+              So the caller's intent is verified by reading the track back, and
+              only that counts as success.
               """
               edit_id = edits.insert(packageName=package, body={}).execute()["id"]
               committed = False
@@ -140,7 +158,13 @@ jobs:
                           changesNotSentForReview=True,
                       ).execute()
                   committed = True
-                  print(f"  {description}: committed")
+                  if still_live(track):
+                      print(
+                          f"  {description}: committed and IGNORED - "
+                          f"{track} is still serving the same release"
+                      )
+                      return False
+                  print(f"  {description}: committed and verified")
                   return True
               except HttpError as error:
                   print(f"  {description}: rejected - {error}")
@@ -173,18 +197,39 @@ jobs:
                   # to emptying the track, which is what the Console's "pause"
                   # does. Both are tried because which one Play accepts depends
                   # on the release's state, not on anything visible here.
-                  stopped = attempt(
-                      "halt the live release",
-                      "beta",
-                      [
-                          {
-                              "name": release.get("name"),
-                              "versionCodes": release.get("versionCodes"),
-                              "status": "halted",
-                          }
-                          for release in live
-                      ],
-                  ) or attempt("empty the track", "beta", [])
+                  stopped = (
+                      attempt(
+                          "halt the live release",
+                          "beta",
+                          [
+                              {
+                                  "name": release.get("name"),
+                                  "versionCodes": release.get("versionCodes"),
+                                  "status": "halted",
+                              }
+                              for release in live
+                          ],
+                      )
+                      or attempt("empty the track", "beta", [])
+                      or attempt(
+                          "return the release to draft",
+                          "beta",
+                          [
+                              {
+                                  "name": release.get("name"),
+                                  "versionCodes": release.get("versionCodes"),
+                                  "status": "draft",
+                              }
+                              for release in live
+                          ],
+                      )
+                  )
+                  if not stopped:
+                      print(
+                          "beta: the Play API will not withdraw a completed "
+                          "open-testing release. Pause the track in the Play "
+                          "Console: Testing > Open testing > Pause track."
+                      )
                   outcomes.append(("stop open testing", stopped))
 
           if delete_production:
