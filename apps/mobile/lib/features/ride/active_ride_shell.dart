@@ -66,6 +66,7 @@ import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
 import '../../services/rejoin_route_share.dart';
 import '../../services/road_routing.dart';
+import '../../services/ride_connectivity_summary.dart';
 import '../../services/route_rejoin_planner.dart';
 import '../../services/trail_display_simplifier.dart';
 import '../map/maneuver_list_screen.dart';
@@ -3540,7 +3541,26 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     localObserverAssistanceActive:
         _observerAccessController?.localAssistance != null,
     serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
+    connectivity: _connectivitySummary,
   );
+
+  /// The one connectivity answer, built here because this is the only place that
+  /// sees both channels: the event batch's own status and the presence channel's
+  /// verdict on live positions (#174).
+  RideConnectivitySummary? get _connectivitySummary {
+    final internet = _internetRelayController;
+    if (internet == null) return null;
+    final status = internet.status;
+    return RideConnectivitySummary.from(
+      transportActive:
+          status.phase != InternetRelayPhase.unconfigured &&
+          status.phase != InternetRelayPhase.stopped,
+      positionsPaused: widget.rideController.positionChannelUnavailable,
+      queuedEventCount: status.pendingEventCount,
+      lastSuccessfulSync: status.lastSuccessfulSync,
+      now: DateTime.now(),
+    );
+  }
 
   Future<route_domain.GeoPoint?> _acquireCurrentPosition() async {
     final existing = _mapPosition.value;
