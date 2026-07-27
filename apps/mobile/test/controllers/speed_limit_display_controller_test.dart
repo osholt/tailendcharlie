@@ -281,6 +281,109 @@ void main() {
     expect(controller.status, SpeedLimitDisplayStatus.disabled);
     controller.dispose();
   });
+
+  // #164: "The speed limit display was showing a loading animation a lot of the
+  // time." Every lookup set the status to `checking`, so each time the rider
+  // moved far enough to trigger another one the known limit was replaced by a
+  // spinner - which on a moving ride is most of the time.
+  group('the spinner belongs to the first resolution only', () {
+    test('the first lookup may show as checking', () async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = SpeedLimitDisplayController.inMemory(
+        provider: _FakeSpeedLimitProvider(),
+      );
+      addTearDown(controller.dispose);
+
+      controller.observe(location(51.5, baseTime));
+
+      expect(controller.status, SpeedLimitDisplayStatus.checking);
+      expect(controller.limit, isNull);
+      await controller.waitForIdle();
+      expect(controller.status, SpeedLimitDisplayStatus.known);
+    });
+
+    test('a later lookup keeps the number on screen', () async {
+      SharedPreferences.setMockInitialValues({});
+      var now = baseTime;
+      final controller = SpeedLimitDisplayController.inMemory(
+        provider: _FakeSpeedLimitProvider(),
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      controller.observe(location(51.5, now));
+      await controller.waitForIdle();
+      expect(controller.status, SpeedLimitDisplayStatus.known);
+      final first = controller.limit;
+
+      now = baseTime.add(const Duration(seconds: 30));
+      controller.observe(location(51.5015, now));
+
+      expect(
+        controller.status,
+        SpeedLimitDisplayStatus.known,
+        reason:
+            'a resolved limit must stay on screen while the next is fetched',
+      );
+      expect(controller.limit, same(first));
+      expect(
+        controller.refreshing,
+        isTrue,
+        reason: 'the recheck is reported without replacing the reading',
+      );
+
+      await controller.waitForIdle();
+      expect(controller.status, SpeedLimitDisplayStatus.known);
+      expect(controller.refreshing, isFalse);
+    });
+
+    test('a spinner never returns once anything has resolved', () async {
+      SharedPreferences.setMockInitialValues({});
+      var now = baseTime;
+      final controller = SpeedLimitDisplayController.inMemory(
+        provider: _FakeSpeedLimitProvider(),
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      controller.observe(location(51.5, now));
+      await controller.waitForIdle();
+
+      // Ten more fixes, each far enough to trigger a lookup - a ride.
+      for (var step = 1; step <= 10; step += 1) {
+        now = baseTime.add(Duration(seconds: 30 * step));
+        controller.observe(location(51.5 + step * 0.0015, now));
+        expect(
+          controller.status,
+          isNot(SpeedLimitDisplayStatus.checking),
+          reason: 'fix $step put a spinner back in the sign',
+        );
+        await controller.waitForIdle();
+      }
+    });
+
+    test('turning it off and on again may show checking again', () async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = SpeedLimitDisplayController.inMemory(
+        provider: _FakeSpeedLimitProvider(),
+      );
+      addTearDown(controller.dispose);
+
+      controller.observe(location(51.5, baseTime));
+      await controller.waitForIdle();
+      await controller.setEnabled(false);
+      await controller.setEnabled(true);
+
+      expect(controller.limit, isNull, reason: 'the reading was discarded');
+      expect(controller.refreshing, isFalse);
+      controller.observe(location(51.5, baseTime));
+      expect(
+        controller.status,
+        SpeedLimitDisplayStatus.checking,
+        reason: 'with nothing to show, checking is the honest state',
+      );
+    });
+  });
 }
 
 class _FakeSpeedLimitProvider implements SpeedLimitProvider {
