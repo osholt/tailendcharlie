@@ -75,3 +75,71 @@ duplicate/schema gates, exclusion rules, pass-to-road matching, separate layer
 outputs, byte-for-byte web/mobile parity, source pin rejection, category and
 nation stratification of the review sample, quota shortfall reporting, and the
 interpreter version guard.
+
+## Enrichment and publication
+
+The generator produces geometry and a score. It does not produce anything a rider
+can act on, so a second stage adds that. The two stages are deliberately separate,
+and the split is the important part:
+
+**Derived facts** — speed limit, average speed checks, fixed cameras, road class,
+nearest settlement. These come from the checksummed extract, so `enrich_deterministic.py`
+owns them and they are refreshed on every run.
+
+**Researched content** — a good name, evidence that riders use the road, busy
+periods, the rider description. These cannot be re-derived from the extract. They
+live in `editorial-overlay.json` and are merged at publication time. Putting them in
+the generated file would mean the next regeneration silently destroyed them.
+
+Overlay entries are keyed by candidate id *and* carry `sourceFeatureId`, because
+candidate ids are content hashes: a new extract can change them, and the source id is
+what lets an orphaned entry be re-matched rather than lost.
+
+```bash
+export DISCOVERY_WORK_DIR=/path/to/working/dir
+python3.12 tools/discovery/enrich_deterministic.py   # derived facts, all candidates
+python3.12 tools/discovery/build_overlay.py          # researched content
+python3.12 tools/discovery/publish_catalogue.py      # merge, tier, write both copies
+python3.12 tools/discovery/build_pass_sheet.py       # review sheet, with basemap tiles
+```
+
+### Honesty rules
+
+These are not style preferences. Each one exists because the opposite behaviour
+would mislead a rider planning a route.
+
+- **Speed limits carry provenance.** `tagged` means OpenStreetMap records it,
+  `inferred-from-maxspeed-type` means a national-limit tag implies it, `unknown`
+  means nobody has mapped it. 919 of 2,085 published candidates are `unknown`. Never
+  guess a limit from road class — #145 was caused by trusting a value that never held
+  what the code expected.
+- **Absent enforcement data is not absence of enforcement.** Only one candidate
+  matches an OSM `enforcement=average_speed` relation, yet the A57 Snake Pass has
+  published average speed camera proposals that OSM does not record. Rider-facing
+  copy must say "not recorded in OpenStreetMap".
+- **Descriptions are composed from verified facts, never invented.** A `pending`
+  entry's note states road number, locality, length, bend density and speed limit —
+  all from the extract. Subjective claims about how a road rides appear only on
+  `researched` entries, attributed to the source that made them.
+- **A ref match is evidence about the road number, not the section.** The A5 runs
+  from London to Holyhead and only part of it is celebrated. Researched entries quote
+  the route the directory names so a planner can judge whether their section is it.
+
+### Tiering
+
+| Tier | Meaning | Count |
+| --- | --- | --- |
+| `researched` | corroborated by a motorcycle-road directory or hand-researched | 182 |
+| `pending` | carries a name or road number, not yet corroborated | 1,903 |
+| discarded | anonymous, unclassified, short or straight, no corroboration | 156 |
+
+Rejected outright: 4 `mountain_pass=yes` nodes that are not passes in any sense a
+rider would accept (the lowest was 100 m, on a dead-end lane). A further 4 were
+reclassified to the road layer. **The generator should require a name on a
+`mountain_pass=yes` node** — every problem case was unnamed and every good candidate
+was named. An elevation threshold does not work: it would drop legitimate named
+passes such as Tullybaccart (213 m) and Scarth Nick (232 m).
+
+The score cannot drive any of this. The generator creams off the top 1,100 per
+category, so published scores run 81-100 with 1,376 candidates tied at 100 —
+saturated. `scoreComponents` carries the usable signal.
