@@ -555,7 +555,7 @@ class ProviderStatusCard extends StatelessWidget {
         title: Text(provider.displayName),
         subtitle: Text(provider.status.message),
         trailing: Text(
-          provider.status.state.name.toUpperCase(),
+          provider.status.state.label.toUpperCase(),
           style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800),
         ),
       ),
