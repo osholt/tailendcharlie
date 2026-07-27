@@ -42,6 +42,7 @@ dependencies:
   http: ^1.6.0
   latlong2: ^0.10.1
   maplibre_gl: ^0.26.0
+  meta: ^1.18.0
   path: ^1.9.1
   path_provider: ^2.1.5
   shared_preferences: ^2.5.5
@@ -54,6 +55,10 @@ dependencies:
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  # Used only by integration_test/, which profiles on a physical phone in
+  # release mode. Host `flutter test` never loads it.
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to

@@ -314,7 +314,29 @@ class RideController extends ChangeNotifier {
     authenticatedLocationEvidence: _authenticatedLocationEvidence,
   );
 
+  /// Cached against the journal it was derived from.
+  ///
+  /// This walk parses a timestamp and authenticates a signature for every
+  /// position fix in the ride, and it is reached from [markingSummary], which
+  /// the dashboard reads during build. Recomputing it per build is what made
+  /// rotating and opening a menu cost over a second at the end of a long ride
+  /// (#165). `_events` is replaced wholesale whenever the journal changes, so
+  /// its identity is a sound cache key, and the result depends on nothing else
+  /// that varies - notably not on the clock.
+  List<RideEvent>? _evidenceJournal;
+  Map<String, String>? _evidence;
+
   Map<String, String> get _authenticatedLocationEvidence {
+    if (identical(_evidenceJournal, _events) && _evidence != null) {
+      return _evidence!;
+    }
+    final computed = _computeAuthenticatedLocationEvidence();
+    _evidenceJournal = _events;
+    _evidence = computed;
+    return computed;
+  }
+
+  Map<String, String> _computeAuthenticatedLocationEvidence() {
     final activeSession = _session;
     final startedAt = rideStartedAt;
     if (activeSession == null || startedAt == null) return const {};
@@ -1425,6 +1447,8 @@ class RideController extends ChangeNotifier {
     await _sessionStore.clear();
     _session = null;
     _events = const [];
+    _evidenceJournal = null;
+    _evidence = null;
     _lifecycle = const RideLifecycle();
     _routeState = const RideRouteState();
     _roleBeforeMarker = null;
