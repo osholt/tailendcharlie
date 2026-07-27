@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:meta/meta.dart';
 
 import '../domain/ride_event.dart';
 
@@ -12,23 +13,68 @@ class RideEventAuthenticator {
   static String sign(RideEvent event, String secret) =>
       _digest(_canonicalV1Body(event), secret);
 
+  /// Verdicts already reached, keyed by event identity.
+  ///
+  /// A [RideEvent] is immutable, so its verdict under a given secret never
+  /// changes - but a ride journal is re-verified constantly: every reducer
+  /// pass, every dashboard build. On a two-hour ride that is tens of thousands
+  /// of events walked tens of thousands of times, which is what made the app
+  /// unresponsive at the end of a ride (#165). Identity keying is what makes
+  /// the memo safe: a forged event is a different object and is verified from
+  /// scratch, so nothing can inherit another event's verdict. An [Expando]
+  /// also releases its entry when the event is collected, so a removed ride
+  /// leaves nothing behind.
+  static final Expando<_Verdict> _verdicts = Expando<_Verdict>(
+    'ride event signature verdict',
+  );
+
+  /// How many events have actually been authenticated, as opposed to answered
+  /// from [_verdicts].
+  ///
+  /// Exposed because the cost this guards is invisible to a timing assertion on
+  /// a shared CI machine but exact as a count: a journal walked ten times must
+  /// authenticate each event once, not ten times.
+  @visibleForTesting
+  static int verificationsComputed = 0;
+
   static bool verify(RideEvent event, String secret) {
-    final current = _constantTimeMatch(
-      event.signature,
-      _digest(_canonicalV1Body(event), secret),
-    );
+    final cached = _verdicts[event];
+    if (cached != null && cached.secret == secret) return cached.verdict;
+    verificationsComputed += 1;
+    final verdict = _verifyUncached(event, secret);
+    _verdicts[event] = _Verdict(secret, verdict);
+    return verdict;
+  }
+
+  static bool _verifyUncached(RideEvent event, String secret) {
+    if (_constantTimeMatch(
+          event.signature,
+          _digest(_canonicalV1Body(event), secret),
+        ) ==
+        1) {
+      return true;
+    }
     // Builds released before canonical ordering signed the same complete
     // envelope with insertion-ordered JSON. Keep those events readable during
     // the development-alpha migration.
-    final transitional = _constantTimeMatch(
-      event.signature,
-      _digest(_transitionalV1Body(event), secret),
-    );
-    final legacy = _constantTimeMatch(
-      event.signature,
-      _digest(_legacyBody(event), secret),
-    );
-    return (current | transitional | legacy) == 1;
+    //
+    // Stopping at the first body that matches costs a third as much for the
+    // events almost every journal is made of. It reveals only which schema
+    // version signed the event, which the event states in the clear anyway;
+    // the comparison against each candidate digest stays constant-time, which
+    // is the part that must not leak.
+    if (_constantTimeMatch(
+          event.signature,
+          _digest(_transitionalV1Body(event), secret),
+        ) ==
+        1) {
+      return true;
+    }
+    return _constantTimeMatch(
+          event.signature,
+          _digest(_legacyBody(event), secret),
+        ) ==
+        1;
   }
 
   static int _constantTimeMatch(String actual, String expected) {
@@ -81,4 +127,11 @@ class RideEventAuthenticator {
     }
     return jsonEncode(value);
   }
+}
+
+class _Verdict {
+  const _Verdict(this.secret, this.verdict);
+
+  final String secret;
+  final bool verdict;
 }

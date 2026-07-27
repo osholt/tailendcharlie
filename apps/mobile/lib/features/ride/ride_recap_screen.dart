@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/ride_summary_exporter.dart';
+import '../../services/trail_display_simplifier.dart';
 import 'ride_recap_card.dart';
 
 /// Shows [RideRecapCard] full-screen and shares it as a PNG - a purpose-made
@@ -47,6 +48,24 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
   final _boundaryKey = GlobalKey();
   bool _sharing = false;
   String? _error;
+
+  /// Simplified once, here, rather than per build or per caller: a two-hour
+  /// ride arrives with around ten thousand recorded points and the card is
+  /// repainted on every frame it is on screen, then again at 3x to rasterise
+  /// (#165).
+  late List<GeoPoint> _routePoints = const TrailDisplaySimplifier().simplify(
+    widget.routePoints,
+  );
+
+  @override
+  void didUpdateWidget(RideRecapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.routePoints, widget.routePoints)) {
+      _routePoints = const TrailDisplaySimplifier().simplify(
+        widget.routePoints,
+      );
+    }
+  }
 
   Future<void> _share() async {
     setState(() {
@@ -92,7 +111,7 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
                   key: _boundaryKey,
                   child: RideRecapCard(
                     summary: widget.summary,
-                    routePoints: widget.routePoints,
+                    routePoints: _routePoints,
                     distanceUnit: widget.distanceUnit,
                   ),
                 ),

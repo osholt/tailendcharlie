@@ -67,6 +67,7 @@ import '../../services/relay_traffic_reroute_provider.dart';
 import '../../services/rejoin_route_share.dart';
 import '../../services/road_routing.dart';
 import '../../services/route_rejoin_planner.dart';
+import '../../services/trail_display_simplifier.dart';
 import '../map/maneuver_list_screen.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
@@ -623,6 +624,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
   final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
+  final _trailSimplifier = const TrailDisplaySimplifier();
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
   final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
   final _enforcementAlert = ValueNotifier<EnforcementAlert?>(null);
@@ -2248,12 +2250,30 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// the flutter_map fallback, matching the MapLibre layer order. Shared
   /// breadcrumbs from other riders sit under the local rider's own, which is the
   /// only one that is guidance for this phone.
+  /// Every trace is simplified for display here, once per change, rather than
+  /// in a renderer or on every frame: this is the single point both map
+  /// implementations read from, so the bound cannot apply to only one of them
+  /// (#165).
   void _pushRiderTrails() {
     _riderTrails.value = List.unmodifiable([
-      ..._recordedTrailTraces,
-      ..._sharedRejoinTraces,
-      ?_rejoinTrace,
+      for (final trace in [
+        ..._recordedTrailTraces,
+        ..._sharedRejoinTraces,
+        ?_rejoinTrace,
+      ])
+        _simplifiedForDisplay(trace),
     ]);
+  }
+
+  MapOverlayTrace _simplifiedForDisplay(MapOverlayTrace trace) {
+    final simplified = _trailSimplifier.simplify(trace.points);
+    if (simplified.length == trace.points.length) return trace;
+    return MapOverlayTrace(
+      id: trace.id,
+      points: simplified,
+      label: trace.label,
+      kind: trace.kind,
+    );
   }
 
   /// Issue #128 part 2: refreshes the rejoin breadcrumbs other riders have
