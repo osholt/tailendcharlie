@@ -51,6 +51,7 @@ import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'maneuver_list_screen.dart';
 import 'maneuver_symbol.dart';
+import 'group_mini_map_framing.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 import 'route_review_screen.dart';
@@ -5290,6 +5291,12 @@ typedef _MiniMapSnapshot = ({
 class _GroupMiniMapState extends State<_GroupMiniMap> {
   static const _routeSource = 'ride-relay-mini-route';
   static const _riderSource = 'ride-relay-mini-riders';
+
+  /// Left plus right, and top plus bottom, of the fit padding the old bounds
+  /// call used. Subtracted before framing so padding can never exceed the box.
+  static const _fitHorizontalPadding = 40.0;
+  static const _fitVerticalPadding = 40.0;
+
   ml.MapLibreMapController? _controller;
   Timer? _refreshTimer;
   DateTime? _lastRefreshAt;
@@ -5467,18 +5474,21 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                     label: 'N ↑',
                   ),
                 ),
-              if (!widget.showTiles)
-                Positioned(
-                  left: 7,
-                  bottom: 6,
-                  child: _MiniMapScaleBar(
-                    width: widget.width,
-                    points: [
-                      ?widget.currentPosition,
-                      ...widget.riders.map((rider) => rider.point),
-                    ],
-                  ),
+              // Both variants, not only the untiled one. The tiled iOS mini-map
+              // drew no scale at all while Android drew "10 km", and a tester
+              // asked for exactly this: something that says at a glance whether
+              // the group is spread over half a mile or 195 miles (#172).
+              Positioned(
+                left: 7,
+                bottom: 6,
+                child: _MiniMapScaleBar(
+                  width: widget.width,
+                  points: [
+                    ?widget.currentPosition,
+                    ...widget.riders.map((rider) => rider.point),
+                  ],
                 ),
+              ),
             ],
           ),
         ),
@@ -5595,23 +5605,19 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       ...effective.riders.map((rider) => rider.point),
     ].nonNulls.toList(growable: false);
     if (points.isEmpty) return;
-    if (points.length == 1) {
-      await controller.animateCamera(
-        ml.CameraUpdate.newLatLngZoom(
-          ml.LatLng(points.single.latitude, points.single.longitude),
-          14.5,
-        ),
-        duration: const Duration(milliseconds: 500),
-      );
-      return;
-    }
+    // The camera is computed rather than handed to `newLatLngBounds`, so the
+    // outcome is testable and does not depend on how a bounds fit behaves in a
+    // 150 x 104 box. A rider on the Isle of Man and the rest near Bristol used
+    // to leave the mini-map framed on open sea with nobody in it (#172).
+    final framing = GroupMiniMapFraming.forPoints(
+      points,
+      width: widget.width - _fitHorizontalPadding,
+      height: widget.height - _fitVerticalPadding,
+    );
     await controller.animateCamera(
-      ml.CameraUpdate.newLatLngBounds(
-        _mapLibreBounds(points),
-        left: 20,
-        top: 24,
-        right: 20,
-        bottom: 16,
+      ml.CameraUpdate.newLatLngZoom(
+        ml.LatLng(framing.centre.latitude, framing.centre.longitude),
+        framing.zoom,
       ),
       duration: const Duration(milliseconds: 500),
     );
