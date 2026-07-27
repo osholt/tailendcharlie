@@ -194,4 +194,86 @@ void main() {
     expect(presented.alerts.single.message.headline, 'Bill needs help');
     expect(presented.alerts.single.origin, isNull);
   });
+
+  // #178: the same rider saying the same thing three times produced three
+  // identical prompts, one after another, which a tester read as one prompt that
+  // would not go away:
+  //
+  //   "cancelling multiple 'ride stop's seems a bit flaky, think I got repeated
+  //    requests to cancel same ones."
+  test('repeated identical messages from one rider collapse into one', () {
+    final presented = presentableQuickMessageAlerts(
+      messages: [
+        message(eventId: 'stop-1', kind: QuickMessage.stopped),
+        message(eventId: 'stop-2', kind: QuickMessage.stopped),
+        message(eventId: 'stop-3', kind: QuickMessage.stopped),
+      ],
+      localRiderId: 'me',
+      readerPosition: readerPosition,
+    );
+
+    expect(presented.alerts, hasLength(1));
+    expect(presented.alerts.single.repeatCount, 3);
+    expect(
+      presented.alerts.single.acknowledgeable.map((item) => item.eventId),
+      ['stop-1', 'stop-2', 'stop-3'],
+      reason: 'acknowledging the card must answer for all three',
+    );
+  });
+
+  test('different kinds from one rider stay separate', () {
+    final presented = presentableQuickMessageAlerts(
+      messages: [
+        message(eventId: 'stop-1', kind: QuickMessage.stopped),
+        message(eventId: 'mech-1', kind: QuickMessage.mechanical),
+      ],
+      localRiderId: 'me',
+      readerPosition: readerPosition,
+    );
+
+    expect(presented.alerts, hasLength(2));
+    expect(presented.alerts.every((alert) => alert.repeatCount == 1), isTrue);
+  });
+
+  test('the same kind from different riders stays separate', () {
+    final presented = presentableQuickMessageAlerts(
+      messages: [
+        message(
+          eventId: 'stop-1',
+          senderRiderId: 'bill',
+          kind: QuickMessage.stopped,
+        ),
+        message(
+          eventId: 'stop-2',
+          senderRiderId: 'kate',
+          senderDisplayName: 'Kate',
+          kind: QuickMessage.stopped,
+        ),
+      ],
+      localRiderId: 'me',
+      readerPosition: readerPosition,
+    );
+
+    expect(presented.alerts, hasLength(2));
+    expect(presented.alerts.every((alert) => alert.repeatCount == 1), isTrue);
+  });
+
+  test('an already-acknowledged repeat is not counted again', () {
+    final presented = presentableQuickMessageAlerts(
+      messages: [
+        message(eventId: 'stop-1', kind: QuickMessage.stopped),
+        message(
+          eventId: 'stop-2',
+          kind: QuickMessage.stopped,
+          acknowledgedBy: const ['me'],
+        ),
+      ],
+      localRiderId: 'me',
+      readerPosition: readerPosition,
+    );
+
+    expect(presented.alerts, hasLength(1));
+    expect(presented.alerts.single.repeatCount, 1);
+    expect(presented.alerts.single.acknowledgeable.single.eventId, 'stop-1');
+  });
 }
