@@ -261,6 +261,12 @@ class RoundaboutSymbolGeometry {
     final exitDegrees = _exitDegrees(symbol);
     final entryDegrees = _entryDegrees(exitDegrees);
     final entryUnit = _unitAt(entryDegrees);
+    // Turning back leaves by the exit beside the one the rider came in by, so
+    // both roads sit near the bottom of the ring. Run them along the box instead
+    // of along their own radii: radial roads splay apart into a V, which reads as
+    // two unrelated sticks rather than as going back the way you came.
+    final parallelRoads = _turnsBack(exitDegrees);
+    final entryDirection = parallelRoads ? _down : entryUnit;
     final gapHalfDegrees = _ringGapHalfDegrees(road: road, radius: radius);
     return RoundaboutSymbolGeometry._(
       centre: centre,
@@ -271,9 +277,13 @@ class RoundaboutSymbolGeometry {
       beyondRingStrokeWidth: road * _beyondRingFraction,
       ringGapHalfDegrees: gapHalfDegrees,
       entryDegrees: entryDegrees,
-      entryRoadStart: centre + entryUnit * reach,
       // Roads stop on the ring itself, so a rounded end fills the break in the
-      // ring without reaching into the middle of it.
+      // ring without reaching into the middle of it. Where the roads run
+      // parallel, the far end is carried straight down the box from the point
+      // the road meets the ring, keeping both roads on the same heading.
+      entryRoadStart: parallelRoads
+          ? centre + entryUnit * radius + _down * (reach - radius)
+          : centre + entryUnit * reach,
       entryRoadEnd: centre + entryUnit * radius,
       ringArcs: _ringArcs(
         entryDegrees: entryDegrees,
@@ -292,30 +302,48 @@ class RoundaboutSymbolGeometry {
               extent: extent,
               exitDegrees: exitDegrees,
               radius: radius,
+              along: parallelRoads ? _down : _unitAt(exitDegrees),
             ),
     );
   }
 
+  /// The exit road, from where it meets the ring out to its arrowhead.
+  ///
+  /// [along] is the heading the road runs on, which is normally its own radius
+  /// but is straight down the box where the roads run parallel. Splitting the two
+  /// is what lets a turn back on itself leave alongside the road in rather than
+  /// splaying away from it.
   static RoundaboutExitRoad _exitRoad({
     required Offset centre,
     required double extent,
     required double exitDegrees,
     required double radius,
+    required Offset along,
   }) {
-    final unit = _unitAt(exitDegrees);
+    final onRing = centre + _unitAt(exitDegrees) * radius;
     final headLength = extent * _arrowHeadLengthFraction;
-    final tip = centre + unit * (extent * _reachFraction);
+    final tip = onRing + along * (extent * _reachFraction - radius);
     return RoundaboutExitRoad(
-      start: centre + unit * radius,
-      end: tip - unit * (headLength * _roadIntoHeadFraction),
+      start: onRing,
+      end: tip - along * (headLength * _roadIntoHeadFraction),
       head: RoundaboutArrowHead(
         tip: tip,
-        direction: unit,
+        direction: along,
         length: headLength,
         halfWidth: extent * _arrowHeadHalfWidthFraction,
       ),
     );
   }
+
+  /// Straight down the box, the way the rider came from.
+  static const _down = Offset(0, 1);
+
+  /// Whether the exit leaves close enough to the road in for the two to need
+  /// running parallel rather than along their own radii.
+  static bool _turnsBack(double? exitDegrees) =>
+      exitDegrees != null &&
+      _halfTurn(exitDegrees - _straightBackDegrees).abs() <
+          _minimumRoadSeparationDegrees;
 
   /// Straight back the way the rider came, where the road in normally meets the
   /// ring: at the bottom of the box, opposite a straight-ahead exit.
@@ -326,14 +354,20 @@ class RoundaboutSymbolGeometry {
   static const _minimumRoadSeparationDegrees = 36.0;
 
   static const _minimumRoadStroke = 1.6;
-  static const _roadStrokeFraction = 0.095;
-  static const _radiusFraction = 0.215;
+  static const _roadStrokeFraction = 0.07;
+  static const _radiusFraction = 0.20;
 
   /// Furthest any ink sits from the centre, which keeps the arrow point inside
   /// the box at every exit angle, including straight ahead and square across.
   static const _reachFraction = 0.45;
-  static const _arrowHeadLengthFraction = 0.145;
-  static const _arrowHeadHalfWidthFraction = 0.088;
+
+  /// Arrowhead size, kept proportionate to the ring rather than to the box.
+  ///
+  /// At 0.088 the head was almost as wide across its base as the ring's radius,
+  /// which read as a solid wedge stuck to a stub of road rather than as an arrow
+  /// on a road. Two road widths across is enough to be unmistakable.
+  static const _arrowHeadLengthFraction = 0.12;
+  static const _arrowHeadHalfWidthFraction = 0.070;
   static const _roadIntoHeadFraction = 0.6;
 
   /// The road in is context rather than instruction, so it is drawn lighter
@@ -342,13 +376,27 @@ class RoundaboutSymbolGeometry {
   static const _riddenRingFraction = 0.85;
   static const _beyondRingFraction = 0.58;
 
+  /// Bounds on the ring gap either road clears, in degrees of half-width.
+  ///
+  /// The gap has to be wider than the road that passes through it, or the road
+  /// fills its own gap and the ring reads as unbroken. A road of stroke `s` at
+  /// radius `r` covers `asin(s / 2r)` either side of its centre-line — about 10
+  /// degrees here — so a half-gap must clear that with daylight to spare. These
+  /// bounds only catch absurd sizes; the derived value normally passes through.
+  static const _minimumGapHalfDegrees = 14.0;
+  static const _maximumGapHalfDegrees = 26.0;
+
   /// Shortest arc worth drawing, as a multiple of its own stroke width.
   ///
   /// Measured in stroke widths rather than degrees because that is what decides
   /// whether a rider reads an arc or a speck: at banner size a first-exit stub
   /// is barely twice as long as the ring is thick, and sitting beside the exit
   /// it reads as something left in the gap.
-  static const _minimumArcInStrokes = 3.0;
+  ///
+  /// Held low deliberately. At 3.0 this worked out to a 64 degree threshold,
+  /// which dropped the perfectly legible 38 degree arc beside a right turn and
+  /// left the ring open on that side — the ring stopped reading as a ring.
+  static const _minimumArcInStrokes = 1.2;
 
   final Offset centre;
   final double radius;
@@ -423,10 +471,23 @@ class RoundaboutSymbolGeometry {
 
   /// Half the ring gap, as the angle whose chord is one road width: the road
   /// takes half of that, leaving half a road width of daylight beside it.
+  ///
+  /// Held to a fixed angle rather than derived from the road width. Deriving it
+  /// as `asin(road / radius)` produced a 26 degree half-gap — a 52 degree hole in
+  /// the ring for every road — which left so little ring between two roads that
+  /// the remaining arcs fell under the minimum below and were dropped. The ring
+  /// then rendered as one long stroke with no visible circulation, which is what
+  /// riders reported as "no gap" and as the flow running the wrong way round.
   static double _ringGapHalfDegrees({
     required double road,
     required double radius,
-  }) => math.asin(math.min(0.92, road / radius)) * 180 / math.pi;
+  }) => math.min(
+    _maximumGapHalfDegrees,
+    math.max(
+      _minimumGapHalfDegrees,
+      math.asin(math.min(0.92, road / radius)) * 180 / math.pi,
+    ),
+  );
 
   /// The shortest arc worth drawing, as a sweep.
   static double _minimumSweepDegrees({

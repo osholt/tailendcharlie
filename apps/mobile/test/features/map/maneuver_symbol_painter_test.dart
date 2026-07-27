@@ -51,21 +51,33 @@ void main() {
 
       // No arc is drawn so short that it reads as something left in the gap
       // rather than as part of the ring.
+      //
+      // Held at 1.2 stroke widths, not 3. At 3 the arc beside a square left or
+      // right turn was dropped, the two gaps merged into one wide opening, and
+      // the ring lost its ridden/beyond emphasis — which a rider reported on the
+      // road as the ring having no gap and the flow running anticlockwise. A
+      // short arc that keeps the ring reading as a ring beats a tidy gap.
       for (final arc in geometry.ringArcs) {
         final stroke = arc.segment == RoundaboutRingSegment.beyond
             ? geometry.beyondRingStrokeWidth
             : geometry.riddenRingStrokeWidth;
         expect(
           arc.sweepRadians.abs() * geometry.radius,
-          greaterThan(stroke * 3 - 0.01),
+          greaterThan(stroke * 1.2 - 0.01),
           reason: '$why: a ring arc is barely longer than it is thick',
         );
       }
 
       // Every gap is where a road is, and every road has daylight either side.
+      //
+      // Measured where each road meets the ring, which is not the same as the
+      // direction it then runs: where the exit leaves alongside the road in, both
+      // roads run straight down the box while still joining the ring at their own
+      // angles.
       final roads = <double>[
         geometry.entryDegrees,
-        if (geometry.exit != null) _headingOf(geometry.exit!.head.direction),
+        if (geometry.exit != null)
+          _headingOf(geometry.exit!.start - geometry.centre),
       ];
       for (final arc in geometry.ringArcs) {
         for (final end in [arc.startDegrees, arc.endDegrees]) {
@@ -96,22 +108,31 @@ void main() {
       expect(geometry.arrowHeadCount, 1, reason: why);
       final exit = geometry.exit!;
       // The one arrowhead is on the exit, pointing the way the exit runs.
+      // Compared with a tolerance: the tip and the base are each derived from
+      // the point the road meets the ring, so recomposing one from the other
+      // is not bit-exact even though it is geometrically identical.
+      final recomposed = exit.head.base + exit.head.direction * exit.head.length;
       expect(
-        exit.head.tip,
-        exit.head.base + exit.head.direction * exit.head.length,
+        (exit.head.tip - recomposed).distance,
+        lessThan(0.001),
+        reason: '$why: the arrowhead is not at the end of its own shaft',
       );
       expect(
         (exit.head.tip - geometry.centre).distance,
         greaterThan((exit.start - geometry.centre).distance),
         reason: why,
       );
+      // The arrow points away from the ring, so it reads as leaving rather than
+      // as pointing into the middle. Not exactly along its own radius: where the
+      // exit leaves alongside the road in it runs straight down the box, which
+      // puts its tip a few degrees off the radius it started from.
       expect(
-        _headingOf(
-          (exit.head.tip - geometry.centre) /
-              (exit.head.tip - geometry.centre).distance,
+        _angleBetween(
+          _headingOf(exit.head.tip - geometry.centre),
+          _headingOf(exit.head.direction),
         ),
-        closeTo(_headingOf(exit.head.direction), 0.01),
-        reason: why,
+        lessThan(15),
+        reason: '$why: the arrow does not point away from the ring',
       );
       // Wider than the road it ends, so it reads as an arrow and not a blob.
       expect(
@@ -234,12 +255,12 @@ void main() {
       lessThan(ridden(ManeuverDirection.slightLeft, leftHandTraffic: false)),
     );
 
-    // A square left or right exit sits so close to the road in that the arc
-    // between them is shorter than the ring is thick. It is left out, the ring
-    // becomes one arc at full strength, and both roads leave through a single
-    // wide opening - which is what the ring can honestly show at that angle,
-    // rather than a speck beside the exit. Driving side is then carried by the
-    // wording and the arrow alone.
+    // A square left or right exit leaves a short arc between the two roads. It
+    // used to be dropped as a speck, which merged the two gaps into one wide
+    // opening and left the ring as a single undirected arc — and a rider reported
+    // exactly that on the road: the ring appeared to have no gap and to circulate
+    // the wrong way. It is now kept, so both gaps stay distinct and the ring
+    // keeps the ridden/beyond emphasis that shows which way round traffic goes.
     for (final direction in [ManeuverDirection.left, ManeuverDirection.right]) {
       for (final leftHandTraffic in <bool?>[true, false, null]) {
         final geometry = RoundaboutSymbolGeometry.of(
@@ -249,14 +270,17 @@ void main() {
           ),
           const Size(38, 38),
         );
-        expect(geometry.ringArcs, hasLength(1));
+        expect(geometry.ringArcs, hasLength(2));
+        // Where the driving side is known, the ring says which way round the
+        // rider goes; where it is not, neither arc may claim it.
         expect(
-          geometry.ringArcs.single.segment,
-          RoundaboutRingSegment.undirected,
-        );
-        expect(
-          geometry.ringGapDegrees,
-          greaterThan(geometry.ringGapHalfDegrees * 4),
+          geometry.ringArcs.map((arc) => arc.segment).toSet(),
+          leftHandTraffic == null
+              ? {RoundaboutRingSegment.undirected}
+              : {
+                  RoundaboutRingSegment.ridden,
+                  RoundaboutRingSegment.beyond,
+                },
         );
       }
     }
@@ -339,9 +363,15 @@ void main() {
 
       // Daylight on both sides of every road where it crosses the ring, and
       // ink on the ring away from the roads.
+      //
+      // Taken from where the road meets the ring, not from the heading it then
+      // runs on: a turn back on itself leaves alongside the road in, so both
+      // roads run straight down the box while joining the ring at their own
+      // angles, and sampling by heading would probe the wrong point entirely.
       final roads = <double>[
         geometry.entryDegrees,
-        if (geometry.exit != null) _headingOf(geometry.exit!.head.direction),
+        if (geometry.exit != null)
+          _headingOf(geometry.exit!.start - geometry.centre),
       ];
       for (final road in roads) {
         expect(pixels.isInk(_onRing(geometry, road)), isTrue, reason: why);

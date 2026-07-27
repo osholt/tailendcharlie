@@ -430,7 +430,10 @@ ManeuverDirection _ringExitDirection({
     departure = follower.bearingBeforeDegrees;
   }
   if (departure == null) return ManeuverDirection.unstated;
-  return _directionFromTurnDegrees(_signedBearingDelta(approach, departure));
+  return _directionFromTurnDegrees(
+    _signedBearingDelta(approach, departure),
+    straightBandDegrees: _roundaboutStraightBandDegrees,
+  );
 }
 
 ManeuverInstruction _simpleInstruction(RouteManeuver maneuver) {
@@ -523,13 +526,32 @@ ManeuverDirection _directionFromModifier(String? modifier) {
   };
 }
 
+/// The straight band for an ordinary junction, where the roads meet directly.
+const _straightBandDegrees = 20.0;
+
+/// The straight band for a roundabout exit.
+///
+/// Wider, because a roundabout's arms are offset by the ring rather than meeting
+/// at a point: riding straight across a four-arm roundabout routinely shows an
+/// entry-to-exit heading change of 25 to 35 degrees purely from that offset. At
+/// the ordinary 20 degree band, crossing the A46 from the A420 was announced and
+/// drawn as a slight right, which is a junction the rider has been told to do
+/// something at that they do not in fact have to do.
+///
+/// It stops short of 45, which is where a genuine slight right begins to be a
+/// real change of direction rather than the ring's geometry.
+const _roundaboutStraightBandDegrees = 38.0;
+
 /// Buckets a heading change into a direction a rider can act on.
 ///
 /// The straight band is deliberately wide so a gentle curve on the road taken
 /// is not announced as a turn.
-ManeuverDirection _directionFromTurnDegrees(double degrees) {
+ManeuverDirection _directionFromTurnDegrees(
+  double degrees, {
+  double straightBandDegrees = _straightBandDegrees,
+}) {
   final magnitude = degrees.abs();
-  if (magnitude <= 20) return ManeuverDirection.straight;
+  if (magnitude <= straightBandDegrees) return ManeuverDirection.straight;
   if (magnitude > 160) return ManeuverDirection.uTurn;
   final right = degrees > 0;
   if (magnitude <= 60) {
