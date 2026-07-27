@@ -278,12 +278,11 @@ class RoundaboutSymbolGeometry {
       ringGapHalfDegrees: gapHalfDegrees,
       entryDegrees: entryDegrees,
       // Roads stop on the ring itself, so a rounded end fills the break in the
-      // ring without reaching into the middle of it. Where the roads run
-      // parallel, the far end is carried straight down the box from the point
-      // the road meets the ring, keeping both roads on the same heading.
-      entryRoadStart: parallelRoads
-          ? centre + entryUnit * radius + _down * (reach - radius)
-          : centre + entryUnit * reach,
+      // ring without reaching into the middle of it. The far end is carried out
+      // from there along the road's own heading, which is its radius except
+      // where the roads run parallel and both run straight down the box.
+      entryRoadStart:
+          centre + entryUnit * radius + entryDirection * (reach - radius),
       entryRoadEnd: centre + entryUnit * radius,
       ringArcs: _ringArcs(
         entryDegrees: entryDegrees,

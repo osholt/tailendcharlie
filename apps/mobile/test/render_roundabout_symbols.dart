@@ -122,8 +122,10 @@ Future<void> _writeLarge(String key, ManeuverDirection direction) async {
     symbol: RoundaboutSymbol(direction: direction, leftHandTraffic: true),
     color: const Color(0xFFFFFFFF),
   ).paint(canvas, const Size(_largeTile, _largeTile));
-  final image = await recorder.endRecording()
-      .toImage(_largeTile.round(), _largeTile.round());
+  final image = await recorder.endRecording().toImage(
+    _largeTile.round(),
+    _largeTile.round(),
+  );
   final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
   final file = File('$_outputDirectory/large-$key.png');
   await file.parent.create(recursive: true);
@@ -159,8 +161,10 @@ Future<void> _writeActualSizes() async {
     canvas.restore();
     x += size * scale + 8;
   }
-  final image = await recorder.endRecording()
-      .toImage(width.round(), height.round());
+  final image = await recorder.endRecording().toImage(
+    width.round(),
+    height.round(),
+  );
   final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
   final file = File('$_outputDirectory/actual-sizes-right.png');
   await file.parent.create(recursive: true);
@@ -170,7 +174,13 @@ Future<void> _writeActualSizes() async {
 
 void main() {
   test('render roundabout symbols for visual inspection', () async {
-    for (final key in ['straight', 'slight-right', 'right', 'sharp-right', 'u-turn']) {
+    for (final key in [
+      'straight',
+      'slight-right',
+      'right',
+      'sharp-right',
+      'u-turn',
+    ]) {
       await _writeLarge(key, _cases[key]!);
     }
     await _writeGrid(name: 'left-hand-traffic-uk', leftHandTraffic: true);

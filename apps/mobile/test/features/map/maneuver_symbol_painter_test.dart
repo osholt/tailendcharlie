@@ -111,7 +111,8 @@ void main() {
       // Compared with a tolerance: the tip and the base are each derived from
       // the point the road meets the ring, so recomposing one from the other
       // is not bit-exact even though it is geometrically identical.
-      final recomposed = exit.head.base + exit.head.direction * exit.head.length;
+      final recomposed =
+          exit.head.base + exit.head.direction * exit.head.length;
       expect(
         (exit.head.tip - recomposed).distance,
         lessThan(0.001),
@@ -277,10 +278,7 @@ void main() {
           geometry.ringArcs.map((arc) => arc.segment).toSet(),
           leftHandTraffic == null
               ? {RoundaboutRingSegment.undirected}
-              : {
-                  RoundaboutRingSegment.ridden,
-                  RoundaboutRingSegment.beyond,
-                },
+              : {RoundaboutRingSegment.ridden, RoundaboutRingSegment.beyond},
         );
       }
     }
