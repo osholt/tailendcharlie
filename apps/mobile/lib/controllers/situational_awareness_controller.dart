@@ -497,30 +497,34 @@ class SituationalAwarenessController extends ChangeNotifier {
     if (location.role == RideRole.lead) {
       _recordLeaderTrailPoint(location.sample);
     }
+    // Per-role, and re-applied on every fix so a hand-over mid-ride moves both
+    // riders onto the right comparison without resetting their hysteresis.
+    final segments = _routeSegmentsFor(location.role);
     final detector = _detectors.putIfAbsent(
       location.riderId,
       () => RouteDeviationDetector(
         _route,
         config: routeConfig,
-        routeSegments: _combinedRouteSegments,
+        routeSegments: segments,
       ),
     );
-    detector.updateRouteSegments(_combinedRouteSegments);
+    detector.updateRouteSegments(segments);
     final assessment = _applyLeaderFollowExemption(
       location,
       detector,
       detector.evaluate(location.sample, _clock()),
     );
-    final previous = _alerts[location.riderId];
-    if (previous?.assessment.state != assessment.state ||
-        previous?.assessment.alertLevel != assessment.alertLevel ||
-        previous?.assessment.audience != assessment.audience) {
-      _alerts[location.riderId] = RiderRouteAlert(
-        riderId: location.riderId,
-        displayName: location.displayName,
-        assessment: assessment,
-      );
-    }
+    // Always replaced, not only when the state changes. The stored assessment is
+    // what the rider is told - "you are off route by X" - and what the rejoin
+    // planner reads, so keeping the one from the last state *transition* froze
+    // the distance and the timestamp for as long as a rider stayed off route
+    // (#162). Callers that need to know whether anything meaningful changed
+    // compare state, level and audience themselves.
+    _alerts[location.riderId] = RiderRouteAlert(
+      riderId: location.riderId,
+      displayName: location.displayName,
+      assessment: assessment,
+    );
   }
 
   /// Inserts in chronological order (by [LocationSample.recordedAt], not
@@ -547,12 +551,22 @@ class SituationalAwarenessController extends ChangeNotifier {
     for (final point in _leaderTrail) point.position,
   ];
 
-  /// The planned route (if any) plus the leader's live trail (once it has
-  /// at least two points) - a rider is on-route if they are near either,
-  /// so a leader's own live position (always the trail's own endpoint) is
-  /// never flagged, and followers keep matching an abandoned GPX until the
-  /// leader has actually diverged from it.
-  List<List<GeoPoint>> get _combinedRouteSegments {
+  /// What a rider of [role] is compared against.
+  ///
+  /// A **follower** is compared against the planned route *and* the leader's
+  /// live trail: a rider near either is on route, so followers keep matching an
+  /// abandoned GPX until the leader has actually diverged from it.
+  ///
+  /// The **leader** is compared against the planned route alone. Their own live
+  /// position is by definition the endpoint of their own trail, so including it
+  /// measures the leader against themselves and returns approximately zero from
+  /// anywhere on earth. That is why the leader was never once flagged off route
+  /// in the field, never got a reroute, and never got told why turn instructions
+  /// had stopped (#162). `_applyLeaderFollowExemption` already refuses to exempt
+  /// the leader for exactly this reason - but the exemption never had to fire,
+  /// because the geometry it guards had already been given the answer.
+  List<List<GeoPoint>> _routeSegmentsFor(RideRole role) {
+    if (role == RideRole.lead) return _routeSegments;
     final leaderPoints = _leaderTrailPoints;
     return [..._routeSegments, if (leaderPoints.length >= 2) leaderPoints];
   }
