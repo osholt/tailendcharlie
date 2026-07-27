@@ -24,7 +24,7 @@ jobs:
       run:
         working-directory: ${{ env.SERVER_DIR }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           working-directory: ${{ env.SERVER_DIR }}
@@ -65,7 +65,7 @@ jobs:
       RIDE_RELAY_DATA_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc
       RIDE_RELAY_CURSOR_SIGNING_KEY: CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           working-directory: ${{ env.SERVER_DIR }}
@@ -81,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: docker build --tag ride-relay-server:ci apps/server
       - name: Validate tailnet deployment
         env:
