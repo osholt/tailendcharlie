@@ -796,6 +796,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _recordBottomChromeHeight();
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
     final markerOverlay = widget.junctionMarkerOverlay?.value;
@@ -1078,7 +1079,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 // (#104). The persistent row in the bottom band is what survives
                 // it being closed.
                 if (widget.quickMessageAlerts != null)
-                  Positioned.fill(
+                  // Stops short of the action band rather than filling the
+                  // screen. Opaque and full-bleed, it covered SOS and LEAVE and
+                  // absorbed every tap, so a rider could neither leave nor call
+                  // for help until they had cleared each interrupting message -
+                  // one tap per message (#177).
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: _safetyBandReservedHeight(landscape),
                     child: ValueListenableBuilder<List<RideQuickMessageAlert>>(
                       valueListenable: widget.quickMessageAlerts!,
                       builder: (context, alerts, _) {
@@ -2073,6 +2083,44 @@ class _RideMapScreenState extends State<RideMapScreen> {
     return height != null && height > 0
         ? height
         : MediaQuery.sizeOf(context).height;
+  }
+
+  /// How much of the bottom of the screen an interrupting alert must leave
+  /// alone, so SOS and LEAVE stay visible and hittable behind it (#177).
+  ///
+  /// Portrait reserves the measured bottom band - the same band the navigation
+  /// camera biases against - so there is one measurement rather than a constant
+  /// that drifts from the layout. Landscape lays the actions out differently, so
+  /// a floor clears them.
+  double _safetyBandReservedHeight(bool landscape) {
+    if (landscape) return _landscapeSafetyBandFloor;
+    final measured = _measuredBottomChromeHeight;
+    return measured > 0 ? measured : _portraitSafetyBandFallback;
+  }
+
+  /// Two stacked extended FABs plus their gap and the margin below - what
+  /// portrait lays out when SOS sits above LEAVE. Only used before the first
+  /// frame has been measured, where covering the controls would be worse than
+  /// reserving slightly too much.
+  static const _portraitSafetyBandFallback = 132.0;
+
+  /// One row of extended FABs plus its margin.
+  static const _landscapeSafetyBandFloor = 72.0;
+
+  /// The bottom band's height as last laid out.
+  ///
+  /// Recorded after a frame rather than read during one: a render object's size
+  /// is not available while building. The band is on screen continuously, so by
+  /// the time an alert interrupts this is already the real measurement.
+  double _measuredBottomChromeHeight = 0;
+
+  void _recordBottomChromeHeight() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final measured = _bottomChromeHeightPixels;
+      if (measured == _measuredBottomChromeHeight) return;
+      setState(() => _measuredBottomChromeHeight = measured);
+    });
   }
 
   /// Height of the portrait bottom chrome band as laid out, including the
@@ -7179,85 +7227,91 @@ class _QuickMessageInterruptOverlay extends StatelessWidget {
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    quickMessageIcon(message.message),
-                    size: 64,
-                    color: Colors.white,
-                  ),
-                  const SizedBox(height: 10),
-                  FittedBox(
-                    child: Text(
-                      message.headline.toUpperCase(),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 40,
-                        height: 1.05,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.8,
-                      ),
+              // Reserving the action band (#177) took height away, and in
+              // landscape the fixed icon and type overran what was left. The
+              // alert scales into the space it has rather than overflowing it.
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      quickMessageIcon(message.message),
+                      size: 64,
+                      color: Colors.white,
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  FittedBox(
-                    child: Text(
-                      origin.toUpperCase(),
-                      key: const Key('quick-message-interrupt-origin'),
-                      style: const TextStyle(
-                        // Secondary to the headline, unlike the enforcement
-                        // warning where the distance *is* the actionable number.
-                        // Here who and what outrank how far.
-                        color: Color(0xF2FFFFFF),
-                        fontSize: 30,
-                        height: 1,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  if (onAcknowledge != null)
-                    SizedBox(
-                      height: 62,
-                      width: 240,
-                      child: FilledButton(
-                        key: const Key('quick-message-interrupt-acknowledge'),
-                        onPressed: acknowledging ? null : onAcknowledge,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF7A0E1E),
+                    const SizedBox(height: 10),
+                    FittedBox(
+                      child: Text(
+                        message.headline.toUpperCase(),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 40,
+                          height: 1.05,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
                         ),
-                        child: acknowledging
-                            ? const SizedBox.square(
-                                dimension: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF7A0E1E),
-                                ),
-                              )
-                            : const Text(
-                                'I HAVE SEEN THIS',
-                                style: TextStyle(
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1,
-                                ),
-                              ),
                       ),
                     ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'TAP ANYWHERE TO DISMISS',
-                    style: TextStyle(
-                      color: Color(0x99FFFFFF),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 2,
+                    const SizedBox(height: 8),
+                    FittedBox(
+                      child: Text(
+                        origin.toUpperCase(),
+                        key: const Key('quick-message-interrupt-origin'),
+                        style: const TextStyle(
+                          // Secondary to the headline, unlike the enforcement
+                          // warning where the distance *is* the actionable number.
+                          // Here who and what outrank how far.
+                          color: Color(0xF2FFFFFF),
+                          fontSize: 30,
+                          height: 1,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 20),
+                    if (onAcknowledge != null)
+                      SizedBox(
+                        height: 62,
+                        width: 240,
+                        child: FilledButton(
+                          key: const Key('quick-message-interrupt-acknowledge'),
+                          onPressed: acknowledging ? null : onAcknowledge,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: const Color(0xFF7A0E1E),
+                          ),
+                          child: acknowledging
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Color(0xFF7A0E1E),
+                                  ),
+                                )
+                              : const Text(
+                                  'I HAVE SEEN THIS',
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'TAP ANYWHERE TO DISMISS',
+                      style: TextStyle(
+                        color: Color(0x99FFFFFF),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
