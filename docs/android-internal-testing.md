@@ -403,14 +403,31 @@ Two lessons:
 ### Closing a public track
 
 ```bash
-gh workflow run "Close public tracks" --ref main \
+gh workflow run "Close public Play tracks" --ref main \
   -f confirm=close-public-tracks \
   -f halt_open_testing=true \
   -f delete_production_draft=false
 ```
 
-It halts any live open-testing release and, optionally, deletes a draft
-production release. It refuses to touch a non-draft production release — halting a
-live production release is a separate, deliberate decision — and never touches
-`internal` or `alpha`. Halting stops further distribution; riders who already
-installed the halted build keep it and simply receive no updates on that track.
+It never touches `internal` or `alpha`, and it refuses to touch a non-draft
+production release — withdrawing a live production release is a separate,
+deliberate decision. Every change is verified by reading the track back, because
+a committed edit is not evidence that anything changed.
+
+**Deleting a draft production release works. Stopping open testing does not.**
+The Play Developer API has no way to withdraw a *completed* open-testing release,
+and all three plausible mechanisms were tried against the live track on
+27 July 2026:
+
+| Mechanism | Result |
+| --- | --- |
+| `status: halted` | `500 Internal error` on commit — `halted` is a staged-rollout state |
+| `releases: []` | commit succeeds, **track keeps serving the same release** |
+| `status: draft` | commit succeeds, adds a draft *beside* the live release, which keeps serving |
+
+The second and third are the dangerous ones: they report success. That is why the
+workflow verifies rather than trusting `commit`.
+
+**Open testing can only be stopped in the Play Console:** Testing → Open testing
+→ **Pause track**. There is no API equivalent. Run `Play track status` afterwards
+to confirm `beta` no longer reports `completed`.
