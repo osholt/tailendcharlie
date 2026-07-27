@@ -86,124 +86,181 @@ jobs:
           edits = service.edits()
 
 
-          def describe(tracks):
+          def read_tracks():
+              edit_id = edits.insert(packageName=package, body={}).execute()["id"]
+              try:
+                  return (
+                      edits.tracks()
+                      .list(packageName=package, editId=edit_id)
+                      .execute()
+                      .get("tracks", [])
+                  )
+              finally:
+                  edits.delete(packageName=package, editId=edit_id).execute()
+
+
+          def describe(label, tracks):
+              print(f"{label}:")
               for track in sorted(tracks, key=lambda item: item["track"]):
-                  for release in track.get("releases", []) or [{}]:
+                  releases = track.get("releases") or [{}]
+                  for release in releases:
+                      codes = ",".join(release.get("versionCodes") or []) or "-"
                       print(
                           f"  {track['track']:12s} "
-                          f"status={release.get('status', '-'):10s} "
-                          f"codes={','.join(release.get('versionCodes') or []) or '-'}"
+                          f"status={release.get('status', 'none'):10s} codes={codes}"
                       )
 
 
-          edit_id = edits.insert(packageName=package, body={}).execute()["id"]
-          committed = False
-          try:
-              tracks = (
-                  edits.tracks()
-                  .list(packageName=package, editId=edit_id)
-                  .execute()
-                  .get("tracks", [])
-              )
-              print("before:")
-              describe(tracks)
-              by_name = {track["track"]: track for track in tracks}
-              changed = []
-
-              if halt_beta:
-                  beta = by_name.get("beta")
-                  live = [
+          def still_live(track_name):
+              for track in read_tracks():
+                  if track["track"] != track_name:
+                      continue
+                  return [
                       release
-                      for release in (beta or {}).get("releases", [])
+                      for release in track.get("releases", [])
                       if release.get("status") in {"completed", "inProgress"}
                   ]
-                  if not live:
-                      print("beta: nothing live to halt")
-                  else:
-                      edits.tracks().update(
-                          packageName=package,
-                          editId=edit_id,
-                          track="beta",
-                          body={
-                              "track": "beta",
-                              "releases": [
-                                  {
-                                      "name": release.get("name"),
-                                      "versionCodes": release.get("versionCodes"),
-                                      "status": "halted",
-                                  }
-                                  for release in live
-                              ],
-                          },
-                      ).execute()
-                      changed.append("halted beta")
+              return []
 
-              if delete_production:
-                  production = by_name.get("production")
-                  drafts = [
-                      release
-                      for release in (production or {}).get("releases", [])
-                      if release.get("status") == "draft"
-                  ]
-                  others = [
-                      release
-                      for release in (production or {}).get("releases", [])
-                      if release.get("status") != "draft"
-                  ]
-                  if others:
-                      # A live production release is a different decision from
-                      # deleting a draft. Refuse rather than guess.
-                      raise SystemExit(
-                          "Refusing: production has a non-draft release. "
-                          "Halting a live production release is a separate, "
-                          "deliberate decision."
-                      )
-                  if not drafts:
-                      print("production: no draft to delete")
-                  else:
-                      edits.tracks().update(
-                          packageName=package,
-                          editId=edit_id,
-                          track="production",
-                          body={"track": "production", "releases": []},
-                      ).execute()
-                      changed.append("deleted production draft")
 
-              if not changed:
-                  print("nothing to change; abandoning the edit")
-                  raise SystemExit(0)
+          def attempt(description, track, releases):
+              """One track change in its own edit, committed or wholly abandoned.
 
+              Each change gets its own edit so a rejection of one does not roll
+              back another, and so a partial success is still a success.
+
+              A committed edit is not evidence of anything. Play accepts
+              `releases: []` on a live track, commits it, and serves the same
+              release afterwards - the same shape of lie as managed publishing.
+              So the caller's intent is verified by reading the track back, and
+              only that counts as success.
+              """
+              edit_id = edits.insert(packageName=package, body={}).execute()["id"]
+              committed = False
               try:
-                  edits.commit(packageName=package, editId=edit_id).execute()
-              except HttpError as error:
-                  # An app that has never been published to production cannot
-                  # send an edit for review; that is not a failure here.
-                  if "changesNotSentForReview" not in str(error):
-                      raise
-                  print("retrying commit with changesNotSentForReview=true")
-                  edits.commit(
+                  edits.tracks().update(
                       packageName=package,
                       editId=edit_id,
-                      changesNotSentForReview=True,
+                      track=track,
+                      body={"track": track, "releases": releases},
                   ).execute()
-              committed = True
-              print("committed: " + ", ".join(changed))
-          finally:
-              if not committed:
                   try:
-                      edits.delete(packageName=package, editId=edit_id).execute()
-                  except HttpError:
-                      pass
+                      edits.commit(packageName=package, editId=edit_id).execute()
+                  except HttpError as error:
+                      # An app never published to production cannot send an edit
+                      # for review; that is not a failure here.
+                      if "changesNotSentForReview" not in str(error):
+                          raise
+                      print(f"  {description}: retrying without review")
+                      edits.commit(
+                          packageName=package,
+                          editId=edit_id,
+                          changesNotSentForReview=True,
+                      ).execute()
+                  committed = True
+                  if still_live(track):
+                      print(
+                          f"  {description}: committed and IGNORED - "
+                          f"{track} is still serving the same release"
+                      )
+                      return False
+                  print(f"  {description}: committed and verified")
+                  return True
+              except HttpError as error:
+                  print(f"  {description}: rejected - {error}")
+                  return False
+              finally:
+                  if not committed:
+                      try:
+                          edits.delete(packageName=package, editId=edit_id).execute()
+                      except HttpError:
+                          pass
 
-          verify_id = edits.insert(packageName=package, body={}).execute()["id"]
-          try:
-              print("after:")
-              describe(
-                  edits.tracks()
-                  .list(packageName=package, editId=verify_id)
-                  .execute()
-                  .get("tracks", [])
-              )
-          finally:
-              edits.delete(packageName=package, editId=verify_id).execute()
+
+          tracks = read_tracks()
+          describe("before", tracks)
+          by_name = {track["track"]: track for track in tracks}
+          outcomes = []
+
+          if halt_beta:
+              live = [
+                  release
+                  for release in (by_name.get("beta") or {}).get("releases", [])
+                  if release.get("status") in {"completed", "inProgress"}
+              ]
+              if not live:
+                  print("beta: nothing live")
+              else:
+                  print("beta: stopping open testing")
+                  # `halted` is really a staged-rollout concept and Play answers
+                  # a 500 when asked to halt a fully released one, so fall back
+                  # to emptying the track, which is what the Console's "pause"
+                  # does. Both are tried because which one Play accepts depends
+                  # on the release's state, not on anything visible here.
+                  stopped = (
+                      attempt(
+                          "halt the live release",
+                          "beta",
+                          [
+                              {
+                                  "name": release.get("name"),
+                                  "versionCodes": release.get("versionCodes"),
+                                  "status": "halted",
+                              }
+                              for release in live
+                          ],
+                      )
+                      or attempt("empty the track", "beta", [])
+                      or attempt(
+                          "return the release to draft",
+                          "beta",
+                          [
+                              {
+                                  "name": release.get("name"),
+                                  "versionCodes": release.get("versionCodes"),
+                                  "status": "draft",
+                              }
+                              for release in live
+                          ],
+                      )
+                  )
+                  if not stopped:
+                      print(
+                          "beta: the Play API will not withdraw a completed "
+                          "open-testing release. Pause the track in the Play "
+                          "Console: Testing > Open testing > Pause track."
+                      )
+                  outcomes.append(("stop open testing", stopped))
+
+          if delete_production:
+              production = (by_name.get("production") or {}).get("releases", [])
+              drafts = [r for r in production if r.get("status") == "draft"]
+              others = [r for r in production if r.get("status") != "draft"]
+              if others:
+                  # A live production release is a different decision from
+                  # deleting a draft. Refuse rather than guess.
+                  print("production: refusing, a non-draft release is present")
+                  outcomes.append(("delete production draft", False))
+              elif not drafts:
+                  print("production: no draft")
+              else:
+                  print("production: deleting the draft")
+                  outcomes.append(
+                      (
+                          "delete production draft",
+                          attempt("empty the track", "production", []),
+                      )
+                  )
+
+          describe("after", read_tracks())
+
+          if not outcomes:
+              print("nothing to do")
+              raise SystemExit(0)
+          print("--- outcome ---")
+          for description, ok in outcomes:
+              print(f"{description}: {'done' if ok else 'FAILED'}")
+          # Fail the run if anything asked for did not happen, so a red run
+          # always means the app is still on a track it should not be on.
+          raise SystemExit(0 if all(ok for _, ok in outcomes) else 1)
           PY
