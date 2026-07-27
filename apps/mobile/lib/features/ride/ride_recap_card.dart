@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../../domain/distance_unit.dart';
@@ -14,16 +16,53 @@ class RideRecapCard extends StatelessWidget {
     required this.summary,
     required this.routePoints,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.basemap,
+    this.mapLayer,
+    this.basemapAttribution,
+    this.dark = true,
   });
 
   final RideSummary summary;
   final List<GeoPoint> routePoints;
   final DistanceUnit distanceUnit;
 
+  /// A basemap already rasterised to an image, drawn behind the route.
+  ///
+  /// An image rather than a map widget on purpose. MapLibre renders as a platform
+  /// view, which `RepaintBoundary.toImage` cannot capture - it would export a
+  /// blank rectangle, the same class of failure as #29. The snapshot is taken
+  /// through MapLibre's own `takeSnapshot` and handed here already flattened, so
+  /// the capture only ever sees Flutter-drawn layers (#157).
+  ///
+  /// Null means no basemap: offline, unconfigured, or a snapshot that failed. The
+  /// card falls back to the route sketch and says so rather than exporting an
+  /// empty map.
+  final ui.Image? basemap;
+
+  /// The live map shown while the rider is looking at the card, before Share.
+  ///
+  /// [basemap] wins when both are given: at capture time the platform view is
+  /// replaced by its own snapshot, because that is the only form
+  /// `RepaintBoundary.toImage` can see.
+  final Widget? mapLayer;
+
+  /// Rendered into the card, because a shared image leaves the app and the
+  /// licence follows the picture rather than the screen it came from.
+  final String? basemapAttribution;
+
+  /// Which palette this export uses. A property of the image only: it never
+  /// touches the app theme, the ride map, or anything stored.
+  final bool dark;
+
   static const _background = Color(0xFF0D1117);
   static const _surface = Color(0xFF171D25);
   static const _accent = Color(0xFFFF7A1A);
   static const _muted = Color(0xFF8D98A7);
+
+  /// Only the map panel changes with [dark]; the card itself keeps its identity
+  /// so a shared recap still reads as this app's.
+  static const _lightSurface = Color(0xFFE8EDF3);
+  static const _lightMuted = Color(0xFF5A6472);
 
   @override
   Widget build(BuildContext context) {
@@ -70,27 +109,71 @@ class RideRecapCard extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               Expanded(
-                child: Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: _surface,
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  padding: const EdgeInsets.all(20),
-                  child: routePoints.length >= 2
-                      ? CustomPaint(
-                          size: Size.infinite,
-                          painter: RouteSketchPainter(
-                            normalizeRoutePoints(routePoints),
-                          ),
-                        )
-                      : const Center(
-                          child: Text(
-                            'No recorded route for this ride',
-                            style: TextStyle(color: _muted),
-                            textAlign: TextAlign.center,
-                          ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: Container(
+                    width: double.infinity,
+                    color: dark ? _surface : _lightSurface,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (basemap case final tiles?)
+                          RawImage(
+                            key: const Key('recap-basemap'),
+                            image: tiles,
+                            fit: BoxFit.cover,
+                          )
+                        else
+                          ?mapLayer,
+                        Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: routePoints.length >= 2
+                              ? CustomPaint(
+                                  size: Size.infinite,
+                                  painter: RouteSketchPainter(
+                                    normalizeRoutePoints(routePoints),
+                                  ),
+                                )
+                              // #124: a ride with no route is valid, and its
+                              // recap says so rather than failing.
+                              : Center(
+                                  child: Text(
+                                    'No recorded route for this ride',
+                                    style: TextStyle(
+                                      color: dark ? _muted : _lightMuted,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
                         ),
+                        if (basemapAttribution case final attribution?)
+                          Positioned(
+                            right: 6,
+                            bottom: 4,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: const Color(0xB30D1117),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 2,
+                                ),
+                                child: Text(
+                                  attribution,
+                                  key: const Key('recap-basemap-attribution'),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 20),

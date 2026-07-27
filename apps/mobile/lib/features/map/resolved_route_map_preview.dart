@@ -28,6 +28,8 @@ class ResolvedRouteMapPreview extends StatefulWidget {
     this.mapStyleString,
     this.lineColor = '#3478F6',
     this.onPointTap,
+    this.onControllerReady,
+    this.onStyleReady,
   });
 
   final List<List<GeoPoint>> paths;
@@ -36,6 +38,15 @@ class ResolvedRouteMapPreview extends StatefulWidget {
   final String? mapStyleString;
   final String lineColor;
   final ValueChanged<int>? onPointTap;
+
+  /// Handed the map's controller once created, so a caller can snapshot it.
+  /// Exposed for the recap export, which needs MapLibre's own snapshot because
+  /// `RepaintBoundary.toImage` cannot capture a platform view (#157).
+  final ValueChanged<ml.MapLibreMapController>? onControllerReady;
+
+  /// Called once the style and this route's layers are on the map. A snapshot
+  /// taken before this returns tiles that have not arrived.
+  final VoidCallback? onStyleReady;
 
   @override
   State<ResolvedRouteMapPreview> createState() =>
@@ -87,7 +98,10 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                   ),
                   zoom: initial == null ? 5 : 13,
                 ),
-                onMapCreated: (controller) => _controller = controller,
+                onMapCreated: (controller) {
+                  _controller = controller;
+                  widget.onControllerReady?.call(controller);
+                },
                 onStyleLoadedCallback: () => unawaited(_prepareStyle()),
                 onMapClick: widget.onPointTap == null
                     ? null
@@ -212,6 +226,9 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
       );
       _styleReady = true;
       await _syncAndFit();
+      // After the fit, so a snapshot taken on this signal frames the route
+      // rather than wherever the camera started (#157).
+      widget.onStyleReady?.call();
     } on Object catch (error) {
       if (kDebugMode) debugPrint('Could not prepare route preview map: $error');
     }

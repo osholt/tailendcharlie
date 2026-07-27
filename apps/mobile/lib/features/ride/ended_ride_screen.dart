@@ -4,6 +4,7 @@ import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../services/basemap_configuration.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
@@ -113,6 +114,9 @@ class EndedRideScreen extends StatelessWidget {
     );
     await RideRecapScreen.show(
       context,
+      // The real configuration, not the empty default: without a style there is
+      // no basemap to snapshot and the recap falls back to the outline (#157).
+      basemapConfiguration: BasemapConfiguration.fromEnvironment(),
       summary: summary,
       routePoints: route?.paths.single.points ?? const [],
       distanceUnit: distanceUnits.value,
