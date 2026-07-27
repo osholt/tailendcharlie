@@ -96,6 +96,11 @@ class SpeedLimitDisplayController extends ChangeNotifier {
   SpeedLimitDisplayStatus _status;
   SpeedLimitLookupOutcome? _lastOutcome;
   PostedSpeedLimit? _limit;
+
+  /// True while a lookup is in flight. Deliberately not a [status]: the sign has
+  /// three states and a spinner is not one of them (#164). Surfaces may use this
+  /// to say a reading is being rechecked without replacing the reading.
+  bool _refreshing = false;
   SpeedLimitLocation? _previousLocation;
   SpeedLimitLocation? _lastLookupLocation;
   DateTime? _lastLookupAt;
@@ -108,11 +113,15 @@ class SpeedLimitDisplayController extends ChangeNotifier {
   SpeedLimitLookupOutcome? get lastOutcome => _lastOutcome;
   PostedSpeedLimit? get limit => _limit;
 
+  /// Whether a fresh lookup is in flight behind whatever is currently shown.
+  bool get refreshing => _refreshing;
+
   Future<void> setEnabled(bool value) async {
     if (_enabled == value) return;
     _generation += 1;
     _enabled = value;
     _limit = null;
+    _refreshing = false;
     _lastOutcome = null;
     _previousLocation = null;
     _lastLookupLocation = null;
@@ -206,7 +215,21 @@ class SpeedLimitDisplayController extends ChangeNotifier {
     required SpeedLimitLocation current,
     required int generation,
   }) async {
-    _status = SpeedLimitDisplayStatus.checking;
+    // Only the *first* resolution shows as checking. Setting it on every lookup
+    // threw away a perfectly good reading and put a spinner in the sign each
+    // time the rider moved far enough to trigger another one, which on a moving
+    // ride is most of the time:
+    //
+    //   "The speed limit display was showing a loading animation a lot of the
+    //    time. It should always show a speed limit and it should buffer ahead to
+    //    avoid this issue."
+    //
+    // A limit already resolved stays on screen while the next one is fetched.
+    // It carries its own "checked HH:MM" provenance, so a reading a few seconds
+    // old is visibly a reading a few seconds old rather than a claim about the
+    // road the rider is on right now (#164, and #145's honesty rule).
+    _refreshing = true;
+    if (_limit == null) _status = SpeedLimitDisplayStatus.checking;
     if (!_disposed) notifyListeners();
     _lastLookupAt = _clock();
     _lastLookupLocation = current;
@@ -218,6 +241,7 @@ class SpeedLimitDisplayController extends ChangeNotifier {
         SpeedLimitLookupOutcome.unavailable,
       );
     }
+    _refreshing = false;
     if (_disposed || !_enabled || generation != _generation) return;
     _lastOutcome = result.outcome;
     _limit = result.limit;
