@@ -29,6 +29,7 @@ import '../../services/enforcement_alert_detector.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/group_pip_bridge.dart';
 import '../../services/leader_ride_status.dart';
+import '../../services/tec_gap_trend.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
@@ -98,6 +99,7 @@ class RideMapFeature extends StatefulWidget {
     this.overlayMarkers,
     this.riderTrails,
     this.leaderStatus,
+    this.tecGapTrend,
     this.groupRiderCount,
     this.onOpenRoster,
     this.junctionMarkerOverlay,
@@ -139,6 +141,7 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
     ValueListenable<List<MapOverlayTrace>>? riderTrails,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
+    ValueListenable<TecGapTrend>? tecGapTrend,
     int? groupRiderCount,
     VoidCallback? onOpenRoster,
     ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
@@ -175,6 +178,7 @@ class RideMapFeature extends StatefulWidget {
     overlayMarkers: overlayMarkers,
     riderTrails: riderTrails,
     leaderStatus: leaderStatus,
+    tecGapTrend: tecGapTrend,
     groupRiderCount: groupRiderCount,
     onOpenRoster: onOpenRoster,
     junctionMarkerOverlay: junctionMarkerOverlay,
@@ -212,6 +216,10 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? riderTrails;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
+
+  /// Which way the gap to the TEC is going (#181). Null where no trend is
+  /// tracked, in which case the gap card shows the distance alone.
+  final ValueListenable<TecGapTrend>? tecGapTrend;
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
@@ -350,6 +358,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         overlayMarkers: widget.overlayMarkers,
         riderTrails: widget.riderTrails,
         leaderStatus: widget.leaderStatus,
+        tecGapTrend: widget.tecGapTrend,
         groupRiderCount: widget.groupRiderCount,
         onOpenRoster: widget.onOpenRoster,
         junctionMarkerOverlay: widget.junctionMarkerOverlay,
@@ -411,6 +420,7 @@ class RideMapScreen extends StatefulWidget {
     this.overlayMarkers,
     this.riderTrails,
     this.leaderStatus,
+    this.tecGapTrend,
     this.groupRiderCount,
     this.onOpenRoster,
     this.junctionMarkerOverlay,
@@ -456,6 +466,10 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? riderTrails;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
+
+  /// Which way the gap to the TEC is going (#181). Null where no trend is
+  /// tracked, in which case the gap card shows the distance alone.
+  final ValueListenable<TecGapTrend>? tecGapTrend;
   final int? groupRiderCount;
   final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
@@ -1235,6 +1249,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
               status: leaderStatus,
               compact: compactStatus,
               distanceUnit: widget.distanceUnit,
+              trend: widget.tecGapTrend?.value ?? TecGapTrend.unknown,
             )
           : null;
       final miniMap = canShowGroupMiniMap
@@ -7382,16 +7397,31 @@ class _OffCourseBanner extends StatelessWidget {
   }
 }
 
+/// The trend, as a shape and a word rather than a colour.
+///
+/// Never colour alone: riders wear tinted visors in direct sunlight - the
+/// condition #107 and #143 exist for - and some riders cannot distinguish the
+/// colours at all. Empty while the trend is unknown, so a leader is not told
+/// something the app does not know (#181).
+String _trendSuffix(TecGapTrend trend) =>
+    trend == TecGapTrend.unknown ? '' : ' · ${trend.arrow} ${trend.label}';
+
 class _TecGapCard extends StatelessWidget {
   const _TecGapCard({
     required this.status,
     required this.compact,
     required this.distanceUnit,
+    this.trend = TecGapTrend.unknown,
   });
 
   final LeaderRideStatus status;
   final bool compact;
   final DistanceUnit distanceUnit;
+
+  /// Which way the gap is going. A distance alone told a leader almost nothing
+  /// - on a fast road 1.2 miles is normal, in town it means the group has split
+  /// (#181).
+  final TecGapTrend trend;
 
   @override
   Widget build(BuildContext context) {
@@ -7406,7 +7436,8 @@ class _TecGapCard extends StatelessWidget {
     final age = status.tecLocationAge;
     final detail = switch (status.tecAvailability) {
       TecAvailability.tracking when distance != null && eta != null =>
-        '$name · ${formatter.distance(distance)} · about ${_durationLabel(eta)}',
+        '$name · ${formatter.distance(distance)} · about ${_durationLabel(eta)}'
+            '${_trendSuffix(trend)}',
       TecAvailability.stale when age != null =>
         '$name · last update ${_ageLabel(age)}',
       _ => '$name · waiting for location',
@@ -7414,7 +7445,8 @@ class _TecGapCard extends StatelessWidget {
     if (compact) {
       final compactDetail = switch (status.tecAvailability) {
         TecAvailability.tracking when distance != null && eta != null =>
-          '$name · ${formatter.distance(distance)} · ~${_durationLabel(eta)}',
+          '$name · ${formatter.distance(distance)} · ~${_durationLabel(eta)}'
+              '${_trendSuffix(trend)}',
         TecAvailability.stale when age != null => '$name · ${_ageLabel(age)}',
         _ => '$name · waiting for location',
       };
