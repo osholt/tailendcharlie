@@ -67,9 +67,12 @@ class EndedRideScreen extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
-          onPressed: () => _confirmRemove(context),
-          icon: const Icon(Icons.delete_outline),
-          label: const Text('Remove ride from this phone'),
+          key: const Key('file-ended-ride-button'),
+          onPressed: () => _confirmFile(context),
+          // Not a delete icon: this files the ride, and the icon is read before
+          // the label (#156).
+          icon: const Icon(Icons.inventory_2_outlined),
+          label: const Text('Finish and file in Previous rides'),
         ),
       ],
     ),
@@ -116,23 +119,36 @@ class EndedRideScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmRemove(BuildContext context) async {
+  /// The confirmation is kept, but it no longer describes a deletion.
+  ///
+  /// Filing a ride is harmless - it is archived to Previous rides first and only
+  /// the live working copy is cleared - so a scary modal is not warranted. What
+  /// is warranted is one sentence, because the single real consequence cannot be
+  /// undone: a phone that has not yet received another rider's last few events
+  /// stops trying for them. A rider who presses this thirty seconds after the
+  /// ride ends can lose the TEC's final marker count. That is small, and it is
+  /// still a loss, and it is invisible unless said.
+  Future<void> _confirmFile(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Remove this ended ride?'),
+        title: const Text('File this ride in Previous rides?'),
         content: const Text(
-          'Automatic relay recovery for its final events will stop on this '
-          'phone. Export the summary first if you want a copy.',
+          'The ride stays on this phone, in Previous rides, with its summary '
+          'and recorded route.\n\n'
+          'One thing stops: if another rider\'s last few events have not '
+          'reached this phone yet, it will stop waiting for them.',
         ),
         actions: [
           TextButton(
+            key: const Key('keep-ended-ride-open-button'),
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Keep ride'),
+            child: const Text('Not yet'),
           ),
           FilledButton(
+            key: const Key('confirm-file-ended-ride-button'),
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remove'),
+            child: const Text('File ride'),
           ),
         ],
       ),
