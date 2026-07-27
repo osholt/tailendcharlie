@@ -195,12 +195,30 @@ presentableQuickMessageAlerts({
 }) {
   final alerts = <RideQuickMessageAlert>[];
   final bySender = <String, ReceivedQuickMessage>{};
+  // The same rider saying the same thing again is one fact, not another prompt.
+  // Keyed by sender and the label the rider actually reads, so someone who
+  // raises `Stopped` three times is acknowledged once (#178), a `Stopped` and a
+  // `Mechanical` from them stay separate because those are two things to know,
+  // and a kind this build has never heard of still groups by its own words.
+  final repeatsOfIndex = <({String senderRiderId, String label}), int>{};
   for (final message in messages) {
     if (message.raisedFromLocalRider) {
       if (!message.isAcknowledged) continue;
     } else {
       if (message.acknowledgedBy(localRiderId)) continue;
       bySender.putIfAbsent(message.senderRiderId, () => message);
+      final key = (senderRiderId: message.senderRiderId, label: message.label);
+      final existing = repeatsOfIndex[key];
+      if (existing != null) {
+        final kept = alerts[existing];
+        alerts[existing] = RideQuickMessageAlert(
+          message: kept.message,
+          origin: kept.origin,
+          repeats: [...kept.repeats, message],
+        );
+        continue;
+      }
+      repeatsOfIndex[key] = alerts.length;
     }
     final live = livePositions[message.senderRiderId];
     alerts.add(
@@ -1948,8 +1966,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     return presented.bySender;
   }
 
+  /// Acknowledges the presented message *and* every repeat it stands for, so a
+  /// rider who cancels a `Stopped` is not asked again about the two identical
+  /// ones behind it (#178).
   Future<void> _acknowledgeQuickMessage(ReceivedQuickMessage message) async {
-    await widget.rideController.acknowledgeQuickMessage(message);
+    final alert = _quickMessageAlerts.value
+        .where((candidate) => candidate.message.eventId == message.eventId)
+        .firstOrNull;
+    for (final outstanding in alert?.acknowledgeable ?? [message]) {
+      await widget.rideController.acknowledgeQuickMessage(outstanding);
+    }
     _updateMapOverlays(updateNavigationPosition: false);
   }
 

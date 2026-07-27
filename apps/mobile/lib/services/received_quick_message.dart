@@ -206,9 +206,28 @@ class QuickMessageOrigin {
 /// A received quick message together with where its sender is — everything the
 /// ride surfaces need to present one, and nothing they have to work out.
 class RideQuickMessageAlert {
-  const RideQuickMessageAlert({required this.message, this.origin});
+  const RideQuickMessageAlert({
+    required this.message,
+    this.origin,
+    this.repeats = const [],
+  });
 
   final ReceivedQuickMessage message;
+
+  /// The other outstanding messages this alert stands for: the same rider saying
+  /// the same thing again, with [message] the one presented.
+  ///
+  /// One card is shown at a time and acknowledging it reveals the next, so three
+  /// `Stopped` messages from one rider produced three identical prompts and read
+  /// as one prompt that would not go away (#178). Three `Stopped` from one rider
+  /// is one fact, so they are collapsed into a single alert and acknowledged
+  /// together - which is why the messages are carried rather than counted.
+  final List<ReceivedQuickMessage> repeats;
+
+  /// Every message this alert answers for, the presented one first.
+  List<ReceivedQuickMessage> get acknowledgeable => [message, ...repeats];
+
+  int get repeatCount => repeats.length + 1;
 
   /// Null when the sender has never reported a position and did not relay one:
   /// a surface says so rather than showing a zero or an empty gap, the rule
