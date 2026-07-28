@@ -725,6 +725,88 @@ void main() {
     await tester.pump();
   });
 
+  // #210: a stationary rider sends no fixes at all, because the platform stream
+  // carries a distance filter. The readout therefore has to age out on its own,
+  // or it sits there claiming 18 mph while the bike is parked in a lay-by.
+  testWidgets('the rider speed readout ages out when the bike stops', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('map-stale-speed');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final now = DateTime.utc(2026, 7, 28, 9, 24);
+    final navigation = ValueNotifier<MapNavigationPosition>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 54.15, longitude: -4.48),
+        recordedAt: now,
+        accuracyMeters: 5,
+        headingDegrees: 0,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: _WidgetSpeedLimitProvider(),
+      clock: () => now,
+    );
+    addTearDown(speedLimitDisplay.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          speedLimitDisplay: speedLimitDisplay,
+        ),
+      ),
+    );
+    await tester.pump();
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 54.1504, longitude: -4.48),
+      recordedAt: now.add(const Duration(seconds: 1)),
+      accuracyMeters: 5,
+      headingDegrees: 0,
+      speedMetersPerSecond: 8,
+    );
+    await speedLimitDisplay.waitForIdle();
+    await tester.pump();
+
+    Text readout() => tester.widget<Text>(
+      find.byKey(const Key('posted-speed-limit-rider-speed')),
+    );
+
+    // 8 m/s is 18 mph — the number the tester photographed.
+    expect(readout().data, '18');
+
+    // No further fix arrives, because the bike has not moved 10 m.
+    await tester.pump(const Duration(seconds: 4));
+
+    expect(readout().data, '–');
+
+    // Pulling away reads the real speed straight away rather than climbing out
+    // of the value that was held while stopped.
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 54.1508, longitude: -4.48),
+      recordedAt: now.add(const Duration(seconds: 6)),
+      accuracyMeters: 5,
+      headingDegrees: 0,
+      speedMetersPerSecond: 4,
+    );
+    await tester.pump();
+
+    expect(readout().data, '9');
+
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('reports a gloved enforcement sighting from the map', (
     tester,
   ) async {
