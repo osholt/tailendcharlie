@@ -193,6 +193,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     for destination in args.output:
         write_bytes(destination, encoded)
+    rejected = collection["properties"]["rejectedUnnamedPasses"]
+    if rejected["count"]:
+        print(f"Rejected {rejected['count']} unnamed mountain_pass=yes node(s): {rejected['rule']}")
     if args.layer_directory is not None:
         write_layers(args.layer_directory, collection)
     if args.review_sample is not None:
@@ -285,7 +288,7 @@ def generate_catalogue(
     connection = sqlite3.connect(database_path)
     try:
         create_working_schema(connection)
-        passes = ingest_sequence(connection, sequence)
+        passes, rejected_unnamed_passes = ingest_sequence(connection, sequence)
         road_features = list(derive_road_features(connection, manifest))
         pass_features = list(derive_pass_features(connection, passes, manifest))
     finally:
@@ -323,6 +326,18 @@ def generate_catalogue(
                 )
                 for category in LAYER_FILENAMES
             },
+            "rejectedUnnamedPasses": {
+                "count": len(rejected_unnamed_passes),
+                "sourceFeatureIds": [
+                    osm_source_feature_id(source_id) for source_id in rejected_unnamed_passes
+                ],
+                "rule": (
+                    "A mountain_pass=yes node with no name is not published. "
+                    "OpenStreetMap uses the tag for ordinary local hill saddles, "
+                    "and a name is the only signal in the extract that separates "
+                    "those from a real pass."
+                ),
+            },
         },
         "features": selected,
     }
@@ -357,8 +372,14 @@ def create_working_schema(connection: sqlite3.Connection) -> None:
 def ingest_sequence(
     connection: sqlite3.Connection,
     sequence: Path,
-) -> list[PassPoint]:
+) -> tuple[list[PassPoint], list[str]]:
+    """Load roads into the working database and collect the named pass nodes.
+
+    Returns the accepted passes and the source ids of `mountain_pass=yes` nodes
+    rejected for having no name, so the count is reported rather than silent.
+    """
     passes: list[PassPoint] = []
+    rejected_unnamed_passes: list[str] = []
     with sequence.open("r", encoding="utf-8") as source:
         for line_number, raw_line in enumerate(source, start=1):
             raw_line = raw_line.lstrip("\x1e").strip()
@@ -379,10 +400,21 @@ def ingest_sequence(
                 coordinate = coordinate_pair(geometry.get("coordinates"))
                 if coordinate is None or not within_uk(coordinate):
                     continue
+                name = short_text(properties.get("name"), 120)
+                if not name:
+                    # OpenStreetMap tags many an ordinary local hill saddle
+                    # `mountain_pass=yes`. Every unnamed node reviewed for #158 was
+                    # one of those - a dead-end lane on Skye at 100 m, a hill on the
+                    # Isle of Wight - while every named node was a real pass. A pass
+                    # the locals have named is a pass. An elevation threshold cannot
+                    # do this job: it would drop Tullybaccart (213 m) and Scarth
+                    # Nick (232 m), which are genuine named passes.
+                    rejected_unnamed_passes.append(source_id)
+                    continue
                 passes.append(
                     PassPoint(
                         source_id=source_id,
-                        name=short_text(properties.get("name"), 120) or "Mapped mountain pass",
+                        name=name,
                         elevation=short_text(properties.get("ele"), 20),
                         coordinate=coordinate,
                     )
@@ -416,7 +448,7 @@ def ingest_sequence(
                     (cell_x, cell_y, road.source_id),
                 )
     connection.commit()
-    return passes
+    return passes, sorted(rejected_unnamed_passes)
 
 
 def road_from_feature(
@@ -685,7 +717,8 @@ def derive_pass_features(
                 "Mapped OpenStreetMap mountain_pass=yes node within 50 m of a "
                 "motorcycle-accessible road candidate."
             ),
-            "confidence": "high" if mountain_pass.name != "Mapped mountain pass" else "medium",
+            # Unnamed nodes never reach here, so every pass carries a real name.
+            "confidence": "high",
             "sourceName": "OpenStreetMap via Geofabrik",
             "sourceFeatureId": source_feature_id,
             "sourceFeatureIds": [source_feature_id],

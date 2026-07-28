@@ -19,6 +19,8 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+import publish_catalogue
+
 OUT = os.environ.get("DISCOVERY_WORK_DIR", "/private/tmp/discovery-out")
 ZOOM = 13
 TILE = 256
@@ -83,7 +85,10 @@ def data_uri(png):
 def main():
     catalogue = json.load(open(f"{OUT}/discovery-catalogue.geojson"))
     enrichment = json.load(open(f"{OUT}/enrichment-deterministic.json"))
-    overlay = json.load(open(f"{OUT}/editorial-overlay.json"))["entries"]
+    overlay_document = json.load(open(f"{OUT}/editorial-overlay.json"))
+    overlay = overlay_document["entries"]
+    overlay_by_source = publish_catalogue.index_overlay(overlay)
+    rejections = overlay_document.get("classificationRejections", {})
 
     passes = [f for f in catalogue["features"] if f["properties"]["category"] == "mountain_pass"]
 
@@ -112,8 +117,11 @@ def main():
         props = feature["properties"]
         lon, lat = feature["geometry"]["coordinates"]
         enriched = enrichment[props["id"]]
-        editorial = overlay[props["id"]]
-        status = editorial["researchStatus"]
+        # Re-matched by sourceFeatureId when a new extract has churned candidate ids,
+        # for the same reason publication does it: otherwise a rerun shows a reviewer
+        # "research pending" for work that exists.
+        editorial = overlay.get(props["id"]) or overlay_by_source.get(props["sourceFeatureId"])
+        status = editorial["researchStatus"] if editorial else "pending"
 
         tiles, mx, my, x0, y0 = tile_mosaic(lon, lat)
         images = []
@@ -138,11 +146,14 @@ def main():
             speed = '<span class="unknown">not mapped</span>'
 
         average = enriched["averageSpeedCheck"]
+        cameras = enriched["fixedSpeedCameras"]["count"]
         if average.get("present"):
             enforcement = "Average speed check"
-        elif enriched["fixedSpeedCameras"]:
-            enforcement = f"{enriched['fixedSpeedCameras']} fixed camera(s) nearby"
+        elif cameras:
+            enforcement = f"{cameras} fixed camera(s) mapped nearby"
         else:
+            # "none in OSM", never "none": the reviewer has to see which claim is
+            # being made. A researched enforcementNote below may contradict it.
             enforcement = '<span class="unknown">none in OSM</span>'
 
         locality = enriched.get("locality") or {}
@@ -158,21 +169,27 @@ def main():
             f'<span class="prov">{peak.get("elevation", "")}</span>'
         )
         roads_cell = html.escape(", ".join(enriched["roadRefs"] + enriched["roadNames"]) or "-")
-        name = html.escape(editorial.get("name") or props["name"])
+        name = html.escape((editorial or {}).get("name") or props["name"])
         badge = {
             "researched": ("ok", "researched"),
             "pending": ("warn", "research pending"),
-            "classification-rejected": ("bad", editorial.get("verdict", "rejected")),
         }[status]
 
         body = []
-        if status == "classification-rejected":
-            body.append(f'<p class="verdict-note">{html.escape(editorial["reason"])}</p>')
-        elif status == "researched":
+        if status == "researched":
             body.append(f'<p class="note">{html.escape(editorial["riderNote"])}</p>')
             body.append(
+                '<p class="busy"><b>Motorcycle evidence:</b> '
+                + html.escape(editorial["motorcycleEvidence"])
+                + ' <span class="prov">('
+                + html.escape(editorial["sourceVerification"])
+                + ")</span></p>"
+            )
+            # "not researched" rather than a dash: a reviewer must not read a blank as
+            # a finding that the road is quiet.
+            body.append(
                 '<p class="busy"><b>Busy:</b> '
-                + html.escape(editorial.get("busyPeriods", "-"))
+                + html.escape(editorial.get("busyPeriods") or "not researched")
                 + "</p>"
             )
             if editorial.get("enforcementNote"):
@@ -220,14 +237,16 @@ def main():
  </div>
 </article>""")
 
+    def entry_for(feature):
+        props = feature["properties"]
+        return overlay.get(props["id"]) or overlay_by_source.get(props["sourceFeatureId"])
+
     researched = sum(
-        1 for f in passes if overlay[f["properties"]["id"]]["researchStatus"] == "researched"
+        1 for f in passes if (entry_for(f) or {}).get("researchStatus") == "researched"
     )
-    rejected = sum(
-        1
-        for f in passes
-        if overlay[f["properties"]["id"]]["researchStatus"] == "classification-rejected"
-    )
+    # Rejected nodes are no longer catalogue features, so this is the count of recorded
+    # classification decisions rather than a count of cards on the sheet.
+    rejected = len(rejections)
 
     version = html.escape(catalogue["properties"]["catalogueVersion"])
     document = f"""<title>Mountain pass review - {version}</title>
@@ -287,8 +306,8 @@ says so rather than guessing.</p>
 <div class="tally">
  <div><b>{len(passes)}</b> candidates</div>
  <div><b>{researched}</b> researched &amp; cited</div>
- <div><b>{len(passes) - researched - rejected}</b> research pending</div>
- <div><b>{rejected}</b> wrong category</div>
+ <div><b>{len(passes) - researched}</b> research pending</div>
+ <div><b>{rejected}</b> rejected on classification, not published</div>
 </div>
 {"".join(cards)}
 <footer>Basemap &copy; OpenStreetMap contributors, ODbL. Candidate data derived from
@@ -301,8 +320,8 @@ inlined, so this file needs no network access.</footer>
     size = len(document.encode()) / 1e6
     print(f"\nwrote {path} ({size:.1f} MB)")
     print(
-        f"  {researched} researched, {rejected} wrong category, "
-        f"{len(passes) - researched - rejected} pending"
+        f"  {researched} researched, {len(passes) - researched} pending, "
+        f"{rejected} rejected on classification and not published"
     )
 
 

@@ -93,10 +93,27 @@ the generated file would mean the next regeneration silently destroyed them.
 
 Overlay entries are keyed by candidate id *and* carry `sourceFeatureId`, because
 candidate ids are content hashes: a new extract can change them, and the source id is
-what lets an orphaned entry be re-matched rather than lost.
+what lets an orphaned entry be re-matched rather than lost. `publish_catalogue.py`
+looks up the candidate id first and falls back to `sourceFeatureId`; without that
+fallback a regeneration would silently revert every researched pass to a generated
+`pending` note, which is the failure the overlay exists to prevent. A source id shared
+by two entries is a real ambiguity, so neither is offered for re-matching — attaching
+the wrong prose to a pass is worse than falling back to a generated note. A candidate
+with no overlay entry is `pending`, never a crash, so a fresh extract that introduces
+a new pass cannot break publication. `properties.editorialOverlay` reports how many
+entries were re-matched on each run.
+
+A pass candidate's `sourceFeatureId` is the summit *node*, which carries no speed
+limit of its own, so passes used to report `unknown` across the board.
+`enrich_deterministic.py` now resolves a summit node to the catalogue ways it is a
+vertex of — an exact id join, not a distance threshold, so it cannot pick up a car
+park lane next door. Where the crossing way is not itself a catalogue candidate the
+limit stays `unknown` rather than being guessed by proximity, and the note says which
+of those two situations applies.
 
 ```bash
 export DISCOVERY_WORK_DIR=/path/to/working/dir
+export PYTHONPATH=tools/discovery   # these stages import each other by module name
 python3.12 tools/discovery/enrich_deterministic.py   # derived facts, all candidates
 python3.12 tools/discovery/build_overlay.py          # researched content
 python3.12 tools/discovery/publish_catalogue.py      # merge, tier, write both copies
@@ -144,6 +161,12 @@ rule rather than applying this one to those numbers. Ratings are matched on
 `sourceFeatureId` before candidate `id`, for the same reason overlay entries are,
 and only ever against the catalogue release they were given on.
 
+`build_overlay.py` and `enrich_deterministic.py` both read the generated catalogue, so
+run them after `generate_catalogue.py` and before publication. The review sheet reports
+`N researched, N pending, N rejected on classification and not published` — the last
+number counts recorded decisions in `classificationRejections`, not cards on the sheet,
+because rejected nodes are no longer catalogue features.
+
 ### Honesty rules
 
 These are not style preferences. Each one exists because the opposite behaviour
@@ -156,8 +179,20 @@ would mislead a rider planning a route.
   what the code expected.
 - **Absent enforcement data is not absence of enforcement.** Only one candidate
   matches an OSM `enforcement=average_speed` relation, yet the A57 Snake Pass has
-  published average speed camera proposals that OSM does not record. Rider-facing
-  copy must say "not recorded in OpenStreetMap".
+  published average speed camera proposals that OSM does not record. Every
+  enforcement field therefore carries a provenance *and* a note saying what was
+  inspected: `averageSpeedCheck.present: false` reads "no relation covers this
+  candidate; coverage is incomplete", and `fixedSpeedCameras.count: 0` reads "none
+  mapped within 250 m", not "no cameras". Tullybaccart is the worked example —
+  Police Scotland lists the A923 as a mobile camera route, and OSM records nothing.
+- **An unknown limit says what was inspected.** A road candidate's own ways were
+  read, so "OpenStreetMap does not record a limit on this candidate's ways" is true
+  of them. A pass candidate is a *node*; if no way could be resolved, nothing was
+  inspected, and the note says so rather than claiming OSM holds no limit for a road
+  nobody looked at.
+- **Busy periods are never silently absent.** `busyPeriods` always carries a
+  provenance of `researched` or `not-researched`. An omitted field would be read as
+  "not busy", which is a claim nobody made.
 - **Descriptions are composed from verified facts, never invented.** A `pending`
   entry's note states road number, locality, length, bend density and speed limit —
   all from the extract. Subjective claims about how a road rides appear only on
@@ -165,6 +200,12 @@ would mislead a rider planning a route.
 - **A ref match is evidence about the road number, not the section.** The A5 runs
   from London to Holyhead and only part of it is celebrated. Researched entries quote
   the route the directory names so a planner can judge whether their section is it.
+- **Editorial claims are graded, not merely cited.** Each researched pass carries
+  `sourceVerification`: `fetched` means the cited page was retrieved and the claim
+  read off it; `listing-only` means the URL resolves and the claim is limited to what
+  the listing establishes — that a directory lists the road, not what its reviewers
+  said. `motorcycleEvidence: none-found` is a recorded outcome of searching, not a
+  placeholder to fill in later.
 
 ### Tiering
 
@@ -174,12 +215,22 @@ would mislead a rider planning a route.
 | `pending` | carries a name or road number, not yet corroborated | 1,903 |
 | discarded | anonymous, unclassified, short or straight, no corroboration | 156 |
 
-Rejected outright: 4 `mountain_pass=yes` nodes that are not passes in any sense a
-rider would accept (the lowest was 100 m, on a dead-end lane). A further 4 were
-reclassified to the road layer. **The generator should require a name on a
-`mountain_pass=yes` node** — every problem case was unnamed and every good candidate
-was named. An elevation threshold does not work: it would drop legitimate named
-passes such as Tullybaccart (213 m) and Scarth Nick (232 m).
+**The generator requires a name on a `mountain_pass=yes` node.** All eight unnamed
+nodes in the UK extract were ordinary local hill saddles — the lowest 100 m, on a
+dead-end lane on Skye; another on the Isle of Wight — and all 37 named nodes were
+real passes. An elevation threshold does not work: it would drop Tullybaccart (213 m)
+and Scarth Nick (232 m). `properties.rejectedUnnamedPasses` reports the count and the
+rejected source ids on every run, and `classificationRejections` in the overlay keeps
+the per-node verdict and its OSM source URLs as an audit trail.
+
+Four of those eight used to be reclassified into `good_biking_road`. They are not any
+more, because they were pass *nodes*: Point geometry in a line layer. The web planner
+partitions its map sources by geometry type, so every Point lands in the
+mountain-pass source and is drawn in the mountain-pass colour — reclassifying put
+four ordinary roads on the map as mountain passes. Three of the four roads (A4113,
+A859, B9120) are already road-layer candidates on their own way geometry, which is
+the right way for them to appear; the A928 is not, which is a road-layer scoring
+question rather than a reason to publish it as a pass.
 
 The score cannot drive any of this. The generator creams off the top 1,100 per
 category, so published scores run 81-100 with 1,376 candidates tied at 100 —

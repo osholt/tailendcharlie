@@ -5,3 +5,4 @@
 {"type":"Feature","id":"w400","properties":{"highway":"tertiary","name":"Urban Road","surface":"asphalt","maxspeed":"30 mph"},"geometry":{"type":"LineString","coordinates":[[-3.3,51.7],[-3.2,51.72],[-3.1,51.7]]}}
 {"type":"Feature","id":"n500","properties":{"mountain_pass":"yes","name":"Test Pass","ele":"410"},"geometry":{"type":"Point","coordinates":[-3.1501,51.5301]}}
 {"type":"Feature","id":"n501","properties":{"mountain_pass":"yes","name":"Disconnected Pass"},"geometry":{"type":"Point","coordinates":[-4.5,52.5]}}
+{"type":"Feature","id":"n502","properties":{"mountain_pass":"yes","ele":"415"},"geometry":{"type":"Point","coordinates":[-3.1502,51.5302]}}

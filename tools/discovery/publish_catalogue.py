@@ -20,6 +20,15 @@ Composed from verified facts only — road number, locality, length, bend densit
 speed limit, enforcement. That is factual composition, not research: it states what
 the extract says and nothing more. Subjective claims about how a road rides appear
 only for `researched` entries, quoted from the directory that made them.
+
+Overlay merge
+-------------
+An overlay entry is looked up by candidate id first, then by `sourceFeatureId`. The
+second lookup is what makes researched prose survive a regeneration: candidate ids
+are content hashes, so a new extract churns them, and without the fallback every
+researched pass would silently revert to a generated `pending` note. A candidate with
+no overlay entry at all is `pending`, never a crash — a fresh extract introducing a
+new pass must not break publication.
 """
 
 import json
@@ -44,6 +53,58 @@ CLASS_WORDS = {
     "unclassified": "Unclassified road",
     "residential": "Residential road",
 }
+
+
+BUSY_PERIODS_NOT_RESEARCHED = (
+    "Not researched. No claim is made either way about when this road is busy."
+)
+
+
+def index_overlay(entries):
+    """Index overlay entries by sourceFeatureId so orphans can be re-matched.
+
+    A sourceFeatureId shared by two entries is a genuine ambiguity, so neither is
+    offered for re-matching: attaching the wrong prose to a pass is worse than
+    falling back to a generated note.
+    """
+    by_source = {}
+    for candidate_id, entry in entries.items():
+        source_id = entry.get("sourceFeatureId")
+        if source_id:
+            by_source.setdefault(source_id, []).append(candidate_id)
+    return {
+        source_id: entries[matches[0]]
+        for source_id, matches in by_source.items()
+        if len(matches) == 1
+    }
+
+
+def overlay_entry_for(props, entries, by_source):
+    """Return (entry, how) for a candidate. `how` records which key matched."""
+    entry = entries.get(props["id"])
+    if entry is not None:
+        return entry, "candidate-id"
+    entry = by_source.get(props.get("sourceFeatureId"))
+    if entry is not None:
+        return entry, "source-feature-id"
+    return None, "none"
+
+
+def busy_periods_field(entry):
+    """Busy periods, always with provenance.
+
+    A bare missing field reads as "not busy" to anyone consuming the catalogue, which
+    is a claim nobody researched. `researched` carries the finding and its date;
+    `not-researched` says so out loud.
+    """
+    value = (entry or {}).get("busyPeriods")
+    if value:
+        return {
+            "value": value,
+            "provenance": "researched",
+            "researchedOn": (entry or {}).get("researchedOn"),
+        }
+    return {"value": None, "provenance": "not-researched", "note": BUSY_PERIODS_NOT_RESEARCHED}
 
 
 def road_name(derived, used):
@@ -150,9 +211,9 @@ def describe(props, derived, evidence):
 
     if derived["averageSpeedCheck"].get("present"):
         tail.append("an average speed check covers part of it")
-    elif derived["fixedSpeedCameras"]:
-        count = derived["fixedSpeedCameras"]
-        tail.append(f"{count} fixed speed camera{'s' if count > 1 else ''} nearby")
+    elif derived["fixedSpeedCameras"]["count"]:
+        count = derived["fixedSpeedCameras"]["count"]
+        tail.append(f"{count} fixed speed camera{'s' if count > 1 else ''} mapped nearby")
 
     if evidence:
         routes = "; ".join(evidence["routes"][:2])
@@ -170,7 +231,10 @@ def main():
     index = evidence_index.build()
     catalogue = json.load(open(f"{OUT}/discovery-catalogue.geojson"))
     derived_all = json.load(open(f"{OUT}/enrichment-deterministic.json"))
-    overlay = json.load(open(f"{OUT}/editorial-overlay.json"))["entries"]
+    overlay_document = json.load(open(f"{OUT}/editorial-overlay.json"))
+    overlay = overlay_document["entries"]
+    overlay_by_source = index_overlay(overlay)
+    rejections = overlay_document.get("classificationRejections", {})
     # Rider verdicts collected by the relay since the last publication, if an
     # export has been fetched. Absent is normal and behaves as it did before.
     ratings = road_ratings.load(catalogue["properties"]["catalogueVersion"])
@@ -197,6 +261,9 @@ def main():
             "pass-pending": 0,
             "pass-rejected": 0,
             "pass-reclassified": 0,
+            "pass-classification-rejected": 0,
+            "overlay-rematched-by-source-id": 0,
+            "overlay-missing": 0,
             "rider-verified": 0,
             "rider-flagged-for-removal": 0,
         },
@@ -211,38 +278,44 @@ def main():
         derived = derived_all[props["id"]]
         is_pass = props["category"] == "mountain_pass"
 
+        # A candidate a reviewer has rejected on classification grounds never ships,
+        # whatever layer it claims to be in. The generator now drops unnamed pass
+        # nodes itself, so this is the belt to that braces: an extract that reinstates
+        # one, or a named candidate a reviewer later rejects, is still caught here.
+        if props.get("sourceFeatureId") in rejections:
+            tally["pass-classification-rejected"] += 1
+            continue
+
+        editorial, matched_by = overlay_entry_for(props, overlay, overlay_by_source)
+        if matched_by == "source-feature-id":
+            tally["overlay-rematched-by-source-id"] += 1
+            props["overlayMatch"] = "re-matched-by-source-feature-id"
+        elif is_pass and editorial is None:
+            tally["overlay-missing"] += 1
+
         if is_pass:
-            editorial = overlay[props["id"]]
-            status = editorial["researchStatus"]
-            if status == "classification-rejected":
-                if editorial["verdict"] == "reject":
-                    tally["pass-rejected"] += 1
-                    continue
-                # Reclassified: it is a road, not a pass. Keep it in the road layer.
-                # The name has to come from the overlay: these candidates are pass
-                # *nodes*, so they carry no way refs of their own to fall back on,
-                # and falling back would keep the placeholder name verbatim.
-                props["category"] = "good_biking_road"
-                props["name"] = editorial["name"]
-                props["riderNote"] = editorial["riderNote"]
-                props["researchStatus"] = "researched"
-                props["reclassifiedFrom"] = "mountain_pass"
-                props["reclassificationReason"] = editorial["reason"]
-                tally["pass-reclassified"] += 1
-            elif status == "researched":
+            if editorial and editorial["researchStatus"] == "researched":
                 props["name"] = summit_name(editorial["name"], used_names)
                 props["riderNote"] = editorial["riderNote"]
-                props["busyPeriods"] = editorial.get("busyPeriods")
+                props["motorcycleEvidence"] = editorial["motorcycleEvidence"]
+                # Ships on the feature, not just in the overlay: a rider reading the
+                # catalogue has to be able to tell a claim read off a retrieved page
+                # from one that only rests on a directory listing.
+                props["sourceVerification"] = editorial["sourceVerification"]
                 if editorial.get("enforcementNote"):
                     props["enforcementNote"] = editorial["enforcementNote"]
+                if editorial.get("crossingRoad"):
+                    props["crossingRoad"] = editorial["crossingRoad"]
                 props["evidenceSources"] = editorial["sources"]
                 props["researchStatus"] = "researched"
+                props["researchedOn"] = editorial["researchedOn"]
                 tally["pass-researched"] += 1
             else:
                 props["researchStatus"] = "pending"
                 props["riderNote"] = describe_pass(props, derived)
                 props["name"] = summit_name(props["name"], used_names)
                 tally["pass-pending"] += 1
+            props["busyPeriods"] = busy_periods_field(editorial)
         else:
             evidence = next((index[r] for r in derived["roadRefs"] if r in index), None)
             has_identity = bool(derived["roadRefs"] or derived["roadNames"])
@@ -267,6 +340,9 @@ def main():
             props["name"] = road_name(derived, used_names)
 
             props["riderNote"] = describe(props, derived, evidence)
+            # No road candidate has had its busy periods researched, and saying so is
+            # the point: an omitted field would be read as "not busy".
+            props["busyPeriods"] = busy_periods_field(editorial)
 
         # Riders who have actually ridden a road are the only source of truth
         # about whether it belongs here, so their verdict outranks a directory
@@ -323,12 +399,38 @@ def main():
             "evidenceSource": evidence_index.SOURCE,
             "enforcementNote": (
                 "Average speed check and camera fields report what OpenStreetMap "
-                "records. Absence means not recorded, not absence of enforcement."
+                "records, and each carries a provenance and a note. Absence means "
+                "not recorded, not absence of enforcement: OpenStreetMap holds one "
+                "average-speed relation for the whole United Kingdom extract, while "
+                "the A57 Snake Pass has published average speed camera proposals it "
+                "does not record."
             ),
             "speedLimitNote": (
                 "Speed limits carry provenance: tagged, inferred-from-maxspeed-type, "
                 "or unknown. An unknown limit is not an unrestricted road."
             ),
+            "busyPeriodsNote": (
+                "busyPeriods carries a provenance of researched or not-researched. "
+                "not-researched means nobody has checked, not that the road is quiet."
+            ),
+            "sourceVerificationNote": (
+                "On a researched candidate, sourceVerification is `fetched` when the "
+                "cited page was retrieved and the claim read off it, or "
+                "`listing-only` when the URL resolves and the claim is limited to "
+                "what the listing establishes. motorcycleEvidence `none-found` "
+                "records that a search was done and found nothing."
+            ),
+            "editorialOverlay": {
+                "schemaVersion": overlay_document["schemaVersion"],
+                "note": (
+                    "Researched names, rider notes, motorcycle evidence and busy "
+                    "periods come from editorial-overlay.json and are merged here. "
+                    "They are re-matched by sourceFeatureId when candidate ids "
+                    "change, so a regeneration cannot destroy them."
+                ),
+                "rematchedBySourceFeatureId": tally["overlay-rematched-by-source-id"],
+                "classificationRejections": len(rejections),
+            },
         }
     )
 
