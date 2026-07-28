@@ -47,11 +47,17 @@ void main() {
           kind: RoutePathKind.track,
           points: [
             GeoPoint(latitude: 52, longitude: -3),
-            GeoPoint(latitude: 52.01, longitude: -3.01),
+            GeoPoint(latitude: 52.005, longitude: -3.005),
           ],
         ),
       ],
       waypoints: const [],
+      // Both manoeuvres sit on the first, longer path: the one the group rides.
+      // They were on one path each until #179 stopped scoring manoeuvres that
+      // lie off the ridden line - a road nobody on this ride will use cannot be
+      // missed, so it earns no marking position. That rule is asserted directly
+      // in test/services/route_marker_plan_test.dart; this test is about the two
+      // paths staying visually separate, which they still are.
       maneuvers: const [
         RouteManeuver(
           position: GeoPoint(latitude: 51.005, longitude: -2.005),
@@ -59,7 +65,7 @@ void main() {
           modifier: 'left',
         ),
         RouteManeuver(
-          position: GeoPoint(latitude: 52.005, longitude: -3.005),
+          position: GeoPoint(latitude: 51.0075, longitude: -2.0075),
           type: 'off ramp',
           modifier: 'left',
         ),
@@ -158,7 +164,136 @@ void main() {
     expect(find.byKey(const Key('maneuver-list')), findsOneWidget);
     expect(find.text('2nd exit, straight on'), findsOneWidget);
   });
+
+  testWidgets('a suggested marking position can be rejected and restored', (
+    tester,
+  ) async {
+    final reviews = <MarkerPlanReview>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RouteReviewScreen(
+          route: _junctionRoute(),
+          distanceUnit: DistanceUnit.kilometres,
+          basemapConfiguration: const BasemapConfiguration(),
+          onMarkerReviewChanged: reviews.add,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final scrollable = find.byType(Scrollable).last;
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('marker-plan-maneuver-0')),
+      160,
+      scrollable: scrollable,
+    );
+    expect(find.text('Turn left marker'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('marker-plan-reject-maneuver-0')));
+    await tester.pump();
+
+    expect(reviews.single.rejected.single.id, 'maneuver-0');
+    expect(find.byKey(const Key('marker-plan-maneuver-0')), findsNothing);
+    expect(
+      find.byKey(const Key('marker-plan-rejected-maneuver-0')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('marker-plan-restore-maneuver-0')));
+    await tester.pump();
+
+    expect(reviews.last.rejected, isEmpty);
+    expect(find.byKey(const Key('marker-plan-maneuver-0')), findsOneWidget);
+  });
+
+  testWidgets('a junction the detector missed can be added by hand', (
+    tester,
+  ) async {
+    final reviews = <MarkerPlanReview>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RouteReviewScreen(
+          route: _junctionRoute(),
+          distanceUnit: DistanceUnit.kilometres,
+          basemapConfiguration: const BasemapConfiguration(),
+          onMarkerReviewChanged: reviews.add,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('marker-plan-add')),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.byKey(const Key('marker-plan-add')));
+    await tester.pumpAndSettle();
+
+    final candidate = find
+        .descendant(
+          of: find.byKey(const Key('marker-plan-candidates')),
+          matching: find.byType(ListTile),
+        )
+        .first;
+    await tester.tap(candidate);
+    await tester.pumpAndSettle();
+
+    expect(reviews.single.added, hasLength(1));
+    expect(reviews.single.added.single.label, contains('Orchard Close'));
+
+    // The added position joins the plan even though the gates dropped it: the
+    // person reviewing gets the last word about a junction the detector missed.
+    await tester.scrollUntilVisible(
+      find.byKey(Key('marker-plan-${reviews.single.added.single.id}')),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(
+      find.text('Added during review because the detector missed it.'),
+      findsOneWidget,
+    );
+  });
 }
+
+/// A route with one genuine left turn the group takes, plus a side road it rides
+/// straight past. The straight-through junction is the review surface's "the
+/// detector missed one" candidate.
+ImportedRoute _junctionRoute() => ImportedRoute(
+  id: 'junctions',
+  name: 'Junction route',
+  importedAt: DateTime.utc(2026, 7, 27),
+  sourceFileName: 'junctions.gpx',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 51.5, longitude: -2.5),
+        GeoPoint(latitude: 51.502, longitude: -2.5),
+        GeoPoint(latitude: 51.504, longitude: -2.5),
+        GeoPoint(latitude: 51.504, longitude: -2.504),
+      ],
+    ),
+  ],
+  waypoints: const [],
+  maneuvers: const [
+    RouteManeuver(
+      position: GeoPoint(latitude: 51.504, longitude: -2.5),
+      type: 'turn',
+      modifier: 'left',
+      bearingBeforeDegrees: 0,
+      bearingAfterDegrees: 270,
+    ),
+    RouteManeuver(
+      position: GeoPoint(latitude: 51.502, longitude: -2.5),
+      type: 'turn',
+      modifier: 'right',
+      name: 'Orchard Close',
+      bearingBeforeDegrees: 0,
+      bearingAfterDegrees: 1,
+    ),
+  ],
+);
 
 ImportedRoute _route(double longitudeDelta) => ImportedRoute(
   id: 'route-$longitudeDelta',
