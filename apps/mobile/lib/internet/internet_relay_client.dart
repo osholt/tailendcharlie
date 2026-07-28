@@ -446,6 +446,11 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
   final DateTime Function() _clock;
   RelayCompatibilityResult? _cachedCompatibility;
 
+  /// How hard to try the compatibility probe before giving up on an answer and
+  /// letting the directory call itself speak (#208).
+  static const _compatibilityProbeAttempts = 2;
+  static const _compatibilityRetryBackoff = Duration(milliseconds: 300);
+
   @override
   Future<void> register(RideSession session) async {
     _validateConfiguration();
@@ -551,28 +556,45 @@ class HttpRideCodeDirectory implements RideCodeDirectory {
     }
   }
 
+  /// Checks compatibility before a directory call, and refuses the call only on
+  /// a definite answer that the two ends disagree.
+  ///
+  /// A probe that times out says nothing about compatibility, and it used to be
+  /// fatal: a tester on a working 4G connection could not rejoin her own ride,
+  /// and the sentence she was shown was "Ride service compatibility check timed
+  /// out" (#208). Treating silence as incompatible is the wrong default for an
+  /// offline-first app — and it is not even the safe one, because
+  /// `InternetRelayWorker`'s `updateRequired` phase is what actually stops an
+  /// incompatible client from synchronising. That gate stays where it is.
+  ///
+  /// So: retry a little, then proceed on anything short of a verdict. A join that
+  /// goes ahead against an unreachable relay fails at the directory call itself,
+  /// with an error about the connection, which is the truth.
   Future<void> _ensureCompatibility() async {
-    try {
-      final result = await _fetchCompatibility(
-        configuration: configuration,
-        client: _client,
-        descriptor: _clientDescriptor,
-        clock: _clock,
-        cached: _cachedCompatibility,
-      );
-      _cachedCompatibility = result;
-      if (result.canSynchronize) return;
-      throw RideCodeDirectoryException(
-        result.message ?? 'This app and the ride service are not compatible.',
-        retryable:
+    for (var attempt = 0; ; attempt += 1) {
+      try {
+        final result = await _fetchCompatibility(
+          configuration: configuration,
+          client: _client,
+          descriptor: _clientDescriptor,
+          clock: _clock,
+          cached: _cachedCompatibility,
+        );
+        _cachedCompatibility = result;
+        if (result.canSynchronize ||
             result.disposition ==
-            RelayCompatibilityDisposition.temporarilyUnavailable,
-      );
-    } on InternetRelayException catch (error) {
-      throw RideCodeDirectoryException(
-        error.message,
-        retryable: error.retryable,
-      );
+                RelayCompatibilityDisposition.temporarilyUnavailable) {
+          return;
+        }
+        // A real disagreement about the protocol. Updating the app is the only
+        // way through it, so saying so now beats a confusing failure later.
+        throw RideCodeDirectoryException(
+          result.message ?? 'This app and the ride service are not compatible.',
+        );
+      } on InternetRelayException {
+        if (attempt >= _compatibilityProbeAttempts - 1) return;
+        await Future<void>.delayed(_compatibilityRetryBackoff * (attempt + 1));
+      }
     }
   }
 
