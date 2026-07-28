@@ -2748,7 +2748,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     for (final event in events) {
       if (_publishedEventIds.contains(event.id)) continue;
       try {
-        await relay.publish(event);
+        // Bounded, because this is an await on a transport from a chain that a
+        // rejoin and a cold start both walk over the whole eligible backlog. A
+        // publish that never returns would stall every later event behind it for
+        // as long as the app is running, and a phone in that state is
+        // indistinguishable from a hung app (#209).
+        await relay
+            .publish(event)
+            .timeout(
+              _nearbyPublishTimeout,
+              onTimeout: () {
+                throw TimeoutException('nearby publish', _nearbyPublishTimeout);
+              },
+            );
         _publishedEventIds.add(event.id);
       } on Object catch (error) {
         if (kDebugMode) {
@@ -2757,6 +2769,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       }
     }
   }
+
+  /// One nearby publish is a local hand-off to the transport, not a round trip,
+  /// so seconds are already generous. The number exists to make "never" and
+  /// "slow" different outcomes.
+  static const _nearbyPublishTimeout = Duration(seconds: 5);
 
   @override
   Widget build(BuildContext context) {

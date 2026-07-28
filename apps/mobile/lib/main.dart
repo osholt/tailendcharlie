@@ -27,9 +27,40 @@ Future<void> main() async {
   // equivalent composition mode and is unaffected either way.
   MapLibreMap.useHybridComposition = true;
 
-  final riderProfile = await RiderProfileController.load();
+  // Nothing here paints until every one of these has finished, so the launch
+  // sequence is exactly as slow as their sum and hangs if any one of them hangs.
+  // A tester's phone came back up after a crash and stopped at a spinner (#209),
+  // and a serial chain of nine disk and preference reads is the shape of startup
+  // that produces that. Only the genuine dependencies stay ordered.
+  final (
+    riderProfile,
+    distanceUnits,
+    mapStyleMode,
+    rideCodePreference,
+    sharedRoutes,
+    speedLimitDisplay,
+    recordedRoutes,
+    // Null unless this build has a discovery catalogue endpoint compiled in, so
+    // the rating card never appears where an answer could not be delivered
+    // (#159).
+    roadRatings,
+    completedRideStore,
+  ) = await (
+    RiderProfileController.load(),
+    DistanceUnitController.load(
+      locale: WidgetsBinding.instance.platformDispatcher.locale,
+    ),
+    MapStyleModeController.load(),
+    RideCodePreferenceController.load(),
+    SharedRouteController.load(),
+    SpeedLimitDisplayController.load(),
+    JsonFileRecordedRouteStore.openDefault(),
+    RoadRatingController.openDefault(),
+    JsonFileCompletedRideStore.openDefault(),
+  ).wait;
+
   final completedRides = await CompletedRidesController.load(
-    await JsonFileCompletedRideStore.openDefault(),
+    completedRideStore,
   );
   final controller = RideController(
     SqliteEventStore(),
@@ -39,17 +70,6 @@ Future<void> main() async {
     completedRideStore: completedRides,
   );
   await controller.initialize();
-  final distanceUnits = await DistanceUnitController.load(
-    locale: WidgetsBinding.instance.platformDispatcher.locale,
-  );
-  final mapStyleMode = await MapStyleModeController.load();
-  final rideCodePreference = await RideCodePreferenceController.load();
-  final sharedRoutes = await SharedRouteController.load();
-  final speedLimitDisplay = await SpeedLimitDisplayController.load();
-  final recordedRoutes = await JsonFileRecordedRouteStore.openDefault();
-  // Null unless this build has a discovery catalogue endpoint compiled in, so
-  // the rating card never appears where an answer could not be delivered (#159).
-  final roadRatings = await RoadRatingController.openDefault();
 
   runApp(
     RideRelayApp(
