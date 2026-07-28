@@ -616,8 +616,9 @@ class _StubRouting implements RoadRoutingService {
 
   @override
   Future<RoadRouteResult> routeThrough(
-    List<route_domain.GeoPoint> waypoints,
-  ) async {
+    List<route_domain.GeoPoint> waypoints, {
+    route_domain.RoutePreferences? preferences,
+  }) async {
     calls.add(List.unmodifiable(waypoints));
     final first = waypoints.first;
     final last = waypoints.last;
@@ -644,8 +645,9 @@ class _FailingRouting implements RoadRoutingService {
 
   @override
   Future<RoadRouteResult> routeThrough(
-    List<route_domain.GeoPoint> waypoints,
-  ) async {
+    List<route_domain.GeoPoint> waypoints, {
+    route_domain.RoutePreferences? preferences,
+  }) async {
     calls += 1;
     throw const FormatException('No road route was found.');
   }

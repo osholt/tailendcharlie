@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -12,29 +11,24 @@ import {
   formatRouteBendScore,
   gpxFileName,
   motorcycleCostingOptions,
+  requiresMotorcycleCosting,
   routeBendScore,
+  routePreferencesGpxExtension,
   routeDetourLimit,
   routeSelfCrossingArrows,
   StateHistory,
 } from "./planner-core.mjs";
 
-const reviewedSouthWalesCatalogue = JSON.parse(
-  readFileSync(
-    new URL("./data/discovery-catalogue.geojson", import.meta.url),
-    "utf8",
-  ),
+/// A deterministic sinusoidal lane. Byte-for-byte the coordinates the mobile
+/// twistiness test uses, so both implementations of the score are pinned to one
+/// number.
+const SINUSOIDAL_LANE = Object.freeze(
+  Array.from({ length: 40 }, (_unused, index) => [
+    Number((-2.5 + index * 0.004).toFixed(6)),
+    Number((51.4 + Math.sin(index / 2.5) * 0.006).toFixed(6)),
+  ]),
 );
-
-function reviewedRoute(featureId) {
-  const feature = reviewedSouthWalesCatalogue.features.find(
-    (candidate) => candidate.properties.id === featureId,
-  );
-  const coordinates = feature.geometry.coordinates;
-  return {
-    distance: geometryDistance(coordinates),
-    geometry: { coordinates },
-  };
-}
+const SINUSOIDAL_LANE_METRES = 12963.68838;
 
 function geometryDistance(coordinates) {
   return coordinates
@@ -126,14 +120,23 @@ test("twisty routing chooses a bendier reasonable alternative", () => {
 });
 
 test("bend score is calibrated on reviewed UK routes and rejects manoeuvres", () => {
-  const blackMountain = reviewedRoute("poc-a4069-black-mountain");
-  const gospelPass = reviewedRoute("poc-gospel-pass-road");
-  const blackMountainScore = routeBendScore(blackMountain);
-  const gospelPassScore = routeBendScore(gospelPass);
+  // The fixture is a self-contained sinusoidal lane rather than a catalogue
+  // feature: the catalogue is regenerated (#161, #158) and its ids move, and the
+  // point of this test is that the score is reproducible. The identical
+  // coordinates and expected value are pinned in the mobile suite
+  // (apps/mobile/test/services/route_twistiness_test.dart), which is what stops
+  // the two implementations of the score drifting apart (#182).
+  const sinusoidalLane = { distance: SINUSOIDAL_LANE_METRES, geometry: { coordinates: SINUSOIDAL_LANE } };
+  const score = routeBendScore(sinusoidalLane);
 
-  assert.equal(routeBendScore(blackMountain), blackMountainScore);
-  assert.ok(blackMountainScore >= 14 && blackMountainScore <= 16);
-  assert.ok(gospelPassScore >= 15 && gospelPassScore <= 20);
+  assert.equal(routeBendScore(sinusoidalLane), score, "the score is deterministic");
+  assert.ok(Math.abs(score - 29.115031244781) < 1e-9, `score was ${score}`);
+  assert.equal(formatRouteBendScore(score), "29°/km · Twisty");
+  // Geometry length alone reproduces the same score, which is the case a stored
+  // route without a provider summary has.
+  assert.ok(
+    Math.abs(geometryDistance(SINUSOIDAL_LANE) - SINUSOIDAL_LANE_METRES) < 1e-6,
+  );
 
   const uTurn = [
     [-3.2, 51.48],
@@ -199,9 +202,11 @@ test("motorcycle routing keeps motorway and major-road preferences separate", ()
       use_highways: 1,
       use_tolls: 0.5,
       use_ferry: 0.5,
+      use_trails: 0,
       exclude_highways: true,
       exclude_tolls: false,
       exclude_ferries: false,
+      exclude_unpaved: true,
     },
   );
   assert.deepEqual(
@@ -215,14 +220,114 @@ test("motorcycle routing keeps motorway and major-road preferences separate", ()
       use_highways: 0.08,
       use_tolls: 0,
       use_ferry: 0,
+      use_trails: 0,
       exclude_highways: false,
       exclude_tolls: true,
       exclude_ferries: true,
+      exclude_unpaved: true,
     },
   );
   assert.equal(
     motorcycleCostingOptions({ routeStyle: "very-twisty" }).use_highways,
     0.15,
+  );
+});
+
+test("unsurfaced byways are avoided by default and by surface tagging", () => {
+  // The default. Documented in docs/route-twistiness.md and matched by
+  // RoutePreferences.defaults in the mobile app.
+  const defaults = motorcycleCostingOptions();
+  assert.equal(defaults.exclude_unpaved, true);
+  assert.equal(defaults.use_trails, 0);
+
+  // A trail rider who asks for them gets both surface levers relaxed together.
+  const seeking = motorcycleCostingOptions({ avoidUnsurfacedByways: false });
+  assert.equal(seeking.exclude_unpaved, false);
+  assert.equal(seeking.use_trails, 0.5);
+
+  // The preference is independent of every other one.
+  assert.equal(
+    motorcycleCostingOptions({ avoidMotorways: true }).exclude_unpaved,
+    true,
+  );
+  assert.equal(
+    motorcycleCostingOptions({
+      routeStyle: "very-twisty",
+      avoidUnsurfacedByways: false,
+    }).use_highways,
+    0.15,
+  );
+});
+
+test("the engine choice matches the mobile app's dispatch rule", () => {
+  assert.equal(requiresMotorcycleCosting(), false, "defaults stay on OSRM");
+  assert.equal(
+    requiresMotorcycleCosting({ routeStyle: "very-twisty" }),
+    false,
+    "a bendier style needs only OSRM alternatives",
+  );
+  for (const preference of [
+    "avoidMotorways",
+    "avoidMajorRoads",
+    "avoidTolls",
+    "avoidFerries",
+  ]) {
+    assert.equal(
+      requiresMotorcycleCosting({ [preference]: true }),
+      true,
+      `${preference} is a hard exclusion OSRM cannot express`,
+    );
+  }
+  // OSRM's car profile does not route highway=track at all, so seeking byways
+  // is the byway case it cannot serve.
+  assert.equal(
+    requiresMotorcycleCosting({ avoidUnsurfacedByways: false }),
+    true,
+  );
+});
+
+test("shared GPX states the preferences the route was planned with", () => {
+  const stops = [
+    { name: "Start", longitude: -2.5, latitude: 51.4 },
+    { name: "Finish", longitude: -2.4, latitude: 51.45 },
+  ];
+  const routeCoordinates = [
+    [-2.5, 51.4],
+    [-2.45, 51.42],
+    [-2.4, 51.45],
+  ];
+  const gpx = buildGpx({
+    rideName: "Sunday ride",
+    stops,
+    routeCoordinates,
+    createdAt: new Date("2026-07-27T09:00:00Z"),
+    preferences: {
+      routeStyle: "twisty",
+      avoidMotorways: true,
+      avoidUnsurfacedByways: true,
+    },
+  });
+
+  assert.match(gpx, /<tec:route-preferences /);
+  assert.match(gpx, /style="twisty"/);
+  assert.match(gpx, /avoid-motorways="true"/);
+  assert.match(gpx, /byway-surface="avoid-unsurfaced"/);
+  assert.match(gpx, /avoid-ferries="false"/);
+  // A route with nothing recorded stays silent rather than claiming a default.
+  assert.doesNotMatch(
+    buildGpx({
+      rideName: "Sunday ride",
+      stops,
+      routeCoordinates,
+      createdAt: new Date("2026-07-27T09:00:00Z"),
+    }),
+    /tec:route-preferences/,
+  );
+  assert.equal(
+    routePreferencesGpxExtension({ avoidUnsurfacedByways: false }).includes(
+      'byway-surface="allow-unsurfaced"',
+    ),
+    true,
   );
 });
 

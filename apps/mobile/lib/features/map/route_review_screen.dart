@@ -8,6 +8,7 @@ import '../../services/basemap_configuration.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/route_marker_plan.dart';
+import '../../services/route_twistiness.dart';
 import 'maneuver_list_screen.dart';
 import 'resolved_route_map_preview.dart';
 
@@ -21,6 +22,7 @@ class RouteReviewScreen extends StatefulWidget {
     required this.basemapConfiguration,
     this.distanceMeters,
     this.duration,
+    this.twistinessScore,
     this.warnings = const [],
     this.previousRoute,
     this.canEditStops = false,
@@ -32,6 +34,11 @@ class RouteReviewScreen extends StatefulWidget {
   final BasemapConfiguration basemapConfiguration;
   final double? distanceMeters;
   final Duration? duration;
+
+  /// The provider-scored twistiness of this route, when it was planned online.
+  /// Falls back to scoring the stored geometry, which is what a route loaded
+  /// from a share code or a file has.
+  final double? twistinessScore;
   final List<String> warnings;
   final ImportedRoute? previousRoute;
   final bool canEditStops;
@@ -48,6 +55,7 @@ class RouteReviewScreen extends StatefulWidget {
     required BasemapConfiguration basemapConfiguration,
     double? distanceMeters,
     Duration? duration,
+    double? twistinessScore,
     List<String> warnings = const [],
     ImportedRoute? previousRoute,
     bool canEditStops = false,
@@ -62,6 +70,7 @@ class RouteReviewScreen extends StatefulWidget {
             basemapConfiguration: basemapConfiguration,
             distanceMeters: distanceMeters,
             duration: duration,
+            twistinessScore: twistinessScore,
             warnings: warnings,
             previousRoute: previousRoute,
             canEditStops: canEditStops,
@@ -84,6 +93,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   BasemapConfiguration get basemapConfiguration => widget.basemapConfiguration;
   double? get distanceMeters => widget.distanceMeters;
   Duration? get duration => widget.duration;
+  double? get twistinessScore => widget.twistinessScore;
   List<String> get warnings => widget.warnings;
   ImportedRoute? get previousRoute => widget.previousRoute;
   bool get canEditStops => widget.canEditStops;
@@ -396,8 +406,29 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                               '${markerPlan.musterPoints.length} muster '
                               'point${markerPlan.musterPoints.length == 1 ? '' : 's'}',
                         ),
+                      // The same score, thresholds and wording the web planner
+                      // shows for the same geometry (#46, #182).
+                      _SummaryItem(
+                        icon: Icons.moving,
+                        label: RouteTwistiness.describe(
+                          twistinessScore ??
+                              RouteTwistiness.score(
+                                previewPaths
+                                    .expand((points) => points)
+                                    .toList(growable: false),
+                                distanceMeters: effectiveDistance,
+                              ),
+                        ),
+                      ),
                     ],
                   ),
+                  if (route.preferences case final preferences?) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Planned with: ${preferences.summary}',
+                      style: const TextStyle(color: Color(0xFF98A3B1)),
+                    ),
+                  ],
                   if (!basemapConfiguration.usesMapLibre &&
                       !basemapConfiguration.usesLegacyRaster) ...[
                     const SizedBox(height: 10),

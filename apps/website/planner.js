@@ -7,6 +7,7 @@ import {
   formatRouteBendScore,
   gpxFileName,
   motorcycleCostingOptions,
+  requiresMotorcycleCosting,
   routeBendScore,
   routeSelfCrossingArrows,
   StateHistory,
@@ -36,6 +37,7 @@ import {
   DISCOVERY_CATALOGUE_URL,
   DISCOVERY_CATEGORIES,
   discoveryFeatureAnchor,
+  discoveryRoadFacts,
   discoveryRouteStop,
   emptyFeatureCollection,
   filterDiscoveryFeatures,
@@ -68,6 +70,7 @@ const elements = {
   avoidMajorRoads: document.querySelector("#avoid-major-roads"),
   avoidMotorways: document.querySelector("#avoid-motorways"),
   avoidTolls: document.querySelector("#avoid-tolls"),
+  avoidUnsurfacedByways: document.querySelector("#avoid-unsurfaced-byways"),
   bikerBrowser: document.querySelector("#biker-browser"),
   bikerCatalogResults: document.querySelector("#biker-catalog-results"),
   bikerCatalogStatus: document.querySelector("#biker-catalog-status"),
@@ -158,6 +161,11 @@ let discoveryCatalogue = emptyFeatureCollection();
 let visibleDiscoveryCatalogue = emptyFeatureCollection();
 let discoveryLoadRequest = null;
 let discoveryPopup = null;
+// Which candidate the popup is describing, and whether it was opened by hover
+// rather than by a deliberate click. A hovered popup gets out of the way; a
+// clicked one stays put.
+let discoveryPopupFeatureId = null;
+let discoveryPopupIsHover = false;
 let suggestionCoordinate = null;
 let suggestionGeometry = null;
 let suggestionSegmentStart = null;
@@ -171,6 +179,7 @@ const routePreferenceElements = [
   elements.avoidMajorRoads,
   elements.avoidTolls,
   elements.avoidFerries,
+  elements.avoidUnsurfacedByways,
 ];
 const discoveryLayerElements = [
   elements.layerTwisty,
@@ -411,6 +420,25 @@ map.on("error", (event) => {
   }
 });
 map.on("moveend", updateDiscoveryViewport);
+
+// Hover is the natural interaction for these facts on a desktop (#160). It shows
+// the same content the click popup shows, so the two cannot disagree, and it
+// never replaces a popup the rider has deliberately opened by clicking.
+map.on("mousemove", (event) => {
+  if (routeDrag) return;
+  const feature = queryDiscoveryFeature(event.point);
+  map.getCanvas().style.cursor = feature ? "pointer" : "";
+  if (!feature) {
+    if (discoveryPopupIsHover) closeDiscoveryPopup();
+    return;
+  }
+  if (discoveryPopupFeatureId === feature.properties?.id) return;
+  if (discoveryPopup && !discoveryPopupIsHover) return;
+  showDiscoveryPopup(feature, event.lngLat, { hover: true });
+});
+map.on("mouseout", () => {
+  if (discoveryPopupIsHover) closeDiscoveryPopup();
+});
 
 elements.placeSearch.addEventListener("submit", searchPlaces);
 elements.bikerBrowser.addEventListener("toggle", toggleBikerBrowser);
@@ -799,6 +827,7 @@ function routeStateSnapshot() {
     avoidMajorRoads: elements.avoidMajorRoads.checked,
     avoidTolls: elements.avoidTolls.checked,
     avoidFerries: elements.avoidFerries.checked,
+    avoidUnsurfacedByways: elements.avoidUnsurfacedByways.checked,
   };
 }
 
@@ -832,6 +861,12 @@ function applyRouteState(state) {
   elements.avoidMajorRoads.checked = Boolean(state.avoidMajorRoads);
   elements.avoidTolls.checked = Boolean(state.avoidTolls);
   elements.avoidFerries.checked = Boolean(state.avoidFerries);
+  // A stored draft that predates the byway preference gets the documented
+  // default rather than silently allowing green lanes.
+  elements.avoidUnsurfacedByways.checked =
+    state.avoidUnsurfacedByways === undefined
+      ? true
+      : Boolean(state.avoidUnsurfacedByways);
   for (const preference of routePreferenceElements) {
     rememberPreferenceValue({ target: preference });
   }
@@ -885,6 +920,7 @@ function routePreferenceStateKey(preference) {
     "avoid-major-roads": "avoidMajorRoads",
     "avoid-tolls": "avoidTolls",
     "avoid-ferries": "avoidFerries",
+    "avoid-unsurfaced-byways": "avoidUnsurfacedByways",
   }[preference.id];
 }
 
@@ -933,6 +969,11 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
     if (elements.avoidMajorRoads.checked) preferenceNotes.push("major roads avoided");
     if (elements.avoidTolls.checked) preferenceNotes.push("tolls excluded");
     if (elements.avoidFerries.checked) preferenceNotes.push("ferries excluded");
+    preferenceNotes.push(
+      elements.avoidUnsurfacedByways.checked
+        ? "unsurfaced byways avoided"
+        : "unsurfaced byways allowed",
+    );
     const preferenceNote = preferenceNotes.length
       ? ` ${preferenceNotes.join(", ").replace(/^./, (letter) => letter.toUpperCase())} applied.`
       : "";
@@ -951,13 +992,24 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
   }
 }
 
+/// The route character the rider has asked for.
+///
+/// One object shared by the engine choice, the costing options and the status
+/// line, and the same shape `RoutePreferences` carries in the mobile app so the
+/// two surfaces cannot drift apart.
+function routePreferences() {
+  return {
+    routeStyle: elements.routeStyle.value,
+    avoidMotorways: elements.avoidMotorways.checked,
+    avoidMajorRoads: elements.avoidMajorRoads.checked,
+    avoidTolls: elements.avoidTolls.checked,
+    avoidFerries: elements.avoidFerries.checked,
+    avoidUnsurfacedByways: elements.avoidUnsurfacedByways.checked,
+  };
+}
+
 function requestRoadRoute(controls, signal) {
-  if (
-    elements.avoidMotorways.checked ||
-    elements.avoidMajorRoads.checked ||
-    elements.avoidTolls.checked ||
-    elements.avoidFerries.checked
-  ) {
+  if (requiresMotorcycleCosting(routePreferences())) {
     return fetchMotorcycleRoute(controls, signal);
   }
   const coordinates = controls
@@ -988,13 +1040,7 @@ async function fetchOsrmRoute(url, signal) {
 }
 
 async function fetchMotorcycleRoute(controls, signal) {
-  const costingOptions = motorcycleCostingOptions({
-    routeStyle: elements.routeStyle.value,
-    avoidMajorRoads: elements.avoidMajorRoads.checked,
-    avoidMotorways: elements.avoidMotorways.checked,
-    avoidTolls: elements.avoidTolls.checked,
-    avoidFerries: elements.avoidFerries.checked,
-  });
+  const costingOptions = motorcycleCostingOptions(routePreferences());
   const routingRequest = {
     locations: controls.map((control) => ({
       lat: control.latitude,
@@ -1078,7 +1124,13 @@ function updateDownloadState() {
 function downloadGpx() {
   try {
     const rideName = elements.rideName.value.trim();
-    const gpx = buildGpx({ rideName, stops, routeCoordinates, createdAt: new Date() });
+    const gpx = buildGpx({
+      rideName,
+      stops,
+      routeCoordinates,
+      createdAt: new Date(),
+      preferences: routedControls ? routePreferences() : null,
+    });
     const blob = new Blob([gpx], { type: "application/gpx+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1109,6 +1161,7 @@ async function createPlanCode() {
       stops,
       routeCoordinates,
       createdAt: new Date(),
+      preferences: routedControls ? routePreferences() : null,
     });
     const plan = await createRoutePlan({
       apiBase: RELAY_API_URL,
@@ -1734,6 +1787,10 @@ function restorePlannerDraft() {
   elements.avoidMajorRoads.checked = draft.avoidMajorRoads;
   elements.avoidTolls.checked = draft.avoidTolls;
   elements.avoidFerries.checked = draft.avoidFerries;
+  elements.avoidUnsurfacedByways.checked =
+    draft.avoidUnsurfacedByways === undefined
+      ? true
+      : Boolean(draft.avoidUnsurfacedByways);
   elements.bikerLayerVisible.checked = draft.bikerLayerVisible;
   elements.bikerLayerVisibleMenu.checked = draft.bikerLayerVisible;
   elements.layerTwisty.checked = draft.twistyLayerVisible;
@@ -2420,7 +2477,7 @@ function enabledDiscoveryCategories() {
 }
 
 function changeDiscoveryLayers() {
-  discoveryPopup?.remove();
+  closeDiscoveryPopup();
   updateDiscoveryViewport();
   scheduleDraftSave();
 }
@@ -2550,8 +2607,15 @@ function queryDiscoveryFeature(point) {
   );
 }
 
-function showDiscoveryPopup(feature, clickedLocation) {
+function closeDiscoveryPopup() {
   discoveryPopup?.remove();
+  discoveryPopup = null;
+  discoveryPopupFeatureId = null;
+  discoveryPopupIsHover = false;
+}
+
+function showDiscoveryPopup(feature, clickedLocation, { hover = false } = {}) {
+  closeDiscoveryPopup();
   const properties = feature.properties || {};
   const category = DISCOVERY_CATEGORIES[properties.category];
   const anchor = discoveryFeatureAnchor(feature) || [
@@ -2564,6 +2628,15 @@ function showDiscoveryPopup(feature, clickedLocation) {
   kicker.textContent = category?.label || "Discovery highlight";
   const title = document.createElement("strong");
   title.textContent = properties.name || "Unnamed highlight";
+  const facts = discoveryRoadFacts(properties);
+  // A pending candidate must not be presented with the confidence of a cited
+  // one (#160).
+  const researchBadge = document.createElement("span");
+  researchBadge.className = `discovery-research-badge ${
+    facts.isVerified ? "is-researched" : "is-pending"
+  }`;
+  researchBadge.textContent = facts.researchLabel;
+  researchBadge.title = facts.researchDetail;
   const detail = document.createElement("p");
   const details = [
     properties.score == null ? null : `Score ${properties.score}/100`,
@@ -2571,6 +2644,7 @@ function showDiscoveryPopup(feature, clickedLocation) {
     properties.lastVerified ? `checked ${properties.lastVerified}` : null,
   ].filter(Boolean);
   detail.textContent = details.join(" · ");
+  const roadFacts = discoveryFactsElement(facts);
   const warning = document.createElement("p");
   warning.className = "discovery-warning";
   warning.textContent =
@@ -2585,7 +2659,7 @@ function showDiscoveryPopup(feature, clickedLocation) {
   routeButton.textContent = "Add to route via here";
   routeButton.addEventListener("click", () => {
     addStop(discoveryRouteStop(feature));
-    discoveryPopup?.remove();
+    closeDiscoveryPopup();
   });
   const correctionButton = document.createElement("button");
   correctionButton.type = "button";
@@ -2598,15 +2672,77 @@ function showDiscoveryPopup(feature, clickedLocation) {
     elements.suggestionCategory.value = properties.category;
     elements.suggestionName.value = properties.name || "";
     openSuggestionDialog(false);
-    discoveryPopup?.remove();
+    closeDiscoveryPopup();
   });
-  content.append(kicker, title);
+  content.append(kicker, researchBadge, title);
   if (details.length) content.append(detail);
-  content.append(warning, source, routeButton, correctionButton);
-  discoveryPopup = new maplibregl.Popup({ maxWidth: "320px", offset: 12 })
+  if (facts.description) {
+    const description = document.createElement("p");
+    description.className = "discovery-description";
+    description.textContent = facts.description;
+    content.append(description);
+  }
+  content.append(roadFacts);
+  content.append(warning, source);
+  for (const evidence of facts.evidenceSources) {
+    const link = document.createElement("a");
+    link.className = "discovery-evidence";
+    link.href = evidence;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    try {
+      link.textContent = new URL(evidence).host;
+    } catch {
+      link.textContent = evidence;
+    }
+    content.append(link);
+  }
+  content.append(routeButton, correctionButton);
+  discoveryPopup = new maplibregl.Popup({
+    maxWidth: "340px",
+    offset: 12,
+    closeButton: !hover,
+    closeOnClick: !hover,
+  })
     .setLngLat(anchor)
     .setDOMContent(content)
     .addTo(map);
+  discoveryPopupFeatureId = properties.id || null;
+  discoveryPopupIsHover = hover;
+}
+
+/// Speed limit, enforcement, busy periods and review state, in reading order.
+///
+/// A mapped limit and an unknown one are given different classes so they cannot
+/// read the same: an untagged road must not look like an unrestricted one (#145).
+function discoveryFactsElement(facts) {
+  const list = document.createElement("dl");
+  list.className = "discovery-facts";
+  const row = (term, className, lines) => {
+    const label = document.createElement("dt");
+    label.textContent = term;
+    const value = document.createElement("dd");
+    if (className) value.className = className;
+    for (const line of lines) {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = line;
+      value.append(paragraph);
+    }
+    list.append(label, value);
+  };
+  row(
+    "Speed limit",
+    facts.speedLimitIsKnown ? "is-known" : "is-unknown",
+    [facts.speedLimit, facts.speedLimitProvenance],
+  );
+  row("Enforcement", null, facts.enforcementLines);
+  row("Busy periods", null, [facts.busyPeriods]);
+  row(
+    "Research",
+    facts.isVerified ? "is-known" : "is-unknown",
+    [facts.researchLabel, facts.researchDetail],
+  );
+  return list;
 }
 
 function openSuggestionDialog(reset = true) {

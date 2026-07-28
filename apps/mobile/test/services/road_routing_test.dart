@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -329,14 +330,334 @@ void main() {
     expect(result.route, same(route));
     expect(result.warning, contains('Could not match'));
   });
+
+  group('route preferences reach the provider (#182)', () {
+    test('the quickest style asks for no alternatives', () async {
+      Uri? requested;
+      final service = OsrmRoadRoutingService(
+        client: MockClient((request) async {
+          requested = request.url;
+          return http.Response(_osrmResponse(), 200);
+        }),
+        baseUrl: Uri.parse('https://routing.example.test'),
+      );
+
+      final result = await service.routeThrough(
+        _twoPoints,
+        preferences: RoutePreferences.defaults,
+      );
+
+      expect(requested!.queryParameters.containsKey('alternatives'), isFalse);
+      expect(result.preferences, RoutePreferences.defaults);
+      expect(result.twistinessScore, isNotNull);
+    });
+
+    test('a bendier style asks OSRM for three alternatives and picks the '
+        'bendiest inside the allowance', () async {
+      Uri? requested;
+      final service = OsrmRoadRoutingService(
+        client: MockClient((request) async {
+          requested = request.url;
+          return http.Response(_osrmAlternativesResponse(), 200);
+        }),
+        baseUrl: Uri.parse('https://routing.example.test'),
+      );
+
+      final flowing = await service.routeThrough(
+        _twoPoints,
+        preferences: const RoutePreferences(style: RouteStyle.flowing),
+      );
+      final veryTwisty = await service.routeThrough(
+        _twoPoints,
+        preferences: const RoutePreferences(style: RouteStyle.veryTwisty),
+      );
+
+      expect(requested!.queryParameters['alternatives'], '3');
+      // Quickest is 1000 s. Flowing allows 1250 s, so only the 1200 s
+      // alternative qualifies; very twisty allows 1750 s and reaches the
+      // bendiest 1700 s one.
+      expect(flowing.duration, const Duration(seconds: 1200));
+      expect(veryTwisty.duration, const Duration(seconds: 1700));
+      expect(veryTwisty.twistinessScore, greaterThan(flowing.twistinessScore!));
+    });
+
+    test('avoiding motorways sends the documented motorcycle costing to '
+        'Valhalla', () async {
+      Map<String, Object?>? costing;
+      final service = ValhallaMotorcycleRoutingService(
+        client: MockClient((request) async {
+          final json = jsonDecode(request.url.queryParameters['json']!) as Map;
+          costing = Map<String, Object?>.from(
+            (json['costing_options'] as Map)['motorcycle'] as Map,
+          );
+          expect(json['costing'], 'motorcycle');
+          expect(json['units'], 'kilometers');
+          expect((json['locations'] as List), hasLength(2));
+          return http.Response(_valhallaResponse(), 200);
+        }),
+        routeUrl: Uri.parse('https://valhalla.example.test/route'),
+      );
+
+      final result = await service.routeThrough(
+        _twoPoints,
+        preferences: const RoutePreferences(
+          style: RouteStyle.twisty,
+          avoidMotorways: true,
+        ),
+      );
+
+      expect(costing, {
+        'use_highways': 0.35,
+        'use_tolls': 0.5,
+        'use_ferry': 0.5,
+        'use_trails': 0,
+        'exclude_highways': true,
+        'exclude_tolls': false,
+        'exclude_ferries': false,
+        'exclude_unpaved': true,
+      });
+      expect(result.points, hasLength(3));
+      expect(result.points.last.latitude, closeTo(53.01, 1e-9));
+      expect(result.points.last.longitude, closeTo(-1.01, 1e-9));
+      expect(result.distanceMeters, 12500);
+      expect(result.duration, const Duration(seconds: 900));
+      // Honest about what the motorcycle service does not return.
+      expect(result.maneuvers, isEmpty);
+    });
+
+    test('allowing unsurfaced byways relaxes both surface levers', () async {
+      Map<String, Object?>? costing;
+      final service = ValhallaMotorcycleRoutingService(
+        client: MockClient((request) async {
+          costing = Map<String, Object?>.from(
+            ((jsonDecode(request.url.queryParameters['json']!)
+                        as Map)['costing_options']
+                    as Map)['motorcycle']
+                as Map,
+          );
+          return http.Response(_valhallaResponse(), 200);
+        }),
+        routeUrl: Uri.parse('https://valhalla.example.test/route'),
+      );
+
+      await service.routeThrough(
+        _twoPoints,
+        preferences: const RoutePreferences(
+          bywaySurface: BywaySurfacePreference.allowUnsurfaced,
+        ),
+      );
+
+      expect(costing!['use_trails'], 0.5);
+      expect(costing!['exclude_unpaved'], isFalse);
+    });
+
+    test('the dispatcher chooses the engine the preferences need', () async {
+      final osrm = _FakeRoadRoutingService();
+      final motorcycle = _FakeRoadRoutingService();
+      final dispatcher = PreferenceAwareRoadRoutingService(
+        osrm: osrm,
+        motorcycle: motorcycle,
+      );
+
+      await dispatcher.routeThrough(_twoPoints);
+      await dispatcher.routeThrough(
+        _twoPoints,
+        preferences: RoutePreferences.defaults,
+      );
+      await dispatcher.routeThrough(
+        _twoPoints,
+        preferences: const RoutePreferences(style: RouteStyle.veryTwisty),
+      );
+      await dispatcher.routeThrough(
+        _twoPoints,
+        preferences: const RoutePreferences(avoidMotorways: true),
+      );
+      await dispatcher.routeThrough(
+        _twoPoints,
+        preferences: const RoutePreferences(
+          bywaySurface: BywaySurfacePreference.allowUnsurfaced,
+        ),
+      );
+
+      expect(
+        osrm.requests,
+        hasLength(3),
+        reason: 'no preference, the defaults, and a style-only change',
+      );
+      expect(
+        motorcycle.requests,
+        hasLength(2),
+        reason: 'a hard exclusion, and seeking byways',
+      );
+    });
+
+    test('a planned route carries its preferences and warns when turn '
+        'instructions are unavailable', () async {
+      final plan =
+          await DestinationRoutePlanner(
+            searchService: const _FakeDestinationSearchService({
+              'Start': [
+                DestinationMatch(
+                  label: 'Start',
+                  point: GeoPoint(latitude: 53, longitude: -1),
+                ),
+              ],
+              'Finish': [
+                DestinationMatch(
+                  label: 'Finish',
+                  point: GeoPoint(latitude: 53.2, longitude: -1.2),
+                ),
+              ],
+            }),
+            routingService: PreferenceAwareRoadRoutingService(
+              osrm: _FakeRoadRoutingService(),
+              motorcycle: _ManeuverlessRoadRoutingService(),
+            ),
+          ).planForReview(
+            originQuery: 'Start',
+            query: 'Finish',
+            preferences: const RoutePreferences(
+              style: RouteStyle.twisty,
+              avoidMotorways: true,
+            ),
+          );
+
+      expect(
+        plan.route.preferences,
+        const RoutePreferences(style: RouteStyle.twisty, avoidMotorways: true),
+      );
+      expect(plan.route.description, contains('motorways excluded'));
+      expect(plan.route.description, contains('unsurfaced byways avoided'));
+      expect(
+        plan.warnings,
+        contains(PreferenceAwareRoadRoutingService.motorcycleManeuverWarning),
+      );
+    });
+
+    test('re-snapping a shared route reuses its own preferences', () async {
+      final routing = _FakeRoadRoutingService();
+      final route = ImportedRoute(
+        id: 'shared',
+        name: 'Shared twisty route',
+        importedAt: DateTime.utc(2026),
+        sourceFileName: 'shared.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.route,
+            points: [
+              GeoPoint(latitude: 53, longitude: -1),
+              GeoPoint(latitude: 53.1, longitude: -1.1),
+            ],
+          ),
+        ],
+        waypoints: const [],
+        preferences: const RoutePreferences(
+          style: RouteStyle.twisty,
+          avoidMotorways: true,
+        ),
+      );
+
+      final result = await RouteGeometryEnricher(
+        routingService: routing,
+      ).enrich(route);
+
+      expect(routing.requestedPreferences.single, route.preferences);
+      expect(result.route.preferences, route.preferences);
+    });
+  });
+}
+
+const _twoPoints = [
+  GeoPoint(latitude: 53, longitude: -1),
+  GeoPoint(latitude: 53.01, longitude: -1.01),
+];
+
+String _osrmResponse() => jsonEncode({
+  'code': 'Ok',
+  'routes': [
+    {
+      'distance': 1250.5,
+      'duration': 92.4,
+      'geometry': {
+        'coordinates': [
+          [-1.0, 53.0],
+          [-1.005, 53.005],
+          [-1.01, 53.01],
+        ],
+      },
+    },
+  ],
+});
+
+/// Three alternatives: straight and quickest first, then a bendier one inside
+/// the flowing allowance, then the bendiest and slowest.
+String _osrmAlternativesResponse() {
+  List<List<double>> sinusoid(double amplitude) => [
+    for (var index = 0; index < 40; index += 1)
+      [-1.0 + index * 0.004, 53.0 + math.sin(index / 2.5) * amplitude],
+  ];
+  return jsonEncode({
+    'code': 'Ok',
+    'routes': [
+      {
+        'distance': 20000,
+        'duration': 1000,
+        'geometry': {'coordinates': sinusoid(0)},
+      },
+      {
+        'distance': 22000,
+        'duration': 1200,
+        'geometry': {'coordinates': sinusoid(0.006)},
+      },
+      {
+        'distance': 26000,
+        'duration': 1700,
+        'geometry': {'coordinates': sinusoid(0.012)},
+      },
+    ],
+  });
+}
+
+String _valhallaResponse() => jsonEncode({
+  'trip': {
+    'legs': [
+      // Precision-6 encoded polyline for three points near 53.0, -1.0.
+      {'shape': _encodedShape},
+    ],
+    'summary': {'length': 12.5, 'time': 900},
+  },
+});
+
+/// `(53.0, -1.0), (53.005, -1.005), (53.01, -1.01)` at precision 6.
+const _encodedShape = '_szadB~b`|@owHnwHowHnwH';
+
+class _ManeuverlessRoadRoutingService implements RoadRoutingService {
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  }) async => RoadRouteResult(
+    points: const [
+      GeoPoint(latitude: 53, longitude: -1),
+      GeoPoint(latitude: 53.1, longitude: -1.1),
+    ],
+    distanceMeters: 12500,
+    duration: const Duration(minutes: 15),
+    preferences: preferences,
+  );
 }
 
 class _FakeRoadRoutingService implements RoadRoutingService {
   final List<List<GeoPoint>> requests = [];
+  final List<RoutePreferences?> requestedPreferences = [];
 
   @override
-  Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints) async {
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  }) async {
     requests.add(waypoints);
+    requestedPreferences.add(preferences);
     return const RoadRouteResult(
       points: [
         GeoPoint(latitude: 53, longitude: -1),
@@ -359,7 +680,10 @@ class _FakeRoadRoutingService implements RoadRoutingService {
 
 class _FailingRoadRoutingService implements RoadRoutingService {
   @override
-  Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints) {
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  }) {
     throw const FormatException('offline');
   }
 }

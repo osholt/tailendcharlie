@@ -18,6 +18,116 @@ export const DISCOVERY_CATEGORIES = Object.freeze({
 
 export const DISCOVERY_CATALOGUE_URL = "/data/discovery-catalogue.geojson";
 
+/// Wording used wherever a fact could exist but OpenStreetMap does not carry it.
+/// Never "none": the field describes the map, not the road.
+export const NOT_RECORDED = "not recorded in OpenStreetMap";
+
+/// Why "not recorded" must not be read as "not there".
+///
+/// One candidate in 2,245 matches an OpenStreetMap average-speed relation, while
+/// the A57 Snake Pass has published camera proposals OpenStreetMap does not
+/// hold. Getting this wrong tells a rider a road is clear when it is not.
+export const ENFORCEMENT_RECORD_CAVEAT =
+  "OpenStreetMap does not hold every camera, so this is not evidence that the road is unenforced.";
+
+/// What a discovery road says about itself, in words a rider can trust.
+///
+/// The JavaScript half of `DiscoveryRoadFacts` in
+/// `apps/mobile/lib/services/discovery_road_facts.dart`. Both are pinned to the
+/// same strings by tests so the website and the app cannot phrase the same fact
+/// two different ways (#160).
+///
+/// There is deliberately no "police checks likely" field. It is not in
+/// OpenStreetMap, must not be synthesised from road class, and the only credible
+/// source is accumulated rider reports (#112, #135).
+export function discoveryRoadFacts(properties = {}) {
+  const limit = properties.speedLimit;
+  const limitValue = trimmedOrNull(limit?.value);
+  const provenance = limit ? limit.provenance : undefined;
+  const speedLimitIsKnown = Boolean(
+    limitValue && provenance !== "unknown" && provenance !== undefined,
+  );
+  const check = properties.averageSpeedCheck;
+  const cameras = Number.isInteger(properties.fixedSpeedCameras)
+    ? properties.fixedSpeedCameras
+    : null;
+  const isVerified = properties.researchStatus === "researched";
+
+  const enforcement = check?.present
+    ? trimmedOrNull(check.description) ||
+      `Average speed check: recorded in OpenStreetMap${
+        trimmedOrNull(check.enforcedLimit)
+          ? ` at ${trimmedOrNull(check.enforcedLimit)}`
+          : ""
+      }.`
+    : check
+      ? `Average speed check: ${NOT_RECORDED} for this road.`
+      : "Average speed check: not checked for this road.";
+  const hasRecordedEnforcement =
+    enforcement.includes("recorded in OpenStreetMap") &&
+    !enforcement.includes(NOT_RECORDED);
+  const enforcementCaveat = trimmedOrNull(properties.enforcementNote);
+
+  return {
+    speedLimit: speedLimitIsKnown
+      ? limitWithRange(limit, limitValue)
+      : "Speed limit not known",
+    speedLimitIsKnown,
+    speedLimitProvenance:
+      provenance === "tagged"
+        ? "Recorded in OpenStreetMap for this road."
+        : provenance === "inferred-from-maxspeed-type"
+          ? "Implied by a national speed limit tag in OpenStreetMap, not a posted value for this road."
+          : trimmedOrNull(limit?.note) ||
+            `A speed limit for this road is ${NOT_RECORDED}.`,
+    enforcement,
+    hasRecordedEnforcement,
+    fixedCameras:
+      cameras === null
+        ? "Fixed speed cameras: not checked for this road."
+        : cameras === 0
+          ? `Fixed speed cameras: ${NOT_RECORDED} near this road.`
+          : `Fixed speed cameras: ${cameras} recorded in OpenStreetMap near this road.`,
+    enforcementCaveat,
+    busyPeriods:
+      trimmedOrNull(properties.busyPeriods) ||
+      "Busy periods have not been researched.",
+    description: trimmedOrNull(properties.riderNote),
+    researchLabel: isVerified ? "Researched" : "Not yet reviewed",
+    researchDetail: isVerified
+      ? "Checked against the cited sources below."
+      : "Generated from OpenStreetMap and not yet checked by a person. Treat every field here with less confidence than a reviewed entry.",
+    isVerified,
+    evidenceSources: Array.isArray(properties.evidenceSources)
+      ? properties.evidenceSources.map(trimmedOrNull).filter(Boolean)
+      : [],
+    get enforcementLines() {
+      return [
+        this.enforcement,
+        this.fixedCameras,
+        ...(this.enforcementCaveat ? [this.enforcementCaveat] : []),
+        ...(this.hasRecordedEnforcement ? [] : [ENFORCEMENT_RECORD_CAVEAT]),
+      ];
+    },
+  };
+}
+
+function limitWithRange(limit, value) {
+  if (!limit?.mixed) return value;
+  const range = (Array.isArray(limit.range) ? limit.range : [])
+    .map(trimmedOrNull)
+    .filter(Boolean);
+  return range.length === 2
+    ? `${value} · varies from ${range[0]} to ${range[1]}`
+    : `${value} · varies along this road`;
+}
+
+function trimmedOrNull(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
 export function filterDiscoveryFeatures(collection, bounds, categories) {
   const enabled = new Set(categories);
   if (!collection || collection.type !== "FeatureCollection") {

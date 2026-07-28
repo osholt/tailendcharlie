@@ -186,6 +186,7 @@ export function motorcycleCostingOptions({
   avoidMotorways = false,
   avoidTolls = false,
   avoidFerries = false,
+  avoidUnsurfacedByways = true,
 } = {}) {
   const curveHighwayPreference = {
     balanced: 0.6,
@@ -196,10 +197,42 @@ export function motorcycleCostingOptions({
     use_highways: avoidMajorRoads ? 0.08 : curveHighwayPreference ?? 1,
     use_tolls: avoidTolls ? 0 : 0.5,
     use_ferry: avoidFerries ? 0 : 0.5,
+    // A byway open to all traffic is a legal designation, not a surface, so the
+    // preference is expressed against the surface and track tagging
+    // OpenStreetMap actually carries rather than guessed from road class.
+    // `use_trails` covers ways mapped as tracks; `exclude_unpaved` covers
+    // `surface=*`. See docs/route-twistiness.md for the default and its
+    // reasoning; apps/mobile/lib/domain/route_preferences.dart is the same
+    // contract in Dart.
+    use_trails: avoidUnsurfacedByways ? 0 : 0.5,
     exclude_highways: Boolean(avoidMotorways),
     exclude_tolls: Boolean(avoidTolls),
     exclude_ferries: Boolean(avoidFerries),
+    exclude_unpaved: Boolean(avoidUnsurfacedByways),
   };
+}
+
+/// Whether a set of preferences needs the Valhalla motorcycle service rather
+/// than the OSRM driving profile.
+///
+/// The four avoidances are hard exclusions OSRM cannot express. Allowing
+/// unsurfaced byways is on the list for the opposite reason: OSRM's standard car
+/// profile does not route `highway=track` at all, so *seeking* byways is the case
+/// it cannot serve, while avoiding them is the case it already serves.
+export function requiresMotorcycleCosting({
+  avoidMotorways = false,
+  avoidMajorRoads = false,
+  avoidTolls = false,
+  avoidFerries = false,
+  avoidUnsurfacedByways = true,
+} = {}) {
+  return Boolean(
+    avoidMotorways ||
+      avoidMajorRoads ||
+      avoidTolls ||
+      avoidFerries ||
+      !avoidUnsurfacedByways,
+  );
 }
 
 export class StateHistory {
@@ -238,7 +271,37 @@ export class StateHistory {
   }
 }
 
-export function buildGpx({ rideName, stops, routeCoordinates, createdAt }) {
+/// The metadata extension that carries route preferences into the mobile app.
+///
+/// Preferences belong to the route, not the browser, so the shared file states
+/// what the route was planned for. `GpxParser` reads exactly these attribute
+/// names back into `RoutePreferences`.
+export function routePreferencesGpxExtension(preferences) {
+  if (!preferences) return "";
+  const avoidUnsurfacedByways = preferences.avoidUnsurfacedByways !== false;
+  const attributes = [
+    ["style", String(preferences.routeStyle || "quickest")],
+    ["avoid-motorways", String(Boolean(preferences.avoidMotorways))],
+    ["avoid-major-roads", String(Boolean(preferences.avoidMajorRoads))],
+    ["avoid-tolls", String(Boolean(preferences.avoidTolls))],
+    ["avoid-ferries", String(Boolean(preferences.avoidFerries))],
+    [
+      "byway-surface",
+      avoidUnsurfacedByways ? "avoid-unsurfaced" : "allow-unsurfaced",
+    ],
+  ]
+    .map(([name, value]) => `${name}="${escapeXml(value)}"`)
+    .join(" ");
+  return `    <extensions><tec:route-preferences ${attributes} /></extensions>`;
+}
+
+export function buildGpx({
+  rideName,
+  stops,
+  routeCoordinates,
+  createdAt,
+  preferences = null,
+}) {
   const safeName = String(rideName).trim();
   if (!safeName) throw new Error("Name the ride before downloading it.");
   if (!Array.isArray(stops) || stops.length < 2) {
@@ -269,6 +332,7 @@ export function buildGpx({ rideName, stops, routeCoordinates, createdAt }) {
     })
     .join("\n");
 
+  const preferencesExtension = routePreferencesGpxExtension(preferences);
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<gpx version="1.1" creator="Tail End Charlie" xmlns="http://www.topografix.com/GPX/1/1" xmlns:tec="https://tailendcharlie.app/gpx/1">',
@@ -276,6 +340,7 @@ export function buildGpx({ rideName, stops, routeCoordinates, createdAt }) {
     `    <name>${escapeXml(safeName)}</name>`,
     "    <desc>Road-following group ride planned at tailendcharlie.app.</desc>",
     `    <time>${timestamp}</time>`,
+    ...(preferencesExtension ? [preferencesExtension] : []),
     "  </metadata>",
     waypoints,
     "  <trk>",

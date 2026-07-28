@@ -14,6 +14,8 @@ class GpxExporter {
         'version': '1.1',
         'creator': 'Tail End Charlie',
         'xmlns': 'http://www.topografix.com/GPX/1/1',
+        if (route.preferences != null)
+          'xmlns:tec': 'https://tailendcharlie.app/gpx/1',
       },
       nest: () {
         builder.element(
@@ -27,6 +29,25 @@ class GpxExporter {
               'time',
               nest: route.importedAt.toUtc().toIso8601String(),
             );
+            // Preferences belong to the route, so they travel with the file a
+            // rider shares rather than staying on the device that planned it.
+            // Any other GPX reader ignores an unknown extension element.
+            if (route.preferences case final preferences?) {
+              builder.element(
+                'extensions',
+                nest: () => builder.element(
+                  'tec:route-preferences',
+                  attributes: {
+                    'style': preferences.style.apiValue,
+                    'avoid-motorways': '${preferences.avoidMotorways}',
+                    'avoid-major-roads': '${preferences.avoidMajorRoads}',
+                    'avoid-tolls': '${preferences.avoidTolls}',
+                    'avoid-ferries': '${preferences.avoidFerries}',
+                    'byway-surface': preferences.bywaySurface.apiValue,
+                  },
+                ),
+              );
+            }
           },
         );
         for (final waypoint in route.waypoints) {
