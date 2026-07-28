@@ -42,6 +42,10 @@ class RouteGeometryEnricher {
       try {
         final result = await routingService.routeThrough(
           _sample(path.points, maximumViaPoints),
+          // A route that recorded what it was planned for is re-snapped for the
+          // same thing, so a shared route does not quietly gain a motorway when
+          // it reaches a second rider's phone (#182).
+          preferences: route.preferences,
         );
         paths.add(
           RoutePath(
@@ -66,6 +70,7 @@ class RouteGeometryEnricher {
             route.waypoints.map((waypoint) => waypoint.point).toList(),
             maximumViaPoints,
           ),
+          preferences: route.preferences,
         );
         paths.add(
           RoutePath(
@@ -102,6 +107,7 @@ class RouteGeometryEnricher {
         // Recalculating geometry must not silently un-reject a marking
         // position a person already rejected for this route (#179).
         markerReview: route.markerReview,
+        preferences: route.preferences,
       ),
       attempted: attempted,
       snappedPathCount: snapped,

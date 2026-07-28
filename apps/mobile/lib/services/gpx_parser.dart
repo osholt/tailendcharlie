@@ -198,8 +198,33 @@ class GpxParser {
       sourceFileName: sourceFileName,
       paths: selectedPaths,
       waypoints: List.unmodifiable(waypoints),
+      preferences: metadata == null ? null : _routePreferences(metadata),
     );
   }
+}
+
+/// Reads the preferences a Tail End Charlie route was planned with.
+///
+/// Absent for a file from any other tool, which is the honest answer: nothing
+/// is assumed about a route whose planner never recorded one.
+RoutePreferences? _routePreferences(XmlElement metadata) {
+  final element = _children(metadata, 'extensions')
+      .expand((extensions) => extensions.childElements)
+      .where((child) => child.name.local.toLowerCase() == 'route-preferences')
+      .firstOrNull;
+  if (element == null) return null;
+  String? attribute(String name) => element.attributes
+      .where((item) => item.name.local.toLowerCase() == name)
+      .map((item) => item.value.trim())
+      .firstOrNull;
+  return RoutePreferences.fromJson({
+    'style': attribute('style'),
+    'avoidMotorways': attribute('avoid-motorways') == 'true',
+    'avoidMajorRoads': attribute('avoid-major-roads') == 'true',
+    'avoidTolls': attribute('avoid-tolls') == 'true',
+    'avoidFerries': attribute('avoid-ferries') == 'true',
+    'bywaySurface': attribute('byway-surface'),
+  });
 }
 
 /// Drops a route path that describes the same journey as a track path.

@@ -106,10 +106,17 @@
             <input id="avoid-ferries" type="checkbox" />
             <span>Avoid ferries</span>
           </label>
+          <label class="checkbox-field" for="avoid-unsurfaced-byways">
+            <input id="avoid-unsurfaced-byways" type="checkbox" checked />
+            <span>Avoid unsurfaced byways</span>
+          </label>
           <p class="field-help">
             The bendier styles choose the highest bend score within the stated
             time allowance. “Avoid major roads” is the quieter-road option; the
             other avoidances exclude only their named road or crossing type.
+            A byway open to all traffic is legal to ride but often unsurfaced,
+            so it is avoided by default; clear the box to allow ways
+            OpenStreetMap tags as unsurfaced or as a track.
           </p>
         </fieldset>
 
@@ -440,6 +447,6 @@
       integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
       crossorigin="anonymous"
     ></script>
-    <script type="module" src="/planner.js?v=9689f899"></script>
+    <script type="module" src="/planner.js?v=ef02870f"></script>
   </body>
 </html>

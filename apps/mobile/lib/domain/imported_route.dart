@@ -1,5 +1,9 @@
 import 'dart:convert';
 
+import 'route_preferences.dart';
+
+export 'route_preferences.dart';
+
 enum RoutePathKind { track, route }
 
 class GeoPoint {
@@ -351,6 +355,7 @@ class ImportedRoute {
     this.maneuvers = const [],
     this.markerReview = MarkerPlanReview.empty,
     this.description,
+    this.preferences,
   });
 
   static const schemaVersion = 1;
@@ -377,7 +382,18 @@ class ImportedRoute {
     waypoints: waypoints,
     maneuvers: maneuvers,
     markerReview: review,
+    preferences: preferences,
   );
+
+  /// The route character this route was planned for, when it was planned rather
+  /// than recorded or imported from a tool that records none.
+  ///
+  /// It lives on the route and not on the device so that sharing a route into a
+  /// ride carries what it was planned for. Null means "not stated", which is
+  /// honest for a recorded track and for every route saved before this field
+  /// existed; it is not the same as a route deliberately planned with the
+  /// defaults.
+  final RoutePreferences? preferences;
 
   Iterable<GeoPoint> get allPoints sync* {
     for (final path in paths) {
@@ -403,6 +419,8 @@ class ImportedRoute {
     if (maneuvers.isNotEmpty)
       'maneuvers': maneuvers.map((maneuver) => maneuver.toJson()).toList(),
     if (markerReview.isNotEmpty) 'markerReview': markerReview.toJson(),
+    if (preferences case final routePreferences?)
+      'preferences': routePreferences.toJson(),
   };
 
   String toJsonString() => jsonEncode(toJson());
@@ -458,6 +476,7 @@ class ImportedRoute {
       ),
     };
 
+    final rawPreferences = json['preferences'];
     return ImportedRoute(
       id: _requiredString(json, 'id'),
       name: _requiredString(json, 'name'),
@@ -468,6 +487,9 @@ class ImportedRoute {
       waypoints: waypoints,
       maneuvers: maneuvers,
       markerReview: markerReview,
+      preferences: rawPreferences is Map
+          ? RoutePreferences.fromJson(Map<String, Object?>.from(rawPreferences))
+          : null,
     );
   }
 

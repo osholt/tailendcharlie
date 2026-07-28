@@ -1,8 +1,29 @@
-# Route twistiness score
+# Route preferences and the twistiness score
 
-The web planner's twistiness score is a deterministic comparison aid, not a
-speed target or a safety rating. It lets a rider compare road-route
-alternatives before accepting the extra time and distance.
+The twistiness score is a deterministic comparison aid, not a speed target or a
+safety rating. It lets a rider compare road-route alternatives before accepting
+the extra time and distance.
+
+This document is the **single contract** for route preferences. There is one set
+of preferences, not one per surface, and both clients implement this page:
+
+| Surface | Implementation |
+| --- | --- |
+| Web planner | `apps/website/planner-core.mjs` |
+| Mobile app | `apps/mobile/lib/domain/route_preferences.dart`, `apps/mobile/lib/services/route_twistiness.dart` |
+
+The two implementations are pinned to identical constants by tests on both
+sides, so a route planned with "avoid motorways" on the desktop and one planned
+with it in the app mean the same thing and reach the same engine with the same
+options. Changing a number here means changing it in both, and both test suites
+will say so.
+
+Preferences belong to the **route**, not to the device. The app stores them on
+the route record and writes them to a `<tec:route-preferences>` metadata
+extension in the GPX it exports; the web planner writes the same element into the
+GPX behind a share code. A route shared into a ride therefore carries what it was
+planned for, and is re-snapped to roads for the same preferences rather than
+quietly acquiring a motorway on the next rider's phone.
 
 ## Metric
 
@@ -38,10 +59,72 @@ the same result.
 - **Twisty** may choose one up to 50% slower.
 - **Very twisty** may choose one up to 75% slower.
 
-Motorway, major-road, toll and ferry controls remain independent of the
+Motorway, major-road, toll, ferry and byway controls remain independent of the
 twistiness setting. OSRM is used for ordinary alternatives; exclusions use the
-documented Valhalla motorcycle costing options. The planner selects only from
-the alternatives a provider actually returns.
+documented Valhalla motorcycle costing options. Each client selects only from the
+alternatives a provider actually returns.
+
+## Which engine answers
+
+| Preferences | Engine |
+| --- | --- |
+| Defaults, or a style change only | OSRM `driving`, `alternatives=3` when a style has to choose |
+| Any of motorways / major roads / tolls / ferries avoided | Valhalla `motorcycle` costing |
+| Unsurfaced byways **allowed** | Valhalla `motorcycle` costing |
+
+The four avoidances are hard exclusions the OSRM driving profile cannot express.
+Allowing unsurfaced byways is on the list for the opposite reason: the standard
+OSRM car profile does not route `highway=track` at all, so *seeking* byways is
+the case OSRM cannot serve, while avoiding them is the case it already serves.
+That keeps the default request on OSRM instead of putting every route through the
+shared Valhalla instance.
+
+The Valhalla route deliberately carries **no turn instructions**. Valhalla numbers
+its manoeuvre types where OSRM names them, and this app turns a manoeuvre into a
+spoken instruction and a second-bike marker drop, so a mapping invented without a
+verified fixture could state the wrong direction at a junction. Until that
+fixture exists the route falls back to geometry-derived decision points, the same
+as an imported GPX route, and the app says so in the route review warnings.
+
+## Byways open to all traffic: the default and why
+
+**Default: unsurfaced byways are avoided.**
+
+A byway open to all traffic is a *legal* designation. OpenStreetMap records it as
+`designation=byway_open_to_all_traffic`, and that tag says nothing whatsoever
+about what the surface is made of: some BOATs are asphalt lanes, many are rutted
+mud. So the preference is expressed against the surface tagging OpenStreetMap
+actually carries — `surface=*`, and `highway=track` for a way mapped as a track —
+and never inferred from the road's classification. That is why the option is
+named for the surface (`avoid-unsurfaced` / `allow-unsurfaced`) rather than for
+the legal right of way, and why it maps onto Valhalla's `exclude_unpaved`
+(surface) and `use_trails` (track) options rather than onto a road-class filter.
+
+Avoided is the default because Tail End Charlie coordinates **group** road rides:
+
+- The cost of the wrong guess is asymmetric. A road-biased rider sent down a
+  green lane on a loaded tourer or with a pillion stops, and a group ride that
+  stops mid-lane on a single-track byway is a ride that has split.
+- A group is mixed. One adventure bike in eight does not make a BOAT rideable for
+  the other seven, and the planner cannot know the fleet.
+- It matches the rest of the product. The discovery pipeline already excludes
+  unpaved surfaces from its candidates
+  (`EXCLUDED_SURFACES` in `tools/discovery/generate_catalogue.py`), so a road that
+  is not good enough to suggest is not a road to route down by default either.
+- The opposite default cannot be undone safely by a rider who did not expect it.
+  A trail rider who wants byways knows they want them and can say so; a road
+  rider who did not think to check finds out at the mud.
+
+A trail rider turns the preference off, in the app or in the planner, and the
+route may then use ways OpenStreetMap tags as unsurfaced or as a track.
+
+What this does **not** claim: an OSRM route with the default preference rests on
+the standard car profile refusing `highway=track` and penalising unpaved
+surfaces, which is weaker than an exclusion. Only the Valhalla path applies
+`exclude_unpaved` as a hard constraint. And a way OpenStreetMap has not tagged
+with a surface at all is unknown, not paved — the same honesty rule the speed
+limit display follows. Surface, width, gates and seasonal restrictions remain the
+rider's own check.
 
 ## Limitations
 

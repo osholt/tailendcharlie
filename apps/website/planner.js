@@ -7,6 +7,7 @@ import {
   formatRouteBendScore,
   gpxFileName,
   motorcycleCostingOptions,
+  requiresMotorcycleCosting,
   routeBendScore,
   routeSelfCrossingArrows,
   StateHistory,
@@ -68,6 +69,7 @@ const elements = {
   avoidMajorRoads: document.querySelector("#avoid-major-roads"),
   avoidMotorways: document.querySelector("#avoid-motorways"),
   avoidTolls: document.querySelector("#avoid-tolls"),
+  avoidUnsurfacedByways: document.querySelector("#avoid-unsurfaced-byways"),
   bikerBrowser: document.querySelector("#biker-browser"),
   bikerCatalogResults: document.querySelector("#biker-catalog-results"),
   bikerCatalogStatus: document.querySelector("#biker-catalog-status"),
@@ -171,6 +173,7 @@ const routePreferenceElements = [
   elements.avoidMajorRoads,
   elements.avoidTolls,
   elements.avoidFerries,
+  elements.avoidUnsurfacedByways,
 ];
 const discoveryLayerElements = [
   elements.layerTwisty,
@@ -799,6 +802,7 @@ function routeStateSnapshot() {
     avoidMajorRoads: elements.avoidMajorRoads.checked,
     avoidTolls: elements.avoidTolls.checked,
     avoidFerries: elements.avoidFerries.checked,
+    avoidUnsurfacedByways: elements.avoidUnsurfacedByways.checked,
   };
 }
 
@@ -832,6 +836,12 @@ function applyRouteState(state) {
   elements.avoidMajorRoads.checked = Boolean(state.avoidMajorRoads);
   elements.avoidTolls.checked = Boolean(state.avoidTolls);
   elements.avoidFerries.checked = Boolean(state.avoidFerries);
+  // A stored draft that predates the byway preference gets the documented
+  // default rather than silently allowing green lanes.
+  elements.avoidUnsurfacedByways.checked =
+    state.avoidUnsurfacedByways === undefined
+      ? true
+      : Boolean(state.avoidUnsurfacedByways);
   for (const preference of routePreferenceElements) {
     rememberPreferenceValue({ target: preference });
   }
@@ -885,6 +895,7 @@ function routePreferenceStateKey(preference) {
     "avoid-major-roads": "avoidMajorRoads",
     "avoid-tolls": "avoidTolls",
     "avoid-ferries": "avoidFerries",
+    "avoid-unsurfaced-byways": "avoidUnsurfacedByways",
   }[preference.id];
 }
 
@@ -933,6 +944,11 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
     if (elements.avoidMajorRoads.checked) preferenceNotes.push("major roads avoided");
     if (elements.avoidTolls.checked) preferenceNotes.push("tolls excluded");
     if (elements.avoidFerries.checked) preferenceNotes.push("ferries excluded");
+    preferenceNotes.push(
+      elements.avoidUnsurfacedByways.checked
+        ? "unsurfaced byways avoided"
+        : "unsurfaced byways allowed",
+    );
     const preferenceNote = preferenceNotes.length
       ? ` ${preferenceNotes.join(", ").replace(/^./, (letter) => letter.toUpperCase())} applied.`
       : "";
@@ -951,13 +967,24 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
   }
 }
 
+/// The route character the rider has asked for.
+///
+/// One object shared by the engine choice, the costing options and the status
+/// line, and the same shape `RoutePreferences` carries in the mobile app so the
+/// two surfaces cannot drift apart.
+function routePreferences() {
+  return {
+    routeStyle: elements.routeStyle.value,
+    avoidMotorways: elements.avoidMotorways.checked,
+    avoidMajorRoads: elements.avoidMajorRoads.checked,
+    avoidTolls: elements.avoidTolls.checked,
+    avoidFerries: elements.avoidFerries.checked,
+    avoidUnsurfacedByways: elements.avoidUnsurfacedByways.checked,
+  };
+}
+
 function requestRoadRoute(controls, signal) {
-  if (
-    elements.avoidMotorways.checked ||
-    elements.avoidMajorRoads.checked ||
-    elements.avoidTolls.checked ||
-    elements.avoidFerries.checked
-  ) {
+  if (requiresMotorcycleCosting(routePreferences())) {
     return fetchMotorcycleRoute(controls, signal);
   }
   const coordinates = controls
@@ -988,13 +1015,7 @@ async function fetchOsrmRoute(url, signal) {
 }
 
 async function fetchMotorcycleRoute(controls, signal) {
-  const costingOptions = motorcycleCostingOptions({
-    routeStyle: elements.routeStyle.value,
-    avoidMajorRoads: elements.avoidMajorRoads.checked,
-    avoidMotorways: elements.avoidMotorways.checked,
-    avoidTolls: elements.avoidTolls.checked,
-    avoidFerries: elements.avoidFerries.checked,
-  });
+  const costingOptions = motorcycleCostingOptions(routePreferences());
   const routingRequest = {
     locations: controls.map((control) => ({
       lat: control.latitude,
@@ -1078,7 +1099,13 @@ function updateDownloadState() {
 function downloadGpx() {
   try {
     const rideName = elements.rideName.value.trim();
-    const gpx = buildGpx({ rideName, stops, routeCoordinates, createdAt: new Date() });
+    const gpx = buildGpx({
+      rideName,
+      stops,
+      routeCoordinates,
+      createdAt: new Date(),
+      preferences: routedControls ? routePreferences() : null,
+    });
     const blob = new Blob([gpx], { type: "application/gpx+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1109,6 +1136,7 @@ async function createPlanCode() {
       stops,
       routeCoordinates,
       createdAt: new Date(),
+      preferences: routedControls ? routePreferences() : null,
     });
     const plan = await createRoutePlan({
       apiBase: RELAY_API_URL,
@@ -1734,6 +1762,10 @@ function restorePlannerDraft() {
   elements.avoidMajorRoads.checked = draft.avoidMajorRoads;
   elements.avoidTolls.checked = draft.avoidTolls;
   elements.avoidFerries.checked = draft.avoidFerries;
+  elements.avoidUnsurfacedByways.checked =
+    draft.avoidUnsurfacedByways === undefined
+      ? true
+      : Boolean(draft.avoidUnsurfacedByways);
   elements.bikerLayerVisible.checked = draft.bikerLayerVisible;
   elements.bikerLayerVisibleMenu.checked = draft.bikerLayerVisible;
   elements.layerTwisty.checked = draft.twistyLayerVisible;

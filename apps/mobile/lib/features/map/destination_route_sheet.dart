@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../domain/route_preferences.dart';
 import '../../services/navigation_export.dart';
 
 class DestinationPlanRequest {
@@ -8,6 +9,7 @@ class DestinationPlanRequest {
     this.startQuery,
     this.stopQueries = const [],
     this.handoffTarget,
+    this.preferences = RoutePreferences.defaults,
   });
 
   final String query;
@@ -19,6 +21,10 @@ class DestinationPlanRequest {
   final String? startQuery;
   final List<String> stopQueries;
   final NavigationTarget? handoffTarget;
+
+  /// The route character asked for, using the same preferences as the web
+  /// planner so the two agree about what a route with them means.
+  final RoutePreferences preferences;
 }
 
 class DestinationRouteSheet extends StatefulWidget {
@@ -45,6 +51,7 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
   late final TextEditingController _destinationController;
   final List<TextEditingController> _stopControllers = [];
   late _DestinationHandoff _handoff;
+  late RoutePreferences _preferences;
   String? _error;
 
   @override
@@ -58,6 +65,7 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
           const <TextEditingController>[],
     );
     _handoff = _handoffFromTarget(initial?.handoffTarget);
+    _preferences = initial?.preferences ?? RoutePreferences.defaults;
   }
 
   @override
@@ -173,6 +181,92 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
                 prefixIcon: const Icon(Icons.place_outlined),
               ),
             ),
+            const SizedBox(height: 18),
+            Text(
+              'Route preferences',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'The same preferences as the web planner, so a route planned '
+              'here and one planned on the website mean the same thing.',
+              style: TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<RouteStyle>(
+              key: const Key('route-style-field'),
+              initialValue: _preferences.style,
+              decoration: const InputDecoration(labelText: 'Routing style'),
+              items: RouteStyle.values
+                  .map(
+                    (style) => DropdownMenuItem(
+                      value: style,
+                      child: Text(style.label),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: (value) => setState(
+                () => _preferences = _preferences.copyWith(style: value),
+              ),
+            ),
+            SwitchListTile(
+              key: const Key('avoid-motorways-switch'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Avoid motorways'),
+              value: _preferences.avoidMotorways,
+              onChanged: (value) => setState(
+                () =>
+                    _preferences = _preferences.copyWith(avoidMotorways: value),
+              ),
+            ),
+            SwitchListTile(
+              key: const Key('avoid-major-roads-switch'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Avoid major roads'),
+              subtitle: const Text('The quieter-road option.'),
+              value: _preferences.avoidMajorRoads,
+              onChanged: (value) => setState(
+                () => _preferences = _preferences.copyWith(
+                  avoidMajorRoads: value,
+                ),
+              ),
+            ),
+            SwitchListTile(
+              key: const Key('avoid-tolls-switch'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Avoid toll roads'),
+              value: _preferences.avoidTolls,
+              onChanged: (value) => setState(
+                () => _preferences = _preferences.copyWith(avoidTolls: value),
+              ),
+            ),
+            SwitchListTile(
+              key: const Key('avoid-ferries-switch'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Avoid ferries'),
+              value: _preferences.avoidFerries,
+              onChanged: (value) => setState(
+                () => _preferences = _preferences.copyWith(avoidFerries: value),
+              ),
+            ),
+            SwitchListTile(
+              key: const Key('avoid-unsurfaced-byways-switch'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Avoid unsurfaced byways'),
+              subtitle: const Text(
+                'On by default. A byway open to all traffic is legal to ride '
+                'but often unsurfaced. Turn this off to allow ways '
+                'OpenStreetMap tags as unsurfaced or as a track.',
+              ),
+              value: _preferences.bywaySurface.avoidsUnsurfaced,
+              onChanged: (value) => setState(
+                () => _preferences = _preferences.copyWith(
+                  bywaySurface: value
+                      ? BywaySurfacePreference.avoidUnsurfaced
+                      : BywaySurfacePreference.allowUnsurfaced,
+                ),
+              ),
+            ),
             const SizedBox(height: 14),
             DropdownButtonFormField<_DestinationHandoff>(
               key: const Key('destination-handoff-field'),
@@ -227,6 +321,7 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
             .where((value) => value.isNotEmpty)
             .toList(growable: false),
         handoffTarget: _handoff.target,
+        preferences: _preferences,
       ),
     );
   }

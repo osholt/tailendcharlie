@@ -1142,6 +1142,13 @@ void main() {
     await tester.tap(find.text('Enter destination'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('destination-field')), 'Wrong');
+    // The sheet carries the route preferences (#182), so the plan button can
+    // start below the fold.
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('plan-destination-button')),
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
     await tester.tap(find.byKey(const Key('plan-destination-button')));
     await tester.pumpAndSettle();
 
@@ -1165,6 +1172,13 @@ void main() {
     await tester.enterText(
       find.byKey(const Key('destination-field')),
       'Correct',
+    );
+    // The sheet carries the route preferences (#182), so the plan button can
+    // start below the fold.
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('plan-destination-button')),
+      250,
+      scrollable: find.byType(Scrollable).last,
     );
     await tester.tap(find.byKey(const Key('plan-destination-button')));
     await tester.pumpAndSettle();
@@ -3632,12 +3646,14 @@ class _RecordingDestinationSearch implements DestinationSearchService {
 
 class _StraightRoadRoutingService implements RoadRoutingService {
   @override
-  Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints) async =>
-      RoadRouteResult(
-        points: waypoints,
-        distanceMeters: 12000,
-        duration: const Duration(minutes: 22),
-      );
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  }) async => RoadRouteResult(
+    points: waypoints,
+    distanceMeters: 12000,
+    duration: const Duration(minutes: 22),
+  );
 }
 
 class _WidgetSpeedLimitProvider implements SpeedLimitProvider {

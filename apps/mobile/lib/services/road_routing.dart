@@ -6,11 +6,13 @@ import 'package:uuid/uuid.dart';
 import '../domain/distance_unit.dart';
 import '../domain/imported_route.dart';
 import 'measurement_formatter.dart';
+import 'route_twistiness.dart';
 
 class RoutingConfiguration {
   const RoutingConfiguration({
     required this.routingBaseUrl,
     required this.geocodingBaseUrl,
+    required this.motorcycleRoutingUrl,
   });
 
   factory RoutingConfiguration.fromEnvironment() => RoutingConfiguration(
@@ -26,10 +28,20 @@ class RoutingConfiguration {
         defaultValue: 'https://nominatim.openstreetmap.org',
       ),
     ),
+    // The same Valhalla motorcycle service the web planner uses for the
+    // exclusions OSRM's driving profile cannot express, so the two surfaces ask
+    // the same engine the same question.
+    motorcycleRoutingUrl: Uri.parse(
+      const String.fromEnvironment(
+        'RIDE_RELAY_MOTORCYCLE_ROUTING_URL',
+        defaultValue: 'https://valhalla1.openstreetmap.de/route',
+      ),
+    ),
   );
 
   final Uri routingBaseUrl;
   final Uri geocodingBaseUrl;
+  final Uri motorcycleRoutingUrl;
 }
 
 class RoadRouteResult {
@@ -38,12 +50,22 @@ class RoadRouteResult {
     required this.distanceMeters,
     required this.duration,
     this.maneuvers = const [],
+    this.twistinessScore,
+    this.preferences,
   });
 
   final List<GeoPoint> points;
   final double distanceMeters;
   final Duration duration;
   final List<RoadRouteManeuver> maneuvers;
+
+  /// Degrees of useful heading change per kilometre, as scored by
+  /// [RouteTwistiness]. Null when the caller asked for no score.
+  final double? twistinessScore;
+
+  /// What the route was actually planned for. Null when the caller asked for
+  /// nothing in particular.
+  final RoutePreferences? preferences;
 }
 
 /// A decision reported by the routing engine rather than inferred from a
@@ -111,7 +133,16 @@ class RoadRouteManeuver extends RouteManeuver {
 }
 
 abstract interface class RoadRoutingService {
-  Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints);
+  /// Routes through [waypoints].
+  ///
+  /// [preferences] is what the rider asked the route to be like. Null means
+  /// "whatever this service does by default", which is what an internal caller
+  /// such as an off-route rejoin wants: a rejoin leg is not a planning decision
+  /// and must not silently acquire the exclusions of the route it rejoins.
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  });
 }
 
 class OsrmRoadRoutingService implements RoadRoutingService {
@@ -122,13 +153,20 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     this.maximumResponseBytes = 5 * 1024 * 1024,
   });
 
+  /// Alternatives asked of OSRM when a bendier style has to choose between
+  /// them. The web planner asks for the same three.
+  static const alternativeCount = 3;
+
   final http.Client client;
   final Uri baseUrl;
   final Duration timeout;
   final int maximumResponseBytes;
 
   @override
-  Future<RoadRouteResult> routeThrough(List<GeoPoint> waypoints) async {
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  }) async {
     if (waypoints.length < 2) {
       throw const FormatException('At least two route points are required.');
     }
@@ -138,16 +176,21 @@ class OsrmRoadRoutingService implements RoadRoutingService {
       );
     }
     _requireHttps(baseUrl, 'Routing');
+    final style = preferences?.style ?? RouteStyle.quickest;
     final coordinates = waypoints
         .map((point) => '${point.longitude},${point.latitude}')
         .join(';');
     final path = '${_basePath(baseUrl)}/route/v1/driving/$coordinates';
     final uri = baseUrl.replace(
       path: path,
-      queryParameters: const {
+      queryParameters: {
         'overview': 'full',
         'geometries': 'geojson',
         'steps': 'true',
+        // Only asked for when a style has to choose. The quickest route needs
+        // no alternatives, and not asking keeps the default request identical
+        // to the one this client has always sent.
+        if (style.prefersBends) 'alternatives': '$alternativeCount',
       },
     );
     final response = await client
@@ -172,7 +215,30 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     if (routes is! List || routes.isEmpty || routes.first is! Map) {
       throw const FormatException('Road routing returned no route.');
     }
-    final route = Map<String, dynamic>.from(routes.first as Map);
+    final parsed = routes
+        .whereType<Map>()
+        .map((route) => _parseRoute(Map<String, dynamic>.from(route)))
+        .toList(growable: false);
+    final chosen =
+        RouteTwistiness.chooseWithinDetour(
+          parsed,
+          style: style,
+          duration: (candidate) =>
+              candidate.duration.inMilliseconds.toDouble() / 1000,
+          twistiness: (candidate) => candidate.twistinessScore ?? 0,
+        ) ??
+        parsed.first;
+    return RoadRouteResult(
+      points: chosen.points,
+      distanceMeters: chosen.distanceMeters,
+      duration: chosen.duration,
+      maneuvers: chosen.maneuvers,
+      twistinessScore: chosen.twistinessScore,
+      preferences: preferences,
+    );
+  }
+
+  RoadRouteResult _parseRoute(Map<String, dynamic> route) {
     final geometry = route['geometry'];
     if (geometry is! Map || geometry['coordinates'] is! List) {
       throw const FormatException('Road routing geometry is invalid.');
@@ -208,6 +274,10 @@ class OsrmRoadRoutingService implements RoadRoutingService {
       distanceMeters: distance.toDouble(),
       duration: Duration(milliseconds: (duration.toDouble() * 1000).round()),
       maneuvers: _parseManeuvers(route['legs']),
+      twistinessScore: RouteTwistiness.score(
+        points,
+        distanceMeters: distance.toDouble(),
+      ),
     );
   }
 
@@ -286,6 +356,195 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     }
     return const [];
   }
+}
+
+/// Valhalla motorcycle routing, for the exclusions OSRM cannot express.
+///
+/// It sends the same request the web planner sends: `costing: motorcycle`,
+/// `costing_options.motorcycle` from
+/// [RoutePreferences.valhallaMotorcycleCostingOptions], and kilometre units. The
+/// two surfaces therefore ask one engine one question and get one answer.
+///
+/// It deliberately reports **no manoeuvres**. Valhalla numbers its manoeuvre
+/// types where OSRM names them, and this app turns a manoeuvre into a spoken
+/// instruction and a second-bike marker drop, so a mapping invented without a
+/// verified fixture could state the wrong direction at a junction. Until such a
+/// fixture exists the route falls back to geometry-derived decision points, the
+/// same as an imported GPX route, and [PreferenceAwareRoadRoutingService] says
+/// so out loud.
+class ValhallaMotorcycleRoutingService implements RoadRoutingService {
+  const ValhallaMotorcycleRoutingService({
+    required this.client,
+    required this.routeUrl,
+    this.timeout = const Duration(seconds: 20),
+    this.maximumResponseBytes = 5 * 1024 * 1024,
+  });
+
+  final http.Client client;
+  final Uri routeUrl;
+  final Duration timeout;
+  final int maximumResponseBytes;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  }) async {
+    if (waypoints.length < 2) {
+      throw const FormatException('At least two route points are required.');
+    }
+    if (waypoints.length > 100) {
+      throw const FormatException(
+        'A maximum of 100 route points is supported.',
+      );
+    }
+    _requireHttps(routeUrl, 'Motorcycle routing');
+    final resolved = preferences ?? RoutePreferences.defaults;
+    final request = {
+      'locations': waypoints
+          .map(
+            (point) => {
+              'lat': point.latitude,
+              'lon': point.longitude,
+              'type': 'break',
+            },
+          )
+          .toList(growable: false),
+      'costing': 'motorcycle',
+      'costing_options': {
+        'motorcycle': resolved.valhallaMotorcycleCostingOptions(),
+      },
+      'units': 'kilometers',
+      'directions_options': {'units': 'kilometers'},
+    };
+    final response = await client
+        .get(
+          routeUrl.replace(
+            queryParameters: {
+              ...routeUrl.queryParameters,
+              'json': jsonEncode(request),
+            },
+          ),
+          headers: _requestHeaders,
+        )
+        .timeout(timeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw FormatException(
+        'Motorcycle routing failed (${response.statusCode}).',
+      );
+    }
+    if (response.bodyBytes.length > maximumResponseBytes) {
+      throw const FormatException('Motorcycle routing response is too large.');
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    final trip = decoded is Map ? decoded['trip'] : null;
+    if (trip is! Map || trip['legs'] is! List) {
+      final error = decoded is Map ? decoded['error'] : null;
+      throw FormatException(
+        error is String && error.trim().isNotEmpty
+            ? error
+            : 'No road route was found for those stops.',
+      );
+    }
+    final points = <GeoPoint>[];
+    for (final leg in trip['legs'] as List) {
+      if (leg is! Map) continue;
+      final shape = decodeValhallaShape(leg['shape']);
+      points.addAll(points.isEmpty ? shape : shape.skip(1));
+    }
+    if (points.length < 2) {
+      throw const FormatException(
+        'Motorcycle routing returned insufficient geometry.',
+      );
+    }
+    final summary = trip['summary'];
+    // Valhalla reports `length` in the requested units and `time` in seconds.
+    final lengthKm = summary is Map ? summary['length'] : null;
+    final seconds = summary is Map ? summary['time'] : null;
+    if (lengthKm is! num || seconds is! num) {
+      throw const FormatException('Motorcycle routing summary is invalid.');
+    }
+    final distanceMeters = lengthKm.toDouble() * 1000;
+    return RoadRouteResult(
+      points: List.unmodifiable(points),
+      distanceMeters: distanceMeters,
+      duration: Duration(milliseconds: (seconds.toDouble() * 1000).round()),
+      twistinessScore: RouteTwistiness.score(
+        points,
+        distanceMeters: distanceMeters,
+      ),
+      preferences: resolved,
+    );
+  }
+
+  /// Valhalla encodes leg shapes as a precision-6 encoded polyline.
+  static List<GeoPoint> decodeValhallaShape(Object? encoded) {
+    if (encoded is! String || encoded.isEmpty) return const [];
+    const factor = 1000000.0;
+    final points = <GeoPoint>[];
+    var index = 0;
+    var latitude = 0;
+    var longitude = 0;
+    int readValue() {
+      var result = 0;
+      var shift = 0;
+      int byte;
+      do {
+        if (index >= encoded.length) {
+          throw const FormatException(
+            'Motorcycle routing returned an invalid route shape.',
+          );
+        }
+        byte = encoded.codeUnitAt(index) - 63;
+        index += 1;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+      return result.isOdd ? ~(result >> 1) : result >> 1;
+    }
+
+    while (index < encoded.length) {
+      latitude += readValue();
+      longitude += readValue();
+      points.add(
+        GeoPoint(latitude: latitude / factor, longitude: longitude / factor),
+      );
+    }
+    return points;
+  }
+}
+
+/// Sends a request to whichever engine can honour the rider's preferences.
+///
+/// The dispatch rule is [RoutePreferences.requiresMotorcycleCosting], which is
+/// the web planner's `requestRoadRoute` rule. Same rule, same engine, same
+/// options, same route.
+class PreferenceAwareRoadRoutingService implements RoadRoutingService {
+  const PreferenceAwareRoadRoutingService({
+    required this.osrm,
+    required this.motorcycle,
+  });
+
+  /// Warning shown when the motorcycle engine had to be used and therefore no
+  /// turn instructions came back. Stated rather than hidden: the route is still
+  /// correct, but the app will infer junctions from its shape.
+  static const motorcycleManeuverWarning =
+      'These preferences need the motorcycle router, which does not return turn '
+      'instructions. Junctions are worked out from the route shape instead.';
+
+  final RoadRoutingService osrm;
+  final RoadRoutingService motorcycle;
+
+  bool usesMotorcycleCosting(RoutePreferences? preferences) =>
+      preferences?.requiresMotorcycleCosting ?? false;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  }) => usesMotorcycleCosting(preferences)
+      ? motorcycle.routeThrough(waypoints, preferences: preferences)
+      : osrm.routeThrough(waypoints, preferences: preferences);
 }
 
 class DestinationMatch {
@@ -394,6 +653,7 @@ class DestinationRoutePlanner {
     List<String> stopQueries = const [],
     required String query,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
+    RoutePreferences preferences = RoutePreferences.defaults,
   }) async {
     final warnings = <String>[];
     final GeoPoint resolvedOrigin;
@@ -443,7 +703,12 @@ class DestinationRoutePlanner {
       resolvedOrigin,
       ...resolvedStops.map((stop) => stop.point),
       destination.point,
-    ]);
+    ], preferences: preferences);
+    if (routingService case final PreferenceAwareRoadRoutingService dispatcher
+        when dispatcher.usesMotorcycleCosting(preferences) &&
+            roadRoute.maneuvers.isEmpty) {
+      warnings.add(PreferenceAwareRoadRoutingService.motorcycleManeuverWarning);
+    }
     final id = _idFactory();
     final route = ImportedRoute(
       id: id,
@@ -451,7 +716,8 @@ class DestinationRoutePlanner {
       description:
           'Road route generated by Tail End Charlie. '
           '${MeasurementFormatter(distanceUnit).distance(roadRoute.distanceMeters)}, '
-          '${_durationLabel(roadRoute.duration)}.',
+          '${_durationLabel(roadRoute.duration)}. '
+          '${preferences.summary}',
       importedAt: _clock().toUtc(),
       sourceFileName: 'ride-relay-destination-$id.gpx',
       paths: [
@@ -485,11 +751,13 @@ class DestinationRoutePlanner {
         ),
       ],
       maneuvers: roadRoute.maneuvers,
+      preferences: preferences,
     );
     return DestinationRoutePlan(
       route: route,
       distanceMeters: roadRoute.distanceMeters,
       duration: roadRoute.duration,
+      twistinessScore: roadRoute.twistinessScore,
       warnings: List.unmodifiable(warnings),
     );
   }
@@ -504,6 +772,7 @@ class DestinationRoutePlanner {
     List<String> stopQueries = const [],
     required String query,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
+    RoutePreferences preferences = RoutePreferences.defaults,
   }) async {
     return (await planForReview(
       origin: origin,
@@ -511,6 +780,7 @@ class DestinationRoutePlanner {
       stopQueries: stopQueries,
       query: query,
       distanceUnit: distanceUnit,
+      preferences: preferences,
     )).route;
   }
 }
@@ -520,12 +790,17 @@ class DestinationRoutePlan {
     required this.route,
     required this.distanceMeters,
     required this.duration,
+    this.twistinessScore,
     this.warnings = const [],
   });
 
   final ImportedRoute route;
   final double distanceMeters;
   final Duration duration;
+
+  /// The route's own twistiness, so the app can show the same number the web
+  /// planner shows for the same geometry.
+  final double? twistinessScore;
   final List<String> warnings;
 }
 

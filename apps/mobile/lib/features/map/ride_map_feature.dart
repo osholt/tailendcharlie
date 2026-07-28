@@ -753,9 +753,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _suggestionConfiguration =
         DiscoverySuggestionConfiguration.fromEnvironment();
     final routingConfiguration = RoutingConfiguration.fromEnvironment();
-    _roadRoutingService = OsrmRoadRoutingService(
-      client: _routingClient,
-      baseUrl: routingConfiguration.routingBaseUrl,
+    // Preferences the OSRM driving profile cannot express are sent to the same
+    // Valhalla motorcycle service the web planner uses, by the same rule, so the
+    // two surfaces agree about what a preference means (#182).
+    _roadRoutingService = PreferenceAwareRoadRoutingService(
+      osrm: OsrmRoadRoutingService(
+        client: _routingClient,
+        baseUrl: routingConfiguration.routingBaseUrl,
+      ),
+      motorcycle: ValhallaMotorcycleRoutingService(
+        client: _routingClient,
+        routeUrl: routingConfiguration.motorcycleRoutingUrl,
+      ),
     );
     _defaultDestinationRoutePlanner = DestinationRoutePlanner(
       searchService: NominatimDestinationSearchService(
@@ -3901,11 +3910,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
           stopQueries: request.stopQueries,
           query: request.query,
           distanceUnit: widget.distanceUnit,
+          preferences: request.preferences,
         );
         final review = await _reviewRoute(
           planned.route,
           distanceMeters: planned.distanceMeters,
           duration: planned.duration,
+          twistinessScore: planned.twistinessScore,
           warnings: planned.warnings,
           canEditStops: true,
           previousRoute: previousCandidate,
@@ -4007,6 +4018,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ImportedRoute route, {
     double? distanceMeters,
     Duration? duration,
+    double? twistinessScore,
     List<String> warnings = const [],
     bool canEditStops = false,
     ImportedRoute? previousRoute,
@@ -4040,6 +4052,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       basemapConfiguration: _basemap,
       distanceMeters: distanceMeters,
       duration: duration,
+      twistinessScore: twistinessScore,
       warnings: reviewWarnings,
       previousRoute: previousRoute ?? _route,
       canEditStops: canEditStops,
@@ -4388,7 +4401,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       final extension = await _roadRoutingService.routeThrough([
         start,
         feature.anchor,
-      ]);
+      ], preferences: existing?.preferences);
       final route = ImportedRoute(
         id:
             existing?.id ??
@@ -4414,6 +4427,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             symbol: 'Scenic Area',
           ),
         ],
+        preferences: existing?.preferences,
       );
       await _reviewAndActivateRoute(route);
     } on Object catch (error) {

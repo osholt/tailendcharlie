@@ -221,8 +221,9 @@ class _RecordingRoutingService implements RoadRoutingService {
 
   @override
   Future<RoadRouteResult> routeThrough(
-    List<route_domain.GeoPoint> waypoints,
-  ) async {
+    List<route_domain.GeoPoint> waypoints, {
+    route_domain.RoutePreferences? preferences,
+  }) async {
     calls += 1;
     return RoadRouteResult(
       points: List.unmodifiable(waypoints),
