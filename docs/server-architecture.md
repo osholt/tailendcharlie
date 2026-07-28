@@ -72,6 +72,16 @@ Pre-start snapshots have a separate default 45-second TTL and are deleted when
 the ride starts or ends. Publishing a new fix overwrites the rider's existing
 encrypted row; there is no pre-start history table.
 
+`discovery_road_ratings` is the one table deliberately outside this scheme.
+Anonymous rider verdicts on catalogued roads (#159) outlive the ride they came
+from, so cleanup never touches them. They are safe to keep because they are a
+tally rather than a log: the primary key is `(feature_id, catalogue_version,
+verdict)` with a counter, receipt is a date rather than a timestamp, and no row
+represents a single submission, so nothing here can be attributed to a rider even
+with the whole database in hand. The trade is that the signal is not
+sybil-resistant; the aggregation rule may promote a candidate but never removes
+one.
+
 Default capacity bounds are 100 active rides, 5,000 retained events and 25 MiB
 of encrypted event bodies per ride, 5,000 replay records and 25 MiB of encrypted
 replay bodies per ride, 100,000 in-memory limiter identities, and 64 KiB per

@@ -13,6 +13,11 @@ enum MotorcycleDiscoveryCategory {
 
   final String apiValue;
   final String label;
+
+  static MotorcycleDiscoveryCategory? fromApiValue(String? value) =>
+      MotorcycleDiscoveryCategory.values
+          .where((category) => category.apiValue == value)
+          .firstOrNull;
 }
 
 class MotorcycleDiscoveryFeature {
@@ -27,6 +32,7 @@ class MotorcycleDiscoveryFeature {
     required this.lastVerified,
     required this.warning,
     this.score,
+    this.sourceFeatureId,
   });
 
   final String id;
@@ -40,14 +46,36 @@ class MotorcycleDiscoveryFeature {
   final String warning;
   final int? score;
 
+  /// The upstream feature this candidate was derived from.
+  ///
+  /// [id] is a content hash over the OSM source ways, so it changes whenever the
+  /// extract does; `sourceFeatureId` is what the catalogue tooling re-matches on
+  /// across releases. A rider rating has to carry it or the rating is orphaned
+  /// by the next publication (#159).
+  final String? sourceFeatureId;
+
   bool get isPoint => points.length == 1;
   GeoPoint get anchor => points[points.length ~/ 2];
 }
 
 class MotorcycleDiscoveryCatalogue {
-  const MotorcycleDiscoveryCatalogue(this.features);
+  const MotorcycleDiscoveryCatalogue(
+    this.features, {
+    this.version = unknownVersion,
+  });
+
+  /// What a build reports when the asset carries no `catalogueVersion`.
+  ///
+  /// Named rather than blank so a rating can never be filed against an
+  /// unidentifiable catalogue without that being obvious in the tally.
+  static const unknownVersion = 'unknown';
 
   final List<MotorcycleDiscoveryFeature> features;
+
+  /// The published catalogue release this data came from, e.g.
+  /// `uk-osm-2026-07-23-v1`. Sent with a rider rating so the review process
+  /// never counts an answer against geometry that has since changed (#159).
+  final String version;
 
   static Future<MotorcycleDiscoveryCatalogue> loadAsset() async =>
       MotorcycleDiscoveryCatalogue.fromJson(
@@ -65,8 +93,15 @@ class MotorcycleDiscoveryCatalogue {
         'Discovery catalogue feature list is invalid.',
       );
     }
+    final properties = decoded['properties'];
+    final rawVersion = properties is Map
+        ? properties['catalogueVersion']
+        : null;
     return MotorcycleDiscoveryCatalogue(
       List.unmodifiable(rawFeatures.map(_parseFeature)),
+      version: rawVersion is String && rawVersion.trim().isNotEmpty
+          ? rawVersion.trim()
+          : unknownVersion,
     );
   }
 
@@ -135,6 +170,10 @@ class MotorcycleDiscoveryCatalogue {
       lastVerified: _required(properties, 'lastVerified'),
       warning: _required(properties, 'warning'),
       score: (properties['score'] as num?)?.round(),
+      sourceFeatureId: switch (properties['sourceFeatureId']) {
+        final String value when value.trim().isNotEmpty => value.trim(),
+        _ => null,
+      },
     );
   }
 

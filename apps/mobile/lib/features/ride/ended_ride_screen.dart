@@ -4,13 +4,15 @@ import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/road_rating_controller.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
 import 'ride_recap_screen.dart';
+import 'road_rating_card.dart';
 
-class EndedRideScreen extends StatelessWidget {
+class EndedRideScreen extends StatefulWidget {
   const EndedRideScreen({
     super.key,
     required this.controller,
@@ -19,6 +21,7 @@ class EndedRideScreen extends StatelessWidget {
     this.internetRelayController,
     this.summarySharer,
     this.onRemoveRide,
+    this.roadRatings,
   });
 
   final RideController controller;
@@ -27,6 +30,36 @@ class EndedRideScreen extends StatelessWidget {
   final InternetRelayController? internetRelayController;
   final RideSummarySharer? summarySharer;
   final Future<void> Function()? onRemoveRide;
+
+  /// Absent in a build with no catalogue service configured, and in tests that
+  /// are not about ratings. When absent, no rating card is built at all.
+  final RoadRatingController? roadRatings;
+
+  @override
+  State<EndedRideScreen> createState() => _EndedRideScreenState();
+}
+
+class _EndedRideScreenState extends State<EndedRideScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // After the first frame, never during it. Matching a track against the
+    // catalogue means loading and scanning it, and #165 was about exactly this
+    // screen taking too long to appear.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _prepareRatings());
+  }
+
+  Future<void> _prepareRatings() async {
+    final ratings = widget.roadRatings;
+    final session = widget.controller.session;
+    if (ratings == null || ratings.prepared || session == null) return;
+    final route = const RideSummaryExporter().traveledRoute(
+      session,
+      widget.controller.events,
+      generatedAt: DateTime.now(),
+    );
+    await ratings.prepare(riddenTrack: route?.paths.single.points ?? const []);
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -46,14 +79,16 @@ class EndedRideScreen extends StatelessWidget {
           style: TextStyle(color: Color(0xFFABB5C1), height: 1.45),
         ),
         const SizedBox(height: 18),
-        if (nearbyRelayController case final nearby?) ...[
+        if (widget.nearbyRelayController case final nearby?) ...[
           RelayStatusCard(controller: nearby),
           const SizedBox(height: 12),
         ],
-        if (internetRelayController case final internet?) ...[
+        if (widget.internetRelayController case final internet?) ...[
           InternetRelayStatusCard(controller: internet),
           const SizedBox(height: 18),
         ],
+        if (widget.roadRatings case final ratings?)
+          RoadRatingCard(controller: ratings),
         FilledButton.icon(
           onPressed: () => _shareSummary(context),
           icon: const Icon(Icons.ios_share),
@@ -85,10 +120,10 @@ class EndedRideScreen extends StatelessWidget {
         ? renderObject.localToGlobal(Offset.zero) & renderObject.size
         : null;
     try {
-      await (summarySharer ?? const SystemRideSummarySharer()).share(
-        controller.session!,
-        controller.events,
-        distanceUnit: distanceUnits.value,
+      await (widget.summarySharer ?? const SystemRideSummarySharer()).share(
+        widget.controller.session!,
+        widget.controller.events,
+        distanceUnit: widget.distanceUnits.value,
         sharePositionOrigin: origin,
       );
     } on Object catch (error) {
@@ -103,13 +138,13 @@ class EndedRideScreen extends StatelessWidget {
     const exporter = RideSummaryExporter();
     final generatedAt = DateTime.now();
     final summary = exporter.summarize(
-      controller.session!,
-      controller.events,
+      widget.controller.session!,
+      widget.controller.events,
       generatedAt: generatedAt,
     );
     final route = exporter.traveledRoute(
-      controller.session!,
-      controller.events,
+      widget.controller.session!,
+      widget.controller.events,
       generatedAt: generatedAt,
     );
     await RideRecapScreen.show(
@@ -119,7 +154,7 @@ class EndedRideScreen extends StatelessWidget {
       basemapConfiguration: BasemapConfiguration.fromEnvironment(),
       summary: summary,
       routePoints: route?.paths.single.points ?? const [],
-      distanceUnit: distanceUnits.value,
+      distanceUnit: widget.distanceUnits.value,
     );
   }
 
@@ -158,7 +193,7 @@ class EndedRideScreen extends StatelessWidget {
       ),
     );
     if (confirmed ?? false) {
-      await (onRemoveRide?.call() ?? controller.clearEndedRide());
+      await (widget.onRemoveRide?.call() ?? widget.controller.clearEndedRide());
     }
   }
 }

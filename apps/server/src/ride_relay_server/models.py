@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -343,3 +344,31 @@ class DiscoveryFeature(Base):
         DateTime(timezone=True),
         nullable=False,
     )
+
+
+class DiscoveryRoadRating(Base):
+    """Aggregated rider verdicts on catalogued roads (#159).
+
+    A tally, not a log. The primary key is the road, the catalogue release and
+    the verdict; a submission increments ``rating_count``. There is no row that
+    stands for one rating, so there is nothing here to tie back to a rider even
+    with the whole database in hand - not a rider ID, not a device ID, not a
+    ride, not a submission identifier, and not a receipt timestamp finer than a
+    day.
+
+    Deliberately outside the ride retention scheme. A rating outlives the ride it
+    came from: the cleanup worker never touches this table, and a rider archiving
+    or removing their ride does not remove their answer.
+    """
+
+    __tablename__ = "discovery_road_ratings"
+    __table_args__ = (Index("ix_discovery_road_ratings_source", "source_feature_id"),)
+
+    feature_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    catalogue_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    verdict: Mapped[str] = mapped_column(String(24), primary_key=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_feature_id: Mapped[str | None] = mapped_column(String(128))
+    rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    first_rated_on: Mapped[date] = mapped_column(Date, nullable=False)
+    last_rated_on: Mapped[date] = mapped_column(Date, nullable=False)

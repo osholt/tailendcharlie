@@ -83,6 +83,15 @@ abstract final class RelayProtocolCapabilities {
   /// this" instead of appearing to have shared a number that went nowhere.
   static const riderContactSharing = 'rider-contact-sharing-v1';
 
+  /// Anonymous rider verdicts on catalogued roads (issue #159).
+  ///
+  /// Not an event type, so it is not in the worker's event-to-capability map: it
+  /// is a standalone unauthenticated endpoint. It is negotiated through the same
+  /// compatibility document so a relay that does not accept ratings produces a
+  /// named limitation and the answers stay durable on the phone, instead of the
+  /// rider being thanked for something that went nowhere.
+  static const roadRatings = 'road-ratings-v1';
+
   static const current = {
     rideStart,
     membership,
@@ -96,6 +105,7 @@ abstract final class RelayProtocolCapabilities {
     tecRoleAssignment,
     rejoinRouteSharing,
     riderContactSharing,
+    roadRatings,
   };
 }
 

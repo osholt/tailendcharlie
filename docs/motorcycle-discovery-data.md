@@ -110,6 +110,47 @@ The algorithm, thresholds and test fixtures are published with the data so a
 score is reproducible. Changes create a new catalogue version rather than
 silently altering existing features.
 
+## Rider ratings
+
+Riders who have ridden a road are the only source of truth about whether it
+deserves its place, so after a ride that crossed catalogued roads the app asks
+about at most three of them, highest-ranked first, one tap each and skippable
+(#159). The question is binary — "does this road belong in the good-road
+directory?" — not a star rating: the review process needs a decision, a mean of
+unanchored stars still has to be thresholded into one, and two large targets are a
+genuinely single tap for a gloved thumb after three hours in the saddle.
+
+The rating is anonymous, and the rider is told so on the same card as the buttons
+before the first answer. It goes to the relay as a bare
+`(road, catalogue release, verdict)` tuple with no rider, device, ride, position
+or timestamp, held on the phone and released after an independently randomised
+delay so it cannot be lined up against the ride's own relay traffic. See
+[internet-relay.md](./internet-relay.md#anonymous-road-ratings).
+
+### Aggregation rule
+
+Defined once in `ROAD_RATING_*` in
+`apps/server/src/ride_relay_server/discovery.py` and mirrored in
+`tools/discovery/road_ratings.py`, whose tests fail if the two disagree.
+
+| Outcome | Condition | Effect |
+| --- | --- | --- |
+| `promote` | >= 5 answers and >= 70% say worth including | `researchStatus` becomes `researched`, with `tail-end-charlie-riders` added to `evidenceSources` |
+| `review-for-removal` | >= 5 answers and >= 60% say not worth including | Written to `rider-removal-review.json` for a reviewer. **Never removes a candidate.** |
+| `insufficient` | fewer than 5 answers, or no clear majority | Nothing |
+
+Five is the floor because the signal is unauthenticated by design and therefore
+not sybil-resistant; a threshold one determined person could reach alone would be
+worthless. Promotion is data-driven at publication time because adding a road a
+group of riders vouch for is a low-cost mistake. Removal is not: one rider's
+dislike must not remove a road, and neither may twenty, so a negative verdict
+only ever produces a flag and a road leaves the catalogue through the editorial
+overlay by a reviewer's decision.
+
+A rating is counted only against the catalogue release it was given on, and is
+joined back on `sourceFeatureId` before the candidate `id`, because a candidate
+ID is a content hash over its OSM source ways and moves with every extract.
+
 ## Validation-only datasets
 
 OS Open Roads may be used to sample-check Great Britain road classification and

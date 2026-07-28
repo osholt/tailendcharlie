@@ -14,6 +14,7 @@ CURRENT_CAPABILITIES = [
     "push-notifications-v1",
     "rejoin-route-sharing-v1",
     "rider-contact-sharing-v1",
+    "road-ratings-v1",
     "route-revisions-v1",
     "tec-role-assignment-v1",
     "traffic-incidents-v1",

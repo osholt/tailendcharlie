@@ -37,6 +37,8 @@ from .discovery import (
     moderate_suggestion,
     public_feature_collection,
     purge_expired_private_suggestions,
+    record_road_rating,
+    road_rating_report,
     suggestion_json,
 )
 from .observer import (
@@ -67,6 +69,7 @@ from .schemas import (
     PushRegistrationRequest,
     PushRegistrationResponse,
     RegisterJoinCodeRequest,
+    RoadRatingRequest,
     SyncRequest,
     TrafficRerouteRequest,
 )
@@ -118,6 +121,13 @@ def create_app(
     discovery_suggestion_limiter = SlidingWindowRateLimiter(
         maximum_requests=settings.discovery_suggestion_rate_limit_requests,
         window_seconds=settings.discovery_suggestion_rate_limit_window_seconds,
+    )
+    # In-memory and keyed by IP, like every other limiter here: it holds a
+    # monotonic clock reading per key and never writes an address to the
+    # database, so nothing about a rating is persisted alongside its source.
+    discovery_rating_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.discovery_rating_rate_limit_requests,
+        window_seconds=settings.discovery_rating_rate_limit_window_seconds,
     )
     plan_create_limiter = SlidingWindowRateLimiter(
         maximum_requests=settings.plan_create_rate_limit_requests,
@@ -490,6 +500,46 @@ def create_app(
             status_code=202,
             content=suggestion_json(suggestion, include_private=False),
         )
+
+    @app.post("/api/v1/discovery/road-ratings", include_in_schema=False)
+    def submit_road_rating(
+        payload: RoadRatingRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> Response:
+        """Count one anonymous verdict on a catalogued road (#159).
+
+        Unauthenticated on purpose. A ride bearer would tell the relay which ride
+        the rating came from, and the relay already knows which device IDs synced
+        that ride - so authenticating the submission is precisely what would make
+        it attributable. There is nothing here to authenticate: the payload has no
+        subject, and the reply carries no body and no server-assigned identifier
+        for a caller to be correlated by later.
+        """
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = discovery_rating_limiter.check(f"road-rating:{client_ip}")
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                headers={"retry-after": str(min(retry_after, 3600))},
+                content={"error": "Road rating rate limit exceeded"},
+            )
+        record_road_rating(session, payload)
+        return Response(status_code=204)
+
+    @app.get("/api/v1/admin/discovery/road-ratings", include_in_schema=False)
+    def discovery_admin_road_ratings(
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        """The aggregate the catalogue review process reads.
+
+        Admin-only because the tallies are operational data, not something the
+        app needs; the counts themselves are not personal data, and there is no
+        per-submission record to expose even to an administrator.
+        """
+        require_discovery_admin(request)
+        return JSONResponse(content=road_rating_report(session))
 
     @app.get("/api/v1/admin/discovery/suggestions", include_in_schema=False)
     def discovery_admin_queue(
