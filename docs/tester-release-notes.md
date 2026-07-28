@@ -98,6 +98,30 @@ named after a ticket, that ticket is your report.
 - 37 discovery passes now carry checked, cited descriptions instead of
   generated ones (#158).
 
+### Also fixed — from what you reported on the morning of 28 July
+
+- **The app now keeps recording and sharing your position while it is not on
+  screen.** It was foreground-only, so a phone in a pocket or sitting behind
+  another navigation app contributed nothing to the group, and its recorded
+  trail became a straight line between the last fix before backgrounding and
+  the first one after (#205).
+- **A loop route no longer ends the ride on its own start line.** Arrival was
+  tested against the route's last point alone, so a day tour finishing at the
+  hotel it started from counted as arrived the moment it began — one tester's
+  Isle of Man tour ended itself about twenty minutes in (#206).
+- **The "Ride ended" screen has a way out that gives nothing up.** Filing the
+  ride was the only exit, and filing stops your phone waiting for other riders'
+  final events (#207).
+- **A rejoin no longer fails because a compatibility probe timed out.** The
+  probe ran before the ride code was even looked up, so a rider on working 4G
+  was told "Ride service compatibility check timed out" and could not get back
+  into her own ride (#208).
+- **The speed readout no longer holds a number while you are stopped.** A
+  stationary phone produces no fixes at all, and the readout was only updated
+  when one arrived (#210).
+- **An archived ride no longer shows a "Planned route" key when it had no
+  planned route** (#211).
+
 ### Known limitations — please do not re-report these
 
 - **Speed limits do not prefetch ahead**, and an unrestricted stretch shows no
@@ -112,8 +136,11 @@ named after a ticket, that ticket is your report.
   tell us (#135).
 - **A discovery road sourced only from a directory listing looks identical to
   one whose claim was actually read and checked** (#215).
-- Nothing is recorded or shared while the app is not on screen. Known, being
-  worked on separately (#205).
+- **The freeze on the ride map after joining is NOT confirmed fixed.** There is
+  no reproduction of it yet. The two unbounded waits on the join and cold-start
+  paths that the report points at are now bounded, which is hardening rather
+  than a diagnosis. If it happens again please say so straight away, and if you
+  can, what you did in the seconds before — that is the missing piece (#209).
 
 ## Android build 30 — 1.0.1 — 27 July 2026
 
