@@ -194,15 +194,14 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _Legend(color: Color(0xFFFF7A1A), label: 'Planned route'),
-              SizedBox(width: 18),
-              _Legend(color: Color(0xFF42C9E8), label: 'Your recorded trail'),
-            ],
-          ),
+          if (_legendKeys(ride) case final keys when keys.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Row(
+              key: const Key('archived-ride-legend'),
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: keys,
+            ),
+          ],
           const SizedBox(height: 18),
           Card(
             child: Padding(
@@ -335,6 +334,17 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
           const [],
       distanceUnit: widget.distanceUnits.value,
     );
+  }
+
+  static List<Widget> _legendKeys(CompletedRide ride) {
+    final legend = archivedRideLegend(ride);
+    return [
+      if (legend.planned)
+        const _Legend(color: Color(0xFFFF7A1A), label: 'Planned route'),
+      if (legend.planned && legend.traveled) const SizedBox(width: 18),
+      if (legend.traveled)
+        const _Legend(color: Color(0xFF42C9E8), label: 'Your recorded trail'),
+    ];
   }
 
   Future<void> _confirmDelete() async {
@@ -536,6 +546,23 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
     );
   }
 }
+
+/// Which legend keys the archived-ride map warrants.
+///
+/// A key is only honest when the line it describes is on the map. A ride started
+/// without a route used to show a Planned route key with no orange line under
+/// it, which sends the rider hunting for geometry that was never there (#211).
+///
+/// The `length >= 2` test deliberately mirrors `MapGeoJson.lines`, which is what
+/// decides whether a line exists at all; the two have to move together.
+@visibleForTesting
+({bool planned, bool traveled}) archivedRideLegend(CompletedRide ride) => (
+  planned: _hasDrawableLine(ride.plannedRoute),
+  traveled: _hasDrawableLine(ride.traveledRoute),
+);
+
+bool _hasDrawableLine(ImportedRoute? route) =>
+    route?.paths.any((path) => path.points.length >= 2) ?? false;
 
 @visibleForTesting
 ml.LatLngBounds archivedRideBounds(List<GeoPoint> points) {
