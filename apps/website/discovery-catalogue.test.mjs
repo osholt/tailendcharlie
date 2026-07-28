@@ -280,6 +280,7 @@ test("a pending candidate is distinguishable from a researched one", () => {
   const pending = discoveryRoadFacts({ researchStatus: "pending" });
   const researched = discoveryRoadFacts({
     researchStatus: "researched",
+    sourceVerification: "fetched",
     evidenceSources: ["https://en.wikipedia.org/wiki/Horseshoe_Pass"],
   });
 
@@ -292,4 +293,27 @@ test("a pending candidate is distinguishable from a researched one", () => {
   assert.equal(researched.evidenceSources.length, 1);
   // An unstated status is no better than pending.
   assert.equal(discoveryRoadFacts({}).researchLabel, "Not yet reviewed");
+});
+
+test("source verification distinguishes fetched, listing-only, and missing evidence", () => {
+  const fetched = discoveryRoadFacts({ sourceVerification: "fetched" });
+  assert.equal(fetched.sourceIsFetched, true);
+  assert.equal(fetched.sourceVerificationLabel, "Source checked");
+  assert.match(fetched.sourceVerificationDetail, /page was retrieved/);
+
+  const listing = discoveryRoadFacts({
+    researchStatus: "researched",
+    sourceVerification: "listing-only",
+  });
+  assert.equal(listing.sourceIsFetched, false);
+  assert.equal(listing.sourceVerificationLabel, "Listing evidence only");
+  assert.match(listing.sourceVerificationDetail, /does not verify.*riding quality/);
+  assert.match(listing.researchDetail, /only as a listing/);
+
+  for (const value of [undefined, "unexpected"]) {
+    const cautious = discoveryRoadFacts({ sourceVerification: value });
+    assert.equal(cautious.sourceIsFetched, false);
+    assert.equal(cautious.sourceVerificationLabel, "Source check not recorded");
+    assert.match(cautious.sourceVerificationDetail, /claim cautiously/);
+  }
 });

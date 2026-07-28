@@ -151,6 +151,29 @@ enum DiscoveryResearchStatus {
       DiscoveryResearchStatus.unstated;
 }
 
+/// How directly the catalogue's cited source supports an editorial claim.
+///
+/// A listing can establish that a road appears in a directory, but cannot be
+/// presented as verification of riding quality. Missing and unknown values are
+/// deliberately no stronger than [unstated] (#215).
+enum DiscoverySourceVerification {
+  fetched('fetched'),
+  listingOnly('listing-only'),
+  unstated(null);
+
+  const DiscoverySourceVerification(this.apiValue);
+
+  final String? apiValue;
+
+  bool get isFetched => this == DiscoverySourceVerification.fetched;
+
+  static DiscoverySourceVerification fromApiValue(Object? value) =>
+      DiscoverySourceVerification.values
+          .where((verification) => verification.apiValue == value)
+          .firstOrNull ??
+      DiscoverySourceVerification.unstated;
+}
+
 class MotorcycleDiscoveryFeature {
   const MotorcycleDiscoveryFeature({
     required this.id,
@@ -171,6 +194,7 @@ class MotorcycleDiscoveryFeature {
     this.riderNote,
     this.enforcementNote,
     this.researchStatus = DiscoveryResearchStatus.unstated,
+    this.sourceVerification = DiscoverySourceVerification.unstated,
     this.evidenceSources = const [],
   });
 
@@ -208,6 +232,7 @@ class MotorcycleDiscoveryFeature {
   /// A researched caveat about enforcement that OpenStreetMap does not record.
   final String? enforcementNote;
   final DiscoveryResearchStatus researchStatus;
+  final DiscoverySourceVerification sourceVerification;
   final List<String> evidenceSources;
 
   bool get isPoint => points.length == 1;
@@ -353,6 +378,9 @@ class MotorcycleDiscoveryCatalogue {
       enforcementNote: _trimmedOrNull(properties['enforcementNote']),
       researchStatus: DiscoveryResearchStatus.fromApiValue(
         properties['researchStatus'],
+      ),
+      sourceVerification: DiscoverySourceVerification.fromApiValue(
+        properties['sourceVerification'],
       ),
       evidenceSources:
           (properties['evidenceSources'] as List?)

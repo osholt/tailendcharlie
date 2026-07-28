@@ -32,6 +32,9 @@ class DiscoveryRoadFacts {
     required this.researchLabel,
     required this.researchDetail,
     required this.isVerified,
+    required this.sourceVerificationLabel,
+    required this.sourceVerificationDetail,
+    required this.sourceIsFetched,
     required this.evidenceSources,
   });
 
@@ -74,6 +77,9 @@ class DiscoveryRoadFacts {
   final String researchLabel;
   final String researchDetail;
   final bool isVerified;
+  final String sourceVerificationLabel;
+  final String sourceVerificationDetail;
+  final bool sourceIsFetched;
   final List<String> evidenceSources;
 
   factory DiscoveryRoadFacts.of(MotorcycleDiscoveryFeature feature) {
@@ -125,12 +131,45 @@ class DiscoveryRoadFacts {
       researchLabel: feature.researchStatus.isVerified
           ? 'Researched'
           : 'Not yet reviewed',
-      researchDetail: feature.researchStatus.isVerified
-          ? 'Checked against the cited sources below.'
-          : 'Generated from OpenStreetMap and not yet checked by a person. '
-                'Treat every field here with less confidence than a reviewed '
-                'entry.',
+      researchDetail: switch ((
+        feature.researchStatus,
+        feature.sourceVerification,
+      )) {
+        (
+          DiscoveryResearchStatus.researched,
+          DiscoverySourceVerification.fetched,
+        ) =>
+          'Checked against the cited sources below.',
+        (
+          DiscoveryResearchStatus.researched,
+          DiscoverySourceVerification.listingOnly,
+        ) =>
+          'Reviewed, but the cited source was available only as a listing.',
+        (DiscoveryResearchStatus.researched, _) =>
+          'Reviewed, but the catalogue does not record how the cited source '
+              'was checked.',
+        _ =>
+          'Generated from OpenStreetMap and not yet checked by a person. '
+              'Treat every field here with less confidence than a reviewed '
+              'entry.',
+      },
       isVerified: feature.researchStatus.isVerified,
+      sourceVerificationLabel: switch (feature.sourceVerification) {
+        DiscoverySourceVerification.fetched => 'Source checked',
+        DiscoverySourceVerification.listingOnly => 'Listing evidence only',
+        DiscoverySourceVerification.unstated => 'Source check not recorded',
+      },
+      sourceVerificationDetail: switch (feature.sourceVerification) {
+        DiscoverySourceVerification.fetched =>
+          'The cited page was retrieved and the claim was checked against it.',
+        DiscoverySourceVerification.listingOnly =>
+          'The cited listing confirms that the road appears there; it does '
+              'not verify the road’s riding quality.',
+        DiscoverySourceVerification.unstated =>
+          'The catalogue does not record how the source was checked. Treat '
+              'this claim cautiously.',
+      },
+      sourceIsFetched: feature.sourceVerification.isFetched,
       evidenceSources: feature.evidenceSources,
     );
   }

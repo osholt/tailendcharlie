@@ -248,6 +248,7 @@ void main() {
     test('a researched candidate is labelled and cites its sources', () {
       final facts = _facts({
         'researchStatus': 'researched',
+        'sourceVerification': 'fetched',
         'evidenceSources': ['https://en.wikipedia.org/wiki/Horseshoe_Pass'],
       });
 
@@ -276,6 +277,44 @@ void main() {
     });
   });
 
+  group('source verification', () {
+    test('a fetched source states that the cited page was checked', () {
+      final facts = _facts({'sourceVerification': 'fetched'});
+
+      expect(facts.sourceIsFetched, isTrue);
+      expect(facts.sourceVerificationLabel, 'Source checked');
+      expect(facts.sourceVerificationDetail, contains('page was retrieved'));
+    });
+
+    test('a listing does not verify riding quality', () {
+      final facts = _facts({
+        'researchStatus': 'researched',
+        'sourceVerification': 'listing-only',
+      });
+
+      expect(facts.sourceIsFetched, isFalse);
+      expect(facts.sourceVerificationLabel, 'Listing evidence only');
+      expect(
+        facts.sourceVerificationDetail,
+        contains('does not verify the road’s riding quality'),
+      );
+      expect(facts.researchDetail, contains('only as a listing'));
+    });
+
+    test('missing and unknown values degrade to the cautious reading', () {
+      for (final properties in [
+        const <String, Object?>{},
+        const <String, Object?>{'sourceVerification': 'unexpected'},
+      ]) {
+        final facts = _facts(properties);
+
+        expect(facts.sourceIsFetched, isFalse);
+        expect(facts.sourceVerificationLabel, 'Source check not recorded');
+        expect(facts.sourceVerificationDetail, contains('claim cautiously'));
+      }
+    });
+  });
+
   test('the shipped catalogue parses its enrichment fields', () {
     // Guards the consumption contract rather than the data: #158 owns the
     // catalogue, and this only asserts that whatever it publishes is read.
@@ -298,6 +337,7 @@ void main() {
             'busyPeriods': 'Commuter-heavy on weekdays.',
             'riderNote': 'A588 near Lower Thurnham.',
             'researchStatus': 'pending',
+            'sourceVerification': 'listing-only',
             'evidenceSources': ['https://example.test/a'],
           }),
         ],
@@ -312,6 +352,7 @@ void main() {
     expect(feature.fixedSpeedCameras, 3);
     expect(feature.busyPeriods, 'Commuter-heavy on weekdays.');
     expect(feature.researchStatus, DiscoveryResearchStatus.pending);
+    expect(feature.sourceVerification, DiscoverySourceVerification.listingOnly);
     expect(feature.evidenceSources, ['https://example.test/a']);
   });
 
@@ -328,6 +369,7 @@ void main() {
     expect(feature.averageSpeedCheck.recorded, isFalse);
     expect(feature.fixedSpeedCameras, isNull);
     expect(feature.researchStatus, DiscoveryResearchStatus.unstated);
+    expect(feature.sourceVerification, DiscoverySourceVerification.unstated);
   });
 }
 

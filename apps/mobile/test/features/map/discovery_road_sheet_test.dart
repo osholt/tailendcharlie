@@ -24,6 +24,7 @@ void main() {
       'busyPeriods': 'Jams on summer weekends and bank holidays.',
       'riderNote': 'A588 near Lower Thurnham, 92° of bend per km.',
       'researchStatus': 'researched',
+      'sourceVerification': 'fetched',
       'evidenceSources': ['https://en.wikipedia.org/wiki/A588_road'],
     });
 
@@ -48,6 +49,10 @@ void main() {
       'Jams on summer weekends and bank holidays.',
     );
     expect(_rowHeadline(tester, 'discovery-research-status'), 'Researched');
+    expect(
+      _rowHeadline(tester, 'discovery-source-verification'),
+      'Source checked',
+    );
     // The cited source is reachable, listed by host.
     expect(find.text('en.wikipedia.org'), findsOneWidget);
   });
@@ -136,6 +141,26 @@ void main() {
     expect(_badgeColour(tester), isNot(pendingBadge));
   });
 
+  testWidgets('listing-only evidence is explained in words', (tester) async {
+    await _pump(tester, {
+      'researchStatus': 'researched',
+      'sourceVerification': 'listing-only',
+    });
+
+    expect(
+      _rowHeadline(tester, 'discovery-source-verification'),
+      'Listing evidence only',
+    );
+    expect(
+      _rowDetail(tester, 'discovery-source-verification'),
+      contains('does not verify the road’s riding quality'),
+    );
+    expect(
+      _rowDetail(tester, 'discovery-research-status'),
+      contains('available only as a listing'),
+    );
+  });
+
   testWidgets('a bare candidate degrades honestly rather than reassuringly', (
     tester,
   ) async {
@@ -154,6 +179,14 @@ void main() {
       'Busy periods have not been researched.',
     );
     expect(find.text('NOT YET REVIEWED'), findsOneWidget);
+    expect(
+      _rowHeadline(tester, 'discovery-source-verification'),
+      'Source check not recorded',
+    );
+    expect(
+      _rowDetail(tester, 'discovery-source-verification'),
+      contains('Treat this claim cautiously'),
+    );
     expect(find.byKey(const Key('discovery-description')), findsNothing);
   });
 
