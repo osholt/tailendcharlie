@@ -7,6 +7,11 @@ on:
         description: Optional unique iOS build number (defaults to GitHub run number)
         required: false
         type: string
+      submit_external:
+        description: Assign the build to external testers and submit it for beta review
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -150,6 +155,34 @@ jobs:
             fi
             exit "$upload_status"
           done
+      - name: Submit to external TestFlight review
+        if: ${{ inputs.submit_external }}
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+          EXTERNAL_TESTER_GROUP: ${{ vars.RIDE_RELAY_IOS_EXTERNAL_TESTER_GROUP }}
+          REVIEW_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_KEY_ID }}
+          REVIEW_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_ISSUER_ID }}
+          REVIEW_API_PRIVATE_KEY_BASE64: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_PRIVATE_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$EXTERNAL_TESTER_GROUP" || {
+            echo "::error::Set RIDE_RELAY_IOS_EXTERNAL_TESTER_GROUP to the exact App Store Connect external tester group name." >&2
+            exit 1
+          }
+          test -n "$REVIEW_API_KEY_ID"
+          test -n "$REVIEW_API_ISSUER_ID"
+          test -n "$REVIEW_API_PRIVATE_KEY_BASE64"
+          review_key_path="$RUNNER_TEMP/AuthKey_$REVIEW_API_KEY_ID.p8"
+          printf '%s' "$REVIEW_API_PRIVATE_KEY_BASE64" | base64 -D > "$review_key_path"
+          chmod 600 "$review_key_path"
+          python3 -m pip install --quiet "PyJWT[crypto]==2.10.1"
+          python3 "$GITHUB_WORKSPACE/tools/testflight/submit_external.py" \
+            --bundle-id app.tailendcharlie \
+            --build-number "$BUILD_NUMBER" \
+            --group "$EXTERNAL_TESTER_GROUP" \
+            --issuer-id "$REVIEW_API_ISSUER_ID" \
+            --key-id "$REVIEW_API_KEY_ID" \
+            --private-key "$review_key_path"
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

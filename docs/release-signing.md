@@ -166,13 +166,35 @@ profile - name it to match both `PROVISIONING_PROFILE_SPECIFIER` in
 - `APPLE_CI_KEYCHAIN_PASSWORD` — a random, dedicated temporary-keychain
   password.
 - `APPSTORE_CONNECT_API_KEY_ID`, `APPSTORE_CONNECT_API_ISSUER_ID`, and
-  `APPSTORE_CONNECT_API_PRIVATE_KEY_BASE64` — the App Store Connect API key.
+  `APPSTORE_CONNECT_API_PRIVATE_KEY_BASE64` — the Developer-role App Store
+  Connect API key used only to upload the IPA.
+- `APPSTORE_CONNECT_REVIEW_API_KEY_ID`,
+  `APPSTORE_CONNECT_REVIEW_API_ISSUER_ID`, and
+  `APPSTORE_CONNECT_REVIEW_API_PRIVATE_KEY_BASE64` — a separate App
+  Manager-role key used only to assign the processed build to the external
+  tester group and create the beta review submission.
+
+Keep the two App Store Connect keys separate. The Developer key is deliberately
+least-privilege for routine uploads. Apple requires App Manager or higher to
+create a beta review submission, and a Team key applies to every app in the
+account, so the broader review key must not replace the upload key. Store its
+one-time-download private key outside the repository at
+`~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`, mode `600`, with an
+encrypted recovery copy.
+
+Set `RIDE_RELAY_IOS_EXTERNAL_TESTER_GROUP` to the exact App Store Connect group
+name (currently `External Testers`). The manual workflow's
+`submit_external` input defaults to true. After upload, it waits for processing,
+assigns the build to that group, and creates an idempotent beta review
+submission. Set the input to false only when deliberately uploading an
+internal-only build.
 
 Run **TestFlight** from the Actions tab and provide a unique build number if the
 default GitHub run number has already been uploaded. Apple processes the upload
-before it appears under the app's TestFlight tab. Start with internal testers;
-external TestFlight testing and App Store release require their own review,
-privacy, age-rating, and export-compliance steps.
+before it appears under the app's TestFlight tab. External TestFlight testing
+still requires Apple's beta review, privacy, age-rating, export-compliance and
+test-information metadata, but the workflow now submits the eligible build
+without a manual App Store Connect click.
 
 ## Before public App Store distribution
 
