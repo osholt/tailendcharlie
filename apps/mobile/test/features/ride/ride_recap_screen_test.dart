@@ -146,4 +146,26 @@ void main() {
       isNull,
     );
   });
+
+  testWidgets('an interactive map is not covered by a fixed route sketch', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RideRecapCard(
+            summary: summary,
+            routePoints: route,
+            mapLayer: const ColoredBox(
+              key: Key('interactive-recap-map'),
+              color: Colors.blue,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('interactive-recap-map')), findsOneWidget);
+    expect(find.byKey(const Key('recap-route-sketch')), findsNothing);
+  });
 }

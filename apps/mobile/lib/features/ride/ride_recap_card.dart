@@ -125,27 +125,34 @@ class RideRecapCard extends StatelessWidget {
                           )
                         else
                           ?mapLayer,
-                        Padding(
-                          padding: const EdgeInsets.all(20),
-                          child: routePoints.length >= 2
-                              ? CustomPaint(
-                                  size: Size.infinite,
-                                  painter: RouteSketchPainter(
-                                    normalizeRoutePoints(routePoints),
-                                  ),
-                                )
-                              // #124: a ride with no route is valid, and its
-                              // recap says so rather than failing.
-                              : Center(
-                                  child: Text(
-                                    'No recorded route for this ride',
-                                    style: TextStyle(
-                                      color: dark ? _muted : _lightMuted,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                        ),
+                        if (routePoints.length < 2)
+                          // #124: a ride with no route is valid, and its recap
+                          // says so rather than failing.
+                          Center(
+                            child: Text(
+                              'No recorded route for this ride',
+                              style: TextStyle(
+                                color: dark ? _muted : _lightMuted,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        else if (basemap == null && mapLayer == null)
+                          // The fallback owns its route sketch. A live MapLibre
+                          // view and its captured snapshot already contain the
+                          // geographically aligned route layer; painting this
+                          // fixed sketch over them made the line stay put while
+                          // the rider panned the map.
+                          Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: CustomPaint(
+                              key: const Key('recap-route-sketch'),
+                              size: Size.infinite,
+                              painter: RouteSketchPainter(
+                                normalizeRoutePoints(routePoints),
+                              ),
+                            ),
+                          ),
                         if (basemapAttribution case final attribution?)
                           Positioned(
                             right: 6,

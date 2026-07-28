@@ -691,6 +691,44 @@ enum _StartRideDecision { cancel, chooseRoute, start }
 
 enum _MissingTecDecision { cancel, assignTec, startAnyway }
 
+@visibleForTesting
+enum RideExitDecision { cancel, leave, endForEveryone }
+
+@visibleForTesting
+Future<RideExitDecision?> showRideExitDialog(
+  BuildContext context, {
+  required bool isLeader,
+}) => showDialog<RideExitDecision>(
+  context: context,
+  builder: (dialogContext) => AlertDialog(
+    title: Text(isLeader ? 'Leave or end this ride?' : 'Leave this ride?'),
+    content: Text(
+      isLeader
+          ? 'Leave only this phone, or end the group ride for everyone.'
+          : 'Your location sharing will stop on this phone. The group ride '
+                'will continue for everyone else.',
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(dialogContext, RideExitDecision.cancel),
+        child: const Text('Cancel'),
+      ),
+      TextButton(
+        key: const Key('leave-only-this-phone'),
+        onPressed: () => Navigator.pop(dialogContext, RideExitDecision.leave),
+        child: Text(isLeader ? 'Leave only' : 'Leave ride'),
+      ),
+      if (isLeader)
+        FilledButton(
+          key: const Key('end-ride-for-everyone'),
+          onPressed: () =>
+              Navigator.pop(dialogContext, RideExitDecision.endForEveryone),
+          child: const Text('End for everyone'),
+        ),
+    ],
+  ),
+);
+
 class _ActiveRideShellState extends State<ActiveRideShell>
     with WidgetsBindingObserver {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
@@ -731,6 +769,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   late final RouteRejoinPlanner _rejoinPlanner;
   Future<void> _rejoinChain = Future.value();
   String? _rejoinGuidance;
+  final _rejoinNavigationRoute = ValueNotifier<route_domain.ImportedRoute?>(
+    null,
+  );
 
   /// Recorded travelled trails and, separately, the local rider's advisory
   /// rejoin breadcrumb (#102). They share the map's one trail channel so the
@@ -2290,7 +2331,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           ? null
           : awareness.alertFor(session.localRiderId);
       if (session == null || local == null || alert == null) {
-        _setRejoinPlan(null, null);
+        _setRejoinPlan(null);
         return;
       }
       // The TEC is resolved through the one availability model (#113) rather
@@ -2317,15 +2358,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       );
       if (!mounted) return;
       _setRejoinPlan(
-        plan.severity == RouteRejoinSeverity.onRoute ? null : plan.guidance,
-        plan.hasBreadcrumb
-            ? MapOverlayTrace(
-                id: 'rejoin-${plan.riderId}',
-                points: _routePoints(plan.breadcrumb),
-                label: 'Advisory rejoin route',
-                kind: RiderTrailKind.rejoin,
-              )
-            : null,
+        plan.severity == RouteRejoinSeverity.onRoute ? null : plan,
       );
       await _relayRejoinPlanToLeader(plan, session);
     });
@@ -2412,10 +2445,23 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     }
   }
 
-  void _setRejoinPlan(String? guidance, MapOverlayTrace? trace) {
+  void _setRejoinPlan(RouteRejoinPlan? plan) {
+    final guidance = plan?.guidance;
+    final trace = plan?.hasBreadcrumb ?? false
+        ? MapOverlayTrace(
+            id: 'rejoin-${plan!.riderId}',
+            points: _routePoints(plan.breadcrumb),
+            label: 'Advisory rejoin route',
+            kind: RiderTrailKind.rejoin,
+          )
+        : null;
     if (trace != _rejoinTrace) {
       _rejoinTrace = trace;
       _pushRiderTrails();
+    }
+    final navigationRoute = rejoinNavigationRoute(plan);
+    if (_rejoinNavigationRoute.value?.id != navigationRoute?.id) {
+      _rejoinNavigationRoute.value = navigationRoute;
     }
     if (guidance != _rejoinGuidance) {
       setState(() => _rejoinGuidance = guidance);
@@ -3011,6 +3057,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       navigationPosition: _mapNavigationPosition,
       overlayMarkers: _mapOverlays,
       riderTrails: _riderTrails,
+      rejoinNavigationRoute: _rejoinNavigationRoute,
       leaderStatus: _leaderStatus,
       tecGapTrend: _tecGapTrend,
       groupRiderCount: widget.rideController.liveParticipants.length,
@@ -3488,27 +3535,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   Future<void> _confirmLeaveRideFromMap() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Leave this ride?'),
-        content: const Text(
-          'Your location sharing will stop on this phone. The group ride will '
-          'continue for everyone else.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Leave ride'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed ?? false) await _leaveRide();
+    final isLeader = widget.rideController.session?.role == RideRole.lead;
+    final decision = await showRideExitDialog(context, isLeader: isLeader);
+    switch (decision) {
+      case RideExitDecision.leave:
+        await _leaveRide();
+        return;
+      case RideExitDecision.endForEveryone:
+        await _confirmEndRide();
+        return;
+      case RideExitDecision.cancel:
+      case null:
+        return;
+    }
   }
 
   Future<void> _confirmEndRide() async {
@@ -4047,6 +4086,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _observerAccessController?.dispose();
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
+    _rejoinNavigationRoute.dispose();
     _mapOverlays.dispose();
     _riderTrails.dispose();
     _quickMessageAlerts.dispose();

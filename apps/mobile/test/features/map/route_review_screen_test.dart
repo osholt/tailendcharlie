@@ -27,6 +27,60 @@ void main() {
     expect(warning, isNull);
   });
 
+  testWidgets('a long route can be confirmed without scrolling its points', (
+    tester,
+  ) async {
+    final waypoints = [
+      for (var index = 0; index < 102; index += 1)
+        RouteWaypoint(
+          point: GeoPoint(
+            latitude: 51.46 + index * 0.0001,
+            longitude: -2.5 + index * 0.0001,
+          ),
+          name: 'Point ${index + 1}',
+        ),
+    ];
+    final route = ImportedRoute(
+      id: 'long-review',
+      name: 'Long review route',
+      importedAt: DateTime.utc(2026, 7, 29),
+      sourceFileName: 'long-review.gpx',
+      paths: [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: waypoints.map((waypoint) => waypoint.point).toList(),
+        ),
+      ],
+      waypoints: waypoints,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RouteReviewScreen(
+          route: route,
+          distanceUnit: DistanceUnit.kilometres,
+          basemapConfiguration: const BasemapConfiguration(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final confirm = find.byKey(const Key('confirm-reviewed-route'));
+    expect(confirm, findsOneWidget);
+    expect(tester.getTopLeft(confirm).dy, lessThan(80));
+    expect(find.text('Route points (102)'), findsOneWidget);
+    expect(
+      find.byKey(const Key('route-review-waypoint-0')),
+      findsNothing,
+      reason: 'the long detail list starts collapsed',
+    );
+
+    await tester.tap(find.text('Route points (102)'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('route-review-waypoint-0')), findsOneWidget);
+  });
+
   testWidgets('keeps disconnected imported paths visually separate', (
     tester,
   ) async {
@@ -189,7 +243,11 @@ void main() {
     );
     expect(find.text('Turn left marker'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('marker-plan-reject-maneuver-0')));
+    final reject = find.byKey(const Key('marker-plan-reject-maneuver-0'));
+    await tester.scrollUntilVisible(reject, 120, scrollable: scrollable);
+    await tester.ensureVisible(reject);
+    await tester.pumpAndSettle();
+    await tester.tap(reject);
     await tester.pump();
 
     expect(reviews.single.rejected.single.id, 'maneuver-0');
@@ -199,7 +257,11 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.byKey(const Key('marker-plan-restore-maneuver-0')));
+    final restore = find.byKey(const Key('marker-plan-restore-maneuver-0'));
+    await tester.scrollUntilVisible(restore, 120, scrollable: scrollable);
+    await tester.ensureVisible(restore);
+    await tester.pumpAndSettle();
+    await tester.tap(restore);
     await tester.pump();
 
     expect(reviews.last.rejected, isEmpty);
@@ -222,12 +284,15 @@ void main() {
     );
     await tester.pump();
 
+    final add = find.byKey(const Key('marker-plan-add'));
     await tester.scrollUntilVisible(
-      find.byKey(const Key('marker-plan-add')),
+      add,
       160,
       scrollable: find.byType(Scrollable).last,
     );
-    await tester.tap(find.byKey(const Key('marker-plan-add')));
+    await tester.ensureVisible(add);
+    await tester.pump();
+    await tester.tap(add);
     await tester.pumpAndSettle();
 
     final candidate = find

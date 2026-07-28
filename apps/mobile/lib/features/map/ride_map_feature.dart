@@ -127,6 +127,7 @@ class RideMapFeature extends StatefulWidget {
     this.navigationPosition,
     this.overlayMarkers,
     this.riderTrails,
+    this.rejoinNavigationRoute,
     this.leaderStatus,
     this.tecGapTrend,
     this.groupRiderCount,
@@ -170,6 +171,7 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<MapNavigationPosition?>? navigationPosition,
     ValueListenable<List<MapOverlayMarker>>? overlayMarkers,
     ValueListenable<List<MapOverlayTrace>>? riderTrails,
+    ValueListenable<ImportedRoute?>? rejoinNavigationRoute,
     ValueListenable<LeaderRideStatus?>? leaderStatus,
     ValueListenable<TecGapTrend>? tecGapTrend,
     int? groupRiderCount,
@@ -208,6 +210,7 @@ class RideMapFeature extends StatefulWidget {
     navigationPosition: navigationPosition,
     overlayMarkers: overlayMarkers,
     riderTrails: riderTrails,
+    rejoinNavigationRoute: rejoinNavigationRoute,
     leaderStatus: leaderStatus,
     tecGapTrend: tecGapTrend,
     groupRiderCount: groupRiderCount,
@@ -247,6 +250,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? riderTrails;
+  final ValueListenable<ImportedRoute?>? rejoinNavigationRoute;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
 
   /// Which way the gap to the TEC is going (#181). Null where no trend is
@@ -392,6 +396,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         navigationPosition: widget.navigationPosition,
         overlayMarkers: widget.overlayMarkers,
         riderTrails: widget.riderTrails,
+        rejoinNavigationRoute: widget.rejoinNavigationRoute,
         leaderStatus: widget.leaderStatus,
         tecGapTrend: widget.tecGapTrend,
         groupRiderCount: widget.groupRiderCount,
@@ -455,6 +460,7 @@ class RideMapScreen extends StatefulWidget {
     this.navigationPosition,
     this.overlayMarkers,
     this.riderTrails,
+    this.rejoinNavigationRoute,
     this.leaderStatus,
     this.tecGapTrend,
     this.groupRiderCount,
@@ -504,6 +510,7 @@ class RideMapScreen extends StatefulWidget {
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
   final ValueListenable<List<MapOverlayTrace>>? riderTrails;
+  final ValueListenable<ImportedRoute?>? rejoinNavigationRoute;
   final ValueListenable<LeaderRideStatus?>? leaderStatus;
 
   /// Which way the gap to the TEC is going (#181). Null where no trend is
@@ -589,6 +596,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
+  final RouteProgressTracker _rejoinProgressTracker = RouteProgressTracker();
   final ValueNotifier<NavigationGuidance?> _navigationGuidance = ValueNotifier(
     null,
   );
@@ -696,6 +704,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _mapLibrePositionDirty = false;
   bool _mapLibreOverlaysDirty = false;
   RouteProgressGeometry _progressGeometry = const RouteProgressGeometry.empty();
+  RouteProgressGeometry _rejoinProgressGeometry =
+      const RouteProgressGeometry.empty();
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
   MotorcycleDiscoveryCatalogue _discoveryCatalogue =
@@ -703,6 +713,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
   final Set<MotorcycleDiscoveryCategory> _enabledDiscoveryCategories = {};
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
+
+  ImportedRoute? get _rejoinRoute => widget.rejoinNavigationRoute?.value;
+
+  RouteProgressGeometry get _navigationProgressGeometry =>
+      _rejoinRoute == null ? _progressGeometry : _rejoinProgressGeometry;
 
   /// Route-derived: the marker plan is an analysis of the planned route.
   RouteMarkerPlan get _markerPlan => _route == null
@@ -825,8 +840,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.navigationPosition?.addListener(_onPositionChanged);
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.riderTrails?.addListener(_onOverlayDataChanged);
+    widget.rejoinNavigationRoute?.addListener(_onRejoinNavigationRouteChanged);
     widget.leaderStatus?.addListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
+    _rejoinProgressGeometry = _rejoinProgressTracker.update(
+      _rejoinRoute,
+      _effectivePosition,
+    );
     _observeSpeedLimit(_navigationFix);
     _markerOverviewVisible =
         widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
@@ -857,6 +877,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
       oldWidget.riderTrails?.removeListener(_onOverlayDataChanged);
       widget.riderTrails?.addListener(_onOverlayDataChanged);
     }
+    if (oldWidget.rejoinNavigationRoute != widget.rejoinNavigationRoute) {
+      oldWidget.rejoinNavigationRoute?.removeListener(
+        _onRejoinNavigationRouteChanged,
+      );
+      widget.rejoinNavigationRoute?.addListener(
+        _onRejoinNavigationRouteChanged,
+      );
+      _onRejoinNavigationRouteChanged();
+    }
     if (oldWidget.leaderStatus != widget.leaderStatus) {
       oldWidget.leaderStatus?.removeListener(_onGroupPipDataChanged);
       widget.leaderStatus?.addListener(_onGroupPipDataChanged);
@@ -883,6 +912,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
     widget.riderTrails?.removeListener(_onOverlayDataChanged);
+    widget.rejoinNavigationRoute?.removeListener(
+      _onRejoinNavigationRouteChanged,
+    );
     widget.leaderStatus?.removeListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
@@ -2554,6 +2586,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         position != null && !_navigationCanvasActive;
     if (refreshProgress) {
       _progressGeometry = _routeProgressTracker.update(_route, position);
+      _rejoinProgressGeometry = _rejoinProgressTracker.update(
+        _rejoinRoute,
+        position,
+      );
       _updateNavigationGuidance(position);
     }
     _observeSpeedLimit(navigationFix);
@@ -2610,15 +2646,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _speedLimitDisplay.prefetchAhead(
       current: location,
       routeAhead:
-          _progressGeometry.remainingPaths.firstOrNull ?? const <GeoPoint>[],
+          _navigationProgressGeometry.remainingPaths.firstOrNull ??
+          const <GeoPoint>[],
     );
   }
 
   void _updateNavigationGuidance(GeoPoint? position) {
+    final navigationRoute = _rejoinRoute ?? _route;
     final next = _navigationGuidancePlanner.plan(
-      route: _route,
+      route: navigationRoute,
       position: position,
-      progressMeters: _progressGeometry.progressMeters,
+      progressMeters: _navigationProgressGeometry.progressMeters,
     );
     final current = _navigationGuidance.value;
     final visibilityChanged = (current == null) != (next == null);
@@ -2632,6 +2670,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
       widget.onNavigationGuidanceChanged?.call(next);
       if (visibilityChanged && mounted) setState(() {});
     }
+  }
+
+  void _onRejoinNavigationRouteChanged() {
+    _rejoinProgressGeometry = _rejoinProgressTracker.update(
+      _rejoinRoute,
+      _effectivePosition,
+    );
+    _updateNavigationGuidance(_effectivePosition);
+    _observeSpeedLimit(_navigationFix);
   }
 
   void _onOverlayDataChanged() {

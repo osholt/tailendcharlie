@@ -2,12 +2,20 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/map_style_repository.dart';
+
+/// Lets a map embedded in a scrollable screen claim a drag that starts on the
+/// map. Without this, the surrounding list wins vertical pans and the map feels
+/// intermittently frozen.
+final embeddedMapGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
+  Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
+};
 
 class RoutePreviewPin {
   const RoutePreviewPin({required this.point, required this.kind});
@@ -63,12 +71,18 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
   late final Future<String> _style = _resolveStyle();
 
   List<GeoPoint> get _points =>
-      widget.paths.expand((path) => path).toList(growable: false);
+      routePreviewFramingPoints(widget.paths, widget.pins);
 
   @override
   void didUpdateWidget(ResolvedRouteMapPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_styleReady) unawaited(_syncAndFit());
+    // Parent state changes such as pressing Share used to re-fit the route here,
+    // discarding the framing the rider had just chosen before the snapshot.
+    if (_styleReady &&
+        (!_samePreviewPaths(oldWidget.paths, widget.paths) ||
+            !_samePreviewPins(oldWidget.pins, widget.pins))) {
+      unawaited(_syncAndFit());
+    }
   }
 
   @override
@@ -107,6 +121,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                     ? null
                     : (point, _) => unawaited(_handlePointTap(point)),
                 featureTapsTriggersMapClick: true,
+                gestureRecognizers: embeddedMapGestureRecognizers,
                 logoEnabled: false,
                 compassEnabled: true,
                 minMaxZoomPreference: ml.MinMaxZoomPreference(
@@ -126,6 +141,21 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                     'OpenFreeMap · © OSM',
                     style: TextStyle(color: Colors.white, fontSize: 7),
                   ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 8,
+              top: 8,
+              child: Material(
+                color: const Color(0xD9182029),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  key: const Key('route-preview-fit-route'),
+                  tooltip: 'Fit the whole route',
+                  onPressed: _fit,
+                  color: Colors.white,
+                  icon: const Icon(Icons.fit_screen),
                 ),
               ),
             ),
@@ -350,6 +380,50 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     };
   }
 }
+
+bool _samePreviewPaths(
+  List<List<GeoPoint>> first,
+  List<List<GeoPoint>> second,
+) {
+  if (first.length != second.length) return false;
+  for (var pathIndex = 0; pathIndex < first.length; pathIndex += 1) {
+    final firstPath = first[pathIndex];
+    final secondPath = second[pathIndex];
+    if (firstPath.length != secondPath.length) return false;
+    for (var pointIndex = 0; pointIndex < firstPath.length; pointIndex += 1) {
+      if (!_samePoint(firstPath[pointIndex], secondPath[pointIndex])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool _samePreviewPins(
+  List<RoutePreviewPin> first,
+  List<RoutePreviewPin> second,
+) {
+  if (first.length != second.length) return false;
+  for (var index = 0; index < first.length; index += 1) {
+    if (first[index].kind != second[index].kind ||
+        !_samePoint(first[index].point, second[index].point)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _samePoint(GeoPoint first, GeoPoint second) =>
+    first.latitude == second.latitude && first.longitude == second.longitude;
+
+@visibleForTesting
+List<GeoPoint> routePreviewFramingPoints(
+  List<List<GeoPoint>> paths,
+  List<RoutePreviewPin> pins,
+) => List.unmodifiable([
+  ...paths.expand((path) => path),
+  ...pins.map((pin) => pin.point),
+]);
 
 @visibleForTesting
 ml.LatLngBounds routePreviewBounds(List<GeoPoint> points) {
