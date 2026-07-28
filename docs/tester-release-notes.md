@@ -36,9 +36,91 @@ permissions by design.
 - ...
 ```
 
-## Unreleased
+## Android build 31 — 1.0.1 — 28 July 2026
 
-Changes merged but not yet in a tester build.
+Almost everything here came from what you told us on 27 July. Where a fix is
+named after a ticket, that ticket is your report.
+
+### What to test
+
+1. **End of a ride.** It used to lock up. The cause was the app
+   re-checking the signature on every event in the ride, every time anything
+   changed. Ending a long ride is now around 0.8 s on the phone we profiled.
+2. **Leading a ride.** The leader was being judged against their *own* trail
+   instead of the planned route, so the person at the front got told they were
+   off-route while leading it. Please lead one and confirm it stays quiet.
+3. **Distance to the TEC.** It now says which way the gap is going — TEC
+   stopped, Closing, Holding, or Opening — with an arrow as well as the word.
+   The number alone never told you whether to ease off.
+4. **The group mini map.** It now frames every rider and scales itself, with a
+   scale bar on both Android and iOS. A glance should tell you whether the group
+   is spread over half a mile or twenty.
+5. **Riding a route you already rode.** Pick a previous ride or a recorded
+   track directly instead of exporting a GPX and importing it back. Recorded
+   tracks are offered cleaned, with the raw one still there if you want it.
+6. **Cameras and police on the map.** Reports now appear as symbols, and only
+   when they are ahead of you, not behind.
+
+### Fixed
+
+- Ending a ride no longer makes the app unresponsive (#165).
+- The leader is judged against the planned route, not their own trail (#162).
+- Cancelling a ride stop no longer asks repeatedly about the same one (#178).
+- "Ride ended" says the ride is **filed**, not removed from your phone (#156).
+- A MyRouteApp export is no longer counted and drawn twice — the file describes
+  the same ride as both a route and a track (#180).
+- The emergency text no longer claims a recipient it does not have, and now
+  sends your position (#173).
+- A ride that loses its leader now offers somebody the role (#176).
+- The dashboard gives one answer about connectivity instead of three (#174).
+- An interrupting alert no longer covers SOS and Leave (#124).
+- The emergency actions sheet fits a phone held sideways (#193).
+- The speed limit no longer blanks while the next one is being looked up (#164).
+- Two roundabouts 41 m apart are no longer merged into one instruction — New
+  Cheltenham Road (#163).
+- The recap image has real map tiles and a light/dark toggle (#157).
+- Marking positions the group rides straight past are no longer suggested, and
+  you can reject one and have it stay rejected (#179).
+
+### New
+
+- Share your own number with the leader and TEC, or as leader/TEC with the
+  ride, so people can call or message you from the rider list instead of
+  digging through contacts. Entirely optional, both directions, and it is
+  deleted at the end of the ride unless it was dialled (#188).
+- Rate a catalogued road after riding it — one tap, optional, and anonymous.
+  The relay stores answers as counts only, with no way to tell whose was
+  whose (#159).
+- Ask for routes that avoid motorways or prefer twisty roads, and see speed
+  limit and enforcement facts when picking a discovery road (#182, #160).
+- Position is reported on distance travelled rather than on a timer, with a
+  separate keep-alive (#166).
+- 37 discovery passes now carry checked, cited descriptions instead of
+  generated ones (#158).
+
+### Known limitations — please do not re-report these
+
+- **Speed limits do not prefetch ahead**, and an unrestricted stretch shows no
+  infinity symbol yet (#164 stays open for both).
+- **The recap image export is not yet confirmed on a real phone** — the file it
+  writes has only been checked on a test machine (#157).
+- **The new reporting rate is not field-measured.** On a fast A-road it saves
+  nothing, and a *stationary* off-route rider may take about 30 s to show as
+  off-course rather than about 3 s. We want to know how that feels (#166).
+- **Camera and police symbols have not been checked through a visor in
+  sunlight.** That is the whole point of them, and no test on a computer can
+  tell us (#135).
+- **A discovery road sourced only from a directory listing looks identical to
+  one whose claim was actually read and checked** (#215).
+- Nothing is recorded or shared while the app is not on screen. Known, being
+  worked on separately (#205).
+
+## Android build 30 — 1.0.1 — 27 July 2026
+
+Recorded after the fact. These changes were sitting under "Unreleased" when
+build 30 went out, but every one of them is present at build 30's commit
+(`fc5b699`) — so testers on 30 already have them, and leaving them listed as
+pending would have had build 31 claim them a second time.
 
 - Builds now report their real version and build number to the relay instead of
   the hardcoded `1.0.1+22` fallback, so a bug report can be matched to code.
@@ -58,6 +140,12 @@ Changes merged but not yet in a tester build.
   written for the closed track, with internal testing as a separate section.
 - A release that reaches the Android closed track emails the tester group with
   the version, build number, commit, what changed and the opt-in link.
+
+## Unreleased
+
+Changes merged but not yet in a tester build.
+
+_Nothing outstanding: everything on `main` is in build 31._
 
 ## Earlier
 
