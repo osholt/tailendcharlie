@@ -175,8 +175,10 @@ jobs:
           review_key_path="$RUNNER_TEMP/AuthKey_$REVIEW_API_KEY_ID.p8"
           printf '%s' "$REVIEW_API_PRIVATE_KEY_BASE64" | base64 -D > "$review_key_path"
           chmod 600 "$review_key_path"
-          python3 -m pip install --quiet "PyJWT[crypto]==2.10.1"
-          python3 "$GITHUB_WORKSPACE/tools/testflight/submit_external.py" \
+          review_venv="$RUNNER_TEMP/testflight-review-venv"
+          python3 -m venv "$review_venv"
+          "$review_venv/bin/python" -m pip install --quiet "PyJWT[crypto]==2.10.1"
+          "$review_venv/bin/python" "$GITHUB_WORKSPACE/tools/testflight/submit_external.py" \
             --bundle-id app.tailendcharlie \
             --build-number "$BUILD_NUMBER" \
             --group "$EXTERNAL_TESTER_GROUP" \
