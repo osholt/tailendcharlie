@@ -8,6 +8,7 @@ import 'controllers/map_style_mode_controller.dart';
 import 'controllers/ride_code_preference_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/rider_profile_controller.dart';
+import 'controllers/road_rating_controller.dart';
 import 'controllers/shared_route_controller.dart';
 import 'controllers/speed_limit_display_controller.dart';
 import 'data/json_file_recorded_route_store.dart';
@@ -46,6 +47,9 @@ Future<void> main() async {
   final sharedRoutes = await SharedRouteController.load();
   final speedLimitDisplay = await SpeedLimitDisplayController.load();
   final recordedRoutes = await JsonFileRecordedRouteStore.openDefault();
+  // Null unless this build has a discovery catalogue endpoint compiled in, so
+  // the rating card never appears where an answer could not be delivered (#159).
+  final roadRatings = await RoadRatingController.openDefault();
 
   runApp(
     RideRelayApp(
@@ -58,6 +62,7 @@ Future<void> main() async {
       speedLimitDisplay: speedLimitDisplay,
       recordedRoutes: recordedRoutes,
       completedRides: completedRides,
+      roadRatings: roadRatings,
     ),
   );
 }

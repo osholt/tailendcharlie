@@ -15,6 +15,7 @@ import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
@@ -138,6 +139,7 @@ class ActiveRideShell extends StatefulWidget {
     this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.pushTokenSource,
     this.pushRegistrationApi,
+    this.roadRatings,
   });
 
   final RideController rideController;
@@ -152,6 +154,10 @@ class ActiveRideShell extends StatefulWidget {
   final Duration screenWakeReassertInterval;
   final PushTokenSource? pushTokenSource;
   final PushRegistrationApi? pushRegistrationApi;
+
+  /// Drives the end-of-ride catalogued-road rating card (#159). Null in a build
+  /// with no catalogue service configured, and the card is then never built.
+  final RoadRatingController? roadRatings;
 
   @override
   State<ActiveRideShell> createState() => _ActiveRideShellState();
@@ -2734,6 +2740,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         nearbyRelayController: _relayController,
         internetRelayController: _internetRelayController,
         onRemoveRide: _removeEndedRide,
+        roadRatings: widget.roadRatings,
       );
     }
     final selectedBody = _isSimulation

@@ -103,6 +103,47 @@ python3.12 tools/discovery/publish_catalogue.py      # merge, tier, write both c
 python3.12 tools/discovery/build_pass_sheet.py       # review sheet, with basemap tiles
 ```
 
+Optionally fetch rider ratings first (see below). `publish_catalogue.py` reads
+`$DISCOVERY_WORK_DIR/road-ratings.json` when it exists and ignores its absence, so
+a run without an export behaves exactly as before:
+
+```bash
+curl -sS -H "Authorization: Bearer $RIDE_RELAY_DISCOVERY_ADMIN_TOKEN" \
+  https://<relay>/api/v1/admin/discovery/road-ratings \
+  > "$DISCOVERY_WORK_DIR/road-ratings.json"
+```
+
+### Rider ratings (#159)
+
+The third source of truth, after the extract and the directories: riders who have
+actually ridden the road. The app asks about at most three catalogued roads at the
+end of a ride, one binary tap each, and the relay holds the answers as anonymous
+tallies. `road_ratings.py` turns that export into a decision.
+
+| Outcome | Condition | Effect on publication |
+| --- | --- | --- |
+| `promote` | >= 5 answers, >= 70% worth including | `researchStatus` -> `researched`; `tail-end-charlie-riders` added to `evidenceSources`; counted as `rider-verified` |
+| `review-for-removal` | >= 5 answers, >= 60% not worth including | Written to `$DISCOVERY_WORK_DIR/rider-removal-review.json` and counted as `rider-flagged-for-removal`. **Nothing is removed.** |
+| `insufficient` | fewer than 5 answers, or no clear majority | Nothing |
+
+Five is the floor because the ratings are deliberately unauthenticated — the
+relay stores no submitter identity, so the signal cannot be deduplicated per
+person and is not sybil-resistant. A threshold one determined person could reach
+alone would be worthless.
+
+Promotion is automatic because adding a road several riders vouch for is a
+cheap mistake to make. **Removal never is.** One rider's dislike must not remove
+a road and neither may twenty: a negative verdict produces a flag for a human,
+and a road leaves the catalogue only through an `editorial-overlay.json` verdict.
+
+The thresholds are defined in `ROAD_RATING_*` in
+`apps/server/src/ride_relay_server/discovery.py` and mirrored in
+`road_ratings.py`; `tests/test_road_ratings.py` fails if the two disagree, and
+`road_ratings.index` refuses an export the relay aggregated under a different
+rule rather than applying this one to those numbers. Ratings are matched on
+`sourceFeatureId` before candidate `id`, for the same reason overlay entries are,
+and only ever against the catalogue release they were given on.
+
 ### Honesty rules
 
 These are not style preferences. Each one exists because the opposite behaviour

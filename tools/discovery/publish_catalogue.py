@@ -27,6 +27,7 @@ import os
 import pathlib
 
 import evidence_index
+import road_ratings
 
 OUT = os.environ.get("DISCOVERY_WORK_DIR", "/private/tmp/discovery-out")
 REPO = os.environ.get("DISCOVERY_REPO", str(pathlib.Path(__file__).resolve().parents[2]))
@@ -170,6 +171,9 @@ def main():
     catalogue = json.load(open(f"{OUT}/discovery-catalogue.geojson"))
     derived_all = json.load(open(f"{OUT}/enrichment-deterministic.json"))
     overlay = json.load(open(f"{OUT}/editorial-overlay.json"))["entries"]
+    # Rider verdicts collected by the relay since the last publication, if an
+    # export has been fetched. Absent is normal and behaves as it did before.
+    ratings = road_ratings.load(catalogue["properties"]["catalogueVersion"])
 
     # A pass summit node and the road that crosses it often share an OSM name, so
     # register the road names first. The pass then resolves to "<name> (summit)"
@@ -193,8 +197,14 @@ def main():
             "pass-pending": 0,
             "pass-rejected": 0,
             "pass-reclassified": 0,
+            "rider-verified": 0,
+            "rider-flagged-for-removal": 0,
         },
     )
+    # Candidates riders have voted against, for a human to look at. Never acted on
+    # here: a road leaves the catalogue through the editorial overlay, by a
+    # reviewer's decision.
+    removal_review = []
 
     for feature in catalogue["features"]:
         props = feature["properties"]
@@ -258,6 +268,36 @@ def main():
 
             props["riderNote"] = describe(props, derived, evidence)
 
+        # Riders who have actually ridden a road are the only source of truth
+        # about whether it belongs here, so their verdict outranks a directory
+        # ref match - but only in the direction that adds a road. A negative
+        # verdict is recorded and reported, never applied.
+        if rating := road_ratings.lookup(ratings, props):
+            props["riderRatings"] = {
+                "worthIncluding": rating["worthIncluding"],
+                "notWorthIncluding": rating["notWorthIncluding"],
+                "recommendation": rating["recommendation"],
+                "lastRatedOn": rating["lastRatedOn"],
+            }
+            if rating["recommendation"] == "promote":
+                if props["researchStatus"] == "pending":
+                    tally["rider-verified"] += 1
+                props["researchStatus"] = "researched"
+                props["evidenceSources"] = sorted(
+                    {*props.get("evidenceSources", []), "tail-end-charlie-riders"}
+                )
+            elif rating["recommendation"] == "review-for-removal":
+                tally["rider-flagged-for-removal"] += 1
+                removal_review.append(
+                    {
+                        "id": props["id"],
+                        "sourceFeatureId": props.get("sourceFeatureId"),
+                        "name": props["name"],
+                        "category": props["category"],
+                        **props["riderRatings"],
+                    }
+                )
+
         # Rider-facing derived facts, on every surviving candidate.
         props["speedLimit"] = derived["speedLimit"]
         props["averageSpeedCheck"] = derived["averageSpeedCheck"]
@@ -302,10 +342,21 @@ def main():
             json.dump(published, handle, separators=(",", ":"))
         print(f"wrote {path}")
 
+    if removal_review:
+        path = f"{OUT}/rider-removal-review.json"
+        with open(path, "w") as handle:
+            json.dump({"candidates": removal_review}, handle, indent=1, sort_keys=True)
+        print(f"wrote {path}")
+
     print(f"\npublished {len(kept)} of {len(catalogue['features'])} candidates")
     for key in sorted(tally):
-        print(f"  {key:24s} {tally[key]}")
+        print(f"  {key:26s} {tally[key]}")
     print(f"\nby category: {counts}")
+    if removal_review:
+        print(
+            f"\n{len(removal_review)} candidate(s) flagged by riders for removal "
+            "review; none removed. See rider-removal-review.json."
+        )
 
 
 if __name__ == "__main__":

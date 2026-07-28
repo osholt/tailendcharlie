@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .crypto import sha256
 from .models import (
     DiscoveryFeature,
     DiscoveryModerationEvent,
+    DiscoveryRoadRating,
     DiscoverySuggestion,
 )
-from .schemas import DiscoveryModerationRequest, DiscoverySuggestionRequest
+from .schemas import (
+    DiscoveryModerationRequest,
+    DiscoverySuggestionRequest,
+    RoadRatingRequest,
+)
 from .service import RelayServiceError
 
 PUBLIC_WARNING = (
@@ -292,3 +298,173 @@ def _intersects_bounds(
         and south <= point[1] <= north
         for point in points
     )
+
+
+# ---------------------------------------------------------------------------
+# Anonymous rider road ratings (#159)
+# ---------------------------------------------------------------------------
+
+WORTH_INCLUDING = "worth_including"
+NOT_WORTH_INCLUDING = "not_worth_including"
+ROAD_RATING_VERDICTS = (WORTH_INCLUDING, NOT_WORTH_INCLUDING)
+
+# The aggregation rule, in one place, so the relay's export and the catalogue
+# tooling cannot drift apart. Also recorded in tools/discovery/README.md.
+#
+# Five answers, because fewer is noise. The signal is unauthenticated by design
+# (see record_road_rating), so it is not sybil-resistant, and a threshold one
+# determined person could reach alone would be worthless.
+ROAD_RATING_MINIMUM_RESPONSES = 5
+
+# 70% of answers saying yes retires a candidate's `pending` tag. Two dissenters
+# out of seven is disagreement about a road, not evidence against it.
+ROAD_RATING_PROMOTION_SHARE = 0.7
+
+# 60% saying no flags a candidate for a human to look at. It never removes one:
+# the recommendation is advisory input to the review process, and a road leaves
+# the catalogue only when a reviewer says so. One rider's dislike cannot remove
+# anything, and neither can twenty.
+ROAD_RATING_REVIEW_SHARE = 0.6
+
+
+def record_road_rating(
+    session: Session,
+    payload: RoadRatingRequest,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Count one anonymous verdict.
+
+    Takes no caller identity and stores none. There is no ride, no rider, no
+    device, no request hash and no client-supplied timestamp: the request schema
+    forbids extra fields, so a client cannot add one, and this function has
+    nowhere to write it if it did. Receipt is recorded to the day, because a
+    receipt second could be lined up against the ride journal's own sequence.
+
+    The cost is no per-submitter deduplication - one person can answer twice from
+    two devices. That is a deliberate trade against anonymity, bounded by the
+    endpoint's IP rate limit and by an aggregation rule that only recommends.
+    """
+    today = (now or datetime.now(UTC)).date()
+    # Increment-or-insert without reading first, so two phones answering the same
+    # road at the same moment cannot lose a count to a read-modify-write race.
+    if _increment_road_rating(session, payload, today):
+        session.commit()
+        return
+    session.add(
+        DiscoveryRoadRating(
+            feature_id=payload.featureId,
+            catalogue_version=payload.catalogueVersion,
+            verdict=payload.verdict,
+            category=payload.category,
+            source_feature_id=payload.sourceFeatureId,
+            rating_count=1,
+            first_rated_on=today,
+            last_rated_on=today,
+        )
+    )
+    try:
+        session.commit()
+    except IntegrityError:
+        # Another worker inserted the same tally between the update and the
+        # insert. Roll back and increment the row that now exists.
+        session.rollback()
+        _increment_road_rating(session, payload, today)
+        session.commit()
+
+
+def _increment_road_rating(
+    session: Session,
+    payload: RoadRatingRequest,
+    today: date,
+) -> int:
+    result = session.execute(
+        update(DiscoveryRoadRating)
+        .where(
+            DiscoveryRoadRating.feature_id == payload.featureId,
+            DiscoveryRoadRating.catalogue_version == payload.catalogueVersion,
+            DiscoveryRoadRating.verdict == payload.verdict,
+        )
+        .values(
+            rating_count=DiscoveryRoadRating.rating_count + 1,
+            last_rated_on=today,
+        )
+    )
+    return result.rowcount or 0
+
+
+def road_rating_recommendation(worth_including: int, not_worth_including: int) -> str:
+    """What the numbers recommend to the catalogue review process.
+
+    ``promote``            enough answers, enough of them positive, to retire a
+                           candidate's `pending` tag.
+    ``review-for-removal`` enough answers, enough of them negative, that a human
+                           should look. Never an automatic removal.
+    ``insufficient``       not enough answers, or no clear majority either way.
+    """
+    total = worth_including + not_worth_including
+    if total < ROAD_RATING_MINIMUM_RESPONSES:
+        return "insufficient"
+    if worth_including / total >= ROAD_RATING_PROMOTION_SHARE:
+        return "promote"
+    if not_worth_including / total >= ROAD_RATING_REVIEW_SHARE:
+        return "review-for-removal"
+    return "insufficient"
+
+
+def road_rating_report(session: Session, *, limit: int = 5000) -> dict:
+    """The aggregate the catalogue review process consumes.
+
+    One entry per (road, catalogue release), carrying the counts, the stable
+    upstream key to re-match on, and the recommendation the shared rule produces.
+    The thresholds travel with the report so a reviewer does not have to guess
+    which version of the rule produced the verdicts.
+    """
+    rows = session.scalars(
+        select(DiscoveryRoadRating)
+        .order_by(
+            DiscoveryRoadRating.feature_id,
+            DiscoveryRoadRating.catalogue_version,
+        )
+        .limit(limit)
+    )
+    grouped: dict[tuple[str, str], dict] = {}
+    for row in rows:
+        entry = grouped.setdefault(
+            (row.feature_id, row.catalogue_version),
+            {
+                "featureId": row.feature_id,
+                "catalogueVersion": row.catalogue_version,
+                "sourceFeatureId": row.source_feature_id,
+                "category": row.category,
+                "worthIncluding": 0,
+                "notWorthIncluding": 0,
+                "firstRatedOn": row.first_rated_on.isoformat(),
+                "lastRatedOn": row.last_rated_on.isoformat(),
+            },
+        )
+        if row.source_feature_id and not entry["sourceFeatureId"]:
+            entry["sourceFeatureId"] = row.source_feature_id
+        if row.verdict == WORTH_INCLUDING:
+            entry["worthIncluding"] = row.rating_count
+        elif row.verdict == NOT_WORTH_INCLUDING:
+            entry["notWorthIncluding"] = row.rating_count
+        entry["firstRatedOn"] = min(entry["firstRatedOn"], row.first_rated_on.isoformat())
+        entry["lastRatedOn"] = max(entry["lastRatedOn"], row.last_rated_on.isoformat())
+
+    entries = []
+    for entry in grouped.values():
+        entry["recommendation"] = road_rating_recommendation(
+            entry["worthIncluding"],
+            entry["notWorthIncluding"],
+        )
+        entries.append(entry)
+    entries.sort(key=lambda item: (item["featureId"], item["catalogueVersion"]))
+    return {
+        "thresholds": {
+            "minimumResponses": ROAD_RATING_MINIMUM_RESPONSES,
+            "promotionShare": ROAD_RATING_PROMOTION_SHARE,
+            "reviewShare": ROAD_RATING_REVIEW_SHARE,
+        },
+        "ratings": entries,
+    }

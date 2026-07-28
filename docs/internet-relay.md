@@ -80,12 +80,67 @@ raises its own named limitation. Two capabilities were added by #128:
 | `tec-role-assignment-v1` | `tecRoleRequested`, `tecRoleResponded` | 2 h | `tecAssignmentUnsupportedByService`, or `tecAssignmentUnsupportedByPeer` for a named rider |
 | `rejoin-route-sharing-v1` | `rejoinRouteShared` | 30 min, the same band as `riderLocationUpdated` | `rejoinSharingUnsupportedByService` |
 
+`road-ratings-v1` (#159) is negotiated the same way but is not an event type — it
+is a standalone endpoint with its own retention, described below.
+
 Both are additive in the direction that matters for mixed builds: an older client
 skips an unknown event type per event and keeps the rest of the batch or frame
 (`describeUnsupportedRelayEvent`), so a newer peer cannot stall it. The relay's
 own event-type allowlist stays closed — a type the server does not know is
 rejected with HTTP 400 rather than stored — so forward compatibility is the
 client's per-event skip, never a server that stores whatever it is sent.
+
+### Anonymous road ratings
+
+`road-ratings-v1` carries a rider's one-tap verdict on a catalogued road, asked
+only after the ride has ended (#159). It is not an event type, so it is not in
+the worker's event-to-capability map; it is a standalone endpoint on the
+discovery API origin, negotiated through the same compatibility document.
+
+```text
+POST {discovery-origin}/api/v1/discovery/road-ratings
+Content-Type: application/json
+```
+
+```json
+{
+  "featureId": "osm-good-biking-road-0006a6641990bc7c",
+  "sourceFeatureId": "derived/osm-good-biking-road-0006a6641990bc7c",
+  "category": "good_biking_road",
+  "verdict": "worth_including",
+  "catalogueVersion": "uk-osm-2026-07-23-v1"
+}
+```
+
+That is the whole request, and the reply is `204` with no body. There is
+deliberately **no** `Authorization`, no `X-Ride-Relay-Device`, and none of the
+`X-TailEndCharlie-*` descriptor headers: platform, app version, build and
+distribution track together fingerprint a rider better than a rider ID would,
+and the relay needs none of them to count a verdict. The request schema is
+`extra="forbid"`, so a client that tried to attach a rider, device, ride,
+position or timestamp gets HTTP 400 rather than having it quietly stored.
+
+The client holds each answer in its own durable store — not the ride journal and
+not the completed-ride archive — and releases it after an independently drawn
+delay of 30 minutes to 18 hours, one request per rating. The relay sees the
+source IP of a rating and of the ride's own sync traffic, so sending at ride end
+would let anyone holding the relay's logs line the two up; the delay and the
+one-per-request rule remove that. Ratings therefore survive the ride being
+archived or removed, which is the point: an answer outlives the ride it came
+from.
+
+Storage is a tally, not a log: primary key `(feature_id, catalogue_version,
+verdict)` with a counter, and receipt recorded as a date rather than a
+timestamp. There is no row that represents a single rating, so the relay cannot
+attribute one even from a full database dump. The cost is no per-submitter
+deduplication — one person can answer twice from two devices — bounded by an IP
+rate limit and by an aggregation rule that promotes but never removes. See
+[motorcycle-discovery-data.md](./motorcycle-discovery-data.md) for the rule and
+`tools/discovery/road_ratings.py` for the review-side join.
+
+When the relay does not advertise the capability, or returns 404 for the
+endpoint, the answers stay durable and the card says so instead of thanking the
+rider for something that went nowhere.
 
 ### Pre-start assembly presence
 

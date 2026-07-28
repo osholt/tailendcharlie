@@ -36,6 +36,16 @@ class Settings(BaseSettings):
         ge=60,
         le=24 * 3600,
     )
+    # Road ratings are one small request each, deliberately unauthenticated and
+    # spread over hours by the client, so a genuine rider needs a handful an hour
+    # at most. The cap is what stands between the tally and ballot stuffing from
+    # one source, since there is no submitter identity to deduplicate on.
+    discovery_rating_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
+    discovery_rating_rate_limit_window_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=24 * 3600,
+    )
     discovery_admin_token: SecretStr | None = None
     discovery_admin_name: str = Field(default="discovery-admin", min_length=1, max_length=120)
     discovery_rejected_retention_days: int = Field(default=90, ge=7, le=365)
@@ -92,6 +102,11 @@ class Settings(BaseSettings):
             # nobody shares one carries no numbers at all. Named so a client can
             # report the limitation instead of appearing to have shared.
             "rider-contact-sharing-v1",
+            # Anonymous rider verdicts on catalogued roads. Not an event type:
+            # a standalone unauthenticated endpoint, negotiated here so a client
+            # facing an older relay names the limitation and keeps the rider's
+            # answer on the phone instead of losing it.
+            "road-ratings-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)

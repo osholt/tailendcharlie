@@ -290,6 +290,37 @@ class DiscoveryModerationRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class RoadRatingRequest(BaseModel):
+    """One anonymous rider verdict on a catalogued road (#159).
+
+    This is the whole of it. ``extra="forbid"`` is load-bearing, not tidiness: it
+    means the relay structurally cannot accept a rider ID, device ID, ride ID,
+    installation ID, position or client timestamp, however a future client is
+    written. A build that tried to attach one gets HTTP 400 instead of quietly
+    handing the relay something it could attribute.
+
+    There is no ``createdAt`` for the same reason. A client-supplied time of
+    rating is a correlation handle against the ride journal, so the relay records
+    only the day it received the answer.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    featureId: str = Field(min_length=1, max_length=128)
+
+    # The stable re-match key across OSM extracts. Optional because the
+    # catalogue's own IDs are content hashes that move with each extract, and an
+    # older published asset may not carry one.
+    sourceFeatureId: str | None = Field(default=None, min_length=1, max_length=128)
+    category: DiscoveryCategory
+    verdict: Literal["worth_including", "not_worth_including"]
+    catalogueVersion: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+
+
 class CreatePlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -6,6 +6,7 @@ import '../controllers/map_style_mode_controller.dart';
 import '../controllers/ride_code_preference_controller.dart';
 import '../controllers/ride_controller.dart';
 import '../controllers/rider_profile_controller.dart';
+import '../controllers/road_rating_controller.dart';
 import '../controllers/shared_route_controller.dart';
 import '../controllers/speed_limit_display_controller.dart';
 import '../domain/recorded_route_store.dart';
@@ -27,6 +28,7 @@ class RideRelayApp extends StatelessWidget {
     required this.recordedRoutes,
     required this.completedRides,
     this.planDirectory,
+    this.roadRatings,
     this.enableNativeServices = true,
   });
 
@@ -40,6 +42,10 @@ class RideRelayApp extends StatelessWidget {
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final PlanDirectory? planDirectory;
+
+  /// Drives the end-of-ride catalogued-road rating card (#159).
+  final RoadRatingController? roadRatings;
+
   final bool enableNativeServices;
 
   @override
@@ -137,6 +143,7 @@ class RideRelayApp extends StatelessWidget {
               riderProfile: riderProfile,
               sharedRoutes: sharedRoutes,
               speedLimitDisplay: speedLimitDisplay,
+              roadRatings: roadRatings,
             );
           }
           if (riderProfile.needsOnboarding) {
