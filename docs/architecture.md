@@ -42,6 +42,16 @@ intentionally not signed because each phone changes it after successful relay.
 This group HMAC is not the final security design: device identity, key rotation,
 and application-layer encryption remain production gates.
 
+## Location capture
+
+Location runs only for the length of an active ride, and within that window it
+keeps running while the app is backgrounded — a rider navigating in another app is
+the ordinary case. iOS uses a declared `location` background mode with a
+while-in-use authorisation and the background indicator shown; Android uses a
+location-typed foreground service with an ongoing notification. Physical-device
+validation on both platforms is still a release gate; see
+`background-location.md`.
+
 ## Relay transport
 
 The transport-neutral relay engine implements bounded, HMAC-authenticated,

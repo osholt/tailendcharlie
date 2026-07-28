@@ -76,7 +76,22 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Tail End Charlie uses your location during an active ride to share your position with your group, provide navigation, and warn about route deviations. You can pause or stop location sharing at any time.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Tail End Charlie uses your location while the ride screen is open to show your group position and warn about route deviations.</string>
+	<string>Tail End Charlie uses your location during an active ride to show your group position, keep the group informed of where you are, and warn about route deviations. During a ride it keeps doing this while you use another navigation app or the screen is off, and stops as soon as the ride ends.</string>
+	<!--
+	  Location is a background mode because the group has to be able to see a
+	  rider whose phone is in a pocket or showing another navigation app. Without
+	  it iOS stops delivering fixes the moment the app leaves the foreground, and
+	  a recorded trail becomes a straight line between the last fix before that
+	  and the first one after (#205).
+
+	  This is a while-in-use capability, not an always-on one: the app only holds
+	  a location session during an active ride, and it shows the blue background
+	  indicator the whole time. See AppleSettings in device_location_source.dart.
+	-->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>
