@@ -659,6 +659,74 @@ class _RideMapScreenState extends State<RideMapScreen> {
       ? const RouteMarkerPlan(points: [])
       : const RouteMarkerPlanAnalyzer().analyze(_route!);
 
+  /// The review action on the day: a green dot the group turns out not to need
+  /// is rejected here rather than argued with at the roadside (#179).
+  ///
+  /// Reviewing the whole plan at leisure belongs on the route review screen and,
+  /// in time, the web planner; this surface is for the one that is wrong now.
+  Future<void> _showMarkerPlanPoint(MarkerPlanPoint point) async {
+    final manual = point.source == MarkerPlanPointSource.manual;
+    final reject = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                point.label,
+                style: Theme.of(sheetContext).textTheme.titleMedium,
+              ),
+              if (point.detail case final detail?) ...[
+                const SizedBox(height: 6),
+                Text(detail, style: const TextStyle(color: Color(0xFF98A3B1))),
+              ],
+              if (widget.canEditRoute) ...[
+                const SizedBox(height: 14),
+                OutlinedButton.icon(
+                  key: const Key('reject-marker-plan-point'),
+                  onPressed: () => Navigator.of(sheetContext).pop(true),
+                  icon: const Icon(Icons.block_outlined),
+                  label: Text(
+                    manual
+                        ? 'Remove this added position'
+                        : 'Not needed — reject for this route',
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    if (reject != true || !mounted) return;
+    await _rejectMarkerPlanPoint(point);
+  }
+
+  Future<void> _rejectMarkerPlanPoint(MarkerPlanPoint point) async {
+    final route = _route;
+    if (route == null || !widget.canEditRoute) return;
+    final updated = route.withMarkerReview(
+      point.source == MarkerPlanPointSource.manual
+          ? route.markerReview.restoring(point.id)
+          : route.markerReview.rejecting(point.toReviewPoint()),
+    );
+    await widget.routeStore.saveActiveRoute(updated);
+    if (!mounted) return;
+    setState(() => _route = updated);
+    await _syncMapLibreSources();
+    widget.onRouteChanged?.call(updated);
+    widget.onRouteCommitted?.call(updated);
+    _showMessage(
+      point.source == MarkerPlanPointSource.manual
+          ? '${point.label}: removed from the marker plan.'
+          : '${point.label}: rejected for this route.',
+    );
+  }
+
   DestinationRoutePlanner get _destinationRoutePlanner =>
       widget.destinationRoutePlanner ?? _defaultDestinationRoutePlanner;
 
@@ -1930,32 +1998,38 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     point: _latLng(point.position),
                     width: 38,
                     height: 38,
-                    child: Tooltip(
-                      message: point.label,
-                      child: Icon(
-                        switch (point.kind) {
-                          MarkerPlanPointKind.likelyMarker =>
-                            Icons.person_pin_circle_outlined,
-                          MarkerPlanPointKind.safetyReview =>
-                            Icons.warning_amber_rounded,
-                          MarkerPlanPointKind.musterPoint =>
-                            Icons.groups_2_outlined,
-                        },
-                        color: switch (point.kind) {
-                          MarkerPlanPointKind.likelyMarker => const Color(
-                            0xFF6ED89A,
-                          ),
-                          MarkerPlanPointKind.safetyReview => const Color(
-                            0xFFFF8A4C,
-                          ),
-                          MarkerPlanPointKind.musterPoint => const Color(
-                            0xFF68A9FF,
-                          ),
-                        },
-                        size: 32,
-                        shadows: const [
-                          Shadow(color: Color(0xFF10151C), blurRadius: 4),
-                        ],
+                    child: GestureDetector(
+                      key: Key('ride-marker-plan-${point.id}'),
+                      onTap: () => unawaited(_showMarkerPlanPoint(point)),
+                      child: Tooltip(
+                        message: point.label,
+                        child: Icon(
+                          point.source == MarkerPlanPointSource.manual
+                              ? Icons.add_location_alt_outlined
+                              : switch (point.kind) {
+                                  MarkerPlanPointKind.likelyMarker =>
+                                    Icons.person_pin_circle_outlined,
+                                  MarkerPlanPointKind.safetyReview =>
+                                    Icons.warning_amber_rounded,
+                                  MarkerPlanPointKind.musterPoint =>
+                                    Icons.groups_2_outlined,
+                                },
+                          color: switch (point.kind) {
+                            MarkerPlanPointKind.likelyMarker => const Color(
+                              0xFF6ED89A,
+                            ),
+                            MarkerPlanPointKind.safetyReview => const Color(
+                              0xFFFF8A4C,
+                            ),
+                            MarkerPlanPointKind.musterPoint => const Color(
+                              0xFF68A9FF,
+                            ),
+                          },
+                          size: 32,
+                          shadows: const [
+                            Shadow(color: Color(0xFF10151C), blurRadius: 4),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -3649,13 +3723,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       final point = _markerPlan.points
           .where((item) => item.id == id)
           .firstOrNull;
-      if (point != null) {
-        _showMessage(
-          point.detail == null
-              ? point.label
-              : '${point.label}: ${point.detail}',
-        );
-      }
+      if (point != null) unawaited(_showMarkerPlanPoint(point));
       return;
     }
     if (layerId != 'ride-relay-overlay-icons' &&
@@ -3912,6 +3980,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
         'Online road recalculation was unavailable. The original geometry is '
             'shown and remains usable offline.',
     ];
+    // The review screen is where suggested marking positions are accepted or
+    // rejected, so its decisions have to come back out with the route (#179).
+    var markerReview = activeRoute.markerReview;
     final action = await RouteReviewScreen.show(
       context,
       route: activeRoute,
@@ -3922,8 +3993,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       warnings: reviewWarnings,
       previousRoute: previousRoute ?? _route,
       canEditStops: canEditStops,
+      onMarkerReviewChanged: (review) => markerReview = review,
     );
-    return (action: action, route: activeRoute);
+    return (action: action, route: activeRoute.withMarkerReview(markerReview));
   }
 
   Future<ImportedRoute> _commitRoute(ImportedRoute activeRoute) async {

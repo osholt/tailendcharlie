@@ -99,6 +99,9 @@ class RouteGeometryEnricher {
         paths: List.unmodifiable(paths),
         waypoints: route.waypoints,
         maneuvers: List.unmodifiable(maneuvers),
+        // Recalculating geometry must not silently un-reject a marking
+        // position a person already rejected for this route (#179).
+        markerReview: route.markerReview,
       ),
       attempted: attempted,
       snappedPathCount: snapped,

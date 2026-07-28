@@ -222,6 +222,124 @@ class RouteLane {
   );
 }
 
+/// One reviewed marking position: a suggestion a person rejected, or a junction
+/// the detector missed and a person added.
+///
+/// The position is recorded as well as the identifier because a manoeuvre
+/// identifier is only an index into the route-engine reply. A reroute, or a
+/// second recalculation of the same GPX, renumbers them. Matching on position
+/// as well means a rejection still refers to the same place on the ground.
+class MarkerReviewPoint {
+  const MarkerReviewPoint({
+    required this.id,
+    required this.position,
+    this.label,
+  });
+
+  final String id;
+  final GeoPoint position;
+  final String? label;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'position': position.toJson(),
+    if (label != null) 'label': label,
+  };
+
+  factory MarkerReviewPoint.fromJson(Map<String, Object?> json) {
+    final rawPosition = json['position'];
+    if (rawPosition is! Map) {
+      throw const FormatException('Marker review position must be an object.');
+    }
+    return MarkerReviewPoint(
+      id: _requiredString(json, 'id'),
+      position: GeoPoint.fromJson(Map<String, Object?>.from(rawPosition)),
+      label: _optionalString(json['label']),
+    );
+  }
+}
+
+/// A person's decisions about the suggested marking positions for one route.
+///
+/// Marker assistance only ever suggests; the rider confirms. Rejection is the
+/// missing half of that (#179), and adding is the other half again: the
+/// detector misses junctions as well as over-suggesting, so a review surface
+/// that could only remove suggestions would be half a tool.
+///
+/// This rides with the route rather than in a side store, so a rejection sticks
+/// for that route through save, restart and hand-off, and so the web planner
+/// can read and write the same JSON without a second source of truth.
+class MarkerPlanReview {
+  const MarkerPlanReview({this.rejected = const [], this.added = const []});
+
+  final List<MarkerReviewPoint> rejected;
+  final List<MarkerReviewPoint> added;
+
+  static const empty = MarkerPlanReview();
+
+  bool get isEmpty => rejected.isEmpty && added.isEmpty;
+  bool get isNotEmpty => !isEmpty;
+
+  bool rejectsId(String id) => rejected.any((point) => point.id == id);
+
+  /// A compact identity for the decisions this review holds, so a caller that
+  /// caches work derived from a route can tell that the review changed.
+  String get signature =>
+      '${rejected.map((point) => point.id).join(',')}'
+      '/${added.map((point) => point.id).join(',')}';
+
+  MarkerPlanReview rejecting(MarkerReviewPoint point) => MarkerPlanReview(
+    rejected: [...rejected.where((existing) => existing.id != point.id), point],
+    added: added
+        .where((existing) => existing.id != point.id)
+        .toList(growable: false),
+  );
+
+  /// Undoes a rejection, and removes a manually added position of the same
+  /// identifier. One control on the review surface, one method here.
+  MarkerPlanReview restoring(String id) => MarkerPlanReview(
+    rejected: rejected.where((point) => point.id != id).toList(growable: false),
+    added: added.where((point) => point.id != id).toList(growable: false),
+  );
+
+  MarkerPlanReview adding(MarkerReviewPoint point) => MarkerPlanReview(
+    rejected: rejected
+        .where((existing) => existing.id != point.id)
+        .toList(growable: false),
+    added: [...added.where((existing) => existing.id != point.id), point],
+  );
+
+  Map<String, Object?> toJson() => {
+    if (rejected.isNotEmpty)
+      'rejected': rejected.map((point) => point.toJson()).toList(),
+    if (added.isNotEmpty)
+      'added': added.map((point) => point.toJson()).toList(),
+  };
+
+  factory MarkerPlanReview.fromJson(Map<String, Object?> json) =>
+      MarkerPlanReview(
+        rejected: _reviewPoints(json['rejected']),
+        added: _reviewPoints(json['added']),
+      );
+
+  static List<MarkerReviewPoint> _reviewPoints(Object? raw) {
+    if (raw == null) return const [];
+    if (raw is! List) {
+      throw const FormatException('Marker review entries must be a list.');
+    }
+    return raw
+        .map((entry) {
+          if (entry is! Map) {
+            throw const FormatException(
+              'Marker review entry must be an object.',
+            );
+          }
+          return MarkerReviewPoint.fromJson(Map<String, Object?>.from(entry));
+        })
+        .toList(growable: false);
+  }
+}
+
 class ImportedRoute {
   const ImportedRoute({
     required this.id,
@@ -231,6 +349,7 @@ class ImportedRoute {
     required this.paths,
     required this.waypoints,
     this.maneuvers = const [],
+    this.markerReview = MarkerPlanReview.empty,
     this.description,
   });
 
@@ -244,6 +363,21 @@ class ImportedRoute {
   final List<RoutePath> paths;
   final List<RouteWaypoint> waypoints;
   final List<RouteManeuver> maneuvers;
+
+  /// Which suggested marking positions a person has rejected or added.
+  final MarkerPlanReview markerReview;
+
+  ImportedRoute withMarkerReview(MarkerPlanReview review) => ImportedRoute(
+    id: id,
+    name: name,
+    description: description,
+    importedAt: importedAt,
+    sourceFileName: sourceFileName,
+    paths: paths,
+    waypoints: waypoints,
+    maneuvers: maneuvers,
+    markerReview: review,
+  );
 
   Iterable<GeoPoint> get allPoints sync* {
     for (final path in paths) {
@@ -268,6 +402,7 @@ class ImportedRoute {
     'waypoints': waypoints.map((waypoint) => waypoint.toJson()).toList(),
     if (maneuvers.isNotEmpty)
       'maneuvers': maneuvers.map((maneuver) => maneuver.toJson()).toList(),
+    if (markerReview.isNotEmpty) 'markerReview': markerReview.toJson(),
   };
 
   String toJsonString() => jsonEncode(toJson());
@@ -313,6 +448,15 @@ class ImportedRoute {
     if (paths.isEmpty && waypoints.isEmpty) {
       throw const FormatException('A route must contain geometry.');
     }
+    final markerReview = switch (json['markerReview']) {
+      null => MarkerPlanReview.empty,
+      final Map<Object?, Object?> value => MarkerPlanReview.fromJson(
+        Map<String, Object?>.from(value),
+      ),
+      _ => throw const FormatException(
+        'Route marker review must be an object.',
+      ),
+    };
 
     return ImportedRoute(
       id: _requiredString(json, 'id'),
@@ -323,6 +467,7 @@ class ImportedRoute {
       paths: paths,
       waypoints: waypoints,
       maneuvers: maneuvers,
+      markerReview: markerReview,
     );
   }
 

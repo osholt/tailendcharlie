@@ -1259,7 +1259,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final fingerprint = route == null
         ? 'none'
         : '${route.id}:${route.importedAt.toUtc().toIso8601String()}:'
-              '${route.pathPointCount}';
+              // The marker review decides which decision points the live
+              // detector may suggest, so rejecting one has to rebuild it (#179).
+              '${route.pathPointCount}:${route.markerReview.signature}';
     final lifecycleFingerprint =
         widget.rideController.rideStartedAt?.toUtc().toIso8601String() ??
         'open';
@@ -1320,6 +1322,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     }
 
     final markerRoute = _markerRouteFor(route);
+    final markerReview =
+        route?.markerReview ?? route_domain.MarkerPlanReview.empty;
     final decisionPoints = const RouteDecisionPointExtractor().extract(
       route: markerRoute,
       explicitPoints:
@@ -1335,6 +1339,27 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               )
               .toList(growable: false) ??
           const [],
+      // The review the planner or the roadside made for this route decides what
+      // the live detector may suggest (#179).
+      rejectedPositions: markerReview.rejected
+          .map(
+            (point) => awareness_geo.GeoPoint(
+              latitude: point.position.latitude,
+              longitude: point.position.longitude,
+            ),
+          )
+          .toList(growable: false),
+      addedPositions: markerReview.added
+          .map(
+            (point) => ExplicitDecisionPoint(
+              position: awareness_geo.GeoPoint(
+                latitude: point.position.latitude,
+                longitude: point.position.longitude,
+              ),
+              label: point.label,
+            ),
+          )
+          .toList(growable: false),
     );
     final markerController = MarkerAssistanceController(
       widget.rideController,
@@ -1450,7 +1475,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final fingerprint = route == null
         ? 'none'
         : '${route.id}:${route.importedAt.toUtc().toIso8601String()}:'
-              '${route.pathPointCount}';
+              // The marker review decides which decision points the live
+              // detector may suggest, so rejecting one has to rebuild it (#179).
+              '${route.pathPointCount}:${route.markerReview.signature}';
     final lifecycleFingerprint =
         widget.rideController.rideStartedAt?.toUtc().toIso8601String() ??
         'open';
