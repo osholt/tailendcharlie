@@ -96,6 +96,74 @@ abstract final class GeoCalculations {
     );
   }
 
+  /// Every separate time [polyline] comes within [corridorMeters] of [point].
+  ///
+  /// [projectOntoPolyline] answers "where on the route is this?" with the single
+  /// geometrically nearest place, which is the wrong question for a route that
+  /// visits somewhere twice. An out-and-back passes the same camera at, say, 20
+  /// km outbound and 40 km inbound, and the nearest projection picks one of them
+  /// essentially at random - so a rider on the way home gets told the camera they
+  /// are about to ride past is 15 km behind them (#135).
+  ///
+  /// Each returned pass is one run of segments inside the corridor, reduced to
+  /// the closest segment in that run, and carries that segment's bearing so a
+  /// caller can tell which way the route runs there.
+  ///
+  /// A run ends either when the route leaves the corridor or when it turns back
+  /// on itself by more than [reversalToleranceDegrees]. The reversal split is what
+  /// makes an exact out-and-back work: riding out and back down the same road puts
+  /// both passes in one unbroken corridor run, and without the split they collapse
+  /// into whichever came first.
+  static List<PolylinePass> passesNear(
+    GeoPoint point,
+    List<GeoPoint> polyline, {
+    required double corridorMeters,
+    double reversalToleranceDegrees = 120,
+  }) {
+    if (polyline.length < 2) return const [];
+    final passes = <PolylinePass>[];
+    var travelled = 0.0;
+    PolylinePass? run;
+    for (var index = 0; index < polyline.length - 1; index += 1) {
+      final start = polyline[index];
+      final end = polyline[index + 1];
+      final segment = _projectOntoSegment(point, start, end);
+      final length = distanceMeters(start, end);
+      if (segment.distanceMeters <= corridorMeters) {
+        final bearing = length == 0 ? null : bearingDegrees(start, end);
+        final runBearing = run?.bearingDegrees;
+        if (run != null &&
+            runBearing != null &&
+            bearing != null &&
+            bearingDifferenceDegrees(runBearing, bearing) >
+                reversalToleranceDegrees) {
+          passes.add(run);
+          run = null;
+        }
+        if (run == null ||
+            segment.distanceMeters < run.distanceFromRouteMeters) {
+          run = PolylinePass(
+            distanceFromRouteMeters: segment.distanceMeters,
+            distanceAlongRouteMeters: travelled + segment.progressMeters,
+            bearingDegrees: bearing ?? run?.bearingDegrees,
+          );
+        }
+      } else if (run != null) {
+        passes.add(run);
+        run = null;
+      }
+      travelled += length;
+    }
+    if (run != null) passes.add(run);
+    return passes;
+  }
+
+  /// Smallest angle between two bearings, in degrees from 0 to 180.
+  static double bearingDifferenceDegrees(double first, double second) {
+    final difference = (first - second).abs() % 360;
+    return math.min(difference, 360 - difference);
+  }
+
   static double _distanceToSegmentMeters(
     GeoPoint point,
     GeoPoint start,
@@ -155,6 +223,22 @@ class PolylineProjection {
 
   final double distanceFromRouteMeters;
   final double distanceAlongRouteMeters;
+}
+
+/// One occasion on which a polyline runs close to a point.
+class PolylinePass {
+  const PolylinePass({
+    required this.distanceFromRouteMeters,
+    required this.distanceAlongRouteMeters,
+    required this.bearingDegrees,
+  });
+
+  final double distanceFromRouteMeters;
+  final double distanceAlongRouteMeters;
+
+  /// Which way the route runs at this pass, or null where the closest segment
+  /// has no length to take a bearing from.
+  final double? bearingDegrees;
 }
 
 class _SegmentProjection {
