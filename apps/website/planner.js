@@ -37,6 +37,7 @@ import {
   DISCOVERY_CATALOGUE_URL,
   DISCOVERY_CATEGORIES,
   discoveryFeatureAnchor,
+  discoveryRoadFacts,
   discoveryRouteStop,
   emptyFeatureCollection,
   filterDiscoveryFeatures,
@@ -160,6 +161,11 @@ let discoveryCatalogue = emptyFeatureCollection();
 let visibleDiscoveryCatalogue = emptyFeatureCollection();
 let discoveryLoadRequest = null;
 let discoveryPopup = null;
+// Which candidate the popup is describing, and whether it was opened by hover
+// rather than by a deliberate click. A hovered popup gets out of the way; a
+// clicked one stays put.
+let discoveryPopupFeatureId = null;
+let discoveryPopupIsHover = false;
 let suggestionCoordinate = null;
 let suggestionGeometry = null;
 let suggestionSegmentStart = null;
@@ -414,6 +420,25 @@ map.on("error", (event) => {
   }
 });
 map.on("moveend", updateDiscoveryViewport);
+
+// Hover is the natural interaction for these facts on a desktop (#160). It shows
+// the same content the click popup shows, so the two cannot disagree, and it
+// never replaces a popup the rider has deliberately opened by clicking.
+map.on("mousemove", (event) => {
+  if (routeDrag) return;
+  const feature = queryDiscoveryFeature(event.point);
+  map.getCanvas().style.cursor = feature ? "pointer" : "";
+  if (!feature) {
+    if (discoveryPopupIsHover) closeDiscoveryPopup();
+    return;
+  }
+  if (discoveryPopupFeatureId === feature.properties?.id) return;
+  if (discoveryPopup && !discoveryPopupIsHover) return;
+  showDiscoveryPopup(feature, event.lngLat, { hover: true });
+});
+map.on("mouseout", () => {
+  if (discoveryPopupIsHover) closeDiscoveryPopup();
+});
 
 elements.placeSearch.addEventListener("submit", searchPlaces);
 elements.bikerBrowser.addEventListener("toggle", toggleBikerBrowser);
@@ -2452,7 +2477,7 @@ function enabledDiscoveryCategories() {
 }
 
 function changeDiscoveryLayers() {
-  discoveryPopup?.remove();
+  closeDiscoveryPopup();
   updateDiscoveryViewport();
   scheduleDraftSave();
 }
@@ -2582,8 +2607,15 @@ function queryDiscoveryFeature(point) {
   );
 }
 
-function showDiscoveryPopup(feature, clickedLocation) {
+function closeDiscoveryPopup() {
   discoveryPopup?.remove();
+  discoveryPopup = null;
+  discoveryPopupFeatureId = null;
+  discoveryPopupIsHover = false;
+}
+
+function showDiscoveryPopup(feature, clickedLocation, { hover = false } = {}) {
+  closeDiscoveryPopup();
   const properties = feature.properties || {};
   const category = DISCOVERY_CATEGORIES[properties.category];
   const anchor = discoveryFeatureAnchor(feature) || [
@@ -2596,6 +2628,15 @@ function showDiscoveryPopup(feature, clickedLocation) {
   kicker.textContent = category?.label || "Discovery highlight";
   const title = document.createElement("strong");
   title.textContent = properties.name || "Unnamed highlight";
+  const facts = discoveryRoadFacts(properties);
+  // A pending candidate must not be presented with the confidence of a cited
+  // one (#160).
+  const researchBadge = document.createElement("span");
+  researchBadge.className = `discovery-research-badge ${
+    facts.isVerified ? "is-researched" : "is-pending"
+  }`;
+  researchBadge.textContent = facts.researchLabel;
+  researchBadge.title = facts.researchDetail;
   const detail = document.createElement("p");
   const details = [
     properties.score == null ? null : `Score ${properties.score}/100`,
@@ -2603,6 +2644,7 @@ function showDiscoveryPopup(feature, clickedLocation) {
     properties.lastVerified ? `checked ${properties.lastVerified}` : null,
   ].filter(Boolean);
   detail.textContent = details.join(" · ");
+  const roadFacts = discoveryFactsElement(facts);
   const warning = document.createElement("p");
   warning.className = "discovery-warning";
   warning.textContent =
@@ -2617,7 +2659,7 @@ function showDiscoveryPopup(feature, clickedLocation) {
   routeButton.textContent = "Add to route via here";
   routeButton.addEventListener("click", () => {
     addStop(discoveryRouteStop(feature));
-    discoveryPopup?.remove();
+    closeDiscoveryPopup();
   });
   const correctionButton = document.createElement("button");
   correctionButton.type = "button";
@@ -2630,15 +2672,77 @@ function showDiscoveryPopup(feature, clickedLocation) {
     elements.suggestionCategory.value = properties.category;
     elements.suggestionName.value = properties.name || "";
     openSuggestionDialog(false);
-    discoveryPopup?.remove();
+    closeDiscoveryPopup();
   });
-  content.append(kicker, title);
+  content.append(kicker, researchBadge, title);
   if (details.length) content.append(detail);
-  content.append(warning, source, routeButton, correctionButton);
-  discoveryPopup = new maplibregl.Popup({ maxWidth: "320px", offset: 12 })
+  if (facts.description) {
+    const description = document.createElement("p");
+    description.className = "discovery-description";
+    description.textContent = facts.description;
+    content.append(description);
+  }
+  content.append(roadFacts);
+  content.append(warning, source);
+  for (const evidence of facts.evidenceSources) {
+    const link = document.createElement("a");
+    link.className = "discovery-evidence";
+    link.href = evidence;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    try {
+      link.textContent = new URL(evidence).host;
+    } catch {
+      link.textContent = evidence;
+    }
+    content.append(link);
+  }
+  content.append(routeButton, correctionButton);
+  discoveryPopup = new maplibregl.Popup({
+    maxWidth: "340px",
+    offset: 12,
+    closeButton: !hover,
+    closeOnClick: !hover,
+  })
     .setLngLat(anchor)
     .setDOMContent(content)
     .addTo(map);
+  discoveryPopupFeatureId = properties.id || null;
+  discoveryPopupIsHover = hover;
+}
+
+/// Speed limit, enforcement, busy periods and review state, in reading order.
+///
+/// A mapped limit and an unknown one are given different classes so they cannot
+/// read the same: an untagged road must not look like an unrestricted one (#145).
+function discoveryFactsElement(facts) {
+  const list = document.createElement("dl");
+  list.className = "discovery-facts";
+  const row = (term, className, lines) => {
+    const label = document.createElement("dt");
+    label.textContent = term;
+    const value = document.createElement("dd");
+    if (className) value.className = className;
+    for (const line of lines) {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = line;
+      value.append(paragraph);
+    }
+    list.append(label, value);
+  };
+  row(
+    "Speed limit",
+    facts.speedLimitIsKnown ? "is-known" : "is-unknown",
+    [facts.speedLimit, facts.speedLimitProvenance],
+  );
+  row("Enforcement", null, facts.enforcementLines);
+  row("Busy periods", null, [facts.busyPeriods]);
+  row(
+    "Research",
+    facts.isVerified ? "is-known" : "is-unknown",
+    [facts.researchLabel, facts.researchDetail],
+  );
+  return list;
 }
 
 function openSuggestionDialog(reset = true) {

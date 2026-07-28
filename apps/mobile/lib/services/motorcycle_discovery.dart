@@ -20,6 +20,137 @@ enum MotorcycleDiscoveryCategory {
           .firstOrNull;
 }
 
+/// Where a candidate's speed limit came from.
+///
+/// The catalogue distinguishes these because a road with no mapped limit must
+/// read as *not known*, never as unrestricted and never as a guess (#145, #160).
+/// [absent] is the case the catalogue itself has no opinion on - an older
+/// catalogue, or a field a generator has not written yet - and is reported just
+/// as honestly as [unknown] rather than defaulted to something reassuring.
+enum DiscoverySpeedLimitProvenance {
+  tagged('tagged'),
+  inferredFromMaxspeedType('inferred-from-maxspeed-type'),
+  unknown('unknown'),
+  absent(null);
+
+  const DiscoverySpeedLimitProvenance(this.apiValue);
+
+  final String? apiValue;
+
+  static DiscoverySpeedLimitProvenance fromApiValue(Object? value) =>
+      DiscoverySpeedLimitProvenance.values
+          .where((provenance) => provenance.apiValue == value)
+          .firstOrNull ??
+      DiscoverySpeedLimitProvenance.unknown;
+}
+
+/// A candidate's mapped speed limit, or the reason there is none.
+class DiscoverySpeedLimit {
+  const DiscoverySpeedLimit({
+    required this.provenance,
+    this.value,
+    this.mixed = false,
+    this.range = const [],
+    this.note,
+  });
+
+  static const DiscoverySpeedLimit absent = DiscoverySpeedLimit(
+    provenance: DiscoverySpeedLimitProvenance.absent,
+  );
+
+  /// The limit as the catalogue states it, e.g. `50 mph`. Null whenever it is
+  /// not known - which is the only honest reading of an untagged road.
+  final String? value;
+  final DiscoverySpeedLimitProvenance provenance;
+
+  /// The road carries more than one limit over its length.
+  final bool mixed;
+
+  /// The lowest and highest limits on a [mixed] road, when recorded.
+  final List<String> range;
+
+  /// The catalogue's own explanation, used in preference to any wording of ours.
+  final String? note;
+
+  bool get isKnown =>
+      value != null &&
+      provenance != DiscoverySpeedLimitProvenance.unknown &&
+      provenance != DiscoverySpeedLimitProvenance.absent;
+
+  factory DiscoverySpeedLimit.fromJson(Map<String, Object?> json) =>
+      DiscoverySpeedLimit(
+        value: _trimmedOrNull(json['value']),
+        provenance: DiscoverySpeedLimitProvenance.fromApiValue(
+          json['provenance'],
+        ),
+        mixed: json['mixed'] == true,
+        range:
+            (json['range'] as List?)
+                ?.map(_trimmedOrNull)
+                .whereType<String>()
+                .toList(growable: false) ??
+            const [],
+        note: _trimmedOrNull(json['note']),
+      );
+}
+
+/// Whether an OpenStreetMap `enforcement=average_speed` relation covers a road.
+class DiscoveryAverageSpeedCheck {
+  const DiscoveryAverageSpeedCheck({
+    required this.recorded,
+    this.present = false,
+    this.relation,
+    this.enforcedLimit,
+    this.description,
+  });
+
+  /// The catalogue said nothing at all about average-speed enforcement.
+  static const DiscoveryAverageSpeedCheck absent = DiscoveryAverageSpeedCheck(
+    recorded: false,
+  );
+
+  /// Whether the catalogue carries the field at all. False means "we did not
+  /// look", which is a different statement from "we looked and found nothing".
+  final bool recorded;
+
+  /// True only when a relation actually covers the road.
+  final bool present;
+  final String? relation;
+  final String? enforcedLimit;
+  final String? description;
+
+  factory DiscoveryAverageSpeedCheck.fromJson(Map<String, Object?> json) =>
+      DiscoveryAverageSpeedCheck(
+        recorded: true,
+        present: json['present'] == true,
+        relation: _trimmedOrNull(json['relation']),
+        enforcedLimit: _trimmedOrNull(json['enforcedLimit']),
+        description: _trimmedOrNull(json['description']),
+      );
+}
+
+/// How far a candidate has been researched.
+enum DiscoveryResearchStatus {
+  researched('researched'),
+  pending('pending'),
+
+  /// The catalogue does not say. Treated as no better than [pending] on screen:
+  /// an entry with no stated review state must not read as a verified one.
+  unstated(null);
+
+  const DiscoveryResearchStatus(this.apiValue);
+
+  final String? apiValue;
+
+  bool get isVerified => this == DiscoveryResearchStatus.researched;
+
+  static DiscoveryResearchStatus fromApiValue(Object? value) =>
+      DiscoveryResearchStatus.values
+          .where((status) => status.apiValue == value)
+          .firstOrNull ??
+      DiscoveryResearchStatus.unstated;
+}
+
 class MotorcycleDiscoveryFeature {
   const MotorcycleDiscoveryFeature({
     required this.id,
@@ -33,6 +164,14 @@ class MotorcycleDiscoveryFeature {
     required this.warning,
     this.score,
     this.sourceFeatureId,
+    this.speedLimit = DiscoverySpeedLimit.absent,
+    this.averageSpeedCheck = DiscoveryAverageSpeedCheck.absent,
+    this.fixedSpeedCameras,
+    this.busyPeriods,
+    this.riderNote,
+    this.enforcementNote,
+    this.researchStatus = DiscoveryResearchStatus.unstated,
+    this.evidenceSources = const [],
   });
 
   final String id;
@@ -53,6 +192,23 @@ class MotorcycleDiscoveryFeature {
   /// across releases. A rider rating has to carry it or the rating is orphaned
   /// by the next publication (#159).
   final String? sourceFeatureId;
+  final DiscoverySpeedLimit speedLimit;
+  final DiscoveryAverageSpeedCheck averageSpeedCheck;
+
+  /// Fixed speed cameras near the road. Null means the catalogue does not count
+  /// them, which is not the same as counting zero.
+  final int? fixedSpeedCameras;
+
+  /// When the road is busy, where a researcher has established it.
+  final String? busyPeriods;
+
+  /// One or two sentences for a rider.
+  final String? riderNote;
+
+  /// A researched caveat about enforcement that OpenStreetMap does not record.
+  final String? enforcementNote;
+  final DiscoveryResearchStatus researchStatus;
+  final List<String> evidenceSources;
 
   bool get isPoint => points.length == 1;
   GeoPoint get anchor => points[points.length ~/ 2];
@@ -174,6 +330,36 @@ class MotorcycleDiscoveryCatalogue {
         final String value when value.trim().isNotEmpty => value.trim(),
         _ => null,
       },
+      // Every enrichment field is optional. The catalogue is generated by a
+      // separate pipeline (#158) and an older or partial one must still load,
+      // degrading to "not recorded" rather than to a comfortable default.
+      speedLimit: switch (properties['speedLimit']) {
+        final Map<Object?, Object?> value => DiscoverySpeedLimit.fromJson(
+          Map<String, Object?>.from(value),
+        ),
+        _ => DiscoverySpeedLimit.absent,
+      },
+      averageSpeedCheck: switch (properties['averageSpeedCheck']) {
+        final Map<Object?, Object?> value =>
+          DiscoveryAverageSpeedCheck.fromJson(Map<String, Object?>.from(value)),
+        _ => DiscoveryAverageSpeedCheck.absent,
+      },
+      fixedSpeedCameras: switch (properties['fixedSpeedCameras']) {
+        final num value when value.isFinite && value >= 0 => value.round(),
+        _ => null,
+      },
+      busyPeriods: _trimmedOrNull(properties['busyPeriods']),
+      riderNote: _trimmedOrNull(properties['riderNote']),
+      enforcementNote: _trimmedOrNull(properties['enforcementNote']),
+      researchStatus: DiscoveryResearchStatus.fromApiValue(
+        properties['researchStatus'],
+      ),
+      evidenceSources:
+          (properties['evidenceSources'] as List?)
+              ?.map(_trimmedOrNull)
+              .whereType<String>()
+              .toList(growable: false) ??
+          const [],
     );
   }
 
@@ -184,4 +370,10 @@ class MotorcycleDiscoveryCatalogue {
     }
     return value.trim();
   }
+}
+
+String? _trimmedOrNull(Object? value) {
+  if (value is! String) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
 }

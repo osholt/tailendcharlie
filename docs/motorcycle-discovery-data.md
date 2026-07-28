@@ -98,6 +98,45 @@ Every public feature should include:
 - The planned route must render above discovery roads, with distinct colours
   and a legend that cannot be mistaken for navigation guidance.
 
+## Showing a candidate's facts honestly
+
+Both surfaces render speed limit, enforcement, busy periods, the rider
+description and the review state when a road is selected (app) or hovered
+(website). The wording is owned by one place per surface and pinned to the same
+strings by tests on both:
+
+| Surface | Implementation |
+| --- | --- |
+| Mobile app | `apps/mobile/lib/services/discovery_road_facts.dart` |
+| Website planner | `discoveryRoadFacts` in `apps/website/discovery-catalogue.mjs` |
+
+Four rules, which the tests enforce rather than merely describe:
+
+1. **A road with no mapped limit reads as "Speed limit not known"**, visually
+   distinct from a mapped one, and never as an unrestricted road or a guess.
+   `tagged`, `inferred-from-maxspeed-type` and `unknown` each state their own
+   provenance on screen; an `inferred` value says outright that it is implied by
+   a national-limit tag and is not a posted value. A missing `speedLimit` field
+   is reported as honestly as an explicit `unknown`.
+2. **An absent record is not an absent thing.** Enforcement copy says *not
+   recorded in OpenStreetMap*, never "none", and every road with no recorded
+   enforcement also carries the sentence explaining that OpenStreetMap does not
+   hold every camera. One candidate in the catalogue matches an
+   `enforcement=average_speed` relation while the A57 Snake Pass has published
+   camera proposals OpenStreetMap does not record; telling a rider that road is
+   clear would be the worst thing this layer could do. "Not checked" and
+   "checked and not recorded" are also kept distinct.
+3. **A `pending` candidate never looks like a researched one.** It carries a
+   differently coloured badge, not just different text, and says it was generated
+   from OpenStreetMap and not yet checked by a person.
+4. **No "police checks likely" field.** It is not in OpenStreetMap and must not
+   be synthesised from road class or from anything adjacent. The only credible
+   source is accumulated rider hazard reports (#112, #135); until those exist the
+   field is omitted.
+
+Busy periods are shown only where a researcher established them, and otherwise
+say they have not been researched — never that a road is quiet.
+
 ## Scoring guardrails
 
 The bend metric is descriptive, not a speed or safety score. A road must not

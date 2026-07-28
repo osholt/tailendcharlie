@@ -1317,6 +1317,86 @@
   font-weight: 700;
 }
 
+/* A pending candidate must not be presented with the confidence of a cited
+   one (#160), so the badge is a different colour, not just different text. */
+.discovery-research-badge {
+  justify-self: start;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid;
+  border-radius: 6px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.discovery-research-badge.is-researched {
+  border-color: #2f7a46;
+  background: #e4f5e9;
+  color: #1d5730;
+}
+
+.discovery-research-badge.is-pending {
+  border-color: #a8791b;
+  background: #fbf1da;
+  color: #6d4c07;
+}
+
+.discovery-popup-content .discovery-description {
+  font-size: 0.84rem;
+}
+
+.discovery-facts {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.5rem 0 0;
+  border-top: 1px solid rgba(69, 44, 95, 0.18);
+}
+
+.discovery-facts dt {
+  color: #5f3a85;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.discovery-facts dd {
+  margin: 0 0 0.2rem;
+}
+
+.discovery-facts dd p {
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+/* The first line of a row is the fact; the rest is where it came from. */
+.discovery-facts dd p:first-child {
+  color: #171823;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.discovery-facts dd p + p {
+  color: #4a4459;
+}
+
+/* A road with no mapped limit must not read like a mapped one. */
+.discovery-facts dd.is-unknown p:first-child {
+  color: #6b6579;
+  font-style: italic;
+  font-weight: 600;
+}
+
+.discovery-facts dd.is-known p:first-child {
+  color: #17351f;
+}
+
+.discovery-popup-content .discovery-evidence {
+  font-size: 0.72rem;
+}
+
 .suggestion-dialog {
   width: min(94vw, 620px);
   max-height: 90vh;

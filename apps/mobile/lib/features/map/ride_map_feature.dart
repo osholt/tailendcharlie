@@ -53,6 +53,7 @@ import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
+import 'discovery_road_sheet.dart';
 import 'maneuver_list_screen.dart';
 import 'maneuver_symbol.dart';
 import 'group_mini_map_framing.dart';
@@ -4314,71 +4315,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<void> _showDiscoveryFeature(MotorcycleDiscoveryFeature feature) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                feature.category.label,
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-              Text(
-                feature.name,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                [
-                  if (feature.score case final score?) 'Score $score/100',
-                  '${feature.confidence} confidence',
-                  'checked ${feature.lastVerified}',
-                ].join(' · '),
-              ),
-              const SizedBox(height: 8),
-              Text(feature.warning),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => launchUrl(
-                    Uri.parse(feature.sourceUrl),
-                    mode: LaunchMode.externalApplication,
-                  ),
-                  icon: const Icon(Icons.open_in_new),
-                  label: Text('Source: ${feature.sourceName}'),
-                ),
-              ),
-              FilledButton.icon(
-                onPressed: _routing
-                    ? null
-                    : () {
-                        Navigator.of(sheetContext).pop();
-                        unawaited(_addDiscoveryFeatureToRoute(feature));
-                      },
-                icon: const Icon(Icons.add_road),
-                label: const Text('Add to route via here'),
-              ),
-              TextButton.icon(
-                onPressed: () {
-                  Navigator.of(sheetContext).pop();
-                  unawaited(
-                    _showDiscoverySuggestionForm(
-                      feature: feature,
-                      action: 'correct',
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.edit_location_alt_outlined),
-                label: const Text('Suggest a correction or removal'),
-              ),
-            ],
-          ),
-        ),
+    await DiscoveryRoadSheet.show(
+      context,
+      feature: feature,
+      onAddToRoute: _routing
+          ? null
+          : () {
+              Navigator.of(context).pop();
+              unawaited(_addDiscoveryFeatureToRoute(feature));
+            },
+      onSuggestCorrection: () {
+        Navigator.of(context).pop();
+        unawaited(
+          _showDiscoverySuggestionForm(feature: feature, action: 'correct'),
+        );
+      },
+      onOpenLink: (url) => unawaited(
+        launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
       ),
     );
   }
