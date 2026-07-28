@@ -61,6 +61,7 @@ import '../../services/received_quick_message.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
+import '../../services/route_progress.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
 import '../../services/enforcement_alert_detector.dart';
@@ -719,6 +720,14 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
   final _rideCompletionDetector = RideCompletionDetector();
+
+  /// Progress along the active route, used only to arm the automatic ride end.
+  ///
+  /// Deliberately the shell's own tracker rather than the map's: completion has
+  /// to work when the map is not the visible tab, and the map's tracker is tied
+  /// to that widget's lifecycle. Both are monotonic and fed the same fixes, so
+  /// they agree.
+  final _completionProgressTracker = RouteProgressTracker();
   late final RouteRejoinPlanner _rejoinPlanner;
   Future<void> _rejoinChain = Future.value();
   String? _rejoinGuidance;
@@ -1863,7 +1872,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // A simulation can finish between throttled overlay frames. Completion
     // needs to inspect the final GPS fixes even when no later overlay frame is
     // scheduled to arrive.
-    unawaited(_maybeAutomaticallyEndRide(awareness));
+    unawaited(_maybeAutomaticallyEndRide(awareness, mapPoint));
     if (!updateOverlayMarkers) return;
     if (_isSimulation) {
       _updateSimulationRiderTrails(simulatedRiders ?? const []);
@@ -2105,6 +2114,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<void> _maybeAutomaticallyEndRide(
     SituationalAwarenessController awareness,
+    route_domain.GeoPoint? localPosition,
   ) async {
     if (_autoEndingRide ||
         !widget.rideController.rideStarted ||
@@ -2123,6 +2133,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final route = _activeRoute;
     final destination = _routeDestination(route);
     if (destination == null) return;
+    // Monotonic progress along the plan, not proximity to its last point. On a
+    // loop the two are the same thing at the start line (#206).
+    final progress = _completionProgressTracker.update(route, localPosition);
     final arrived = _rideCompletionDetector.everyoneReachedDestination(
       destination: awareness_geo.GeoPoint(
         latitude: destination.latitude,
@@ -2130,6 +2143,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       ),
       riderLocations: awareness.riderLocations,
       now: DateTime.now(),
+      routeProgressFraction: progress.totalMeters <= 0
+          ? 0
+          : progress.progressMeters / progress.totalMeters,
     );
     if (!arrived) return;
     _autoEndingRide = true;

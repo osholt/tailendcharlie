@@ -511,6 +511,9 @@ void main() {
         destination: const GeoPoint(latitude: 51, longitude: -0.9),
         riderLocations: awareness.riderLocations,
         now: DateTime.now(),
+        // The fleet's own progress, not a stand-in: arrival is only arrival once
+        // the route is behind the group (#206).
+        routeProgressFraction: simulation.progress,
       ),
       isTrue,
     );
