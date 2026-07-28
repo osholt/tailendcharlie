@@ -361,7 +361,7 @@ List<ManeuverInstruction> collapseManeuvers(List<RouteManeuver> maneuvers) {
 /// an exit against the next entry measures the gap between leaving one ring and
 /// joining the next, which is much shorter than the distance between the rings.
 /// The double roundabout on New Cheltenham Road is a pair of mini-roundabouts
-/// **41 m apart** (OpenStreetMap nodes 51.46705,-2.50050 and 51.46721,-2.50106),
+/// **42 m apart** (OpenStreetMap nodes 51.46705,-2.50050 and 51.46721,-2.50106),
 /// comfortably outside the 25 m threshold as centres and easily inside it as
 /// exit-to-entry. Merging them announces one junction where a rider meets two
 /// (#163).

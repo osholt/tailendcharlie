@@ -124,8 +124,8 @@ class RouteWaypoint {
   }
 }
 
-/// A route-engine instruction retained with the route geometry so navigation
-/// guidance remains available after restart and while offline.
+/// A routing or reviewed mapped instruction retained with the route geometry so
+/// navigation guidance remains available after restart and while offline.
 class RouteManeuver {
   const RouteManeuver({
     required this.position,

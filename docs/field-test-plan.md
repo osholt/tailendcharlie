@@ -166,6 +166,10 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
   two seconds with no overshoot or oscillation; a stationary phone with a noisy
   fix leaves the map still; and the bearing never misrepresents which way the
   rider faces at a junction.
+- Plan or simulate BS15 1UJ toward Chippenham along New Cheltenham Road. The two
+  mini-roundabouts at OSM nodes 30983542 and 30983544 each appear as a 2nd-exit,
+  straight-on instruction 42 m apart; the second is visible before entering the
+  first and becomes current after the first is passed.
 
 If the gate fails, retain durable offline queues and opportunistic exchange but
 do not market the product as a continuously available mesh.

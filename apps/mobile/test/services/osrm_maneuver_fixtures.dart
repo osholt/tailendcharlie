@@ -358,6 +358,92 @@ Map<String, Object?> multiRoundaboutUrbanResponse() => _response(
   ],
 );
 
+/// The live default-route response from BS15 1UJ toward Chippenham, reduced to
+/// the New Cheltenham Road corridor.
+///
+/// OSRM reports both OSM mini-roundabout nodes as ordinary intersections inside
+/// one 1,136 m `new name` step. There is no manoeuvre at either coordinate. The
+/// next manoeuvre is the separate third-exit roundabout near Tenniscourt Road.
+Map<String, Object?> newCheltenhamRoadOmittedRoundaboutsResponse() => _response(
+  coordinates: [
+    [-2.5061000, 51.4677300],
+    [-2.5048780, 51.4676080],
+    [-2.5023880, 51.4673440],
+    [-2.5010632, 51.4672133],
+    [-2.5005026, 51.4670501],
+    [-2.4998010, 51.4666450],
+    [-2.4894250, 51.4676490],
+    [-2.4890410, 51.4675390],
+    [-2.4850000, 51.4650000],
+  ],
+  distanceMeters: 2100,
+  durationSeconds: 210,
+  steps: [
+    _step(
+      name: 'Syston Way',
+      drivingSide: 'left',
+      type: 'depart',
+      modifier: 'right',
+      bearingBefore: 0,
+      bearingAfter: 99,
+      location: [-2.5061000, 51.4677300],
+    ),
+    _step(
+      name: 'New Cheltenham Road',
+      drivingSide: 'left',
+      type: 'new name',
+      modifier: 'straight',
+      bearingBefore: 98,
+      bearingAfter: 98,
+      location: [-2.5048780, 51.4676080],
+      intersections: [
+        {
+          'location': [-2.5010632, 51.4672133],
+          'in': 2,
+          'out': 1,
+          'bearings': [0, 135, 270],
+          'entry': [true, true, false],
+        },
+        {
+          'location': [-2.5005026, 51.4670501],
+          'in': 2,
+          'out': 1,
+          'bearings': [30, 150, 285],
+          'entry': [true, true, true],
+        },
+      ],
+    ),
+    _step(
+      name: 'Tenniscourt Road',
+      drivingSide: 'left',
+      type: 'roundabout',
+      modifier: 'straight',
+      exit: 3,
+      bearingBefore: 56,
+      bearingAfter: 47,
+      location: [-2.4894250, 51.4676490],
+    ),
+    _step(
+      name: 'Tenniscourt Road',
+      drivingSide: 'left',
+      type: 'exit roundabout',
+      modifier: 'straight',
+      exit: 3,
+      bearingBefore: 185,
+      bearingAfter: 174,
+      location: [-2.4890410, 51.4675390],
+    ),
+    _step(
+      name: 'Tenniscourt Road',
+      drivingSide: 'left',
+      type: 'arrive',
+      bearingBefore: 150,
+      bearingAfter: 0,
+      location: [-2.4850000, 51.4650000],
+    ),
+  ],
+);
+
 Map<String, Object?> _response({
   required Coordinates coordinates,
   required double distanceMeters,
@@ -388,6 +474,7 @@ Map<String, Object?> _step({
   String? drivingSide,
   int? exit,
   List<Map<String, Object?>>? lanes,
+  List<Map<String, Object?>>? intersections,
 }) => {
   'name': ?name,
   'ref': ?ref,
@@ -400,7 +487,9 @@ Map<String, Object?> _step({
     'bearing_after': bearingAfter,
     'location': location,
   },
-  'intersections': [
-    {'location': location, 'lanes': ?lanes},
-  ],
+  'intersections':
+      intersections ??
+      [
+        {'location': location, 'lanes': ?lanes},
+      ],
 };

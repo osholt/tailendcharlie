@@ -120,6 +120,88 @@ void main() {
     expect(exit.bearingAfterDegrees, 2);
   });
 
+  test(
+    'the exact BS15 1UJ route restores both omitted mini-roundabouts',
+    () async {
+      final response = newCheltenhamRoadOmittedRoundaboutsResponse();
+      final rawSteps =
+          (((response['routes'] as List).single as Map)['legs'] as List)
+              .expand((leg) => ((leg as Map)['steps'] as List).whereType<Map>())
+              .toList(growable: false);
+      final rawLocations = rawSteps
+          .map((step) => (step['maneuver'] as Map)['location'])
+          .toList(growable: false);
+      expect(
+        rawLocations,
+        isNot(contains(equals([-2.5010632, 51.4672133]))),
+        reason: 'the captured engine response genuinely omits the west node',
+      );
+      expect(
+        rawLocations,
+        isNot(contains(equals([-2.5005026, 51.4670501]))),
+        reason: 'the captured engine response genuinely omits the east node',
+      );
+
+      final route = await routeFromOsrmResponse(response, id: 'issue-163');
+      final restored = route.maneuvers
+          .where(
+            (maneuver) =>
+                maneuver.type == 'roundabout' &&
+                maneuver.name == 'New Cheltenham Road',
+          )
+          .toList(growable: false);
+
+      expect(restored, hasLength(2));
+      expect(
+        restored.map((maneuver) => maneuver.position.longitude),
+        orderedEquals([-2.5010632, -2.5005026]),
+      );
+      expect(restored.map((maneuver) => maneuver.exitNumber), [2, 2]);
+      expect(
+        restored.map((maneuver) => maneuver.drivingSide),
+        everyElement('left'),
+      );
+    },
+  );
+
+  test(
+    'mapped mini-roundabouts are bounded and never duplicate an engine step',
+    () {
+      const catalogue = MappedMiniRoundaboutCatalogue.fieldRegressions;
+      const awayFromNewCheltenhamRoad = [
+        GeoPoint(latitude: 51.4700, longitude: -2.5060),
+        GeoPoint(latitude: 51.4700, longitude: -2.4960),
+      ];
+      expect(
+        catalogue.enrich(route: awayFromNewCheltenhamRoad, maneuvers: const []),
+        isEmpty,
+        reason: 'ordinary route geometry is not inferred to be a roundabout',
+      );
+
+      const throughWestNode = [
+        GeoPoint(latitude: 51.4673, longitude: -2.5020),
+        GeoPoint(latitude: 51.4672133, longitude: -2.5010632),
+        GeoPoint(latitude: 51.46715, longitude: -2.5009),
+      ];
+      const engineManeuvers = [
+        RoadRouteManeuver(
+          position: GeoPoint(latitude: 51.4672133, longitude: -2.5010632),
+          type: 'roundabout',
+          exitNumber: 2,
+        ),
+        RoadRouteManeuver(
+          position: GeoPoint(latitude: 51.4672133, longitude: -2.5010632),
+          type: 'exit roundabout',
+        ),
+      ];
+      expect(
+        catalogue.enrich(route: throughWestNode, maneuvers: engineManeuvers),
+        same(engineManeuvers),
+        reason: 'a future provider fix must not create duplicate instructions',
+      );
+    },
+  );
+
   test('a small roundabout reported as a turn still needs a marker', () {
     expect(
       const RoadRouteManeuver(

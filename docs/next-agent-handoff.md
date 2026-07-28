@@ -145,6 +145,14 @@ concurrent runs; `flutter test -j 1` is clean.
   After the first resolution the sign is always a number, dash or infinity, and
   conflicting nearby roads are not guessed. A rider who previously turned the
   feature off stays off.
+- **The BS15 1UJ double mini-roundabout is restored from reviewed map data.**
+  Live OSRM and Valhalla responses both omit OSM nodes 30983542 and 30983544 as
+  manoeuvres. Their current OSM tags and mapped arms are therefore kept in a
+  bounded offline regression catalogue. A route through them gains two
+  persisted 2nd-exit, straight-on instructions 42 m apart; the second is shown
+  while approaching the first and becomes current after it is passed. The
+  catalogue intentionally claims no general mini-roundabout coverage. Physical
+  or simulator validation from BS15 1UJ toward Chippenham remains the #163 gate.
 - **Waze is closed.** A Waze for Cities relay reader was built on this branch
   and then removed: the programme is limited to government agencies and road
   operators, and this project applied and is not eligible. TomTom is again the

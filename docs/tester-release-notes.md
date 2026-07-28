@@ -78,8 +78,9 @@ named after a ticket, that ticket is your report.
 - The speed-limit sign now buffers the next kilometre, keeps prefetched answers
   through a signal drop, shows `∞` only for an explicitly unrestricted road,
   and never returns to a spinner after its first answer (#164).
-- Two roundabouts 41 m apart are no longer merged into one instruction — New
-  Cheltenham Road (#163).
+- From a BS15 1UJ start, both New Cheltenham Road mini-roundabouts now appear as
+  separate 2nd-exit instructions 42 m apart, even though both routing engines
+  omit them (#163).
 - The recap image has real map tiles and a light/dark toggle (#157).
 - Marking positions the group rides straight past are no longer suggested, and
   you can reject one and have it stay rejected (#179).
