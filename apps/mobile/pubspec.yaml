@@ -50,6 +50,7 @@ dependencies:
   share_plus: ^13.3.0
   uuid: ^4.6.0
   url_launcher: ^6.3.2
+  vector_map_tiles: 9.0.0-beta.11
   wakelock_plus: ^1.7.0
   xml: ^7.0.1
 
