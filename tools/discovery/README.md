@@ -114,11 +114,33 @@ of those two situations applies.
 ```bash
 export DISCOVERY_WORK_DIR=/path/to/working/dir
 export PYTHONPATH=tools/discovery   # these stages import each other by module name
+python3.12 tools/discovery/prepare_enrichment_inputs.py \
+  --manifest tools/discovery/releases/uk-2026-07-23.toml \
+  --pbf /data/united-kingdom-260723.osm.pbf \
+  --catalogue "$DISCOVERY_WORK_DIR/discovery-catalogue.geojson" \
+  --output-directory "$DISCOVERY_WORK_DIR"
 python3.12 tools/discovery/enrich_deterministic.py   # derived facts, all candidates
 python3.12 tools/discovery/build_overlay.py          # researched content
 python3.12 tools/discovery/publish_catalogue.py      # merge, tier, write both copies
 python3.12 tools/discovery/build_pass_sheet.py       # review sheet, with basemap tiles
 ```
+
+`prepare_enrichment_inputs.py` replaces the old one-off `.opl` extraction
+commands. It validates the PBF against the same pinned size and checksum as the
+catalogue generator, derives the exact candidate object IDs from the generated
+catalogue, and writes:
+
+- `candidate-objects.opl`, retaining each selected way's node references for
+  exact pass-to-road joins without copying hundreds of thousands of unrelated
+  node records;
+- `enforcement.opl`, containing mapped speed cameras and average-speed
+  enforcement relations; and
+- `places.opl`, containing named settlements and peaks.
+
+`enrichment-inputs.json` records the catalogue hash, source pin, osmium version,
+and the size and SHA-256 digest of every derived input. Existing inputs are not
+replaced unless `--overwrite` is given, so an interrupted or mixed-source run
+cannot silently feed the review sheet.
 
 Optionally fetch rider ratings first (see below). `publish_catalogue.py` reads
 `$DISCOVERY_WORK_DIR/road-ratings.json` when it exists and ignores its absence, so
