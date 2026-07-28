@@ -60,8 +60,8 @@ void main() {
     );
     expect(bill.transportLabel, 'Internet relay · joining');
     expect(bill.isEligibleForLivePosition, isTrue);
-    // A live position is current proof of reachability, so the rider is active
-    // rather than "inactive · location is stale".
+    // Contact through presence is current proof of reachability, so the rider
+    // is active rather than "inactive · not heard from".
     expect(bill.state, RideMembershipState.active);
   });
 
@@ -227,9 +227,12 @@ void main() {
     // Issue #132: "in the count, no marker, nothing said" is the defect. A
     // rider with no position always carries the reason there is none.
     expect(bill.positionAbsence, RidePositionAbsence.noPositionReported);
+    // "Not heard from", not "location is stale": with positions reported on
+    // distance travelled and a keep-alive on a timer, an old position is not
+    // evidence of absence — silence on every channel is (#166).
     expect(
       bill.stateLabel,
-      'Inactive · location is stale · no position reported yet',
+      'Inactive · not heard from · no position reported yet',
     );
     expect(bill.hasStatedPositionState, isTrue);
     expect(bill.knownFromRelayOnly, isFalse);
@@ -263,6 +266,10 @@ LiveRiderPresence _presence(
     receivedAt: recordedAt,
   ),
   age: const Duration(seconds: 5),
+  // What `LivePresenceReconciler` sets: the newest evidence of this rider on
+  // this device's clock. Presence is contact, and contact is what decides
+  // whether a rider reads as present — not how old their position is (#166).
+  contactAt: recordedAt,
 );
 
 RideEvent _joinEvent({

@@ -62,11 +62,30 @@ class GeolocatorDeviceLocationPlatform implements DeviceLocationPlatform {
   Future<DeviceLocationPermission> requestPermission() async =>
       _mapPermission(await Geolocator.requestPermission());
 
+  /// The platform filter, and deliberately not the reporting threshold.
+  ///
+  /// 10 m is how often the OS wakes this app with a fix. `PositionReportPolicy`
+  /// then decides which of those fixes becomes a durable position report, at
+  /// 20 m. The two are different layers and this one has to stay the smaller of
+  /// the two:
+  ///
+  ///  - It gives the policy two or more candidate fixes per reported position,
+  ///    which is what lets a fix be reported at a corner apex rather than 20 m
+  ///    past it.
+  ///  - It is the only thing that distinguishes "this rider has not moved" from
+  ///    "this rider's GPS has stopped". Raising it to 20 m would collapse that
+  ///    distinction, and the app would have no evidence left to tell a parked
+  ///    rider apart from a dead receiver.
+  ///
+  /// Lowering it is not free either: sub-10 m wander on a stationary phone is
+  /// mostly noise, and every delivered fix costs a wake-up. 10 m stays.
+  static const platformDistanceFilterMeters = 10;
+
   @override
   Stream<LocationSample> positionStream() => Geolocator.getPositionStream(
     locationSettings: const LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
+      distanceFilter: platformDistanceFilterMeters,
     ),
   ).map(_mapPosition);
 

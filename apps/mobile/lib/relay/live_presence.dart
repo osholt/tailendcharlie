@@ -181,6 +181,7 @@ class LiveRiderPresence {
     this.riderColor = riderColorDefault,
     this.location,
     this.age,
+    this.contactAt,
     this.clockBasis = PresenceClockBasis.publisherClock,
     this.publisherClockOffset,
   });
@@ -207,7 +208,19 @@ class LiveRiderPresence {
   /// Age of [location] at the moment of reconciliation.
   final Duration? age;
 
-  /// Which clock [age] was measured on.
+  /// When this rider was last demonstrably in contact, expressed on **this**
+  /// device's clock. Null when nothing has been heard from them at all.
+  ///
+  /// Deliberately not interchangeable with the age of [location], even though
+  /// today both are derived from the newest position that arrived. Position
+  /// reports are driven by distance travelled with a keep-alive on a timer
+  /// (#166), so a rider stopped at a set of lights keeps proving they are there
+  /// while their position correctly stops changing. Anything judging *whether a
+  /// rider is present* must read this; anything judging *how current their
+  /// position is* must read [age].
+  final DateTime? contactAt;
+
+  /// Which clock [age] and [contactAt] were measured on.
   final PresenceClockBasis clockBasis;
 
   /// How far the publisher's own timestamp sits behind the relay's arrival stamp
@@ -605,6 +618,11 @@ class LivePresenceReconciler {
           riderColor: location.riderColor,
           location: location,
           age: age,
+          // The newest evidence of this rider, moved onto this device's clock.
+          // For a relay-stamped position that is the relay's arrival stamp, the
+          // only clock both phones share, so a stationary rider republishing an
+          // unchanged position still advances their contact.
+          contactAt: now.subtract(age),
         ),
       );
     }
