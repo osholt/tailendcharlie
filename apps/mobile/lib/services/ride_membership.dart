@@ -7,7 +7,37 @@ import '../relay/live_presence.dart';
 import 'ride_event_authenticator.dart';
 import 'ride_lifecycle.dart';
 
-enum RideMembershipState { joined, active, inactive, left, expired }
+/// The membership lifecycle from #27, with #144's departure retention.
+///
+/// One distinction carries the whole enum: [inactive] is about *contact*, never
+/// about movement. Position reports are driven by distance travelled with a
+/// keep-alive on a timer (#166), so a rider waiting at a set of lights stops
+/// producing positions on purpose. A stale position is therefore no longer
+/// evidence of absence, and the only thing that makes a rider [inactive] is
+/// nothing arriving from them at all.
+enum RideMembershipState {
+  /// In the ride, but the ride has not started or they have not been heard from
+  /// since it did.
+  joined,
+
+  /// Heard from within [RideMembershipReducer.inactiveAfter], by any means: a
+  /// journal event, a movement position report, or a keep-alive. A stationary
+  /// rider is active on keep-alives alone, indefinitely.
+  active,
+
+  /// Nothing has arrived from this rider for
+  /// [RideMembershipReducer.inactiveAfter] — no event, no position, no
+  /// keep-alive. Not "their position is old": a rider who has stopped moving is
+  /// still [active].
+  inactive,
+
+  /// They left, and their record is kept for the rest of the ride (#144).
+  left,
+
+  /// Nothing from them for [RideMembershipReducer.expireAfter], or the ride is
+  /// over.
+  expired,
+}
 
 /// Wall-clock `HH:mm` for a roster row.
 ///
@@ -139,7 +169,11 @@ class RideParticipant {
     final base = switch (state) {
       RideMembershipState.joined => 'Joined · waiting to ride',
       RideMembershipState.active => 'Active now',
-      RideMembershipState.inactive => 'Inactive · location is stale',
+      // Not "location is stale". Positions are reported on distance travelled
+      // (#166), so a rider at a set of lights has an old position and is
+      // perfectly present. Only silence on every channel reads as absence, and
+      // the wording has to say which of the two this is.
+      RideMembershipState.inactive => 'Inactive · not heard from',
       // Its own state, with the time on it: "Left at 14:32" is neither active
       // nor inactive, and the row stays until the ride is over.
       RideMembershipState.left =>
@@ -328,6 +362,14 @@ class RideMembershipReducer {
     this.expireAfter = const Duration(hours: 12),
   });
 
+  /// How long silence on every channel lasts before a rider reads as
+  /// [RideMembershipState.inactive].
+  ///
+  /// It has to stay comfortably longer than the keep-alive interval
+  /// (`PositionReportPolicy.keepAliveAfter`, 15 s), because that interval is the
+  /// slowest rate at which a stationary rider says anything at all. 2 minutes
+  /// tolerates seven consecutive missed keep-alives before a present rider is
+  /// described as absent.
   final Duration inactiveAfter;
   final Duration expireAfter;
 
@@ -617,14 +659,19 @@ class RideMembershipReducer {
               // A live presence position is current proof of reachability, so
               // it counts as recent contact even if no journal event has
               // arrived. Without this a demonstrably visible rider expires.
-              final presenceSeenAt =
+              //
+              // Read from `contactAt`, not from the position's own timestamp: a
+              // stationary rider republishing an unchanged position is in
+              // contact now, and dating that contact to when the position was
+              // *recorded* would creep them toward `expired` for standing still
+              // (#166).
+              final contactAt =
                   presence != null && presence.freshness.isTrackedAsContact
-                  ? presence.location?.sample.recordedAt
+                  ? presence.contactAt
                   : null;
               final lastSeenAt =
-                  presenceSeenAt != null &&
-                      presenceSeenAt.isAfter(resolved.lastSeenAt)
-                  ? presenceSeenAt
+                  contactAt != null && contactAt.isAfter(resolved.lastSeenAt)
+                  ? contactAt
                   : resolved.lastSeenAt;
               final age = now.difference(lastSeenAt);
               if (rideEndedAt != null || age >= expireAfter) {
@@ -633,10 +680,13 @@ class RideMembershipReducer {
               if (rideStartedAt == null) {
                 return resolved.copyWith(state: RideMembershipState.joined);
               }
+              // Either channel on its own is enough. A journal keep-alive and a
+              // presence republish are both contact; neither requires the rider
+              // to have moved a metre.
               final activityAt = lastActivityAt[resolved.riderId];
               if ((activityAt != null &&
                       now.difference(activityAt) < inactiveAfter) ||
-                  presenceSeenAt != null) {
+                  contactAt != null) {
                 return resolved.copyWith(state: RideMembershipState.active);
               }
               final waitingSince = resolved.joinedAt.isAfter(rideStartedAt)

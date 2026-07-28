@@ -56,6 +56,7 @@ import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/native_push_token_source.dart';
+import '../../services/position_report_policy.dart';
 import '../../services/received_quick_message.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/route_decision_point_extractor.dart';
@@ -788,6 +789,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   DateTime? _lastSimulationNavigationUpdateAt;
   DateTime? _lastSimulationOverlayUpdateAt;
   LocationSample? _latestObserverLocationSample;
+
+  /// Decides which device fixes become durable position reports (#166).
+  ///
+  /// It gates the journal only. The observer snapshot and the ephemeral presence
+  /// channel above it see every fix, so a rider stays continuously visible while
+  /// the expensive half of reporting follows distance travelled.
+  final PositionReportGate _positionReportGate = PositionReportGate();
   bool _loading = true;
   bool _relayConfigured = false;
   bool _refreshingRideEvents = false;
@@ -979,6 +987,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         (sample) async {
           _latestObserverLocationSample = sample;
           _publishObserverSnapshot();
+          // One decision, taken once, for both halves of reporting: distance
+          // travelled, a turn, or the keep-alive timer (#166).
+          final reported = _positionReportGate.consider(sample);
           // Every fix goes to the ephemeral presence channel, in both phases,
           // so this rider stays continuously visible to the group. The durable
           // journal still only receives post-start fixes.
@@ -994,12 +1005,20 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 motorcycleStyle: currentSession.motorcycleStyle,
                 riderColor: currentSession.riderColor,
               ),
+              // A withheld fix is still held as the newest position and still
+              // goes out on the next presence tick; it just does not bring that
+              // tick forward. Presence itself never waits for movement.
+              publishImmediately: reported != null,
             );
           }
           final startedAt = widget.rideController.rideStartedAt;
           if (startedAt == null || sample.recordedAt.isBefore(startedAt)) {
             return;
           }
+          // A withheld fix is not a lost fix: the presence channel above has it,
+          // so the only thing not happening here is a journal event nobody
+          // needed.
+          if (reported == null) return;
           final awareness = _awarenessController;
           if (awareness != null) {
             await awareness.recordLocalLocation(sample);
@@ -2541,6 +2560,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
     final rideJustStarted = rideStarted && !_observedRideStarted;
     _observedRideStarted = rideStarted;
+    // The journal only accepts fixes from the start onwards, so the first fix
+    // after the start has nothing to be measured against and must report
+    // whatever the rider has or has not moved since.
+    if (rideJustStarted) _positionReportGate.reset();
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _observerAccessController?.updateSession(session);
@@ -2570,6 +2593,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         widget.rideController.rideEnded) {
       return;
     }
+    // The gap since the last report is not travel, so the next fix reports
+    // unconditionally rather than being measured against wherever this rider was
+    // when sharing last stopped.
+    _positionReportGate.reset();
     try {
       await locationController.resumeIfAuthorized();
     } on Object catch (error, stackTrace) {

@@ -230,7 +230,21 @@ class PreStartPresenceController extends ChangeNotifier {
     await synchronizeNow();
   }
 
-  void updateLocalPosition(RiderLocation location) {
+  /// Takes the newest local fix. Every fix belongs here, whether or not it was
+  /// worth a durable position report, because this channel is what keeps a rider
+  /// visible while they are not moving.
+  ///
+  /// [publishImmediately] only decides whether the scheduled poll is brought
+  /// forward. False leaves the fix to go out on the next tick, which is the
+  /// keep-alive: the poll runs on a timer regardless of movement and carries
+  /// whatever the newest fix is, so nothing is withheld — it is delivered at
+  /// [pollInterval] instead of instantly. Callers pass false for a fix that did
+  /// not clear the reporting threshold, so a rider crawling in traffic stops
+  /// generating a request per fix (#166).
+  void updateLocalPosition(
+    RiderLocation location, {
+    bool publishImmediately = true,
+  }) {
     final session = _session;
     if (!_active ||
         session == null ||
@@ -247,6 +261,7 @@ class PreStartPresenceController extends ChangeNotifier {
       position: location,
     );
     notifyListeners();
+    if (!publishImmediately) return;
     unawaited(_publishNearby(location));
     wake();
   }
