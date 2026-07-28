@@ -447,16 +447,73 @@ void main() {
   //
   // Ground truth from OpenStreetMap: the pair is two mini-roundabouts, mapped as
   // `highway=mini_roundabout` nodes at 51.46705,-2.50050 and 51.46721,-2.50106 -
-  // **41 m apart**. That is outside the 25 m gyratory threshold as ring centres,
+  // **42 m apart**. That is outside the 25 m gyratory threshold as ring centres,
   // and easily inside it measured from the first ring's exit to the second's
   // entry, which is what the collapse used to compare.
   group('the New Cheltenham Road double roundabout', () {
-    const firstRing = GeoPoint(latitude: 51.46705, longitude: -2.50050);
-    const secondRing = GeoPoint(latitude: 51.46721, longitude: -2.50106);
+    const firstRing = GeoPoint(latitude: 51.46721, longitude: -2.50106);
+    const secondRing = GeoPoint(latitude: 51.46705, longitude: -2.50050);
     // Leaving the first ring puts the rider most of the way to the second, which
     // is exactly why an exit-to-entry measurement reads as one junction.
-    const firstExit = GeoPoint(latitude: 51.46714, longitude: -2.50085);
-    const secondExit = GeoPoint(latitude: 51.46728, longitude: -2.50126);
+    const firstExit = GeoPoint(latitude: 51.46712, longitude: -2.50075);
+    const secondExit = GeoPoint(latitude: 51.46695, longitude: -2.50020);
+
+    test(
+      'the captured BS15 1UJ route announces both and advances to the second',
+      () async {
+        final route = await routeFromOsrmResponse(
+          newCheltenhamRoadOmittedRoundaboutsResponse(),
+          id: 'issue-163-live-route',
+        );
+        final newCheltenham = planner
+            .instructions(route)
+            .where(
+              (step) =>
+                  step.instruction.isRoundabout &&
+                  step.instruction.roadName == 'New Cheltenham Road',
+            )
+            .toList(growable: false);
+
+        expect(newCheltenham, hasLength(2));
+        expect(newCheltenham.map((step) => step.instruction.text), [
+          '2nd exit, straight on',
+          '2nd exit, straight on',
+        ]);
+        expect(
+          newCheltenham.last.distanceFromStartMeters -
+              newCheltenham.first.distanceFromStartMeters,
+          closeTo(42, 5),
+        );
+
+        final approaching = planner.plan(
+          route: route,
+          position: route.paths.first.points.first,
+          progressMeters: 0,
+        );
+        expect(
+          approaching?.maneuver.position.longitude,
+          closeTo(-2.5010632, 1e-7),
+        );
+        expect(
+          approaching?.followingManeuver?.position.longitude,
+          closeTo(-2.5005026, 1e-7),
+        );
+
+        final secondPosition = route.paths.first.points.firstWhere(
+          (point) => point.longitude == -2.5005026,
+        );
+        final afterFirst = planner.plan(
+          route: route,
+          position: secondPosition,
+          progressMeters: planner.progressMetersAt(route, secondPosition)!,
+        );
+        expect(
+          afterFirst?.maneuver.position.longitude,
+          closeTo(-2.5005026, 1e-7),
+          reason: 'the second junction must become current after the first',
+        );
+      },
+    );
 
     test('both roundabouts survive as separate instructions', () {
       final instructions = collapseManeuvers(const [
@@ -471,7 +528,7 @@ void main() {
           position: secondRing,
           type: 'roundabout',
           modifier: 'straight',
-          exitNumber: 1,
+          exitNumber: 2,
         ),
         RouteManeuver(position: secondExit, type: 'exit roundabout'),
       ]);
@@ -482,7 +539,7 @@ void main() {
         reason: 'a rider meets two junctions and needs telling about both',
       );
       expect(instructions.first.exitNumber, 2);
-      expect(instructions.last.exitNumber, 1);
+      expect(instructions.last.exitNumber, 2);
     });
 
     test('a genuine gyratory inside 25 m is still one instruction', () {

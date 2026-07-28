@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
@@ -68,9 +69,9 @@ class RoadRouteResult {
   final RoutePreferences? preferences;
 }
 
-/// A decision reported by the routing engine rather than inferred from a
-/// bend in recorded GPS geometry. These are the points where a second rider
-/// may need to mark a junction.
+/// A decision reported by the routing engine or restored from reviewed mapped
+/// junction data rather than inferred from a bend in recorded GPS geometry.
+/// These are the points where a second rider may need to mark a junction.
 class RoadRouteManeuver extends RouteManeuver {
   const RoadRouteManeuver({
     required super.position,
@@ -132,6 +133,197 @@ class RoadRouteManeuver extends RouteManeuver {
   }
 }
 
+enum MiniRoundaboutDirection { clockwise, counterClockwise }
+
+/// One reviewed OpenStreetMap mini-roundabout omitted by the routing engines.
+class MappedMiniRoundabout {
+  const MappedMiniRoundabout({
+    required this.nodeId,
+    required this.position,
+    required this.armBearingsDegrees,
+    required this.direction,
+    required this.roadName,
+  });
+
+  final int nodeId;
+  final GeoPoint position;
+
+  /// Bearings from the node out along every mapped arm, clockwise from north.
+  ///
+  /// They are sorted ascending. Comparing the route approach/departure with
+  /// these arms lets the app count the exit without treating an ordinary
+  /// three-way intersection as a roundabout.
+  final List<double> armBearingsDegrees;
+  final MiniRoundaboutDirection direction;
+  final String roadName;
+}
+
+/// A deliberately bounded, reviewed catalogue for field-proven omissions.
+///
+/// OSRM and Valhalla both route through `highway=mini_roundabout` nodes without
+/// necessarily emitting a manoeuvre. Their route geometry still passes through
+/// the mapped node, so this catalogue can restore only junctions whose OSM
+/// identity and arms have been reviewed. It is not presented as general UK
+/// coverage.
+class MappedMiniRoundaboutCatalogue {
+  const MappedMiniRoundaboutCatalogue(this.roundabouts);
+
+  static const fieldRegressions = MappedMiniRoundaboutCatalogue([
+    // New Cheltenham Road, Kingswood. OSM node records and connected arms were
+    // reviewed against the live OSM API and the exact BS15 1UJ -> Chippenham
+    // OSRM response on 2026-07-28 (#163).
+    MappedMiniRoundabout(
+      nodeId: 30983542,
+      position: GeoPoint(latitude: 51.4672133, longitude: -2.5010632),
+      armBearingsDegrees: [0, 135, 270],
+      direction: MiniRoundaboutDirection.clockwise,
+      roadName: 'New Cheltenham Road',
+    ),
+    MappedMiniRoundabout(
+      nodeId: 30983544,
+      position: GeoPoint(latitude: 51.4670501, longitude: -2.5005026),
+      armBearingsDegrees: [30, 150, 285],
+      direction: MiniRoundaboutDirection.clockwise,
+      roadName: 'New Cheltenham Road',
+    ),
+  ]);
+
+  static const routeMatchToleranceMeters = 12.0;
+  static const duplicateManeuverToleranceMeters = 20.0;
+  static const bearingMatchToleranceDegrees = 35.0;
+  static const bearingSampleDistanceMeters = 12.0;
+
+  final List<MappedMiniRoundabout> roundabouts;
+
+  List<RoadRouteManeuver> enrich({
+    required List<GeoPoint> route,
+    required List<RoadRouteManeuver> maneuvers,
+  }) {
+    if (route.length < 2 || roundabouts.isEmpty) return maneuvers;
+    final additions =
+        <({double progressMeters, List<RoadRouteManeuver> maneuvers})>[];
+    for (final roundabout in roundabouts) {
+      final projection = _projectOntoRoute(roundabout.position, route);
+      if (projection.distanceMeters > routeMatchToleranceMeters ||
+          maneuvers.any(
+            (maneuver) =>
+                _isRoundaboutManeuver(maneuver.type) &&
+                _distanceMeters(maneuver.position, roundabout.position) <=
+                    duplicateManeuverToleranceMeters,
+          )) {
+        continue;
+      }
+      final before = _pointAtRouteProgress(
+        route,
+        projection.progressMeters - bearingSampleDistanceMeters,
+      );
+      final after = _pointAtRouteProgress(
+        route,
+        projection.progressMeters + bearingSampleDistanceMeters,
+      );
+      final approachBearing = _bearingDegrees(before, projection.point);
+      final departureBearing = _bearingDegrees(projection.point, after);
+      final incomingArm = _nearestBearingIndex(
+        roundabout.armBearingsDegrees,
+        (approachBearing + 180) % 360,
+      );
+      final outgoingArm = _nearestBearingIndex(
+        roundabout.armBearingsDegrees,
+        departureBearing,
+      );
+      if (incomingArm == null ||
+          outgoingArm == null ||
+          incomingArm == outgoingArm) {
+        continue;
+      }
+      final exitNumber = _exitNumber(
+        incomingArm: incomingArm,
+        outgoingArm: outgoingArm,
+        armCount: roundabout.armBearingsDegrees.length,
+        direction: roundabout.direction,
+      );
+      if (exitNumber == null) continue;
+      final drivingSide =
+          roundabout.direction == MiniRoundaboutDirection.clockwise
+          ? 'left'
+          : 'right';
+      additions.add((
+        progressMeters: projection.progressMeters,
+        maneuvers: [
+          RoadRouteManeuver(
+            position: roundabout.position,
+            type: 'roundabout',
+            name: roundabout.roadName,
+            exitNumber: exitNumber,
+            drivingSide: drivingSide,
+            bearingBeforeDegrees: approachBearing,
+          ),
+          RoadRouteManeuver(
+            position: roundabout.position,
+            type: 'exit roundabout',
+            name: roundabout.roadName,
+            drivingSide: drivingSide,
+            bearingAfterDegrees: departureBearing,
+          ),
+        ],
+      ));
+    }
+    if (additions.isEmpty) return maneuvers;
+    additions.sort(
+      (first, second) => first.progressMeters.compareTo(second.progressMeters),
+    );
+    final enriched = maneuvers.toList();
+    for (final addition in additions) {
+      final insertAt = enriched.indexWhere(
+        (maneuver) =>
+            _projectOntoRoute(maneuver.position, route).progressMeters >
+            addition.progressMeters,
+      );
+      enriched.insertAll(
+        insertAt < 0 ? enriched.length : insertAt,
+        addition.maneuvers,
+      );
+    }
+    return List.unmodifiable(enriched);
+  }
+
+  static int? _nearestBearingIndex(List<double> bearings, double target) {
+    int? selected;
+    var selectedDifference = double.infinity;
+    for (var index = 0; index < bearings.length; index += 1) {
+      final difference = _headingDifference(bearings[index], target);
+      if (difference < selectedDifference) {
+        selected = index;
+        selectedDifference = difference;
+      }
+    }
+    return selectedDifference <= bearingMatchToleranceDegrees ? selected : null;
+  }
+
+  static int? _exitNumber({
+    required int incomingArm,
+    required int outgoingArm,
+    required int armCount,
+    required MiniRoundaboutDirection direction,
+  }) {
+    if (armCount < 3 ||
+        incomingArm < 0 ||
+        incomingArm >= armCount ||
+        outgoingArm < 0 ||
+        outgoingArm >= armCount) {
+      return null;
+    }
+    var current = incomingArm;
+    for (var exit = 1; exit < armCount; exit += 1) {
+      current = direction == MiniRoundaboutDirection.clockwise
+          ? (current + 1) % armCount
+          : (current - 1 + armCount) % armCount;
+      if (current == outgoingArm) return exit;
+    }
+    return null;
+  }
+}
+
 abstract interface class RoadRoutingService {
   /// Routes through [waypoints].
   ///
@@ -151,6 +343,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     required this.baseUrl,
     this.timeout = const Duration(seconds: 15),
     this.maximumResponseBytes = 5 * 1024 * 1024,
+    this.miniRoundabouts = MappedMiniRoundaboutCatalogue.fieldRegressions,
   });
 
   /// Alternatives asked of OSRM when a bendier style has to choose between
@@ -161,6 +354,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
   final Uri baseUrl;
   final Duration timeout;
   final int maximumResponseBytes;
+  final MappedMiniRoundaboutCatalogue miniRoundabouts;
 
   @override
   Future<RoadRouteResult> routeThrough(
@@ -232,7 +426,10 @@ class OsrmRoadRoutingService implements RoadRoutingService {
       points: chosen.points,
       distanceMeters: chosen.distanceMeters,
       duration: chosen.duration,
-      maneuvers: chosen.maneuvers,
+      maneuvers: miniRoundabouts.enrich(
+        route: chosen.points,
+        maneuvers: chosen.maneuvers,
+      ),
       twistinessScore: chosen.twistinessScore,
       preferences: preferences,
     );
@@ -365,25 +562,27 @@ class OsrmRoadRoutingService implements RoadRoutingService {
 /// [RoutePreferences.valhallaMotorcycleCostingOptions], and kilometre units. The
 /// two surfaces therefore ask one engine one question and get one answer.
 ///
-/// It deliberately reports **no manoeuvres**. Valhalla numbers its manoeuvre
-/// types where OSRM names them, and this app turns a manoeuvre into a spoken
-/// instruction and a second-bike marker drop, so a mapping invented without a
-/// verified fixture could state the wrong direction at a junction. Until such a
-/// fixture exists the route falls back to geometry-derived decision points, the
-/// same as an imported GPX route, and [PreferenceAwareRoadRoutingService] says
-/// so out loud.
+/// It deliberately reports no general engine manoeuvres. Valhalla numbers its
+/// manoeuvre types where OSRM names them, and this app turns a manoeuvre into a
+/// spoken instruction and a second-bike marker drop, so a mapping invented
+/// without a verified fixture could state the wrong direction at a junction.
+/// Reviewed mapped mini-roundabouts may still be added from route geometry; the
+/// rest falls back to geometry-derived decision points, and
+/// [PreferenceAwareRoadRoutingService] says so out loud.
 class ValhallaMotorcycleRoutingService implements RoadRoutingService {
   const ValhallaMotorcycleRoutingService({
     required this.client,
     required this.routeUrl,
     this.timeout = const Duration(seconds: 20),
     this.maximumResponseBytes = 5 * 1024 * 1024,
+    this.miniRoundabouts = MappedMiniRoundaboutCatalogue.fieldRegressions,
   });
 
   final http.Client client;
   final Uri routeUrl;
   final Duration timeout;
   final int maximumResponseBytes;
+  final MappedMiniRoundaboutCatalogue miniRoundabouts;
 
   @override
   Future<RoadRouteResult> routeThrough(
@@ -469,6 +668,7 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
       points: List.unmodifiable(points),
       distanceMeters: distanceMeters,
       duration: Duration(milliseconds: (seconds.toDouble() * 1000).round()),
+      maneuvers: miniRoundabouts.enrich(route: points, maneuvers: const []),
       twistinessScore: RouteTwistiness.score(
         points,
         distanceMeters: distanceMeters,
@@ -530,7 +730,8 @@ class PreferenceAwareRoadRoutingService implements RoadRoutingService {
   /// correct, but the app will infer junctions from its shape.
   static const motorcycleManeuverWarning =
       'These preferences need the motorcycle router, which does not return turn '
-      'instructions. Junctions are worked out from the route shape instead.';
+      'instructions. Reviewed mapped mini-roundabouts are retained; other '
+      'junctions are worked out from the route shape.';
 
   final RoadRoutingService osrm;
   final RoadRoutingService motorcycle;
@@ -705,8 +906,7 @@ class DestinationRoutePlanner {
       destination.point,
     ], preferences: preferences);
     if (routingService case final PreferenceAwareRoadRoutingService dispatcher
-        when dispatcher.usesMotorcycleCosting(preferences) &&
-            roadRoute.maneuvers.isEmpty) {
+        when dispatcher.usesMotorcycleCosting(preferences)) {
       warnings.add(PreferenceAwareRoadRoutingService.motorcycleManeuverWarning);
     }
     final id = _idFactory();
@@ -803,6 +1003,124 @@ class DestinationRoutePlan {
   final double? twistinessScore;
   final List<String> warnings;
 }
+
+({GeoPoint point, double progressMeters, double distanceMeters})
+_projectOntoRoute(GeoPoint point, List<GeoPoint> route) {
+  const earthRadius = 6371000.0;
+  final referenceLatitude = point.latitude * math.pi / 180;
+  var travelled = 0.0;
+  var bestDistance = double.infinity;
+  var bestProgress = 0.0;
+  var bestPoint = route.first;
+  for (var index = 0; index < route.length - 1; index += 1) {
+    final start = route[index];
+    final end = route[index + 1];
+    final startX =
+        (start.longitude - point.longitude) *
+        math.pi /
+        180 *
+        math.cos(referenceLatitude) *
+        earthRadius;
+    final startY =
+        (start.latitude - point.latitude) * math.pi / 180 * earthRadius;
+    final endX =
+        (end.longitude - point.longitude) *
+        math.pi /
+        180 *
+        math.cos(referenceLatitude) *
+        earthRadius;
+    final endY = (end.latitude - point.latitude) * math.pi / 180 * earthRadius;
+    final deltaX = endX - startX;
+    final deltaY = endY - startY;
+    final lengthSquared = deltaX * deltaX + deltaY * deltaY;
+    final fraction = lengthSquared <= 0
+        ? 0.0
+        : (-(startX * deltaX + startY * deltaY) / lengthSquared).clamp(
+            0.0,
+            1.0,
+          );
+    final nearestX = startX + deltaX * fraction;
+    final nearestY = startY + deltaY * fraction;
+    final distance = math.sqrt(nearestX * nearestX + nearestY * nearestY);
+    final segmentLength = _distanceMeters(start, end);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestProgress = travelled + segmentLength * fraction;
+      bestPoint = GeoPoint(
+        latitude: start.latitude + (end.latitude - start.latitude) * fraction,
+        longitude:
+            start.longitude + (end.longitude - start.longitude) * fraction,
+      );
+    }
+    travelled += segmentLength;
+  }
+  return (
+    point: bestPoint,
+    progressMeters: bestProgress,
+    distanceMeters: bestDistance,
+  );
+}
+
+GeoPoint _pointAtRouteProgress(List<GeoPoint> route, double progressMeters) {
+  if (progressMeters <= 0) return route.first;
+  var travelled = 0.0;
+  for (var index = 0; index < route.length - 1; index += 1) {
+    final start = route[index];
+    final end = route[index + 1];
+    final segmentLength = _distanceMeters(start, end);
+    if (segmentLength > 0 && travelled + segmentLength >= progressMeters) {
+      final fraction = (progressMeters - travelled) / segmentLength;
+      return GeoPoint(
+        latitude: start.latitude + (end.latitude - start.latitude) * fraction,
+        longitude:
+            start.longitude + (end.longitude - start.longitude) * fraction,
+      );
+    }
+    travelled += segmentLength;
+  }
+  return route.last;
+}
+
+double _distanceMeters(GeoPoint first, GeoPoint second) {
+  const earthRadius = 6371000.0;
+  final firstLatitude = first.latitude * math.pi / 180;
+  final secondLatitude = second.latitude * math.pi / 180;
+  final deltaLatitude = (second.latitude - first.latitude) * math.pi / 180;
+  final deltaLongitude = (second.longitude - first.longitude) * math.pi / 180;
+  final a =
+      math.sin(deltaLatitude / 2) * math.sin(deltaLatitude / 2) +
+      math.cos(firstLatitude) *
+          math.cos(secondLatitude) *
+          math.sin(deltaLongitude / 2) *
+          math.sin(deltaLongitude / 2);
+  return earthRadius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+}
+
+double _bearingDegrees(GeoPoint first, GeoPoint second) {
+  final firstLatitude = first.latitude * math.pi / 180;
+  final secondLatitude = second.latitude * math.pi / 180;
+  final deltaLongitude = (second.longitude - first.longitude) * math.pi / 180;
+  final y = math.sin(deltaLongitude) * math.cos(secondLatitude);
+  final x =
+      math.cos(firstLatitude) * math.sin(secondLatitude) -
+      math.sin(firstLatitude) *
+          math.cos(secondLatitude) *
+          math.cos(deltaLongitude);
+  return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+}
+
+double _headingDifference(double first, double second) {
+  final difference = (first - second).abs() % 360;
+  return math.min(difference, 360 - difference);
+}
+
+bool _isRoundaboutManeuver(String type) => const {
+  'roundabout',
+  'rotary',
+  'roundabout turn',
+  'exit roundabout',
+  'exit rotary',
+}.contains(type.trim().toLowerCase());
 
 const _requestHeaders = {
   'Accept': 'application/json',
