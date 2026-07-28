@@ -802,6 +802,13 @@ class _EventRow extends StatelessWidget {
         (event.payload['share'] as Map?)?['cleared'] == true
             ? 'Rejoin route cleared'
             : 'Rejoin route shared with the leader',
+      // #188. The activity list says a number was shared and with whom, never
+      // what the number is: this is a log, not a place to read a number off a
+      // screen.
+      RideEventType.riderContactShared =>
+        event.payload['recipientRiderIds'] == null
+            ? 'Phone number shared with the ride'
+            : 'Phone number shared with the leader and TEC',
     };
     final time = TimeOfDay.fromDateTime(event.createdAt).format(context);
     return ListTile(

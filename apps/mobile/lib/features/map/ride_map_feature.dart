@@ -110,6 +110,7 @@ class RideMapFeature extends StatefulWidget {
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
+    this.onEmergencyContactUsed,
     this.ridePaused = false,
     this.rideHasNoLeader = false,
     this.onLeaveRide,
@@ -153,6 +154,7 @@ class RideMapFeature extends StatefulWidget {
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
     Future<void> Function(QuickMessage message)? onEmergencyIssue,
+    void Function(MapEmergencyContact contact)? onEmergencyContactUsed,
     bool ridePaused = false,
     bool rideHasNoLeader = false,
     Future<void> Function()? onLeaveRide,
@@ -189,6 +191,7 @@ class RideMapFeature extends StatefulWidget {
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
     onEmergencyIssue: onEmergencyIssue,
+    onEmergencyContactUsed: onEmergencyContactUsed,
     ridePaused: ridePaused,
     rideHasNoLeader: rideHasNoLeader,
     onLeaveRide: onLeaveRide,
@@ -236,6 +239,9 @@ class RideMapFeature extends StatefulWidget {
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
+
+  /// Called when the rider dials or texts a shared number (#188).
+  final void Function(MapEmergencyContact contact)? onEmergencyContactUsed;
   final bool ridePaused;
   final bool rideHasNoLeader;
   final Future<void> Function()? onLeaveRide;
@@ -369,6 +375,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
         onEmergencyIssue: widget.onEmergencyIssue,
+        onEmergencyContactUsed: widget.onEmergencyContactUsed,
         ridePaused: widget.ridePaused,
         rideHasNoLeader: widget.rideHasNoLeader,
         onLeaveRide: widget.onLeaveRide,
@@ -431,6 +438,7 @@ class RideMapScreen extends StatefulWidget {
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
+    this.onEmergencyContactUsed,
     this.ridePaused = false,
     this.rideHasNoLeader = false,
     this.onLeaveRide,
@@ -486,6 +494,10 @@ class RideMapScreen extends StatefulWidget {
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
+
+  /// Called when the rider dials or texts a shared number, so the embedder can
+  /// mark that share as used and keep it past the ride-end purge (#188).
+  final void Function(MapEmergencyContact contact)? onEmergencyContactUsed;
   final bool ridePaused;
   final bool rideHasNoLeader;
   final Future<void> Function()? onLeaveRide;
@@ -2716,6 +2728,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
           contacts: widget.emergencyContacts,
           onIssueSelected: _sendEmergencyIssue,
           onOpenMessages: _openEmergencyMessages,
+          onCallContact: _callEmergencyContact,
+          onMessageContact: _messageEmergencyContact,
         ),
       );
     } finally {
@@ -2754,6 +2768,42 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
     if (!opened && mounted) {
       _showMessage('Could not open Messages on this device.');
+    }
+  }
+
+  /// Rings a coordination role on the number they themselves shared (#188).
+  ///
+  /// Only ever reached from a row whose contact carries a number, so there is no
+  /// path that dials an ICE contact by mistake: an ICE number never populates
+  /// [MapEmergencyContact].
+  Future<void> _callEmergencyContact(MapEmergencyContact contact) =>
+      _launchEmergencyContact(contact, scheme: 'tel');
+
+  /// Texts a coordination role, with the rider's position already in the body —
+  /// the same body #173 put in the contacts-book fallback, because "I have
+  /// stopped" is not actionable without where.
+  Future<void> _messageEmergencyContact(MapEmergencyContact contact) =>
+      _launchEmergencyContact(contact, scheme: 'sms');
+
+  Future<void> _launchEmergencyContact(
+    MapEmergencyContact contact, {
+    required String scheme,
+  }) async {
+    final number = contact.phoneNumber;
+    if (number == null || number.isEmpty) return;
+    widget.onEmergencyContactUsed?.call(contact);
+    final opened = await launchUrl(
+      Uri(
+        scheme: scheme,
+        path: number,
+        queryParameters: scheme == 'sms'
+            ? {'body': emergencyMessageBody(_effectivePosition)}
+            : null,
+      ),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && mounted) {
+      _showMessage('Could not reach ${contact.displayName} from this device.');
     }
   }
 
@@ -4922,26 +4972,48 @@ class MapJunctionMarkerOverlay {
 
 /// A ride role that should receive urgent assistance requests.
 ///
-/// Phone numbers are deliberately optional here: this general roster does
-/// not carry personal contact details, so the UI can safely offer Messages
-/// without exposing anyone's number by default. Actual ICE contact numbers
-/// only ever travel through the separate, opt-in sharing flow in
-/// RideController (IceShareInboxSheet / shareEmergencyInfo), never through
-/// this class.
+/// [phoneNumber] is null unless that rider has explicitly shared their own
+/// number into this ride (#188). It is never derived: not from the roster, not
+/// from a location event, not from the device, and emphatically not from an ICE
+/// share, which carries a rider's next of kin rather than the rider. A rider's
+/// own number arrives through `RideController.receivedRiderContacts`, and their
+/// next of kin's through the separate ICE flow (IceShareInboxSheet /
+/// shareEmergencyInfo); neither is ever read as the other.
+///
+/// [phoneNumber] exists so the emergency sheet can dial. It is not a display
+/// field: nothing shows it beside a rider's name, because a number is not an
+/// identity.
 class MapEmergencyContact {
   const MapEmergencyContact({
     required this.riderId,
     required this.displayName,
     required this.role,
+    this.phoneNumber,
+    this.contactShareEventId,
   });
 
   final String riderId;
   final String displayName;
   final RideRole role;
+  final String? phoneNumber;
+
+  /// The share the number came from, so dialling can mark it used and exempt it
+  /// from the ride-end purge.
+  final String? contactShareEventId;
+
+  bool get hasPhoneNumber => (phoneNumber ?? '').isNotEmpty;
 
   String get shortRoleLabel => switch (role) {
     RideRole.lead => 'the leader',
     RideRole.tailEndCharlie => 'the TEC',
+    _ => displayName,
+  };
+
+  /// "Oliver (leader)". Used at the point of dialling, where the rider needs to
+  /// know both who and which role.
+  String get roleQualifiedName => switch (role) {
+    RideRole.lead => '$displayName (leader)',
+    RideRole.tailEndCharlie => '$displayName (TEC)',
     _ => displayName,
   };
 }
@@ -5212,11 +5284,15 @@ class _EmergencyActionsSheet extends StatefulWidget {
     required this.contacts,
     required this.onIssueSelected,
     required this.onOpenMessages,
+    required this.onCallContact,
+    required this.onMessageContact,
   });
 
   final List<MapEmergencyContact> contacts;
   final Future<void> Function(QuickMessage message) onIssueSelected;
   final Future<void> Function() onOpenMessages;
+  final Future<void> Function(MapEmergencyContact contact) onCallContact;
+  final Future<void> Function(MapEmergencyContact contact) onMessageContact;
 
   @override
   State<_EmergencyActionsSheet> createState() => _EmergencyActionsSheetState();
@@ -5247,6 +5323,20 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
     }
   }
 
+  Future<void> _dial(
+    Future<void> Function(MapEmergencyContact contact) action,
+    MapEmergencyContact contact,
+  ) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      await action(contact);
+      if (mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final contacts = widget.contacts;
@@ -5260,9 +5350,11 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
       // any current iPhone held sideways - the fixed content overran the bottom
       // by 58 px and the framework clipped whatever was last (#193).
       //
-      // The order already puts what matters first: the four issue buttons, then
-      // the messaging control, then the explanatory note. So the note is what
-      // goes below the fold, which is the right thing to lose.
+      // The order puts what matters first: the four issue buttons, then the
+      // per-role Call/Message controls (#188), then the contacts-book fallback,
+      // then the explanatory note. So the note is what goes below the fold,
+      // which is the right thing to lose. Adding the contact rows made this
+      // sheet taller again, so the scroll matters more, not less.
       child: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
@@ -5301,7 +5393,30 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
                     ),
                 ],
               ),
-              const SizedBox(height: 18),
+              if (contacts.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'Reach them directly',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 10),
+                // Every leader and TEC is listed whether or not a number is
+                // held: "they have not shared one" is information, and hiding
+                // the row would leave a rider guessing whether the app had
+                // simply failed to draw it (#188).
+                for (final contact in contacts) ...[
+                  _EmergencyContactRow(
+                    contact: contact,
+                    enabled: !_sending,
+                    onCall: () =>
+                        unawaited(_dial(widget.onCallContact, contact)),
+                    onMessage: () =>
+                        unawaited(_dial(widget.onMessageContact, contact)),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ],
+              const SizedBox(height: 8),
               OutlinedButton.icon(
                 key: const Key('emergency-open-messages-button'),
                 onPressed: _sending ? null : () => unawaited(_openMessages()),
@@ -5309,14 +5424,15 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
                 // Names the recipient problem in the label, not only in the note
                 // below it: a rider who has stopped and needs help does not read
                 // 12 px of grey text, and an empty To: field looked like a fault
-                // rather than a choice (#173).
+                // rather than a choice (#173). Still here after #188, because a
+                // rider whose leader and TEC have shared nothing needs a route
+                // out, and so does one who needs somebody outside the ride.
                 label: const Text('Text someone from your contacts'),
               ),
               const SizedBox(height: 6),
               const Text(
-                'Your position is filled in ready to send. A ride invite carries '
-                'no phone numbers, so pick who to text - the leader and TEC have '
-                'already had the alert in the app.',
+                'Your position is filled in ready to send. Pick who to text - '
+                'the leader and TEC have already had the alert in the app.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
               ),
@@ -5326,6 +5442,71 @@ class _EmergencyActionsSheetState extends State<_EmergencyActionsSheet> {
       ),
     );
   }
+}
+
+/// One coordination role in the emergency sheet: who they are, and either the
+/// dial controls or the plain fact that there is nothing to dial.
+///
+/// The number itself is deliberately not rendered. A rider needs to reach the
+/// leader, not to read the leader's phone number off a screen, and putting it in
+/// the UI would make it a display field — the one thing #188 says it must never
+/// be.
+class _EmergencyContactRow extends StatelessWidget {
+  const _EmergencyContactRow({
+    required this.contact,
+    required this.enabled,
+    required this.onCall,
+    required this.onMessage,
+  });
+
+  final MapEmergencyContact contact;
+  final bool enabled;
+  final VoidCallback onCall;
+  final VoidCallback onMessage;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: Key('emergency-contact-${contact.riderId}'),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      border: Border.all(color: const Color(0xFF2A2E38)),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          contact.roleQualifiedName,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        if (contact.hasPhoneNumber)
+          Row(
+            children: [
+              FilledButton.icon(
+                key: Key('emergency-contact-call-${contact.riderId}'),
+                onPressed: enabled ? onCall : null,
+                icon: const Icon(Icons.call, size: 18),
+                label: const Text('Call'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                key: Key('emergency-contact-message-${contact.riderId}'),
+                onPressed: enabled ? onMessage : null,
+                icon: const Icon(Icons.sms_outlined, size: 18),
+                label: const Text('Message'),
+              ),
+            ],
+          )
+        else
+          Text(
+            '${contact.displayName} has not shared a phone number. '
+            'The alert has reached them in the app.',
+            style: const TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
+          ),
+      ],
+    ),
+  );
 }
 
 class _GroupMiniMap extends StatefulWidget {

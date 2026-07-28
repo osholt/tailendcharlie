@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../../controllers/rider_profile_controller.dart';
+import '../../services/rider_contact_share.dart';
 
-/// Editor for in-case-of-emergency details. Stored in
-/// [RiderProfileController]'s SharedPreferences and kept off ordinary ride
-/// events by default. It only leaves the device via an explicit share action
-/// or the opt-in "share with the leader by default" setting below, both
-/// driven from RideController - never as a side effect of anything else.
+/// Editor for in-case-of-emergency details, and for the rider's own number.
+/// Stored in [RiderProfileController]'s SharedPreferences and kept off
+/// ordinary ride events by default. It only leaves the device via an explicit
+/// share action or the opt-in "share with the leader by default" setting below,
+/// both driven from RideController - never as a side effect of anything else.
+///
+/// The two numbers on this sheet are different things and are kept visibly
+/// apart: "your own number" is the rider, "emergency contact" is their next of
+/// kin. Sharing one never shares the other, and the auto-share checkbox belongs
+/// to the ICE block alone.
 class EmergencyInfoSheet extends StatefulWidget {
   const EmergencyInfoSheet({super.key, required this.riderProfile});
 
@@ -37,15 +43,20 @@ class _EmergencyInfoSheetState extends State<EmergencyInfoSheet> {
   late final _notesController = TextEditingController(
     text: widget.riderProfile.medicalNotes,
   );
+  late final _ownPhoneController = TextEditingController(
+    text: widget.riderProfile.ownPhoneNumber,
+  );
   late bool _shareWithLeaderByDefault =
       widget.riderProfile.shareIceWithLeaderByDefault;
   bool _saving = false;
+  String? _ownPhoneError;
 
   @override
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
     _notesController.dispose();
+    _ownPhoneController.dispose();
     super.dispose();
   }
 
@@ -74,6 +85,46 @@ class _EmergencyInfoSheetState extends State<EmergencyInfoSheet> {
           style: TextStyle(color: Color(0xFF98A3B1)),
         ),
         const SizedBox(height: 20),
+        Text(
+          'YOUR OWN NUMBER',
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: const Color(0xFF8D98A7),
+            letterSpacing: 1.1,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          key: const Key('rider-own-phone'),
+          controller: _ownPhoneController,
+          keyboardType: TextInputType.phone,
+          decoration: InputDecoration(
+            labelText: 'Your phone number (optional)',
+            errorText: _ownPhoneError,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Optional, and blank unless you type it - the app never reads it from '
+          'your SIM or your contacts. Once a ride is running you can offer it '
+          'to the ride leader and Tail End Charlie from the ride menu, so they '
+          'can ring you if you stop. Nobody gets it until you send it, and it '
+          'is cleared from their phone when the ride ends.',
+          style: TextStyle(color: Color(0xFF98A3B1)),
+        ),
+        const Divider(height: 32),
+        Text(
+          'EMERGENCY CONTACT',
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: const Color(0xFF8D98A7),
+            letterSpacing: 1.1,
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Someone to ring about you - not your own number.',
+          style: TextStyle(color: Color(0xFF98A3B1)),
+        ),
+        const SizedBox(height: 12),
         TextField(
           key: const Key('emergency-contact-name'),
           controller: _nameController,
@@ -133,13 +184,30 @@ class _EmergencyInfoSheetState extends State<EmergencyInfoSheet> {
   );
 
   Future<void> _save() async {
-    setState(() => _saving = true);
+    final ownPhone = _ownPhoneController.text.trim();
+    if (ownPhone.isNotEmpty &&
+        RiderContactShare.normalisePhoneNumber(ownPhone) == null) {
+      setState(
+        () => _ownPhoneError =
+            'Enter a number the phone can dial - digits, and optionally a '
+            'leading +.',
+      );
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _ownPhoneError = null;
+    });
     await widget.riderProfile.saveEmergencyInfo(
       emergencyContactName: _nameController.text.trim(),
       emergencyContactPhone: _phoneController.text.trim(),
       medicalNotes: _notesController.text.trim(),
       shareWithLeaderByDefault: _shareWithLeaderByDefault,
     );
+    // Separate call, separate field: an ICE payload is built only from the
+    // arguments above, so a rider's own number can never travel as their next
+    // of kin's.
+    await widget.riderProfile.saveOwnPhoneNumber(ownPhone);
     if (mounted) Navigator.of(context).pop();
   }
 }

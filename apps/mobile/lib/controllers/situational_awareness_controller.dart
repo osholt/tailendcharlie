@@ -473,6 +473,7 @@ class SituationalAwarenessController extends ChangeNotifier {
       case RideEventType.tecRoleRequested:
       case RideEventType.tecRoleResponded:
       case RideEventType.rejoinRouteShared:
+      case RideEventType.riderContactShared:
         break;
     }
     if (!replaying) {

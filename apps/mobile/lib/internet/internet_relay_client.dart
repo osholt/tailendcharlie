@@ -78,6 +78,11 @@ abstract final class RelayProtocolCapabilities {
   /// (issue #128 part 2).
   static const rejoinRouteSharing = 'rejoin-route-sharing-v1';
 
+  /// A rider's own phone number, addressed to the ride's coordination roles
+  /// (issue #188). Named so a client can say "the ride service cannot carry
+  /// this" instead of appearing to have shared a number that went nowhere.
+  static const riderContactSharing = 'rider-contact-sharing-v1';
+
   static const current = {
     rideStart,
     membership,
@@ -90,6 +95,7 @@ abstract final class RelayProtocolCapabilities {
     trafficReroutes,
     tecRoleAssignment,
     rejoinRouteSharing,
+    riderContactSharing,
   };
 }
 

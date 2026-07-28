@@ -188,6 +188,104 @@ void main() {
     });
   });
 
+  group("a rider's own number, #188", () {
+    test('the capability is advertised and gated by name', () {
+      expect(
+        RelayProtocolCapabilities.current,
+        contains(RelayProtocolCapabilities.riderContactSharing),
+      );
+      expect(
+        RelayClientDescriptor.current()
+            .headers['x-tailendcharlie-capabilities']!
+            .split(','),
+        contains('rider-contact-sharing-v1'),
+      );
+    });
+
+    test('a relay that cannot carry it withholds the share and names the '
+        'reason', () async {
+      final eventStore = InMemoryEventStore();
+      await eventStore.append(_event(id: 'core', createdAt: _base));
+      await eventStore.append(
+        _event(
+          id: 'contact-share',
+          type: RideEventType.riderContactShared,
+          createdAt: _base.add(const Duration(seconds: 1)),
+        ),
+      );
+      final api = _NegotiatedRelayApi(
+        capabilities: RelayProtocolCapabilities.current
+            .where(
+              (capability) =>
+                  capability != RelayProtocolCapabilities.riderContactSharing,
+            )
+            .toSet(),
+      );
+      final worker = InternetRelayWorker(
+        api: api,
+        eventStore: eventStore,
+        cursorStore: InMemoryInternetCursorStore(),
+        pollInterval: const Duration(days: 1),
+      );
+      final synced = worker.statuses.firstWhere(
+        (status) => status.phase == InternetRelayPhase.synced,
+      );
+
+      await worker.start(_session);
+      final status = await synced.timeout(const Duration(seconds: 2));
+
+      // The number never leaves; the ordinary event still goes.
+      expect(api.uploadedEventIds, ['core']);
+      expect(status.unsupportedUploadCount, 1);
+      expect(
+        status.limitations.map((limitation) => limitation.kind),
+        contains(PresenceLimitationKind.uploadCapabilityMissing),
+      );
+      expect(
+        worker.supportsCapability(
+          RelayProtocolCapabilities.riderContactSharing,
+        ),
+        isFalse,
+      );
+      await worker.close();
+    });
+
+    test('the named limitation says nobody was given the number, and what '
+        'still works', () {
+      final message =
+          PresenceLimitation.riderContactSharingUnsupportedByService.message;
+
+      expect(
+        message,
+        allOf(
+          contains('too old'),
+          contains('nobody has been given it'),
+          contains('still reaches the leader and TEC'),
+        ),
+      );
+      // No hostname, URL, raw error text or phone number in it.
+      expect(message, isNot(contains('http')));
+      expect(message, isNot(contains('://')));
+      expect(message, isNot(matches(RegExp(r'\d{4}'))));
+    });
+
+    test('an older build skips the event whole rather than rejecting the '
+        'batch', () {
+      // The failure this guards against: `RideEvent.fromJson` throws on an
+      // unknown type, so without the per-event skip a single share from a newer
+      // peer would take down the whole reply - every position and the roster
+      // with it.
+      expect(
+        describeUnsupportedRelayEvent(_rawEvent(type: 'riderContactShared')),
+        isNull,
+      );
+      expect(
+        describeUnsupportedRelayEvent(_rawEvent(type: 'riderContactWithdrawn')),
+        'riderContactWithdrawn',
+      );
+    });
+  });
+
   group('older client, current relay', () {
     test('a build that does not know these types skips them per event', () {
       // The mechanism #99 built, exercised with the three names this issue adds

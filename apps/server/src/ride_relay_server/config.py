@@ -87,6 +87,11 @@ class Settings(BaseSettings):
             # A separated rider's advisory rejoin route, addressed to the ride
             # leader only.
             "rejoin-route-sharing-v1",
+            # A rider's own phone number, addressed to the ride's coordination
+            # roles. Optional throughout and never inferred: a ride in which
+            # nobody shares one carries no numbers at all. Named so a client can
+            # report the limitation instead of appearing to have shared.
+            "rider-contact-sharing-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)

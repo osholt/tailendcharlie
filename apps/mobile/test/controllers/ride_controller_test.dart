@@ -17,6 +17,7 @@ import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:ride_relay/services/received_quick_message.dart';
 import 'package:ride_relay/services/ride_event_authenticator.dart';
+import 'package:ride_relay/services/rider_contact_share.dart';
 import 'package:ride_relay/services/situation_event_factory.dart';
 
 void main() {
@@ -947,6 +948,215 @@ void main() {
         .map((event) => event.id)
         .toSet();
     expect(remainingIds, {'used-share', ownShareId});
+  });
+
+  group("sharing a rider's own number (#188)", () {
+    /// Signs a peer's share with the live ride secret, because the reducer
+    /// verifies: an unauthenticated event must never be able to plant a number.
+    Future<void> appendPeerShare({
+      required String eventId,
+      required String riderId,
+      required String phone,
+      List<String>? recipientRiderIds,
+      DateTime? createdAt,
+    }) async {
+      final session = controller.session!;
+      final unsigned = RideEvent(
+        id: eventId,
+        rideId: session.rideId,
+        deviceId: riderId,
+        type: RideEventType.riderContactShared,
+        priority: EventPriority.important,
+        createdAt: createdAt ?? DateTime.utc(2026, 7, 16, 11, 55),
+        payload: {
+          'contact': {
+            'riderId': riderId,
+            'displayName': riderId,
+            'phone': phone,
+            'sharedByRole': RideRole.lead.name,
+          },
+          'recipientRiderIds': ?recipientRiderIds,
+        },
+        signature: '',
+      );
+      await eventStore.append(
+        RideEvent(
+          id: unsigned.id,
+          rideId: unsigned.rideId,
+          deviceId: unsigned.deviceId,
+          type: unsigned.type,
+          priority: unsigned.priority,
+          createdAt: unsigned.createdAt,
+          payload: unsigned.payload,
+          signature: RideEventAuthenticator.sign(
+            unsigned,
+            session.inviteSecret,
+          ),
+        ),
+      );
+      await controller.reloadEvents();
+    }
+
+    test('an ordinary rider addresses it to the leader and TEC and to nobody '
+        'else, and it is a separate event from ICE', () async {
+      await controller.createRide('Oliver');
+
+      final shared = await controller.shareOwnContactNumber(
+        phoneNumber: '+44 7700 900321',
+        recipients: const RiderContactRecipients.addressed(['leader', 'tec']),
+      );
+
+      expect(shared, isTrue);
+      final event = controller.events.singleWhere(
+        (event) => event.type == RideEventType.riderContactShared,
+      );
+      expect(event.payload['recipientRiderIds'], ['leader', 'tec']);
+      expect((event.payload['contact'] as Map)['phone'], '+44 7700 900321');
+      // The number never travels as an ICE share, which carries next of kin.
+      expect(
+        controller.events.where(
+          (event) => event.type == RideEventType.iceInfoShared,
+        ),
+        isEmpty,
+      );
+      expect(controller.hasSharedOwnContactNumber, isTrue);
+    });
+
+    test('records nothing when there is nobody to address, or the number is '
+        'not dialable', () async {
+      await controller.createRide('Oliver');
+
+      expect(
+        await controller.shareOwnContactNumber(
+          phoneNumber: '+44 7700 900321',
+          recipients: const RiderContactRecipients.addressed([]),
+        ),
+        isFalse,
+      );
+      expect(
+        await controller.shareOwnContactNumber(
+          phoneNumber: 'tel:+447700900321',
+          recipients: const RiderContactRecipients.addressed(['leader']),
+        ),
+        isFalse,
+      );
+      expect(
+        controller.events.where(
+          (event) => event.type == RideEventType.riderContactShared,
+        ),
+        isEmpty,
+      );
+      expect(controller.hasSharedOwnContactNumber, isFalse);
+    });
+
+    test("a share addressed elsewhere never reaches this rider's contact "
+        'list', () async {
+      await controller.createRide('Oliver');
+      final myId = controller.session!.localRiderId;
+
+      await appendPeerShare(
+        eventId: 'addressed-to-me',
+        riderId: 'leader-device',
+        phone: '+44 7700 900111',
+        recipientRiderIds: [myId],
+      );
+      await appendPeerShare(
+        eventId: 'addressed-elsewhere',
+        riderId: 'other-device',
+        phone: '+44 7700 900222',
+        recipientRiderIds: const ['somebody-else'],
+      );
+      await appendPeerShare(
+        eventId: 'ride-wide',
+        riderId: 'tec-device',
+        phone: '+44 7700 900333',
+        recipientRiderIds: null,
+      );
+
+      final contacts = controller.receivedRiderContacts;
+      expect(contacts.keys.toSet(), {'leader-device', 'tec-device'});
+      expect(contacts['leader-device']!.phoneNumber, '+44 7700 900111');
+      // The number of a rider who addressed somebody else is not merely
+      // hidden - it is not in the model any surface reads.
+      expect(
+        contacts.values.map((contact) => contact.phoneNumber),
+        isNot(contains('+44 7700 900222')),
+      );
+    });
+
+    test('ending the ride purges an unused shared number and keeps a dialled '
+        'one, exactly as ICE is treated', () async {
+      await controller.createRide('Oliver');
+      final rideId = controller.session!.rideId;
+      final myId = controller.session!.localRiderId;
+
+      await appendPeerShare(
+        eventId: 'unused-number',
+        riderId: 'leader-device',
+        phone: '+44 7700 900111',
+        recipientRiderIds: [myId],
+      );
+      await appendPeerShare(
+        eventId: 'dialled-number',
+        riderId: 'tec-device',
+        phone: '+44 7700 900222',
+        recipientRiderIds: [myId],
+      );
+      controller.markRiderContactUsed('dialled-number');
+      await controller.shareOwnContactNumber(
+        phoneNumber: '+44 7700 900999',
+        recipients: const RiderContactRecipients.addressed(['leader-device']),
+      );
+
+      await controller.endRide();
+
+      final remaining = await eventStore.eventsForRide(rideId);
+      final remainingContactIds = remaining
+          .where((event) => event.type == RideEventType.riderContactShared)
+          .map((event) => event.id)
+          .toSet();
+      // The dialled one and this rider's own outbound share survive; the unused
+      // one is gone from storage, not merely filtered out of a getter.
+      expect(remainingContactIds, contains('dialled-number'));
+      expect(remainingContactIds, isNot(contains('unused-number')));
+      expect(
+        remaining
+            .where((event) => event.type == RideEventType.riderContactShared)
+            .any((event) => event.deviceId == myId),
+        isTrue,
+      );
+      // And nothing is offered to dial once the ride has ended, whatever
+      // survives in the journal.
+      expect(controller.receivedRiderContacts, isEmpty);
+    });
+
+    test('an unsigned share can never plant a number', () async {
+      await controller.createRide('Oliver');
+      final session = controller.session!;
+
+      await eventStore.append(
+        RideEvent(
+          id: 'forged',
+          rideId: session.rideId,
+          deviceId: 'mallory',
+          type: RideEventType.riderContactShared,
+          priority: EventPriority.important,
+          createdAt: DateTime.utc(2026, 7, 16, 11, 55),
+          payload: {
+            'contact': const {
+              'riderId': 'mallory',
+              'displayName': 'Mallory',
+              'phone': '+44 7700 900444',
+            },
+            'recipientRiderIds': [session.localRiderId],
+          },
+          signature: 'f' * 64,
+        ),
+      );
+      await controller.reloadEvents();
+
+      expect(controller.receivedRiderContacts, isEmpty);
+    });
   });
 }
 
