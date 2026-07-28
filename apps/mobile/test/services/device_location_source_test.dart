@@ -1,12 +1,61 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/device_location_source.dart';
 
 void main() {
+  // #205. A plain LocationSettings is foreground-only, so a rider with the phone
+  // in a pocket or another navigation app in front contributed nothing to the
+  // group and recorded a trail that jumped in a straight line across a bay.
+  group('ride location settings keep running in the background', () {
+    test('iOS asks Core Location not to stop or pause', () {
+      final settings = GeolocatorDeviceLocationPlatform.rideLocationSettings(
+        TargetPlatform.iOS,
+      );
+
+      expect(settings, isA<AppleSettings>());
+      final apple = settings as AppleSettings;
+      expect(apple.allowBackgroundLocationUpdates, isTrue);
+      // A stop on a ride is a coffee stop, not the end of the journey.
+      expect(apple.pauseLocationUpdatesAutomatically, isFalse);
+      // What makes a while-in-use authorisation sufficient, and the honest
+      // signal to the rider that location is in use.
+      expect(apple.showBackgroundLocationIndicator, isTrue);
+      expect(apple.activityType, ActivityType.otherNavigation);
+    });
+
+    test('Android runs a foreground service the rider can see', () {
+      final settings = GeolocatorDeviceLocationPlatform.rideLocationSettings(
+        TargetPlatform.android,
+      );
+
+      expect(settings, isA<AndroidSettings>());
+      final config = (settings as AndroidSettings).foregroundNotificationConfig;
+      expect(config, isNotNull);
+      expect(config!.setOngoing, isTrue);
+      // It has to say what is happening and that it ends with the ride.
+      expect(config.notificationText, contains('ride'));
+      expect(config.notificationText, contains('stops when the ride ends'));
+    });
+
+    test('every platform keeps the 10 m platform filter', () {
+      for (final platform in TargetPlatform.values) {
+        expect(
+          GeolocatorDeviceLocationPlatform.rideLocationSettings(
+            platform,
+          ).distanceFilter,
+          GeolocatorDeviceLocationPlatform.platformDistanceFilterMeters,
+          reason: '$platform',
+        );
+      }
+    });
+  });
+
   test('inspection reports denial without prompting', () async {
     final platform = _FakeLocationPlatform();
     final source = DeviceLocationSource(platform);

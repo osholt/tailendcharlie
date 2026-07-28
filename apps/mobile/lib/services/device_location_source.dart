@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+// AppleSettings, AndroidSettings and ForegroundNotificationConfig all come from
+// this one re-export, so the platform packages stay transitive.
 import 'package:geolocator/geolocator.dart';
 
 import '../domain/geo_point.dart';
@@ -83,11 +86,57 @@ class GeolocatorDeviceLocationPlatform implements DeviceLocationPlatform {
 
   @override
   Stream<LocationSample> positionStream() => Geolocator.getPositionStream(
-    locationSettings: const LocationSettings(
+    locationSettings: rideLocationSettings(defaultTargetPlatform),
+  ).map(_mapPosition);
+
+  /// Settings that keep fixes arriving while the app is not in the foreground.
+  ///
+  /// A plain [LocationSettings] is foreground-only, and that broke the premise of
+  /// the app: a rider with the phone in a pocket or another navigation app in
+  /// front contributed no position to the group and recorded a trail that jumped
+  /// in a straight line across a bay (#205).
+  ///
+  /// Exposed for test because the two platform branches are the whole fix, and
+  /// they cannot be exercised on a device from a unit test.
+  @visibleForTesting
+  static LocationSettings rideLocationSettings(
+    TargetPlatform platform,
+  ) => switch (platform) {
+    TargetPlatform.iOS || TargetPlatform.macOS => AppleSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: platformDistanceFilterMeters,
+      allowBackgroundLocationUpdates: true,
+      // Core Location would otherwise decide the rider has stopped moving
+      // and power the receiver down. On a ride, a stop is a coffee stop.
+      pauseLocationUpdatesAutomatically: false,
+      // The blue indicator is not a cost, it is the honest signal that this
+      // app is using location right now, and it is what makes a while-in-use
+      // authorisation sufficient for background updates.
+      showBackgroundLocationIndicator: true,
+      activityType: ActivityType.otherNavigation,
+    ),
+    TargetPlatform.android => AndroidSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: platformDistanceFilterMeters,
+      // Android grants background location through a location-typed
+      // foreground service. geolocator_android owns the service; this is the
+      // notification that has to accompany it, and the rider can stop the
+      // ride from the app it points at.
+      foregroundNotificationConfig: const ForegroundNotificationConfig(
+        notificationTitle: 'Sharing your position with your ride',
+        notificationText:
+            'Tail End Charlie is recording your ride and keeping the group '
+            'up to date. This stops when the ride ends.',
+        notificationChannelName: 'Active ride',
+        setOngoing: true,
+        enableWakeLock: true,
+      ),
+    ),
+    _ => const LocationSettings(
       accuracy: LocationAccuracy.high,
       distanceFilter: platformDistanceFilterMeters,
     ),
-  ).map(_mapPosition);
+  };
 
   static DeviceLocationPermission _mapPermission(LocationPermission value) =>
       switch (value) {
@@ -113,7 +162,12 @@ class GeolocatorDeviceLocationPlatform implements DeviceLocationPlatform {
   );
 }
 
-/// Foreground-only location source.
+/// Ride-scoped location source.
+///
+/// Runs only between [start] and [stop], and within that window keeps running
+/// while the app is in the background — a rider using another navigation app is
+/// the ordinary case, not an edge case (#205). Outside that window the app holds
+/// no location session at all.
 ///
 /// [inspect] never requests permission. [requestAccess] must be called from an
 /// explicit user action, and [start] only works after access is granted.
@@ -170,7 +224,8 @@ class DeviceLocationSource {
     _emit(
       DeviceLocationStatus(
         state: DeviceLocationState.sampling,
-        message: 'Sharing foreground location for this ride.',
+        message:
+            'Sharing your position for this ride, including in the background.',
         lastSample: _status.lastSample,
       ),
     );
@@ -179,7 +234,8 @@ class DeviceLocationSource {
       (sample) => _emit(
         DeviceLocationStatus(
           state: DeviceLocationState.sampling,
-          message: 'Foreground location is active.',
+          message:
+              'Location is active for this ride, including in the background.',
           lastSample: sample,
         ),
       ),
@@ -268,14 +324,15 @@ class DeviceLocationSource {
           ? _emit(
               DeviceLocationStatus(
                 state: DeviceLocationState.sampling,
-                message: 'Foreground location is active.',
+                message:
+                    'Location is active for this ride, including in the background.',
                 lastSample: _status.lastSample,
               ),
             )
           : _emit(
               DeviceLocationStatus(
                 state: DeviceLocationState.ready,
-                message: 'Location is available while the app is open.',
+                message: 'Location is ready. It runs for the length of a ride.',
                 lastSample: _status.lastSample,
               ),
             ),

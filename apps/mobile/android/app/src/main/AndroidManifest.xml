@@ -15,6 +15,20 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!--
+      A ride keeps recording while the phone is in a pocket or showing another
+      navigation app, which on Android means a foreground service typed for
+      location (#205). geolocator_android already declares
+      GeolocatorLocationService with android:foregroundServiceType="location";
+      these are the permissions it needs to start it.
+
+      Deliberately NOT ACCESS_BACKGROUND_LOCATION. A location-typed foreground
+      service grants location while the app is backgrounded, so the extra
+      permission - and the separate, alarming system prompt that comes with it -
+      would buy nothing.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" android:minSdkVersion="31" />
