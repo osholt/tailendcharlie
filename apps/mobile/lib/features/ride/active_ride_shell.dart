@@ -933,8 +933,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         if (session != null) {
           _rideRouteStore = await JsonFileRouteStore.openForRide(
             session.rideId,
+          ).timeout(_localRouteRestoreTimeout);
+          route = await _rideRouteStore!.loadActiveRoute().timeout(
+            _localRouteRestoreTimeout,
           );
-          route = await _rideRouteStore!.loadActiveRoute();
           final authoritative = widget.rideController.authoritativeRouteState;
           _appliedAuthoritativeRouteRevision = authoritative.revisionId;
           if (authoritative.hasDecision) {
@@ -955,21 +957,51 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         // Never fall back to the legacy app-wide route file. A failed
         // ride-scoped store should leave this ride empty instead of reviving
         // a route chosen for an earlier ride.
-        _rideRouteStore ??= InMemoryRouteStore();
+        _rideRouteStore = InMemoryRouteStore();
         _warnings.add('Route storage could not be opened: $error');
+        final authoritative = widget.rideController.authoritativeRouteState;
+        _appliedAuthoritativeRouteRevision = authoritative.revisionId;
+        if (authoritative.hasDecision) route = authoritative.route;
       }
     }
 
     _activeRoute = route;
-    await _initializeTrafficRerouting();
-    await _replaceAwarenessController(route, notify: false);
+    if (!mounted) return;
+
+    // The map depends only on its ride-scoped route store. It must not leave a
+    // full-screen spinner up while GPS, push, internet presence or nearby
+    // transport start in the background. This frame is the escape hatch for a
+    // transport plugin that never returns on a particular Android phone
+    // (#209).
+    setState(() => _loading = false);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+
+    try {
+      await _initializeTrafficRerouting();
+    } on Object catch (error) {
+      _warnings.add('Traffic preferences could not be restored: $error');
+    }
+    try {
+      await _replaceAwarenessController(route);
+    } on Object catch (error) {
+      _warnings.add('Ride map history could not be restored: $error');
+    }
     if (_isSimulation) {
-      await _replaceSimulationController(route, notify: false);
+      try {
+        await _replaceSimulationController(route);
+      } on Object catch (error) {
+        _warnings.add('Ride Lab could not be restored: $error');
+      }
     }
     if (publishStoredLeaderRoute && route != null) {
-      await widget.rideController.publishRoute(route);
-      _appliedAuthoritativeRouteRevision =
-          widget.rideController.authoritativeRouteState.revisionId;
+      try {
+        await widget.rideController.publishRoute(route);
+        _appliedAuthoritativeRouteRevision =
+            widget.rideController.authoritativeRouteState.revisionId;
+      } on Object catch (error) {
+        _warnings.add('The stored group route could not be published: $error');
+      }
     }
     if (!mounted) return;
 
@@ -1158,9 +1190,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (widget.rideController.rideEnded) {
       await _handleRideEnded();
     }
-    setState(() => _loading = false);
     _schedulePublish();
   }
+
+  /// Route storage is local and normally opens in milliseconds. If the
+  /// platform file-service call itself wedges, fall back to an empty in-memory
+  /// store so the rider gets controls rather than an indefinite map spinner.
+  static const _localRouteRestoreTimeout = Duration(seconds: 2);
 
   Future<void> _initializeTrafficRerouting() async {
     if (_isSimulation || !widget.enableNativeServices) return;
@@ -1394,7 +1430,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       rideStarted: widget.rideController.rideStarted,
       rideStartedAt: widget.rideController.rideStartedAt,
     );
-    await controller.initialize();
+    await controller.initialize(restoredEvents: widget.rideController.events);
     if (!mounted || generation != _routeGeneration) {
       controller.dispose();
       return;

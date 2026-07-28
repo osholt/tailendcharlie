@@ -39,6 +39,9 @@ class HomeScreen extends StatefulWidget {
     required this.recordedRoutes,
     required this.completedRides,
     this.planDirectory,
+    this.restoringRideCode,
+    this.restorationError,
+    this.onRetryRestoration,
   });
 
   final RideController controller;
@@ -51,6 +54,9 @@ class HomeScreen extends StatefulWidget {
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final PlanDirectory? planDirectory;
+  final String? restoringRideCode;
+  final Object? restorationError;
+  final VoidCallback? onRetryRestoration;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -93,6 +99,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 24),
                       TesterUpdateBanner(identity: _buildIdentity),
                       const SizedBox(height: 32),
+                      if (widget.onRetryRestoration != null) ...[
+                        _RideRestorationBanner(
+                          rideCode: widget.restoringRideCode,
+                          error: widget.restorationError,
+                          onRetry: widget.onRetryRestoration!,
+                        ),
+                        const SizedBox(height: 20),
+                      ],
                       if (widget.controller.endedRideSetAside)
                         _SetAsideRideBanner(
                           rideCode: widget.controller.session!.rideCode,
@@ -134,7 +148,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 40),
                       FilledButton.icon(
-                        onPressed: widget.controller.busy
+                        onPressed:
+                            widget.controller.busy ||
+                                widget.onRetryRestoration != null
                             ? null
                             : () => _showRideSheet(context, creating: true),
                         icon: const Icon(Icons.add_road),
@@ -142,7 +158,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 12),
                       OutlinedButton.icon(
-                        onPressed: widget.controller.busy
+                        onPressed:
+                            widget.controller.busy ||
+                                widget.onRetryRestoration != null
                             ? null
                             : () => _showRideSheet(context, creating: false),
                         icon: const Icon(Icons.group_add_outlined),
@@ -151,7 +169,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 12),
                       TextButton.icon(
                         key: const Key('start-ride-simulator'),
-                        onPressed: widget.controller.busy
+                        onPressed:
+                            widget.controller.busy ||
+                                widget.onRetryRestoration != null
                             ? null
                             : widget.controller.createSimulationRide,
                         icon: const Icon(Icons.science_outlined),
@@ -263,6 +283,81 @@ class _HomeScreenState extends State<HomeScreen> {
         planDirectory: widget.planDirectory,
         creating: creating,
         onComplete: () => Navigator.of(sheetContext).pop(),
+      ),
+    );
+  }
+}
+
+class _RideRestorationBanner extends StatelessWidget {
+  const _RideRestorationBanner({
+    required this.rideCode,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final String? rideCode;
+  final Object? error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = error != null;
+    final ride = rideCode == null ? 'your saved ride' : 'ride $rideCode';
+    return Container(
+      key: const Key('ride-restoration-banner'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1D2530),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: failed
+              ? Theme.of(context).colorScheme.error
+              : const Color(0xFF3B4654),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (failed)
+            Icon(
+              Icons.warning_amber_rounded,
+              color: Theme.of(context).colorScheme.error,
+            )
+          else
+            const SizedBox.square(
+              dimension: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  failed ? 'Could not restore $ride' : 'Still restoring $ride',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  failed
+                      ? 'The home screen remains available. Retry before '
+                            'creating or joining another ride.'
+                      : 'The home screen remains available while its journal '
+                            'loads. Ride actions will unlock when it is ready.',
+                ),
+                if (failed) ...[
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    key: const Key('retry-ride-restoration'),
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry restore'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

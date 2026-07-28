@@ -170,10 +170,20 @@ class SituationalAwarenessController extends ChangeNotifier {
     );
   }
 
-  Future<void> initialize() async {
-    final events = await _eventStore.eventsForRide(_session.rideId);
+  Future<void> initialize({Iterable<RideEvent>? restoredEvents}) async {
+    final events =
+        restoredEvents ?? await _eventStore.eventsForRide(_session.rideId);
+    var replayed = 0;
     for (final event in events) {
       _applyEvent(event, replaying: true);
+      replayed += 1;
+      // A restored group ride can contain tens of thousands of positions. The
+      // reducer remains ordered, but yields between bounded batches so Android
+      // can draw and respond while the journal is projected into map state
+      // (#209).
+      if (replayed % 250 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
     _removeExpiredHazards();
     notifyListeners();

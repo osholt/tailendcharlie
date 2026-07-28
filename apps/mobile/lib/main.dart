@@ -69,7 +69,6 @@ Future<void> main() async {
     installationId: riderProfile.installationId,
     completedRideStore: completedRides,
   );
-  await controller.initialize();
 
   runApp(
     RideRelayApp(
@@ -83,6 +82,7 @@ Future<void> main() async {
       recordedRoutes: recordedRoutes,
       completedRides: completedRides,
       roadRatings: roadRatings,
+      initializeController: controller.initialize,
     ),
   );
 }
