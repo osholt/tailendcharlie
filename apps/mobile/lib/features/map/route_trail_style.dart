@@ -192,8 +192,25 @@ class RouteTrailStyle {
   ///
   /// Anything that adds a new badge - #135's reported camera and police symbols,
   /// for one - belongs in here, so the glyph rule is checked against it too.
+  ///
+  /// #135 added the three enforcement rows. All three are the same near-white
+  /// plate at a different stage of its life: `HazardMapSymbols` blends an ageing
+  /// report toward grey rather than making it translucent, precisely so the faded
+  /// steps land in this table and have to satisfy the same rule as everything
+  /// else. That is what stops the fade being taken too far - the fading step
+  /// still measures 8.99:1 against its own ring, and it is why the blend target
+  /// is a lighter grey than the one a stale rider marker uses. The road-defect
+  /// fills are the four `hazard *` rows below, unchanged, and their faded steps
+  /// are generated and checked in `hazard_map_symbol_test.dart` rather than
+  /// listed here.
   static const markerBadgeFills = <String, Color>{
     'own rider': Color(0xFF2F80ED),
+    // #135. Near-white is the one value nothing else on this map uses, and at
+    // 17.04:1 against its own ring it is also the most findable badge in the set,
+    // which is what a camera or a police sighting warrants.
+    'enforcement report': Color(0xFFF4F7FA),
+    'enforcement report ageing': Color(0xFFCCD3DA),
+    'enforcement report fading': Color(0xFFACB7C2),
     'rider green': Color(0xFF6ED89A),
     'rider orange': Color(0xFFFF9F5A),
     'rider yellow': Color(0xFFE8D24C),

@@ -64,6 +64,7 @@ import '../../services/ride_completion_detector.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
 import '../../services/enforcement_alert_detector.dart';
+import '../../services/hazard_map_relevance.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
 import '../../services/rejoin_route_share.dart';
@@ -73,6 +74,7 @@ import '../../services/ride_connectivity_summary.dart';
 import '../../services/tec_gap_trend.dart';
 import '../../services/route_rejoin_planner.dart';
 import '../../services/trail_display_simplifier.dart';
+import '../map/hazard_map_symbol.dart';
 import '../map/maneuver_list_screen.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
@@ -1876,19 +1878,20 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       visibleRiderLocations: visibleRiderLocations,
       route: awareness.route,
     );
+    // Issue #135. Judged once, here, so the MapLibre renderer and the
+    // flutter_map fallback are handed the same decision rather than each
+    // deciding for itself what is ahead and what a camera looks like (#141).
+    final now = DateTime.now();
+    final hazardJudgements = const HazardMapRelevance().judgeAll(
+      reports: awareness.activeHazards,
+      riderPosition: localLocation?.sample.position,
+      headingDegrees: localLocation?.sample.headingDegrees,
+      route: awareness.route,
+      now: now,
+    );
     final overlays = <MapOverlayMarker>[
-      ...awareness.activeHazards.map(
-        (hazard) => MapOverlayMarker(
-          id: 'hazard-${hazard.id}',
-          point: route_domain.GeoPoint(
-            latitude: hazard.position.latitude,
-            longitude: hazard.position.longitude,
-          ),
-          label: '${hazard.type.label} · ${hazard.severity.label}',
-          icon: Icons.warning_amber_rounded,
-          color: _hazardColor(hazard.severity),
-        ),
-      ),
+      for (final judgement in hazardJudgements)
+        if (judgement.isVisible) _hazardOverlayMarker(judgement.report, now),
       ...(simulatedRiders == null
               ? visibleRiderLocations
                     .where(
@@ -1990,7 +1993,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       headingDegrees: localLocation?.sample.headingDegrees,
       route: awareness.route,
       hazards: awareness.activeHazards,
-      now: DateTime.now(),
+      now: now,
     );
     unawaited(
       _carPlayBridge?.publish(
@@ -2501,12 +2504,27 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     return Color.lerp(base, const Color(0xFF6B7684), blend) ?? base;
   }
 
-  static Color _hazardColor(HazardSeverity severity) => switch (severity) {
-    HazardSeverity.advisory => const Color(0xFF8EA7C4),
-    HazardSeverity.caution => const Color(0xFFFFC857),
-    HazardSeverity.serious => const Color(0xFFFF8A4C),
-    HazardSeverity.critical => const Color(0xFFFF5D73),
-  };
+  /// One reported hazard as a map marker (#135).
+  ///
+  /// The symbol - shape, glyph, fill, freshness - is resolved here and travels
+  /// on the marker, so both renderers draw the same thing and the tap text is
+  /// the same sentence in both.
+  static MapOverlayMarker _hazardOverlayMarker(
+    HazardReport report,
+    DateTime now,
+  ) {
+    final symbol = HazardMapSymbols.forReport(report, now: now);
+    return MapOverlayMarker(
+      id: 'hazard-${report.id}',
+      point: route_domain.GeoPoint(
+        latitude: report.position.latitude,
+        longitude: report.position.longitude,
+      ),
+      label: HazardMapSymbols.describe(report, now: now),
+      color: symbol.fill,
+      hazardSymbol: symbol,
+    );
+  }
 
   static List<awareness_geo.GeoPoint> _markerRouteFor(
     route_domain.ImportedRoute? route,

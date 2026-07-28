@@ -16,6 +16,7 @@ import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
+import 'package:ride_relay/features/map/hazard_map_symbol.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/enforcement_alert_detector.dart';
@@ -102,6 +103,101 @@ void main() {
 
     expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
     expect(find.text('3 RIDERS'), findsOneWidget);
+  });
+
+  testWidgets('a reported camera and police sighting draw their symbols', (
+    tester,
+  ) async {
+    // Issue #135, and the wiring #141 warns about: the decision travels on the
+    // marker, so the renderer that runs in tests has to be drawing the same
+    // symbol the native one is handed an image of.
+    final directory = Directory.systemTemp.createTempSync(
+      'map-hazard-symbol-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final reportedAt = DateTime.utc(2026, 7, 27, 12);
+    HazardReport report({required String id, required HazardType type}) =>
+        HazardReport(
+          id: id,
+          rideId: 'ride-1',
+          type: type,
+          severity: HazardSeverity.serious,
+          position: const awareness_geo.GeoPoint(
+            latitude: 53.34,
+            longitude: -1.78,
+          ),
+          reportedAt: reportedAt,
+          updatedAt: reportedAt,
+          expiresAt: reportedAt.add(const Duration(hours: 2)),
+          reporterId: 'rider-1',
+          reporterName: 'Alex',
+          source: HazardSource.rider,
+        );
+    final camera = HazardMapSymbols.forReport(
+      report(id: 'camera', type: HazardType.speedCamera),
+      now: reportedAt,
+    );
+    final police = HazardMapSymbols.forReport(
+      report(id: 'police', type: HazardType.policeActivity),
+      now: reportedAt.add(const Duration(minutes: 75)),
+    );
+    final overlays = ValueNotifier<List<MapOverlayMarker>>([
+      MapOverlayMarker(
+        id: 'hazard-camera',
+        point: const GeoPoint(latitude: 53.34, longitude: -1.78),
+        label: 'Speed camera · Alex just now',
+        color: camera.fill,
+        hazardSymbol: camera,
+      ),
+      MapOverlayMarker(
+        id: 'hazard-police',
+        point: const GeoPoint(latitude: 53.35, longitude: -1.79),
+        label: 'Police activity · Alex 1 h ago · ageing',
+        color: police.fill,
+        hazardSymbol: police,
+      ),
+      // No symbol: the older generic badge, still drawn the way it always was.
+      const MapOverlayMarker(
+        id: 'legacy',
+        point: GeoPoint(latitude: 53.36, longitude: -1.8),
+        label: 'Road works',
+      ),
+    ]);
+    addTearDown(overlays.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          overlayMarkers: overlays,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final badges = tester
+        .widgetList<HazardMapSymbolBadge>(find.byType(HazardMapSymbolBadge))
+        .toList();
+    expect(badges, hasLength(2));
+    expect(badges.map((badge) => badge.symbol.glyph), [
+      HazardMapGlyph.camera,
+      HazardMapGlyph.police,
+    ]);
+    // A fresh camera and an ageing police sighting must not look the same.
+    expect(badges.first.symbol.freshness, HazardMapFreshness.fresh);
+    expect(badges.last.symbol.freshness, HazardMapFreshness.ageing);
+    expect(badges.first.symbol.fill, isNot(badges.last.symbol.fill));
+    // And the marker with no symbol keeps the generic icon badge.
+    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+    expect(find.byTooltip('Speed camera · Alex just now'), findsOneWidget);
   });
 
   testWidgets(

@@ -54,6 +54,7 @@ import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'discovery_road_sheet.dart';
+import 'hazard_map_symbol.dart';
 import 'maneuver_list_screen.dart';
 import 'maneuver_symbol.dart';
 import 'group_mini_map_framing.dart';
@@ -2086,21 +2087,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     (overlay) => Marker(
                       key: ValueKey(overlay.id),
                       point: _latLng(overlay.point),
-                      width: 42,
-                      height: 42,
+                      // A reported hazard gets a larger box than a rider so its
+                      // badge is not clipped and so a gloved tap lands: the issue
+                      // asks for the tap to work without fine interaction while
+                      // moving.
+                      width: overlay.hazardSymbol == null ? 42 : 52,
+                      height: overlay.hazardSymbol == null ? 42 : 52,
                       child: Tooltip(
                         message: overlay.label,
-                        child: overlay.motorcycleStyle == null
-                            ? _IconBadge(
-                                icon: overlay.icon,
-                                badgeColor: overlay.color,
-                                size: 34,
-                              )
-                            : RiderMarkerBadge(
-                                style: overlay.motorcycleStyle!,
-                                badgeColor: overlay.color,
-                                size: 34,
-                              ),
+                        child: _overlayMarkerChild(overlay),
                       ),
                     ),
                   )
@@ -3090,6 +3085,26 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  /// The badge for one overlay marker in the flutter_map fallback.
+  ///
+  /// A reported hazard draws [HazardMapSymbolPainter] - the same painter the
+  /// MapLibre images are baked from - and answers a tap the way the native
+  /// renderer does, so the two behave the same rather than one of them needing a
+  /// long press to reveal a tooltip (#141).
+  Widget _overlayMarkerChild(MapOverlayMarker overlay) {
+    final hazard = overlay.hazardSymbol;
+    if (hazard != null) {
+      return GestureDetector(
+        onTap: () => _showMessage(overlay.label),
+        child: HazardMapSymbolBadge(symbol: hazard),
+      );
+    }
+    final style = overlay.motorcycleStyle;
+    return style == null
+        ? _IconBadge(icon: overlay.icon, badgeColor: overlay.color, size: 34)
+        : RiderMarkerBadge(style: style, badgeColor: overlay.color, size: 34);
+  }
+
   static const _hazardIconImage = 'ride-relay-hazard-warning';
   bool _markerImagesRegistered = false;
 
@@ -3109,6 +3124,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await rasterizeIconGlyphPng(Icons.warning_amber_rounded),
       true,
     );
+    // Every hazard badge the map can draw, baked from the shared painter. Full
+    // colour, so registered with `sdf: false` and drawn by its own layer, which
+    // applies no `icon-color`: the fill and the ring are artwork rather than
+    // layer paint, because the flutter_map fallback has no layer paint to match
+    // them with.
+    for (final symbol in HazardMapSymbols.catalogue) {
+      await controller.addImage(
+        symbol.imageName,
+        await rasterizeHazardMapSymbolPng(symbol),
+        false,
+      );
+    }
     await controller.addImage(
       _trailDirectionArrowImage,
       await rasterizeIconGlyphPng(Icons.navigation_rounded),
@@ -3321,6 +3348,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // A colour alone was hard to pick out against some basemaps. A solid
       // badge behind a fixed-white glyph reads clearly regardless of what's
       // underneath, and matches the "you are here" marker's badge look.
+      //
+      // Riders only. A reported hazard brings its own complete badge as one
+      // image, so a circle drawn under it would show through the corners of the
+      // enforcement plate.
       await controller.addCircleLayer(
         _overlaySource,
         'ride-relay-overlay-badges',
@@ -3330,6 +3361,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           circleStrokeWidth: 2,
           circleStrokeColor: '#10151C',
         ),
+        filter: _riderOverlayFilter,
         enableInteraction: false,
       );
       await controller.addSymbolLayer(
@@ -3344,6 +3376,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
+        filter: _riderOverlayFilter,
+      );
+      // Reported cameras, police sightings and road defects (#135). One layer,
+      // one constant size, no paint properties: everything that distinguishes a
+      // fresh camera from a fading police sighting is in the image, drawn by the
+      // painter the fallback renderer also uses.
+      await controller.addSymbolLayer(
+        _overlaySource,
+        _hazardSymbolLayer,
+        const ml.SymbolLayerProperties(
+          iconImage: ['get', 'iconImage'],
+          iconSize: 1 / hazardMapSymbolRasterScale,
+          iconAllowOverlap: true,
+          iconIgnorePlacement: true,
+        ),
+        filter: _hazardOverlayFilter,
       );
       _mapLibreStyleReady = true;
       await _syncMapLibreSources();
@@ -3748,6 +3796,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
+  /// Layer holding the reported-hazard badges (#135).
+  static const _hazardSymbolLayer = 'ride-relay-hazard-symbols';
+
+  /// Which overlay features each of the two badge families draws.
+  ///
+  /// A single flag on the feature rather than a test on its icon name, so the
+  /// filters and the GeoJSON writer below cannot drift apart.
+  static const _hazardOverlayFilter = [
+    '==',
+    ['get', 'hazardSymbol'],
+    true,
+  ];
+  static const _riderOverlayFilter = [
+    '!=',
+    ['get', 'hazardSymbol'],
+    true,
+  ];
+
   Map<String, dynamic> _overlayGeoJson() => MapGeoJson.points(
     (widget.overlayMarkers?.value ?? const <MapOverlayMarker>[])
         .take(1000)
@@ -3758,7 +3824,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
             properties: {
               'label': overlay.label,
               'color': _hexColor(overlay.color),
-              'iconImage': overlay.motorcycleStyle?.name ?? _hazardIconImage,
+              'hazardSymbol': overlay.hazardSymbol != null,
+              'iconImage':
+                  overlay.hazardSymbol?.imageName ??
+                  overlay.motorcycleStyle?.name ??
+                  _hazardIconImage,
             },
           ),
         ),
@@ -3787,6 +3857,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       return;
     }
     if (layerId != 'ride-relay-overlay-icons' &&
+        layerId != _hazardSymbolLayer &&
         layerId != 'ride-relay-waypoint-circles') {
       return;
     }
@@ -5124,6 +5195,7 @@ class MapOverlayMarker {
     this.icon = Icons.warning_amber_rounded,
     this.color = const Color(0xFFFFC857),
     this.motorcycleStyle,
+    this.hazardSymbol,
   });
 
   final String id;
@@ -5135,6 +5207,16 @@ class MapOverlayMarker {
   final IconData icon;
   final Color color;
   final MotorcycleIconStyle? motorcycleStyle;
+
+  /// A reported hazard's decided symbol: shape, glyph, fill and freshness (#135).
+  ///
+  /// The one field both renderers read for hazard artwork. When it is set, the
+  /// MapLibre symbol layer draws a raster of [HazardMapSymbolPainter] and the
+  /// flutter_map fallback draws the same painter directly, so the two cannot
+  /// disagree about what shipped (#141). Null keeps the older generic
+  /// icon-on-a-circle badge, which is what a caller that has no report behind the
+  /// marker still gets.
+  final HazardMapSymbol? hazardSymbol;
 }
 
 LatLng _latLng(GeoPoint point) => LatLng(point.latitude, point.longitude);
