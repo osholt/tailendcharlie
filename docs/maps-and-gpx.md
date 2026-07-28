@@ -635,12 +635,13 @@ curvy-road optimization.
 
 ## Mapped speed-limit display
 
-The map, map menu and Settings screen carry a UK speed-limit display. **It is on
-by default, and an explicit opt-out is respected.** The preference is only ever
-written by a rider toggling it, so an absent key means "never chose" and takes
-the default while a stored `false` stays off across an upgrade. A rider who has
-turned it off sees the compact `Limits off` map control, which opens the
-location-data explanation before re-enabling the layer.
+The map, map menu and Settings screen carry a mapped speed-limit display for
+Great Britain and the Isle of Man. **It is on by default, and an explicit
+opt-out is respected.** The preference is only ever written by a rider toggling
+it, so an absent key means "never chose" and takes the default while a stored
+`false` stays off across an upgrade. A rider who has turned it off sees the
+compact `Limits off` map control, which opens the location-data explanation
+before re-enabling the layer.
 
 **A road is resolved from the current position, not from movement.** The first
 fix after the feature is enabled triggers a lookup immediately; the earlier
@@ -687,12 +688,12 @@ candidates still post different limits, as they do standing where a 30 becomes a
 50, the reading stays unconfirmed and resolves on the next fix or on movement
 using heading, rather than one of the two being chosen.
 
-`locate` reports no country of its own, so the GB requirement is met by a
-`trace_attributes` confirmation sent at the chosen road's own snapped position —
-and only when a number is actually about to be displayed. A position with nothing
-to show costs one request, not two, and the country that comes back belongs to
-the road on the sign rather than to whichever edge a map match happened to
-prefer.
+`locate` reports no country of its own, so the GB/Isle of Man requirement is met
+by a `trace_attributes` confirmation sent at the chosen road's own snapped
+position — and only when a mapped value is actually about to be displayed. A
+position with nothing to show costs one request, not two, and the country that
+comes back belongs to the road on the sign rather than to whichever edge a map
+match happened to prefer.
 
 Ambiguity is stated, not hidden. Poor accuracy or an uncertain match resolves to
 `unconfirmedRoad` — named for the condition, not for a wait — which shows `GPS
@@ -707,6 +708,17 @@ Lookups are fed from the navigation fix rather than a bare position, because the
 confidence test is built on reported accuracy and heading and a position
 carrying neither cannot be tested at all.
 
+The steady-state display is prefetched rather than allowed to wait at every road
+change. At most every 30 seconds or 150 metres, one `trace_attributes` request
+samples the next kilometre of the remaining route at 25-metre intervals. With no
+route, the same samples are projected along the current heading. Results are
+cached in memory by OSM way plus direction and applied only within 45 metres of
+the map-matched sample with a compatible heading. Conflicting nearby roads are
+not guessed: the cache yields to a current-road lookup and the sign shows the
+honest dash if that lookup cannot disambiguate them. Because the cache is local,
+already-prefetched numbers, unknown-road dashes and unrestricted-road readings
+survive a signal drop during the ride.
+
 Only an OpenStreetMap `maxspeed` value is displayed, and it is read from
 Valhalla's `speed_limit` attribute, documented as "the posted speed limit, if
 available" and as the attribute a navigation application should display. Valhalla
@@ -718,21 +730,33 @@ the edge's *base routing speed* was assigned. The live FOSSGIS instance reports
 20 mph street — so requiring `tagged` withheld every genuine posted limit and was
 the second half of the ride-start failure.
 
+Valhalla serialises an explicit OpenStreetMap `maxspeed=none` as
+`"speed_limit": "unlimited"`; an untagged road omits `speed_limit`. Those live
+responses were captured separately from Isle of Man OSM way 25985919 (Ballanard
+Road/A22) and the untagged bundled-demo-start way 844320294. Valhalla reports the
+former with country code `IM`, so that mph jurisdiction is accepted alongside
+`GB`. The app renders the first as `∞` and the second as `–` without inventing an
+unrestricted road from missing data.
+
 The value must also convert to one of the six limits a UK sign carries (20, 30,
 40, 50, 60, 70 mph) or it is treated as unknown. That keeps an inferred or foreign
 value off the sign and fails safe on units: every UK limit read in the wrong unit
 falls outside the set rather than producing a plausible wrong number.
 
-The UI uses mph and familiar UK sign styling, labels the reading `MAPPED`, and
-always warns that it is not live: temporary and variable limits may differ and
-roadside signs apply.
+After the first lookup completes the sign has exactly three visual states:
+number, dash or infinity. A loading indicator is allowed only for that first
+resolution; a later refresh keeps the last completed state visible until the
+next answer arrives. The UI uses mph and familiar UK sign styling, labels the
+reading `MAPPED`, and always warns that it is not live: temporary and variable
+limits may differ and roadside signs apply.
 
-OpenStreetMap `maxspeed` coverage in the UK is real but patchy, and that sets a
-floor on what the feature can show. The bundled demo route's own start point is a
-worked example: the King's Oak Academy car park access road is untagged, and the
-nearest road, Brook Road 43 metres away, is untagged too, so no tolerance can
-honestly produce a number there. The A4174 ring road a few streets away is tagged
-throughout. Absent readings on minor urban roads are a data limitation, not a bug.
+OpenStreetMap `maxspeed` coverage in Great Britain and the Isle of Man is real
+but patchy, and that sets a floor on what the feature can show. The bundled demo
+route's own start point is a worked example: the King's Oak Academy car park
+access road is untagged, and the nearest road, Brook Road 43 metres away, is
+untagged too, so no tolerance can honestly produce a number there. The A4174
+ring road a few streets away is tagged throughout. Absent readings on minor
+urban roads are a data limitation, not a bug.
 
 The sign is drawn straight onto the map with no surrounding panel. The rider's
 own GPS speed appears directly beneath it at the sign's own font size, so the
@@ -754,9 +778,9 @@ reading — which condition is holding it up.
 
 `PostedSpeedLimit.checkedAt` is the lookup time, not the age of the underlying
 OpenStreetMap tag. The provider does not expose a reliable source-update time,
-so data freshness is explicitly unknown. A reading is kept only in memory,
-replaced or cleared by the next attempted match, and cleared when the user
-turns the feature off; it is not persisted as a speed-limit cache.
+so data freshness is explicitly unknown. Current and prefetched readings are
+kept only in memory and cleared when the user turns the feature off; the cache
+is not persisted across app launches.
 
 Alpha builds default to FOSSGIS/OpenStreetMap.de's public Valhalla instance.
 The endpoint is replaceable without an app update:
@@ -778,10 +802,11 @@ tester rollout that enables this endpoint, the project must notify its
 operators as requested in the Valhalla repository.
 
 A production release needs an operated Valhalla service or licensed provider,
-capacity monitoring, and UK road tests covering direction, parallel roads,
-junctions, national-speed-limit roads, temporary limits, and variable limits.
-The current alpha integration has no per-request provider fee, but operating a
-production instance or selecting a commercial source has an unresolved cost.
+capacity monitoring, and Great Britain/Isle of Man road tests covering
+direction, parallel roads, junctions, national or unrestricted roads, temporary
+limits, and variable limits. The current alpha integration has no per-request
+provider fee, but operating a production instance or selecting a commercial
+source has an unresolved cost.
 
 Provider references:
 

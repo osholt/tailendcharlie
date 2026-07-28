@@ -35,13 +35,30 @@ class PostedSpeedLimit {
     required this.checkedAt,
     required this.matchDistanceMeters,
     this.roadName,
-  });
+    this.roadId,
+  }) : unlimited = false;
 
-  final int milesPerHour;
+  const PostedSpeedLimit.unlimited({
+    required this.source,
+    required this.checkedAt,
+    required this.matchDistanceMeters,
+    this.roadName,
+    this.roadId,
+  }) : milesPerHour = null,
+       unlimited = true;
+
+  final int? milesPerHour;
+  final bool unlimited;
   final String source;
   final DateTime checkedAt;
   final double matchDistanceMeters;
   final String? roadName;
+
+  /// Stable OSM/Valhalla road identity, including travel direction where known.
+  ///
+  /// It is deliberately not shown to the rider. The look-ahead cache uses it so
+  /// several sampled positions on the same road share one answer (#164).
+  final String? roadId;
 }
 
 class SpeedLimitLookupResult {
@@ -74,6 +91,28 @@ abstract interface class SpeedLimitProvider {
   });
 
   void close();
+}
+
+/// A road answer resolved before the rider reaches [anchor].
+class PrefetchedSpeedLimit {
+  const PrefetchedSpeedLimit({
+    required this.roadId,
+    required this.anchor,
+    required this.headingDegrees,
+    required this.result,
+  });
+
+  final String roadId;
+  final GeoPoint anchor;
+  final double? headingDegrees;
+  final SpeedLimitLookupResult result;
+}
+
+/// Optional provider capability used to resolve a route or heading in one pass.
+abstract interface class SpeedLimitPrefetchProvider {
+  Future<List<PrefetchedSpeedLimit>> prefetch({
+    required List<SpeedLimitLocation> locations,
+  });
 }
 
 class UnavailableSpeedLimitProvider implements SpeedLimitProvider {
@@ -139,7 +178,8 @@ class ValhallaSpeedLimitConfiguration {
   }
 }
 
-class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
+class ValhallaSpeedLimitProvider
+    implements SpeedLimitProvider, SpeedLimitPrefetchProvider {
   ValhallaSpeedLimitProvider({
     required this.configuration,
     http.Client? client,
@@ -151,6 +191,7 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
   static const sourceLabel = 'OpenStreetMap via Valhalla';
   static const _maximumResponseBytes = 256 * 1024;
   static const _acceptedUkLimitsMph = {20, 30, 40, 50, 60, 70};
+  static const _supportedCountryCodes = {'GB', 'IM'};
 
   /// Below this the two fixes are jitter, not travel, so the pair carries no
   /// usable heading and the trace is sent as the current fix twice.
@@ -255,8 +296,8 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
         ? 0.0
         : _distanceMeters(previous.point, current.point);
     final origin = travelled >= _minimumTraceMeters ? previous : null;
-    if (!_isInUnitedKingdom(current.point) ||
-        (origin != null && !_isInUnitedKingdom(origin.point))) {
+    if (!_isInSupportedBounds(current.point) ||
+        (origin != null && !_isInSupportedBounds(origin.point))) {
       return const SpeedLimitLookupResult.unknown(
         SpeedLimitLookupOutcome.unsupportedRegion,
       );
@@ -289,13 +330,106 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
     )).result;
   }
 
+  @override
+  Future<List<PrefetchedSpeedLimit>> prefetch({
+    required List<SpeedLimitLocation> locations,
+  }) async {
+    if (locations.length < 2 ||
+        locations.any((location) => !_isInSupportedBounds(location.point))) {
+      return const [];
+    }
+    final decoded = await _requestTrace(locations);
+    if (decoded is! Map ||
+        decoded['edges'] is! List ||
+        decoded['admins'] is! List ||
+        decoded['matched_points'] is! List ||
+        decoded['units'] != 'kilometers') {
+      return const [];
+    }
+    final edges = decoded['edges'] as List;
+    final admins = decoded['admins'] as List;
+    final matches = decoded['matched_points'] as List;
+    final prefetched = <PrefetchedSpeedLimit>[];
+    for (
+      var index = 0;
+      index < math.min(locations.length, matches.length);
+      index += 1
+    ) {
+      final match = matches[index];
+      if (match is! Map ||
+          match['type'] != 'matched' ||
+          match['edge_index'] is! num ||
+          match['distance_from_trace_point'] is! num) {
+        continue;
+      }
+      final edgeIndex = (match['edge_index'] as num).toInt();
+      final distance = (match['distance_from_trace_point'] as num).toDouble();
+      if (edgeIndex < 0 ||
+          edgeIndex >= edges.length ||
+          edges[edgeIndex] is! Map ||
+          !distance.isFinite ||
+          distance < 0 ||
+          distance > _movingMatchCeilingMeters) {
+        continue;
+      }
+      final edge = edges[edgeIndex] as Map;
+      final endNode = edge['end_node'];
+      final adminIndex = endNode is Map ? endNode['admin_index'] : null;
+      if (adminIndex is! num ||
+          adminIndex.toInt() < 0 ||
+          adminIndex.toInt() >= admins.length ||
+          admins[adminIndex.toInt()] is! Map ||
+          !_supportedCountryCodes.contains(
+            (admins[adminIndex.toInt()] as Map)['country_code'],
+          )) {
+        continue;
+      }
+      final edgeHeading = edge['end_heading'] ?? edge['begin_heading'];
+      final expectedHeading = locations[index].headingDegrees;
+      if (expectedHeading != null &&
+          (edgeHeading is! num ||
+              !edgeHeading.toDouble().isFinite ||
+              _headingDifference(expectedHeading, edgeHeading.toDouble()) >
+                  50)) {
+        continue;
+      }
+      final roadId = _roadId(edge['way_id'], edgeHeading);
+      if (roadId == null) continue;
+      final mapped = _mappedSpeedLimit(edge['speed_limit']);
+      final names = edge['names'];
+      final result = mapped == null
+          ? const SpeedLimitLookupResult.unknown(
+              SpeedLimitLookupOutcome.noTaggedLimit,
+            )
+          : SpeedLimitLookupResult.known(
+              mapped.toPosted(
+                roadName: names is List ? _firstRoadName(names) : null,
+                roadId: roadId,
+                checkedAt: _clock().toUtc(),
+                matchDistanceMeters: distance,
+              ),
+            );
+      prefetched.add(
+        PrefetchedSpeedLimit(
+          roadId: roadId,
+          anchor: locations[index].point,
+          headingDegrees: edgeHeading is num
+              ? edgeHeading.toDouble()
+              : expectedHeading,
+          result: result,
+        ),
+      );
+    }
+    return List.unmodifiable(prefetched);
+  }
+
   /// Resolves the road under a bike that has not moved.
   ///
   /// `locate` chooses the road; `trace_attributes` is then asked to confirm the
   /// country, and only when a number is actually about to be shown. That ordering
-  /// keeps #84's GB requirement without spending a request on a position that has
-  /// nothing to display anyway, and it keeps the retry a stationary rider sits
-  /// through down to one request.
+  /// keeps #84's administrative-region requirement without spending a request
+  /// on a position that has nothing to display anyway, and it keeps the retry a
+  /// stationary rider sits through down to one request.
   Future<SpeedLimitLookupResult> _resolveStationary(
     SpeedLimitLocation current,
   ) async {
@@ -320,7 +454,7 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
       ),
       accuracy: current.accuracyMeters,
     );
-    if (!confirmation.regionIsGb) return confirmation.result;
+    if (!confirmation.regionIsSupported) return confirmation.result;
     return SpeedLimitLookupResult.known(limit);
   }
 
@@ -329,11 +463,30 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
     required SpeedLimitLocation current,
     required double? accuracy,
   }) async {
-    final endpoint = configuration.lookupUri;
-    if (endpoint == null) {
+    final decoded = await _requestTrace([
+      origin ?? current,
+      current,
+    ], accuracy: accuracy);
+    if (decoded == null) {
       return _TraceOutcome.unknown(SpeedLimitLookupOutcome.unavailable);
     }
-    final searchRadius = ((accuracy ?? 15) * 2).clamp(
+    return _parse(decoded, origin: origin, current: current);
+  }
+
+  Future<Object?> _requestTrace(
+    List<SpeedLimitLocation> locations, {
+    double? accuracy,
+  }) async {
+    final endpoint = configuration.lookupUri;
+    if (endpoint == null || locations.length < 2) return null;
+    final effectiveAccuracy =
+        accuracy ??
+        locations
+            .map((location) => location.accuracyMeters)
+            .whereType<double>()
+            .where((value) => value.isFinite && value >= 0)
+            .fold<double>(15, math.max);
+    final searchRadius = (effectiveAccuracy * 2).clamp(
       _minimumSearchRadiusMeters,
       _maximumSearchRadiusMeters,
     );
@@ -343,31 +496,27 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
             endpoint,
             headers: _headers,
             body: jsonEncode({
-              // Valhalla needs at least two shape points: a one-point shape is
-              // rejected with `error_code` 123, "Insufficient shape provided",
-              // which is what the live FOSSGIS instance returns and is why every
-              // ride-start lookup resolved to nothing (#145, the caveat #126
-              // shipped with). A stationary fix is therefore sent twice. The
-              // duplicate reports a real `distance_from_trace_point` but a
-              // degenerate zero heading, which costs nothing here because a
-              // stationary lookup already refuses to trust a heading.
+              // Valhalla needs at least two shape points. A stationary lookup
+              // deliberately supplies the same fix twice; a prefetch supplies
+              // sampled points along the remaining route or current heading.
               'shape': [
-                {
-                  'lat': (origin ?? current).point.latitude,
-                  'lon': (origin ?? current).point.longitude,
-                },
-                {'lat': current.point.latitude, 'lon': current.point.longitude},
+                for (final location in locations)
+                  {
+                    'lat': location.point.latitude,
+                    'lon': location.point.longitude,
+                  },
               ],
               'costing': 'motorcycle',
               'shape_match': 'map_snap',
               'trace_options': {
-                'gps_accuracy': (accuracy ?? 15).clamp(5, 50),
+                'gps_accuracy': effectiveAccuracy.clamp(5, 50),
                 'search_radius': searchRadius,
               },
               'filters': {
                 'action': 'include',
                 'attributes': [
                   'edge.names',
+                  'edge.way_id',
                   'edge.speed_limit',
                   'edge.begin_heading',
                   'edge.end_heading',
@@ -384,15 +533,11 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||
           response.bodyBytes.length > _maximumResponseBytes) {
-        return _TraceOutcome.unknown(SpeedLimitLookupOutcome.unavailable);
+        return null;
       }
-      return _parse(
-        jsonDecode(utf8.decode(response.bodyBytes)),
-        origin: origin,
-        current: current,
-      );
+      return jsonDecode(utf8.decode(response.bodyBytes));
     } on Object {
-      return _TraceOutcome.unknown(SpeedLimitLookupOutcome.unavailable);
+      return null;
     }
   }
 
@@ -463,7 +608,7 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
       return _NeighbourChoice.unknown(SpeedLimitLookupOutcome.poorMatch);
     }
     final posted = withinTolerance
-        .where((candidate) => candidate.milesPerHour != null)
+        .where((candidate) => candidate.limit != null)
         .toList();
     if (posted.isEmpty) {
       // Roads are here, none of them carries a mapped limit. Settled until the
@@ -487,22 +632,22 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
     final best = pool
         .where((candidate) => candidate.classRank == topRank)
         .toList();
-    final limits = best.map((candidate) => candidate.milesPerHour).toSet();
+    final limits = best.map((candidate) => candidate.limit).toSet();
     if (limits.length != 1) {
       return _NeighbourChoice.unknown(SpeedLimitLookupOutcome.poorMatch);
     }
     final nearest = best.reduce(
       (a, b) => a.distanceMeters <= b.distanceMeters ? a : b,
     );
+    final selected = limits.single!;
     return _NeighbourChoice.resolved(
       correlatedPoint: nearest.correlatedPoint,
-      limit: PostedSpeedLimit(
-        milesPerHour: limits.single!,
+      limit: selected.toPosted(
         roadName: best
             .map((candidate) => candidate.roadName)
             .whereType<String>()
             .firstOrNull,
-        source: sourceLabel,
+        roadId: nearest.roadId,
         checkedAt: _clock().toUtc(),
         matchDistanceMeters: nearest.distanceMeters,
       ),
@@ -551,8 +696,9 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
           isServiceWay:
               roadClass == 'service_other' ||
               (use is String && _nonCarriagewayUses.contains(use)),
-          milesPerHour: _ukMilesPerHour(info['speed_limit']),
+          limit: _mappedSpeedLimit(info['speed_limit']),
           roadName: names is List ? _firstRoadName(names) : null,
+          roadId: _roadId(info['way_id'], entry['heading']),
         ),
       );
     }
@@ -632,7 +778,7 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
       return _TraceOutcome.unknown(SpeedLimitLookupOutcome.unavailable);
     }
     final admin = admins[adminIndex.toInt()] as Map;
-    if (admin['country_code'] != 'GB') {
+    if (!_supportedCountryCodes.contains(admin['country_code'])) {
       return _TraceOutcome.unknown(SpeedLimitLookupOutcome.unsupportedRegion);
     }
     // Valhalla documents `speed_limit` as "the posted speed limit, if available"
@@ -643,11 +789,11 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
     // and gating on it was rejecting every genuine posted limit on the live
     // service, which reports `classified` alongside a perfectly good
     // `speed_limit` (#145).
-    final milesPerHour = _ukMilesPerHour(edge['speed_limit']);
-    if (milesPerHour == null) {
+    final mappedLimit = _mappedSpeedLimit(edge['speed_limit']);
+    if (mappedLimit == null) {
       return _TraceOutcome.unknown(
         SpeedLimitLookupOutcome.noTaggedLimit,
-        regionIsGb: true,
+        regionIsSupported: true,
       );
     }
     if (travelHeading != null) {
@@ -661,15 +807,17 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
     final names = edge['names'];
     return _TraceOutcome(
       SpeedLimitLookupResult.known(
-        PostedSpeedLimit(
-          milesPerHour: milesPerHour,
+        mappedLimit.toPosted(
           roadName: names is List ? _firstRoadName(names) : null,
-          source: sourceLabel,
+          roadId: _roadId(
+            edge['way_id'],
+            edge['end_heading'] ?? edge['begin_heading'],
+          ),
           checkedAt: _clock().toUtc(),
           matchDistanceMeters: matchDistance.toDouble(),
         ),
       ),
-      regionIsGb: true,
+      regionIsSupported: true,
     );
   }
 
@@ -682,18 +830,18 @@ class ValhallaSpeedLimitProvider implements SpeedLimitProvider {
 /// What a `trace_attributes` response established about the road under the fix.
 ///
 /// Carries one thing beyond the answer itself: whether the service confirmed the
-/// position is in GB, which is what the stationary path asks a trace for because
-/// `locate` reports no country of its own.
+/// position is in GB or the Isle of Man, which is what the stationary path asks
+/// a trace for because `locate` reports no country of its own.
 class _TraceOutcome {
-  const _TraceOutcome(this.result, {this.regionIsGb = false});
+  const _TraceOutcome(this.result, {this.regionIsSupported = false});
 
   _TraceOutcome.unknown(
     SpeedLimitLookupOutcome outcome, {
-    this.regionIsGb = false,
+    this.regionIsSupported = false,
   }) : result = SpeedLimitLookupResult.unknown(outcome);
 
   final SpeedLimitLookupResult result;
-  final bool regionIsGb;
+  final bool regionIsSupported;
 }
 
 /// One road near a fix, as reported by `locate`.
@@ -703,8 +851,9 @@ class _RoadCandidate {
     required this.correlatedPoint,
     required this.classRank,
     required this.isServiceWay,
-    required this.milesPerHour,
+    required this.limit,
     required this.roadName,
+    required this.roadId,
   });
 
   final double distanceMeters;
@@ -717,8 +866,9 @@ class _RoadCandidate {
   /// rank is a bigger road.
   final int classRank;
   final bool isServiceWay;
-  final int? milesPerHour;
+  final _MappedSpeedLimit? limit;
   final String? roadName;
+  final String? roadId;
 }
 
 /// The road chosen from a `locate` list, or the reason none was.
@@ -744,6 +894,59 @@ class _NeighbourChoice {
   SpeedLimitLookupResult get result => SpeedLimitLookupResult.unknown(outcome);
 }
 
+class _MappedSpeedLimit {
+  const _MappedSpeedLimit.numeric(this.milesPerHour) : unlimited = false;
+
+  const _MappedSpeedLimit.unlimited() : milesPerHour = null, unlimited = true;
+
+  final int? milesPerHour;
+  final bool unlimited;
+
+  PostedSpeedLimit toPosted({
+    required DateTime checkedAt,
+    required double matchDistanceMeters,
+    String? roadName,
+    String? roadId,
+  }) => unlimited
+      ? PostedSpeedLimit.unlimited(
+          source: ValhallaSpeedLimitProvider.sourceLabel,
+          checkedAt: checkedAt,
+          matchDistanceMeters: matchDistanceMeters,
+          roadName: roadName,
+          roadId: roadId,
+        )
+      : PostedSpeedLimit(
+          milesPerHour: milesPerHour!,
+          source: ValhallaSpeedLimitProvider.sourceLabel,
+          checkedAt: checkedAt,
+          matchDistanceMeters: matchDistanceMeters,
+          roadName: roadName,
+          roadId: roadId,
+        );
+
+  @override
+  bool operator ==(Object other) =>
+      other is _MappedSpeedLimit &&
+      other.milesPerHour == milesPerHour &&
+      other.unlimited == unlimited;
+
+  @override
+  int get hashCode => Object.hash(milesPerHour, unlimited);
+}
+
+/// Parses Valhalla's posted-limit field without confusing two different absences.
+///
+/// The live service serialises OSM `maxspeed=none` as the string `unlimited`.
+/// An untagged road omits `speed_limit` altogether. Only the former earns the
+/// infinity sign; null remains the honest unknown-road dash (#164).
+_MappedSpeedLimit? _mappedSpeedLimit(Object? speedLimit) {
+  if (speedLimit == 'unlimited') {
+    return const _MappedSpeedLimit.unlimited();
+  }
+  final milesPerHour = _ukMilesPerHour(speedLimit);
+  return milesPerHour == null ? null : _MappedSpeedLimit.numeric(milesPerHour);
+}
+
 /// Converts a Valhalla posted limit in km/h to a UK sign value, or null.
 ///
 /// Only the six limits a UK sign carries are accepted. That keeps an inferred or
@@ -762,13 +965,24 @@ int? _ukMilesPerHour(Object? speedLimitKph) {
       : null;
 }
 
+String? _roadId(Object? wayId, Object? heading) {
+  if (wayId is! num || wayId < 0) return null;
+  // Directional limits share an OSM way id. Four heading quadrants keep the
+  // cache road-based while preventing a value from the opposite carriageway
+  // direction being reused.
+  final direction = heading is num && heading.toDouble().isFinite
+      ? ((heading.toDouble() % 360 + 360) % 360 / 90).round() % 4
+      : 0;
+  return '${wayId.toInt()}:$direction';
+}
+
 String? _firstRoadName(List names) => names
     .whereType<String>()
     .map((value) => value.trim())
     .where((value) => value.isNotEmpty && value.length <= 100)
     .firstOrNull;
 
-bool _isInUnitedKingdom(GeoPoint point) =>
+bool _isInSupportedBounds(GeoPoint point) =>
     point.latitude >= 49.8 &&
     point.latitude <= 60.95 &&
     point.longitude >= -8.7 &&

@@ -25,7 +25,7 @@ void main() {
   /// A `trace_attributes` response in the shape the live FOSSGIS instance
   /// returns, including `speed_type: classified` alongside a real posted limit.
   String traceBody({
-    int? speedLimitKph = 48,
+    Object? speedLimitKph = 48,
     String countryCode = 'GB',
     double matchDistanceMeters = 0,
     List<String> names = const [],
@@ -63,7 +63,7 @@ void main() {
     required double distanceMeters,
     required String roadClass,
     String use = 'road',
-    int speedLimitKph = 0,
+    Object? speedLimitKph = 0,
     List<String> names = const [],
     double correlatedLatitude = 51.5,
     double correlatedLongitude = -0.12,
@@ -74,7 +74,7 @@ void main() {
     'heading': 90.0,
     'percent_along': 0.5,
     'side_of_street': 'neither',
-    'edge_info': {'way_id': 1, 'names': names, 'speed_limit': speedLimitKph},
+    'edge_info': {'way_id': 1, 'names': names, 'speed_limit': ?speedLimitKph},
     'edge': {
       'speeds': {'default': 30, 'type': 'classified'},
       'classification': {
@@ -174,6 +174,45 @@ void main() {
       expect(result.outcome, SpeedLimitLookupOutcome.known);
       expect(result.limit?.milesPerHour, 50);
       expect(result.limit?.roadName, 'A4174');
+    });
+
+    test('keeps an unrestricted road distinct from an untagged road', () async {
+      // Captured from the live FOSSGIS trace_attributes service on OSM way
+      // 271008234 (A 555): maxspeed=none is the string "unlimited". At the
+      // bundled demo start, untagged way 844320294 omits speed_limit entirely.
+      final unlimited = build(
+        locate: locateBody([
+          candidate(
+            distanceMeters: 0,
+            roadClass: 'trunk',
+            speedLimitKph: 'unlimited',
+            names: const ['Unrestricted road'],
+          ),
+        ]),
+        trace: traceBody(speedLimitKph: 'unlimited'),
+      );
+
+      final unlimitedResult = await unlimited.provider.lookup(
+        current: location(51.5),
+      );
+
+      expect(unlimitedResult.outcome, SpeedLimitLookupOutcome.known);
+      expect(unlimitedResult.limit?.unlimited, isTrue);
+      expect(unlimitedResult.limit?.milesPerHour, isNull);
+
+      final untagged = build(
+        locate: locateBody([
+          candidate(distanceMeters: 0, roadClass: 'trunk', speedLimitKph: null),
+        ]),
+        trace: traceBody(speedLimitKph: null),
+      );
+
+      final untaggedResult = await untagged.provider.lookup(
+        current: location(51.5),
+      );
+
+      expect(untaggedResult.outcome, SpeedLimitLookupOutcome.noTaggedLimit);
+      expect(untaggedResult.limit, isNull);
     });
 
     test(
@@ -445,7 +484,7 @@ void main() {
   });
 
   group('honesty rules', () {
-    test('refuses a limit the service places outside GB', () async {
+    test('refuses a limit outside Great Britain and the Isle of Man', () async {
       // The chosen road's own snapped position is what gets confirmed, so an
       // Irish road inside the UK bounding box cannot reach an mph sign.
       final harness = build(
@@ -552,6 +591,34 @@ void main() {
       expect(harness.traceRequests.single['costing'], 'motorcycle');
     });
 
+    test('parses the live unlimited trace sentinel', () async {
+      final harness = build(
+        trace: traceBody(
+          speedLimitKph: 'unlimited',
+          countryCode: 'IM',
+          names: const ['Unrestricted road'],
+          heading: 150,
+        ),
+      );
+
+      final result = await harness.provider.lookup(
+        previous: location(
+          54.1853058,
+          longitude: -4.4982317,
+          headingDegrees: 150,
+        ),
+        current: location(
+          54.1845085,
+          longitude: -4.4974432,
+          headingDegrees: 150,
+        ),
+      );
+
+      expect(result.outcome, SpeedLimitLookupOutcome.known);
+      expect(result.limit?.unlimited, isTrue);
+      expect(result.limit?.milesPerHour, isNull);
+    });
+
     test(
       'rejects a road facing the opposite way to the travel heading',
       () async {
@@ -612,6 +679,62 @@ void main() {
       expect(result.outcome, SpeedLimitLookupOutcome.known);
       expect(harness.locateRequests, hasLength(1));
     });
+  });
+
+  test('prefetch resolves several roads in one trace request', () async {
+    final harness = build(
+      trace: jsonEncode({
+        'units': 'kilometers',
+        'admins': [
+          {'country_code': 'GB'},
+        ],
+        'edges': [
+          {
+            'way_id': 101,
+            'names': ['First road'],
+            'speed_limit': 48,
+            'begin_heading': 0,
+            'end_heading': 0,
+            'end_node': {'admin_index': 0},
+          },
+          {
+            'way_id': 202,
+            'names': ['Unmapped road'],
+            'begin_heading': 0,
+            'end_heading': 0,
+            'end_node': {'admin_index': 0},
+          },
+          {
+            'way_id': 303,
+            'names': ['Unrestricted road'],
+            'speed_limit': 'unlimited',
+            'begin_heading': 0,
+            'end_heading': 0,
+            'end_node': {'admin_index': 0},
+          },
+        ],
+        'matched_points': [
+          for (final edgeIndex in const [0, 1, 2])
+            {
+              'type': 'matched',
+              'edge_index': edgeIndex,
+              'distance_from_trace_point': 2,
+            },
+        ],
+      }),
+    );
+
+    final results = await harness.provider.prefetch(
+      locations: [location(51.5000), location(51.5007), location(51.5014)],
+    );
+
+    expect(harness.traceRequests, hasLength(1));
+    expect(harness.traceRequests.single['shape'], hasLength(3));
+    expect(results, hasLength(3));
+    expect(results[0].result.limit?.milesPerHour, 30);
+    expect(results[1].result.outcome, SpeedLimitLookupOutcome.noTaggedLimit);
+    expect(results[2].result.limit?.unlimited, isTrue);
+    expect(results.map((result) => result.roadId).toSet(), hasLength(3));
   });
 
   test('derives the candidate endpoint from the configured lookup URL', () {

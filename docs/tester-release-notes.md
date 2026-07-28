@@ -75,7 +75,9 @@ named after a ticket, that ticket is your report.
 - The dashboard gives one answer about connectivity instead of three (#174).
 - An interrupting alert no longer covers SOS and Leave (#124).
 - The emergency actions sheet fits a phone held sideways (#193).
-- The speed limit no longer blanks while the next one is being looked up (#164).
+- The speed-limit sign now buffers the next kilometre, keeps prefetched answers
+  through a signal drop, shows `∞` only for an explicitly unrestricted road,
+  and never returns to a spinner after its first answer (#164).
 - Two roundabouts 41 m apart are no longer merged into one instruction — New
   Cheltenham Road (#163).
 - The recap image has real map tiles and a light/dark toggle (#157).

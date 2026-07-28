@@ -2483,7 +2483,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!mounted) return;
     final position = _effectivePosition;
     final navigationFix = _navigationFix;
-    _observeSpeedLimit(navigationFix);
     if (navigationFix != null) {
       if (navigationFix == _lastHandledNavigationFix) return;
       _lastHandledNavigationFix = navigationFix;
@@ -2557,6 +2556,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _progressGeometry = _routeProgressTracker.update(_route, position);
       _updateNavigationGuidance(position);
     }
+    _observeSpeedLimit(navigationFix);
     // MapLibre receives sources directly. Keep its platform view mounted while
     // the simulation is running; only FlutterMap needs a widget rebuild for
     // fresh route-progress geometry.
@@ -2600,13 +2600,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// for confidence at all (#126).
   void _observeSpeedLimit(MapNavigationPosition? fix) {
     if (fix == null) return;
-    _speedLimitDisplay.observe(
-      SpeedLimitLocation(
-        point: fix.point,
-        recordedAt: fix.recordedAt,
-        accuracyMeters: fix.accuracyMeters,
-        headingDegrees: fix.headingDegrees,
-      ),
+    final location = SpeedLimitLocation(
+      point: fix.point,
+      recordedAt: fix.recordedAt,
+      accuracyMeters: fix.accuracyMeters,
+      headingDegrees: fix.headingDegrees,
+    );
+    _speedLimitDisplay.observe(location);
+    _speedLimitDisplay.prefetchAhead(
+      current: location,
+      routeAhead:
+          _progressGeometry.remainingPaths.firstOrNull ?? const <GeoPoint>[],
     );
   }
 
@@ -4906,10 +4910,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         title: const Text('Show mapped speed limits?'),
         content: const Text(
           'When this is on, the app sends your current and recent foreground '
-          'GPS positions to a Valhalla road-matching service to identify the '
-          'road you are on. It works in the UK and uses mapped OpenStreetMap '
-          'limits, which may be missing or out of date. Roadside signs always '
-          'apply.',
+          'GPS positions, plus sampled points up to 1 km ahead on your route '
+          'or heading, to a Valhalla road-matching service. It works in Great '
+          'Britain and the Isle of Man and uses mapped OpenStreetMap limits, '
+          'which may be missing or out of date. Roadside signs always apply.',
         ),
         actions: [
           TextButton(
@@ -7261,7 +7265,11 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final reading = limit;
     final known = status == SpeedLimitDisplayStatus.known && reading != null;
-    final value = known ? '${reading.milesPerHour}' : '–';
+    final value = known
+        ? reading.unlimited
+              ? '∞'
+              : '${reading.milesPerHour}'
+        : '–';
     // The readout sits under a UK mph sign, so it stays in mph whatever the
     // rider's distance-unit preference is. Two units under one sign would
     // invite a dangerous misread.
@@ -7289,7 +7297,8 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
               _ => 'Finding your road',
             },
             _ => switch (outcome) {
-              SpeedLimitLookupOutcome.unsupportedRegion => 'UK only',
+              SpeedLimitLookupOutcome.unsupportedRegion =>
+                'Great Britain and Isle of Man only',
               SpeedLimitLookupOutcome.noTaggedLimit => 'No mapped limit',
               _ => 'Limit unavailable',
             },
@@ -7301,8 +7310,11 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
     // sign and which is the rider, that the limit is mapped rather than live,
     // and how stale it is. Removing the caption moved this wording, it did not
     // lose it.
+    final semanticLimit = reading?.unlimited == true
+        ? 'unrestricted'
+        : '${reading?.milesPerHour} miles per hour';
     final semanticLabel = known
-        ? 'Mapped speed limit ${reading.milesPerHour} miles per hour'
+        ? 'Mapped speed limit $semanticLimit'
               '${reading.roadName == null ? '' : ' on ${reading.roadName}'}. '
               'Looked up at $checkedAt. Mapped, not live. $riderSpeedLabel '
               'Roadside signs apply.'
