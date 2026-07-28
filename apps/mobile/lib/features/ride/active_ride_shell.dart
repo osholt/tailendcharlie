@@ -2819,6 +2819,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         internetRelayController: _internetRelayController,
         onRemoveRide: _removeEndedRide,
         roadRatings: widget.roadRatings,
+        relayCanCarryReopen:
+            _internetRelayController?.supportsCapability(
+              RelayProtocolCapabilities.rideReopen,
+            ) ??
+            true,
       );
     }
     final selectedBody = _isSimulation

@@ -23,6 +23,7 @@ class EndedRideScreen extends StatefulWidget {
     this.onRemoveRide,
     this.roadRatings,
     this.onSetAside,
+    this.relayCanCarryReopen = true,
   });
 
   final RideController controller;
@@ -41,6 +42,10 @@ class EndedRideScreen extends StatefulWidget {
   /// Required, in practice: without it this screen is the whole app and its only
   /// exit files the ride (#207).
   final VoidCallback? onSetAside;
+
+  /// The negotiated `ride-reopen-v1` capability. False hides the action rather
+  /// than offering a reopen that could not reach the rest of the group.
+  final bool relayCanCarryReopen;
 
   @override
   State<EndedRideScreen> createState() => _EndedRideScreenState();
@@ -71,6 +76,67 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
   /// The way off this screen that gives nothing up (#207).
   VoidCallback get _setAside =>
       widget.onSetAside ?? widget.controller.setEndedRideAside;
+
+  bool _reopening = false;
+
+  /// Only the leader, only while the relay can carry it.
+  ///
+  /// The window is not checked here — [RideController.reopenRide] owns that, and
+  /// it is the same 24 hours the ended ride survives for anyway, so a screen that
+  /// exists at all is inside it.
+  bool get _canOfferReopen =>
+      widget.relayCanCarryReopen && widget.controller.isLocalRideLeader;
+
+  Future<void> _confirmReopen(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Resume this ride?'),
+        content: const Text(
+          'The ride goes back to running for everyone, on the same ride code. '
+          'Riders who already left stay out until they rejoin.\n\n'
+          'One thing does not come back: emergency contact details other '
+          'riders shared with you were cleared when the ride ended.',
+        ),
+        actions: [
+          TextButton(
+            key: const Key('cancel-reopen-ride-button'),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Leave it ended'),
+          ),
+          FilledButton(
+            key: const Key('confirm-reopen-ride-button'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Resume ride'),
+          ),
+        ],
+      ),
+    );
+    if (!(confirmed ?? false)) return;
+    setState(() => _reopening = true);
+    final outcome = await widget.controller.reopenRide(
+      relayCanCarryReopen: widget.relayCanCarryReopen,
+    );
+    if (mounted) setState(() => _reopening = false);
+    if (outcome == RideReopenOutcome.reopened || !context.mounted) return;
+    // Anything short of success is said out loud. A leader must never be left
+    // believing the group is riding again when it is not.
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_reopenFailure(outcome))));
+  }
+
+  static String _reopenFailure(RideReopenOutcome outcome) => switch (outcome) {
+    RideReopenOutcome.notLeader => 'Only the ride leader can resume a ride.',
+    RideReopenOutcome.windowExpired =>
+      'This ride ended too long ago to resume. Start a new one.',
+    RideReopenOutcome.relayUnsupported =>
+      'The ride service cannot carry a resume yet, so the rest of the group '
+          'would not see it. Start a new ride instead.',
+    RideReopenOutcome.notEnded => 'This ride is already running.',
+    RideReopenOutcome.failed || RideReopenOutcome.reopened =>
+      'Could not resume the ride. Please try again.',
+  };
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -126,6 +192,17 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
           icon: const Icon(Icons.image_outlined),
           label: const Text('Share ride recap image'),
         ),
+        // Above the shares and the filing, because a leader who is here by
+        // mistake is mid-ride and has a group waiting (#206).
+        if (_canOfferReopen) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const Key('reopen-ended-ride-button'),
+            onPressed: _reopening ? null : () => _confirmReopen(context),
+            icon: const Icon(Icons.play_arrow_outlined),
+            label: const Text("This ride hasn't finished — resume it"),
+          ),
+        ],
         const SizedBox(height: 12),
         OutlinedButton.icon(
           key: const Key('leave-ended-ride-button'),

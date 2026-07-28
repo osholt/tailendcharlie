@@ -452,6 +452,7 @@ class InternetRelayWorker {
         RelayProtocolCapabilities.rejoinRouteSharing,
       RideEventType.riderContactShared =>
         RelayProtocolCapabilities.riderContactSharing,
+      RideEventType.rideReopened => RelayProtocolCapabilities.rideReopen,
       _ => null,
     };
     return capability == null || compatibility.supports(capability);

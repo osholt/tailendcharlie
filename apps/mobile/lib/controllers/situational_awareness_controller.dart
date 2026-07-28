@@ -464,6 +464,7 @@ class SituationalAwarenessController extends ChangeNotifier {
       case RideEventType.ridePaused:
       case RideEventType.rideResumed:
       case RideEventType.rideEnded:
+      case RideEventType.rideReopened:
       case RideEventType.iceInfoShared:
       case RideEventType.iceInfoViewed:
       // Leader-issued TEC requests and relayed rejoin routes (#128) are

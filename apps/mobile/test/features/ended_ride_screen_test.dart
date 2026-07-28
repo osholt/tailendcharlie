@@ -83,6 +83,47 @@ void main() {
     expect(find.text('Finish and file in Previous rides'), findsOneWidget);
   });
 
+  // #206/#207: the tester was stranded here by an automatic end she did not
+  // ask for, so the screen has to offer the way back into the ride.
+  testWidgets('the leader can resume a ride that ended', (tester) async {
+    await pumpScreen(tester);
+
+    await tester.tap(find.byKey(const Key('reopen-ended-ride-button')));
+    await tester.pumpAndSettle();
+    expect(find.text('Resume this ride?'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('cancel-reopen-ride-button')));
+    await tester.pumpAndSettle();
+    expect(controller.rideEnded, isTrue);
+
+    await tester.tap(find.byKey(const Key('reopen-ended-ride-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('confirm-reopen-ride-button')));
+    await tester.pumpAndSettle();
+
+    expect(controller.rideEnded, isFalse);
+  });
+
+  testWidgets('a relay that cannot carry a resume does not offer one', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EndedRideScreen(
+          controller: controller,
+          distanceUnits: DistanceUnitController.forLocale(
+            const Locale('en', 'GB'),
+          ),
+          relayCanCarryReopen: false,
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('reopen-ended-ride-button')), findsNothing);
+    // The way out is still there; only the resume is withheld.
+    expect(find.byKey(const Key('leave-ended-ride-button')), findsOneWidget);
+  });
+
   // #207: this screen replaces the whole app, so without an exit of its own the
   // only way off it was to file the ride and stop relay recovery.
   testWidgets('offers two exits that give nothing up', (tester) async {

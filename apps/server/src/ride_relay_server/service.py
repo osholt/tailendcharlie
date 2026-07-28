@@ -68,6 +68,10 @@ EVENT_TYPES = {
     # coordination roles. Deliberately distinct from "iceInfoShared", which
     # carries a rider's next of kin.
     "riderContactShared",
+    # Issues #206/#207. The leader saying a ride that ended has not finished
+    # after all. Deliberately not "rideResumed", which is the other half of
+    # "ridePaused"; conflating them would make a pause look like a resurrection.
+    "rideReopened",
 }
 PRIORITIES = {"routine", "important", "critical"}
 EVENT_FIELDS = {
@@ -199,7 +203,16 @@ class RelayService:
             # Only a finished ride discards live positions. Discarding them at
             # `rideStarted` is what previously severed presence mid-ride and
             # left a rider who joined afterwards with no live channel at all.
-            if any(event.event_type == "rideEnded" for event in events):
+            #
+            # A batch can carry both an end and the leader's reopen of it
+            # (#206/#207), so the last one in the batch decides. Discarding on the
+            # end alone would cut presence for a ride that is running again.
+            lifecycle = [
+                event.event_type
+                for event in events
+                if event.event_type in ("rideEnded", "rideReopened")
+            ]
+            if lifecycle and lifecycle[-1] == "rideEnded":
                 session.execute(delete(PreStartPosition).where(PreStartPosition.ride_id == ride_id))
             response = self._build_response(
                 session,
@@ -351,15 +364,20 @@ class RelayService:
 
     @staticmethod
     def _ride_presence_phase(session: Session, ride_id: str) -> str:
-        lifecycle_types = set(
+        # Ordered, not a set: a reopen after an end means the ride is running
+        # again, and set membership cannot express "which came last" (#206/#207).
+        lifecycle_types = list(
             session.scalars(
-                select(StoredEvent.event_type).where(
+                select(StoredEvent.event_type)
+                .where(
                     StoredEvent.ride_id == ride_id,
-                    StoredEvent.event_type.in_(["rideStarted", "rideEnded"]),
+                    StoredEvent.event_type.in_(["rideStarted", "rideEnded", "rideReopened"]),
                 )
+                .order_by(StoredEvent.sequence)
             ).all()
         )
-        if "rideEnded" in lifecycle_types:
+        ended = [name for name in lifecycle_types if name in ("rideEnded", "rideReopened")]
+        if ended and ended[-1] == "rideEnded":
             return "ended"
         return "started" if "rideStarted" in lifecycle_types else "open"
 
@@ -803,6 +821,15 @@ class RelayService:
                 ride.delete_after = min(
                     self._as_utc(ride.delete_after),
                     now + timedelta(hours=self._settings.ended_ride_grace_hours),
+                )
+            elif event.event_type == "rideReopened" and ride.ended_at is not None:
+                # The end shortened this ride's life to the grace period. A ride
+                # that is running again gets the full retention window back, or it
+                # would be deleted out from under the group (#206/#207).
+                ride.ended_at = None
+                ride.delete_after = max(
+                    self._as_utc(ride.delete_after),
+                    now + timedelta(hours=self._settings.ride_retention_hours),
                 )
         session.flush()
         return accepted_ids

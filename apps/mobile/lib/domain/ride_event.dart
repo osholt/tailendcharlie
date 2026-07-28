@@ -46,6 +46,17 @@ enum RideEventType {
   /// the person to ring *about* them. Ringing it to reach the leader would ring
   /// the leader's partner.
   riderContactShared,
+
+  /// The leader says a ride that ended has not finished after all (#206, #207).
+  ///
+  /// Deliberately not [rideResumed], which is the other half of [ridePaused] and
+  /// means "the group is moving again". This one un-ends a ride, and conflating
+  /// the two would make a pause look like a resurrection to every reducer.
+  ///
+  /// The journal is append-only, so this does not remove the [rideEnded] event.
+  /// The later of the two decides whether the ride has ended, exactly as
+  /// [ridePaused] and [rideResumed] already decide whether it is paused.
+  rideReopened,
 }
 
 enum EventPriority { routine, important, critical }

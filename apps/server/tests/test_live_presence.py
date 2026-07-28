@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 
-from ride_relay_server.models import PreStartPosition
+from ride_relay_server.models import PreStartPosition, Ride
 from ride_relay_server.schemas import PresenceSyncRequest
 
 from .conftest import event, ride_token
@@ -279,6 +279,81 @@ def test_ride_ended_discards_live_positions(client, synchronize) -> None:
     observed = _presence(client, ride_id, "leader").json()
     assert observed["positions"] == []
     assert observed["phase"] == "ended"
+
+
+def test_reopening_a_ride_restores_its_running_phase(client, synchronize) -> None:
+    """Issues #206/#207.
+
+    A ride the leader ends by mistake can be un-ended, and presence has to come
+    back with it: a reopened ride that still reported ``ended`` would leave every
+    rider's app refusing to publish a position to a ride that is running.
+    """
+    ride_id = "ride-reopened-presence"
+    assert (
+        synchronize(client, ride_id=ride_id, secret=SECRET, device_id="leader").status_code == 200
+    )
+    for index, event_type in enumerate(("rideStarted", "rideEnded", "rideReopened")):
+        assert (
+            synchronize(
+                client,
+                ride_id=ride_id,
+                secret=SECRET,
+                device_id="leader",
+                events=[
+                    event(
+                        ride_id,
+                        f"lifecycle-{index}",
+                        device_id="leader",
+                        event_type=event_type,
+                        payload={},
+                    )
+                ],
+            ).status_code
+            == 200
+        )
+
+    assert _presence(client, ride_id, "leader").json()["phase"] == "started"
+    # A position published after the reopen is kept, because the ride is running.
+    assert _presence(client, ride_id, "rider-a", position=_position(51.0)).status_code == 200
+    with client.app.state.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(PreStartPosition)) == 1
+        ride = session.get(Ride, ride_id)
+        assert ride is not None
+        assert ride.ended_at is None
+
+
+def test_ending_after_a_reopen_ends_the_ride_again(client, synchronize) -> None:
+    ride_id = "ride-reended-presence"
+    assert (
+        synchronize(client, ride_id=ride_id, secret=SECRET, device_id="leader").status_code == 200
+    )
+    assert _presence(client, ride_id, "rider-a", position=_position(51.0)).status_code == 200
+    for index, event_type in enumerate(("rideEnded", "rideReopened", "rideEnded")):
+        assert (
+            synchronize(
+                client,
+                ride_id=ride_id,
+                secret=SECRET,
+                device_id="leader",
+                events=[
+                    event(
+                        ride_id,
+                        f"lifecycle-{index}",
+                        device_id="leader",
+                        event_type=event_type,
+                        payload={},
+                    )
+                ],
+            ).status_code
+            == 200
+        )
+
+    assert _presence(client, ride_id, "leader").json()["phase"] == "ended"
+    with client.app.state.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(PreStartPosition)) == 0
+        ride = session.get(Ride, ride_id)
+        assert ride is not None
+        assert ride.ended_at is not None
 
 
 def test_a_legacy_publisher_stays_visible_to_a_live_presence_peer_and_is_flagged(

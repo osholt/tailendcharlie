@@ -17,6 +17,7 @@ import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:ride_relay/services/received_quick_message.dart';
 import 'package:ride_relay/services/ride_event_authenticator.dart';
+import 'package:ride_relay/services/ride_lifecycle.dart';
 import 'package:ride_relay/services/rider_contact_share.dart';
 import 'package:ride_relay/services/situation_event_factory.dart';
 
@@ -692,6 +693,141 @@ void main() {
     controller.setEndedRideAside();
 
     expect(controller.endedRideSetAside, isFalse);
+  });
+
+  // #206/#207. The journal is append-only, so un-ending a ride is a later event
+  // and not a deletion. The later of the pair decides, exactly as ridePaused and
+  // rideResumed already decide whether the group is stopped.
+  group('a leader can un-end a ride', () {
+    test('reopening puts the ride back to running', () async {
+      await controller.createRide('Oliver');
+      await controller.startRide();
+      await controller.endRide();
+      expect(controller.rideEnded, isTrue);
+
+      expect(await controller.reopenRide(), RideReopenOutcome.reopened);
+
+      expect(controller.rideEnded, isFalse);
+      expect(controller.rideStarted, isTrue);
+      expect(controller.ridePhase, RidePhase.started);
+      // Nothing was removed: both events are still in the journal.
+      expect(
+        controller.events.map((event) => event.type),
+        containsAll([RideEventType.rideEnded, RideEventType.rideReopened]),
+      );
+      expect(controller.events.last.signature, hasLength(64));
+    });
+
+    test('ending again after a reopen ends the ride again', () async {
+      await controller.createRide('Oliver');
+      await controller.startRide();
+      await controller.endRide();
+      await controller.reopenRide();
+
+      await controller.endRide();
+
+      expect(controller.rideEnded, isTrue);
+    });
+
+    test('a rider who is not the leader cannot reopen', () async {
+      await controller.createRide('Oliver');
+      await controller.endRide();
+      await controller.setRole(RideRole.rider);
+
+      expect(await controller.reopenRide(), RideReopenOutcome.notLeader);
+      expect(controller.rideEnded, isTrue);
+    });
+
+    test('a running ride has nothing to reopen', () async {
+      await controller.createRide('Oliver');
+      await controller.startRide();
+
+      expect(await controller.reopenRide(), RideReopenOutcome.notEnded);
+    });
+
+    test('a relay that cannot carry the reopen records nothing', () async {
+      await controller.createRide('Oliver');
+      await controller.endRide();
+      final eventCount = controller.events.length;
+
+      expect(
+        await controller.reopenRide(relayCanCarryReopen: false),
+        RideReopenOutcome.relayUnsupported,
+      );
+
+      // Not recorded locally either: a leader back on the map while the group
+      // still sees a finished ride is worse than being told it is unavailable.
+      expect(controller.events, hasLength(eventCount));
+      expect(controller.rideEnded, isTrue);
+    });
+
+    test('past the recovery window there is nothing left to reopen', () async {
+      var now = DateTime.utc(2026, 7, 28, 8);
+      var seedId = 0;
+      final aged = RideController(
+        eventStore,
+        sessionStore,
+        const _FakeNearbyBridge(),
+        clock: () => now,
+        idFactory: () => 'aged-${seedId++}',
+        random: Random(3),
+        rideCodeDirectory: rideCodes,
+        completedRideStore: completedRideStore,
+      );
+      await aged.initialize();
+      await aged.createRide('Oliver');
+      await aged.endRide();
+
+      now = now
+          .add(RideController.endedRideRecoveryWindow)
+          .add(const Duration(minutes: 1));
+
+      expect(await aged.reopenRide(), RideReopenOutcome.windowExpired);
+      aged.dispose();
+    });
+
+    test('a reopened ride is no longer scheduled for deletion', () async {
+      var now = DateTime.utc(2026, 7, 28, 8);
+      var seedId = 0;
+      final controllerWithClock = RideController(
+        eventStore,
+        sessionStore,
+        const _FakeNearbyBridge(),
+        clock: () => now,
+        idFactory: () => 'reopen-${seedId++}',
+        random: Random(4),
+        rideCodeDirectory: rideCodes,
+        completedRideStore: completedRideStore,
+      );
+      await controllerWithClock.initialize();
+      await controllerWithClock.createRide('Oliver');
+      final rideId = controllerWithClock.session!.rideId;
+      await controllerWithClock.endRide();
+      await controllerWithClock.reopenRide();
+      controllerWithClock.dispose();
+
+      // The retention timer keys off the end; reopening has to call it off, or a
+      // running ride deletes itself out from under the group.
+      now = now
+          .add(RideController.endedRideRecoveryWindow)
+          .add(const Duration(minutes: 1));
+      final restored = RideController(
+        eventStore,
+        sessionStore,
+        const _FakeNearbyBridge(),
+        clock: () => now,
+        idFactory: () => 'restored-${seedId++}',
+        random: Random(5),
+        rideCodeDirectory: rideCodes,
+        completedRideStore: completedRideStore,
+      );
+      await restored.initialize();
+
+      expect(restored.hasActiveRide, isTrue);
+      expect(restored.rideEnded, isFalse);
+      expect(await eventStore.eventsForRide(rideId), isNotEmpty);
+      restored.dispose();
+    });
   });
 
   test('expired ended ride data is deleted when the app is reopened', () async {

@@ -107,6 +107,11 @@ class Settings(BaseSettings):
             # facing an older relay names the limitation and keeps the rider's
             # answer on the phone instead of losing it.
             "road-ratings-v1",
+            # The leader un-ending a ride that ended by mistake. Named so a
+            # client facing an older relay hides the action rather than putting
+            # its leader back on the map while every other rider still sees a
+            # finished ride.
+            "ride-reopen-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)
