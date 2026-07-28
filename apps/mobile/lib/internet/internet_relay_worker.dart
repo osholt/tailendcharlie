@@ -450,6 +450,8 @@ class InternetRelayWorker {
         RelayProtocolCapabilities.tecRoleAssignment,
       RideEventType.rejoinRouteShared =>
         RelayProtocolCapabilities.rejoinRouteSharing,
+      RideEventType.riderContactShared =>
+        RelayProtocolCapabilities.riderContactSharing,
       _ => null,
     };
     return capability == null || compatibility.supports(capability);
@@ -459,8 +461,9 @@ class InternetRelayWorker {
   ///
   /// Null before the first negotiation, so a caller can say "not checked yet"
   /// instead of guessing. Used by the features whose whole point is a relayed
-  /// event — a leader-assigned TEC role and a leader-visible rejoin route — so
-  /// they can name the limitation rather than appear to have worked.
+  /// event — a leader-assigned TEC role, a leader-visible rejoin route and a
+  /// rider's own phone number — so they can name the limitation rather than
+  /// appear to have worked.
   bool? supportsCapability(String capability) =>
       _compatibility?.supports(capability);
 

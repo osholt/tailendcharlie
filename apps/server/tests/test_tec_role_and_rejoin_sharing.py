@@ -160,6 +160,44 @@ def test_retention_table_matches_the_documented_bands() -> None:
     assert retention("rejoinRouteShared") == retention("riderLocationUpdated")
     assert retention("tecRoleRequested") == timedelta(hours=2)
     assert retention("tecRoleResponded") == timedelta(hours=2)
+    # Issue #188. A rider's own phone number gets exactly the cap an ICE share
+    # gets, and is capped independently of whatever expiry a client asks for.
+    assert retention("riderContactShared") == timedelta(hours=2)
+    assert retention("riderContactShared") == retention("iceInfoShared")
+
+
+def test_a_shared_phone_number_is_accepted_and_capped(client, synchronize, make_event) -> None:
+    ride_id = "ride-rider-contact"
+    before = datetime.now(UTC)
+    contact_event = make_event(
+        ride_id,
+        "event-contact-1",
+        event_type="riderContactShared",
+        payload={
+            "contact": {
+                "riderId": "device-a",
+                "displayName": "Rider A",
+                # A reserved, non-dialable placeholder: no real number belongs in
+                # a fixture.
+                "phone": "+00 0000 000000",
+                "sharedByRole": "rider",
+            },
+            "recipientRiderIds": ["device-b"],
+        },
+    )
+
+    response = synchronize(client, ride_id=ride_id, secret=SECRET, events=[contact_event])
+
+    assert response.status_code == 200
+    assert response.json()["acceptedEventIds"] == ["event-contact-1"]
+
+    factory = client.app.state.session_factory
+    with factory() as session:
+        stored = session.scalars(select(StoredEvent).where(StoredEvent.ride_id == ride_id)).one()
+
+    expires_at = stored.expires_at.replace(tzinfo=UTC)
+    assert expires_at < before + timedelta(hours=3)
+    assert expires_at > before + timedelta(hours=1)
 
 
 def test_an_unknown_event_type_is_still_refused(client, synchronize, make_event) -> None:

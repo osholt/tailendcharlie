@@ -112,4 +112,85 @@ void main() {
 
     expect(profile.onboardingCompleted, isTrue);
   });
+
+  group("a rider's own number (#188)", () {
+    test('is empty on a fresh install and never inferred', () async {
+      final profile = await RiderProfileController.load();
+
+      expect(profile.ownPhoneNumber, isEmpty);
+      expect(profile.hasOwnPhoneNumber, isFalse);
+      // The whole point of the field: an install that has been given nothing
+      // holds nothing. Nothing reads the SIM, the telephony subscription or the
+      // contacts book, so there is no path by which a number appears here
+      // without the rider typing it.
+    });
+
+    test('survives a restart, and is a different field from the ICE '
+        'contact', () async {
+      final profile = await RiderProfileController.load();
+
+      await profile.saveOwnPhoneNumber(' +44 7700 900321 ');
+      await profile.saveEmergencyInfo(
+        emergencyContactName: 'Jamie Rider',
+        emergencyContactPhone: '+44 7700 900123',
+        medicalNotes: '',
+        shareWithLeaderByDefault: true,
+      );
+      final reloaded = await RiderProfileController.load();
+
+      expect(reloaded.ownPhoneNumber, '+44 7700 900321');
+      expect(reloaded.hasOwnPhoneNumber, isTrue);
+      // Distinct storage: ringing one must never ring the other.
+      expect(reloaded.emergencyContactPhone, '+44 7700 900123');
+      expect(reloaded.ownPhoneNumber, isNot(reloaded.emergencyContactPhone));
+    });
+
+    test('saving an ICE contact never populates the rider\'s own '
+        'number', () async {
+      final profile = await RiderProfileController.load();
+
+      await profile.saveEmergencyInfo(
+        emergencyContactName: 'Next of kin',
+        emergencyContactPhone: '+44 7700 900999',
+        medicalNotes: 'Penicillin allergy',
+        shareWithLeaderByDefault: true,
+      );
+
+      expect(profile.ownPhoneNumber, isEmpty);
+      expect(profile.hasOwnPhoneNumber, isFalse);
+      expect((await RiderProfileController.load()).ownPhoneNumber, isEmpty);
+    });
+
+    test('an empty value clears it rather than storing a blank', () async {
+      final profile = await RiderProfileController.load();
+      await profile.saveOwnPhoneNumber('07700 900321');
+
+      await profile.saveOwnPhoneNumber('   ');
+
+      expect(profile.hasOwnPhoneNumber, isFalse);
+      expect((await RiderProfileController.load()).ownPhoneNumber, isEmpty);
+    });
+
+    test('a value that is not dialable is rejected, not stored', () async {
+      final profile = await RiderProfileController.load();
+
+      // This is handed to `tel:`/`sms:`, so anything carrying a scheme, a path
+      // or free text is refused rather than sanitised into something that
+      // dials somewhere unintended.
+      for (final rejected in [
+        'tel:+447700900321',
+        '+44 7700 900321?body=hi',
+        'call me',
+        '123',
+        'sms:07700900321',
+      ]) {
+        await expectLater(
+          profile.saveOwnPhoneNumber(rejected),
+          throwsArgumentError,
+          reason: rejected,
+        );
+      }
+      expect(profile.hasOwnPhoneNumber, isFalse);
+    });
+  });
 }

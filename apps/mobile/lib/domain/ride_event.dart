@@ -37,6 +37,15 @@ enum RideEventType {
   /// One rider's advisory rejoin route, addressed to the ride leader
   /// (issue #128 part 2). Also carries the cleared form that expires it.
   rejoinRouteShared,
+
+  /// A rider's **own** phone number, offered so the ride's coordination roles
+  /// can ring or text them — and, when a coordination role shares, so a stopped
+  /// rider can ring them (issue #188).
+  ///
+  /// Deliberately not [iceInfoShared]. That event carries a rider's next of kin:
+  /// the person to ring *about* them. Ringing it to reach the leader would ring
+  /// the leader's partner.
+  riderContactShared,
 }
 
 enum EventPriority { routine, important, critical }

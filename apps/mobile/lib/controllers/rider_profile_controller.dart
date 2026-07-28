@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../domain/rider_color.dart';
 import '../features/map/motorcycle_icon.dart';
+import '../services/rider_contact_share.dart';
 
 /// Remembers how a rider last presented themselves - name, bike, colour -
 /// so the create/join ride form starts pre-filled instead of blank every
@@ -20,6 +21,7 @@ class RiderProfileController extends ChangeNotifier {
     this._emergencyContactPhone,
     this._medicalNotes,
     this._shareIceWithLeaderByDefault,
+    this._ownPhoneNumber,
     this._onboardingCompleted,
     this._onboardingEducationSkipped,
   );
@@ -33,6 +35,11 @@ class RiderProfileController extends ChangeNotifier {
   static const _medicalNotesKey = 'rider_profile_ice_medical_notes';
   static const _shareIceWithLeaderByDefaultKey =
       'rider_profile_ice_share_with_leader_default';
+
+  /// Deliberately a separate key from [_emergencyContactPhoneKey]. One is the
+  /// rider's own number, the other is their next of kin's, and conflating them
+  /// would put the wrong person on the end of an emergency call.
+  static const _ownPhoneNumberKey = 'rider_profile_own_phone_number';
   static const _onboardingCompletedKey = 'rider_profile_onboarding_completed';
   static const _onboardingEducationSkippedKey =
       'rider_profile_onboarding_education_skipped';
@@ -46,6 +53,7 @@ class RiderProfileController extends ChangeNotifier {
   String _emergencyContactPhone;
   String _medicalNotes;
   bool _shareIceWithLeaderByDefault;
+  String _ownPhoneNumber;
   bool _onboardingCompleted;
   bool _onboardingEducationSkipped;
   OnboardingRideChoice? _pendingRideChoice;
@@ -76,6 +84,19 @@ class RiderProfileController extends ChangeNotifier {
   /// explicit step - so it still happens if the rider can't act again.
   bool get shareIceWithLeaderByDefault => _shareIceWithLeaderByDefault;
 
+  /// This rider's **own** phone number (issue #188). Emphatically not
+  /// [emergencyContactPhone], which is their next of kin: the person to ring
+  /// *about* them rather than the person to ring.
+  ///
+  /// Optional throughout, and empty until the rider types it. It is never
+  /// inferred from the device (no SIM, no telephony subscription lookup) and
+  /// never read from the contacts book, so an app that has been given nothing
+  /// holds nothing. Like the ICE fields it is not read by RideSession or
+  /// RideEvent, so no ordinary ride event can carry it; it leaves the device
+  /// only through the explicit share action in RideController.
+  String get ownPhoneNumber => _ownPhoneNumber;
+  bool get hasOwnPhoneNumber => _ownPhoneNumber.isNotEmpty;
+
   static Future<RiderProfileController> load() async {
     final preferences = await SharedPreferences.getInstance();
     var installationId = preferences.getString(_installationIdKey);
@@ -100,6 +121,7 @@ class RiderProfileController extends ChangeNotifier {
       preferences.getString(_emergencyContactPhoneKey) ?? '',
       preferences.getString(_medicalNotesKey) ?? '',
       preferences.getBool(_shareIceWithLeaderByDefaultKey) ?? false,
+      preferences.getString(_ownPhoneNumberKey) ?? '',
       onboardingCompleted,
       preferences.getBool(_onboardingEducationSkippedKey) ?? false,
     );
@@ -180,6 +202,34 @@ class RiderProfileController extends ChangeNotifier {
         shareWithLeaderByDefault,
       ),
     ]);
+    notifyListeners();
+  }
+
+  /// Saves this rider's own number, or clears it when [ownPhoneNumber] is empty.
+  ///
+  /// A separate call from [saveEmergencyInfo] on purpose: the ICE payload
+  /// builder takes its arguments from that method, so there is no code path in
+  /// which a rider's own number can be picked up and relayed as their next of
+  /// kin's. Rejects anything that is not a plain dialable number rather than
+  /// storing something that would later be handed to `tel:`.
+  Future<void> saveOwnPhoneNumber(String ownPhoneNumber) async {
+    final trimmed = ownPhoneNumber.trim();
+    if (trimmed.isEmpty) {
+      _ownPhoneNumber = '';
+      await _preferences.remove(_ownPhoneNumberKey);
+      notifyListeners();
+      return;
+    }
+    final normalised = RiderContactShare.normalisePhoneNumber(trimmed);
+    if (normalised == null) {
+      throw ArgumentError.value(
+        ownPhoneNumber,
+        'ownPhoneNumber',
+        'is not a phone number this app can dial',
+      );
+    }
+    _ownPhoneNumber = normalised;
+    await _preferences.setString(_ownPhoneNumberKey, normalised);
     notifyListeners();
   }
 }

@@ -159,6 +159,7 @@ class RideRouteReducer {
         case RideEventType.tecRoleRequested:
         case RideEventType.tecRoleResponded:
         case RideEventType.rejoinRouteShared:
+        case RideEventType.riderContactShared:
           break;
       }
     }

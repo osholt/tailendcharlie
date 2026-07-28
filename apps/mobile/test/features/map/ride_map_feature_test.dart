@@ -1705,10 +1705,163 @@ void main() {
     // as a fault when nothing at the control says the rider picks who to text.
     expect(find.text('Text someone from your contacts'), findsOneWidget);
     expect(find.text('Open Messages'), findsNothing);
-    expect(find.textContaining('pick who to text'), findsOneWidget);
+    expect(find.textContaining('Pick who to text'), findsOneWidget);
+    // #188 dropped the old note's claim that a ride invite carries no phone
+    // numbers: a rider may now have been given the leader's or TEC's. Neither
+    // of these two has shared one, so no dial control is offered.
+    expect(find.byKey(const Key('emergency-contact-call-lead')), findsNothing);
+    expect(find.byKey(const Key('emergency-contact-call-tec')), findsNothing);
     await tester.tap(find.text('Mechanical'));
     await tester.pumpAndSettle();
     expect(sentIssues, ['mechanical']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('offers Call and Message where a number was shared, and says so '
+      'plainly where it was not', (tester) async {
+    // #188. The leader has given this rider their number; the TEC has not.
+    // Neither is required to, so the sheet has to read correctly either way and
+    // must never hide the role that shared nothing - "they have not shared a
+    // number" is information a stopped rider needs.
+    final directory = Directory.systemTemp.createTempSync('contact-map-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final used = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(null),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          emergencyContacts: const [
+            MapEmergencyContact(
+              riderId: 'lead',
+              displayName: 'Oliver',
+              role: RideRole.lead,
+              phoneNumber: '+44 7700 900321',
+              contactShareEventId: 'lead-share',
+            ),
+            MapEmergencyContact(
+              riderId: 'tec',
+              displayName: 'Charlie',
+              role: RideRole.tailEndCharlie,
+            ),
+          ],
+          onEmergencyAlert: () async {},
+          onEmergencyIssue: (_) async {},
+          onEmergencyContactUsed: (contact) =>
+              used.add(contact.contactShareEventId ?? contact.riderId),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await tester.tap(find.byKey(const Key('emergency-alert-button')));
+    await tester.pumpAndSettle();
+
+    // Both roles are listed, by name and role.
+    expect(find.byKey(const Key('emergency-contact-lead')), findsOneWidget);
+    expect(find.byKey(const Key('emergency-contact-tec')), findsOneWidget);
+    expect(find.text('Oliver (leader)'), findsOneWidget);
+    expect(find.text('Charlie (TEC)'), findsOneWidget);
+
+    // The leader shared, so both dial controls are offered.
+    expect(
+      find.byKey(const Key('emergency-contact-call-lead')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('emergency-contact-message-lead')),
+      findsOneWidget,
+    );
+
+    // The TEC did not, so it is stated rather than hidden - and there is
+    // nothing to tap.
+    expect(find.byKey(const Key('emergency-contact-call-tec')), findsNothing);
+    expect(
+      find.byKey(const Key('emergency-contact-message-tec')),
+      findsNothing,
+    );
+    expect(
+      find.textContaining('Charlie has not shared a phone number'),
+      findsOneWidget,
+    );
+
+    // The number itself is never rendered: it is for dialling, not for reading
+    // off a screen beside somebody's name.
+    expect(find.textContaining('900321'), findsNothing);
+
+    // #173's contacts-book fallback survives, because a rider whose leader and
+    // TEC have shared nothing still needs a way out.
+    expect(find.text('Text someone from your contacts'), findsOneWidget);
+
+    // Dialling marks the share used, which is what keeps it past the ride-end
+    // purge.
+    await tester.tap(find.byKey(const Key('emergency-contact-call-lead')));
+    await tester.pumpAndSettle();
+    expect(used, ['lead-share']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('a rider whose leader and TEC shared nothing keeps a working '
+      'sheet', (tester) async {
+    // The "optional throughout" half of #188: an app that has been given no
+    // numbers at all still opens, still lists the roles, and still offers the
+    // contacts-book route. Nothing about the feature is load-bearing.
+    final directory = Directory.systemTemp.createTempSync(
+      'no-contact-map-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(null),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          emergencyContacts: const [
+            MapEmergencyContact(
+              riderId: 'lead',
+              displayName: 'Oliver',
+              role: RideRole.lead,
+            ),
+          ],
+          onEmergencyAlert: () async {},
+          onEmergencyIssue: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await tester.tap(find.byKey(const Key('emergency-alert-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('You are stopped'), findsOneWidget);
+    expect(find.byKey(const Key('emergency-contact-call-lead')), findsNothing);
+    expect(
+      find.textContaining('Oliver has not shared a phone number'),
+      findsOneWidget,
+    );
+    expect(find.text('Text someone from your contacts'), findsOneWidget);
+    expect(find.text('Mechanical'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

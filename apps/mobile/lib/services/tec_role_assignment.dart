@@ -243,6 +243,7 @@ class TecRoleAssignmentReducer {
         case RideEventType.iceInfoShared:
         case RideEventType.iceInfoViewed:
         case RideEventType.rejoinRouteShared:
+        case RideEventType.riderContactShared:
           break;
       }
     }

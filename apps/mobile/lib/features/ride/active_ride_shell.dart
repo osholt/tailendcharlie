@@ -65,6 +65,7 @@ import '../../services/enforcement_alert_detector.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
 import '../../services/rejoin_route_share.dart';
+import '../../services/rider_contact_share.dart';
 import '../../services/road_routing.dart';
 import '../../services/ride_connectivity_summary.dart';
 import '../../services/tec_gap_trend.dart';
@@ -84,6 +85,13 @@ import 'observer_access_sheet.dart';
 import 'ride_dashboard.dart';
 import 'ride_roster_sheet.dart';
 
+/// The only thing an observer link publishes.
+///
+/// Its argument list is the privacy boundary: an observer is a separate
+/// authorisation decision (#36), so nothing that a rider shared *inside* the
+/// ride is an input here. That covers the ICE contact, a rejoin breadcrumb
+/// (#128) and a rider's own phone number (#188) — none of them has a parameter
+/// to populate, by accident or otherwise.
 @visibleForTesting
 ObserverPublishedSnapshot buildLocalObserverSnapshot({
   required RideSession session,
@@ -292,6 +300,10 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.onShareIceInfo,
     required this.receivedIceShareCount,
     required this.onViewIceShares,
+    required this.hasOwnPhoneNumber,
+    required this.ownPhoneNumberShared,
+    required this.ownPhoneNumberRecipientLabel,
+    required this.onShareOwnPhoneNumber,
     required this.ridePaused,
     required this.canToggleRidePause,
     required this.onToggleRidePause,
@@ -316,6 +328,14 @@ class _RideNavigationMenu extends StatelessWidget {
   final VoidCallback onShareIceInfo;
   final int receivedIceShareCount;
   final VoidCallback onViewIceShares;
+
+  /// #188. The tile is always shown, because "you have not added a number" is
+  /// worth saying: a rider who never sees the control cannot know the option
+  /// exists, and the emergency sheet's silence would look like a fault.
+  final bool hasOwnPhoneNumber;
+  final bool ownPhoneNumberShared;
+  final String ownPhoneNumberRecipientLabel;
+  final VoidCallback onShareOwnPhoneNumber;
   final bool ridePaused;
   final bool canToggleRidePause;
   final VoidCallback onToggleRidePause;
@@ -455,6 +475,29 @@ class _RideNavigationMenu extends StatelessWidget {
                   onShareIceInfo();
                 },
               ),
+            ListTile(
+              key: const Key('ride-menu-share-own-number'),
+              leading: const Icon(Icons.phone_forwarded_outlined),
+              title: Text(
+                ownPhoneNumberShared
+                    ? 'Your number is shared'
+                    : 'Share my phone number',
+              ),
+              subtitle: Text(
+                !hasOwnPhoneNumber
+                    ? 'Optional. Add your number first, so they can ring you '
+                          'if you stop'
+                    : ownPhoneNumberShared
+                    ? 'Sent to $ownPhoneNumberRecipientLabel for this ride. '
+                          'Cleared when the ride ends'
+                    : 'Gives it to $ownPhoneNumberRecipientLabel for this ride '
+                          'only',
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                onShareOwnPhoneNumber();
+              },
+            ),
             ListTile(
               key: const Key('ride-menu-view-ice-shares'),
               leading: Badge(
@@ -2856,6 +2899,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       emergencyContacts: _emergencyContacts,
       onEmergencyAlert: _sendEmergencyMapAlert,
       onEmergencyIssue: _sendEmergencyMapIssue,
+      onEmergencyContactUsed: _onEmergencyContactUsed,
       ridePaused: widget.rideController.ridePaused,
       rideHasNoLeader: widget.rideController.rideHasNoLeader,
       onLeaveRide: _confirmLeaveRideFromMap,
@@ -2922,8 +2966,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     };
   }
 
+  /// The leader and TEC, with a phone number attached only where that rider has
+  /// explicitly shared their own (#188).
+  ///
+  /// The number comes from `receivedRiderContacts` and nowhere else. It is never
+  /// taken from an ICE share — that is the rider's next of kin — and never from
+  /// the roster, a location event or the device. A role with nothing attached is
+  /// still listed: the emergency sheet says so plainly rather than hiding it.
   List<MapEmergencyContact> get _emergencyContacts {
     final contacts = <String, MapEmergencyContact>{};
+    final sharedNumbers = widget.rideController.receivedRiderContacts;
     final session = widget.rideController.session;
     if (session != null &&
         (session.role == RideRole.lead ||
@@ -2939,13 +2991,24 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           rider.role != RideRole.tailEndCharlie) {
         continue;
       }
+      final shared = sharedNumbers[rider.riderId];
       contacts[rider.riderId] = MapEmergencyContact(
         riderId: rider.riderId,
         displayName: rider.displayName,
         role: rider.role,
+        phoneNumber: shared?.phoneNumber,
+        contactShareEventId: shared?.eventId,
       );
     }
     return contacts.values.toList(growable: false);
+  }
+
+  /// A dialled number is a used share, so it survives the ride-end purge for the
+  /// same reason a called ICE contact does: a rider who has just phoned somebody
+  /// may need to phone them again.
+  void _onEmergencyContactUsed(MapEmergencyContact contact) {
+    final eventId = contact.contactShareEventId;
+    if (eventId != null) widget.rideController.markRiderContactUsed(eventId);
   }
 
   Future<void> _sendEmergencyMapAlert() async {
@@ -3039,6 +3102,80 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<void> _openIceShareInbox() =>
       IceShareInboxSheet.show(context, widget.rideController);
+
+  /// Who this rider's own number would go to if they shared it now (#188).
+  ///
+  /// An ordinary rider addresses it to the leader and the TEC and to nobody
+  /// else. A rider who holds either role is sharing so the riders they are
+  /// leading can reach them, which is the case in the request, so theirs goes to
+  /// the ride. Reversing that is a one-line change in
+  /// [RiderContactRecipients.resolve].
+  RiderContactRecipients get _ownContactRecipients {
+    final session = widget.rideController.session;
+    if (session == null) return const RiderContactRecipients.addressed([]);
+    final leaderId = _currentLeaderRiderId;
+    return RiderContactRecipients.resolve(
+      localRole: session.role,
+      leaderRiderId: leaderId == session.localRiderId ? null : leaderId,
+      tecRiderIds: _registeredTecRiderIds.where(
+        (riderId) => riderId != session.localRiderId,
+      ),
+    );
+  }
+
+  /// Shares this rider's own number. An explicit action, never automatic: there
+  /// is no path that shares a number as a side effect of anything else, and a
+  /// rider who shares nothing keeps a fully working app.
+  Future<void> _shareOwnPhoneNumber() async {
+    if (!widget.riderProfile.hasOwnPhoneNumber) {
+      await EmergencyInfoSheet.show(context, widget.riderProfile);
+      return;
+    }
+    // A new event type is rejected outright by an older build, so an older relay
+    // that will not carry it has to be named rather than allowed to look like a
+    // successful share.
+    final relayCanCarry =
+        _internetRelayController?.supportsCapability(
+          RelayProtocolCapabilities.riderContactSharing,
+        ) ??
+        true;
+    if (!relayCanCarry) {
+      _showRideSnackBar(
+        PresenceLimitation.riderContactSharingUnsupportedByService.message,
+      );
+      return;
+    }
+    final recipients = _ownContactRecipients;
+    if (recipients.isEmpty) {
+      _showRideSnackBar(
+        'Nobody is holding the leader or Tail End Charlie role yet, so there '
+        'is nobody to give your number to. Nothing has been shared.',
+      );
+      return;
+    }
+    final shared = await widget.rideController.shareOwnContactNumber(
+      phoneNumber: widget.riderProfile.ownPhoneNumber,
+      recipients: recipients,
+    );
+    if (!mounted) return;
+    _showRideSnackBar(
+      shared
+          ? (recipients.toRideGroup
+                ? 'Your number is now available to this ride, for this ride '
+                      'only.'
+                : 'Your number has gone to the leader and Tail End Charlie, and '
+                      'to nobody else.')
+          : 'Your number was not shared. '
+                    '${widget.rideController.errorMessage ?? ''}'
+                .trim(),
+    );
+  }
+
+  void _showRideSnackBar(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
 
   void _onPushNotificationStatusChanged() {
     if (mounted) setState(() {});
@@ -3305,6 +3442,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         onShareIceInfo: _shareIceInfoWithGroup,
         receivedIceShareCount: widget.rideController.receivedIceShares.length,
         onViewIceShares: _openIceShareInbox,
+        hasOwnPhoneNumber: widget.riderProfile.hasOwnPhoneNumber,
+        ownPhoneNumberShared: widget.rideController.hasSharedOwnContactNumber,
+        ownPhoneNumberRecipientLabel: _ownContactRecipients.toRideGroup
+            ? 'this ride'
+            : 'the leader and Tail End Charlie',
+        onShareOwnPhoneNumber: () => unawaited(_shareOwnPhoneNumber()),
         ridePaused: widget.rideController.ridePaused,
         canToggleRidePause:
             !_isSimulation &&

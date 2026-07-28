@@ -118,7 +118,7 @@ void main() {
     expect(find.text('You are stopped'), findsOneWidget);
     expect(find.text('Mechanical'), findsOneWidget);
     // The note still fits without scrolling where there is room for it.
-    expect(find.textContaining('pick who to text'), findsOneWidget);
+    expect(find.textContaining('Pick who to text'), findsOneWidget);
   });
 }
 

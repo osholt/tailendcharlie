@@ -295,6 +295,10 @@ enum PresenceLimitationKind {
 
   /// The ride service cannot carry a rider's rejoin route to the leader.
   rejoinSharingUnsupportedByService,
+
+  /// The ride service cannot carry a rider's own phone number to the ride's
+  /// coordination roles, so nothing was shared.
+  riderContactSharingUnsupportedByService,
 }
 
 /// A single named, user-readable limitation.
@@ -447,6 +451,18 @@ class PresenceLimitation {
     message:
         'The ride service is too old to send your rejoin route to the ride '
         'leader. You still have it on this phone; the leader will not see it.',
+  );
+
+  /// #188. A new event type is rejected outright by an older *build*, and
+  /// withheld by an older *relay*, so the one thing a rider must never be left
+  /// with is the belief that their number went out. Names what is lost and what
+  /// still works: the in-app alert never needed a phone number.
+  static const riderContactSharingUnsupportedByService = PresenceLimitation(
+    kind: PresenceLimitationKind.riderContactSharingUnsupportedByService,
+    message:
+        'The ride service is too old to pass on your phone number, so nobody '
+        'has been given it. Your emergency alert still reaches the leader and '
+        'TEC in the app.',
   );
 }
 

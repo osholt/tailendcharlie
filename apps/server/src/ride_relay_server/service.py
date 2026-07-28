@@ -64,6 +64,10 @@ EVENT_TYPES = {
     "tecRoleRequested",
     "tecRoleResponded",
     "rejoinRouteShared",
+    # Issue #188. A rider's own phone number, addressed to the ride's
+    # coordination roles. Deliberately distinct from "iceInfoShared", which
+    # carries a rider's next of kin.
+    "riderContactShared",
 }
 PRIORITIES = {"routine", "important", "critical"}
 EVENT_FIELDS = {
@@ -958,6 +962,10 @@ class RelayService:
             # of the client-supplied expiry, not left to the 72h default.
             "iceInfoShared": timedelta(hours=2),
             "iceInfoViewed": timedelta(hours=2),
+            # A rider's own phone number: the same cap an ICE share gets, for the
+            # same reason. The client purges its copy the moment the ride ends;
+            # this is the bound that applies whatever a client asks for.
+            "riderContactShared": timedelta(hours=2),
             # A rider's intended path: the same retention band as where they
             # actually are, capped here as well as on the client so a share
             # cannot outlive its usefulness even if a client asks it to.

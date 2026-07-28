@@ -30,6 +30,7 @@ import '../services/ride_membership.dart';
 import '../services/received_quick_message.dart';
 import '../services/ride_route_reducer.dart';
 import '../services/rejoin_route_share.dart';
+import '../services/rider_contact_share.dart';
 import '../services/situation_event_factory.dart';
 import '../services/tec_role_assignment.dart';
 import '../internet/internet_relay_client.dart';
@@ -113,9 +114,13 @@ class RideController extends ChangeNotifier {
   /// missing position is attributed to the transport rather than to the rider.
   bool _positionChannelUnavailable = false;
 
-  /// ICE shares the local rider has acted on (called/texted the contact).
-  /// Kept in memory only, for this session: it gates which received shares
-  /// survive the ride-end purge, not a durable record of anyone's own.
+  /// Personal-detail shares the local rider has acted on: an ICE contact they
+  /// called or texted, or a rider's own number they dialled. Kept in memory
+  /// only, for this session: it gates which received shares survive the
+  /// ride-end purge, not a durable record of anyone's own.
+  ///
+  /// One set, because event ids are unique across types and the exemption rule
+  /// is identical — a share you actually used may be followed up on.
   final Set<String> _usedIceShareEventIds = {};
 
   RideSession? get session => _session;
@@ -967,6 +972,93 @@ class RideController extends ChangeNotifier {
     }
   }
 
+  /// Shares the local rider's **own** phone number into the ride (issue #188).
+  ///
+  /// Nothing here touches ICE. [phoneNumber] is the rider's own number, and
+  /// [recipients] is resolved by [RiderContactRecipients] — the leader and TEC
+  /// for an ordinary rider, the ride for whoever holds a coordination role,
+  /// because a contact for the role is useless addressed to the other
+  /// role-holder.
+  ///
+  /// Returns false without recording anything when the number is not dialable
+  /// or there is nobody to address it to, so the caller can say so rather than
+  /// letting a rider believe a number went out.
+  Future<bool> shareOwnContactNumber({
+    required String phoneNumber,
+    required RiderContactRecipients recipients,
+  }) async {
+    final activeSession = _session;
+    final normalised = RiderContactShare.normalisePhoneNumber(phoneNumber);
+    if (activeSession == null || normalised == null || recipients.isEmpty) {
+      return false;
+    }
+    await _run(() async {
+      final share = RiderContactShare(
+        // Filled in by the journal; the payload never carries an event id.
+        eventId: '',
+        riderId: activeSession.localRiderId,
+        displayName: activeSession.displayName,
+        phoneNumber: normalised,
+        sharedAt: _clock(),
+        sharedByRole: activeSession.role,
+        toRideGroup: recipients.toRideGroup,
+      );
+      await _record(
+        type: RideEventType.riderContactShared,
+        // Important rather than critical: this is a contact detail, not an
+        // alert. The emergency alert is the critical event, and it does not
+        // depend on a number existing.
+        priority: EventPriority.important,
+        // The same retention band as an ICE share, and the ride-end purge
+        // normally gets there first.
+        expiresAt: _clock().add(riderContactShareLifetime),
+        payload: RiderContactShareReducer.payload(
+          share: share,
+          recipients: recipients,
+        ),
+      );
+    });
+    return _errorMessage == null;
+  }
+
+  /// Numbers other riders have shared with the local rider, keyed by rider id.
+  ///
+  /// Empty once the ride has ended, and never includes the local rider's own.
+  /// This is the only source the dial controls read: nothing derives a number
+  /// from the roster, a location event or a presence row.
+  Map<String, RiderContactShare> get receivedRiderContacts {
+    final activeSession = _session;
+    if (activeSession == null) return const {};
+    return const RiderContactShareReducer().fromEvents(
+      rideId: activeSession.rideId,
+      inviteSecret: activeSession.inviteSecret,
+      events: _events,
+      localRiderId: activeSession.localRiderId,
+      now: _clock(),
+      departedRiderIds: participants
+          .where((participant) => !participant.isIncludedInLiveCount)
+          .map((participant) => participant.riderId),
+      rideEnded: rideEnded,
+    );
+  }
+
+  /// Whether this rider's own number is already in the journal for this ride, so
+  /// the share control can say "shared" instead of recording it twice.
+  bool get hasSharedOwnContactNumber {
+    final localId = _session?.localRiderId;
+    if (localId == null) return false;
+    return _events.any(
+      (event) =>
+          event.type == RideEventType.riderContactShared &&
+          event.deviceId == localId,
+    );
+  }
+
+  /// Marks a received number as dialled, exempting it from the ride-end purge
+  /// for the same reason a used ICE share is exempt: a rider who has just phoned
+  /// somebody may need to phone them again.
+  void markRiderContactUsed(String eventId) => markIceShareUsed(eventId);
+
   Future<void> pauseRide() => _setRidePaused(true);
 
   Future<void> resumeRide() => _setRidePaused(false);
@@ -1432,11 +1524,17 @@ class RideController extends ChangeNotifier {
     await store.save(snapshot);
   }
 
-  /// Removes ICE shares this device received (not ones it sent) as soon as
-  /// the ride ends, unless the recipient acted on them - so a leader's app
-  /// doesn't go on holding another rider's phone number and medical notes
+  /// Removes personal-detail shares this device received (not ones it sent) as
+  /// soon as the ride ends, unless the recipient acted on them - so a leader's
+  /// app doesn't go on holding another rider's phone number and medical notes
   /// once the ride is over, but can still follow up on one they actually
   /// used.
+  ///
+  /// Both share types are purged together and on the same rule: an ICE contact
+  /// ([RideEventType.iceInfoShared]) and a rider's own number
+  /// ([RideEventType.riderContactShared], issue #188). They are separate
+  /// consents and separate fields, but identical retention - the second was
+  /// added here rather than beside here precisely so it cannot be forgotten.
   Future<void> _purgeUnusedIceSharesIfEnded() async {
     final activeSession = _session;
     if (activeSession == null || !rideEnded) return;
@@ -1444,7 +1542,8 @@ class RideController extends ChangeNotifier {
     final toRemove = _events
         .where(
           (event) =>
-              event.type == RideEventType.iceInfoShared &&
+              (event.type == RideEventType.iceInfoShared ||
+                  event.type == RideEventType.riderContactShared) &&
               event.deviceId != localId &&
               _isAddressedToMe(event, localId) &&
               !_usedIceShareEventIds.contains(event.id),
