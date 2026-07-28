@@ -13,6 +13,7 @@ CURRENT_CAPABILITIES = [
     "pre-start-presence-v1",
     "push-notifications-v1",
     "rejoin-route-sharing-v1",
+    "ride-reopen-v1",
     "rider-contact-sharing-v1",
     "road-ratings-v1",
     "route-revisions-v1",

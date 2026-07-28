@@ -79,6 +79,21 @@ raises its own named limitation. Two capabilities were added by #128:
 | --- | --- | --- | --- |
 | `tec-role-assignment-v1` | `tecRoleRequested`, `tecRoleResponded` | 2 h | `tecAssignmentUnsupportedByService`, or `tecAssignmentUnsupportedByPeer` for a named rider |
 | `rejoin-route-sharing-v1` | `rejoinRouteShared` | 30 min, the same band as `riderLocationUpdated` | `rejoinSharingUnsupportedByService` |
+| `ride-reopen-v1` | `rideReopened` | the ride's own retention | the resume action is hidden, and `RideReopenOutcome.relayUnsupported` says why |
+
+`ride-reopen-v1` (#206/#207) is the leader un-ending a ride. Three things about it
+are deliberate:
+
+- `rideReopened` is **not** `rideResumed`. That one is the other half of
+  `ridePaused` and means the group is moving again; conflating them would make a
+  pause look like a resurrection to every reducer.
+- The journal stays append-only. Nothing removes the `rideEnded` event — the later
+  of the pair decides, on the client (`RideController.rideEnded`) and on the relay
+  (`_ride_presence_phase`) alike.
+- Reopening restores the ride's **full** retention window. The end had shortened
+  `delete_after` to the grace period, and a running ride must not delete itself
+  out from under the group.
+
 
 `road-ratings-v1` (#159) is negotiated the same way but is not an event type — it
 is a standalone endpoint with its own retention, described below.

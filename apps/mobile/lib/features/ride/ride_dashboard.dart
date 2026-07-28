@@ -791,6 +791,9 @@ class _EventRow extends StatelessWidget {
       RideEventType.ridePaused => 'Ride paused',
       RideEventType.rideResumed => 'Ride resumed',
       RideEventType.rideEnded => 'Ride ended',
+      // Says what happened rather than what it undid: the journal keeps both
+      // events, and a rider reading the log should see the sequence.
+      RideEventType.rideReopened => 'Ride reopened by the leader',
       RideEventType.iceInfoShared => 'Emergency contact shared',
       RideEventType.iceInfoViewed => 'Emergency contact viewed',
       RideEventType.tecRoleRequested => 'Tail End Charlie requested',

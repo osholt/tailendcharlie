@@ -62,6 +62,30 @@ enum TecRoleRequestOutcome {
   failed,
 }
 
+/// Why a leader's attempt to un-end a ride did or did not take effect.
+///
+/// Every value other than [reopened] is something the leader is told in words.
+/// The outcome this must never have is a leader back on the map believing the
+/// group is with them when nobody else's ride restarted (#206, #207).
+enum RideReopenOutcome {
+  reopened,
+
+  /// This ride has not ended, so there is nothing to undo.
+  notEnded,
+
+  /// Only the current leader may reopen a ride.
+  notLeader,
+
+  /// Past the recovery window the ride's journal and session are already gone.
+  windowExpired,
+
+  /// The negotiated relay cannot carry the reopen, so nothing was recorded.
+  relayUnsupported,
+
+  /// The journal write failed. [RideController.errorMessage] carries the reason.
+  failed,
+}
+
 class RideController extends ChangeNotifier {
   RideController(
     this._eventStore,
@@ -316,8 +340,31 @@ class RideController extends ChangeNotifier {
 
   void refreshMembershipFreshness() => notifyListeners();
 
-  bool get rideEnded {
-    return _events.any((event) => event.type == RideEventType.rideEnded);
+  /// Whether the ride has ended, by the later of its end and reopen events.
+  ///
+  /// Not `any(rideEnded)` any more. The journal is append-only, so undoing an end
+  /// means a later [RideEventType.rideReopened] rather than removing anything
+  /// (#206, #207) — the same shape [ridePaused] already uses.
+  bool get rideEnded =>
+      _latestOf(const {
+        RideEventType.rideEnded,
+        RideEventType.rideReopened,
+      })?.type ==
+      RideEventType.rideEnded;
+
+  /// The newest event of any of [types], or null when the journal holds none.
+  ///
+  /// Local clocks can produce equal timestamps for back-to-back actions; events
+  /// are ordered by the durable store, so the later item wins ties.
+  RideEvent? _latestOf(Set<RideEventType> types) {
+    RideEvent? latest;
+    for (final event in _events) {
+      if (!types.contains(event.type)) continue;
+      if (latest == null || !event.createdAt.isBefore(latest.createdAt)) {
+        latest = event;
+      }
+    }
+    return latest;
   }
 
   /// A lead-owned group coordination pause. It deliberately does not suppress
@@ -1314,6 +1361,45 @@ class RideController extends ChangeNotifier {
     });
   }
 
+  /// Why a leader could not reopen an ended ride, or [RideReopenOutcome.reopened].
+  ///
+  /// The recovery window is the same 24 hours the ended ride survives for
+  /// anyway: past it the journal and session are gone, so there is nothing left
+  /// to reopen.
+  ///
+  /// [relayCanCarryReopen] is the negotiated `ride-reopen-v1` capability. When it
+  /// is false nothing is recorded at all — a reopen that cannot leave this phone
+  /// would put the leader back on a map while every other rider still sees a
+  /// finished ride, which is worse than being told it is unavailable.
+  Future<RideReopenOutcome> reopenRide({
+    bool relayCanCarryReopen = true,
+  }) async {
+    final activeSession = _session;
+    if (activeSession == null || !rideEnded) {
+      return RideReopenOutcome.notEnded;
+    }
+    if (activeSession.role != RideRole.lead) return RideReopenOutcome.notLeader;
+    final endedAt = _rideEndedAt;
+    if (endedAt != null &&
+        _clock().difference(endedAt) >= endedRideRecoveryWindow) {
+      return RideReopenOutcome.windowExpired;
+    }
+    if (!relayCanCarryReopen) return RideReopenOutcome.relayUnsupported;
+    await _run(() async {
+      await _record(
+        type: RideEventType.rideReopened,
+        priority: EventPriority.important,
+        payload: {'reopenedBy': activeSession.localRiderId},
+      );
+      // The end scheduled the ride's own deletion. Reopening has to call this
+      // off, and `_rideEndedAt` is now null, so it cancels rather than reschedules.
+      await _expireEndedRideIfDue();
+    });
+    return _errorMessage == null
+        ? RideReopenOutcome.reopened
+        : RideReopenOutcome.failed;
+  }
+
   Future<void> clearEndedRide() async {
     if (!rideEnded) return;
     await _run(() async {
@@ -1520,11 +1606,16 @@ class RideController extends ChangeNotifier {
     return 'rider-${base64Url.encode(digest.bytes).replaceAll('=', '')}';
   }
 
+  /// When the ride ended, or null when it has not — including when a reopen
+  /// undid the end. Everything keyed off this unwinds with it: the archived
+  /// snapshot's timestamp, the membership reducer's cutoff, and the 24-hour
+  /// retention timer.
   DateTime? get _rideEndedAt {
-    for (final event in _events.reversed) {
-      if (event.type == RideEventType.rideEnded) return event.createdAt;
-    }
-    return null;
+    final latest = _latestOf(const {
+      RideEventType.rideEnded,
+      RideEventType.rideReopened,
+    });
+    return latest?.type == RideEventType.rideEnded ? latest!.createdAt : null;
   }
 
   Future<void> _expireEndedRideIfDue() async {

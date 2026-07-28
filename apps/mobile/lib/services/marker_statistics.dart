@@ -81,6 +81,7 @@ abstract final class MarkerStatistics {
         case RideEventType.ridePaused:
         case RideEventType.rideResumed:
         case RideEventType.rideEnded:
+        case RideEventType.rideReopened:
         case RideEventType.iceInfoShared:
         case RideEventType.iceInfoViewed:
         case RideEventType.tecRoleRequested:

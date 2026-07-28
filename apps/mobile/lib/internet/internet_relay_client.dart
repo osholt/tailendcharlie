@@ -92,6 +92,14 @@ abstract final class RelayProtocolCapabilities {
   /// rider being thanked for something that went nowhere.
   static const roadRatings = 'road-ratings-v1';
 
+  /// The leader un-ending a ride that ended by mistake (#206, #207).
+  ///
+  /// Named so a client can refuse to offer the action rather than record a
+  /// reopen that never leaves the phone: a leader back on the map while every
+  /// other rider still sees a finished ride is worse than being told it cannot
+  /// be done.
+  static const rideReopen = 'ride-reopen-v1';
+
   static const current = {
     rideStart,
     membership,
@@ -106,6 +114,7 @@ abstract final class RelayProtocolCapabilities {
     rejoinRouteSharing,
     riderContactSharing,
     roadRatings,
+    rideReopen,
   };
 }
 
