@@ -132,7 +132,9 @@ class RideRelayApp extends StatelessWidget {
           speedLimitDisplay,
         ]),
         builder: (context, _) {
-          if (controller.hasActiveRide) {
+          // An ended ride the rider has stepped away from stays on the phone and
+          // stays archived; it just stops owning the whole screen (#207).
+          if (controller.hasActiveRide && !controller.endedRideSetAside) {
             return ActiveRideShell(
               key: ValueKey(controller.session!.rideId),
               rideController: controller,

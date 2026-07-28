@@ -654,6 +654,46 @@ void main() {
     expect(await eventStore.eventsForRide(rideId), isEmpty);
   });
 
+  test('stepping away from an ended ride keeps all of its data', () async {
+    await controller.createRide('Oliver');
+    final rideId = controller.session!.rideId;
+    await controller.endRide();
+
+    controller.setEndedRideAside();
+
+    // The ride stops owning the screen without giving anything up (#207).
+    expect(controller.endedRideSetAside, isTrue);
+    expect(controller.hasActiveRide, isTrue);
+    expect(controller.rideEnded, isTrue);
+    expect(await sessionStore.load(), isNotNull);
+    expect(await eventStore.eventsForRide(rideId), isNotEmpty);
+
+    controller.reopenEndedRide();
+
+    expect(controller.endedRideSetAside, isFalse);
+    expect(controller.session?.rideId, rideId);
+  });
+
+  test('a set-aside ride cannot outlive the ride it refers to', () async {
+    await controller.createRide('Oliver');
+    await controller.endRide();
+    controller.setEndedRideAside();
+
+    await controller.clearEndedRide();
+
+    expect(controller.endedRideSetAside, isFalse);
+    expect(controller.hasActiveRide, isFalse);
+  });
+
+  test('a running ride cannot be set aside', () async {
+    await controller.createRide('Oliver');
+    await controller.startRide();
+
+    controller.setEndedRideAside();
+
+    expect(controller.endedRideSetAside, isFalse);
+  });
+
   test('expired ended ride data is deleted when the app is reopened', () async {
     var now = DateTime.utc(2026, 7, 16, 12);
     var seedId = 0;

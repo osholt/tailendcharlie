@@ -93,6 +93,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 24),
                       TesterUpdateBanner(identity: _buildIdentity),
                       const SizedBox(height: 32),
+                      if (widget.controller.endedRideSetAside)
+                        _SetAsideRideBanner(
+                          rideCode: widget.controller.session!.rideCode,
+                          onReopen: widget.controller.reopenEndedRide,
+                        ),
                       if (widget.sharedRoutes.pending case final file?) ...[
                         _PendingSharedRouteBanner(
                           fileName: file.name,
@@ -294,6 +299,58 @@ class _BrandMark extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The way back into an ended ride the rider stepped away from (#207).
+///
+/// Without this the exit from the ride-ended screen would be a one-way door, and
+/// the summary, the recap image and any late relayed events would be unreachable
+/// until the recovery window expired.
+class _SetAsideRideBanner extends StatelessWidget {
+  const _SetAsideRideBanner({required this.rideCode, required this.onReopen});
+
+  final String rideCode;
+  final VoidCallback onReopen;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: const Key('set-aside-ride-banner'),
+    margin: const EdgeInsets.only(bottom: 20),
+    padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+    decoration: BoxDecoration(
+      color: const Color(0xFF1D2530),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFF3B4654)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.flag_outlined, color: Color(0xFFFFB15C)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Ride $rideCode has ended',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const Text(
+                'Its summary and recap are still here.',
+                style: TextStyle(color: Color(0xFFABB5C1), fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        TextButton(
+          key: const Key('reopen-set-aside-ride'),
+          onPressed: onReopen,
+          child: const Text('Open'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// A GPX file opened from another app (Files, Mail, a route planner's share

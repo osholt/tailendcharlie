@@ -99,6 +99,7 @@ class RideController extends ChangeNotifier {
   String? _errorMessage;
   RideRole? _roleBeforeMarker;
   Timer? _endedRideCleanupTimer;
+  bool _endedRideSetAside = false;
   RideLifecycle _lifecycle = const RideLifecycle();
   RideRouteState _routeState = const RideRouteState();
   final Map<String, Set<RideTransportEvidence>> _transportByEventId = {};
@@ -130,6 +131,33 @@ class RideController extends ChangeNotifier {
   bool get busy => _busy;
   String? get errorMessage => _errorMessage;
   bool get hasActiveRide => _session != null;
+
+  /// True when the rider has stepped away from an ended ride without filing it.
+  ///
+  /// Purely a navigation state: the session, the journal, the archived copy and
+  /// relay recovery are all untouched. It exists because the ride-ended screen
+  /// replaced the entire app and its only exit filed the ride, which stops this
+  /// phone waiting for other riders' final events — so a rider who ended up
+  /// there by accident had to choose between staying stuck and giving something
+  /// up (#207). Two testers hit that within half an hour.
+  ///
+  /// Derived rather than stored so it cannot outlive the ride it refers to: a new
+  /// ride clears `rideEnded`, and the flag with it.
+  bool get endedRideSetAside => _endedRideSetAside && rideEnded;
+
+  /// Steps away from an ended ride, keeping it and all of its data intact.
+  void setEndedRideAside() {
+    if (!rideEnded || _endedRideSetAside) return;
+    _endedRideSetAside = true;
+    notifyListeners();
+  }
+
+  /// Re-opens an ended ride the rider stepped away from.
+  void reopenEndedRide() {
+    if (!_endedRideSetAside) return;
+    _endedRideSetAside = false;
+    notifyListeners();
+  }
 
   bool get rideStarted => _lifecycle.started;
   DateTime? get rideStartedAt => _lifecycle.startedAt;
@@ -1559,6 +1587,7 @@ class RideController extends ChangeNotifier {
   Future<void> _removeRideData({bool deleteEvents = true}) async {
     _endedRideCleanupTimer?.cancel();
     _endedRideCleanupTimer = null;
+    _endedRideSetAside = false;
     final rideId = _requireSession().rideId;
     if (deleteEvents) await _eventStore.deleteRide(rideId);
     await _sessionStore.clear();
