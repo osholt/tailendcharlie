@@ -51,3 +51,9 @@ test("email route is a visible route action rather than a hidden result", () => 
   );
   assert.match(plannerHtml, /Email route/);
 });
+
+test("discovery source confidence is surfaced in the road details", () => {
+  assert.match(plannerJs, /"Source confidence"/);
+  assert.match(plannerJs, /facts\.sourceVerificationLabel/);
+  assert.match(plannerJs, /facts\.sourceVerificationDetail/);
+});

@@ -2711,7 +2711,8 @@ function showDiscoveryPopup(feature, clickedLocation, { hover = false } = {}) {
   discoveryPopupIsHover = hover;
 }
 
-/// Speed limit, enforcement, busy periods and review state, in reading order.
+/// Speed limit, enforcement, busy periods, review state and source confidence,
+/// in reading order.
 ///
 /// A mapped limit and an unknown one are given different classes so they cannot
 /// read the same: an untagged road must not look like an unrestricted one (#145).
@@ -2741,6 +2742,11 @@ function discoveryFactsElement(facts) {
     "Research",
     facts.isVerified ? "is-known" : "is-unknown",
     [facts.researchLabel, facts.researchDetail],
+  );
+  row(
+    "Source confidence",
+    facts.sourceIsFetched ? "is-known" : "is-unknown",
+    [facts.sourceVerificationLabel, facts.sourceVerificationDetail],
   );
   return list;
 }

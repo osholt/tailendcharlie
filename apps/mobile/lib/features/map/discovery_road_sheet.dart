@@ -123,6 +123,15 @@ class DiscoveryRoadSheet extends StatelessWidget {
                 detail: facts.researchDetail,
               ),
               const SizedBox(height: 10),
+              DiscoveryFactRow(
+                key: const Key('discovery-source-verification'),
+                icon: facts.sourceIsFetched
+                    ? Icons.fact_check_outlined
+                    : Icons.info_outline,
+                headline: facts.sourceVerificationLabel,
+                detail: facts.sourceVerificationDetail,
+              ),
+              const SizedBox(height: 10),
               Text(feature.warning),
               Align(
                 alignment: Alignment.centerLeft,

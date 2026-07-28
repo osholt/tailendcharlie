@@ -52,6 +52,12 @@ export function discoveryRoadFacts(properties = {}) {
     ? properties.fixedSpeedCameras
     : null;
   const isVerified = properties.researchStatus === "researched";
+  const sourceVerification =
+    properties.sourceVerification === "fetched"
+      ? "fetched"
+      : properties.sourceVerification === "listing-only"
+        ? "listing-only"
+        : "unstated";
 
   const enforcement = check?.present
     ? trimmedOrNull(check.description) ||
@@ -95,9 +101,26 @@ export function discoveryRoadFacts(properties = {}) {
     description: trimmedOrNull(properties.riderNote),
     researchLabel: isVerified ? "Researched" : "Not yet reviewed",
     researchDetail: isVerified
-      ? "Checked against the cited sources below."
+      ? sourceVerification === "fetched"
+        ? "Checked against the cited sources below."
+        : sourceVerification === "listing-only"
+          ? "Reviewed, but the cited source was available only as a listing."
+          : "Reviewed, but the catalogue does not record how the cited source was checked."
       : "Generated from OpenStreetMap and not yet checked by a person. Treat every field here with less confidence than a reviewed entry.",
     isVerified,
+    sourceVerificationLabel:
+      sourceVerification === "fetched"
+        ? "Source checked"
+        : sourceVerification === "listing-only"
+          ? "Listing evidence only"
+          : "Source check not recorded",
+    sourceVerificationDetail:
+      sourceVerification === "fetched"
+        ? "The cited page was retrieved and the claim was checked against it."
+        : sourceVerification === "listing-only"
+          ? "The cited listing confirms that the road appears there; it does not verify the road’s riding quality."
+          : "The catalogue does not record how the source was checked. Treat this claim cautiously.",
+    sourceIsFetched: sourceVerification === "fetched",
     evidenceSources: Array.isArray(properties.evidenceSources)
       ? properties.evidenceSources.map(trimmedOrNull).filter(Boolean)
       : [],
