@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,21 +32,87 @@ import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/speed_limit.dart';
 
 void main() {
-  test('Android group mini-map uses the local fallback', () {
+  test('group mini-map avoids a second MapLibre surface on Android', () {
     expect(
-      shouldUseTiledGroupMiniMap(
+      groupMiniMapRenderer(
         mapLibreEnabled: true,
         platform: TargetPlatform.android,
       ),
-      isFalse,
+      GroupMiniMapRenderer.flutterVector,
     );
     expect(
-      shouldUseTiledGroupMiniMap(
-        mapLibreEnabled: true,
-        platform: TargetPlatform.iOS,
-      ),
-      isTrue,
+      groupMiniMapRenderer(mapLibreEnabled: true, platform: TargetPlatform.iOS),
+      GroupMiniMapRenderer.mapLibre,
     );
+    expect(
+      groupMiniMapRenderer(
+        mapLibreEnabled: false,
+        platform: TargetPlatform.android,
+      ),
+      GroupMiniMapRenderer.local,
+    );
+  });
+
+  testWidgets('Android keeps a useful local mini-map while vector tiles load', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final directory = Directory.systemTemp.createTempSync(
+      'android-vector-mini-map',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final currentPosition = ValueNotifier<GeoPoint?>(
+      const GeoPoint(latitude: 51.46, longitude: -2.59),
+    );
+    final riders = ValueNotifier<List<MapOverlayMarker>>([
+      const MapOverlayMarker(
+        id: 'rider-alex',
+        point: GeoPoint(latitude: 54.15, longitude: -4.48),
+        label: 'Alex',
+      ),
+    ]);
+    addTearDown(currentPosition.dispose);
+    addTearDown(riders.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(
+        styleUrl: 'https://127.0.0.1:1/style',
+        attribution: 'OpenFreeMap contributors',
+      ),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          currentPosition: currentPosition,
+          overlayMarkers: riders,
+          groupRiderCount: 2,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
+    expect(
+      find.byType(ml.MapLibreMap),
+      findsOneWidget,
+      reason: 'only the primary map may mount a native Android surface',
+    );
+    expect(
+      find.byKey(const Key('group-mini-map-local-fallback')),
+      findsOneWidget,
+      reason: 'tile startup or failure must never leave a blank rectangle',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    debugDefaultTargetPlatformOverride = null;
   });
 
   test('local group mini-map follows light and dark appearance', () {

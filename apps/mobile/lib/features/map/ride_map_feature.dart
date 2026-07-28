@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../data/json_file_completed_ride_store.dart';
@@ -65,10 +66,32 @@ import 'route_trail_style.dart';
 import 'stored_route_picker.dart';
 
 @visibleForTesting
-bool shouldUseTiledGroupMiniMap({
+GroupMiniMapRenderer groupMiniMapRenderer({
   required bool mapLibreEnabled,
   required TargetPlatform platform,
-}) => mapLibreEnabled && platform != TargetPlatform.android;
+}) {
+  if (!mapLibreEnabled) return GroupMiniMapRenderer.local;
+  return platform == TargetPlatform.android
+      ? GroupMiniMapRenderer.flutterVector
+      : GroupMiniMapRenderer.mapLibre;
+}
+
+@visibleForTesting
+enum GroupMiniMapRenderer {
+  /// Route and riders on the deliberately simple offline overview.
+  local,
+
+  /// The existing native MapLibre mini-map used on iOS.
+  mapLibre,
+
+  /// A Flutter-rendered copy of the configured vector style on Android.
+  ///
+  /// Android cannot reliably composite two MapLibre platform views on one
+  /// screen (#29). Rendering the same vector source through Flutter keeps the
+  /// mini-map inside the Flutter layer tree instead of mounting a second native
+  /// surface.
+  flutterVector,
+}
 
 @visibleForTesting
 Color groupMiniMapBackgroundColor(Brightness brightness) =>
@@ -1863,10 +1886,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
       riders: groupRiders,
       riderCount: groupSize,
       onTap: widget.onOpenRoster,
-      showTiles: shouldUseTiledGroupMiniMap(
+      renderer: groupMiniMapRenderer(
         mapLibreEnabled: _basemap.usesMapLibre,
         platform: defaultTargetPlatform,
       ),
+      mapStyleUrl: _basemap.styleUrl,
       mapStyleString: widget.mapStyleString,
     );
   }
@@ -5713,7 +5737,8 @@ class _GroupMiniMap extends StatefulWidget {
     required this.riders,
     required this.riderCount,
     required this.onTap,
-    required this.showTiles,
+    required this.renderer,
+    required this.mapStyleUrl,
     required this.mapStyleString,
   });
 
@@ -5724,7 +5749,8 @@ class _GroupMiniMap extends StatefulWidget {
   final List<MapOverlayMarker> riders;
   final int riderCount;
   final VoidCallback? onTap;
-  final bool showTiles;
+  final GroupMiniMapRenderer renderer;
+  final String mapStyleUrl;
   final String mapStyleString;
 
   @override
@@ -5747,9 +5773,12 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   static const _fitVerticalPadding = 40.0;
 
   ml.MapLibreMapController? _controller;
+  final MapControllerImpl _vectorMapController = MapControllerImpl();
+  Future<vmt.Style>? _vectorStyle;
   Timer? _refreshTimer;
   DateTime? _lastRefreshAt;
   bool _styleReady = false;
+  bool _vectorMapReady = false;
   bool _refreshing = false;
 
   /// Captured once per refresh so the windowed route, rider dots, and camera
@@ -5766,24 +5795,45 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   @override
   void initState() {
     super.initState();
+    _loadVectorStyle();
     _scheduleFit();
   }
 
   @override
   void didUpdateWidget(_GroupMiniMap oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.renderer != widget.renderer ||
+        oldWidget.mapStyleUrl != widget.mapStyleUrl) {
+      _vectorMapReady = false;
+      _loadVectorStyle();
+    }
     _scheduleRefresh();
   }
 
+  void _loadVectorStyle() {
+    _vectorStyle =
+        widget.renderer == GroupMiniMapRenderer.flutterVector &&
+            widget.mapStyleUrl.trim().isNotEmpty
+        ? vmt.StyleReader(
+            uri: widget.mapStyleUrl,
+            httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
+          ).read().timeout(const Duration(seconds: 7))
+        : null;
+  }
+
   void _scheduleFit() {
-    if (!widget.showTiles) return;
+    if (widget.renderer == GroupMiniMapRenderer.local) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_fitGroup());
     });
   }
 
   void _scheduleRefresh() {
-    if (!widget.showTiles) return;
+    if (widget.renderer == GroupMiniMapRenderer.flutterVector) {
+      _scheduleFit();
+      return;
+    }
+    if (widget.renderer != GroupMiniMapRenderer.mapLibre) return;
     final previous = _lastRefreshAt;
     final elapsed = previous == null
         ? const Duration(seconds: 1)
@@ -5878,18 +5928,17 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
           child: Stack(
             children: [
               Positioned.fill(
-                child: widget.showTiles
-                    ? _buildTileMap()
-                    : CustomPaint(
-                        painter: _GroupMiniMapPainter(
-                          routePaths: visibleRoutePaths,
-                          currentPosition: widget.currentPosition,
-                          riders: widget.riders,
-                          brightness: Theme.of(context).brightness,
-                        ),
-                      ),
+                child: switch (widget.renderer) {
+                  GroupMiniMapRenderer.local => _buildLocalOverview(
+                    visibleRoutePaths,
+                  ),
+                  GroupMiniMapRenderer.mapLibre => _buildTileMap(),
+                  GroupMiniMapRenderer.flutterVector => _buildFlutterVectorMap(
+                    visibleRoutePaths,
+                  ),
+                },
               ),
-              if (widget.showTiles)
+              if (widget.renderer == GroupMiniMapRenderer.mapLibre)
                 const Positioned(
                   right: 3,
                   bottom: 2,
@@ -5914,7 +5963,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                     dotColor: Color(0xFFFF7A1A),
                   ),
                 ),
-              if (!widget.showTiles)
+              if (widget.renderer != GroupMiniMapRenderer.mapLibre)
                 const Positioned(
                   right: 6,
                   top: 6,
@@ -5944,6 +5993,17 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       ),
     ],
   );
+
+  Widget _buildLocalOverview(List<List<GeoPoint>> visibleRoutePaths) =>
+      CustomPaint(
+        key: const Key('group-mini-map-local-fallback'),
+        painter: _GroupMiniMapPainter(
+          routePaths: visibleRoutePaths,
+          currentPosition: widget.currentPosition,
+          riders: widget.riders,
+          brightness: Theme.of(context).brightness,
+        ),
+      );
 
   Widget _buildTileMap() {
     final groupPoints = <GeoPoint?>[
@@ -5975,6 +6035,127 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       minMaxZoomPreference: const ml.MinMaxZoomPreference(5, 16),
     );
   }
+
+  Widget _buildFlutterVectorMap(List<List<GeoPoint>> visibleRoutePaths) {
+    final styleFuture = _vectorStyle;
+    if (styleFuture == null) return _buildLocalOverview(visibleRoutePaths);
+    return FutureBuilder<vmt.Style>(
+      future: styleFuture,
+      builder: (context, snapshot) {
+        final style = snapshot.data;
+        final groupPoints = <GeoPoint?>[
+          widget.currentPosition,
+          ...widget.riders.map((rider) => rider.point),
+        ].nonNulls.toList(growable: false);
+        if (style == null || groupPoints.isEmpty) {
+          return _buildLocalOverview(visibleRoutePaths);
+        }
+        final framing = GroupMiniMapFraming.forPoints(
+          groupPoints,
+          width: widget.width - _fitHorizontalPadding,
+          height: widget.height - _fitVerticalPadding,
+        );
+        return Stack(
+          children: [
+            FlutterMap(
+              key: ValueKey(
+                'group-mini-map-vector-tiles-${widget.mapStyleUrl}',
+              ),
+              mapController: _vectorMapController,
+              options: MapOptions(
+                initialCenter: LatLng(
+                  framing.centre.latitude,
+                  framing.centre.longitude,
+                ),
+                initialZoom: framing.zoom,
+                minZoom: GroupMiniMapFraming.minimumZoom,
+                maxZoom: 16,
+                backgroundColor: groupMiniMapBackgroundColor(
+                  Theme.of(context).brightness,
+                ),
+                interactionOptions: const InteractionOptions(
+                  flags: InteractiveFlag.none,
+                ),
+                onMapReady: () {
+                  _vectorMapReady = true;
+                  _scheduleFit();
+                },
+              ),
+              children: [
+                vmt.VectorTileLayer(
+                  tileProviders: style.providers,
+                  theme: style.theme,
+                  sprites: style.sprites,
+                  maximumZoom: 16,
+                  concurrency: 2,
+                  fileCacheTtl: Duration.zero,
+                  fileCacheMaximumSizeInBytes: 0,
+                ),
+                if (visibleRoutePaths.isNotEmpty)
+                  PolylineLayer(
+                    polylines: [
+                      for (final path in visibleRoutePaths)
+                        if (path.length >= 2)
+                          Polyline(
+                            points: path
+                                .map(
+                                  (point) =>
+                                      LatLng(point.latitude, point.longitude),
+                                )
+                                .toList(growable: false),
+                            color: RouteTrailStyle.miniMapRoute.color,
+                            strokeWidth:
+                                RouteTrailStyle.miniMapRoute.widthPixels,
+                            borderColor: RouteTrailStyle.casing,
+                            borderStrokeWidth:
+                                RouteTrailStyle.miniMapRoute.casingWidthPixels -
+                                RouteTrailStyle.miniMapRoute.widthPixels,
+                          ),
+                    ],
+                  ),
+                MarkerLayer(
+                  markers: [
+                    for (final rider in widget.riders)
+                      _vectorRiderMarker(rider.point, rider.color, 12),
+                    if (widget.currentPosition case final point?)
+                      _vectorRiderMarker(point, const Color(0xFFFF7A1A), 14),
+                  ],
+                ),
+              ],
+            ),
+            const Positioned(
+              right: 3,
+              bottom: 2,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: Color(0xB3000000)),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                  child: Text(
+                    'OpenFreeMap · © OSM',
+                    style: TextStyle(color: Colors.white, fontSize: 6),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Marker _vectorRiderMarker(GeoPoint point, Color color, double size) => Marker(
+    point: LatLng(point.latitude, point.longitude),
+    width: size + 4,
+    height: size + 4,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 1),
+        boxShadow: const [BoxShadow(color: Colors.black87, spreadRadius: 2)],
+      ),
+    ),
+  );
 
   Future<void> _prepareStyle() async {
     final controller = _controller;
@@ -6046,8 +6227,6 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   }
 
   Future<void> _fitGroup([_MiniMapSnapshot? snapshot]) async {
-    final controller = _controller;
-    if (controller == null) return;
     final effective = snapshot ?? _snapshot();
     final points = <GeoPoint?>[
       effective.currentPosition,
@@ -6063,6 +6242,20 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       width: widget.width - _fitHorizontalPadding,
       height: widget.height - _fitVerticalPadding,
     );
+    if (widget.renderer == GroupMiniMapRenderer.flutterVector) {
+      if (!_vectorMapReady) return;
+      try {
+        _vectorMapController.move(
+          LatLng(framing.centre.latitude, framing.centre.longitude),
+          framing.zoom,
+        );
+      } on StateError {
+        // The FutureBuilder can finish before FlutterMap attaches its camera.
+      }
+      return;
+    }
+    final controller = _controller;
+    if (controller == null) return;
     await controller.animateCamera(
       ml.CameraUpdate.newLatLngZoom(
         ml.LatLng(framing.centre.latitude, framing.centre.longitude),
@@ -6148,6 +6341,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _vectorMapController.dispose();
     super.dispose();
   }
 }

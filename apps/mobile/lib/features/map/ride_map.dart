@@ -4,6 +4,7 @@ export 'ride_map_feature.dart'
         MapJunctionMarkerOverlay,
         MapJunctionMarkerStage,
         MapEmergencyContact,
+        GroupMiniMapRenderer,
         MapOverlayMarker,
         MapOverlayTrace,
         RideMapFeature,
@@ -11,9 +12,9 @@ export 'ride_map_feature.dart'
         describeQuickMessageOrigin,
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
+        groupMiniMapRenderer,
         portraitBottomChromeKey,
-        quickMessageIcon,
-        shouldUseTiledGroupMiniMap;
+        quickMessageIcon;
 export 'route_trail_style.dart'
     show RouteLineStyle, RouteTrailStyle, contrastRatio, relativeLuminance;
 export '../../services/navigation_export.dart'
