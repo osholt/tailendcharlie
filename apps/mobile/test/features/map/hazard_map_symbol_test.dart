@@ -289,17 +289,37 @@ void main() {
     test('the enforcement fills are the ones #133 lists', () {
       // Both directions: the shared table must carry these, and they must be the
       // colours the resolver actually draws.
-      expect(
+      //
+      // Compared as packed 8-bit ARGB rather than with `==`. The table holds
+      // literals like `Color(0xFFCCD3DA)`, while the aged fills come out of
+      // `Color.lerp`, which interpolates in floating point - the ageing fill
+      // lands on red 0.7980 where the literal is 0.8000. That is a difference of
+      // half a 1/255 step: the same pixel once rendered, but not the same double.
+      // Asserting on `toARGB32()` holds the invariant that actually matters (the
+      // table lists the colour a rider sees) at the precision a display can
+      // express, which is also the form `hazard_map_symbol.dart` itself hands to
+      // MapLibre.
+      void expectSameRenderedColour(Color? tabled, Color drawn, String key) =>
+          expect(
+            tabled?.toARGB32(),
+            drawn.toARGB32(),
+            reason: '$key: table and resolver disagree on the rendered colour',
+          );
+
+      expectSameRenderedColour(
         RouteTrailStyle.markerBadgeFills['enforcement report'],
         HazardMapSymbols.enforcementFill,
+        'enforcement report',
       );
-      expect(
+      expectSameRenderedColour(
         RouteTrailStyle.markerBadgeFills['enforcement report ageing'],
         symbolAt(HazardType.speedCamera, const Duration(minutes: 75)).fill,
+        'enforcement report ageing',
       );
-      expect(
+      expectSameRenderedColour(
         RouteTrailStyle.markerBadgeFills['enforcement report fading'],
         symbolAt(HazardType.speedCamera, const Duration(minutes: 110)).fill,
+        'enforcement report fading',
       );
     });
 
@@ -489,8 +509,17 @@ void main() {
       // looked at by eye; this is what stops two of them coming out identical.
       final images = <String, String>{};
       for (final symbol in HazardMapSymbols.catalogue) {
-        final bytes = await rasterizeHazardMapSymbolPng(symbol);
-        expect(bytes, isNotEmpty, reason: symbol.imageName);
+        // `runAsync` is not optional here. `rasterizeHazardMapSymbolPng` ends in
+        // `toByteData(format: png)`, which is real engine work rather than
+        // something the widget tester's fake-async zone can drive; awaited
+        // directly inside `testWidgets` it never completes and the test sits
+        // there until the ten-minute timeout kills it. Same reason
+        // `quick_message_alert_render_test.dart` wraps its `toImage` call.
+        final bytes = await tester.runAsync(
+          () => rasterizeHazardMapSymbolPng(symbol),
+        );
+        expect(bytes, isNotNull, reason: symbol.imageName);
+        expect(bytes!, isNotEmpty, reason: symbol.imageName);
         final signature = bytes.fold<int>(
           17,
           (hash, byte) => (hash * 31 + byte) & 0x7FFFFFFF,

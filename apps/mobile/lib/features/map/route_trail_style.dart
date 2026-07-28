@@ -209,7 +209,11 @@ class RouteTrailStyle {
     // 17.04:1 against its own ring it is also the most findable badge in the set,
     // which is what a camera or a police sighting warrants.
     'enforcement report': Color(0xFFF4F7FA),
-    'enforcement report ageing': Color(0xFFCCD3DA),
+    // The aged pair are what `HazardMapSymbols.fadedFill` lerps to, transcribed
+    // rather than recomputed - the ageing blue was one step out here (0xDA against
+    // the 0xDB the lerp lands on), which is invisible on screen but means this
+    // table and the painter were documenting different colours.
+    'enforcement report ageing': Color(0xFFCCD3DB),
     'enforcement report fading': Color(0xFFACB7C2),
     'rider green': Color(0xFF6ED89A),
     'rider orange': Color(0xFFFF9F5A),
