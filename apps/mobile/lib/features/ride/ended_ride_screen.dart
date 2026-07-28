@@ -22,6 +22,7 @@ class EndedRideScreen extends StatefulWidget {
     this.summarySharer,
     this.onRemoveRide,
     this.roadRatings,
+    this.onSetAside,
   });
 
   final RideController controller;
@@ -34,6 +35,12 @@ class EndedRideScreen extends StatefulWidget {
   /// Absent in a build with no catalogue service configured, and in tests that
   /// are not about ratings. When absent, no rating card is built at all.
   final RoadRatingController? roadRatings;
+
+  /// Leaves this screen without acting on the ride.
+  ///
+  /// Required, in practice: without it this screen is the whole app and its only
+  /// exit files the ride (#207).
+  final VoidCallback? onSetAside;
 
   @override
   State<EndedRideScreen> createState() => _EndedRideScreenState();
@@ -61,9 +68,21 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     await ratings.prepare(riddenTrack: route?.paths.single.points ?? const []);
   }
 
+  /// The way off this screen that gives nothing up (#207).
+  VoidCallback get _setAside =>
+      widget.onSetAside ?? widget.controller.setEndedRideAside;
+
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Ride ended')),
+    appBar: AppBar(
+      title: const Text('Ride ended'),
+      leading: IconButton(
+        key: const Key('leave-ended-ride-screen-button'),
+        tooltip: 'Back to home',
+        onPressed: _setAside,
+        icon: const Icon(Icons.close),
+      ),
+    ),
     body: ListView(
       padding: const EdgeInsets.all(18),
       children: [
@@ -77,6 +96,12 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
           'final marker and ride-ended events can still be delivered after a '
           'temporary loss of signal.',
           style: TextStyle(color: Color(0xFFABB5C1), height: 1.45),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'This ride is already saved in Previous rides. You can leave this '
+          'screen any time — nothing here has to be done now.',
+          style: TextStyle(color: Color(0xFF7F8A98), height: 1.45),
         ),
         const SizedBox(height: 18),
         if (widget.nearbyRelayController case final nearby?) ...[
@@ -100,6 +125,13 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
           onPressed: () => _openRecap(context),
           icon: const Icon(Icons.image_outlined),
           label: const Text('Share ride recap image'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          key: const Key('leave-ended-ride-button'),
+          onPressed: _setAside,
+          icon: const Icon(Icons.home_outlined),
+          label: const Text('Back to home'),
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(

@@ -454,6 +454,43 @@ void main() {
 
     controller.dispose();
   });
+
+  // #207: the ride-ended screen used to be the whole app with no way back, so
+  // the only exit filed the ride and stopped relay recovery.
+  testWidgets('ended ride can be closed and reopened without filing it', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    await controller.endRide();
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ride summary ready'), findsOneWidget);
+    final rideCode = controller.session!.rideCode;
+
+    await tester.tap(find.byKey(const Key('leave-ended-ride-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create a ride'), findsOneWidget);
+    expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
+    expect(find.text('Ride $rideCode has ended'), findsOneWidget);
+    // Nothing was given up to get here.
+    expect(controller.hasActiveRide, isTrue);
+    expect(controller.rideEnded, isTrue);
+
+    await tester.tap(find.byKey(const Key('reopen-set-aside-ride')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ride summary ready'), findsOneWidget);
+
+    // The app-bar close is the other way out, and it behaves the same.
+    await tester.tap(find.byKey(const Key('leave-ended-ride-screen-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
+
+    controller.dispose();
+  });
 }
 
 late RiderProfileController _riderProfile;

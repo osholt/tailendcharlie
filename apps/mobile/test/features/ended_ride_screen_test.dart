@@ -83,6 +83,27 @@ void main() {
     expect(find.text('Finish and file in Previous rides'), findsOneWidget);
   });
 
+  // #207: this screen replaces the whole app, so without an exit of its own the
+  // only way off it was to file the ride and stop relay recovery.
+  testWidgets('offers two exits that give nothing up', (tester) async {
+    await pumpScreen(tester);
+
+    for (final exit in [
+      const Key('leave-ended-ride-button'),
+      const Key('leave-ended-ride-screen-button'),
+    ]) {
+      controller.reopenEndedRide();
+      expect(controller.endedRideSetAside, isFalse);
+
+      await tester.tap(find.byKey(exit));
+      await tester.pump();
+
+      expect(controller.endedRideSetAside, isTrue, reason: '$exit');
+      expect(controller.hasActiveRide, isTrue);
+      expect(controller.rideEnded, isTrue);
+    }
+  });
+
   testWidgets('the confirmation says what is kept and what stops', (
     tester,
   ) async {
