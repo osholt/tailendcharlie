@@ -135,12 +135,16 @@ concurrent runs; `flutter test -j 1` is clean.
   The portrait band the #105 camera measures is now findable from a test via
   `portraitBottomChromeKey`. See `docs/maps-and-gpx.md` for the measured
   before/after and what still clamps.
-- **The mapped speed limit ships on and resolves where the rider stands.**
+- **The mapped speed limit resolves now and one kilometre ahead.**
   `waitingForMovement` is retired as the entry state; ambiguity is stated as
-  `unconfirmedRoad` and retried, rather than withheld. A stationary lookup is a
-  single-point trace held to a tighter accuracy and match bound because it has no
-  heading to corroborate it; heading disambiguation returns as soon as the bike
-  moves. A rider who previously turned the feature off stays off.
+  `unconfirmedRoad` and retried, rather than withheld. A stationary lookup uses
+  `locate` plus a duplicated-point trace confirmation because Valhalla rejects a
+  one-point trace. While moving, the remaining route is sampled every 25 metres
+  in one look-ahead trace; without a route the samples follow the current
+  heading. Road-and-direction answers stay in memory through a signal drop.
+  After the first resolution the sign is always a number, dash or infinity, and
+  conflicting nearby roads are not guessed. A rider who previously turned the
+  feature off stays off.
 - **Waze is closed.** A Waze for Cities relay reader was built on this branch
   and then removed: the programme is limited to government agencies and road
   operators, and this project applied and is not eligible. TomTom is again the
@@ -257,10 +261,11 @@ Neither is started. The in-app warning surface they would feed already exists.
   reachable by feel without looking.
 - Stand a phone still on a known road and confirm the mapped limit appears within
   one fix. Repeat beside a dual carriageway and at a junction, and confirm an
-  honest low-confidence state rather than the wrong road's limit. The stationary
-  path sends a **single-point** shape to Valhalla `trace_attributes`; that has
-  not been exercised against the live FOSSGIS instance from this branch, so
-  confirm it returns a match rather than an error before trusting the feature.
+  honest low-confidence state rather than the wrong road's limit. Then watch the
+  sign for a whole physical ride with and without a route, including a signal
+  drop, and confirm it moves between number/dash/infinity without returning to a
+  spinner. The provider schema and cache are covered in tests; the mounted,
+  moving behavior remains the release evidence required by #164.
 - TomTom's written "Navigation Functionality" permission remains the only route
   to broad all-road live incidents, and is unchanged by the Waze outcome.
 - Ride past a known camera site and confirm the warning arms about a mile out,

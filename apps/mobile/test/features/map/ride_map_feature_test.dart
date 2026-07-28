@@ -792,6 +792,62 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('an explicitly unrestricted road renders infinity', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-unlimited-speed-limit-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final now = DateTime.utc(2026, 7, 28, 10);
+    final navigation = ValueNotifier<MapNavigationPosition>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.5, longitude: -0.12),
+        recordedAt: now,
+        accuracyMeters: 5,
+        headingDegrees: 0,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: const _WidgetSpeedLimitProvider(unlimited: true),
+      clock: () => now,
+    );
+    addTearDown(speedLimitDisplay.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          speedLimitDisplay: speedLimitDisplay,
+        ),
+      ),
+    );
+    await speedLimitDisplay.waitForIdle();
+    await tester.pump();
+
+    expect(find.text('∞'), findsOneWidget);
+    expect(
+      tester
+          .widget<Semantics>(find.byKey(const Key('posted-speed-limit-badge')))
+          .properties
+          .label,
+      contains('Mapped speed limit unrestricted'),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   // #210: a stationary rider sends no fixes at all, because the platform stream
   // carries a distance filter. The readout therefore has to age out on its own,
   // or it sits there claiming 18 mph while the bike is parked in a lay-by.
@@ -3902,17 +3958,27 @@ class _StraightRoadRoutingService implements RoadRoutingService {
 }
 
 class _WidgetSpeedLimitProvider implements SpeedLimitProvider {
+  const _WidgetSpeedLimitProvider({this.unlimited = false});
+
+  final bool unlimited;
+
   @override
   Future<SpeedLimitLookupResult> lookup({
     required SpeedLimitLocation current,
     SpeedLimitLocation? previous,
   }) async => SpeedLimitLookupResult.known(
-    PostedSpeedLimit(
-      milesPerHour: 30,
-      source: 'Test',
-      checkedAt: current.recordedAt,
-      matchDistanceMeters: 2,
-    ),
+    unlimited
+        ? PostedSpeedLimit.unlimited(
+            source: 'Test',
+            checkedAt: current.recordedAt,
+            matchDistanceMeters: 2,
+          )
+        : PostedSpeedLimit(
+            milesPerHour: 30,
+            source: 'Test',
+            checkedAt: current.recordedAt,
+            matchDistanceMeters: 2,
+          ),
   );
 
   @override

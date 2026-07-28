@@ -226,17 +226,20 @@
       </p>
       <p>
         The mobile app's <strong>Show mapped speed limit</strong> setting is
-        off by default. If you turn it on while using the map in the UK, the
-        app periodically sends your current and a recent prior foreground
-        location point, plus current GPS accuracy, to a configured Valhalla
-        road-matching service. The points are used to infer direction of
-        travel. Development and alpha builds use the public
+        on by default and can be turned off. While it is on and you use the map
+        in Great Britain or the Isle of Man, the app periodically sends your
+        current and a recent prior foreground location point, current GPS
+        accuracy, and sampled points up to one kilometre ahead on your active
+        route to a configured Valhalla road-matching service. If there is no
+        active route, those look-ahead points are projected along your current
+        heading. The points are used to identify the current and upcoming roads.
+        Development and alpha builds use the public
         FOSSGIS/OpenStreetMap.de Valhalla service. This is used only to identify
-        an OpenStreetMap road with an explicitly mapped speed limit; Tail End
-        Charlie does not store those lookup requests. The provider receives
-        your IP address and standard connection information. Mapped limits are
-        not live and can be incomplete or out of date, so roadside signs always
-        apply.
+        OpenStreetMap roads with explicitly mapped speed limits. Tail End
+        Charlie keeps prefetched answers only in app memory during the ride and
+        does not store the lookup requests. The provider receives your IP
+        address and standard connection information. Mapped limits are not live
+        and can be incomplete or out of date, so roadside signs always apply.
       </p>
 
       <h3>Device identifier</h3>
@@ -313,10 +316,12 @@
         to the OpenStreetMap Foundation's public Nominatim service and route
         coordinates to the public Project OSRM service, or to the public
         FOSSGIS/OpenStreetMap.de Valhalla service when motorway, major-road,
-        toll, or ferry avoidance is selected. If you opt in to mapped speed
-        limits in the mobile app, the current and a recent prior foreground
-        location point are also sent to the configured Valhalla service for road
-        matching. The website also loads map styles and tiles from OpenFreeMap.
+        toll, or ferry avoidance is selected. If mapped speed limits are enabled
+        in the mobile app, the current and a recent prior foreground
+        location point, plus sampled points up to one kilometre ahead on the
+        active route or current heading, are also sent to the configured
+        Valhalla service for road matching. The website also loads map styles
+        and tiles from OpenFreeMap.
         These are independent third-party services. Nominatim is covered by the
         OpenStreetMap Foundation's
         <a href="https://osmfoundation.org/wiki/Privacy_Policy"

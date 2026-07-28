@@ -362,6 +362,37 @@ void main() {
       }
     });
 
+    test('a dash also counts as the first completed resolution', () async {
+      var now = baseTime;
+      final controller = SpeedLimitDisplayController.inMemory(
+        provider: _FakeSpeedLimitProvider(
+          results: [
+            const SpeedLimitLookupResult.unknown(
+              SpeedLimitLookupOutcome.noTaggedLimit,
+            ),
+          ],
+        ),
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      controller.observe(location(51.5, now));
+      await controller.waitForIdle();
+      expect(controller.status, SpeedLimitDisplayStatus.unavailable);
+      expect(controller.limit, isNull);
+
+      now = baseTime.add(const Duration(seconds: 30));
+      controller.observe(location(51.5015, now));
+
+      expect(
+        controller.status,
+        isNot(SpeedLimitDisplayStatus.checking),
+        reason: 'a settled dash must not turn back into a spinner',
+      );
+      await controller.waitForIdle();
+      expect(controller.status, SpeedLimitDisplayStatus.known);
+    });
+
     test('turning it off and on again may show checking again', () async {
       SharedPreferences.setMockInitialValues({});
       final controller = SpeedLimitDisplayController.inMemory(
@@ -384,15 +415,207 @@ void main() {
       );
     });
   });
+
+  group('road-ahead cache', () {
+    test('changes roads from cache and keeps working offline', () async {
+      var now = baseTime;
+      final provider = _FakeSpeedLimitProvider(
+        results: [
+          SpeedLimitLookupResult.known(
+            PostedSpeedLimit(
+              milesPerHour: 30,
+              source: 'Test',
+              checkedAt: now,
+              matchDistanceMeters: 1,
+              roadId: 'road-a',
+            ),
+          ),
+        ],
+        prefetchResults: [
+          PrefetchedSpeedLimit(
+            roadId: 'road-b',
+            anchor: const GeoPoint(latitude: 51.5007, longitude: -0.12),
+            headingDegrees: 0,
+            result: SpeedLimitLookupResult.known(
+              PostedSpeedLimit(
+                milesPerHour: 40,
+                source: 'Test',
+                checkedAt: now,
+                matchDistanceMeters: 1,
+                roadId: 'road-b',
+              ),
+            ),
+          ),
+        ],
+      );
+      final controller = SpeedLimitDisplayController.inMemory(
+        provider: provider,
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      final start = location(51.5000, now);
+      controller.observe(start);
+      await controller.waitForIdle();
+      controller.prefetchAhead(
+        current: start,
+        routeAhead: const [
+          GeoPoint(latitude: 51.5000, longitude: -0.12),
+          GeoPoint(latitude: 51.5100, longitude: -0.12),
+        ],
+      );
+      await controller.waitForIdle();
+      provider.offline = true;
+
+      now = baseTime.add(const Duration(seconds: 30));
+      controller.observe(location(51.5007, now));
+
+      expect(controller.status, SpeedLimitDisplayStatus.known);
+      expect(controller.limit?.milesPerHour, 40);
+      expect(
+        provider.calls,
+        hasLength(1),
+        reason: 'the cached road needed no network',
+      );
+    });
+
+    test('a prefetched untagged road becomes a dash while offline', () async {
+      var now = baseTime;
+      final provider = _FakeSpeedLimitProvider(
+        prefetchResults: [
+          const PrefetchedSpeedLimit(
+            roadId: 'untagged',
+            anchor: GeoPoint(latitude: 51.5007, longitude: -0.12),
+            headingDegrees: 0,
+            result: SpeedLimitLookupResult.unknown(
+              SpeedLimitLookupOutcome.noTaggedLimit,
+            ),
+          ),
+        ],
+      );
+      final controller = SpeedLimitDisplayController.inMemory(
+        provider: provider,
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      final start = location(51.5000, now);
+      controller.observe(start);
+      await controller.waitForIdle();
+      controller.prefetchAhead(
+        current: start,
+        routeAhead: const [
+          GeoPoint(latitude: 51.5000, longitude: -0.12),
+          GeoPoint(latitude: 51.5100, longitude: -0.12),
+        ],
+      );
+      await controller.waitForIdle();
+      provider.offline = true;
+
+      now = baseTime.add(const Duration(seconds: 30));
+      controller.observe(location(51.5007, now));
+
+      expect(controller.status, SpeedLimitDisplayStatus.unavailable);
+      expect(controller.lastOutcome, SpeedLimitLookupOutcome.noTaggedLimit);
+      expect(controller.limit, isNull);
+      expect(provider.calls, hasLength(1));
+    });
+
+    test('conflicting nearby prefetched roads are not guessed', () async {
+      var now = baseTime;
+      PrefetchedSpeedLimit reading(String roadId, int milesPerHour) =>
+          PrefetchedSpeedLimit(
+            roadId: roadId,
+            anchor: const GeoPoint(latitude: 51.5007, longitude: -0.12),
+            headingDegrees: 0,
+            result: SpeedLimitLookupResult.known(
+              PostedSpeedLimit(
+                milesPerHour: milesPerHour,
+                source: 'Test',
+                checkedAt: now,
+                matchDistanceMeters: 1,
+                roadId: roadId,
+              ),
+            ),
+          );
+      final provider = _FakeSpeedLimitProvider(
+        prefetchResults: [reading('parallel-a', 40), reading('parallel-b', 50)],
+      );
+      final controller = SpeedLimitDisplayController.inMemory(
+        provider: provider,
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      final start = location(51.5000, now);
+      controller.observe(start);
+      await controller.waitForIdle();
+      controller.prefetchAhead(
+        current: start,
+        routeAhead: const [
+          GeoPoint(latitude: 51.5000, longitude: -0.12),
+          GeoPoint(latitude: 51.5100, longitude: -0.12),
+        ],
+      );
+      await controller.waitForIdle();
+      provider.offline = true;
+
+      now = baseTime.add(const Duration(seconds: 30));
+      controller.observe(location(51.5007, now));
+      await controller.waitForIdle();
+
+      expect(
+        provider.calls,
+        hasLength(2),
+        reason: 'ambiguity forced a current lookup',
+      );
+      expect(controller.status, SpeedLimitDisplayStatus.unavailable);
+      expect(controller.limit, isNull);
+    });
+
+    test(
+      'without a route it samples ahead along the current heading',
+      () async {
+        final provider = _FakeSpeedLimitProvider();
+        final controller = SpeedLimitDisplayController.inMemory(
+          provider: provider,
+          clock: () => baseTime,
+        );
+        addTearDown(controller.dispose);
+        final current = location(51.5000, baseTime, headingDegrees: 0);
+
+        controller.prefetchAhead(current: current);
+        await controller.waitForIdle();
+
+        final sampled = provider.prefetchCalls.single;
+        expect(sampled, hasLength(greaterThan(2)));
+        expect(
+          sampled.last.point.latitude,
+          greaterThan(current.point.latitude),
+        );
+        expect(
+          sampled.last.point.longitude,
+          closeTo(current.point.longitude, 0.0001),
+        );
+      },
+    );
+  });
 }
 
-class _FakeSpeedLimitProvider implements SpeedLimitProvider {
-  _FakeSpeedLimitProvider({this.results = const []});
+class _FakeSpeedLimitProvider
+    implements SpeedLimitProvider, SpeedLimitPrefetchProvider {
+  _FakeSpeedLimitProvider({
+    this.results = const [],
+    this.prefetchResults = const [],
+  });
 
   /// Consumed in order; anything past the end matches at 30 mph.
   final List<SpeedLimitLookupResult> results;
+  final List<PrefetchedSpeedLimit> prefetchResults;
   final calls =
       <({SpeedLimitLocation? previous, SpeedLimitLocation current})>[];
+  final prefetchCalls = <List<SpeedLimitLocation>>[];
+  bool offline = false;
   bool closed = false;
 
   @override
@@ -402,6 +625,7 @@ class _FakeSpeedLimitProvider implements SpeedLimitProvider {
   }) async {
     final index = calls.length;
     calls.add((previous: previous, current: current));
+    if (offline) throw StateError('offline');
     if (index < results.length) return results[index];
     return SpeedLimitLookupResult.known(
       PostedSpeedLimit(
@@ -411,6 +635,15 @@ class _FakeSpeedLimitProvider implements SpeedLimitProvider {
         matchDistanceMeters: 2,
       ),
     );
+  }
+
+  @override
+  Future<List<PrefetchedSpeedLimit>> prefetch({
+    required List<SpeedLimitLocation> locations,
+  }) async {
+    prefetchCalls.add(locations);
+    if (offline) throw StateError('offline');
+    return prefetchResults;
   }
 
   @override
