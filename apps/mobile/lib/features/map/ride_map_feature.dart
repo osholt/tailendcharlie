@@ -643,6 +643,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
   // without rebuilding the map: MapLibre keeps its platform view mounted and
   // only calls setState when navigation mode changes.
   final ValueNotifier<double?> _riderSpeedMetersPerSecond = ValueNotifier(null);
+
+  /// Retires the speed readout when fixes stop arriving.
+  ///
+  /// A stationary rider produces no fixes at all — the platform stream carries a
+  /// `distanceFilter`, so standing still is silence, not a stream of zeroes. The
+  /// readout therefore cannot be driven by arriving fixes alone: it held 18 mph
+  /// while a tester sat in a lay-by (#210). Ageing it is the only way to tell the
+  /// truth without waiting for movement to prove the rider has stopped.
+  ///
+  /// Restarted by every speed-bearing fix, so the timer firing is itself the
+  /// proof that none arrived inside the window.
+  Timer? _riderSpeedStalenessTimer;
+  static const _riderSpeedFreshness = Duration(seconds: 3);
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
   GeoPoint? _lastHandledCurrentPosition;
@@ -852,6 +865,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreController?.removeListener(_scheduleCameraFramingRefresh);
     _mapController.dispose();
     _navigationGuidance.dispose();
+    _riderSpeedStalenessTimer?.cancel();
+    _riderSpeedStalenessTimer = null;
     _riderSpeedMetersPerSecond.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     unawaited(_groupPipBridge.dispose());
@@ -2199,6 +2214,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
     return _isMoving ? _headingSmoother.freezeBelowMetersPerSecond : 0;
   }
 
+  /// Restarts the freshness window for a speed that has just been observed.
+  void _markRiderSpeedObserved() {
+    _riderSpeedStalenessTimer?.cancel();
+    _riderSpeedStalenessTimer = Timer(_riderSpeedFreshness, _clearRiderSpeed);
+  }
+
+  /// Clears the readout and the smoother together.
+  ///
+  /// Leaving the smoother primed with the last moving value would blend it back
+  /// in on the first fix after a stop, so a rider pulling away would watch the
+  /// number climb out of a stale one instead of reading their real speed.
+  void _clearRiderSpeed() {
+    _riderSpeedStalenessTimer?.cancel();
+    _riderSpeedStalenessTimer = null;
+    _smoothedNavigationSpeedMetersPerSecond = null;
+    _riderSpeedMetersPerSecond.value = null;
+  }
+
   /// The rotation deadband tightens inside this distance so the map bearing
   /// cannot lag at the junction the rider is being told about.
   static const _maneuverDeadbandTightenMeters = 150.0;
@@ -2461,9 +2494,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
           : previousSpeed * 0.72 + boundedSpeed * 0.28;
       _riderSpeedMetersPerSecond.value =
           _smoothedNavigationSpeedMetersPerSecond;
+      _markRiderSpeedObserved();
     } else if (navigationFix != null) {
       // A fix without a usable speed must not leave a stale number on screen.
-      _riderSpeedMetersPerSecond.value = null;
+      _clearRiderSpeed();
     }
     // The camera follows a smoothed bearing, never the raw per-fix course. The
     // marker keeps the raw heading: it is only drawn rotated while the map is
