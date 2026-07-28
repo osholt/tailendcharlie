@@ -390,6 +390,106 @@ void main() {
       );
       directory.close();
     });
+
+    // #208. A probe that never answers says nothing about compatibility, and it
+    // used to abandon the join: a tester on working 4G could not rejoin her own
+    // ride, and was shown "Ride service compatibility check timed out".
+    test('a timed-out compatibility probe does not block a join', () async {
+      final paths = <String>[];
+      final transport = MockClient((request) async {
+        paths.add(request.url.path);
+        if (request.url.path.endsWith('/v1/compatibility')) {
+          throw TimeoutException('probe');
+        }
+        return http.Response(
+          jsonEncode({
+            'rideId': _session.rideId,
+            'rideCode': '123456',
+            'inviteSecret': _session.inviteSecret,
+            'resolveToken': _session.joinToken,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final directory = HttpRideCodeDirectory(
+        configuration: InternetRelayConfiguration(
+          baseUri: Uri.parse('https://relay.example/base'),
+        ),
+        client: transport,
+      );
+
+      final resolved = await directory.resolve('123456');
+
+      expect(resolved.rideId, _session.rideId);
+      // Tried more than once before giving up on an answer, then went ahead.
+      expect(
+        paths.where((path) => path.endsWith('/v1/compatibility')),
+        hasLength(2),
+      );
+      expect(paths.last, '/base/v1/join-codes/123456');
+      directory.close();
+    });
+
+    test(
+      'an unreachable relay fails on the join call, not the probe',
+      () async {
+        final transport = MockClient((request) async {
+          if (request.url.path.endsWith('/v1/compatibility')) {
+            throw TimeoutException('probe');
+          }
+          // What package:http surfaces for a dead socket.
+          throw http.ClientException('no route to host', request.url);
+        });
+        final directory = HttpRideCodeDirectory(
+          configuration: InternetRelayConfiguration(
+            baseUri: Uri.parse('https://relay.example/base'),
+          ),
+          client: transport,
+        );
+
+        await expectLater(
+          directory.resolve('123456'),
+          throwsA(
+            isA<RideCodeDirectoryException>()
+                .having((error) => error.retryable, 'retryable', isTrue)
+                .having(
+                  (error) => error.message,
+                  'message',
+                  isNot(contains('compatibility')),
+                ),
+          ),
+        );
+        directory.close();
+      },
+    );
+
+    test('a genuine protocol disagreement still refuses the join', () async {
+      final transport = MockClient((request) async {
+        if (request.url.path.endsWith('/v1/compatibility')) {
+          return _compatibilityResponse(minimumClientProtocol: 99);
+        }
+        return http.Response('', 500);
+      });
+      final directory = HttpRideCodeDirectory(
+        configuration: InternetRelayConfiguration(
+          baseUri: Uri.parse('https://relay.example/base'),
+        ),
+        client: transport,
+      );
+
+      await expectLater(
+        directory.resolve('123456'),
+        throwsA(
+          isA<RideCodeDirectoryException>().having(
+            (error) => error.message,
+            'message',
+            contains('Update Tail End Charlie'),
+          ),
+        ),
+      );
+      directory.close();
+    });
   });
 }
 

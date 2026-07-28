@@ -192,6 +192,45 @@ void main() {
     expect(controller.hasActiveRide, isTrue);
   });
 
+  // #208: a transient relay failure left a sentence on screen and nothing to
+  // press, so a tester at a coffee stop could not get back into her own ride.
+  testWidgets('a transient join failure offers a retry that works', (
+    tester,
+  ) async {
+    final directory = _FlakyRideCodeDirectory();
+    final controller = await _controller(rideCodeDirectory: directory);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+    await tester.tap(find.text('Join a ride'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('rider-name-field')), 'Oliver');
+
+    // A local validation failure is not worth retrying unchanged, so it offers
+    // no retry.
+    await tester.enterText(find.byKey(const Key('ride-code-field')), '123');
+    await _tapJoin(tester);
+    expect(find.text('Enter a valid six-digit ride code.'), findsOneWidget);
+    expect(find.byKey(const Key('retry-ride-submit')), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('ride-code-field')), '994954');
+    await _tapJoin(tester);
+
+    expect(find.textContaining('temporarily unavailable'), findsOneWidget);
+    expect(controller.hasActiveRide, isFalse);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('retry-ride-submit')),
+      180,
+      scrollable: _rideFormScrollable,
+    );
+    await tester.tap(find.byKey(const Key('retry-ride-submit')));
+    await tester.pumpAndSettle();
+
+    expect(controller.hasActiveRide, isTrue);
+    expect(directory.attempts, 2);
+  });
+
   testWidgets('settings can override locale-based distance units', (
     tester,
   ) async {
@@ -536,6 +575,48 @@ Future<RideController> _controller({
   );
   await controller.initialize();
   return controller;
+}
+
+Future<void> _tapJoin(WidgetTester tester) async {
+  await tester.scrollUntilVisible(
+    find.widgetWithText(FilledButton, 'Join ride'),
+    180,
+    scrollable: _rideFormScrollable,
+  );
+  await tester.tap(find.widgetWithText(FilledButton, 'Join ride'));
+  await tester.pumpAndSettle();
+}
+
+/// Fails the first resolve the way an unreachable relay does, then succeeds.
+class _FlakyRideCodeDirectory implements RideCodeDirectory {
+  int attempts = 0;
+
+  @override
+  void close() {}
+
+  @override
+  Future<void> register(RideSession session) async {}
+
+  @override
+  Future<RideCodeCredentials> resolve(
+    String rideCode, {
+    String? joinToken,
+  }) async {
+    attempts += 1;
+    if (attempts == 1) {
+      throw const RideCodeDirectoryException(
+        'Ride code service is temporarily unavailable. Check your connection '
+        'and try again.',
+        retryable: true,
+      );
+    }
+    return RideCodeCredentials(
+      rideId: 'ride-$rideCode',
+      rideCode: rideCode,
+      inviteSecret: 'test-invite-secret-0123456789',
+      joinToken: 'test-join-token-0123456789',
+    );
+  }
 }
 
 class _SuccessfulRideCodeDirectory implements RideCodeDirectory {

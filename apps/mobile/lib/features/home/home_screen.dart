@@ -780,6 +780,24 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                   message,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
+                // A connection or service failure is worth another go, and there
+                // was nothing to press: the rider read a sentence about a relay
+                // handshake and had to guess (#208).
+                if (widget.controller.errorIsRetryable)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      key: const Key('retry-ride-submit'),
+                      onPressed: widget.controller.busy || _checkingPlanCode
+                          ? null
+                          : () {
+                              widget.controller.clearError();
+                              unawaited(_submit());
+                            },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Try again'),
+                    ),
+                  ),
               ],
               const SizedBox(height: 22),
               FilledButton(

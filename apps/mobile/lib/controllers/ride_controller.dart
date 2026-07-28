@@ -97,6 +97,7 @@ class RideController extends ChangeNotifier {
       const NearbyCapabilities.unavailable();
   bool _busy = false;
   String? _errorMessage;
+  bool _errorIsRetryable = false;
   RideRole? _roleBeforeMarker;
   Timer? _endedRideCleanupTimer;
   bool _endedRideSetAside = false;
@@ -130,6 +131,13 @@ class RideController extends ChangeNotifier {
   NearbyCapabilities get nearbyCapabilities => _nearbyCapabilities;
   bool get busy => _busy;
   String? get errorMessage => _errorMessage;
+
+  /// True when the failure behind [errorMessage] is worth simply trying again —
+  /// a connection or service problem rather than something the rider typed.
+  ///
+  /// Surfaced so the join form can offer a retry instead of leaving a rider
+  /// staring at a sentence about a relay handshake with nothing to press (#208).
+  bool get errorIsRetryable => _errorMessage != null && _errorIsRetryable;
   bool get hasActiveRide => _session != null;
 
   /// True when the rider has stepped away from an ended ride without filing it.
@@ -1345,6 +1353,7 @@ class RideController extends ChangeNotifier {
 
   void clearError() {
     _errorMessage = null;
+    _errorIsRetryable = false;
     notifyListeners();
   }
 
@@ -1448,15 +1457,19 @@ class RideController extends ChangeNotifier {
     }
     _busy = true;
     _errorMessage = null;
+    _errorIsRetryable = false;
     notifyListeners();
     try {
       await operation();
     } on FormatException catch (error) {
+      // The rider's own input. Retrying it unchanged would fail identically.
       _errorMessage = error.message;
     } on RideCodeDirectoryException catch (error) {
       _errorMessage = error.message;
+      _errorIsRetryable = error.retryable;
     } on Object catch (error, stackTrace) {
       _errorMessage = 'That action could not be saved. Please try again.';
+      _errorIsRetryable = true;
       if (kDebugMode) {
         debugPrint('Ride action failed: $error\n$stackTrace');
       }
