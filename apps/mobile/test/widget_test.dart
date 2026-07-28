@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
@@ -14,6 +16,8 @@ import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
+import 'package:ride_relay/domain/ride_event.dart';
+import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/internet/plan_directory.dart';
@@ -52,6 +56,74 @@ void main() {
 
     controller.dispose();
   });
+
+  testWidgets(
+    'a stalled saved-ride journal falls back to an interactive home screen',
+    (tester) async {
+      final eventStore = _FirstRestoreBlockingEventStore();
+      final sessionStore = InMemorySessionStore();
+      await sessionStore.save(
+        RideSession(
+          rideId: 'ride-994954',
+          rideCode: '994954',
+          inviteSecret: '0123456789abcdef',
+          joinToken: 'join-token-0123456789',
+          localRiderId: 'rider-android',
+          displayName: 'Android tester',
+          role: RideRole.rider,
+          joinedAt: DateTime(2026, 7, 28, 9),
+        ),
+      );
+      final controller = RideController(
+        eventStore,
+        sessionStore,
+        const _FakeNearbyBridge(),
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        _app(
+          controller,
+          initializeController: controller.initialize,
+          startupFallbackAfter: const Duration(milliseconds: 100),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Restoring your ride…'), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byKey(const Key('ride-restoration-banner')), findsOneWidget);
+      expect(find.text('Still restoring ride 994954'), findsOneWidget);
+      expect(find.byTooltip('Settings'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Create a ride'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Join a ride'),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      eventStore.completeFirstRestore(const []);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ride-restoration-banner')), findsNothing);
+      expect(find.text('Navigation map'), findsOneWidget);
+      // ActiveRideShell must project the controller's already-restored events,
+      // not begin a second full SQLite journal read behind another spinner.
+      expect(eventStore.eventsForRideCalls, 1);
+    },
+  );
 
   testWidgets('create ride accepts a web-planner route code', (tester) async {
     final controller = await _controller();
@@ -550,6 +622,8 @@ RideRelayApp _app(
   RideController controller, {
   RideCodePreferenceController? rideCodePreference,
   PlanDirectory? planDirectory,
+  Future<void> Function()? initializeController,
+  Duration startupFallbackAfter = const Duration(seconds: 2),
 }) => RideRelayApp(
   controller: controller,
   distanceUnits: DistanceUnitController.forLocale(const Locale('en', 'GB')),
@@ -562,6 +636,8 @@ RideRelayApp _app(
   completedRides: _completedRides,
   planDirectory: planDirectory,
   enableNativeServices: false,
+  initializeController: initializeController,
+  startupFallbackAfter: startupFallbackAfter,
 );
 
 Future<RideController> _controller({
@@ -616,6 +692,22 @@ class _FlakyRideCodeDirectory implements RideCodeDirectory {
       inviteSecret: 'test-invite-secret-0123456789',
       joinToken: 'test-join-token-0123456789',
     );
+  }
+}
+
+class _FirstRestoreBlockingEventStore extends InMemoryEventStore {
+  final _firstRestore = Completer<List<RideEvent>>();
+  int eventsForRideCalls = 0;
+
+  @override
+  Future<List<RideEvent>> eventsForRide(String rideId) {
+    eventsForRideCalls += 1;
+    if (eventsForRideCalls == 1) return _firstRestore.future;
+    return Completer<List<RideEvent>>().future;
+  }
+
+  void completeFirstRestore(List<RideEvent> events) {
+    _firstRestore.complete(events);
   }
 }
 
