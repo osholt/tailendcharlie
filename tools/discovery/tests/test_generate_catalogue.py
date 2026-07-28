@@ -10,7 +10,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
+# The enrichment and publication stages import each other by bare module name, so
+# their own directory has to be importable too.
+sys.path.insert(0, str(ROOT / "tools/discovery"))
 
+import enrich_deterministic  # noqa: E402
+import publish_catalogue  # noqa: E402
 from tools.discovery.generate_catalogue import (  # noqa: E402
     LAYER_FILENAMES,
     MINIMUM_PYTHON,
@@ -319,6 +324,116 @@ class DiscoveryCatalogueTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "REVIEW_CATEGORY_ORDER"):
             build_review_sample(collection)
+
+    def test_rejects_an_unnamed_mountain_pass_node(self) -> None:
+        """An unnamed `mountain_pass=yes` node is a hill saddle, not a pass.
+
+        The fixture's unnamed node sits 15 m from the named one, on the same road, so
+        it clears the 50 m road-proximity join. Only the missing name can reject it.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            collection = self.generate(Path(temporary) / "working.sqlite3")
+
+        passes = [
+            feature
+            for feature in collection["features"]
+            if feature["properties"]["category"] == "mountain_pass"
+        ]
+        self.assertEqual([feature["properties"]["name"] for feature in passes], ["Test Pass"])
+        self.assertTrue(all(feature["properties"]["confidence"] == "high" for feature in passes))
+        self.assertNotIn("Mapped mountain pass", encode_collection(collection).decode())
+
+        rejected = collection["properties"]["rejectedUnnamedPasses"]
+        self.assertEqual(rejected["count"], 1)
+        self.assertEqual(rejected["sourceFeatureIds"], ["node/502"])
+
+    def test_researched_prose_survives_a_candidate_id_change(self) -> None:
+        """The overlay must re-match on sourceFeatureId, or a rerun destroys research.
+
+        Candidate ids are content hashes, so a new extract churns them. Without the
+        fallback every researched entry silently reverts to a generated note - the
+        exact failure the overlay exists to prevent.
+        """
+        entries = {
+            "old-hash-id": {
+                "sourceFeatureId": "node/2953157691",
+                "researchStatus": "researched",
+                "name": "Honister Pass (B5289)",
+                "busyPeriods": "Peak holiday season is heavy.",
+                "researchedOn": "2026-07-28",
+            }
+        }
+        by_source = publish_catalogue.index_overlay(entries)
+
+        entry, matched_by = publish_catalogue.overlay_entry_for(
+            {"id": "new-hash-id", "sourceFeatureId": "node/2953157691"}, entries, by_source
+        )
+        self.assertEqual(matched_by, "source-feature-id")
+        self.assertEqual(entry["name"], "Honister Pass (B5289)")
+
+        entry, matched_by = publish_catalogue.overlay_entry_for(
+            {"id": "old-hash-id", "sourceFeatureId": "node/2953157691"}, entries, by_source
+        )
+        self.assertEqual(matched_by, "candidate-id")
+
+        # A candidate with no overlay entry is pending, not a crash: a fresh extract
+        # introducing a new pass must not break publication.
+        entry, matched_by = publish_catalogue.overlay_entry_for(
+            {"id": "unknown", "sourceFeatureId": "node/999"}, entries, by_source
+        )
+        self.assertIsNone(entry)
+        self.assertEqual(matched_by, "none")
+
+    def test_ambiguous_source_ids_are_not_offered_for_rematching(self) -> None:
+        """Two entries on one source id is a real ambiguity, so neither is used.
+
+        Attaching the wrong researched prose to a pass is worse than falling back to
+        a generated note.
+        """
+        entries = {
+            "a": {"sourceFeatureId": "node/1", "researchStatus": "researched"},
+            "b": {"sourceFeatureId": "node/1", "researchStatus": "researched"},
+        }
+        self.assertEqual(publish_catalogue.index_overlay(entries), {})
+
+    def test_busy_periods_distinguishes_no_data_from_no_restriction(self) -> None:
+        """An absent busyPeriods field reads as "not busy" - a claim nobody made."""
+        researched = publish_catalogue.busy_periods_field(
+            {"busyPeriods": "Busy on summer weekends.", "researchedOn": "2026-07-28"}
+        )
+        self.assertEqual(researched["provenance"], "researched")
+        self.assertEqual(researched["value"], "Busy on summer weekends.")
+
+        for absent in (None, {}, {"busyPeriods": None}):
+            field = publish_catalogue.busy_periods_field(absent)
+            self.assertEqual(field["provenance"], "not-researched")
+            self.assertIsNone(field["value"])
+            self.assertIn("Not researched", field["note"])
+
+    def test_speed_limit_says_what_was_inspected_when_it_is_unknown(self) -> None:
+        """A pass node with no resolved way must not claim OSM records no limit.
+
+        Asserting "OpenStreetMap does not record a limit for this road" about a road
+        nobody resolved is a claim about data that was never inspected.
+        """
+        road = enrich_deterministic.speed_limit_for(
+            [], unknown_note=enrich_deterministic.ROAD_LIMIT_UNKNOWN
+        )
+        summit = enrich_deterministic.speed_limit_for(
+            [], unknown_note=enrich_deterministic.SUMMIT_LIMIT_UNKNOWN
+        )
+        self.assertEqual(road["provenance"], "unknown")
+        self.assertEqual(summit["provenance"], "unknown")
+        self.assertNotEqual(road["note"], summit["note"])
+        self.assertIn("candidate's ways", road["note"])
+        self.assertIn("no limit was resolved", summit["note"])
+        for note in (road["note"], summit["note"]):
+            self.assertNotIn("unrestricted road.", note.replace("not an unrestricted road.", ""))
+
+        tagged = enrich_deterministic.speed_limit_for(
+            [{"maxspeed": "60 mph"}], unknown_note=enrich_deterministic.ROAD_LIMIT_UNKNOWN
+        )
+        self.assertEqual(tagged, {"value": "60 mph", "provenance": "tagged", "mixed": False})
 
     def test_interpreter_version_guard_runs_before_tomllib_is_imported(self) -> None:
         self.assertEqual(MINIMUM_PYTHON, (3, 11))

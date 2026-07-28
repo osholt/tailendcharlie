@@ -12,10 +12,15 @@ Fields produced per candidate:
   fixedSpeedCameras   count of highway=speed_camera nodes near the geometry
   locality            nearest settlement, for disambiguating names
   roadRefs/roadClass  for naming and for the ride-planner description
+  crossingWayIds      for a pass, the catalogue ways its summit node sits on
 
 Provenance on the speed limit is not decoration. #145 was caused by trusting a
 Valhalla `speed_type` that never held the expected value, and the honest states here
 are the same defence: a limit is `tagged` only when OSM actually says so.
+
+Every field that can be missing carries a note saying what was inspected. A zero
+camera count and an unknown limit are statements about OpenStreetMap's coverage, not
+about the road, and a rider must be able to tell the difference.
 """
 
 import json
@@ -38,14 +43,14 @@ def unescape(text):
 
 
 def parse_opl(path):
-    """Yield (type, id, tags, lon, lat, members) for each OPL line."""
+    """Yield (type, id, tags, lon, lat, members, nodes) for each OPL line."""
     for line in open(path, encoding="utf-8"):
         line = line.rstrip("\n")
         if not line:
             continue
         kind = line[0]
         fields = line.split(" ")
-        tags, lon, lat, members = {}, None, None, []
+        tags, lon, lat, members, nodes = {}, None, None, [], []
         for field in fields[1:]:
             if len(field) < 2:
                 continue
@@ -61,7 +66,9 @@ def parse_opl(path):
                 lat = float(rest)
             elif code == "M":
                 members = rest.split(",")
-        yield kind, fields[0][1:], tags, lon, lat, members
+            elif code == "N":
+                nodes = [ref[1:] for ref in rest.split(",") if ref]
+        yield kind, fields[0][1:], tags, lon, lat, members, nodes
 
 
 # --- speed limits -----------------------------------------------------------
@@ -94,8 +101,16 @@ def normalise_speed(raw):
     return None
 
 
-def speed_limit_for(ways):
-    """Aggregate the mapped limit across a candidate's member ways."""
+def speed_limit_for(ways, *, unknown_note):
+    """Aggregate the mapped limit across a candidate's member ways.
+
+    `unknown_note` differs by candidate kind, and the difference is the point. A road
+    candidate's own ways were inspected, so "OpenStreetMap does not record a limit"
+    is a true statement about them. A pass candidate is a *node*: if no way could be
+    resolved, nothing was inspected, and claiming OSM records no limit would assert
+    something we never checked. Either way the field must never read as though the
+    road is unrestricted.
+    """
     tagged, inferred = Counter(), Counter()
     for tags in ways:
         direct = normalise_speed(tags.get("maxspeed"))
@@ -114,11 +129,7 @@ def speed_limit_for(ways):
     elif inferred:
         values, provenance = inferred, "inferred-from-maxspeed-type"
     else:
-        return {
-            "value": None,
-            "provenance": "unknown",
-            "note": "OpenStreetMap does not record a limit for this road.",
-        }
+        return {"value": None, "provenance": "unknown", "note": unknown_note}
 
     ordered = sorted(values, key=lambda v: int(v.split()[0]))
     predominant = values.most_common(1)[0][0]
@@ -130,6 +141,36 @@ def speed_limit_for(ways):
     if len(ordered) > 1:
         result["range"] = [ordered[0], ordered[-1]]
     return result
+
+
+# The three ways a limit can be missing. Each says what was looked at, so a reader
+# can tell "nobody mapped a limit" from "we never resolved a road to look at".
+ROAD_LIMIT_UNKNOWN = (
+    "OpenStreetMap does not record a limit on this candidate's ways. That is missing "
+    "data, not an unrestricted road."
+)
+SUMMIT_LIMIT_UNKNOWN = (
+    "No catalogue road way passes through this summit node, so no limit was resolved "
+    "from the extract. Nothing here says the crossing road is unrestricted."
+)
+
+# Enforcement notes. OSM enforcement coverage is thin - one average-speed relation
+# across 2,245 candidates - while the A57 Snake Pass has published average speed
+# camera proposals OSM does not record. Absence in the extract is absence of data.
+NO_AVERAGE_CHECK_NOTE = (
+    "No enforcement=average_speed relation in OpenStreetMap covers this candidate. "
+    "OpenStreetMap enforcement coverage is incomplete, so this is not evidence that "
+    "no average speed check exists."
+)
+NO_FIXED_CAMERA_NOTE = (
+    "No highway=speed_camera node is mapped within 250 m of this candidate in "
+    "OpenStreetMap. Cameras are unevenly mapped, so this is not evidence that none "
+    "is present."
+)
+FIXED_CAMERA_NOTE = (
+    "Count of highway=speed_camera nodes mapped within 250 m of this candidate in "
+    "OpenStreetMap. Treat it as a lower bound."
+)
 
 
 # --- geometry helpers -------------------------------------------------------
@@ -211,15 +252,30 @@ def main():
     # Parsed here with the same decoder as everything else, rather than read from a
     # side file written by a second parser.
     way_tags = {}
-    for kind, oid, tags, _, _, _ in parse_opl(f"{OUT}/candidate-objects.opl"):
-        way_tags[f"{'way' if kind == 'w' else 'node'}/{oid}"] = tags
+    way_nodes = {}
+    for kind, oid, tags, _, _, _, nodes in parse_opl(f"{OUT}/candidate-objects.opl"):
+        key = f"{'way' if kind == 'w' else 'node'}/{oid}"
+        way_tags[key] = tags
+        if kind == "w":
+            way_nodes[key] = nodes
     print(f"candidate objects {len(way_tags)}")
+
+    # A pass candidate's sourceFeatureId is the summit *node*, which carries no
+    # maxspeed of its own, so before this every pass reported an unknown limit. The
+    # ways a node is a vertex of are an exact join, not a spatial guess: no distance
+    # threshold is involved, so it cannot pick up the car park lane next door. A pass
+    # whose crossing way is not itself a catalogue candidate stays unknown rather
+    # than being resolved by proximity - #145's lesson is not to guess.
+    node_to_ways = {}
+    for way_id, nodes in way_nodes.items():
+        for node in nodes:
+            node_to_ways.setdefault(f"node/{node}", []).append(way_id)
 
     # Average speed enforcement: OSM models these as type=enforcement relations
     # with the covered carriageway as `section` members, so this is an exact id
     # join rather than a spatial guess.
     average_speed_ways = {}
-    for kind, oid, tags, _, _, members in parse_opl(f"{OUT}/enforcement.opl"):
+    for kind, oid, tags, _, _, members, _ in parse_opl(f"{OUT}/enforcement.opl"):
         if kind != "r" or tags.get("enforcement") != "average_speed":
             continue
         detail = {
@@ -234,13 +290,13 @@ def main():
     cameras = Grid(
         [
             (lon, lat, tags)
-            for kind, _, tags, lon, lat, _ in parse_opl(f"{OUT}/enforcement.opl")
+            for kind, _, tags, lon, lat, _, _ in parse_opl(f"{OUT}/enforcement.opl")
             if kind == "n" and lon is not None and tags.get("highway") == "speed_camera"
         ]
     )
 
     settlements, peaks = [], []
-    for kind, _, tags, lon, lat, _ in parse_opl(f"{OUT}/places.opl"):
+    for kind, _, tags, lon, lat, _, _ in parse_opl(f"{OUT}/places.opl"):
         if kind != "n" or lon is None or not tags.get("name"):
             continue
         if tags.get("place"):
@@ -254,12 +310,25 @@ def main():
     stats = Counter()
     for feature in features:
         props = feature["properties"]
+        is_pass = props.get("category") == "mountain_pass"
         ids = props.get("sourceFeatureIds") or [props.get("sourceFeatureId")]
         ids = [i for i in ids if i]
+
+        crossing_way_ids = []
+        if is_pass:
+            for source_id in ids:
+                crossing_way_ids.extend(node_to_ways.get(source_id, ()))
+            ids = ids + crossing_way_ids
         ways = [way_tags[i] for i in ids if i in way_tags]
 
-        limit = speed_limit_for(ways)
+        limit = speed_limit_for(
+            ways,
+            unknown_note=SUMMIT_LIMIT_UNKNOWN if is_pass else ROAD_LIMIT_UNKNOWN,
+        )
         stats[f"speed:{limit['provenance']}"] += 1
+        if is_pass:
+            resolved = "resolved" if crossing_way_ids else "none"
+            stats[f"pass-crossing-way:{resolved}"] += 1
 
         average = next((average_speed_ways[i] for i in ids if i in average_speed_ways), None)
         if average:
@@ -282,18 +351,32 @@ def main():
         if nearby_cameras:
             stats["fixed-cameras"] += 1
 
+        average_check = {
+            "present": bool(average),
+            "provenance": "openstreetmap-enforcement-relation",
+        }
+        if average:
+            average_check.update(average)
+        else:
+            average_check["note"] = NO_AVERAGE_CHECK_NOTE
+
         record = {
             "speedLimit": limit,
-            "averageSpeedCheck": average or {"present": False},
-            "fixedSpeedCameras": len(nearby_cameras),
+            "averageSpeedCheck": average_check,
+            "fixedSpeedCameras": {
+                "count": len(nearby_cameras),
+                "radiusMetres": 250,
+                "provenance": "openstreetmap-speed-camera-nodes",
+                "note": FIXED_CAMERA_NOTE if nearby_cameras else NO_FIXED_CAMERA_NOTE,
+            },
             "roadRefs": sorted({t["ref"] for t in ways if t.get("ref")}),
             "roadNames": sorted({t["name"] for t in ways if t.get("name")}),
             "roadClasses": sorted({t["highway"] for t in ways if t.get("highway")}),
             "surfaces": sorted({t["surface"] for t in ways if t.get("surface")}),
             "wayCount": len(ways),
         }
-        if average:
-            record["averageSpeedCheck"]["present"] = True
+        if crossing_way_ids:
+            record["crossingWayIds"] = sorted(set(crossing_way_ids))
 
         if midpoint:
             place, distance = settlement_grid.nearest(*midpoint)
