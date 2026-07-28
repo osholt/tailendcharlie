@@ -12,8 +12,10 @@ import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../data/json_file_completed_ride_store.dart';
 import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
+import '../../domain/completed_ride_store.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart';
@@ -48,6 +50,7 @@ import '../../services/route_importer.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_progress.dart';
 import '../../services/speed_limit.dart';
+import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'maneuver_list_screen.dart';
@@ -57,6 +60,7 @@ import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 import 'route_review_screen.dart';
 import 'route_trail_style.dart';
+import 'stored_route_picker.dart';
 
 @visibleForTesting
 bool shouldUseTiledGroupMiniMap({
@@ -448,6 +452,8 @@ class RideMapScreen extends StatefulWidget {
     this.routeGeometryEnricher,
     this.demoRouteLoader,
     this.recordedRouteStore,
+    this.completedRideStore,
+    this.storedRouteLibrary,
     this.distanceUnit = DistanceUnit.kilometres,
     this.speedLimitDisplay,
     this.disposeOfflineTileCache = false,
@@ -502,7 +508,22 @@ class RideMapScreen extends StatefulWidget {
   final DestinationRoutePlanner? destinationRoutePlanner;
   final RouteGeometryEnricher? routeGeometryEnricher;
   final Future<ImportedRoute> Function()? demoRouteLoader;
+
+  /// Stored geometry, resolved from the app's own on-disk stores when these are
+  /// null.
+  ///
+  /// The map opens these itself rather than having them threaded through the
+  /// ride shell, for the same reason it owns the route file: the ride screen
+  /// must not acquire a second opinion about which routes exist. Both stores
+  /// are read fresh each time the picker opens, so a ride deleted from the
+  /// archive stops being offered immediately.
   final RecordedRouteStore? recordedRouteStore;
+  final CompletedRideStore? completedRideStore;
+
+  /// A fully assembled library, for tests that want to fix the identity and
+  /// timestamp of the route it produces.
+  final StoredRouteLibrary? storedRouteLibrary;
+
   final DistanceUnit distanceUnit;
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool disposeOfflineTileCache;
@@ -1060,6 +1081,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             routing: _routing,
                             onPlanDestination: _planDestination,
                             onImport: _importGpx,
+                            onUseStoredRoute: _useStoredRoute,
                             onLoadDemo: _loadDemoRoute,
                           )
                         : const _WaitingForLeaderRoutePrompt(),
@@ -3806,46 +3828,46 @@ class _RideMapScreenState extends State<RideMapScreen> {
     return const BundledDemoRouteLoader().load();
   }
 
-  Future<void> _useRecordedRoute() async {
+  /// Picks a route out of the geometry already on this phone - a recorded
+  /// route, or a previous ride's plan or track - and feeds it through exactly
+  /// the same pipeline a GPX import uses (#155).
+  ///
+  /// The only difference between this and [_importGpx] is where the
+  /// [ImportedRoute] comes from. Everything after it - road matching, the
+  /// review screen, `RouteStore`, `RouteProgressTracker`, breadcrumbs,
+  /// manoeuvres - is the shared path, so a route from history and a route from
+  /// a file are indistinguishable once selected.
+  Future<void> _useStoredRoute() async {
+    if (_importing) return;
+    setState(() => _importing = true);
     try {
-      final store =
-          widget.recordedRouteStore ??
-          await JsonFileRecordedRouteStore.openDefault();
-      final routes = await store.list();
+      final library = widget.storedRouteLibrary ?? await _openStoredRoutes();
       if (!mounted) return;
-      if (routes.isEmpty) {
-        _showMessage(
-          'No recorded routes yet. Record one from the home screen first.',
-        );
-        return;
-      }
-      final selected = await showModalBottomSheet<ImportedRoute>(
-        context: context,
-        showDragHandle: true,
-        builder: (sheetContext) => SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              for (final route in routes)
-                ListTile(
-                  leading: const Icon(Icons.route_outlined),
-                  title: Text(route.name),
-                  subtitle: Text(
-                    '${route.pathPointCount} points · recorded '
-                    '${route.importedAt.toLocal().toString().split('.').first}',
-                  ),
-                  onTap: () => Navigator.of(sheetContext).pop(route),
-                ),
-            ],
-          ),
-        ),
+      final selection = await StoredRoutePickerScreen.show(
+        context,
+        library: library,
+        distanceUnit: widget.distanceUnit,
       );
-      if (selected == null || !mounted) return;
-      await _reviewAndActivateRoute(selected);
-    } catch (error) {
-      _showMessage('Could not load recorded routes: $error');
+      if (selection == null || !mounted) return;
+      final prepared = library.prepare(selection);
+      await _reviewAndActivateRoute(prepared.route, warnings: prepared.notes);
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+    } on Object catch (error) {
+      _showMessage('Could not read saved routes: $error');
+    } finally {
+      if (mounted) setState(() => _importing = false);
     }
   }
+
+  Future<StoredRouteLibrary> _openStoredRoutes() async => StoredRouteLibrary(
+    recordedRoutes:
+        widget.recordedRouteStore ??
+        await JsonFileRecordedRouteStore.openDefault(),
+    completedRides:
+        widget.completedRideStore ??
+        await JsonFileCompletedRideStore.openDefault(),
+  );
 
   Future<ImportedRoute?> _reviewAndActivateRoute(
     ImportedRoute route, {
@@ -4788,6 +4810,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   _planDestination();
                 },
               ),
+              // Stored geometry sits beside "choose a file", not behind it: a
+              // rider picking a route should not have to know which one the
+              // app wants (#155).
+              ListTile(
+                key: const Key('use-stored-route-sheet-item'),
+                leading: const Icon(Icons.history),
+                title: const Text('Use a saved route'),
+                subtitle: const Text('A recorded route or a previous ride'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _useStoredRoute();
+                },
+              ),
               ListTile(
                 leading: const Icon(Icons.upload_file),
                 title: Text(
@@ -4812,14 +4847,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 onTap: () {
                   Navigator.of(sheetContext).pop();
                   _loadDemoRoute();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.fiber_manual_record_outlined),
-                title: const Text('Use a recorded route'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _useRecordedRoute();
                 },
               ),
               // Route-derived: nothing to remove without one.
@@ -5087,6 +5114,7 @@ class _EmptyRoutePrompt extends StatelessWidget {
     required this.routing,
     required this.onPlanDestination,
     required this.onImport,
+    required this.onUseStoredRoute,
     required this.onLoadDemo,
   });
 
@@ -5094,6 +5122,7 @@ class _EmptyRoutePrompt extends StatelessWidget {
   final bool routing;
   final VoidCallback onPlanDestination;
   final VoidCallback onImport;
+  final VoidCallback onUseStoredRoute;
   final VoidCallback onLoadDemo;
 
   @override
@@ -5114,7 +5143,8 @@ class _EmptyRoutePrompt extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Enter a destination, import a GPX file, or use the demo route.',
+                'Enter a destination, reuse a recorded route or a previous '
+                'ride, import a GPX file, or use the demo route.',
                 style: TextStyle(color: Color(0xFF98A3B1)),
               ),
               const SizedBox(height: 20),
@@ -5128,6 +5158,16 @@ class _EmptyRoutePrompt extends StatelessWidget {
                       )
                     : const Icon(Icons.add_road),
                 label: const Text('Enter destination'),
+              ),
+              const SizedBox(height: 8),
+              // Stored geometry is a route source in its own right, offered
+              // here beside the file picker rather than buried behind it
+              // (#155).
+              OutlinedButton.icon(
+                key: const Key('use-stored-route-empty-button'),
+                onPressed: importing ? null : onUseStoredRoute,
+                icon: const Icon(Icons.history),
+                label: const Text('Use a saved route'),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
