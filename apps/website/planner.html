@@ -28,7 +28,7 @@
       integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK"
       crossorigin="anonymous"
     />
-    <link rel="stylesheet" href="/planner.css?v=664e88d2" />
+    <link rel="stylesheet" href="/planner.css?v=f1a3b0d1" />
     <title>Ride planner | Tail End Charlie</title>
   </head>
   <body class="planner-page">
@@ -302,6 +302,27 @@
           </div>
         </section>
 
+        <details class="marker-review" id="marker-review" hidden>
+          <summary id="marker-review-summary">Review marker positions</summary>
+          <p class="marker-review-advisory">
+            Yellow dots are suggested turn-marker positions, not instructions
+            to stop. The leader must choose a legal, visible place away from
+            live lanes. Red safety reviews need particular care.
+          </p>
+          <ul class="marker-review-list" id="marker-review-list"></ul>
+          <div class="marker-review-add">
+            <label for="marker-candidate">Detector missed a junction?</label>
+            <select id="marker-candidate"></select>
+            <button type="button" id="add-marker-candidate">
+              Add marker position
+            </button>
+          </div>
+          <div id="marker-rejected-section" hidden>
+            <h3>Rejected suggestions</h3>
+            <ul class="marker-review-list" id="marker-rejected-list"></ul>
+          </div>
+        </details>
+
         <p class="route-status" id="route-status" aria-live="polite">
           Add at least two stops to generate a route.
         </p>
@@ -358,6 +379,7 @@
             <span>Biker cafés</span>
           </label>
           <span><i class="legend-route"></i> Road route</span>
+          <span><i class="legend-marker"></i> Turn markers</span>
         </div>
       </section>
     </main>
@@ -447,6 +469,6 @@
       integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
       crossorigin="anonymous"
     ></script>
-    <script type="module" src="/planner.js?v=8620219f"></script>
+    <script type="module" src="/planner.js?v=b4e53465"></script>
   </body>
 </html>

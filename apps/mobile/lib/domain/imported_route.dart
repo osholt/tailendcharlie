@@ -124,6 +124,48 @@ class RouteWaypoint {
   }
 }
 
+/// A non-stopping control used to ask the road router for a particular road.
+///
+/// Named waypoints remain the start, destination and deliberate stops. Shaping
+/// points are stored separately so the app can render and drag them without
+/// turning them into stops or group rendezvous points (#242).
+class RouteShapingPoint {
+  const RouteShapingPoint({
+    required this.id,
+    required this.point,
+    required this.legIndex,
+  });
+
+  final String id;
+  final GeoPoint point;
+
+  /// The named-waypoint leg this point shapes: zero is between waypoints 0 and
+  /// 1. Several points on one leg retain their list order.
+  final int legIndex;
+
+  RouteShapingPoint movedTo(GeoPoint next) =>
+      RouteShapingPoint(id: id, point: next, legIndex: legIndex);
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'point': point.toJson(),
+    'legIndex': legIndex,
+  };
+
+  factory RouteShapingPoint.fromJson(Map<String, Object?> json) {
+    final rawPoint = json['point'];
+    final legIndex = json['legIndex'];
+    if (rawPoint is! Map || legIndex is! int || legIndex < 0) {
+      throw const FormatException('Route shaping point is invalid.');
+    }
+    return RouteShapingPoint(
+      id: _requiredString(json, 'id'),
+      point: GeoPoint.fromJson(Map<String, Object?>.from(rawPoint)),
+      legIndex: legIndex,
+    );
+  }
+}
+
 /// A routing or reviewed mapped instruction retained with the route geometry so
 /// navigation guidance remains available after restart and while offline.
 class RouteManeuver {
@@ -352,6 +394,7 @@ class ImportedRoute {
     required this.sourceFileName,
     required this.paths,
     required this.waypoints,
+    this.shapingPoints = const [],
     this.maneuvers = const [],
     this.markerReview = MarkerPlanReview.empty,
     this.description,
@@ -367,6 +410,7 @@ class ImportedRoute {
   final String sourceFileName;
   final List<RoutePath> paths;
   final List<RouteWaypoint> waypoints;
+  final List<RouteShapingPoint> shapingPoints;
   final List<RouteManeuver> maneuvers;
 
   /// Which suggested marking positions a person has rejected or added.
@@ -380,6 +424,7 @@ class ImportedRoute {
     sourceFileName: sourceFileName,
     paths: paths,
     waypoints: waypoints,
+    shapingPoints: shapingPoints,
     maneuvers: maneuvers,
     markerReview: review,
     preferences: preferences,
@@ -407,6 +452,21 @@ class ImportedRoute {
   int get pathPointCount =>
       paths.fold(0, (total, path) => total + path.points.length);
 
+  ImportedRoute withShapingPoints(List<RouteShapingPoint> points) =>
+      ImportedRoute(
+        id: id,
+        name: name,
+        description: description,
+        importedAt: importedAt,
+        sourceFileName: sourceFileName,
+        paths: paths,
+        waypoints: waypoints,
+        shapingPoints: List.unmodifiable(points),
+        maneuvers: maneuvers,
+        markerReview: markerReview,
+        preferences: preferences,
+      );
+
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
     'id': id,
@@ -416,6 +476,8 @@ class ImportedRoute {
     'sourceFileName': sourceFileName,
     'paths': paths.map((path) => path.toJson()).toList(),
     'waypoints': waypoints.map((waypoint) => waypoint.toJson()).toList(),
+    if (shapingPoints.isNotEmpty)
+      'shapingPoints': shapingPoints.map((point) => point.toJson()).toList(),
     if (maneuvers.isNotEmpty)
       'maneuvers': maneuvers.map((maneuver) => maneuver.toJson()).toList(),
     if (markerReview.isNotEmpty) 'markerReview': markerReview.toJson(),
@@ -433,10 +495,14 @@ class ImportedRoute {
     }
     final rawPaths = json['paths'];
     final rawWaypoints = json['waypoints'];
+    final rawShapingPoints = json['shapingPoints'] ?? const [];
     final rawManeuvers = json['maneuvers'] ?? const [];
-    if (rawPaths is! List || rawWaypoints is! List || rawManeuvers is! List) {
+    if (rawPaths is! List ||
+        rawWaypoints is! List ||
+        rawShapingPoints is! List ||
+        rawManeuvers is! List) {
       throw const FormatException(
-        'Route paths, waypoints and maneuvers must be lists.',
+        'Route paths, waypoints, shaping points and maneuvers must be lists.',
       );
     }
     final paths = rawPaths
@@ -453,6 +519,16 @@ class ImportedRoute {
             throw const FormatException('Route waypoint must be an object.');
           }
           return RouteWaypoint.fromJson(Map<String, Object?>.from(waypoint));
+        })
+        .toList(growable: false);
+    final shapingPoints = rawShapingPoints
+        .map((point) {
+          if (point is! Map) {
+            throw const FormatException(
+              'Route shaping point must be an object.',
+            );
+          }
+          return RouteShapingPoint.fromJson(Map<String, Object?>.from(point));
         })
         .toList(growable: false);
     final maneuvers = rawManeuvers
@@ -485,6 +561,7 @@ class ImportedRoute {
       sourceFileName: _requiredString(json, 'sourceFileName'),
       paths: paths,
       waypoints: waypoints,
+      shapingPoints: shapingPoints,
       maneuvers: maneuvers,
       markerReview: markerReview,
       preferences: rawPreferences is Map

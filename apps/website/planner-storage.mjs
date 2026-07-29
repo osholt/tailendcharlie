@@ -74,12 +74,14 @@ export function decodePlannerDraft(
     if (routeCoordinates.length > 200_000) return null;
     if (stops.length < 2) routeCoordinates.length = 0;
     const hasSavedRoute = routeCoordinates.length > 1;
+    const markerReview = decodeMarkerReview(draft.markerReview);
 
     return {
       savedAt: draft.savedAt,
       rideName: draft.rideName,
       stops,
       shapingPoints,
+      markerReview,
       routeCoordinates,
       routeDistance: hasSavedRoute ? validSummaryValue(draft.routeDistance) : null,
       routeDuration: hasSavedRoute ? validSummaryValue(draft.routeDuration) : null,
@@ -99,6 +101,42 @@ export function decodePlannerDraft(
   } catch {
     return null;
   }
+}
+
+function decodeMarkerReview(raw) {
+  const review = raw && typeof raw === "object" ? raw : {};
+  return {
+    rejected: decodeReviewPoints(review.rejected),
+    added: decodeReviewPoints(review.added),
+  };
+}
+
+function decodeReviewPoints(raw) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || raw.length > 500) {
+    throw new Error("Invalid saved marker review");
+  }
+  const ids = new Set();
+  return raw.map((point) => {
+    if (
+      typeof point?.id !== "string" ||
+      point.id.length === 0 ||
+      point.id.length > 120 ||
+      ids.has(point.id) ||
+      !validCoordinate(point.longitude, point.latitude)
+    ) {
+      throw new Error("Invalid saved marker review point");
+    }
+    ids.add(point.id);
+    return {
+      id: point.id,
+      longitude: Number(point.longitude),
+      latitude: Number(point.latitude),
+      ...(typeof point.label === "string" && point.label.trim()
+        ? { label: point.label.trim().slice(0, 160) }
+        : {}),
+    };
+  });
 }
 
 function validCoordinate(longitude, latitude) {

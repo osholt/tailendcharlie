@@ -199,6 +199,9 @@ class GpxParser {
       paths: selectedPaths,
       waypoints: List.unmodifiable(waypoints),
       preferences: metadata == null ? null : _routePreferences(metadata),
+      markerReview: metadata == null
+          ? MarkerPlanReview.empty
+          : _markerReview(metadata),
     );
   }
 }
@@ -225,6 +228,48 @@ RoutePreferences? _routePreferences(XmlElement metadata) {
     'avoidFerries': attribute('avoid-ferries') == 'true',
     'bywaySurface': attribute('byway-surface'),
   });
+}
+
+MarkerPlanReview _markerReview(XmlElement metadata) {
+  final element = _children(metadata, 'extensions')
+      .expand((extensions) => extensions.childElements)
+      .where((child) => child.name.local.toLowerCase() == 'marker-review')
+      .firstOrNull;
+  if (element == null) return MarkerPlanReview.empty;
+
+  List<MarkerReviewPoint> points(String kind) {
+    final children = element.childElements
+        .where((child) => child.name.local.toLowerCase() == kind)
+        .toList(growable: false);
+    if (children.length > 500) {
+      throw const GpxFormatException(
+        'The GPX file contains too many marker review positions.',
+      );
+    }
+    return children
+        .map((child) {
+          final id = child.getAttribute('id')?.trim();
+          if (id == null || id.isEmpty || id.length > 120) {
+            throw const GpxFormatException(
+              'A marker review position has an invalid identifier.',
+            );
+          }
+          final latitude = _coordinate(child, 'lat', -90, 90);
+          final longitude = _coordinate(child, 'lon', -180, 180);
+          final rawLabel = child.getAttribute('label')?.trim();
+          final label = rawLabel != null && rawLabel.length > 160
+              ? rawLabel.substring(0, 160)
+              : rawLabel;
+          return MarkerReviewPoint(
+            id: id,
+            position: GeoPoint(latitude: latitude, longitude: longitude),
+            label: label == null || label.isEmpty ? null : label,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  return MarkerPlanReview(rejected: points('rejected'), added: points('added'));
 }
 
 /// Drops a route path that describes the same journey as a track path.

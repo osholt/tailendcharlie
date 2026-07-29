@@ -40,6 +40,22 @@ void main() {
           name: 'Fuel & food',
         ),
       ],
+      markerReview: const MarkerPlanReview(
+        rejected: [
+          MarkerReviewPoint(
+            id: 'maneuver-2',
+            position: GeoPoint(latitude: 53.15, longitude: -1.25),
+            label: 'Turn left marker',
+          ),
+        ],
+        added: [
+          MarkerReviewPoint(
+            id: 'geometry-4',
+            position: GeoPoint(latitude: 53.16, longitude: -1.26),
+            label: 'Missed junction',
+          ),
+        ],
+      ),
     );
     const exporter = GpxExporter();
 
@@ -55,6 +71,8 @@ void main() {
     expect(parsed.paths, hasLength(2));
     expect(parsed.pathPointCount, 3);
     expect(parsed.waypoints.single.name, 'Fuel & food');
+    expect(parsed.markerReview.rejected.single.id, 'maneuver-2');
+    expect(parsed.markerReview.added.single.label, 'Missed junction');
     expect(exporter.fileName(route), 'peaks-dales.gpx');
   });
 }

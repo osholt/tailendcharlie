@@ -15,6 +15,10 @@ const plannerJs = await readFile(
   new URL("./planner.js", import.meta.url),
   "utf8",
 );
+const plannerCore = await readFile(
+  new URL("./planner-core.mjs", import.meta.url),
+  "utf8",
+);
 
 test("the enabled app-code action is visually distinct from disabled actions", () => {
   const enabledRule = plannerCss.match(
@@ -42,6 +46,12 @@ test("planner asset versions match their content so deployed fixes replace cache
     plannerHtml,
     new RegExp(`src="/planner\\.js\\?v=${version(plannerJs)}"`),
   );
+  assert.match(
+    plannerJs,
+    new RegExp(
+      `from "\\./planner-core\\.mjs\\?v=${version(plannerCore)}"`,
+    ),
+  );
 });
 
 test("email route is a visible route action rather than a hidden result", () => {
@@ -50,6 +60,14 @@ test("email route is a visible route action rather than a hidden result", () => 
     /<button class="button button-secondary" id="email-plan" disabled>/,
   );
   assert.match(plannerHtml, /Email route/);
+});
+
+test("marker review is keyboard-accessible and explains its advisory status", () => {
+  assert.match(plannerHtml, /id="marker-review"/);
+  assert.match(plannerHtml, /id="marker-candidate"/);
+  assert.match(plannerHtml, /Yellow dots are suggested turn-marker positions/);
+  assert.match(plannerJs, /dataset\.markerAction/);
+  assert.match(plannerJs, /"safety-review"/);
 });
 
 test("discovery source confidence is surfaced in the road details", () => {

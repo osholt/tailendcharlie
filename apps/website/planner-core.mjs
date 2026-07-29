@@ -150,6 +150,356 @@ export function routeSelfCrossingArrows(
   return arrows;
 }
 
+/// Turns an OSRM route response into the same manoeuvre shape the mobile
+/// marker planner consumes.
+export function routeManeuvers(route) {
+  return (Array.isArray(route?.legs) ? route.legs : []).flatMap((leg) =>
+    (Array.isArray(leg?.steps) ? leg.steps : []).flatMap((step) => {
+      const maneuver = step?.maneuver;
+      const location = maneuver?.location;
+      if (
+        !Array.isArray(location) ||
+        location.length < 2 ||
+        !validCoordinatePair(location) ||
+        typeof maneuver?.type !== "string"
+      ) {
+        return [];
+      }
+      return [
+        {
+          position: [Number(location[0]), Number(location[1])],
+          type: maneuver.type,
+          modifier:
+            typeof maneuver.modifier === "string" ? maneuver.modifier : null,
+          name: typeof step?.name === "string" ? step.name : null,
+          ref: typeof step?.ref === "string" ? step.ref : null,
+          exitNumber: Number.isInteger(maneuver.exit) ? maneuver.exit : null,
+          drivingSide:
+            typeof step?.driving_side === "string" ? step.driving_side : null,
+          bearingBefore: finiteNumber(maneuver.bearing_before),
+          bearingAfter: finiteNumber(maneuver.bearing_after),
+          lanes:
+            (Array.isArray(step?.intersections) ? step.intersections : []).find(
+              (intersection) =>
+                Array.isArray(intersection?.lanes) &&
+                intersection.lanes.length > 0,
+            )?.lanes || [],
+        },
+      ];
+    }),
+  );
+}
+
+/// Builds the reviewable yellow-dot plan shared by the web planner and app.
+///
+/// A dot is advisory: live-lane and multi-lane positions are deliberately
+/// classified as safety reviews, never as instructions to stop.
+export function buildRouteMarkerPlan({
+  routeCoordinates = [],
+  maneuvers = [],
+  stops = [],
+  review = {},
+} = {}) {
+  const rejectedReview = Array.isArray(review?.rejected) ? review.rejected : [];
+  const addedReview = Array.isArray(review?.added) ? review.added : [];
+  const points = [];
+  const rejectedPoints = [];
+
+  const isRejected = (point) =>
+    rejectedReview.some(
+      (rejected) =>
+        rejected?.id === point.id ||
+        (validReviewPoint(rejected) &&
+          coordinateDistance(reviewCoordinate(rejected), point.position) <= 30),
+    );
+  const collect = (point) =>
+    (isRejected(point) ? rejectedPoints : points).push(point);
+
+  maneuvers.forEach((maneuver, index) => {
+    if (
+      !validCoordinatePair(maneuver?.position) ||
+      distanceToPolyline(maneuver.position, routeCoordinates) > 30
+    ) {
+      return;
+    }
+    const type = String(maneuver.type || "").trim().toLowerCase();
+    const modifier = String(maneuver.modifier || "").trim().toLowerCase();
+    const id = `maneuver-${index}`;
+    const circular = type === "roundabout" || type === "rotary";
+    const turn = maneuverTurnDegrees(maneuver, routeCoordinates);
+
+    if (["merge", "on ramp", "off ramp"].includes(type)) {
+      collect({
+        id,
+        position: maneuver.position,
+        kind: "safety-review",
+        source: "detected",
+        label: safetyLabel(type),
+        detail:
+          "Do not stop on a live carriageway or slip road. Choose a legal regrouping or marker position elsewhere.",
+      });
+      return;
+    }
+    if (!circular && (modifier === "uturn" || (turn != null && turn >= 150))) {
+      return;
+    }
+    if (circular) {
+      const laneCount = Array.isArray(maneuver.lanes)
+        ? maneuver.lanes.length
+        : 0;
+      const safetyReview = laneCount >= 3;
+      collect({
+        id,
+        position: maneuver.position,
+        kind: safetyReview ? "safety-review" : "likely-marker",
+        source: "detected",
+        label:
+          maneuver.exitNumber == null
+            ? "Roundabout exit marker"
+            : `Roundabout exit ${maneuver.exitNumber} marker`,
+        detail: safetyReview
+          ? "Large multi-lane roundabout: inspect a safe, legal position after the required exit."
+          : "Default rule: mark the required exit only.",
+      });
+      return;
+    }
+    const decisionType = ["turn", "fork", "end of road"].includes(type);
+    const straight = !modifier || modifier === "straight";
+    if (
+      !decisionType ||
+      straight ||
+      (type !== "fork" && turn != null && turn < 20)
+    ) {
+      return;
+    }
+    collect({
+      id,
+      position: maneuver.position,
+      kind: "likely-marker",
+      source: "detected",
+      label: decisionLabel(type, modifier),
+    });
+  });
+
+  stops.forEach((stop, index) => {
+    const searchable = `${stop?.name || ""} ${stop?.description || ""} ${stop?.symbol || ""}`.toLowerCase();
+    if (!/(muster|regroup|re-group)/.test(searchable)) return;
+    const position = [Number(stop.longitude), Number(stop.latitude)];
+    if (!validCoordinatePair(position)) return;
+    collect({
+      id: `muster-${index}`,
+      position,
+      kind: "muster-point",
+      source: "detected",
+      label: String(stop.name || "").trim() || "Muster point",
+      detail: "Planned regrouping point; not a ride stop or marker role.",
+    });
+  });
+
+  for (const added of addedReview) {
+    if (!validReviewPoint(added)) continue;
+    points.push({
+      id: String(added.id),
+      position: reviewCoordinate(added),
+      kind: "likely-marker",
+      source: "manual",
+      label: String(added.label || "").trim() || "Added marker position",
+      detail: "Added during review because the detector missed it.",
+    });
+  }
+
+  const claimed = [...points, ...rejectedPoints].map((point) => point.position);
+  const candidates = [];
+  const offerCandidate = (candidate) => {
+    if (
+      claimed.some(
+        (position) => coordinateDistance(position, candidate.position) <= 30,
+      ) ||
+      candidates.some(
+        (existing) =>
+          coordinateDistance(existing.position, candidate.position) <= 30,
+      )
+    ) {
+      return;
+    }
+    claimed.push(candidate.position);
+    candidates.push(candidate);
+  };
+  maneuvers.forEach((maneuver, index) => {
+    const type = String(maneuver?.type || "").trim().toLowerCase();
+    const modifier = String(maneuver?.modifier || "").trim().toLowerCase();
+    if (
+      ["depart", "arrive"].includes(type) ||
+      !validCoordinatePair(maneuver?.position) ||
+      distanceToPolyline(maneuver.position, routeCoordinates) > 30
+    ) {
+      return;
+    }
+    const baseLabel = candidateLabel(type, modifier);
+    offerCandidate({
+      id: `maneuver-${index}`,
+      position: maneuver.position,
+      label: String(maneuver.name || "").trim()
+        ? `${baseLabel} · ${maneuver.name.trim()}`
+        : baseLabel,
+    });
+  });
+  for (
+    let index = 1;
+    index < routeCoordinates.length - 1 && candidates.length < 500;
+    index += 1
+  ) {
+    const turn = routeTurnDegrees(routeCoordinates, index);
+    if (turn < 20 || turn >= 150) continue;
+    offerCandidate({
+      id: `geometry-${index}`,
+      position: routeCoordinates[index],
+      label: `${Math.round(turn)}° bend in the route`,
+    });
+  }
+
+  return { points, rejectedPoints, candidates };
+}
+
+function safetyLabel(type) {
+  if (type === "off ramp") return "Motorway or dual-carriageway exit review";
+  if (type === "on ramp") return "Motorway or dual-carriageway entry review";
+  return "Live-lane merge review";
+}
+
+function decisionLabel(type, modifier) {
+  if (type === "fork") return modifier ? `Keep ${modifier} marker` : "Fork marker";
+  if (type === "end of road") {
+    return modifier
+      ? `End of road, turn ${modifier} marker`
+      : "End-of-road marker";
+  }
+  return modifier ? `Turn ${modifier} marker` : "Junction marker";
+}
+
+function candidateLabel(type, modifier) {
+  const where =
+    {
+      roundabout: "Roundabout",
+      rotary: "Roundabout",
+      merge: "Merge",
+      "on ramp": "Slip road on",
+      "off ramp": "Slip road off",
+      "end of road": "End of road",
+      fork: "Fork",
+      "new name": "Road name change",
+      continue: "Continue",
+      turn: "Turn",
+    }[type] ||
+    (type ? `${type[0].toUpperCase()}${type.slice(1)}` : "Junction");
+  return modifier ? `${where}, ${modifier}` : where;
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function reviewCoordinate(point) {
+  return [Number(point.longitude), Number(point.latitude)];
+}
+
+function validReviewPoint(point) {
+  return (
+    typeof point?.id === "string" &&
+    point.id.length > 0 &&
+    validCoordinatePair(reviewCoordinate(point))
+  );
+}
+
+function maneuverTurnDegrees(maneuver, routeCoordinates) {
+  if (
+    Number.isFinite(maneuver?.bearingBefore) &&
+    Number.isFinite(maneuver?.bearingAfter)
+  ) {
+    return smallestAngle(maneuver.bearingBefore, maneuver.bearingAfter);
+  }
+  if (routeCoordinates.length < 3) return null;
+  let nearestIndex = -1;
+  let nearestDistance = Infinity;
+  routeCoordinates.forEach((coordinate, index) => {
+    const distance = coordinateDistance(coordinate, maneuver.position);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+  return nearestIndex <= 0 || nearestIndex >= routeCoordinates.length - 1
+    ? null
+    : routeTurnDegrees(routeCoordinates, nearestIndex);
+}
+
+function routeTurnDegrees(routeCoordinates, index) {
+  const vertex = routeCoordinates[index];
+  let inboundIndex = index - 1;
+  while (
+    inboundIndex > 0 &&
+    coordinateDistance(routeCoordinates[inboundIndex], vertex) < 30
+  ) {
+    inboundIndex -= 1;
+  }
+  let outboundIndex = index + 1;
+  while (
+    outboundIndex < routeCoordinates.length - 1 &&
+    coordinateDistance(routeCoordinates[outboundIndex], vertex) < 30
+  ) {
+    outboundIndex += 1;
+  }
+  return smallestAngle(
+    bearing(routeCoordinates[inboundIndex], vertex),
+    bearing(vertex, routeCoordinates[outboundIndex]),
+  );
+}
+
+function smallestAngle(first, second) {
+  return Math.abs((((second - first) % 360) + 540) % 360 - 180);
+}
+
+function distanceToPolyline(point, polyline) {
+  if (!Array.isArray(polyline) || polyline.length === 0) return Infinity;
+  if (polyline.length === 1) return coordinateDistance(point, polyline[0]);
+  let nearest = Infinity;
+  for (let index = 1; index < polyline.length; index += 1) {
+    nearest = Math.min(
+      nearest,
+      distanceToSegment(point, polyline[index - 1], polyline[index]),
+    );
+  }
+  return nearest;
+}
+
+function distanceToSegment(point, start, end) {
+  const referenceLatitude = (point[1] * Math.PI) / 180;
+  const metresPerDegreeLatitude = 111195;
+  const metresPerDegreeLongitude =
+    metresPerDegreeLatitude * Math.cos(referenceLatitude);
+  const startX = normaliseLongitude(start[0] - point[0]) * metresPerDegreeLongitude;
+  const startY = (start[1] - point[1]) * metresPerDegreeLatitude;
+  const endX = normaliseLongitude(end[0] - point[0]) * metresPerDegreeLongitude;
+  const endY = (end[1] - point[1]) * metresPerDegreeLatitude;
+  const deltaX = endX - startX;
+  const deltaY = endY - startY;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared === 0) return Math.hypot(startX, startY);
+  const projection = Math.max(
+    0,
+    Math.min(1, -(startX * deltaX + startY * deltaY) / lengthSquared),
+  );
+  return Math.hypot(
+    startX + projection * deltaX,
+    startY + projection * deltaY,
+  );
+}
+
+function normaliseLongitude(value) {
+  return ((value + 540) % 360) - 180;
+}
+
 function sampleRouteCoordinates(coordinates, maximumPoints) {
   if (coordinates.length <= maximumPoints) return coordinates;
   const sampled = [];
@@ -278,6 +628,10 @@ export class StateHistory {
 /// names back into `RoutePreferences`.
 export function routePreferencesGpxExtension(preferences) {
   if (!preferences) return "";
+  return `    <extensions>${routePreferencesGpxElement(preferences)}</extensions>`;
+}
+
+function routePreferencesGpxElement(preferences) {
   const avoidUnsurfacedByways = preferences.avoidUnsurfacedByways !== false;
   const attributes = [
     ["style", String(preferences.routeStyle || "quickest")],
@@ -292,7 +646,29 @@ export function routePreferencesGpxExtension(preferences) {
   ]
     .map(([name, value]) => `${name}="${escapeXml(value)}"`)
     .join(" ");
-  return `    <extensions><tec:route-preferences ${attributes} /></extensions>`;
+  return `<tec:route-preferences ${attributes} />`;
+}
+
+export function markerReviewGpxElement(review) {
+  const entries = [
+    ["rejected", Array.isArray(review?.rejected) ? review.rejected : []],
+    ["added", Array.isArray(review?.added) ? review.added : []],
+  ].flatMap(([kind, points]) =>
+    points.flatMap((point) => {
+      if (!validReviewPoint(point)) return [];
+      const label = String(point.label || "").trim();
+      const attributes = [
+        `id="${escapeXml(point.id)}"`,
+        `lat="${formatCoordinate(Number(point.latitude))}"`,
+        `lon="${formatCoordinate(Number(point.longitude))}"`,
+        ...(label ? [`label="${escapeXml(label)}"`] : []),
+      ].join(" ");
+      return [`<tec:${kind} ${attributes} />`];
+    }),
+  );
+  return entries.length
+    ? `<tec:marker-review>${entries.join("")}</tec:marker-review>`
+    : "";
 }
 
 export function buildGpx({
@@ -301,6 +677,7 @@ export function buildGpx({
   routeCoordinates,
   createdAt,
   preferences = null,
+  markerReview = null,
 }) {
   const safeName = String(rideName).trim();
   if (!safeName) throw new Error("Name the ride before downloading it.");
@@ -332,7 +709,13 @@ export function buildGpx({
     })
     .join("\n");
 
-  const preferencesExtension = routePreferencesGpxExtension(preferences);
+  const metadataExtensionElements = [
+    preferences ? routePreferencesGpxElement(preferences) : "",
+    markerReviewGpxElement(markerReview),
+  ].filter(Boolean);
+  const metadataExtensions = metadataExtensionElements.length
+    ? `    <extensions>${metadataExtensionElements.join("")}</extensions>`
+    : "";
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<gpx version="1.1" creator="Tail End Charlie" xmlns="http://www.topografix.com/GPX/1/1" xmlns:tec="https://tailendcharlie.app/gpx/1">',
@@ -340,7 +723,7 @@ export function buildGpx({
     `    <name>${escapeXml(safeName)}</name>`,
     "    <desc>Road-following group ride planned at tailendcharlie.app.</desc>",
     `    <time>${timestamp}</time>`,
-    ...(preferencesExtension ? [preferencesExtension] : []),
+    ...(metadataExtensions ? [metadataExtensions] : []),
     "  </metadata>",
     waypoints,
     "  <trk>",

@@ -1,5 +1,6 @@
 import {
   buildGpx,
+  buildRouteMarkerPlan,
   chooseRoadRoute,
   decodePolyline,
   formatDistance,
@@ -9,9 +10,10 @@ import {
   motorcycleCostingOptions,
   requiresMotorcycleCosting,
   routeBendScore,
+  routeManeuvers,
   routeSelfCrossingArrows,
   StateHistory,
-} from "./planner-core.mjs";
+} from "./planner-core.mjs?v=528fa175";
 import {
   BIKER_PLACES,
   bikerPlaceKey,
@@ -100,6 +102,13 @@ const elements = {
   layerGoodRoad: document.querySelector("#layer-good-road"),
   layerMountainPass: document.querySelector("#layer-mountain-pass"),
   layerTwisty: document.querySelector("#layer-twisty"),
+  markerCandidate: document.querySelector("#marker-candidate"),
+  markerReview: document.querySelector("#marker-review"),
+  markerReviewList: document.querySelector("#marker-review-list"),
+  markerReviewSummary: document.querySelector("#marker-review-summary"),
+  markerRejectedList: document.querySelector("#marker-rejected-list"),
+  markerRejectedSection: document.querySelector("#marker-rejected-section"),
+  addMarkerCandidate: document.querySelector("#add-marker-candidate"),
   placeQuery: document.querySelector("#place-query"),
   placeSearch: document.querySelector("#place-search"),
   rideName: document.querySelector("#ride-name"),
@@ -129,6 +138,8 @@ let stops = [];
 let shapingPoints = [];
 let routeCoordinates = [];
 let routeLegGeometries = [];
+let routeManeuverList = [];
+let markerReview = { rejected: [], added: [] };
 let routedControls = [];
 let routeDistance = null;
 let routeDuration = null;
@@ -296,6 +307,29 @@ map.on("load", () => {
       "line-opacity": 0.01,
     },
   });
+  map.addSource("route-marker-plan", {
+    type: "geojson",
+    data: pointData([]),
+  });
+  map.addLayer({
+    id: "route-marker-dots",
+    type: "circle",
+    source: "route-marker-plan",
+    paint: {
+      "circle-color": [
+        "match",
+        ["get", "kind"],
+        "safety-review",
+        "#ff6b6b",
+        "muster-point",
+        "#54e1c4",
+        "#ffd166",
+      ],
+      "circle-radius": ["case", ["==", ["get", "source"], "manual"], 8, 6],
+      "circle-stroke-color": "#171823",
+      "circle-stroke-width": 2,
+    },
+  });
   map.addSource("biker-places", {
     type: "geojson",
     data: bikerPlacesGeoJson(),
@@ -457,6 +491,9 @@ elements.clearRoute.addEventListener("click", clearRoute);
 elements.resetAdjustments.addEventListener("click", resetRouteAdjustments);
 elements.undoRoute.addEventListener("click", undoRouteChange);
 elements.redoRoute.addEventListener("click", redoRouteChange);
+elements.markerReviewList.addEventListener("click", handleMarkerReviewAction);
+elements.markerRejectedList.addEventListener("click", handleMarkerReviewAction);
+elements.addMarkerCandidate.addEventListener("click", addSelectedMarkerCandidate);
 elements.clearSavedDraft.addEventListener("click", clearSavedPlannerData);
 elements.download.addEventListener("click", downloadGpx);
 elements.createPlanCode.addEventListener("click", () => void createPlanCode());
@@ -793,6 +830,8 @@ function clearRoute() {
   routeCoordinates = [];
   routeLegGeometries = [];
   routedControls = [];
+  routeManeuverList = [];
+  markerReview = { rejected: [], added: [] };
   renderStops();
   setSummary();
   setStatus("Add at least two stops to generate a route.");
@@ -933,6 +972,7 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
     routeCoordinates = [];
     routeLegGeometries = [];
     routedControls = [];
+    routeManeuverList = [];
     setSummary();
     updateMapLines();
     updateDownloadState();
@@ -951,6 +991,7 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
     const route = await requestRoadRoute(controls, routeRequest.signal);
     if (requestSequence !== routeRequestSequence) return;
     routeCoordinates = route.geometry.coordinates;
+    routeManeuverList = routeManeuvers(route);
     routedControls = controls;
     routeLegGeometries =
       route.legGeometries ||
@@ -1091,6 +1132,151 @@ function updateMapLines(draftControls = routingControls()) {
     );
     map.getSource("route-crossing-arrows")?.setData(pointData(crossingArrows));
   }
+  updateMarkerReview();
+}
+
+function updateMarkerReview() {
+  const plan = buildRouteMarkerPlan({
+    routeCoordinates,
+    maneuvers: routeManeuverList,
+    stops,
+    review: markerReview,
+  });
+  map
+    .getSource("route-marker-plan")
+    ?.setData(
+      pointData(
+        plan.points.map((point) => ({
+          coordinate: point.position,
+          properties: {
+            id: point.id,
+            kind: point.kind,
+            source: point.source,
+            label: point.label,
+          },
+        })),
+      ),
+    );
+
+  elements.markerReview.hidden = routeCoordinates.length < 2;
+  const suggestions = plan.points.filter(
+    (point) => point.kind !== "muster-point",
+  );
+  elements.markerReviewSummary.textContent = `Review marker positions · ${suggestions.length} active`;
+  elements.markerReviewList.replaceChildren(
+    ...plan.points.map((point) =>
+      markerReviewListItem(point, {
+        action: point.source === "manual" ? "remove" : "reject",
+        actionLabel: point.source === "manual" ? "Remove" : "Reject",
+      }),
+    ),
+  );
+
+  elements.markerRejectedSection.hidden = plan.rejectedPoints.length === 0;
+  elements.markerRejectedList.replaceChildren(
+    ...plan.rejectedPoints.map((point) =>
+      markerReviewListItem(point, {
+        action: "restore",
+        actionLabel: "Restore",
+      }),
+    ),
+  );
+
+  const selectedCandidate = elements.markerCandidate.value;
+  elements.markerCandidate.replaceChildren(
+    ...[
+      ["", plan.candidates.length ? "Choose a passed junction" : "No other junctions detected"],
+      ...plan.candidates.map((candidate) => [candidate.id, candidate.label]),
+    ].map(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      return option;
+    }),
+  );
+  if (plan.candidates.some((candidate) => candidate.id === selectedCandidate)) {
+    elements.markerCandidate.value = selectedCandidate;
+  }
+  elements.markerCandidate.disabled = plan.candidates.length === 0;
+  elements.addMarkerCandidate.disabled =
+    plan.candidates.length === 0 || !elements.markerCandidate.value;
+  elements.markerCandidate.onchange = () => {
+    elements.addMarkerCandidate.disabled = !elements.markerCandidate.value;
+  };
+  elements.markerCandidate.dataset.candidates = JSON.stringify(plan.candidates);
+}
+
+function markerReviewListItem(point, { action, actionLabel }) {
+  const item = document.createElement("li");
+  const dot = document.createElement("span");
+  dot.className = `marker-review-dot ${point.kind}`;
+  dot.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  const category = {
+    "safety-review": "Safety review",
+    "muster-point": "Muster point",
+  }[point.kind] || (point.source === "manual" ? "Added marker" : "Turn marker");
+  label.textContent = `${category}: ${point.label}`;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.markerAction = action;
+  button.dataset.markerId = point.id;
+  button.dataset.markerLongitude = String(point.position[0]);
+  button.dataset.markerLatitude = String(point.position[1]);
+  button.dataset.markerLabel = point.label;
+  button.textContent = actionLabel;
+  item.append(dot, label, button);
+  return item;
+}
+
+function handleMarkerReviewAction(event) {
+  const button = event.target.closest("[data-marker-action]");
+  if (!button) return;
+  const action = button.dataset.markerAction;
+  const id = button.dataset.markerId;
+  if (action === "restore" || action === "remove") {
+    markerReview = {
+      rejected: markerReview.rejected.filter((point) => point.id !== id),
+      added: markerReview.added.filter((point) => point.id !== id),
+    };
+  } else if (action === "reject") {
+    markerReview = {
+      rejected: [
+        ...markerReview.rejected.filter((point) => point.id !== id),
+        {
+          id,
+          longitude: Number(button.dataset.markerLongitude),
+          latitude: Number(button.dataset.markerLatitude),
+          label: button.dataset.markerLabel,
+        },
+      ],
+      added: markerReview.added.filter((point) => point.id !== id),
+    };
+  }
+  updateMarkerReview();
+  scheduleDraftSave();
+}
+
+function addSelectedMarkerCandidate() {
+  const id = elements.markerCandidate.value;
+  if (!id) return;
+  const candidates = JSON.parse(elements.markerCandidate.dataset.candidates || "[]");
+  const candidate = candidates.find((item) => item.id === id);
+  if (!candidate) return;
+  markerReview = {
+    rejected: markerReview.rejected.filter((point) => point.id !== id),
+    added: [
+      ...markerReview.added.filter((point) => point.id !== id),
+      {
+        id,
+        longitude: candidate.position[0],
+        latitude: candidate.position[1],
+        label: candidate.label,
+      },
+    ],
+  };
+  updateMarkerReview();
+  scheduleDraftSave();
 }
 
 function setSummary(distance, duration, bendScore) {
@@ -1130,6 +1316,7 @@ function downloadGpx() {
       routeCoordinates,
       createdAt: new Date(),
       preferences: routedControls ? routePreferences() : null,
+      markerReview,
     });
     const blob = new Blob([gpx], { type: "application/gpx+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -1162,6 +1349,7 @@ async function createPlanCode() {
       routeCoordinates,
       createdAt: new Date(),
       preferences: routedControls ? routePreferences() : null,
+      markerReview,
     });
     const plan = await createRoutePlan({
       apiBase: RELAY_API_URL,
@@ -1298,10 +1486,42 @@ function parsePlanGpx(gpx, fallbackName) {
     childText(metadata, "name") ||
     childText(track, "name") ||
     "Shared ride";
+  const markerReviewElement = pointElements("marker-review")[0];
+  const reviewPoints = (kind) => {
+    const children = markerReviewElement
+      ? Array.from(markerReviewElement.children).filter(
+          (child) => child.localName === kind,
+        )
+      : [];
+    if (children.length > 500) {
+      throw new Error("The shared route contains too many marker review positions.");
+    }
+    return children.map((child) => {
+            const id = child.getAttribute("id")?.trim();
+            const longitude = Number(child.getAttribute("lon"));
+            const latitude = Number(child.getAttribute("lat"));
+            if (!id || id.length > 120 || !isCoordinate(longitude, latitude)) {
+              throw new Error(
+                "The shared route contains an invalid marker review position.",
+              );
+            }
+            const label = child.getAttribute("label")?.trim();
+            return {
+              id,
+              longitude,
+              latitude,
+              ...(label ? { label: label.slice(0, 160) } : {}),
+            };
+          });
+  };
   return {
     name: cleanPlaceName(name),
     stops: parsedStops,
     routeCoordinates: parsedRoute,
+    markerReview: {
+      rejected: reviewPoints("rejected"),
+      added: reviewPoints("added"),
+    },
   };
 }
 
@@ -1313,6 +1533,8 @@ function replaceRouteWithPlan(plan) {
   clearShapingPoints();
   routeCoordinates = plan.routeCoordinates;
   routeLegGeometries = [];
+  routeManeuverList = [];
+  markerReview = plan.markerReview || { rejected: [], added: [] };
   routedControls = [];
   restoringDraft = true;
   elements.rideName.value = plan.name;
@@ -1754,6 +1976,7 @@ function savePlannerDraft() {
       encodePlannerDraft({
         ...routeStateSnapshot(),
         rideName: elements.rideName.value,
+        markerReview,
         routeCoordinates,
         routeDistance,
         routeDuration,
@@ -1803,6 +2026,7 @@ function restorePlannerDraft() {
   for (const shape of draft.shapingPoints) {
     createShapingPoint(shape, shapingPoints.length);
   }
+  markerReview = draft.markerReview;
   routeCoordinates = draft.routeCoordinates;
   routedControls = routingControls();
   routeDistance = draft.routeDistance;
@@ -2245,6 +2469,7 @@ async function runRoutePreview() {
     const route = await requestRoadRoute(controls, previewRouteRequest.signal);
     if (sequence !== previewRouteSequence) return;
     routeCoordinates = route.geometry.coordinates;
+    routeManeuverList = routeManeuvers(route);
     setSummary(route.distance, route.duration, routeBendScore(route));
     updateMapLines(controls);
   } catch (error) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -8,11 +10,18 @@ import '../../services/basemap_configuration.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/route_marker_plan.dart';
+import '../../services/route_reshape_planner.dart';
 import '../../services/route_twistiness.dart';
 import 'maneuver_list_screen.dart';
 import 'resolved_route_map_preview.dart';
 
 enum RouteReviewAction { cancel, edit, confirm }
+
+typedef RouteReshapeCallback =
+    Future<RouteReshapeResult> Function(
+      ImportedRoute route,
+      List<RouteShapingPoint> shapingPoints,
+    );
 
 class RouteReviewScreen extends StatefulWidget {
   const RouteReviewScreen({
@@ -27,6 +36,8 @@ class RouteReviewScreen extends StatefulWidget {
     this.previousRoute,
     this.canEditStops = false,
     this.onMarkerReviewChanged,
+    this.onReshapeRoute,
+    this.onRouteChanged,
   });
 
   final ImportedRoute route;
@@ -47,6 +58,8 @@ class RouteReviewScreen extends StatefulWidget {
   /// it with the route it belongs to. Assistance only suggests; this is where
   /// the person reviewing says which suggestions they will actually use (#179).
   final ValueChanged<MarkerPlanReview>? onMarkerReviewChanged;
+  final RouteReshapeCallback? onReshapeRoute;
+  final ValueChanged<ImportedRoute>? onRouteChanged;
 
   static Future<RouteReviewAction> show(
     BuildContext context, {
@@ -60,6 +73,8 @@ class RouteReviewScreen extends StatefulWidget {
     ImportedRoute? previousRoute,
     bool canEditStops = false,
     ValueChanged<MarkerPlanReview>? onMarkerReviewChanged,
+    RouteReshapeCallback? onReshapeRoute,
+    ValueChanged<ImportedRoute>? onRouteChanged,
   }) async =>
       await Navigator.of(context).push<RouteReviewAction>(
         MaterialPageRoute(
@@ -75,6 +90,8 @@ class RouteReviewScreen extends StatefulWidget {
             previousRoute: previousRoute,
             canEditStops: canEditStops,
             onMarkerReviewChanged: onMarkerReviewChanged,
+            onReshapeRoute: onReshapeRoute,
+            onRouteChanged: onRouteChanged,
           ),
         ),
       ) ??
@@ -86,14 +103,29 @@ class RouteReviewScreen extends StatefulWidget {
 
 class _RouteReviewScreenState extends State<RouteReviewScreen> {
   static const _analyzer = RouteMarkerPlanAnalyzer();
+  static const _reshapePreviewDelay = Duration(milliseconds: 450);
 
   late MarkerPlanReview _markerReview = widget.route.markerReview;
+  late ImportedRoute _route = widget.route;
+  late ImportedRoute _lastSuccessfulRoute = widget.route;
+  late double? _distanceMeters = widget.distanceMeters;
+  late Duration? _duration = widget.duration;
+  late double? _twistinessScore = widget.twistinessScore;
+  final List<List<RouteShapingPoint>> _reshapeHistory = [];
+  Timer? _reshapeTimer;
+  int _reshapeGeneration = 0;
+  String? _activeShapingPointId;
+  String? _reshapeError;
+  bool _reshapeEnabled = false;
+  bool _reshapeQueued = false;
+  bool _reshaping = false;
+  int _shapeSequence = 0;
 
   DistanceUnit get distanceUnit => widget.distanceUnit;
   BasemapConfiguration get basemapConfiguration => widget.basemapConfiguration;
-  double? get distanceMeters => widget.distanceMeters;
-  Duration? get duration => widget.duration;
-  double? get twistinessScore => widget.twistinessScore;
+  double? get distanceMeters => _distanceMeters;
+  Duration? get duration => _duration;
+  double? get twistinessScore => _twistinessScore;
   List<String> get warnings => widget.warnings;
   ImportedRoute? get previousRoute => widget.previousRoute;
   bool get canEditStops => widget.canEditStops;
@@ -101,11 +133,133 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   /// The route as reviewed so far. Everything downstream - the plan, the pins,
   /// the counts - reads this, so the map and the list can never disagree about
   /// which positions are still suggested.
-  ImportedRoute get route => widget.route.withMarkerReview(_markerReview);
+  ImportedRoute get route => _route.withMarkerReview(_markerReview);
 
   void _applyReview(MarkerPlanReview review) {
     setState(() => _markerReview = review);
     widget.onMarkerReviewChanged?.call(review);
+  }
+
+  @override
+  void dispose() {
+    _reshapeTimer?.cancel();
+    _reshapeGeneration += 1;
+    super.dispose();
+  }
+
+  void _beginRouteReshape(RoutePreviewReshapeStart start) {
+    if (widget.onReshapeRoute == null) return;
+    final current = route.shapingPoints;
+    _reshapeHistory.add(List.unmodifiable(current));
+    if (_reshapeHistory.length > 20) _reshapeHistory.removeAt(0);
+    final existingIndex = start.shapingPointIndex;
+    final updated =
+        existingIndex != null &&
+            existingIndex >= 0 &&
+            existingIndex < current.length
+        ? current
+        : insertRouteShapingPoint(
+            route,
+            current,
+            start.point,
+            id: 'shape-${DateTime.now().microsecondsSinceEpoch}-${_shapeSequence++}',
+          );
+    final activeIndex =
+        existingIndex ??
+        updated.indexWhere(
+          (point) => !current.any((existing) => existing.id == point.id),
+        );
+    if (activeIndex < 0 || activeIndex >= updated.length) return;
+    setState(() {
+      _activeShapingPointId = updated[activeIndex].id;
+      _route = _route.withShapingPoints(updated);
+      _reshapeError = null;
+    });
+  }
+
+  void _updateRouteReshape(GeoPoint point) {
+    final activeId = _activeShapingPointId;
+    if (activeId == null) return;
+    final updated = [
+      for (final shapingPoint in route.shapingPoints)
+        shapingPoint.id == activeId
+            ? shapingPoint.movedTo(point)
+            : shapingPoint,
+    ];
+    setState(() => _route = _route.withShapingPoints(updated));
+    _queueReshape();
+  }
+
+  void _endRouteReshape() {
+    if (_activeShapingPointId == null) return;
+    _activeShapingPointId = null;
+    _queueReshape(immediate: true);
+  }
+
+  void _removeShapingPoint(String id) {
+    _reshapeHistory.add(List.unmodifiable(route.shapingPoints));
+    final updated = route.shapingPoints
+        .where((point) => point.id != id)
+        .toList(growable: false);
+    setState(() {
+      _route = _route.withShapingPoints(updated);
+      _reshapeError = null;
+    });
+    _queueReshape(immediate: true);
+  }
+
+  void _undoReshape() {
+    if (_reshapeHistory.isEmpty) return;
+    final previous = _reshapeHistory.removeLast();
+    setState(() {
+      _route = _route.withShapingPoints(previous);
+      _reshapeError = null;
+    });
+    _queueReshape(immediate: true);
+  }
+
+  void _queueReshape({bool immediate = false}) {
+    final callback = widget.onReshapeRoute;
+    if (callback == null) return;
+    _reshapeTimer?.cancel();
+    final generation = ++_reshapeGeneration;
+    setState(() => _reshapeQueued = true);
+    _reshapeTimer = Timer(
+      immediate ? Duration.zero : _reshapePreviewDelay,
+      () async {
+        _reshapeTimer = null;
+        if (!mounted || generation != _reshapeGeneration) return;
+        setState(() {
+          _reshapeQueued = false;
+          _reshaping = true;
+          _reshapeError = null;
+        });
+        try {
+          final result = await callback(route, route.shapingPoints);
+          if (!mounted || generation != _reshapeGeneration) return;
+          setState(() {
+            _route = result.route.withMarkerReview(_markerReview);
+            _lastSuccessfulRoute = _route;
+            _distanceMeters = result.distanceMeters;
+            _duration = result.duration;
+            _twistinessScore = result.twistinessScore;
+          });
+          widget.onRouteChanged?.call(_route);
+        } on Object catch (error) {
+          if (!mounted || generation != _reshapeGeneration) return;
+          setState(() {
+            _route = _lastSuccessfulRoute;
+            _reshapeError =
+                'The route could not be reshaped. The last road route is still '
+                'shown and unchanged. $error';
+          });
+        } finally {
+          if (mounted && generation == _reshapeGeneration) {
+            setState(() => _reshaping = false);
+          }
+        }
+      },
+    );
   }
 
   void _reject(MarkerPlanPoint point) =>
@@ -203,10 +357,19 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
           icon: const Icon(Icons.close),
         ),
         actions: [
+          if (canEditStops)
+            IconButton(
+              key: const Key('edit-reviewed-route'),
+              tooltip: 'Edit stops',
+              onPressed: () =>
+                  Navigator.of(context).pop(RouteReviewAction.edit),
+              icon: const Icon(Icons.edit_location_alt_outlined),
+            ),
           TextButton.icon(
             key: const Key('confirm-reviewed-route'),
-            onPressed: () =>
-                Navigator.of(context).pop(RouteReviewAction.confirm),
+            onPressed: _reshapeQueued || _reshaping
+                ? null
+                : () => Navigator.of(context).pop(RouteReviewAction.confirm),
             icon: const Icon(Icons.check),
             label: const Text('Confirm'),
           ),
@@ -248,8 +411,20 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                                 ),
                               ),
                             )
+                            .followedBy(
+                              route.shapingPoints.map(
+                                (point) => RoutePreviewPin(
+                                  point: point.point,
+                                  kind: 'shape',
+                                ),
+                              ),
+                            )
                             .toList(growable: false),
                         basemapConfiguration: basemapConfiguration,
+                        reshapeEnabled: _reshapeEnabled,
+                        onReshapeStart: _beginRouteReshape,
+                        onReshapeUpdate: _updateRouteReshape,
+                        onReshapeEnd: _endRouteReshape,
                       )
                     : FlutterMap(
                         key: const Key('route-review-map'),
@@ -455,6 +630,71 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                         child: _WarningCard(warning: warning),
                       ),
                   ],
+                  if (_reshapeError case final error?) ...[
+                    const SizedBox(height: 8),
+                    _WarningCard(warning: error),
+                  ],
+                  if (_reshaping || _reshapeQueued) ...[
+                    const SizedBox(height: 10),
+                    const LinearProgressIndicator(
+                      key: Key('route-reshape-progress'),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Recalculating the road route…',
+                      style: TextStyle(color: Color(0xFF98A3B1)),
+                    ),
+                  ],
+                  if (widget.onReshapeRoute != null) ...[
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        FilterChip(
+                          key: const Key('toggle-route-reshape'),
+                          selected: _reshapeEnabled,
+                          avatar: const Icon(Icons.gesture, size: 18),
+                          label: Text(
+                            _reshapeEnabled
+                                ? 'Finish reshaping'
+                                : 'Reshape route',
+                          ),
+                          onSelected: (selected) =>
+                              setState(() => _reshapeEnabled = selected),
+                        ),
+                        if (_reshapeHistory.isNotEmpty)
+                          ActionChip(
+                            key: const Key('undo-route-reshape'),
+                            avatar: const Icon(Icons.undo, size: 18),
+                            label: const Text('Undo adjustment'),
+                            onPressed: _undoReshape,
+                          ),
+                      ],
+                    ),
+                    if (route.shapingPoints.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final entry in route.shapingPoints.indexed)
+                            InputChip(
+                              key: Key('route-shaping-point-${entry.$2.id}'),
+                              avatar: const Icon(
+                                Icons.adjust,
+                                size: 16,
+                                color: Color(0xFFB37CFF),
+                              ),
+                              label: Text('Adjustment ${entry.$1 + 1}'),
+                              tooltip:
+                                  'Route shaping point. This is not a stop.',
+                              onDeleted: () => _removeShapingPoint(entry.$2.id),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
                   if (markerPlan.points.isNotEmpty ||
                       markerPlan.rejectedPoints.isNotEmpty ||
                       route.maneuvers.isNotEmpty) ...[
@@ -614,15 +854,6 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                     ),
                     const SizedBox(height: 10),
                   ],
-                  if (canEditStops)
-                    OutlinedButton.icon(
-                      key: const Key('edit-reviewed-route'),
-                      onPressed: () =>
-                          Navigator.of(context).pop(RouteReviewAction.edit),
-                      icon: const Icon(Icons.edit_location_alt_outlined),
-                      label: const Text('Edit stops'),
-                    ),
-                  if (canEditStops) const SizedBox(height: 10),
                   TextButton(
                     key: const Key('cancel-reviewed-route'),
                     onPressed: () =>

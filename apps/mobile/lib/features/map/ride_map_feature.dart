@@ -50,6 +50,7 @@ import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_progress.dart';
+import '../../services/route_reshape_planner.dart';
 import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
@@ -4225,6 +4226,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ];
     // The review screen is where suggested marking positions are accepted or
     // rejected, so its decisions have to come back out with the route (#179).
+    var reviewedRoute = activeRoute;
     var markerReview = activeRoute.markerReview;
     final action = await RouteReviewScreen.show(
       context,
@@ -4238,8 +4240,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
       previousRoute: previousRoute ?? _route,
       canEditStops: canEditStops,
       onMarkerReviewChanged: (review) => markerReview = review,
+      onReshapeRoute: (candidate, shapingPoints) => RouteReshapePlanner(
+        routingService: _roadRoutingService,
+      ).reshape(candidate, shapingPoints),
+      onRouteChanged: (candidate) => reviewedRoute = candidate,
     );
-    return (action: action, route: activeRoute.withMarkerReview(markerReview));
+    return (
+      action: action,
+      route: reviewedRoute.withMarkerReview(markerReview),
+    );
   }
 
   Future<ImportedRoute> _commitRoute(ImportedRoute activeRoute) async {

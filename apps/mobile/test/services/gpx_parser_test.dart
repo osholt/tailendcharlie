@@ -85,6 +85,35 @@ void main() {
     expect(route.paths.single.kind.name, 'route');
   });
 
+  test('imports reviewed marker decisions from the web planner', () {
+    final route = parser.parse(
+      _bytes('''
+        <gpx version="1.1"
+             xmlns="http://www.topografix.com/GPX/1/1"
+             xmlns:tec="https://tailendcharlie.app/gpx/1">
+          <metadata><extensions><tec:marker-review>
+            <tec:rejected id="old-maneuver" lat="51.1000000" lon="-2.1000000"
+              label="Turn right marker" />
+            <tec:added id="geometry-4" lat="51.1500000" lon="-2.1500000"
+              label="Missed junction" />
+          </tec:marker-review></extensions></metadata>
+          <trk><trkseg>
+            <trkpt lat="51.0" lon="-2.0" />
+            <trkpt lat="51.2" lon="-2.2" />
+          </trkseg></trk>
+        </gpx>
+      '''),
+      routeId: 'reviewed',
+      sourceFileName: 'reviewed.gpx',
+      importedAt: DateTime.utc(2026, 7, 29),
+    );
+
+    expect(route.markerReview.rejected.single.id, 'old-maneuver');
+    expect(route.markerReview.rejected.single.label, 'Turn right marker');
+    expect(route.markerReview.added.single.id, 'geometry-4');
+    expect(route.markerReview.added.single.position.latitude, 51.15);
+  });
+
   test('preserves Scenic soft points without importing duplicate routes', () {
     final route = parser.parse(
       _bytes('''

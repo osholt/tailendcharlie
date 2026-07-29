@@ -689,6 +689,101 @@
   font-size: 1rem;
 }
 
+.marker-review {
+  margin-top: 12px;
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 209, 102, 0.06);
+}
+
+.marker-review summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.marker-review-advisory {
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.marker-review-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.marker-review-list li {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.marker-review-list button,
+.marker-review-add button {
+  border: 1px solid rgba(253, 245, 240, 0.22);
+  border-radius: 7px;
+  padding: 5px 7px;
+  color: var(--ink);
+  background: #292a36;
+  cursor: pointer;
+  font-size: 0.68rem;
+}
+
+.marker-review-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ffd166;
+}
+
+.marker-review-dot.safety-review {
+  background: #ff6b6b;
+}
+
+.marker-review-dot.muster-point {
+  background: var(--teal);
+}
+
+.marker-review-add {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.marker-review-add label,
+.marker-review h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.marker-review-add select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px;
+  color: var(--ink);
+  background: #20212d;
+  font-size: 0.72rem;
+}
+
+#marker-rejected-section {
+  margin-top: 12px;
+}
+
 .route-status {
   min-height: 36px;
   margin: 10px 0 0;
@@ -898,6 +993,14 @@
   height: 3px;
   border-radius: 999px;
   background: var(--purple-bright);
+}
+
+.legend-marker {
+  width: 9px;
+  height: 9px;
+  border: 2px solid #171823;
+  border-radius: 50%;
+  background: #ffd166;
 }
 
 .planner-map-shell.is-expanded,
