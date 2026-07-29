@@ -239,6 +239,7 @@ class RideController extends ChangeNotifier {
       localJoinedAt: activeSession.joinedAt,
       localMotorcycleStyle: activeSession.motorcycleStyle,
       localRiderColor: activeSession.riderColor,
+      localRiderSymbol: activeSession.riderSymbol,
       rideStartedAt: rideStartedAt,
       rideEndedAt: _rideEndedAt,
       transportByEventId: _transportByEventId,
@@ -594,6 +595,7 @@ class RideController extends ChangeNotifier {
   Future<void> createRide(
     String displayName, {
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderSymbol riderSymbol = riderSymbolDefault,
     RiderColor riderColor = riderColorDefault,
     String? rideName,
   }) async {
@@ -601,6 +603,7 @@ class RideController extends ChangeNotifier {
       await _createRide(
         displayName: displayName,
         motorcycleStyle: motorcycleStyle,
+        riderSymbol: riderSymbol,
         riderColor: riderColor,
         rideName: rideName,
       );
@@ -610,6 +613,7 @@ class RideController extends ChangeNotifier {
   Future<void> createSimulationRide({
     int riderCount = RideSession.defaultSimulationRiderCount,
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderSymbol riderSymbol = riderSymbolDefault,
     RiderColor riderColor = riderColorDefault,
   }) async {
     await _run(() async {
@@ -618,6 +622,7 @@ class RideController extends ChangeNotifier {
         isSimulation: true,
         simulationRiderCount: _validatedSimulationRiderCount(riderCount),
         motorcycleStyle: motorcycleStyle,
+        riderSymbol: riderSymbol,
         riderColor: riderColor,
       );
     });
@@ -641,6 +646,7 @@ class RideController extends ChangeNotifier {
           riderCount ?? activeSession.simulationRiderCount,
         ),
         motorcycleStyle: activeSession.motorcycleStyle,
+        riderSymbol: activeSession.riderSymbol,
         riderColor: activeSession.riderColor,
         rideName: activeSession.rideName,
       );
@@ -674,6 +680,7 @@ class RideController extends ChangeNotifier {
     String rideCode,
     String displayName, {
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderSymbol riderSymbol = riderSymbolDefault,
     RiderColor riderColor = riderColorDefault,
     String? joinToken,
   }) async {
@@ -697,6 +704,7 @@ class RideController extends ChangeNotifier {
         role: RideRole.rider,
         joinedAt: now,
         motorcycleStyle: motorcycleStyle,
+        riderSymbol: riderSymbol,
         riderColor: riderColor,
       );
       _session = session;
@@ -708,7 +716,9 @@ class RideController extends ChangeNotifier {
         payload: {
           'displayName': session.displayName,
           'role': session.role.name,
-          'motorcycleStyle': session.motorcycleStyle.name,
+          'motorcycleStyle': session.riderSymbol.wireValue(
+            session.motorcycleStyle,
+          ),
           'riderColor': session.riderColor.name,
         },
       );
@@ -1490,6 +1500,7 @@ class RideController extends ChangeNotifier {
     bool isSimulation = false,
     int simulationRiderCount = RideSession.defaultSimulationRiderCount,
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderSymbol riderSymbol = riderSymbolDefault,
     RiderColor riderColor = riderColorDefault,
     String? rideName,
   }) async {
@@ -1508,6 +1519,7 @@ class RideController extends ChangeNotifier {
       isSimulation: isSimulation,
       simulationRiderCount: simulationRiderCount,
       motorcycleStyle: motorcycleStyle,
+      riderSymbol: riderSymbol,
       riderColor: riderColor,
       rideName: normalisedRideName == null || normalisedRideName.isEmpty
           ? null
@@ -1521,7 +1533,9 @@ class RideController extends ChangeNotifier {
         'displayName': session.displayName,
         'role': session.role.name,
         if (isSimulation) 'simulation': true,
-        'motorcycleStyle': session.motorcycleStyle.name,
+        'motorcycleStyle': session.riderSymbol.wireValue(
+          session.motorcycleStyle,
+        ),
         'riderColor': session.riderColor.name,
         if (session.rideName != null) 'rideName': session.rideName,
       },

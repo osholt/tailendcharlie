@@ -22,6 +22,7 @@ class RideSession {
     this.isSimulation = false,
     this.simulationRiderCount = defaultSimulationRiderCount,
     this.motorcycleStyle = motorcycleIconStyleDefault,
+    this.riderSymbol = riderSymbolDefault,
     this.riderColor = riderColorDefault,
     this.rideName,
   }) : assert(
@@ -47,6 +48,7 @@ class RideSession {
   final bool isSimulation;
   final int simulationRiderCount;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderSymbol riderSymbol;
   final RiderColor riderColor;
 
   /// Optional, leader-chosen at creation. Never required: rides are always
@@ -69,6 +71,7 @@ class RideSession {
     isSimulation: isSimulation,
     simulationRiderCount: simulationRiderCount ?? this.simulationRiderCount,
     motorcycleStyle: motorcycleStyle,
+    riderSymbol: riderSymbol,
     riderColor: riderColor,
     rideName: rideName,
   );
@@ -85,6 +88,7 @@ class RideSession {
     if (isSimulation) 'isSimulation': true,
     if (isSimulation) 'simulationRiderCount': simulationRiderCount,
     'motorcycleStyle': motorcycleStyle.name,
+    'riderSymbol': riderSymbol.storageValue,
     'riderColor': riderColor.name,
     if (rideName != null) 'rideName': rideName,
   };
@@ -103,6 +107,7 @@ class RideSession {
     motorcycleStyle: motorcycleIconStyleFromName(
       json['motorcycleStyle'] as String?,
     ),
+    riderSymbol: RiderSymbol.fromStorageValue(json['riderSymbol'] as String?),
     riderColor: riderColorFromName(json['riderColor'] as String?),
     rideName: json['rideName'] as String?,
   );

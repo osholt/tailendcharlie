@@ -77,6 +77,119 @@ MotorcycleIconStyle motorcycleIconStyleFromName(String? name) =>
       orElse: () => motorcycleIconStyleDefault,
     );
 
+enum RiderSymbolKind { motorcycle, initials, emoji }
+
+/// How a rider identifies themselves inside their coloured marker badge.
+///
+/// The wire representation deliberately reuses the existing
+/// `motorcycleStyle` string. Old builds therefore see an unknown style and
+/// safely fall back to the default bike, while new builds can show initials or
+/// an emoji without requiring a relay protocol migration.
+class RiderSymbol {
+  const RiderSymbol.motorcycle()
+    : kind = RiderSymbolKind.motorcycle,
+      emoji = null;
+
+  const RiderSymbol.initials() : kind = RiderSymbolKind.initials, emoji = null;
+
+  const RiderSymbol.emoji(this.emoji)
+    : kind = RiderSymbolKind.emoji,
+      assert(emoji != null && emoji != '');
+
+  final RiderSymbolKind kind;
+  final String? emoji;
+
+  String get storageValue => switch (kind) {
+    RiderSymbolKind.motorcycle => 'motorcycle',
+    RiderSymbolKind.initials => 'initials',
+    RiderSymbolKind.emoji => 'emoji:$emoji',
+  };
+
+  String wireValue(MotorcycleIconStyle motorcycleStyle) => switch (kind) {
+    RiderSymbolKind.motorcycle => motorcycleStyle.name,
+    _ => storageValue,
+  };
+
+  String label(String displayName, MotorcycleIconStyle motorcycleStyle) =>
+      switch (kind) {
+        RiderSymbolKind.motorcycle => motorcycleStyle.label,
+        RiderSymbolKind.initials => 'Initials ${riderInitials(displayName)}',
+        RiderSymbolKind.emoji => 'Emoji $emoji',
+      };
+
+  String imageName(String displayName, MotorcycleIconStyle motorcycleStyle) {
+    if (kind == RiderSymbolKind.motorcycle) return motorcycleStyle.name;
+    final glyph = kind == RiderSymbolKind.initials
+        ? riderInitials(displayName)
+        : emoji!;
+    final codePoints = glyph.runes
+        .map((value) => value.toRadixString(16))
+        .join('-');
+    return 'rider-symbol-${kind.name}-$codePoints';
+  }
+
+  static RiderSymbol fromStorageValue(String? value) {
+    if (value == 'initials') return const RiderSymbol.initials();
+    if (value?.startsWith('emoji:') ?? false) {
+      final emoji = value!.substring('emoji:'.length);
+      if (riderEmojiChoices.contains(emoji)) return RiderSymbol.emoji(emoji);
+    }
+    return const RiderSymbol.motorcycle();
+  }
+
+  static RiderSymbol fromWireValue(String? value) {
+    if (MotorcycleIconStyle.values.any((style) => style.name == value)) {
+      return const RiderSymbol.motorcycle();
+    }
+    return fromStorageValue(value);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is RiderSymbol && other.kind == kind && other.emoji == emoji;
+
+  @override
+  int get hashCode => Object.hash(kind, emoji);
+}
+
+const riderSymbolDefault = RiderSymbol.motorcycle();
+
+/// A deliberately small, high-contrast catalogue that renders consistently on
+/// both supported platforms and keeps the wire value comfortably below the
+/// relay's existing 40-character motorcycle-style limit.
+const riderEmojiChoices = <String>[
+  '🏍️',
+  '🛵',
+  '🏁',
+  '⚡',
+  '🔥',
+  '⭐',
+  '🚀',
+  '😎',
+  '😈',
+  '🐝',
+  '🦊',
+  '🐺',
+  '🐉',
+  '🦄',
+  '🐢',
+  '🦉',
+];
+
+String riderInitials(String displayName) {
+  final words = displayName
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .toList(growable: false);
+  if (words.isEmpty) return '?';
+  if (words.length == 1) {
+    return words.single.characters.take(2).toString().toUpperCase();
+  }
+  return '${words.first.characters.first}${words.last.characters.first}'
+      .toUpperCase();
+}
+
 /// A motorcycle glyph standing in for the plain circle/Material icon
 /// previously used for rider map markers, tinted by the caller (role colour)
 /// exactly like the `Icon` widget it replaces.
@@ -112,6 +225,8 @@ class RiderMarkerBadge extends StatelessWidget {
     super.key,
     required this.style,
     required this.badgeColor,
+    this.symbol = riderSymbolDefault,
+    this.displayName = '',
     this.size = 34,
     this.borderColor = RouteTrailStyle.casing,
     this.borderWidth = 2,
@@ -120,6 +235,8 @@ class RiderMarkerBadge extends StatelessWidget {
 
   final MotorcycleIconStyle style;
   final Color badgeColor;
+  final RiderSymbol symbol;
+  final String displayName;
   final double size;
   final Color borderColor;
   final double borderWidth;
@@ -139,15 +256,33 @@ class RiderMarkerBadge extends StatelessWidget {
           : Border.all(color: borderColor, width: borderWidth),
     ),
     child: Center(
-      child: MotorcycleIcon(
-        style: style,
-        // Dark, not white. Every badge fill is light because it has to be found
-        // on a dark basemap, so a white glyph on top had almost no contrast at
-        // all - 1.76:1 on the default rider green, 1.53:1 on yellow. See
-        // `RouteTrailStyle.markerGlyph`, which owns the measurement (#133).
-        color: glyphColor,
-        size: size * 0.62,
-      ),
+      child: switch (symbol.kind) {
+        RiderSymbolKind.motorcycle => MotorcycleIcon(
+          style: style,
+          // Dark, not white. Every badge fill is light because it has to be
+          // found on a dark basemap, so a white glyph on top had almost no
+          // contrast at all - 1.76:1 on the default rider green, 1.53:1 on
+          // yellow. See `RouteTrailStyle.markerGlyph` (#133).
+          color: glyphColor,
+          size: size * 0.62,
+        ),
+        RiderSymbolKind.initials => Text(
+          riderInitials(displayName),
+          maxLines: 1,
+          style: TextStyle(
+            color: glyphColor,
+            fontSize: size * 0.34,
+            height: 1,
+            fontWeight: FontWeight.w900,
+            letterSpacing: -0.4,
+          ),
+        ),
+        RiderSymbolKind.emoji => Text(
+          symbol.emoji!,
+          maxLines: 1,
+          style: TextStyle(fontSize: size * 0.55, height: 1),
+        ),
+      },
     ),
   );
 }
@@ -159,6 +294,47 @@ class RiderMarkerBadge extends StatelessWidget {
 Future<Uint8List> loadMotorcycleIconPng(MotorcycleIconStyle style) async {
   final data = await rootBundle.load(style.assetPath);
   return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+}
+
+Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
+  required RiderSymbol symbol,
+  required String displayName,
+  required MotorcycleIconStyle motorcycleStyle,
+  double size = 128,
+}) async {
+  if (symbol.kind == RiderSymbolKind.motorcycle) {
+    return (bytes: await loadMotorcycleIconPng(motorcycleStyle), sdf: true);
+  }
+  final glyph = symbol.kind == RiderSymbolKind.initials
+      ? riderInitials(displayName)
+      : symbol.emoji!;
+  final initials = symbol.kind == RiderSymbolKind.initials;
+  return (
+    bytes: await _rasterizePng(
+      size: size,
+      paint: (canvas) {
+        final painter = TextPainter(
+          textDirection: TextDirection.ltr,
+          textAlign: TextAlign.center,
+          text: TextSpan(
+            text: glyph,
+            style: TextStyle(
+              color: const Color(0xFFFFFFFF),
+              fontSize: size * (initials ? 0.46 : 0.72),
+              height: 1,
+              fontWeight: initials ? FontWeight.w900 : FontWeight.normal,
+              letterSpacing: initials ? -1.5 : null,
+            ),
+          ),
+        )..layout(maxWidth: size);
+        painter.paint(
+          canvas,
+          Offset((size - painter.width) / 2, (size - painter.height) / 2),
+        );
+      },
+    ),
+    sdf: initials,
+  );
 }
 
 /// Renders an arbitrary Material icon glyph as a PNG, for markers (such as

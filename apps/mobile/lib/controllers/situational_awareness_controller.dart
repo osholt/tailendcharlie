@@ -207,6 +207,7 @@ class SituationalAwarenessController extends ChangeNotifier {
       sample: sample,
       receivedAt: _clock(),
       motorcycleStyle: _session.motorcycleStyle,
+      riderSymbol: _session.riderSymbol,
       riderColor: _session.riderColor,
     );
     await _run(() async {

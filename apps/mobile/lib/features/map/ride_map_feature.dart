@@ -170,6 +170,8 @@ class RideMapFeature extends StatefulWidget {
     this.speedLimitDisplay,
     this.basemapConfiguration = const BasemapConfiguration(),
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
+    this.localRiderSymbol = riderSymbolDefault,
+    this.localDisplayName = 'You',
     this.localBadgeColor = const Color(0xFF2F80ED),
   });
 
@@ -217,6 +219,8 @@ class RideMapFeature extends StatefulWidget {
     SpeedLimitDisplayController? speedLimitDisplay,
     bool darkMapStyle = false,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
+    RiderSymbol localRiderSymbol = riderSymbolDefault,
+    String localDisplayName = 'You',
     Color localBadgeColor = const Color(0xFF2F80ED),
   }) => RideMapFeature(
     key: key,
@@ -263,6 +267,8 @@ class RideMapFeature extends StatefulWidget {
       dark: darkMapStyle,
     ),
     localMotorcycleStyle: localMotorcycleStyle,
+    localRiderSymbol: localRiderSymbol,
+    localDisplayName: localDisplayName,
     localBadgeColor: localBadgeColor,
   );
 
@@ -322,6 +328,8 @@ class RideMapFeature extends StatefulWidget {
   final SpeedLimitDisplayController? speedLimitDisplay;
   final BasemapConfiguration basemapConfiguration;
   final MotorcycleIconStyle localMotorcycleStyle;
+  final RiderSymbol localRiderSymbol;
+  final String localDisplayName;
   final Color localBadgeColor;
 
   @override
@@ -459,6 +467,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         distanceUnit: widget.distanceUnit,
         speedLimitDisplay: widget.speedLimitDisplay,
         localMotorcycleStyle: widget.localMotorcycleStyle,
+        localRiderSymbol: widget.localRiderSymbol,
+        localDisplayName: widget.localDisplayName,
         localBadgeColor: widget.localBadgeColor,
       );
     },
@@ -536,6 +546,8 @@ class RideMapScreen extends StatefulWidget {
     this.speedLimitDisplay,
     this.disposeOfflineTileCache = false,
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
+    this.localRiderSymbol = riderSymbolDefault,
+    this.localDisplayName = 'You',
     this.localBadgeColor = const Color(0xFF2F80ED),
   });
 
@@ -617,6 +629,8 @@ class RideMapScreen extends StatefulWidget {
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool disposeOfflineTileCache;
   final MotorcycleIconStyle localMotorcycleStyle;
+  final RiderSymbol localRiderSymbol;
+  final String localDisplayName;
   final Color localBadgeColor;
 
   @override
@@ -1980,6 +1994,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
       currentPosition: _effectivePosition,
       riders: groupRiders,
       riderCount: groupSize,
+      localMotorcycleStyle: widget.localMotorcycleStyle,
+      localRiderSymbol: widget.localRiderSymbol,
+      localDisplayName: widget.localDisplayName,
       onTap: widget.onOpenRoster,
       renderer: groupMiniMapRenderer(
         mapLibreEnabled: _basemap.usesMapLibre,
@@ -2206,6 +2223,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   navigationMode: _isMoving,
                   headingDegrees: _lastHeadingDegrees,
                   style: widget.localMotorcycleStyle,
+                  symbol: widget.localRiderSymbol,
+                  displayName: widget.localDisplayName,
                   badgeColor: widget.localBadgeColor,
                 ),
               ),
@@ -3327,16 +3346,26 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final style = overlay.motorcycleStyle;
     return style == null
         ? _IconBadge(icon: overlay.icon, badgeColor: overlay.color, size: 34)
-        : RiderMarkerBadge(style: style, badgeColor: overlay.color, size: 34);
+        : RiderMarkerBadge(
+            style: style,
+            symbol: overlay.riderSymbol,
+            displayName: overlay.riderDisplayName ?? overlay.label,
+            badgeColor: overlay.color,
+            size: 34,
+          );
   }
 
   static const _hazardIconImage = 'ride-relay-hazard-warning';
   bool _markerImagesRegistered = false;
+  final Set<String> _registeredRiderSymbolImages = {};
 
   Future<void> _registerMarkerImages(
     ml.MapLibreMapController controller,
   ) async {
-    if (_markerImagesRegistered) return;
+    if (_markerImagesRegistered) {
+      await _ensureRiderSymbolImages(controller);
+      return;
+    }
     for (final style in MotorcycleIconStyle.values) {
       await controller.addImage(
         style.name,
@@ -3367,6 +3396,39 @@ class _RideMapScreenState extends State<RideMapScreen> {
       true,
     );
     _markerImagesRegistered = true;
+    await _ensureRiderSymbolImages(controller);
+  }
+
+  Future<void> _ensureRiderSymbolImages(
+    ml.MapLibreMapController controller,
+  ) async {
+    final riders =
+        <({RiderSymbol symbol, String displayName, MotorcycleIconStyle style})>[
+          (
+            symbol: widget.localRiderSymbol,
+            displayName: widget.localDisplayName,
+            style: widget.localMotorcycleStyle,
+          ),
+          for (final overlay
+              in widget.overlayMarkers?.value ?? const <MapOverlayMarker>[])
+            if (overlay.motorcycleStyle case final style?)
+              (
+                symbol: overlay.riderSymbol,
+                displayName: overlay.riderDisplayName ?? overlay.label,
+                style: style,
+              ),
+        ];
+    for (final rider in riders) {
+      if (rider.symbol.kind == RiderSymbolKind.motorcycle) continue;
+      final imageName = rider.symbol.imageName(rider.displayName, rider.style);
+      if (!_registeredRiderSymbolImages.add(imageName)) continue;
+      final raster = await rasterizeRiderSymbolPng(
+        symbol: rider.symbol,
+        displayName: rider.displayName,
+        motorcycleStyle: rider.style,
+      );
+      await controller.addImage(imageName, raster.bytes, raster.sdf);
+    }
   }
 
   Future<void> _prepareMapLibreStyle() async {
@@ -3560,7 +3622,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _positionSource,
         'ride-relay-position-icon',
         ml.SymbolLayerProperties(
-          iconImage: widget.localMotorcycleStyle.name,
+          iconImage: widget.localRiderSymbol.imageName(
+            widget.localDisplayName,
+            widget.localMotorcycleStyle,
+          ),
           // Dark on a light badge: see [RouteTrailStyle.markerGlyph] (#133).
           iconColor: RouteTrailStyle.markerGlyphHex,
           iconSize: 0.2,
@@ -3682,6 +3747,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final controller = _mapLibreController;
     if (!_mapLibreStyleReady || controller == null) return;
     try {
+      await _ensureRiderSymbolImages(controller);
       await controller.setGeoJsonSource(
         _discoveryLineSource,
         _discoveryLineGeoJson(),
@@ -3751,6 +3817,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreOverlaysDirty = false;
     _mapLibreSyncRunning = true;
     try {
+      if (position || overlays) {
+        await _ensureRiderSymbolImages(controller);
+      }
       if (progress) {
         await controller.setGeoJsonSource(
           _remainingRouteSource,
@@ -4050,14 +4119,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
               'label': overlay.label,
               'color': _hexColor(overlay.color),
               'hazardSymbol': overlay.hazardSymbol != null,
-              'iconImage':
-                  overlay.hazardSymbol?.imageName ??
-                  overlay.motorcycleStyle?.name ??
-                  _hazardIconImage,
+              'iconImage': _overlayIconImage(overlay),
             },
           ),
         ),
   );
+
+  String _overlayIconImage(MapOverlayMarker overlay) {
+    final hazardImage = overlay.hazardSymbol?.imageName;
+    if (hazardImage != null) return hazardImage;
+    final style = overlay.motorcycleStyle;
+    if (style == null) return _hazardIconImage;
+    return overlay.riderSymbol.imageName(
+      overlay.riderDisplayName ?? overlay.label,
+      style,
+    );
+  }
 
   void _onMapLibreFeatureTapped(
     math.Point<double> point,
@@ -5437,6 +5514,8 @@ class MapOverlayMarker {
     this.icon = Icons.warning_amber_rounded,
     this.color = const Color(0xFFFFC857),
     this.motorcycleStyle,
+    this.riderSymbol = riderSymbolDefault,
+    this.riderDisplayName,
     this.hazardSymbol,
   });
 
@@ -5449,6 +5528,8 @@ class MapOverlayMarker {
   final IconData icon;
   final Color color;
   final MotorcycleIconStyle? motorcycleStyle;
+  final RiderSymbol riderSymbol;
+  final String? riderDisplayName;
 
   /// A reported hazard's decided symbol: shape, glyph, fill and freshness (#135).
   ///
@@ -5950,6 +6031,9 @@ class _GroupMiniMap extends StatefulWidget {
     required this.currentPosition,
     required this.riders,
     required this.riderCount,
+    required this.localMotorcycleStyle,
+    required this.localRiderSymbol,
+    required this.localDisplayName,
     required this.onTap,
     required this.renderer,
     required this.mapStyleUrl,
@@ -5962,6 +6046,9 @@ class _GroupMiniMap extends StatefulWidget {
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
   final int riderCount;
+  final MotorcycleIconStyle localMotorcycleStyle;
+  final RiderSymbol localRiderSymbol;
+  final String localDisplayName;
   final VoidCallback? onTap;
   final GroupMiniMapRenderer renderer;
   final String mapStyleUrl;
@@ -5994,6 +6081,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   bool _styleReady = false;
   bool _vectorMapReady = false;
   bool _refreshing = false;
+  final Set<String> _registeredSymbolImages = {};
 
   /// Captured once per refresh so the windowed route, rider dots, and camera
   /// fit all agree on the same instant - reading `widget.riders` again after
@@ -6019,6 +6107,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     if (oldWidget.renderer != widget.renderer ||
         oldWidget.mapStyleUrl != widget.mapStyleUrl) {
       _vectorMapReady = false;
+      _registeredSymbolImages.clear();
       _loadVectorStyle();
     }
     _scheduleRefresh();
@@ -6215,6 +6304,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
           routePaths: visibleRoutePaths,
           currentPosition: widget.currentPosition,
           riders: widget.riders,
+          localRiderSymbol: widget.localRiderSymbol,
+          localDisplayName: widget.localDisplayName,
           brightness: Theme.of(context).brightness,
         ),
       );
@@ -6336,9 +6427,24 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 MarkerLayer(
                   markers: [
                     for (final rider in widget.riders)
-                      _vectorRiderMarker(rider.point, rider.color, 12),
+                      _vectorRiderMarker(
+                        point: rider.point,
+                        color: rider.color,
+                        size: 16,
+                        motorcycleStyle:
+                            rider.motorcycleStyle ?? motorcycleIconStyleDefault,
+                        riderSymbol: rider.riderSymbol,
+                        displayName: rider.riderDisplayName ?? rider.label,
+                      ),
                     if (widget.currentPosition case final point?)
-                      _vectorRiderMarker(point, const Color(0xFFFF7A1A), 14),
+                      _vectorRiderMarker(
+                        point: point,
+                        color: const Color(0xFFFF7A1A),
+                        size: 18,
+                        motorcycleStyle: widget.localMotorcycleStyle,
+                        riderSymbol: widget.localRiderSymbol,
+                        displayName: widget.localDisplayName,
+                      ),
                   ],
                 ),
               ],
@@ -6363,16 +6469,30 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     );
   }
 
-  Marker _vectorRiderMarker(GeoPoint point, Color color, double size) => Marker(
+  Marker _vectorRiderMarker({
+    required GeoPoint point,
+    required Color color,
+    required double size,
+    required MotorcycleIconStyle motorcycleStyle,
+    required RiderSymbol riderSymbol,
+    required String displayName,
+  }) => Marker(
     point: LatLng(point.latitude, point.longitude),
     width: size + 4,
     height: size + 4,
     child: DecoratedBox(
-      decoration: BoxDecoration(
-        color: color,
+      decoration: const BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 1),
-        boxShadow: const [BoxShadow(color: Colors.black87, spreadRadius: 2)],
+        boxShadow: [BoxShadow(color: Colors.black87, spreadRadius: 2)],
+      ),
+      child: RiderMarkerBadge(
+        style: motorcycleStyle,
+        symbol: riderSymbol,
+        displayName: displayName,
+        badgeColor: color,
+        size: size,
+        borderColor: Colors.white,
+        borderWidth: 1,
       ),
     ),
   );
@@ -6383,6 +6503,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     _styleReady = false;
     final snapshot = _snapshot();
     try {
+      await _registerSymbolImages(controller, snapshot);
       await controller.addGeoJsonSource(_routeSource, _routeGeoJson(snapshot));
       await controller.addLineLayer(
         _routeSource,
@@ -6411,10 +6532,22 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         _riderSource,
         'ride-relay-mini-rider-circles',
         const ml.CircleLayerProperties(
-          circleRadius: 5,
+          circleRadius: 7,
           circleColor: ['get', 'color'],
           circleStrokeWidth: 1.5,
           circleStrokeColor: '#FFFFFF',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addSymbolLayer(
+        _riderSource,
+        'ride-relay-mini-rider-symbols',
+        const ml.SymbolLayerProperties(
+          iconImage: ['get', 'iconImage'],
+          iconColor: RouteTrailStyle.markerGlyphHex,
+          iconSize: 0.09,
+          iconAllowOverlap: true,
+          iconIgnorePlacement: true,
         ),
         enableInteraction: false,
       );
@@ -6434,6 +6567,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     _refreshing = true;
     try {
       final snapshot = _snapshot();
+      await _registerSymbolImages(controller, snapshot);
       await controller.setGeoJsonSource(_routeSource, _routeGeoJson(snapshot));
       await controller.setGeoJsonSource(_riderSource, _riderGeoJson(snapshot));
       await _fitGroup(snapshot);
@@ -6548,15 +6682,58 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
           MapGeoJsonPoint(
             id: rider.id,
             point: rider.point,
-            properties: {'color': _hexColor(rider.color)},
+            properties: {
+              'color': _hexColor(rider.color),
+              'iconImage': rider.riderSymbol.imageName(
+                rider.riderDisplayName ?? rider.label,
+                rider.motorcycleStyle ?? motorcycleIconStyleDefault,
+              ),
+            },
           ),
         if (snapshot.currentPosition case final point?)
           MapGeoJsonPoint(
             id: 'mini-local-rider',
             point: point,
-            properties: const {'color': '#FF7A1A'},
+            properties: {
+              'color': '#FF7A1A',
+              'iconImage': widget.localRiderSymbol.imageName(
+                widget.localDisplayName,
+                widget.localMotorcycleStyle,
+              ),
+            },
           ),
       ]);
+
+  Future<void> _registerSymbolImages(
+    ml.MapLibreMapController controller,
+    _MiniMapSnapshot snapshot,
+  ) async {
+    final riders =
+        <({RiderSymbol symbol, String displayName, MotorcycleIconStyle style})>[
+          for (final rider in snapshot.riders)
+            (
+              symbol: rider.riderSymbol,
+              displayName: rider.riderDisplayName ?? rider.label,
+              style: rider.motorcycleStyle ?? motorcycleIconStyleDefault,
+            ),
+          if (snapshot.currentPosition != null)
+            (
+              symbol: widget.localRiderSymbol,
+              displayName: widget.localDisplayName,
+              style: widget.localMotorcycleStyle,
+            ),
+        ];
+    for (final rider in riders) {
+      final imageName = rider.symbol.imageName(rider.displayName, rider.style);
+      if (!_registeredSymbolImages.add(imageName)) continue;
+      final raster = await rasterizeRiderSymbolPng(
+        symbol: rider.symbol,
+        displayName: rider.displayName,
+        motorcycleStyle: rider.style,
+      );
+      await controller.addImage(imageName, raster.bytes, raster.sdf);
+    }
+  }
 
   @override
   void dispose() {
@@ -6713,12 +6890,16 @@ class _GroupMiniMapPainter extends CustomPainter {
     required this.routePaths,
     required this.currentPosition,
     required this.riders,
+    required this.localRiderSymbol,
+    required this.localDisplayName,
     required this.brightness,
   });
 
   final List<List<GeoPoint>> routePaths;
   final GeoPoint? currentPosition;
   final List<MapOverlayMarker> riders;
+  final RiderSymbol localRiderSymbol;
+  final String localDisplayName;
   final Brightness brightness;
 
   @override
@@ -6801,7 +6982,13 @@ class _GroupMiniMapPainter extends CustomPainter {
       );
     }
 
-    void drawRider(Offset offset, Color color, double radius) {
+    void drawRider(
+      Offset offset,
+      Color color,
+      double radius,
+      RiderSymbol symbol,
+      String displayName,
+    ) {
       canvas.drawCircle(offset, radius + 2, Paint()..color = Colors.black87);
       canvas.drawCircle(offset, radius, Paint()..color = color);
       canvas.drawCircle(
@@ -6812,14 +6999,57 @@ class _GroupMiniMapPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1,
       );
+      if (symbol.kind == RiderSymbolKind.motorcycle) return;
+      final text = symbol.kind == RiderSymbolKind.initials
+          ? riderInitials(displayName)
+          : symbol.emoji!;
+      final painter = TextPainter(
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center,
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            color: RouteTrailStyle.markerGlyph,
+            fontSize:
+                radius * (symbol.kind == RiderSymbolKind.initials ? 0.9 : 1.25),
+            height: 1,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      )..layout();
+      painter.paint(
+        canvas,
+        offset - Offset(painter.width / 2, painter.height / 2),
+      );
     }
 
-    final dots = <({GeoPoint point, Color color, double radius})>[
-      for (final rider in riders)
-        (point: rider.point, color: rider.color, radius: 5),
-      if (currentPosition case final point?)
-        (point: point, color: const Color(0xFFFF7A1A), radius: 6),
-    ];
+    final dots =
+        <
+          ({
+            GeoPoint point,
+            Color color,
+            double radius,
+            RiderSymbol symbol,
+            String displayName,
+          })
+        >[
+          for (final rider in riders)
+            (
+              point: rider.point,
+              color: rider.color,
+              radius: 7,
+              symbol: rider.riderSymbol,
+              displayName: rider.riderDisplayName ?? rider.label,
+            ),
+          if (currentPosition case final point?)
+            (
+              point: point,
+              color: const Color(0xFFFF7A1A),
+              radius: 8,
+              symbol: localRiderSymbol,
+              displayName: localDisplayName,
+            ),
+        ];
     final placedOffsets = <Offset>[];
     for (var index = 0; index < dots.length; index++) {
       final dot = dots[index];
@@ -6840,7 +7070,7 @@ class _GroupMiniMapPainter extends CustomPainter {
         offset.dy.clamp(7.0, size.height - 7.0),
       );
       placedOffsets.add(offset);
-      drawRider(offset, dot.color, dot.radius);
+      drawRider(offset, dot.color, dot.radius, dot.symbol, dot.displayName);
     }
   }
 
@@ -8466,12 +8696,16 @@ class _CurrentPositionMarker extends StatelessWidget {
     required this.navigationMode,
     required this.headingDegrees,
     required this.style,
+    required this.symbol,
+    required this.displayName,
     required this.badgeColor,
   });
 
   final bool navigationMode;
   final double headingDegrees;
   final MotorcycleIconStyle style;
+  final RiderSymbol symbol;
+  final String displayName;
   final Color badgeColor;
 
   @override
@@ -8479,7 +8713,9 @@ class _CurrentPositionMarker extends StatelessWidget {
     // The badge circle is rotation-symmetric, so only the bike glyph inside
     // visibly turns - this keeps showing heading without the odd look a
     // rotating non-circular marker would have.
-    angle: navigationMode ? 0 : headingDegrees * math.pi / 180,
+    angle: navigationMode || symbol.kind != RiderSymbolKind.motorcycle
+        ? 0
+        : headingDegrees * math.pi / 180,
     child: DecoratedBox(
       decoration: const BoxDecoration(
         shape: BoxShape.circle,
@@ -8487,6 +8723,8 @@ class _CurrentPositionMarker extends StatelessWidget {
       ),
       child: RiderMarkerBadge(
         style: style,
+        symbol: symbol,
+        displayName: displayName,
         badgeColor: badgeColor,
         size: 38,
         borderColor: Colors.white,

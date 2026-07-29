@@ -538,6 +538,8 @@ class _ParticipantTile extends StatelessWidget {
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         leading: RiderMarkerBadge(
           style: participant.motorcycleStyle,
+          symbol: participant.riderSymbol,
+          displayName: participant.displayName,
           // Identity colour belongs to the rider, not the role. Lead/TEC and
           // attention remain explicit in text, semantics and status treatment
           // without making the same person change colour between roster and
