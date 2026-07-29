@@ -36,6 +36,68 @@ permissions by design.
 - ...
 ```
 
+## Android and iOS build 35 — 1.0.1 — 29 July 2026
+
+This build supersedes build 34 on Google Play closed testing (`alpha`) and
+TestFlight. It combines the latest tester-feedback fixes with the new rider
+symbol choices.
+
+### What to test
+
+1. **Choose your rider symbol.** In Settings, switch between a bike, your
+   initials and an emoji. Confirm the same symbol and rider colour appear in the
+   roster, main map and group mini-map on both phones.
+2. **Follow a long route.** Use a route whose next turn is more than 5 km away.
+   Guidance should remain visible. Losing GPS or going off route should show an
+   explicit status instead of leaving an empty guidance area.
+3. **Put the app in the background.** Start sharing, lock the phone or put
+   another navigation app in front for at least 20 minutes, then compare with a
+   second phone. If location stops, the recorded ride must show a gap rather
+   than drawing and counting a false straight line.
+4. **Assign a TEC.** After one rider has selected TEC, ask another rider to take
+   the role. Once accepted, every roster, map, gap and rejoin surface should
+   treat only the accepted rider as the effective TEC.
+5. **Move around the live map.** Pan and pinch on both platforms, then use
+   **Follow me** to recover. A widely separated group should fit inside the
+   mini-map with a meaningful scale.
+6. **Start without a route.** A follower can dismiss the waiting prompt, and it
+   must not return after the leader starts the route-less ride.
+7. **Reuse a previous ride.** Open a previous ride, choose **Ride again**, pick
+   the planned or recorded route, and try the reverse option. On a small iPhone,
+   every route-source action must remain reachable.
+8. **Dismiss a quick message.** Open and close the ride menu afterwards; the
+   cleared interrupt or receipt must not appear again.
+
+### Fixed and new
+
+- Rider symbols can be a bike, initials or an emoji, with a safe bike fallback
+  when talking to an older build (#253).
+- Turn guidance no longer disappears when the next manoeuvre is more than 5 km
+  away, and every non-active state is explained (#254).
+- iOS explicitly asks for the background location access required for another
+  navigation app to stay in front; missing recording periods are left blank
+  and excluded from distance (#205).
+- An accepted leader assignment becomes the one effective TEC everywhere
+  (#128).
+- Dismissed quick-message overlays survive leaving and returning to the map
+  (#178).
+- Map gesture handoff, Follow me diagnostics and wide-area mini-map framing are
+  hardened across iOS and Android (#141, #172, #248).
+- Route-less followers can continue without a blocking prompt (#249).
+- Rider identity colours stay consistent between roster and map (#250).
+- Previous rides have a direct **Ride again** path (#251).
+- The iOS route chooser scrolls safely on compact screens (#252).
+
+### Known validation still needed
+
+- Please include the phone model, operating system, build number and whether
+  the problem happened over internet or nearby transport in every report.
+- Background location, multi-device TEC handover, mixed-version rider symbols,
+  map gestures and a full off-route ride still require physical-device results.
+- CarPlay navigation is not in build 35. Apple has approved the navigation
+  entitlement under Case-ID 21286533, but the App ID, provisioning profile and
+  navigation scene still need to be configured and validated separately.
+
 ## Android and iOS build 34 — 1.0.1 — 29 July 2026
 
 This build supersedes build 33 and contains the latest tester-feedback fixes on
@@ -224,7 +286,7 @@ pending would have had build 31 claim them a second time.
 
 Changes merged but not yet in a tester build.
 
-_Nothing outstanding: everything on `main` is in build 34._
+_Nothing outstanding: everything on `main` is in build 35._
 
 ## Earlier
 
