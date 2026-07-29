@@ -50,6 +50,36 @@ void main() {
     );
   });
 
+  test('reports the evidence used for the leader completion prompt', () {
+    final now = DateTime.utc(2026, 7, 29, 12);
+    final assessment = detector.assess(
+      destination: const GeoPoint(latitude: 51.5, longitude: -2.5),
+      riderLocations: [
+        _location(
+          'lead',
+          RideRole.lead,
+          const GeoPoint(latitude: 51.5001, longitude: -2.5001),
+          now,
+        ),
+        _location(
+          'tec',
+          RideRole.tailEndCharlie,
+          const GeoPoint(latitude: 51.5002, longitude: -2.5002),
+          now,
+        ),
+      ],
+      now: now,
+      routeProgressFraction: 0.94,
+    );
+
+    expect(assessment.ready, isTrue);
+    expect(assessment.riderCount, 2);
+    expect(assessment.freshRiderCount, 2);
+    expect(assessment.arrivedRiderCount, 2);
+    expect(assessment.routeProgressFraction, 0.94);
+    expect(assessment.destinationRadiusMeters, 90);
+  });
+
   test('keeps a ride open when any rider location is stale', () {
     expect(
       detector.everyoneReachedDestination(

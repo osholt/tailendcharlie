@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildGpx,
+  buildRouteMarkerPlan,
   chooseRoadRoute,
   decodePolyline,
   escapeXml,
@@ -79,6 +80,118 @@ test("buildGpx marks its calculated track as a road route", () => {
   assert.match(gpx, /<tec:road-route>true<\/tec:road-route>/);
   assert.match(gpx, /<trkpt lat="53\.2345679" lon="-1\.9876543" \/>/);
   assert.match(gpx, /<time>2026-07-22T10:30:00\.000Z<\/time>/);
+});
+
+test("marker review uses app categories and survives a GPX handoff", () => {
+  const routeCoordinates = [
+    [-2.0, 51.0],
+    [-2.0, 51.001],
+    [-1.999, 51.001],
+    [-1.998, 51.001],
+  ];
+  const maneuvers = [
+    {
+      position: [-2.0, 51.001],
+      type: "turn",
+      modifier: "right",
+      bearingBefore: 0,
+      bearingAfter: 90,
+      lanes: [],
+    },
+    {
+      position: [-1.999, 51.001],
+      type: "off ramp",
+      modifier: "slight right",
+      bearingBefore: 90,
+      bearingAfter: 100,
+      lanes: [],
+    },
+  ];
+  const detected = buildRouteMarkerPlan({ routeCoordinates, maneuvers });
+
+  assert.deepEqual(
+    detected.points.map(({ id, kind, label }) => ({ id, kind, label })),
+    [
+      {
+        id: "maneuver-0",
+        kind: "likely-marker",
+        label: "Turn right marker",
+      },
+      {
+        id: "maneuver-1",
+        kind: "safety-review",
+        label: "Motorway or dual-carriageway exit review",
+      },
+    ],
+  );
+
+  const markerReview = {
+    rejected: [
+      {
+        id: "old-router-id",
+        longitude: -2.0,
+        latitude: 51.001,
+        label: "Turn right marker",
+      },
+    ],
+    added: [
+      {
+        id: "geometry-2",
+        longitude: -1.999,
+        latitude: 51.001,
+        label: "Added marker",
+      },
+    ],
+  };
+  const reviewed = buildRouteMarkerPlan({
+    routeCoordinates,
+    maneuvers,
+    review: markerReview,
+  });
+  assert.equal(reviewed.rejectedPoints[0].id, "maneuver-0");
+  assert.equal(
+    reviewed.points.find((point) => point.source === "manual").label,
+    "Added marker",
+  );
+
+  const gpx = buildGpx({
+    rideName: "Reviewed ride",
+    stops: [
+      { name: "Start", longitude: -2, latitude: 51 },
+      { name: "Finish", longitude: -1.998, latitude: 51.001 },
+    ],
+    routeCoordinates,
+    markerReview,
+    createdAt: new Date("2026-07-29T10:00:00Z"),
+  });
+  assert.match(gpx, /<tec:marker-review>/);
+  assert.match(
+    gpx,
+    /<tec:rejected id="old-router-id" lat="51\.0010000" lon="-2\.0000000"/,
+  );
+  assert.match(gpx, /<tec:added id="geometry-2"/);
+});
+
+test("marker review rejects a cul-de-sac double-back", () => {
+  const plan = buildRouteMarkerPlan({
+    routeCoordinates: [
+      [-2, 51],
+      [-2, 51.001],
+      [-2, 51],
+    ],
+    maneuvers: [
+      {
+        position: [-2, 51.001],
+        type: "turn",
+        modifier: "uturn",
+        bearingBefore: 0,
+        bearingAfter: 180,
+        lanes: [],
+      },
+    ],
+  });
+
+  assert.deepEqual(plan.points, []);
 });
 
 test("twisty routing chooses a bendier reasonable alternative", () => {

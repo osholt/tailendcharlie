@@ -34,6 +34,38 @@ class RideCompletionDetector {
   /// considered, as a fraction of the primary path's length.
   final double minimumRouteProgressFraction;
 
+  /// Returns the evidence behind a completion suggestion rather than only a
+  /// boolean. The leader sees these counts before deciding whether to end the
+  /// ride, so an automatic detector never hides why it fired (#244).
+  RideCompletionAssessment assess({
+    required GeoPoint destination,
+    required Iterable<RiderLocation> riderLocations,
+    required DateTime now,
+    required double routeProgressFraction,
+  }) {
+    final latestByRider = <String, RiderLocation>{
+      for (final location in riderLocations) location.riderId: location,
+    };
+    var freshRiderCount = 0;
+    var arrivedRiderCount = 0;
+    for (final location in latestByRider.values) {
+      if (location.sample.isStaleAt(now, locationFreshness)) continue;
+      freshRiderCount += 1;
+      if (_distanceMeters(location.sample.position, destination) <=
+          destinationRadiusMeters) {
+        arrivedRiderCount += 1;
+      }
+    }
+    return RideCompletionAssessment(
+      routeProgressFraction: routeProgressFraction,
+      minimumRouteProgressFraction: minimumRouteProgressFraction,
+      destinationRadiusMeters: destinationRadiusMeters,
+      riderCount: latestByRider.length,
+      freshRiderCount: freshRiderCount,
+      arrivedRiderCount: arrivedRiderCount,
+    );
+  }
+
   /// [routeProgressFraction] is monotonic progress along the route, 0 to 1, as
   /// tracked by `RouteProgressTracker`. A route with no measurable length must
   /// pass 0 so that a degenerate plan can never end a ride on its own.
@@ -43,20 +75,41 @@ class RideCompletionDetector {
     required DateTime now,
     required double routeProgressFraction,
   }) {
-    if (!routeProgressFraction.isFinite ||
-        routeProgressFraction < minimumRouteProgressFraction) {
-      return false;
-    }
-    final latestByRider = <String, RiderLocation>{
-      for (final location in riderLocations) location.riderId: location,
-    };
-    if (latestByRider.isEmpty) return false;
-    return latestByRider.values.every((location) {
-      if (location.sample.isStaleAt(now, locationFreshness)) return false;
-      return _distanceMeters(location.sample.position, destination) <=
-          destinationRadiusMeters;
-    });
+    return assess(
+      destination: destination,
+      riderLocations: riderLocations,
+      now: now,
+      routeProgressFraction: routeProgressFraction,
+    ).ready;
   }
+}
+
+class RideCompletionAssessment {
+  const RideCompletionAssessment({
+    required this.routeProgressFraction,
+    required this.minimumRouteProgressFraction,
+    required this.destinationRadiusMeters,
+    required this.riderCount,
+    required this.freshRiderCount,
+    required this.arrivedRiderCount,
+  });
+
+  final double routeProgressFraction;
+  final double minimumRouteProgressFraction;
+  final double destinationRadiusMeters;
+  final int riderCount;
+  final int freshRiderCount;
+  final int arrivedRiderCount;
+
+  bool get routeProgressReached =>
+      routeProgressFraction.isFinite &&
+      routeProgressFraction >= minimumRouteProgressFraction;
+
+  bool get ready =>
+      routeProgressReached &&
+      riderCount > 0 &&
+      freshRiderCount == riderCount &&
+      arrivedRiderCount == riderCount;
 }
 
 double _distanceMeters(GeoPoint first, GeoPoint second) {

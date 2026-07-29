@@ -14,7 +14,7 @@ class GpxExporter {
         'version': '1.1',
         'creator': 'Tail End Charlie',
         'xmlns': 'http://www.topografix.com/GPX/1/1',
-        if (route.preferences != null)
+        if (route.preferences != null || route.markerReview.isNotEmpty)
           'xmlns:tec': 'https://tailendcharlie.app/gpx/1',
       },
       nest: () {
@@ -32,20 +32,41 @@ class GpxExporter {
             // Preferences belong to the route, so they travel with the file a
             // rider shares rather than staying on the device that planned it.
             // Any other GPX reader ignores an unknown extension element.
-            if (route.preferences case final preferences?) {
+            if (route.preferences != null || route.markerReview.isNotEmpty) {
               builder.element(
                 'extensions',
-                nest: () => builder.element(
-                  'tec:route-preferences',
-                  attributes: {
-                    'style': preferences.style.apiValue,
-                    'avoid-motorways': '${preferences.avoidMotorways}',
-                    'avoid-major-roads': '${preferences.avoidMajorRoads}',
-                    'avoid-tolls': '${preferences.avoidTolls}',
-                    'avoid-ferries': '${preferences.avoidFerries}',
-                    'byway-surface': preferences.bywaySurface.apiValue,
-                  },
-                ),
+                nest: () {
+                  if (route.preferences case final preferences?) {
+                    builder.element(
+                      'tec:route-preferences',
+                      attributes: {
+                        'style': preferences.style.apiValue,
+                        'avoid-motorways': '${preferences.avoidMotorways}',
+                        'avoid-major-roads': '${preferences.avoidMajorRoads}',
+                        'avoid-tolls': '${preferences.avoidTolls}',
+                        'avoid-ferries': '${preferences.avoidFerries}',
+                        'byway-surface': preferences.bywaySurface.apiValue,
+                      },
+                    );
+                  }
+                  if (route.markerReview.isNotEmpty) {
+                    builder.element(
+                      'tec:marker-review',
+                      nest: () {
+                        _writeReviewPoints(
+                          builder,
+                          'tec:rejected',
+                          route.markerReview.rejected,
+                        );
+                        _writeReviewPoints(
+                          builder,
+                          'tec:added',
+                          route.markerReview.added,
+                        );
+                      },
+                    );
+                  }
+                },
               );
             }
           },
@@ -126,6 +147,23 @@ class GpxExporter {
     'lat': point.latitude.toStringAsFixed(7),
     'lon': point.longitude.toStringAsFixed(7),
   };
+
+  static void _writeReviewPoints(
+    XmlBuilder builder,
+    String element,
+    List<MarkerReviewPoint> points,
+  ) {
+    for (final point in points) {
+      builder.element(
+        element,
+        attributes: {
+          'id': point.id,
+          ..._coordinates(point.position),
+          'label': ?point.label,
+        },
+      );
+    }
+  }
 
   static void _writePointDetails(XmlBuilder builder, GeoPoint point) {
     if (point.elevationMeters case final elevation?) {

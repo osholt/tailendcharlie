@@ -17,6 +17,24 @@ const validDraft = {
   shapingPoints: [
     { id: 1, segmentStartId: 1, longitude: -2.35, latitude: 51.6 },
   ],
+  markerReview: {
+    rejected: [
+      {
+        id: "maneuver-3",
+        longitude: -2.35,
+        latitude: 51.6,
+        label: "Turn left marker",
+      },
+    ],
+    added: [
+      {
+        id: "geometry-2",
+        longitude: -2.34,
+        latitude: 51.61,
+        label: "Added junction",
+      },
+    ],
+  },
   routeCoordinates: [
     [-2.5, 51.5],
     [-2.2, 51.7],

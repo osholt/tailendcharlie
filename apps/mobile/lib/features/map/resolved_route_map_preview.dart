@@ -24,6 +24,17 @@ class RoutePreviewPin {
   final String kind;
 }
 
+class RoutePreviewReshapeStart {
+  const RoutePreviewReshapeStart({required this.point, this.shapingPointIndex});
+
+  final GeoPoint point;
+
+  /// Null when the drag began on the route line and should create a new
+  /// shaping point. Otherwise this is the index among pins whose kind is
+  /// `shape`.
+  final int? shapingPointIndex;
+}
+
 /// A small MapLibre route canvas for review/recording surfaces that do not own
 /// the app's main map dependencies. It resolves and normalises the remote style
 /// before mounting MapLibre, matching the production ride map.
@@ -38,6 +49,10 @@ class ResolvedRouteMapPreview extends StatefulWidget {
     this.onPointTap,
     this.onControllerReady,
     this.onStyleReady,
+    this.reshapeEnabled = false,
+    this.onReshapeStart,
+    this.onReshapeUpdate,
+    this.onReshapeEnd,
   });
 
   final List<List<GeoPoint>> paths;
@@ -46,6 +61,10 @@ class ResolvedRouteMapPreview extends StatefulWidget {
   final String? mapStyleString;
   final String lineColor;
   final ValueChanged<int>? onPointTap;
+  final bool reshapeEnabled;
+  final ValueChanged<RoutePreviewReshapeStart>? onReshapeStart;
+  final ValueChanged<GeoPoint>? onReshapeUpdate;
+  final VoidCallback? onReshapeEnd;
 
   /// Handed the map's controller once created, so a caller can snapshot it.
   /// Exposed for the recap export, which needs MapLibre's own snapshot because
@@ -68,6 +87,12 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
   bool _styleReady = false;
   bool _syncing = false;
   bool _syncAgain = false;
+  bool _syncAgainShouldFit = false;
+  Future<void>? _reshapeStartFuture;
+  int _reshapeGesture = 0;
+  int _reshapeUpdate = 0;
+  bool _reshapeAccepted = false;
+  Offset? _latestReshapePosition;
   late final Future<String> _style = _resolveStyle();
 
   List<GeoPoint> get _points =>
@@ -81,7 +106,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     if (_styleReady &&
         (!_samePreviewPaths(oldWidget.paths, widget.paths) ||
             !_samePreviewPins(oldWidget.pins, widget.pins))) {
-      unawaited(_syncAndFit());
+      unawaited(_syncAndFit(fit: !widget.reshapeEnabled));
     }
   }
 
@@ -144,6 +169,17 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                 ),
               ),
             ),
+            if (widget.reshapeEnabled)
+              Positioned.fill(
+                child: GestureDetector(
+                  key: const Key('route-preview-reshape-surface'),
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: _beginReshape,
+                  onPanUpdate: _updateReshape,
+                  onPanEnd: (_) => _endReshape(),
+                  onPanCancel: _endReshape,
+                ),
+              ),
             Positioned(
               left: 8,
               top: 8,
@@ -159,6 +195,31 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                 ),
               ),
             ),
+            if (widget.reshapeEnabled)
+              const Positioned(
+                left: 58,
+                right: 58,
+                bottom: 10,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Color(0xE61A2029),
+                      borderRadius: BorderRadius.all(Radius.circular(18)),
+                    ),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 7,
+                      ),
+                      child: Text(
+                        'Drag the route or a purple handle · exit Reshape to pan',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -247,6 +308,12 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
               'muster',
             ],
             '#68A9FF',
+            [
+              '==',
+              ['get', 'kind'],
+              'shape',
+            ],
+            '#B37CFF',
             '#FFC857',
           ],
           circleStrokeColor: '#10151C',
@@ -264,9 +331,10 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     }
   }
 
-  Future<void> _syncAndFit() async {
+  Future<void> _syncAndFit({bool fit = true}) async {
     if (_syncing) {
       _syncAgain = true;
+      _syncAgainShouldFit = _syncAgainShouldFit || fit;
       return;
     }
     final controller = _controller;
@@ -275,14 +343,16 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     try {
       await controller.setGeoJsonSource(_routeSource, _routeGeoJson());
       await controller.setGeoJsonSource(_pinSource, _pinGeoJson());
-      await _fit();
+      if (fit) await _fit();
     } on Object catch (error) {
       if (kDebugMode) debugPrint('Could not refresh route preview map: $error');
     } finally {
       _syncing = false;
       if (_syncAgain) {
         _syncAgain = false;
-        unawaited(_syncAndFit());
+        final shouldFit = _syncAgainShouldFit;
+        _syncAgainShouldFit = false;
+        unawaited(_syncAndFit(fit: shouldFit));
       }
     }
   }
@@ -335,6 +405,126 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     if (closest >= 0 && closestDistance <= 30) callback(closest);
   }
 
+  void _beginReshape(DragStartDetails details) {
+    final gesture = ++_reshapeGesture;
+    _reshapeUpdate += 1;
+    _reshapeAccepted = false;
+    _latestReshapePosition = details.localPosition;
+    _reshapeStartFuture = _resolveReshapeStart(details.localPosition, gesture);
+  }
+
+  Future<void> _resolveReshapeStart(Offset localPosition, int gesture) async {
+    final controller = _controller;
+    final callback = widget.onReshapeStart;
+    if (controller == null || callback == null) return;
+    final tap = math.Point<double>(localPosition.dx, localPosition.dy);
+    final shapePins = widget.pins
+        .where((pin) => pin.kind == 'shape')
+        .toList(growable: false);
+    int? shapeIndex;
+    if (shapePins.isNotEmpty) {
+      final screens = await controller.toScreenLocationBatch(
+        shapePins.map(
+          (pin) => ml.LatLng(pin.point.latitude, pin.point.longitude),
+        ),
+      );
+      var closestDistance = double.infinity;
+      for (var index = 0; index < screens.length; index += 1) {
+        final distance = _screenDistance(tap, screens[index]);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          shapeIndex = index;
+        }
+      }
+      if (closestDistance > 32) shapeIndex = null;
+    }
+    if (shapeIndex == null && !await _tapIsNearRoute(controller, tap)) return;
+    final location = await controller.toLatLng(tap);
+    if (gesture != _reshapeGesture) return;
+    _reshapeAccepted = true;
+    callback(
+      RoutePreviewReshapeStart(
+        point: GeoPoint(
+          latitude: location.latitude,
+          longitude: location.longitude,
+        ),
+        shapingPointIndex: shapeIndex,
+      ),
+    );
+  }
+
+  void _updateReshape(DragUpdateDetails details) {
+    final gesture = _reshapeGesture;
+    final update = ++_reshapeUpdate;
+    _latestReshapePosition = details.localPosition;
+    unawaited(_resolveReshapeUpdate(details.localPosition, gesture, update));
+  }
+
+  Future<void> _resolveReshapeUpdate(
+    Offset localPosition,
+    int gesture,
+    int update,
+  ) async {
+    await _reshapeStartFuture;
+    final controller = _controller;
+    final callback = widget.onReshapeUpdate;
+    if (!_reshapeAccepted ||
+        controller == null ||
+        callback == null ||
+        gesture != _reshapeGesture ||
+        update != _reshapeUpdate) {
+      return;
+    }
+    final location = await controller.toLatLng(
+      math.Point<double>(localPosition.dx, localPosition.dy),
+    );
+    if (gesture != _reshapeGesture || update != _reshapeUpdate) return;
+    callback(
+      GeoPoint(latitude: location.latitude, longitude: location.longitude),
+    );
+  }
+
+  void _endReshape() {
+    final gesture = _reshapeGesture;
+    final update = ++_reshapeUpdate;
+    unawaited(_resolveReshapeEnd(gesture, update, _latestReshapePosition));
+  }
+
+  Future<void> _resolveReshapeEnd(
+    int gesture,
+    int update,
+    Offset? localPosition,
+  ) async {
+    await _reshapeStartFuture;
+    if (gesture != _reshapeGesture || !_reshapeAccepted) return;
+    if (localPosition != null) {
+      await _resolveReshapeUpdate(localPosition, gesture, update);
+    }
+    if (gesture != _reshapeGesture || update != _reshapeUpdate) return;
+    _reshapeAccepted = false;
+    _latestReshapePosition = null;
+    widget.onReshapeEnd?.call();
+  }
+
+  Future<bool> _tapIsNearRoute(
+    ml.MapLibreMapController controller,
+    math.Point<double> tap,
+  ) async {
+    for (final path in widget.paths) {
+      if (path.length < 2) continue;
+      final screens = await controller.toScreenLocationBatch(
+        path.map((point) => ml.LatLng(point.latitude, point.longitude)),
+      );
+      for (var index = 1; index < screens.length; index += 1) {
+        if (_pointToSegmentDistance(tap, screens[index - 1], screens[index]) <=
+            28) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   Map<String, dynamic> _routeGeoJson() => {
     'type': 'FeatureCollection',
     'features': [
@@ -379,6 +569,30 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
       ],
     };
   }
+}
+
+double _screenDistance(math.Point<num> first, math.Point<num> second) {
+  final dx = first.x - second.x;
+  final dy = first.y - second.y;
+  return math.sqrt(dx * dx + dy * dy);
+}
+
+double _pointToSegmentDistance(
+  math.Point<num> point,
+  math.Point<num> start,
+  math.Point<num> end,
+) {
+  final dx = end.x - start.x;
+  final dy = end.y - start.y;
+  if (dx == 0 && dy == 0) return _screenDistance(point, start);
+  final position =
+      (((point.x - start.x) * dx + (point.y - start.y) * dy) /
+              (dx * dx + dy * dy))
+          .clamp(0.0, 1.0);
+  return _screenDistance(
+    point,
+    math.Point(start.x + position * dx, start.y + position * dy),
+  );
 }
 
 bool _samePreviewPaths(

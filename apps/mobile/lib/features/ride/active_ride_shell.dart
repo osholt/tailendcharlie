@@ -695,6 +695,9 @@ enum _MissingTecDecision { cancel, assignTec, startAnyway }
 enum RideExitDecision { cancel, leave, endForEveryone }
 
 @visibleForTesting
+enum RideCompletionDecision { continueRide, endForEveryone }
+
+@visibleForTesting
 Future<RideExitDecision?> showRideExitDialog(
   BuildContext context, {
   required bool isLeader,
@@ -729,6 +732,43 @@ Future<RideExitDecision?> showRideExitDialog(
   ),
 );
 
+@visibleForTesting
+Future<RideCompletionDecision?> showRideCompletionDialog(
+  BuildContext context, {
+  required RideCompletionAssessment assessment,
+  required bool relayCanCarryReopen,
+}) => showDialog<RideCompletionDecision>(
+  context: context,
+  barrierDismissible: false,
+  builder: (dialogContext) => AlertDialog(
+    key: const Key('ride-completion-suggestion'),
+    icon: const Icon(Icons.flag_circle_outlined),
+    title: const Text('Has everyone finished?'),
+    content: Text(
+      '${assessment.arrivedRiderCount} of ${assessment.riderCount} riders have '
+      'fresh positions within ${assessment.destinationRadiusMeters.round()} m '
+      'of the destination, and '
+      '${(assessment.routeProgressFraction * 100).clamp(0, 100).round()}% of '
+      'the route has been completed.\n\n'
+      '${relayCanCarryReopen ? 'If this is wrong, the leader can resume this ride within 24 hours without changing its code.' : 'This relay cannot resume an ended ride on the other phones. Only end when the whole group is definitely finished.'}',
+    ),
+    actions: [
+      TextButton(
+        key: const Key('continue-completed-ride'),
+        onPressed: () =>
+            Navigator.pop(dialogContext, RideCompletionDecision.continueRide),
+        child: const Text('Continue ride'),
+      ),
+      FilledButton(
+        key: const Key('confirm-completed-ride'),
+        onPressed: () =>
+            Navigator.pop(dialogContext, RideCompletionDecision.endForEveryone),
+        child: const Text('End for everyone'),
+      ),
+    ],
+  ),
+);
+
 class _ActiveRideShellState extends State<ActiveRideShell>
     with WidgetsBindingObserver {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
@@ -758,6 +798,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
   final _rideCompletionDetector = RideCompletionDetector();
+  bool _completionPromptedForArrival = false;
 
   /// Progress along the active route, used only to arm the automatic ride end.
   ///
@@ -2213,7 +2254,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // Monotonic progress along the plan, not proximity to its last point. On a
     // loop the two are the same thing at the start line (#206).
     final progress = _completionProgressTracker.update(route, localPosition);
-    final arrived = _rideCompletionDetector.everyoneReachedDestination(
+    final assessment = _rideCompletionDetector.assess(
       destination: awareness_geo.GeoPoint(
         latitude: destination.latitude,
         longitude: destination.longitude,
@@ -2224,13 +2265,28 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           ? 0
           : progress.progressMeters / progress.totalMeters,
     );
-    if (!arrived) return;
+    if (!assessment.ready) {
+      _completionPromptedForArrival = false;
+      return;
+    }
+    // A dismissed suggestion stays dismissed while the group remains inside
+    // the destination radius. Leaving and returning arms a fresh suggestion.
+    if (_completionPromptedForArrival) return;
+    _completionPromptedForArrival = true;
     _autoEndingRide = true;
     try {
-      await widget.rideController.endRide();
+      if (!mounted) return;
+      final decision = await showRideCompletionDialog(
+        context,
+        assessment: assessment,
+        relayCanCarryReopen: _relayCanCarryReopen,
+      );
+      if (decision == RideCompletionDecision.endForEveryone) {
+        await widget.rideController.endRide();
+      }
     } catch (error, stackTrace) {
       if (kDebugMode) {
-        debugPrint('Could not automatically end ride: $error\n$stackTrace');
+        debugPrint('Could not offer ride completion: $error\n$stackTrace');
       }
     } finally {
       _autoEndingRide = false;
@@ -2901,11 +2957,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         internetRelayController: _internetRelayController,
         onRemoveRide: _removeEndedRide,
         roadRatings: widget.roadRatings,
-        relayCanCarryReopen:
-            _internetRelayController?.supportsCapability(
-              RelayProtocolCapabilities.rideReopen,
-            ) ??
-            true,
+        relayCanCarryReopen: _relayCanCarryReopen,
       );
     }
     final selectedBody = _isSimulation
@@ -3552,13 +3604,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<void> _confirmEndRide() async {
     if (widget.rideController.session?.role != RideRole.lead) return;
+    final relayCanCarryReopen = _relayCanCarryReopen;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('End this ride?'),
-        content: const Text(
+        content: Text(
           'This ends the group ride for everyone. Location sharing stops, '
-          'but relay recovery remains available for final queued events.',
+          'but relay recovery remains available for final queued events.\n\n'
+          '${relayCanCarryReopen ? 'The leader can resume it within 24 hours without changing the ride code.' : 'This relay cannot resume an ended ride on the other phones. This action cannot be undone for the group.'}',
         ),
         actions: [
           TextButton(
@@ -3624,6 +3678,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       ),
     );
   }
+
+  bool get _relayCanCarryReopen =>
+      _internetRelayController?.supportsCapability(
+        RelayProtocolCapabilities.rideReopen,
+      ) ??
+      true;
 
   void _openRoster() {
     unawaited(

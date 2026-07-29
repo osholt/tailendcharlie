@@ -5,6 +5,7 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/route_review_screen.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
+import 'package:ride_relay/services/route_reshape_planner.dart';
 
 void main() {
   test('warns when recalculation materially changes the route', () {
@@ -80,6 +81,58 @@ void main() {
 
     expect(find.byKey(const Key('route-review-waypoint-0')), findsOneWidget);
   });
+
+  testWidgets(
+    'route adjustments stay distinct from named stops and recalculate',
+    (tester) async {
+      final route = _route(0.02).withShapingPoints(const [
+        RouteShapingPoint(
+          id: 'shape-one',
+          legIndex: 0,
+          point: GeoPoint(latitude: 51.001, longitude: -1.99),
+        ),
+      ]);
+      var reshapeCalls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RouteReviewScreen(
+            route: route,
+            distanceUnit: DistanceUnit.miles,
+            basemapConfiguration: const BasemapConfiguration(),
+            onReshapeRoute: (candidate, shapingPoints) async {
+              reshapeCalls += 1;
+              return RouteReshapeResult(
+                route: candidate.withShapingPoints(shapingPoints),
+                distanceMeters: 1200,
+                duration: const Duration(minutes: 4),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(const Key('toggle-route-reshape')), findsOneWidget);
+      expect(
+        find.byKey(const Key('route-shaping-point-shape-one')),
+        findsOneWidget,
+      );
+      expect(find.text('Adjustment 1'), findsOneWidget);
+      expect(find.text('2 route points'), findsOneWidget);
+
+      final chip = tester.widget<InputChip>(
+        find.byKey(const Key('route-shaping-point-shape-one')),
+      );
+      chip.onDeleted!();
+      await tester.pumpAndSettle();
+
+      expect(reshapeCalls, 1);
+      expect(
+        find.byKey(const Key('route-shaping-point-shape-one')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('keeps disconnected imported paths visually separate', (
     tester,
