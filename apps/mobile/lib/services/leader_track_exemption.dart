@@ -11,6 +11,8 @@ import 'geo_calculations.dart';
 /// It lives in its own file so the deviation/alert side and the rejoin-routing
 /// side can both depend on it without depending on each other.
 abstract final class LeaderTrackExemption {
+  static const defaultRecentPointLimit = 600;
+
   /// [leaderTrack] is the leader's recorded trail. Only the most recent
   /// [recentPointLimit] points are considered: "following the leader" means
   /// being near where the leader has recently been, not standing where the
@@ -21,7 +23,7 @@ abstract final class LeaderTrackExemption {
     required List<GeoPoint> leaderTrack,
     double accuracyMeters = 0,
     double corridorMeters = 120,
-    int recentPointLimit = 600,
+    int recentPointLimit = defaultRecentPointLimit,
   }) {
     if (leaderTrack.length < 2) return false;
     final recent = leaderTrack.length > recentPointLimit

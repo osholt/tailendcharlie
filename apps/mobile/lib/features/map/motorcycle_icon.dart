@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -266,15 +267,26 @@ class RiderMarkerBadge extends StatelessWidget {
           color: glyphColor,
           size: size * 0.62,
         ),
-        RiderSymbolKind.initials => Text(
-          riderInitials(displayName),
-          maxLines: 1,
-          style: TextStyle(
-            color: glyphColor,
-            fontSize: size * 0.34,
-            height: 1,
-            fontWeight: FontWeight.w900,
-            letterSpacing: -0.4,
+        RiderSymbolKind.initials => Padding(
+          padding: EdgeInsets.all(size * 0.08),
+          child: FittedBox(
+            key: const Key('rider-marker-initials-fill'),
+            fit: BoxFit.contain,
+            child: Text(
+              riderInitials(displayName),
+              maxLines: 1,
+              style: TextStyle(
+                color: glyphColor,
+                // Start at the badge diameter, then let FittedBox use whichever
+                // dimension is limiting. One and two letters therefore occupy
+                // the circle instead of inheriting a body-text-sized glyph
+                // (#259).
+                fontSize: size,
+                height: 0.9,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.8,
+              ),
+            ),
           ),
         ),
         RiderSymbolKind.emoji => Text(
@@ -320,13 +332,29 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
             text: glyph,
             style: TextStyle(
               color: const Color(0xFFFFFFFF),
-              fontSize: size * (initials ? 0.46 : 0.72),
-              height: 1,
+              fontSize: size * (initials ? 1 : 0.72),
+              height: initials ? 0.9 : 1,
               fontWeight: initials ? FontWeight.w900 : FontWeight.normal,
-              letterSpacing: initials ? -1.5 : null,
+              letterSpacing: initials ? -3 : null,
             ),
           ),
         )..layout(maxWidth: size);
+        if (initials) {
+          final available = size * 0.84;
+          final scale = math.min(
+            available / painter.width,
+            available / painter.height,
+          );
+          final paintedWidth = painter.width * scale;
+          final paintedHeight = painter.height * scale;
+          canvas
+            ..save()
+            ..translate((size - paintedWidth) / 2, (size - paintedHeight) / 2)
+            ..scale(scale);
+          painter.paint(canvas, Offset.zero);
+          canvas.restore();
+          return;
+        }
         painter.paint(
           canvas,
           Offset((size - painter.width) / 2, (size - painter.height) / 2),

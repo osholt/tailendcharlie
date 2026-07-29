@@ -105,4 +105,26 @@ void main() {
     expect(symbol, const RiderSymbol.emoji('😈'));
     expect(find.text('😈'), findsWidgets);
   });
+
+  testWidgets('initials use the available rider badge instead of body text', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Center(
+          child: RiderMarkerBadge(
+            style: MotorcycleIconStyle.scrambler,
+            badgeColor: Colors.teal,
+            symbol: RiderSymbol.initials(),
+            displayName: 'Keith Simmonds',
+            size: 34,
+          ),
+        ),
+      ),
+    );
+
+    final text = tester.widget<Text>(find.text('KS'));
+    expect(text.style?.fontSize, 34);
+    expect(find.byKey(const Key('rider-marker-initials-fill')), findsOneWidget);
+  });
 }
