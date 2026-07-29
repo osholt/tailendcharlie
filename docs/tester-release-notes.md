@@ -36,6 +36,55 @@ permissions by design.
 - ...
 ```
 
+## Android and iOS build 34 — 1.0.1 — 29 July 2026
+
+This build supersedes build 33 and contains the latest tester-feedback fixes on
+both Google Play closed testing (`alpha`) and TestFlight.
+
+### What to test
+
+1. **Reshape a route in the app.** On the route review map, enter
+   **Reshape**, drag the route onto another road, move the purple shaping
+   handle, then try Undo and Remove. Cancelling must keep the current route;
+   Confirm must apply the new road route without turning shaping points into
+   named stops.
+2. **Review marker positions on the web and in the app.** Yellow dots are
+   likely turn markers, red positions need a safety review and teal positions
+   are muster points. Reject one and add a missed junction, then transfer the
+   route by GPX or private app code and check that both decisions survive.
+3. **Finish a group ride.** Reaching the destination must show the leader why
+   the group looks finished and ask before ending. Choose **Continue ride**
+   once, then leave and re-enter the destination area to confirm the prompt
+   re-arms. Finally choose **End for everyone**.
+4. **Leave as the leader.** The map-level Leave button now offers
+   **Leave only** and **End for everyone** directly.
+5. **Go off route.** The purple rejoin track must now drive the turn-by-turn
+   directions as well as drawing the route.
+6. **Review a long route.** Confirm is at the top; marker positions, route
+   points and the full turn list no longer have to be scrolled past.
+7. **Frame route and previous-ride maps.** Pan and zoom should respond
+   reliably, the whole ride should initially fit, and **Fit whole route/ride**
+   should restore the frame. Sharing a ride must preserve the frame you chose.
+
+### Fixed
+
+- Off-course reroutes now provide directions instead of only a line (#162).
+- Long route confirmation no longer sits below every turn and waypoint (#240).
+- Route preview, sharing and previous-ride maps frame the whole journey and
+  accept touch gestures reliably (#239).
+- A leader can end the ride for everyone from the normal Leave action (#241).
+- Route reshaping now works in the app without creating extra stops (#242).
+- Marker-plan review is available on the web and survives GPX/app-code handoff
+  (#243).
+- Arrival detection no longer silently ends a ride; the leader sees the
+  evidence and chooses whether to continue or end for everyone (#244).
+
+### Known validation still needed
+
+- Please report the phone model and build number when testing route dragging.
+- The end/reopen flow still needs results from two physical phones, especially
+  whether both phones resume within 24 hours without changing the ride code.
+
 ## Android build 31 — 1.0.1 — 28 July 2026
 
 Almost everything here came from what you told us on 27 July. Where a fix is
@@ -175,7 +224,7 @@ pending would have had build 31 claim them a second time.
 
 Changes merged but not yet in a tester build.
 
-_Nothing outstanding: everything on `main` is in build 31._
+_Nothing outstanding: everything on `main` is in build 34._
 
 ## Earlier
 
