@@ -8,6 +8,8 @@ import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
+import 'package:ride_relay/domain/rider_color.dart';
+import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/features/ride/ride_roster_sheet.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
@@ -46,7 +48,11 @@ void main() {
       type: RideEventType.riderJoined,
       priority: EventPriority.routine,
       createdAt: now,
-      payload: const {'displayName': 'Bill', 'role': 'rider'},
+      payload: const {
+        'displayName': 'Bill',
+        'role': 'rider',
+        'riderColor': 'crimson',
+      },
       signature: '',
     );
     await eventStore.append(
@@ -185,6 +191,118 @@ void main() {
 
     expect(find.byKey(const Key('roster-missing-tec-notice')), findsNothing);
     expect(find.byKey(const Key('ask-tec-bill')), findsNothing);
+    final badge = tester.widget<RiderMarkerBadge>(
+      find.descendant(
+        of: find.byKey(const Key('roster-rider-bill')),
+        matching: find.byType(RiderMarkerBadge),
+      ),
+    );
+    expect(
+      badge.badgeColor,
+      RiderColor.crimson.color,
+      reason: 'taking the TEC role must not replace Bill’s identity colour',
+    );
+  });
+
+  testWidgets('an accepted assignment supersedes an older TEC selection', (
+    tester,
+  ) async {
+    final session = controller.session!;
+    final daveJoin = RideEvent(
+      id: 'join-dave',
+      rideId: session.rideId,
+      deviceId: 'dave',
+      type: RideEventType.riderJoined,
+      priority: EventPriority.routine,
+      createdAt: now.add(const Duration(seconds: 1)),
+      payload: const {
+        'displayName': 'Dave',
+        'role': 'tailEndCharlie',
+        'riderColor': 'amber',
+      },
+      signature: '',
+    );
+    await eventStore.append(
+      RideEvent(
+        id: daveJoin.id,
+        rideId: daveJoin.rideId,
+        deviceId: daveJoin.deviceId,
+        type: daveJoin.type,
+        priority: daveJoin.priority,
+        createdAt: daveJoin.createdAt,
+        payload: daveJoin.payload,
+        signature: RideEventAuthenticator.sign(daveJoin, session.inviteSecret),
+      ),
+    );
+    await controller.reloadEvents();
+    expect(
+      await controller.requestTecRole(
+        targetRiderId: 'bill',
+        targetDisplayName: 'Bill',
+      ),
+      TecRoleRequestOutcome.sent,
+    );
+    final request = controller.tecRoleAssignments.latest!;
+    final response = RideEvent(
+      id: 'bill-accepts',
+      rideId: session.rideId,
+      deviceId: 'bill',
+      type: RideEventType.tecRoleResponded,
+      priority: EventPriority.important,
+      createdAt: now.add(const Duration(seconds: 2)),
+      payload: TecRoleAssignmentReducer.responsePayload(
+        requestId: request.requestId,
+        targetRiderId: 'bill',
+        accepted: true,
+      ),
+      signature: '',
+    );
+    final billRole = RideEvent(
+      id: 'bill-role',
+      rideId: session.rideId,
+      deviceId: 'bill',
+      type: RideEventType.roleChanged,
+      priority: EventPriority.routine,
+      createdAt: now.add(const Duration(seconds: 3)),
+      payload: const {'role': 'tailEndCharlie'},
+      signature: '',
+    );
+    for (final event in [response, billRole]) {
+      await eventStore.append(
+        RideEvent(
+          id: event.id,
+          rideId: event.rideId,
+          deviceId: event.deviceId,
+          type: event.type,
+          priority: event.priority,
+          createdAt: event.createdAt,
+          payload: event.payload,
+          signature: RideEventAuthenticator.sign(event, session.inviteSecret),
+        ),
+      );
+    }
+    await controller.reloadEvents();
+
+    await tester.pumpWidget(harness());
+    await tester.pumpAndSettle();
+
+    expect(controller.tecRoleAssignments.acceptedTecRiderId, 'bill');
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('roster-rider-bill')),
+        matching: find.textContaining('Tail End Charlie'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('roster-rider-dave')),
+        matching: find.textContaining(
+          'Rider · previous TEC selection superseded',
+        ),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a rider who is not the leader sees no ask action', (

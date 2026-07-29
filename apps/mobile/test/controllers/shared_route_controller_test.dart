@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/shared_route_controller.dart';
+import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/planner_link_channel.dart';
@@ -103,6 +104,42 @@ void main() {
     expect(directory.codes, ['AB12CD34', 'AB12CD34']);
     expect(controller.pending?.name, 'Recovered.gpx');
     expect(controller.plannerLinkStatus, PlannerLinkStatus.idle);
+  });
+
+  test('an in-app route stays geometry and carries review notes', () async {
+    final controller = await SharedRouteController.load(
+      channel: const _NoGpxChannel(),
+      plannerLinkSource: _PlannerLinkSource([]),
+      planDirectory: _PlanDirectory(),
+    );
+    addTearDown(controller.dispose);
+    final route = ImportedRoute(
+      id: 'ride-again',
+      name: 'Ride again',
+      importedAt: DateTime.utc(2026, 7, 29),
+      sourceFileName: 'previous-ride',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.route,
+          points: [
+            GeoPoint(latitude: 51, longitude: -2),
+            GeoPoint(latitude: 52, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    controller.stagePendingInAppRoute(
+      route,
+      reviewNotes: const ['Previous ride plan'],
+    );
+
+    expect(controller.pending, isNull);
+    expect(controller.pendingInAppRoute?.route, same(route));
+    expect(controller.pendingInAppRoute?.reviewNotes, ['Previous ride plan']);
+    controller.clearPending();
+    expect(controller.pendingInAppRoute, isNull);
   });
 }
 

@@ -48,6 +48,101 @@ void main() {
     expect(guidance, isNull);
   });
 
+  test('keeps the next instruction visible when it is more than 5 km away', () {
+    final route = ImportedRoute(
+      id: 'long-leg',
+      name: 'Long leg',
+      importedAt: DateTime.utc(2026, 7, 29),
+      sourceFileName: 'long-leg.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 0, longitude: 0),
+            GeoPoint(latitude: 0, longitude: 0.2),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 0, longitude: 0.1),
+          type: 'turn',
+          modifier: 'left',
+          name: 'Distant turn',
+        ),
+      ],
+    );
+
+    final assessment = planner.assess(
+      route: route,
+      position: const GeoPoint(latitude: 0, longitude: 0),
+      progressMeters: 0,
+    );
+
+    expect(assessment.state, NavigationGuidanceState.active);
+    expect(assessment.guidance?.maneuver.name, 'Distant turn');
+    expect(assessment.guidance!.distanceMeters, greaterThan(10000));
+  });
+
+  test('diagnoses every non-active guidance state', () {
+    expect(
+      planner.assess(route: null, position: null, progressMeters: 0).state,
+      NavigationGuidanceState.noRoute,
+    );
+    expect(
+      planner.assess(route: _route(), position: null, progressMeters: 0).state,
+      NavigationGuidanceState.waitingForLocation,
+    );
+    expect(
+      planner
+          .assess(
+            route: _route(),
+            position: const GeoPoint(latitude: 0.01, longitude: 0.005),
+            progressMeters: 556,
+          )
+          .state,
+      NavigationGuidanceState.offRoute,
+    );
+    expect(
+      planner
+          .assess(
+            route: _route(),
+            position: const GeoPoint(latitude: 0, longitude: 0.02),
+            progressMeters: 10000,
+          )
+          .state,
+      NavigationGuidanceState.complete,
+    );
+    final noManeuvers = ImportedRoute(
+      id: 'no-maneuvers',
+      name: 'No manoeuvres',
+      importedAt: DateTime.utc(2026, 7, 29),
+      sourceFileName: 'no-maneuvers.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 0, longitude: 0),
+            GeoPoint(latitude: 0, longitude: 0.01),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [],
+    );
+    expect(
+      planner
+          .assess(
+            route: noManeuvers,
+            position: const GeoPoint(latitude: 0, longitude: 0),
+            progressMeters: 0,
+          )
+          .state,
+      NavigationGuidanceState.noManeuvers,
+    );
+  });
+
   test('skips non-instructional route-engine steps', () {
     final route = ImportedRoute(
       id: 'route',

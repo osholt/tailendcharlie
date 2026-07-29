@@ -1,8 +1,13 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/controllers/completed_rides_controller.dart';
+import 'package:ride_relay/controllers/distance_unit_controller.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
+import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/ride/previous_rides_screen.dart';
+import 'package:ride_relay/services/stored_route_library.dart';
 
 void main() {
   test('archived map bounds include sparse and self-crossing geometry', () {
@@ -77,6 +82,90 @@ void main() {
       expect(legend.traveled, isFalse);
     });
   });
+
+  testWidgets('Ride again returns the existing planned-route selection path', (
+    tester,
+  ) async {
+    final ride = _ride(plannedRoute: _line(), traveledRoute: _line());
+    final store = InMemoryCompletedRideStore();
+    await store.save(ride);
+    final completed = await CompletedRidesController.load(store);
+    final distance = DistanceUnitController.forLocale(const Locale('en', 'GB'));
+    StoredRouteSelection? result;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                result = await Navigator.of(context).push(
+                  MaterialPageRoute<StoredRouteSelection>(
+                    builder: (_) => PreviousRideDetailScreen(
+                      ride: ride,
+                      completedRides: completed,
+                      distanceUnits: distance,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('Open ride'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open ride'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byKey(const Key('archived-ride-again')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('archived-ride-again')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('archived-ride-again')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.byKey(const Key('ride-again-previousRidePlan')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.byKey(const Key('stored-route-reverse')));
+    await tester.tap(find.byKey(const Key('use-stored-route')));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(result, isNotNull);
+    expect(result!.candidate.origin, StoredRouteOrigin.previousRidePlan);
+    expect(result!.reversed, isTrue);
+  });
+
+  testWidgets('an archived ride names and preserves a recording gap', (
+    tester,
+  ) async {
+    final ride = _ride(plannedRoute: null, traveledRoute: _splitLine());
+    final store = InMemoryCompletedRideStore();
+    await store.save(ride);
+    final completed = await CompletedRidesController.load(store);
+    final distance = DistanceUnitController.forLocale(const Locale('en', 'GB'));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreviousRideDetailScreen(
+          ride: ride,
+          completedRides: completed,
+          distanceUnits: distance,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(ride.hasRecordingGaps, isTrue);
+    expect(
+      find.byKey(const Key('archived-ride-recording-gap')),
+      findsOneWidget,
+    );
+    expect(find.text('This recording has gaps'), findsOneWidget);
+    expect(find.textContaining('left blank'), findsOneWidget);
+  });
 }
 
 ImportedRoute _line([
@@ -90,6 +179,30 @@ ImportedRoute _line([
   importedAt: DateTime.utc(2026, 7, 23, 14),
   sourceFileName: 'ride.gpx',
   paths: [RoutePath(kind: RoutePathKind.track, points: points)],
+  waypoints: const [],
+);
+
+ImportedRoute _splitLine() => ImportedRoute(
+  id: 'route-with-gap',
+  name: 'Route with gap',
+  importedAt: DateTime.utc(2026, 7, 29, 14),
+  sourceFileName: 'ride.gpx',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 53, longitude: -1),
+        GeoPoint(latitude: 53.001, longitude: -1),
+      ],
+    ),
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 54, longitude: -2),
+        GeoPoint(latitude: 54.001, longitude: -2),
+      ],
+    ),
+  ],
   waypoints: const [],
 );
 

@@ -173,6 +173,39 @@ class NavigationGuidance {
   String get roadLabel => instruction.roadLabel;
 }
 
+/// Why the live guidance surface is showing what it is showing.
+///
+/// Keeping this state separate from [NavigationGuidance] prevents a temporary
+/// loss of position, an off-route fix, or the end of the manoeuvre list from
+/// silently turning the banner into an empty part of the screen (#254).
+enum NavigationGuidanceState {
+  noRoute,
+  waitingForLocation,
+  noManeuvers,
+  offRoute,
+  active,
+  complete,
+}
+
+class NavigationGuidanceAssessment {
+  const NavigationGuidanceAssessment({
+    required this.state,
+    required this.message,
+    this.guidance,
+  });
+
+  const NavigationGuidanceAssessment.noRoute()
+    : state = NavigationGuidanceState.noRoute,
+      message = 'No route is loaded.',
+      guidance = null;
+
+  final NavigationGuidanceState state;
+  final String message;
+  final NavigationGuidance? guidance;
+
+  bool get isVisible => state != NavigationGuidanceState.noRoute;
+}
+
 /// Collapsed instruction sequences, held weakly against the route they describe.
 final _instructionCache = Expando<List<RouteInstructionStep>>(
   'route instructions',
@@ -187,13 +220,11 @@ class NavigationGuidancePlanner {
   const NavigationGuidancePlanner({
     this.maximumDistanceFromRouteMeters = 150,
     this.passedToleranceMeters = 25,
-    this.maximumAdvanceDistanceMeters = 5000,
     this.closeManeuverSpacingMeters = 300,
   });
 
   final double maximumDistanceFromRouteMeters;
   final double passedToleranceMeters;
-  final double maximumAdvanceDistanceMeters;
   final double closeManeuverSpacingMeters;
 
   /// Every announceable instruction for [route], in order, measured along the
@@ -250,18 +281,45 @@ class NavigationGuidancePlanner {
     required ImportedRoute? route,
     required GeoPoint? position,
     required double progressMeters,
+  }) => assess(
+    route: route,
+    position: position,
+    progressMeters: progressMeters,
+  ).guidance;
+
+  NavigationGuidanceAssessment assess({
+    required ImportedRoute? route,
+    required GeoPoint? position,
+    required double progressMeters,
   }) {
-    if (route == null ||
-        position == null ||
-        route.maneuvers.isEmpty ||
-        route.paths.isEmpty) {
-      return null;
+    if (route == null) {
+      return const NavigationGuidanceAssessment.noRoute();
+    }
+    if (position == null) {
+      return const NavigationGuidanceAssessment(
+        state: NavigationGuidanceState.waitingForLocation,
+        message: 'Waiting for GPS — directions will resume automatically.',
+      );
+    }
+    if (route.maneuvers.isEmpty || route.paths.isEmpty) {
+      return const NavigationGuidanceAssessment(
+        state: NavigationGuidanceState.noManeuvers,
+        message: 'Turn guidance is unavailable for this route.',
+      );
     }
     final path = _primaryPath(route.paths);
-    if (path.length < 2) return null;
+    if (path.length < 2) {
+      return const NavigationGuidanceAssessment(
+        state: NavigationGuidanceState.noManeuvers,
+        message: 'Turn guidance is unavailable for this route.',
+      );
+    }
     final riderProjection = _project(position, path);
     if (riderProjection.distanceMeters > maximumDistanceFromRouteMeters) {
-      return null;
+      return const NavigationGuidanceAssessment(
+        state: NavigationGuidanceState.offRoute,
+        message: 'Off route — finding directions back.',
+      );
     }
 
     final candidates =
@@ -271,13 +329,15 @@ class NavigationGuidancePlanner {
         continue;
       }
       final remaining = step.distanceFromStartMeters - progressMeters;
-      if (remaining < -passedToleranceMeters ||
-          remaining > maximumAdvanceDistanceMeters) {
-        continue;
-      }
+      if (remaining < -passedToleranceMeters) continue;
       candidates.add((instruction: step.instruction, remaining: remaining));
     }
-    if (candidates.isEmpty) return null;
+    if (candidates.isEmpty) {
+      return const NavigationGuidanceAssessment(
+        state: NavigationGuidanceState.complete,
+        message: 'No more turns — continue to the destination.',
+      );
+    }
     candidates.sort(
       (first, second) => first.remaining.compareTo(second.remaining),
     );
@@ -290,15 +350,21 @@ class NavigationGuidancePlanner {
         following != null &&
         followingSpacing! >= 0 &&
         followingSpacing <= closeManeuverSpacingMeters;
-    return NavigationGuidance(
-      maneuver: next.instruction.maneuver,
-      instruction: next.instruction,
-      distanceMeters: math.max(0, next.remaining),
-      followingManeuver: showFollowing ? following.instruction.maneuver : null,
-      followingInstruction: showFollowing ? following.instruction : null,
-      followingDistanceMeters: showFollowing
-          ? math.max(0, followingSpacing)
-          : null,
+    return NavigationGuidanceAssessment(
+      state: NavigationGuidanceState.active,
+      message: 'Turn guidance is active.',
+      guidance: NavigationGuidance(
+        maneuver: next.instruction.maneuver,
+        instruction: next.instruction,
+        distanceMeters: math.max(0, next.remaining),
+        followingManeuver: showFollowing
+            ? following.instruction.maneuver
+            : null,
+        followingInstruction: showFollowing ? following.instruction : null,
+        followingDistanceMeters: showFollowing
+            ? math.max(0, followingSpacing)
+            : null,
+      ),
     );
   }
 }

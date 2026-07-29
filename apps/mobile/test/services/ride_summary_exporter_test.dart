@@ -166,6 +166,74 @@ void main() {
     expect(route.paths.single.points.last.latitude, 53.01);
   });
 
+  test('breaks and excludes distance across a missing location interval', () {
+    final session = RideSession(
+      rideId: 'ride-1',
+      rideCode: 'ABC123',
+      inviteSecret: 'secret',
+      joinToken: 'test-join-token-0123456789',
+      localRiderId: 'device-a',
+      displayName: 'Oliver',
+      role: RideRole.lead,
+      joinedAt: DateTime.utc(2026, 7, 16, 9, 55),
+    );
+    final events = [
+      _locationEvent(
+        '1',
+        deviceId: 'device-a',
+        riderId: 'device-a',
+        minute: 1,
+        latitude: 53,
+        longitude: -1,
+      ),
+      _locationEvent(
+        '2',
+        deviceId: 'device-a',
+        riderId: 'device-a',
+        minute: 2,
+        latitude: 53.001,
+        longitude: -1,
+      ),
+      _locationEvent(
+        '3',
+        deviceId: 'device-a',
+        riderId: 'device-a',
+        minute: 22,
+        latitude: 54,
+        longitude: -2,
+      ),
+      _locationEvent(
+        '4',
+        deviceId: 'device-a',
+        riderId: 'device-a',
+        minute: 23,
+        latitude: 54.001,
+        longitude: -2,
+      ),
+    ];
+    const exporter = RideSummaryExporter();
+
+    final summary = exporter.summarize(
+      session,
+      events,
+      generatedAt: DateTime.utc(2026, 7, 16, 10, 25),
+    );
+    final route = exporter.traveledRoute(
+      session,
+      events,
+      generatedAt: DateTime.utc(2026, 7, 16, 10, 25),
+    );
+
+    expect(route, isNotNull);
+    expect(route!.paths, hasLength(2));
+    expect(route.paths.map((path) => path.points.length), const [2, 2]);
+    expect(
+      summary.totalDistanceMeters,
+      closeTo(222, 5),
+      reason: 'the unknown cross-country section must not count as travel',
+    );
+  });
+
   test('duration and traveled trace begin at the authoritative start', () {
     final session = RideSession(
       rideId: 'ride-1',

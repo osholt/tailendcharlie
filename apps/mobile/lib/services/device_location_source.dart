@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 // AppleSettings, AndroidSettings and ForegroundNotificationConfig all come from
 // this one re-export, so the platform packages stay transitive.
 import 'package:geolocator/geolocator.dart';
@@ -23,16 +24,19 @@ class DeviceLocationStatus {
     required this.state,
     required this.message,
     this.lastSample,
+    this.backgroundCapable = false,
   });
 
   const DeviceLocationStatus.idle()
     : state = DeviceLocationState.idle,
       message = 'Location sharing has not been started.',
-      lastSample = null;
+      lastSample = null,
+      backgroundCapable = false;
 
   final DeviceLocationState state;
   final String message;
   final LocationSample? lastSample;
+  final bool backgroundCapable;
 
   bool get canSample =>
       state == DeviceLocationState.ready ||
@@ -48,11 +52,17 @@ abstract interface class DeviceLocationPlatform {
 
   Future<DeviceLocationPermission> requestPermission();
 
+  Future<DeviceLocationPermission> requestBackgroundPermission();
+
   Stream<LocationSample> positionStream();
 }
 
 class GeolocatorDeviceLocationPlatform implements DeviceLocationPlatform {
   const GeolocatorDeviceLocationPlatform();
+
+  static const _backgroundPermissionChannel = MethodChannel(
+    'me.osholt.ride_relay/background_location',
+  );
 
   @override
   Future<bool> isServiceEnabled() => Geolocator.isLocationServiceEnabled();
@@ -64,6 +74,25 @@ class GeolocatorDeviceLocationPlatform implements DeviceLocationPlatform {
   @override
   Future<DeviceLocationPermission> requestPermission() async =>
       _mapPermission(await Geolocator.requestPermission());
+
+  @override
+  Future<DeviceLocationPermission> requestBackgroundPermission() async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return DeviceLocationPermission.always;
+    }
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      return checkPermission();
+    }
+    final value = await _backgroundPermissionChannel.invokeMethod<String>(
+      'requestAlways',
+    );
+    return switch (value) {
+      'always' => DeviceLocationPermission.always,
+      'whileInUse' => DeviceLocationPermission.whileInUse,
+      'deniedForever' => DeviceLocationPermission.deniedForever,
+      _ => DeviceLocationPermission.denied,
+    };
+  }
 
   /// The platform filter, and deliberately not the reporting threshold.
   ///
@@ -109,9 +138,10 @@ class GeolocatorDeviceLocationPlatform implements DeviceLocationPlatform {
       // Core Location would otherwise decide the rider has stopped moving
       // and power the receiver down. On a ride, a stop is a coffee stop.
       pauseLocationUpdatesAutomatically: false,
-      // The blue indicator is not a cost, it is the honest signal that this
-      // app is using location right now, and it is what makes a while-in-use
-      // authorisation sufficient for background updates.
+      // The blue indicator is the honest signal that this app is using
+      // location. The native bridge separately promotes access to Always:
+      // field testing showed that While Using did not reliably survive another
+      // navigation app taking the foreground (#205).
       showBackgroundLocationIndicator: true,
       activityType: ActivityType.otherNavigation,
     ),
@@ -210,6 +240,9 @@ class DeviceLocationSource {
     if (permission == DeviceLocationPermission.denied) {
       permission = await _platform.requestPermission();
     }
+    if (permission == DeviceLocationPermission.whileInUse) {
+      permission = await _platform.requestBackgroundPermission();
+    }
     return _statusForPermission(permission);
   }
 
@@ -224,9 +257,12 @@ class DeviceLocationSource {
     _emit(
       DeviceLocationStatus(
         state: DeviceLocationState.sampling,
-        message:
-            'Sharing your position for this ride, including in the background.',
+        message: inspected.backgroundCapable
+            ? 'Sharing your position for this ride, including in the background.'
+            : 'Sharing while Tail End Charlie is visible. Allow “Always” '
+                  'location access to keep sharing with another app in front.',
         lastSample: _status.lastSample,
+        backgroundCapable: inspected.backgroundCapable,
       ),
     );
     final generation = ++_positionGeneration;
@@ -234,9 +270,11 @@ class DeviceLocationSource {
       (sample) => _emit(
         DeviceLocationStatus(
           state: DeviceLocationState.sampling,
-          message:
-              'Location is active for this ride, including in the background.',
+          message: _status.backgroundCapable
+              ? 'Location is active for this ride, including in the background.'
+              : 'Location is active only while Tail End Charlie is visible.',
           lastSample: sample,
+          backgroundCapable: _status.backgroundCapable,
         ),
       ),
       onError: (Object error, StackTrace stackTrace) =>
@@ -266,6 +304,7 @@ class DeviceLocationSource {
           state: DeviceLocationState.ready,
           message: 'Location sharing is stopped.',
           lastSample: _status.lastSample,
+          backgroundCapable: _status.backgroundCapable,
         ),
       );
     }
@@ -287,6 +326,7 @@ class DeviceLocationSource {
         state: DeviceLocationState.failed,
         message: 'Location updates stopped: $error',
         lastSample: _status.lastSample,
+        backgroundCapable: _status.backgroundCapable,
       ),
     );
   }
@@ -300,6 +340,7 @@ class DeviceLocationSource {
         state: DeviceLocationState.ready,
         message: 'Location sharing is stopped.',
         lastSample: _status.lastSample,
+        backgroundCapable: _status.backgroundCapable,
       ),
     );
   }
@@ -324,16 +365,24 @@ class DeviceLocationSource {
           ? _emit(
               DeviceLocationStatus(
                 state: DeviceLocationState.sampling,
-                message:
-                    'Location is active for this ride, including in the background.',
+                message: permission == DeviceLocationPermission.always
+                    ? 'Location is active for this ride, including in the background.'
+                    : 'Location is active only while Tail End Charlie is visible.',
                 lastSample: _status.lastSample,
+                backgroundCapable:
+                    permission == DeviceLocationPermission.always,
               ),
             )
           : _emit(
               DeviceLocationStatus(
                 state: DeviceLocationState.ready,
-                message: 'Location is ready. It runs for the length of a ride.',
+                message: permission == DeviceLocationPermission.always
+                    ? 'Location is ready. It runs for the length of a ride.'
+                    : 'Location is ready, but background sharing needs “Always” '
+                          'access.',
                 lastSample: _status.lastSample,
+                backgroundCapable:
+                    permission == DeviceLocationPermission.always,
               ),
             ),
   };

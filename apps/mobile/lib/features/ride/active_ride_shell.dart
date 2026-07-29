@@ -794,9 +794,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _quickMessageAlerts = ValueNotifier<List<RideQuickMessageAlert>>(
     const [],
   );
+  final _dismissedQuickMessageInterruptIds = <String>{};
+  final _dismissedQuickMessageReceiptIds = <String>{};
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
+  static const _backgroundLocationWarning =
+      'Background GPS is limited. In iPhone Settings, allow Location → Always '
+      'before using another navigation app; otherwise your group position and '
+      'recorded trail may pause.';
   final _rideCompletionDetector = RideCompletionDetector();
   bool _completionPromptedForArrival = false;
 
@@ -877,6 +883,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   int _selectedIndex = 0;
   Object? _changeRouteRequestToken;
   PickedGpxFile? _pendingSharedGpxFile;
+  PendingInAppRoute? _pendingInAppRoute;
   int _handledAutomaticMarkerActivation = 0;
   int _handledAutomaticMarkerRideOffActivation = 0;
   DateTime? _lastSimulationNavigationUpdateAt;
@@ -939,6 +946,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         _warnings.add('Only the ride leader can replace the group route.');
       }
       _clearSharedRoutePending();
+    } else if (widget.sharedRoutes.pendingInAppRoute case final route?) {
+      if (widget.rideController.isLocalRideLeader) {
+        _selectedIndex = 0;
+        _changeRouteRequestToken = Object();
+        _pendingInAppRoute = route;
+      } else {
+        _warnings.add('Only the ride leader can replace the group route.');
+      }
+      _clearSharedRoutePending();
     }
     unawaited(_initialize());
     _carPlayBridge = CarPlayBridge(
@@ -954,7 +970,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (!mounted) return;
     final warningAdded = _capturePlannerLinkError();
     final file = widget.sharedRoutes.pending;
-    if (file == null) {
+    final inAppRoute = widget.sharedRoutes.pendingInAppRoute;
+    if (file == null && inAppRoute == null) {
       if (warningAdded) setState(() {});
       return;
     }
@@ -968,6 +985,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       _selectedIndex = 0;
       _changeRouteRequestToken = Object();
       _pendingSharedGpxFile = file;
+      _pendingInAppRoute = inAppRoute;
     });
     _clearSharedRoutePending();
   }
@@ -2062,10 +2080,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 alert != null &&
                 alert.assessment.alertLevel.index >=
                     RouteAlertLevel.urgent.index;
-            final isTec = location.role == RideRole.tailEndCharlie;
+            final isTec = _effectiveTecRiderIds.contains(location.riderId);
             final isLead = location.role == RideRole.lead;
-            // A position past its freshness threshold is demoted in words and
-            // in colour, never drawn as though it were current.
+            // A position past its freshness threshold is demoted explicitly in
+            // the label. The identity fill remains stable across surfaces.
             final freshness =
                 freshnessByRider[location.riderId]?.freshness ??
                 PresenceFreshness.live;
@@ -2078,10 +2096,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             };
             // Issue #151's map companion, kept deliberately minimal: the rider
             // who raised something already has a marker, so it says what they
-            // raised and takes the alert colour rather than a second symbol
-            // being invented beside it. #135 owns the hazard and enforcement
-            // symbol language and has not landed, and a dedicated quick-message
-            // pin should share whatever it establishes rather than pre-empt it.
+            // raised rather than inventing a second symbol beside it.
             final raised = quickMessagesBySender[location.riderId];
             final roleSuffix = raised != null
                 ? raised.label
@@ -2097,15 +2112,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               ?roleSuffix,
               ?ageSuffix,
             ].join(' · ');
-            final baseColor = raised != null
-                ? (raised.interrupts ? alertColor : const Color(0xFFFFC857))
-                : needsAttention
-                ? alertColor
-                : isTec
-                ? tailEndCharlieColor
-                : isLead
-                ? leadColor
-                : location.riderColor.color;
+            // The roster, both maps and trails share this one identity colour.
+            // Role and alerts are already named in [label]; changing the fill
+            // made one rider look like different people across surfaces (#250).
+            final baseColor = location.riderColor.color;
             return MapOverlayMarker(
               id: 'rider-${location.riderId}',
               point: location.point,
@@ -2113,9 +2123,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               motorcycleStyle: location.motorcycleStyle,
               riderSymbol: location.riderSymbol,
               riderDisplayName: location.displayName,
-              color: freshness == PresenceFreshness.live
-                  ? baseColor
-                  : _demotedMarkerColor(baseColor, freshness),
+              color: baseColor,
             );
           }),
     ];
@@ -2160,7 +2168,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               // Issue #102: a rider inside the leader's own track corridor is
               // following the leader, not off course, and must not be counted.
               leaderTrail: awareness.leaderTrail,
-              registeredTecRiderIds: _registeredTecRiderIds,
+              registeredTecRiderIds: _effectiveTecRiderIds,
               // Issue #128: two riders can hold the role at once - one
               // self-selected, one asked - and the group needs one answer, so
               // the leader's own accepted request breaks the tie.
@@ -2234,6 +2242,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   String? get _assignedTecRiderId => _isSimulation
       ? null
       : widget.rideController.tecRoleAssignments.acceptedTecRiderId;
+
+  /// One effective back-marker. A leader-requested TEC wins over an older
+  /// self-selection, so the roster, map, gap, rejoin and contact targets do not
+  /// simultaneously treat two riders as the back of one group (#128).
+  Set<String> get _effectiveTecRiderIds {
+    final registered = _registeredTecRiderIds;
+    final assigned = _assignedTecRiderId;
+    final assignedParticipant = assigned == null
+        ? null
+        : widget.rideController.participantFor(assigned);
+    if (assignedParticipant?.isIncludedInLiveCount == true) return {assigned!};
+    return registered;
+  }
 
   Future<void> _maybeAutomaticallyEndRide(
     SituationalAwarenessController awareness,
@@ -2366,7 +2387,14 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                     ?.isEligibleForLivePosition ==
                 true,
             journalTrail: location.role == RideRole.lead
-                ? _routePoints(awareness.leaderTrail)
+                ? [
+                    for (final sample in awareness.leaderTrailSamples)
+                      route_domain.GeoPoint(
+                        latitude: sample.position.latitude,
+                        longitude: sample.position.longitude,
+                        recordedAt: sample.recordedAt,
+                      ),
+                  ]
                 : null,
           ),
       ]),
@@ -2401,7 +2429,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       final tec = const LeaderRideStatusCalculator().resolveTecTarget(
         localRiderId: session.localRiderId,
         riderLocations: awareness.riderLocations,
-        registeredTecRiderIds: _registeredTecRiderIds,
+        registeredTecRiderIds: _effectiveTecRiderIds,
         now: DateTime.now(),
       );
       final leader = _newestLocationFor(awareness, RideRole.lead);
@@ -2557,19 +2585,26 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   void _publishRiderTrails(List<RiderTrail> trails) {
     _recordedTrailTraces = List.unmodifiable([
       for (final trail in trails.where((trail) => trail.isRenderable))
-        MapOverlayTrace(
-          id: 'trail-${trail.riderId}',
-          points: trail.points,
-          label: switch (trail.kind) {
-            RiderTrailKind.leader => '${trail.displayName} leader trail',
-            RiderTrailKind.offRoute => '${trail.displayName} off-route trace',
-            RiderTrailKind.rider => '${trail.displayName} trail',
-            // RiderTrailRecorder only records where riders have been, so it
-            // never produces a rejoin route.
-            RiderTrailKind.rejoin => '${trail.displayName} rejoin route',
-          },
-          kind: trail.kind,
-        ),
+        for (final (index, points)
+            in _trailRecorder
+                .continuousSegments(trail.points)
+                .where((segment) => segment.length >= 2)
+                .indexed)
+          MapOverlayTrace(
+            id: index == 0
+                ? 'trail-${trail.riderId}'
+                : 'trail-${trail.riderId}-$index',
+            points: points,
+            label: switch (trail.kind) {
+              RiderTrailKind.leader => '${trail.displayName} leader trail',
+              RiderTrailKind.offRoute => '${trail.displayName} off-route trace',
+              RiderTrailKind.rider => '${trail.displayName} trail',
+              // RiderTrailRecorder only records where riders have been, so it
+              // never produces a rejoin route.
+              RiderTrailKind.rejoin => '${trail.displayName} rejoin route',
+            },
+            kind: trail.kind,
+          ),
     ]);
     _pushRiderTrails();
   }
@@ -2650,18 +2685,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       state == RouteTrackingState.suspectedOffRoute ||
       state == RouteTrackingState.offRoute ||
       state == RouteTrackingState.recovering;
-
-  /// Desaturates a rider marker as its position ages. The wording beside it
-  /// always states the age too, so this is never the only signal.
-  static Color _demotedMarkerColor(Color base, PresenceFreshness freshness) {
-    final blend = switch (freshness) {
-      PresenceFreshness.live => 0.0,
-      PresenceFreshness.ageing => 0.35,
-      PresenceFreshness.stale => 0.6,
-      PresenceFreshness.none => 0.75,
-    };
-    return Color.lerp(base, const Color(0xFF6B7684), blend) ?? base;
-  }
 
   /// One reported hazard as a map marker (#135).
   ///
@@ -2889,10 +2912,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   void _onDeviceLocationChanged() {
     if (!mounted) return;
+    final status = _locationController?.status;
+    final warningChanged =
+        status != null && status.canSample && !status.backgroundCapable
+        ? _warnings.add(_backgroundLocationWarning)
+        : _warnings.remove(_backgroundLocationWarning);
     // The foreground map follows the newest device fix even if writing that
     // sample to the durable ride journal is briefly delayed or fails. Only
     // the journal feeds trails, summaries and GPX recording.
     _updateMapOverlays(updateDerivedState: false, updateOverlayMarkers: false);
+    if (warningChanged) setState(() {});
   }
 
   @override
@@ -3123,6 +3152,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       enforcementAlert: _enforcementAlert,
       quickMessageAlerts: _quickMessageAlerts,
       onAcknowledgeQuickMessage: _acknowledgeQuickMessage,
+      dismissedQuickMessageInterruptIds: _dismissedQuickMessageInterruptIds,
+      dismissedQuickMessageReceiptIds: _dismissedQuickMessageReceiptIds,
+      onDismissQuickMessageInterrupt: _dismissedQuickMessageInterruptIds.add,
+      onDismissQuickMessageReceipt: _dismissedQuickMessageReceiptIds.add,
       onReportHazard: _awarenessController == null
           ? null
           : _reportHazardFromMap,
@@ -3132,6 +3165,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onEmergencyContactUsed: _onEmergencyContactUsed,
       ridePaused: widget.rideController.ridePaused,
       rideHasNoLeader: widget.rideController.rideHasNoLeader,
+      rideStarted: widget.rideController.rideStarted,
       onLeaveRide: _confirmLeaveRideFromMap,
       onOpenRideMenu: _openRideMenu,
       onRouteCommitted: _onRouteChanged,
@@ -3139,6 +3173,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       changeRouteRequestToken: _changeRouteRequestToken,
       onChangeRouteRequestHandled: _clearChangeRouteRequest,
       pendingSharedGpxFile: _pendingSharedGpxFile,
+      pendingInAppRoute: _pendingInAppRoute,
       acquireCurrentPosition: _isSimulation
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
@@ -3192,11 +3227,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   Color get _localBadgeColor {
     final session = widget.rideController.session;
     if (session == null) return riderColorDefault.color;
-    return switch (session.role) {
-      RideRole.tailEndCharlie => tailEndCharlieColor,
-      RideRole.lead => leadColor,
-      _ => session.riderColor.color,
-    };
+    return session.riderColor.color;
   }
 
   /// The leader and TEC, with a phone number attached only where that rider has
@@ -3350,7 +3381,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     return RiderContactRecipients.resolve(
       localRole: session.role,
       leaderRiderId: leaderId == session.localRiderId ? null : leaderId,
-      tecRiderIds: _registeredTecRiderIds.where(
+      tecRiderIds: _effectiveTecRiderIds.where(
         (riderId) => riderId != session.localRiderId,
       ),
     );
@@ -3553,7 +3584,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// solo scouting ride is legitimate. It only ever runs inside the start
   /// confirmation, so it cannot nag during the ride.
   Future<bool> _confirmStartWithoutTec() async {
-    if (_registeredTecRiderIds.isNotEmpty) return true;
+    if (_effectiveTecRiderIds.isNotEmpty) return true;
     final decision = await showDialog<_MissingTecDecision>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -3851,6 +3882,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       _selectedIndex = 0;
       _changeRouteRequestToken = Object();
       _pendingSharedGpxFile = null;
+      _pendingInAppRoute = null;
     });
   }
 
@@ -3863,6 +3895,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       setState(() {
         _changeRouteRequestToken = null;
         _pendingSharedGpxFile = null;
+        _pendingInAppRoute = null;
       });
     }
   }

@@ -84,9 +84,10 @@
 	  a recorded trail becomes a straight line between the last fix before that
 	  and the first one after (#205).
 
-	  This is a while-in-use capability, not an always-on one: the app only holds
-	  a location session during an active ride, and it shows the blue background
-	  indicator the whole time. See AppleSettings in device_location_source.dart.
+	  The app asks for Always access from the explicit start/share action because
+	  physical testing showed While Using did not reliably survive another
+	  navigation app taking the foreground. It still only holds a location
+	  session during an active ride and shows the blue background indicator.
 	-->
 	<key>UIBackgroundModes</key>
 	<array>

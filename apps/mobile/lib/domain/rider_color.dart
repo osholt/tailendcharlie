@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-/// Colours a rider can personally choose. Lead, tail end charlie, and the
-/// urgent-alert override are never picked from this palette - see
-/// [effectiveRiderColor] - so a colour always unambiguously means a role or
-/// a specific person, never both.
+/// Colours a rider can personally choose.
+///
+/// The selected colour is their identity on every roster and map surface.
+/// Roles and alerts use labels, borders and icons rather than replacing it.
 enum RiderColor { green, orange, yellow, teal, pink, cyan, amber, crimson }
 
 extension RiderColorData on RiderColor {
@@ -40,10 +40,8 @@ RiderColor riderColorFromName(String? name) => RiderColor.values.firstWhere(
   orElse: () => riderColorDefault,
 );
 
-/// Reserved colours that never come from a rider's personal choice: lead,
-/// tail end charlie, and the alert override that replaces any rider's colour
-/// while they need attention. Kept alongside the palette so a UI can exclude
-/// them when offering rider-selectable colours.
+/// Reserved status colours that never come from a rider's personal choice.
+/// They remain available for role/alert accents without replacing identity.
 const leadColor = Color(0xFFB58CFF);
 const tailEndCharlieColor = Color(0xFF68A9FF);
 const alertColor = Color(0xFFFF5D73);
