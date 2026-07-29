@@ -17,9 +17,9 @@ and a symptom-first index of the ways a local device build goes wrong, read
 
 Unsigned iOS applications cannot normally be installed on a physical iPhone.
 The Runner target's Debug and Profile configurations use the locally installed
-`Tail End Charlie CarPlay Development` profile. Manual signing is required
-because automatic signing does not select a manually issued profile carrying
-the restricted CarPlay Driving Task entitlement. The profile must include the
+`Tail End Charlie CarPlay Navigation Development` profile. Manual signing is
+required because automatic signing does not select a manually issued profile
+carrying the restricted CarPlay entitlements. The profile must include the
 developer's Apple Development certificate and test device; it is never stored
 in the repository.
 
@@ -44,14 +44,14 @@ path the `TestFlight` workflow installs the CI profile into before a successful
 archive. Neither directory is authoritative, and either can be empty or
 incomplete on a machine whose signing works perfectly. On the maintainer's Mac
 on 26 July the Xcode 16+ directory held six profiles and the legacy directory
-held exactly one - and the one in the legacy directory was
-`Tail End Charlie CarPlay Development`, the profile Debug and Profile builds
-name. Checking only one path is what produced a wrong conclusion that local
-signing was broken. Search both:
+held exactly one: the then-current `Tail End Charlie CarPlay Development`
+profile. The navigation replacement now named by Debug and Profile builds is
+`Tail End Charlie CarPlay Navigation Development`. Checking only one path is
+what produced a wrong conclusion that local signing was broken. Search both:
 
 ```bash
 # -a matters: without it, BSD grep -r finds nothing in these binary files.
-grep -rla "Tail End Charlie CarPlay Development" \
+grep -rla "Tail End Charlie CarPlay Navigation Development" \
   ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/ \
   ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null
 ```
@@ -75,28 +75,32 @@ brackets as the team led to a wrong conclusion that no development certificate
 existed for this team. An `Apple Distribution` certificate does put the team ID
 in its common name, so do not generalise from one to the other - read the `OU`.
 
-**The CarPlay entitlement and the CarPlay scene declaration are a matched
-pair.** `com.apple.developer.carplay-driving-task` in
-`Runner/DebugProfile.entitlements` and `Runner/Release.entitlements`, and the
+**The CarPlay entitlements and scene declaration are one signing unit.**
+`com.apple.developer.carplay-driving-task` and
+`com.apple.developer.carplay-maps` in the Debug/Profile and Release entitlement
+files, the matching capabilities on `app.tailendcharlie`, and the
 `CPTemplateApplicationSceneSessionRoleApplication` scene in `Runner/Info.plist`
-that names `CarPlaySceneDelegate`, must be present or absent together. iOS
-terminates an app at launch if it declares a scene role it is not entitled to,
-so **removing either one alone crashes the app at launch**. Removing the
-entitlement to make an automatic-signing error go away is exactly how that crash
-was produced, and the crash then looked like an application bug. Automatic
-signing can never work for this target: Xcode cannot mint a profile carrying a
-restricted entitlement, which is why all three Runner configurations are
-`CODE_SIGN_STYLE = Manual`. Dropping CarPlay is a product decision against issue
-#6, not a signing workaround.
+must agree. The navigation scene uses the window-bearing delegate callback and
+a `CPMapTemplate` root, so a profile without `carplay-maps` is not a usable
+substitute. iOS terminates an app at launch if it declares a scene role it is
+not entitled to. Automatic signing cannot mint these restricted profiles;
+all Runner configurations therefore remain manual.
 
-Creating a certificate, registering a device, or issuing a profile needs the
-maintainer's Apple account and cannot be automated from here;
-[build-and-run.md § Not automatable](./build-and-run.md#not-automatable) records
-what was tried and what the limits are. As far as that session established,
-profiles can be created and deleted through the App Store Connect API but not
-edited - so never delete `Tail End Charlie CarPlay Development` or
-`Tail End Charlie CI App Store` before proving, with a throwaway name, that you
-can create one.
+Apple approved CarPlay Navigation under Case-ID 21286533. On 29 July 2026 the
+capability was enabled on App ID `app.tailendcharlie`, invalidating the previous
+profiles. The replacements are:
+
+- `Tail End Charlie CarPlay Navigation Development`, UUID
+  `2f1ad93d-9320-4046-a54e-908dc2639d44`, with two development certificates and
+  two test devices.
+- `Tail End Charlie CarPlay Navigation App Store`, UUID
+  `e87d428b-76d2-4aa5-b455-45e0bd3339d4`, using the same distribution
+  certificate as the previously working CI profile.
+
+Both embed Associated Domains, Push Notifications, CarPlay Driving Task and
+CarPlay Navigation. The development profile has `aps-environment =
+development`; the App Store profile has `aps-environment = production`. The
+old profiles remain in the portal as invalid historical records.
 
 ## CI signing is already correct - do not change it
 
@@ -106,10 +110,12 @@ problem; it is not a reason to edit `project.pbxproj`,
 signing steps.
 
 - **iOS**: `testflight.yml` imports an `Apple Distribution` `.p12` and the
-  `Tail End Charlie CI App Store` provisioning profile into a temporary keychain
-  and signs manually per `ios/ExportOptions-TestFlight.plist`. `TestFlight`
-  workflow runs **20** and **23-26** (24 July 2026) completed successfully,
-  upload included.
+  `Tail End Charlie CarPlay Navigation App Store` provisioning profile into a
+  temporary keychain and signs manually per
+  `ios/ExportOptions-TestFlight.plist`. Runs **20** and **23-26** proved the
+  signing path with the predecessor profile. The replacement profile secret
+  was installed on 29 July; a signed workflow run is still required as
+  evidence for the navigation profile.
 - **Android**: `android-internal.yml` signs with the upload keystore and
   publishes through a least-privilege Play service account.
   `Android internal testing` runs **6-8** and **10-15** completed successfully,
@@ -135,13 +141,10 @@ still fails the build with "No profile ... found" during archiving. The
 requests never send a build to Apple.
 
 Changing capabilities on `app.tailendcharlie` invalidates every profile for
-that App ID. Regenerate both `Tail End Charlie CarPlay Development` and
-`Tail End Charlie CI App Store`, verify that each embeds
-`com.apple.developer.carplay-driving-task`, verify that the development profile
-has `aps-environment = development` and the App Store profile has
-`aps-environment = production`, and replace
-`APPLE_APPSTORE_PROFILE_BASE64` with the regenerated App Store profile before
-the next TestFlight run.
+that App ID. The two replacements above were generated and checked for both
+`com.apple.developer.carplay-driving-task` and
+`com.apple.developer.carplay-maps`; `APPLE_APPSTORE_PROFILE_BASE64` was replaced
+with the new App Store profile on 29 July 2026.
 
 The app previously shipped internal TestFlight builds under bundle ID
 `me.osholt.rideRelay`. That identifier is retired - Apple never allows a bundle

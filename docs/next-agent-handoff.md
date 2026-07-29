@@ -1,6 +1,42 @@
 # Next-agent handoff
 
-Updated: 2026-07-26
+Updated: 2026-07-29
+
+## Current work: CarPlay Navigation
+
+Active work is on `codex/carplay-navigation`, based on `origin/main` at
+`c3d983e`. Apple approved the navigation entitlement under Case-ID 21286533.
+On 29 July the `CarPlay Navigation App` capability was enabled for
+`app.tailendcharlie`; the previous profiles became invalid and were replaced
+without deleting their historical records:
+
+- `Tail End Charlie CarPlay Navigation Development`
+  (`2f1ad93d-9320-4046-a54e-908dc2639d44`)
+- `Tail End Charlie CarPlay Navigation App Store`
+  (`e87d428b-76d2-4aa5-b455-45e0bd3339d4`)
+
+Both contain Driving Task and Navigation, Associated Domains, Push
+Notifications and the correct APNs environment. The development profile
+contains both local development certificates and both test phones. The App
+Store profile uses the same certificate as the previously working CI profile;
+`APPLE_APPSTORE_PROFILE_BASE64` has been replaced.
+
+The branch replaces the status-only CarPlay root with a `CPMapTemplate`,
+app-owned MapKit route/rider canvas, recenter and pan controls, a
+`CPNavigationSession` with turn-card distance updates, and access to the
+existing ride-status/SOS surface. The projected Dart snapshot now includes
+bounded route geometry, rider coordinates/headings and numeric guidance.
+Flutter analysis, all 1,287 tests and an unsigned iOS simulator build pass.
+A signed Profile build also passes with the replacement development profile
+and both CarPlay entitlements stamped into `Runner.app`; the Android debug APK
+still builds. Apple's CarPlay Simulator opens, but does not offer the app in
+its launcher because restricted-entitlement simulator builds are rejected. The
+remaining evidence is PR CI and a physical CarPlay/head-unit field test before
+claiming production support.
+
+The original checkout had unrelated signing edits and untracked entitlement
+submission material, so this work lives in the clean worktree
+`/Users/osholt/Projects/Personal/tailendcharlie-carplay-navigation`.
 
 ## Read this first: #132, a device only received when it sent
 
