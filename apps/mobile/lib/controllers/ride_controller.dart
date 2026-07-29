@@ -801,7 +801,9 @@ class RideController extends ChangeNotifier {
     if (target == null || !target.isIncludedInLiveCount) {
       return TecRoleRequestOutcome.invalidTarget;
     }
-    if (target.role == RideRole.tailEndCharlie) {
+    final acceptedTecRiderId = tecRoleAssignments.acceptedTecRiderId;
+    if (target.role == RideRole.tailEndCharlie &&
+        (acceptedTecRiderId == null || acceptedTecRiderId == targetRiderId)) {
       return TecRoleRequestOutcome.alreadyTailEndCharlie;
     }
     if (!relayCanCarryRequest) {

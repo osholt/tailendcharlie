@@ -97,6 +97,7 @@ class RiderTrailRecorder {
   RiderTrailRecorder({
     this.maximumPointsPerRider = defaultMaximumPointsPerRider,
     this.minimumSeparationDegrees = 1e-7,
+    this.maximumContinuousGap = defaultMaximumContinuousGap,
   }) : assert(maximumPointsPerRider >= 2),
        assert(minimumSeparationDegrees >= 0);
 
@@ -104,8 +105,14 @@ class RiderTrailRecorder {
   /// the local one, so no rider's trail can grow without limit on a long ride.
   static const defaultMaximumPointsPerRider = 120;
 
+  /// A healthy ride reports every few seconds. Beyond this interval the app
+  /// does not know where the rider went, so joining the fixes would invent a
+  /// straight road across the missing section (#205).
+  static const defaultMaximumContinuousGap = Duration(minutes: 2);
+
   final int maximumPointsPerRider;
   final double minimumSeparationDegrees;
+  final Duration maximumContinuousGap;
 
   final _trails = <String, List<GeoPoint>>{};
 
@@ -153,6 +160,29 @@ class RiderTrailRecorder {
         ? trail.sublist(trail.length - maximumPointsPerRider)
         : trail,
   );
+
+  /// Splits recorded history anywhere the location stream was absent too long
+  /// to draw an honest continuous trail.
+  List<List<GeoPoint>> continuousSegments(List<GeoPoint> trail) {
+    if (trail.isEmpty) return const [];
+    final segments = <List<GeoPoint>>[
+      <GeoPoint>[trail.first],
+    ];
+    for (final point in trail.skip(1)) {
+      final previous = segments.last.last;
+      final previousAt = previous.recordedAt;
+      final recordedAt = point.recordedAt;
+      if (previousAt != null &&
+          recordedAt != null &&
+          recordedAt.difference(previousAt) > maximumContinuousGap) {
+        segments.add(<GeoPoint>[]);
+      }
+      segments.last.add(point);
+    }
+    return [
+      for (final segment in segments) List<GeoPoint>.unmodifiable(segment),
+    ];
+  }
 
   /// The leader kind always wins: a leader cannot be off route by design, so
   /// their trail must never be restyled as an excursion.

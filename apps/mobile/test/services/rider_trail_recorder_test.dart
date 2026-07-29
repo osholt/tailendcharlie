@@ -154,6 +154,28 @@ void main() {
     expect(trails.single.points, hasLength(3));
   });
 
+  test('breaks a trail across an implausible reporting gap', () {
+    final recorder = RiderTrailRecorder();
+    final start = DateTime.utc(2026, 7, 29, 9);
+    final points = [
+      _point(53, -1, recordedAt: start),
+      _point(53.001, -1, recordedAt: start.add(const Duration(seconds: 20))),
+      _point(54, -2, recordedAt: start.add(const Duration(minutes: 20))),
+      _point(
+        54.001,
+        -2,
+        recordedAt: start.add(const Duration(minutes: 20, seconds: 20)),
+      ),
+    ];
+
+    final segments = recorder.continuousSegments(points);
+
+    expect(segments, hasLength(2));
+    expect(segments.map((segment) => segment.length), const [2, 2]);
+    expect(segments.first.last.latitude, 53.001);
+    expect(segments.last.first.latitude, 54);
+  });
+
   test('ignores repeated and out-of-order fixes', () {
     final recorder = RiderTrailRecorder();
     final start = DateTime.utc(2026, 7, 25, 9);

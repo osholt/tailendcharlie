@@ -330,7 +330,7 @@ class ForegroundLocationCard extends StatelessWidget {
                     Text(
                       preStart
                           ? 'Your assembly position'
-                          : 'Your foreground location',
+                          : 'Your ride location',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 3),

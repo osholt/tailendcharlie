@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/shared_route_controller.dart';
 import '../../data/json_file_completed_ride_store.dart';
 import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
@@ -137,6 +138,10 @@ class RideMapFeature extends StatefulWidget {
     this.enforcementAlert,
     this.quickMessageAlerts,
     this.onAcknowledgeQuickMessage,
+    this.dismissedQuickMessageInterruptIds = const {},
+    this.dismissedQuickMessageReceiptIds = const {},
+    this.onDismissQuickMessageInterrupt,
+    this.onDismissQuickMessageReceipt,
     this.onReportHazard,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -144,6 +149,7 @@ class RideMapFeature extends StatefulWidget {
     this.onEmergencyContactUsed,
     this.ridePaused = false,
     this.rideHasNoLeader = false,
+    this.rideStarted = false,
     this.onLeaveRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
@@ -152,6 +158,7 @@ class RideMapFeature extends StatefulWidget {
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
+    this.pendingInAppRoute,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
@@ -182,6 +189,10 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<List<RideQuickMessageAlert>>? quickMessageAlerts,
     Future<void> Function(ReceivedQuickMessage message)?
     onAcknowledgeQuickMessage,
+    Set<String> dismissedQuickMessageInterruptIds = const {},
+    Set<String> dismissedQuickMessageReceiptIds = const {},
+    ValueChanged<String>? onDismissQuickMessageInterrupt,
+    ValueChanged<String>? onDismissQuickMessageReceipt,
     Future<void> Function(HazardType type)? onReportHazard,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
@@ -189,6 +200,7 @@ class RideMapFeature extends StatefulWidget {
     void Function(MapEmergencyContact contact)? onEmergencyContactUsed,
     bool ridePaused = false,
     bool rideHasNoLeader = false,
+    bool rideStarted = false,
     Future<void> Function()? onLeaveRide,
     Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
@@ -197,6 +209,7 @@ class RideMapFeature extends StatefulWidget {
     Object? changeRouteRequestToken,
     VoidCallback? onChangeRouteRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
+    PendingInAppRoute? pendingInAppRoute,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
     RouteStore? routeStore,
     bool canEditRoute = true,
@@ -220,6 +233,10 @@ class RideMapFeature extends StatefulWidget {
     enforcementAlert: enforcementAlert,
     quickMessageAlerts: quickMessageAlerts,
     onAcknowledgeQuickMessage: onAcknowledgeQuickMessage,
+    dismissedQuickMessageInterruptIds: dismissedQuickMessageInterruptIds,
+    dismissedQuickMessageReceiptIds: dismissedQuickMessageReceiptIds,
+    onDismissQuickMessageInterrupt: onDismissQuickMessageInterrupt,
+    onDismissQuickMessageReceipt: onDismissQuickMessageReceipt,
     onReportHazard: onReportHazard,
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
@@ -227,6 +244,7 @@ class RideMapFeature extends StatefulWidget {
     onEmergencyContactUsed: onEmergencyContactUsed,
     ridePaused: ridePaused,
     rideHasNoLeader: rideHasNoLeader,
+    rideStarted: rideStarted,
     onLeaveRide: onLeaveRide,
     onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
@@ -235,6 +253,7 @@ class RideMapFeature extends StatefulWidget {
     changeRouteRequestToken: changeRouteRequestToken,
     onChangeRouteRequestHandled: onChangeRouteRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
+    pendingInAppRoute: pendingInAppRoute,
     acquireCurrentPosition: acquireCurrentPosition,
     routeStore: routeStore,
     canEditRoute: canEditRoute,
@@ -269,6 +288,10 @@ class RideMapFeature extends StatefulWidget {
   /// Records that this rider has seen a quick message, so its sender is told.
   final Future<void> Function(ReceivedQuickMessage message)?
   onAcknowledgeQuickMessage;
+  final Set<String> dismissedQuickMessageInterruptIds;
+  final Set<String> dismissedQuickMessageReceiptIds;
+  final ValueChanged<String>? onDismissQuickMessageInterrupt;
+  final ValueChanged<String>? onDismissQuickMessageReceipt;
   final Future<void> Function(HazardType type)? onReportHazard;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -278,6 +301,7 @@ class RideMapFeature extends StatefulWidget {
   final void Function(MapEmergencyContact contact)? onEmergencyContactUsed;
   final bool ridePaused;
   final bool rideHasNoLeader;
+  final bool rideStarted;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
@@ -286,6 +310,7 @@ class RideMapFeature extends StatefulWidget {
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
+  final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
@@ -406,6 +431,11 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         enforcementAlert: widget.enforcementAlert,
         quickMessageAlerts: widget.quickMessageAlerts,
         onAcknowledgeQuickMessage: widget.onAcknowledgeQuickMessage,
+        dismissedQuickMessageInterruptIds:
+            widget.dismissedQuickMessageInterruptIds,
+        dismissedQuickMessageReceiptIds: widget.dismissedQuickMessageReceiptIds,
+        onDismissQuickMessageInterrupt: widget.onDismissQuickMessageInterrupt,
+        onDismissQuickMessageReceipt: widget.onDismissQuickMessageReceipt,
         onReportHazard: widget.onReportHazard,
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
@@ -413,6 +443,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onEmergencyContactUsed: widget.onEmergencyContactUsed,
         ridePaused: widget.ridePaused,
         rideHasNoLeader: widget.rideHasNoLeader,
+        rideStarted: widget.rideStarted,
         onLeaveRide: widget.onLeaveRide,
         onOpenRideMenu: widget.onOpenRideMenu,
         canEditRoute: widget.canEditRoute,
@@ -422,6 +453,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         changeRouteRequestToken: widget.changeRouteRequestToken,
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
         pendingSharedGpxFile: widget.pendingSharedGpxFile,
+        pendingInAppRoute: widget.pendingInAppRoute,
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
         distanceUnit: widget.distanceUnit,
@@ -470,6 +502,10 @@ class RideMapScreen extends StatefulWidget {
     this.enforcementAlert,
     this.quickMessageAlerts,
     this.onAcknowledgeQuickMessage,
+    this.dismissedQuickMessageInterruptIds = const {},
+    this.dismissedQuickMessageReceiptIds = const {},
+    this.onDismissQuickMessageInterrupt,
+    this.onDismissQuickMessageReceipt,
     this.onReportHazard,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -477,6 +513,7 @@ class RideMapScreen extends StatefulWidget {
     this.onEmergencyContactUsed,
     this.ridePaused = false,
     this.rideHasNoLeader = false,
+    this.rideStarted = false,
     this.onLeaveRide,
     this.onOpenRideMenu,
     this.canEditRoute = true,
@@ -486,6 +523,7 @@ class RideMapScreen extends StatefulWidget {
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
+    this.pendingInAppRoute,
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.destinationRoutePlanner,
@@ -529,6 +567,10 @@ class RideMapScreen extends StatefulWidget {
   /// Records that this rider has seen a quick message, so its sender is told.
   final Future<void> Function(ReceivedQuickMessage message)?
   onAcknowledgeQuickMessage;
+  final Set<String> dismissedQuickMessageInterruptIds;
+  final Set<String> dismissedQuickMessageReceiptIds;
+  final ValueChanged<String>? onDismissQuickMessageInterrupt;
+  final ValueChanged<String>? onDismissQuickMessageReceipt;
   final Future<void> Function(HazardType type)? onReportHazard;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -539,6 +581,7 @@ class RideMapScreen extends StatefulWidget {
   final void Function(MapEmergencyContact contact)? onEmergencyContactUsed;
   final bool ridePaused;
   final bool rideHasNoLeader;
+  final bool rideStarted;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
   final bool canEditRoute;
@@ -548,6 +591,7 @@ class RideMapScreen extends StatefulWidget {
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
+  final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final DestinationRoutePlanner? destinationRoutePlanner;
@@ -598,9 +642,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
   final RouteProgressTracker _rejoinProgressTracker = RouteProgressTracker();
-  final ValueNotifier<NavigationGuidance?> _navigationGuidance = ValueNotifier(
-    null,
-  );
+  final ValueNotifier<NavigationGuidanceAssessment> _navigationGuidance =
+      ValueNotifier(const NavigationGuidanceAssessment.noRoute());
   final Map<int, Offset> _mapPointerOrigins = {};
   late final http.Client _routingClient;
   late final RoadRoutingService _roadRoutingService;
@@ -704,6 +747,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _mapLibreProgressDirty = false;
   bool _mapLibrePositionDirty = false;
   bool _mapLibreOverlaysDirty = false;
+  bool _waitingRoutePromptDismissed = false;
   RouteProgressGeometry _progressGeometry = const RouteProgressGeometry.empty();
   RouteProgressGeometry _rejoinProgressGeometry =
       const RouteProgressGeometry.empty();
@@ -1028,7 +1072,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // A route can contain manoeuvres before the device has a usable location.
     // The guidance banner is only composed into the band while guidance is
     // actually visible, so nothing reserves space for a banner that is absent.
-    final hasGuidance = _navigationGuidance.value != null;
+    final hasGuidance = _navigationGuidance.value.isVisible;
     // Leaving a ride is a ride-lifecycle action, not a route action (#124).
     final showLeaveRide = widget.onLeaveRide != null;
     // "Follow me" is the way into the navigation viewport, and it is on screen
@@ -1236,7 +1280,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 // menu's "Change route" and from the app bar whenever this card
                 // is showing.
                 if (_route == null && !hideChrome)
-                  Positioned.fill(
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: _safetyBandReservedHeight(landscape),
                     child: widget.canEditRoute
                         ? _EmptyRoutePrompt(
                             importing: _importing,
@@ -1246,7 +1294,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             onUseStoredRoute: _useStoredRoute,
                             onLoadDemo: _loadDemoRoute,
                           )
-                        : const _WaitingForLeaderRoutePrompt(),
+                        : widget.rideStarted || _waitingRoutePromptDismissed
+                        ? const SizedBox.shrink()
+                        : _WaitingForLeaderRoutePrompt(
+                            onDismiss: () => setState(
+                              () => _waitingRoutePromptDismissed = true,
+                            ),
+                          ),
                   ),
                 // Last in the stack: an approaching camera or police report
                 // takes the screen over everything else on it.
@@ -1304,11 +1358,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
                               : () => unawaited(
                                   _acknowledgeQuickMessage(alert.message),
                                 ),
-                          onDismiss: () => setState(
-                            () => _dismissedQuickMessageInterrupts.add(
-                              alert.message.eventId,
-                            ),
-                          ),
+                          onDismiss: () {
+                            final id = alert.message.eventId;
+                            setState(
+                              () => _dismissedQuickMessageInterrupts.add(id),
+                            );
+                            widget.onDismissQuickMessageInterrupt?.call(id);
+                          },
                         );
                       },
                     ),
@@ -1405,23 +1461,29 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 ? null
                 : () =>
                       unawaited(_acknowledgeQuickMessage(quickMessage.message)),
-            onDismissReceipt: () => setState(
-              () => _dismissedQuickMessageReceipts.add(
-                quickMessage.message.eventId,
-              ),
-            ),
+            onDismissReceipt: () {
+              final id = quickMessage.message.eventId;
+              setState(() => _dismissedQuickMessageReceipts.add(id));
+              widget.onDismissQuickMessageReceipt?.call(id);
+            },
           ),
       ];
       final guidance = hasGuidance
-          ? ValueListenableBuilder<NavigationGuidance?>(
+          ? ValueListenableBuilder<NavigationGuidanceAssessment>(
               valueListenable: _navigationGuidance,
-              builder: (context, guidance, _) => guidance == null
-                  ? const SizedBox.shrink()
-                  : _NavigationGuidanceBanner(
-                      guidance: guidance,
-                      distanceUnit: widget.distanceUnit,
-                      compact: landscape,
-                    ),
+              builder: (context, assessment, _) {
+                final guidance = assessment.guidance;
+                return guidance == null
+                    ? _NavigationGuidanceStatusBanner(
+                        assessment: assessment,
+                        compact: landscape,
+                      )
+                    : _NavigationGuidanceBanner(
+                        guidance: guidance,
+                        distanceUnit: widget.distanceUnit,
+                        compact: landscape,
+                      );
+              },
             )
           : null;
       // With nobody holding the TEC role there is nothing honest to show, so
@@ -2207,6 +2269,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             initialCameraPosition: initial,
             onMapCreated: _onMapLibreCreated,
             onStyleLoadedCallback: () => unawaited(_prepareMapLibreStyle()),
+            onCameraMove: _onMapLibreCameraMove,
             // Without this the platform never reports its camera, and
             // `MapLibreMapController.cameraPosition` keeps the value it was
             // constructed with for the whole ride: iOS returns early from
@@ -2224,6 +2287,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
             trackCameraPosition: true,
             logoEnabled: false,
             compassEnabled: true,
+            // Stated rather than inherited: these are ride-map capabilities,
+            // and Android field testing specifically depends on both remaining
+            // enabled while live overlays and follow mode are active (#248).
+            scrollGesturesEnabled: true,
+            zoomGesturesEnabled: true,
             minMaxZoomPreference: ml.MinMaxZoomPreference(
               3,
               _basemap.maximumNativeZoom.toDouble(),
@@ -2246,6 +2314,31 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // measurement is deferred and only rebuilds when its answer changes, so the
     // platform view is not resized mid-gesture.
     controller.addListener(_scheduleCameraFramingRefresh);
+  }
+
+  void _onMapLibreCameraMove(ml.CameraPosition camera) {
+    if (kDebugMode) {
+      final commanded = _commandedViewport;
+      final drift = commanded == null
+          ? null
+          : _mapDistanceMeters(
+              GeoPoint(
+                latitude: camera.target.latitude,
+                longitude: camera.target.longitude,
+              ),
+              commanded.target,
+            );
+      debugPrint(
+        'Ride map camera: centre=${camera.target.latitude.toStringAsFixed(6)},'
+        '${camera.target.longitude.toStringAsFixed(6)} '
+        'zoom=${camera.zoom.toStringAsFixed(2)} '
+        'follow=$_navigationMode '
+        'commanded=${commanded != null} '
+        'drift=${drift?.toStringAsFixed(1) ?? 'n/a'}m '
+        'locked=$_cameraArrivedAtCommandedViewport',
+      );
+    }
+    _scheduleCameraFramingRefresh();
   }
 
   MapNavigationPosition? get _navigationFix => widget.navigationPosition?.value;
@@ -2289,7 +2382,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _maneuverDeadbandTightenMeters = 150.0;
 
   bool get _maneuverImminent {
-    final guidance = _navigationGuidance.value;
+    final guidance = _navigationGuidance.value.guidance;
     return guidance != null &&
         guidance.distanceMeters <= _maneuverDeadbandTightenMeters;
   }
@@ -2654,22 +2747,28 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _updateNavigationGuidance(GeoPoint? position) {
     final navigationRoute = _rejoinRoute ?? _route;
-    final next = _navigationGuidancePlanner.plan(
+    final next = _navigationGuidancePlanner.assess(
       route: navigationRoute,
       position: position,
       progressMeters: _navigationProgressGeometry.progressMeters,
     );
     final current = _navigationGuidance.value;
-    final visibilityChanged = (current == null) != (next == null);
+    final visibilityChanged = current.isVisible != next.isVisible;
+    final stateChanged = current.state != next.state;
     final unchanged =
-        current?.maneuver == next?.maneuver &&
-        current != null &&
-        next != null &&
-        (current.distanceMeters - next.distanceMeters).abs() < 5;
+        current.guidance?.maneuver == next.guidance?.maneuver &&
+        current.guidance != null &&
+        next.guidance != null &&
+        (current.guidance!.distanceMeters - next.guidance!.distanceMeters)
+                .abs() <
+            5;
     if (!unchanged) {
       _navigationGuidance.value = next;
-      widget.onNavigationGuidanceChanged?.call(next);
-      if (visibilityChanged && mounted) setState(() {});
+      widget.onNavigationGuidanceChanged?.call(next.guidance);
+      if (stateChanged && kDebugMode) {
+        debugPrint('Navigation guidance: ${next.state.name} — ${next.message}');
+      }
+      if ((visibilityChanged || stateChanged) && mounted) setState(() {});
     }
   }
 
@@ -2751,12 +2850,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _onMapPointerDown(PointerDownEvent event) {
     _mapPointerOrigins[event.pointer] = event.localPosition;
-    if (_mapPointerOrigins.length > 1) _suppressFollowForMapGesture();
+    if (_mapPointerOrigins.length > 1) {
+      if (kDebugMode) {
+        debugPrint('Ride map gesture: pinch started; handing camera to rider.');
+      }
+      _suppressFollowForMapGesture();
+    }
   }
 
   void _onMapPointerMove(PointerMoveEvent event) {
     final origin = _mapPointerOrigins[event.pointer];
     if (origin != null && (event.localPosition - origin).distance >= 8) {
+      if (kDebugMode) {
+        debugPrint(
+          'Ride map gesture: pan threshold crossed; handing camera to rider.',
+        );
+      }
       _suppressFollowForMapGesture();
     }
   }
@@ -2852,7 +2961,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     for (final alert in alerts) {
       if (alert.message.isAcknowledged &&
-          !_dismissedQuickMessageReceipts.contains(alert.message.eventId)) {
+          !_dismissedQuickMessageReceipts.contains(alert.message.eventId) &&
+          !widget.dismissedQuickMessageReceiptIds.contains(
+            alert.message.eventId,
+          )) {
         return alert;
       }
     }
@@ -2875,7 +2987,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     for (final alert in alerts) {
       if (alert.message.interrupts &&
           !alert.message.raisedFromLocalRider &&
-          !_dismissedQuickMessageInterrupts.contains(alert.message.eventId)) {
+          !_dismissedQuickMessageInterrupts.contains(alert.message.eventId) &&
+          !widget.dismissedQuickMessageInterruptIds.contains(
+            alert.message.eventId,
+          )) {
         return alert;
       }
     }
@@ -4780,7 +4895,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
             _initialCameraPositioned = false;
             _releaseNavigationViewport();
           });
-          _navigationGuidance.value = null;
+          _navigationGuidance.value =
+              const NavigationGuidanceAssessment.noRoute();
           widget.onNavigationGuidanceChanged?.call(null);
           await _syncMapLibreSources();
           widget.onRouteChanged?.call(null);
@@ -5038,6 +5154,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     _handledChangeRouteRequestToken = token;
     final sharedFile = widget.pendingSharedGpxFile;
+    final inAppRoute = widget.pendingInAppRoute;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.onChangeRouteRequestHandled?.call();
       if (!mounted) return;
@@ -5047,6 +5164,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
       }
       if (sharedFile != null) {
         unawaited(_importSharedGpx(sharedFile));
+      } else if (inAppRoute != null) {
+        unawaited(
+          _reviewAndActivateRoute(
+            inAppRoute.route,
+            warnings: inAppRoute.reviewNotes,
+          ),
+        );
       } else {
         _showChangeRouteSheet();
       }
@@ -5437,6 +5561,98 @@ class _EmptyRoutePrompt extends StatelessWidget {
   final VoidCallback onLoadDemo;
 
   @override
+  Widget build(BuildContext context) => SafeArea(
+    child: LayoutBuilder(
+      builder: (context, constraints) => Align(
+        alignment: Alignment.center,
+        child: SizedBox(
+          width: math.min(392, constraints.maxWidth),
+          height: constraints.maxHeight,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: math.max(0, constraints.maxHeight - 32),
+              ),
+              child: Center(
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(22),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'Choose a route',
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Enter a destination, reuse a recorded route or a '
+                          'previous ride, import a GPX file, or use the demo '
+                          'route.',
+                          style: TextStyle(color: Color(0xFF98A3B1)),
+                        ),
+                        const SizedBox(height: 20),
+                        FilledButton.icon(
+                          key: const Key('plan-destination-empty-button'),
+                          onPressed: routing ? null : onPlanDestination,
+                          icon: routing
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.add_road),
+                          label: const Text('Enter destination'),
+                        ),
+                        const SizedBox(height: 8),
+                        // Stored geometry is a route source in its own right,
+                        // offered here beside the file picker rather than
+                        // buried behind it (#155).
+                        OutlinedButton.icon(
+                          key: const Key('use-stored-route-empty-button'),
+                          onPressed: importing ? null : onUseStoredRoute,
+                          icon: const Icon(Icons.history),
+                          label: const Text('Use a saved route'),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: importing ? null : onImport,
+                          icon: importing
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.upload_file),
+                          label: const Text('Import GPX'),
+                        ),
+                        TextButton(
+                          onPressed: onLoadDemo,
+                          child: const Text('Use demo route'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _WaitingForLeaderRoutePrompt extends StatelessWidget {
+  const _WaitingForLeaderRoutePrompt({required this.onDismiss});
+
+  final VoidCallback onDismiss;
+
+  @override
   Widget build(BuildContext context) => Center(
     child: Card(
       margin: const EdgeInsets.all(24),
@@ -5448,85 +5664,23 @@ class _EmptyRoutePrompt extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'Choose a route',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 8),
               const Text(
-                'Enter a destination, reuse a recorded route or a previous '
-                'ride, import a GPX file, or use the demo route.',
-                style: TextStyle(color: Color(0xFF98A3B1)),
-              ),
-              const SizedBox(height: 20),
-              FilledButton.icon(
-                key: const Key('plan-destination-empty-button'),
-                onPressed: routing ? null : onPlanDestination,
-                icon: routing
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.add_road),
-                label: const Text('Enter destination'),
-              ),
-              const SizedBox(height: 8),
-              // Stored geometry is a route source in its own right, offered
-              // here beside the file picker rather than buried behind it
-              // (#155).
-              OutlinedButton.icon(
-                key: const Key('use-stored-route-empty-button'),
-                onPressed: importing ? null : onUseStoredRoute,
-                icon: const Icon(Icons.history),
-                label: const Text('Use a saved route'),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: importing ? null : onImport,
-                icon: importing
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.upload_file),
-                label: const Text('Import GPX'),
-              ),
-              TextButton(
-                onPressed: onLoadDemo,
-                child: const Text('Use demo route'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-class _WaitingForLeaderRoutePrompt extends StatelessWidget {
-  const _WaitingForLeaderRoutePrompt();
-
-  @override
-  Widget build(BuildContext context) => Center(
-    child: Card(
-      margin: const EdgeInsets.all(24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: const Padding(
-          padding: EdgeInsets.all(22),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
                 'Waiting for the leader’s route',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
               ),
-              SizedBox(height: 8),
-              Text(
+              const SizedBox(height: 8),
+              const Text(
                 'This ride has no group route yet. It will appear here when '
-                'the leader shares one.',
+                'the leader shares one. The leader can also start without a '
+                'route.',
                 style: TextStyle(color: Color(0xFF98A3B1)),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                key: const Key('dismiss-waiting-route-prompt'),
+                onPressed: onDismiss,
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Continue without a route'),
               ),
             ],
           ),
@@ -6092,7 +6246,13 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       tiltGesturesEnabled: false,
       zoomGesturesEnabled: false,
       doubleClickZoomEnabled: false,
-      minMaxZoomPreference: const ml.MinMaxZoomPreference(5, 16),
+      // A 300 km group needs a zoom below 5 in this 150 px window. Keeping the
+      // native renderer at 5 overrode the tested framing and left iOS showing
+      // only the midpoint countryside while Android framed everyone (#172).
+      minMaxZoomPreference: const ml.MinMaxZoomPreference(
+        GroupMiniMapFraming.minimumZoom,
+        16,
+      ),
     );
   }
 
@@ -6529,6 +6689,11 @@ class _MiniMapScaleBar extends StatelessWidget {
       2000,
       5000,
       10000,
+      20000,
+      50000,
+      100000,
+      200000,
+      500000,
     ];
     final maximumScaleMeters = mapWidthMeters * 0.32;
     final scaleMeters = candidates.lastWhere(
@@ -7504,8 +7669,8 @@ class _NavigationGuidanceBanner extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 560),
           child: Container(
             padding: EdgeInsets.symmetric(
-              horizontal: compact ? 10 : 12,
-              vertical: compact ? 7 : 9,
+              horizontal: compact ? 8 : 10,
+              vertical: 4,
             ),
             decoration: BoxDecoration(
               color: const Color(0xF2252E39),
@@ -7583,6 +7748,90 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                         style: const TextStyle(color: Color(0xFFB7C2CF)),
                       ),
                     ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavigationGuidanceStatusBanner extends StatelessWidget {
+  const _NavigationGuidanceStatusBanner({
+    required this.assessment,
+    required this.compact,
+  });
+
+  final NavigationGuidanceAssessment assessment;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, color) = switch (assessment.state) {
+      NavigationGuidanceState.waitingForLocation => (
+        Icons.gps_not_fixed_rounded,
+        const Color(0xFFFFC857),
+      ),
+      NavigationGuidanceState.offRoute => (
+        Icons.alt_route_rounded,
+        const Color(0xFFFFC857),
+      ),
+      NavigationGuidanceState.complete => (
+        Icons.flag_rounded,
+        const Color(0xFF72D69C),
+      ),
+      NavigationGuidanceState.noManeuvers => (
+        Icons.directions_off_rounded,
+        const Color(0xFFFFC857),
+      ),
+      NavigationGuidanceState.noRoute || NavigationGuidanceState.active => (
+        Icons.navigation_rounded,
+        const Color(0xFF68A9FF),
+      ),
+    };
+    return Semantics(
+      key: const Key('navigation-guidance-status-banner'),
+      container: true,
+      liveRegion: true,
+      label: assessment.message,
+      excludeSemantics: true,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 10 : 12,
+              vertical: compact ? 7 : 9,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xF2252E39),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFF445262)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x55000000),
+                  blurRadius: 10,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: compact ? 20 : 22, color: color),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    assessment.message,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: compact ? 12 : 13,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
               ],

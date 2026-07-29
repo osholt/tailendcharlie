@@ -25,6 +25,7 @@ import UserNotifications
   private var pendingPushTokenResult: FlutterResult?
   private var pendingOpenedPush: [String: String]?
   private var pushTokenTimeout: DispatchWorkItem?
+  private var backgroundLocationPermissionBridge: BackgroundLocationPermissionBridge?
   weak var carPlayListTemplate: CPListTemplate?
 
   override func application(
@@ -38,6 +39,9 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    backgroundLocationPermissionBridge = BackgroundLocationPermissionBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
     let channel = FlutterMethodChannel(
       name: "me.osholt.ride_relay/nearby",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()

@@ -19,6 +19,7 @@ import '../../domain/rider_color.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
 import '../../services/gpx_import_source.dart';
+import '../../services/stored_route_library.dart';
 import '../map/motorcycle_icon.dart';
 import '../ride/route_recorder_screen.dart';
 import '../ride/previous_rides_screen.dart';
@@ -188,11 +189,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       TextButton.icon(
                         key: const Key('previous-rides-button'),
-                        onPressed: () => PreviousRidesScreen.show(
-                          context,
-                          widget.completedRides,
-                          widget.distanceUnits,
-                        ),
+                        onPressed: () => _openPreviousRides(context),
                         icon: const Icon(Icons.history),
                         label: Text(
                           widget.completedRides.rides.isEmpty
@@ -268,6 +265,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _showRideSheet(
     BuildContext context, {
     required bool creating,
+    PendingInAppRoute? pendingInAppRoute,
   }) async {
     widget.controller.clearError();
     await showModalBottomSheet<void>(
@@ -282,7 +280,30 @@ class _HomeScreenState extends State<HomeScreen> {
         sharedRoutes: widget.sharedRoutes,
         planDirectory: widget.planDirectory,
         creating: creating,
+        pendingInAppRoute: pendingInAppRoute,
         onComplete: () => Navigator.of(sheetContext).pop(),
+      ),
+    );
+  }
+
+  Future<void> _openPreviousRides(BuildContext launchContext) async {
+    final selection = await PreviousRidesScreen.show(
+      launchContext,
+      widget.completedRides,
+      widget.distanceUnits,
+    );
+    if (selection == null || !mounted) return;
+    final library = StoredRouteLibrary(
+      recordedRoutes: widget.recordedRoutes,
+      completedRides: widget.completedRides,
+    );
+    final prepared = library.prepare(selection);
+    await _showRideSheet(
+      context,
+      creating: true,
+      pendingInAppRoute: PendingInAppRoute(
+        route: prepared.route,
+        reviewNotes: prepared.notes,
       ),
     );
   }
@@ -565,6 +586,7 @@ class _RideForm extends StatefulWidget {
     required this.planDirectory,
     required this.creating,
     required this.onComplete,
+    this.pendingInAppRoute,
   });
 
   final RideController controller;
@@ -574,6 +596,7 @@ class _RideForm extends StatefulWidget {
   final PlanDirectory? planDirectory;
   final bool creating;
   final VoidCallback onComplete;
+  final PendingInAppRoute? pendingInAppRoute;
 
   @override
   State<_RideForm> createState() => _RideFormState();
@@ -992,6 +1015,11 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     if (_pendingPlanFile case final file?) {
       widget.sharedRoutes.stagePending(file);
       _pendingPlanFile = null;
+    } else if (widget.pendingInAppRoute case final route?) {
+      widget.sharedRoutes.stagePendingInAppRoute(
+        route.route,
+        reviewNotes: route.reviewNotes,
+      );
     }
     widget.onComplete();
   }

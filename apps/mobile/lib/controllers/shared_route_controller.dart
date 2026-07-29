@@ -5,11 +5,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import '../internet/plan_directory.dart';
+import '../domain/imported_route.dart';
 import '../services/gpx_import_source.dart';
 import '../services/planner_link_channel.dart';
 import '../services/shared_gpx_channel.dart';
 
 enum PlannerLinkStatus { idle, loading, error }
+
+class PendingInAppRoute {
+  const PendingInAppRoute({required this.route, this.reviewNotes = const []});
+
+  final ImportedRoute route;
+  final List<String> reviewNotes;
+}
 
 /// Tracks a GPX file the platform has handed to the app via "Open in..." /
 /// file association, until some screen claims and clears it. Re-checks on
@@ -29,6 +37,7 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   final PlanDirectory _planDirectory;
   final bool _ownsPlanDirectory;
   PickedGpxFile? _pending;
+  PendingInAppRoute? _pendingInAppRoute;
   PlannerLinkStatus _plannerLinkStatus = PlannerLinkStatus.idle;
   String? _plannerLinkMessage;
   String? _plannerLinkCode;
@@ -36,6 +45,7 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void>? _refreshOperation;
 
   PickedGpxFile? get pending => _pending;
+  PendingInAppRoute? get pendingInAppRoute => _pendingInAppRoute;
   PlannerLinkStatus get plannerLinkStatus => _plannerLinkStatus;
   String? get plannerLinkMessage => _plannerLinkMessage;
   String? get plannerLinkCode => _plannerLinkCode;
@@ -89,14 +99,33 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   /// code) through the same leader-only handoff as an OS "Open in…" file.
   void stagePending(PickedGpxFile file) {
     _pending = file;
+    _pendingInAppRoute = null;
+    notifyListeners();
+  }
+
+  /// Stages geometry already held by the app without serialising it to GPX.
+  ///
+  /// Previous-ride reuse enters the same map review/activation path as every
+  /// other source, while keeping [ImportedRoute] as the only representation
+  /// between the archive and the new ride (#251).
+  void stagePendingInAppRoute(
+    ImportedRoute route, {
+    List<String> reviewNotes = const [],
+  }) {
+    _pending = null;
+    _pendingInAppRoute = PendingInAppRoute(
+      route: route,
+      reviewNotes: List.unmodifiable(reviewNotes),
+    );
     notifyListeners();
   }
 
   /// Call once a screen has either started importing the file or shown the
   /// rider a "start a ride first" message, so it is not offered again.
   void clearPending() {
-    if (_pending == null) return;
+    if (_pending == null && _pendingInAppRoute == null) return;
     _pending = null;
+    _pendingInAppRoute = null;
     notifyListeners();
   }
 

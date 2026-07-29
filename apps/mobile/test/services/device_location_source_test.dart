@@ -23,8 +23,7 @@ void main() {
       expect(apple.allowBackgroundLocationUpdates, isTrue);
       // A stop on a ride is a coffee stop, not the end of the journey.
       expect(apple.pauseLocationUpdatesAutomatically, isFalse);
-      // What makes a while-in-use authorisation sufficient, and the honest
-      // signal to the rider that location is in use.
+      // The honest signal to the rider that location is in use.
       expect(apple.showBackgroundLocationIndicator, isTrue);
       expect(apple.activityType, ActivityType.otherNavigation);
     });
@@ -89,6 +88,46 @@ void main() {
     await source.dispose();
     await platform.dispose();
   });
+
+  test(
+    'explicit request promotes while-in-use access for background GPS',
+    () async {
+      final platform = _FakeLocationPlatform(
+        requestedPermission: DeviceLocationPermission.whileInUse,
+        backgroundPermission: DeviceLocationPermission.always,
+      );
+      final source = DeviceLocationSource(platform);
+
+      final access = await source.requestAccess();
+
+      expect(platform.permissionRequests, 1);
+      expect(platform.backgroundPermissionRequests, 1);
+      expect(access.backgroundCapable, isTrue);
+      expect(access.message, contains('length of a ride'));
+      await source.dispose();
+      await platform.dispose();
+    },
+  );
+
+  test(
+    'while-in-use fallback states that background sharing is limited',
+    () async {
+      final platform = _FakeLocationPlatform(
+        permission: DeviceLocationPermission.whileInUse,
+        backgroundPermission: DeviceLocationPermission.whileInUse,
+      );
+      final source = DeviceLocationSource(platform);
+
+      final access = await source.requestAccess();
+      final started = await source.start();
+
+      expect(access.backgroundCapable, isFalse);
+      expect(started.backgroundCapable, isFalse);
+      expect(started.message, contains('Tail End Charlie is visible'));
+      await source.dispose();
+      await platform.dispose();
+    },
+  );
 
   test(
     'foreground controller forwards samples to ride event handler',
@@ -297,13 +336,16 @@ class _FakeLocationPlatform implements DeviceLocationPlatform {
     this.serviceEnabled = true,
     this.permission = DeviceLocationPermission.denied,
     this.requestedPermission = DeviceLocationPermission.denied,
+    this.backgroundPermission,
   });
 
   final bool serviceEnabled;
   DeviceLocationPermission permission;
   final DeviceLocationPermission requestedPermission;
+  final DeviceLocationPermission? backgroundPermission;
   final positions = StreamController<LocationSample>.broadcast();
   int permissionRequests = 0;
+  int backgroundPermissionRequests = 0;
   int streamRequests = 0;
 
   @override
@@ -311,6 +353,13 @@ class _FakeLocationPlatform implements DeviceLocationPlatform {
 
   @override
   Future<bool> isServiceEnabled() async => serviceEnabled;
+
+  @override
+  Future<DeviceLocationPermission> requestBackgroundPermission() async {
+    backgroundPermissionRequests += 1;
+    permission = backgroundPermission ?? permission;
+    return permission;
+  }
 
   @override
   Stream<LocationSample> positionStream() {

@@ -68,12 +68,26 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
       final visible = all.where(_matchesFilter).toList(growable: false)
         ..sort(_compareParticipants);
       final isLeader = widget.controller.isLocalRideLeader;
-      final hasTec = all.any(
-        (participant) =>
-            participant.isIncludedInLiveCount &&
-            participant.role == RideRole.tailEndCharlie,
-      );
       final assignment = widget.controller.tecRoleAssignments.latest;
+      final acceptedTecRiderId = assignment?.isAccepted == true
+          ? assignment!.targetRiderId
+          : null;
+      final effectiveTecRiderId =
+          acceptedTecRiderId != null &&
+              all.any(
+                (participant) =>
+                    participant.riderId == acceptedTecRiderId &&
+                    participant.isIncludedInLiveCount,
+              )
+          ? acceptedTecRiderId
+          : null;
+      final hasTec =
+          effectiveTecRiderId != null ||
+          all.any(
+            (participant) =>
+                participant.isIncludedInLiveCount &&
+                participant.role == RideRole.tailEndCharlie,
+          );
       return FractionallySizedBox(
         heightFactor: 0.86,
         child: Column(
@@ -175,7 +189,9 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                       itemBuilder: (context, index) => _ParticipantTile(
                         participant: visible[index],
                         now: DateTime.now(),
-                        onAskToBeTec: _canAsk(visible[index])
+                        effectiveTecRiderId: effectiveTecRiderId,
+                        onAskToBeTec:
+                            _canAsk(visible[index], effectiveTecRiderId)
                             ? () => _askToBeTec(visible[index])
                             : null,
                         peerAppIsOlder: widget.legacyPeerRiderIds.contains(
@@ -190,13 +206,17 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
     },
   );
 
-  /// The leader may ask any live rider other than themselves who does not
-  /// already hold the role.
-  bool _canAsk(RideParticipant participant) =>
+  /// The leader may ask any live rider other than themselves who is not the
+  /// effective TEC. Before an accepted assignment, a self-selected TEC is
+  /// effective; afterwards an older self-selection has been superseded and can
+  /// be asked again.
+  bool _canAsk(RideParticipant participant, String? effectiveTecRiderId) =>
       widget.controller.isLocalRideLeader &&
       !participant.isLocal &&
       participant.isIncludedInLiveCount &&
-      participant.role != RideRole.tailEndCharlie;
+      participant.riderId != effectiveTecRiderId &&
+      (effectiveTecRiderId != null ||
+          participant.role != RideRole.tailEndCharlie);
 
   Future<void> _askToBeTec(RideParticipant participant) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -471,18 +491,25 @@ class _ParticipantTile extends StatelessWidget {
   const _ParticipantTile({
     required this.participant,
     required this.now,
+    this.effectiveTecRiderId,
     this.onAskToBeTec,
     this.peerAppIsOlder = false,
   });
 
   final RideParticipant participant;
   final DateTime now;
+  final String? effectiveTecRiderId;
   final VoidCallback? onAskToBeTec;
   final bool peerAppIsOlder;
 
   @override
   Widget build(BuildContext context) {
-    final role = _roleLabel(participant.role);
+    final role = participant.riderId == effectiveTecRiderId
+        ? 'Tail End Charlie'
+        : participant.role == RideRole.tailEndCharlie &&
+              effectiveTecRiderId != null
+        ? 'Rider · previous TEC selection superseded'
+        : _roleLabel(participant.role);
     final lastSeen = _lastSeenLabel(participant.lastSeenAt, now);
     final attention = participant.attentionLabel;
     // A departed rider's record is only useful if it says where they were last
@@ -511,7 +538,11 @@ class _ParticipantTile extends StatelessWidget {
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         leading: RiderMarkerBadge(
           style: participant.motorcycleStyle,
-          badgeColor: _roleColor(participant),
+          // Identity colour belongs to the rider, not the role. Lead/TEC and
+          // attention remain explicit in text, semantics and status treatment
+          // without making the same person change colour between roster and
+          // map (#250).
+          badgeColor: participant.riderColor.color,
           size: 42,
         ),
         title: Row(
@@ -562,13 +593,6 @@ class _ParticipantTile extends StatelessWidget {
     RideRole.marker => 'Marker',
     RideRole.rider => 'Rider',
   };
-
-  static Color _roleColor(RideParticipant participant) =>
-      switch (participant.role) {
-        RideRole.lead => const Color(0xFFFFC857),
-        RideRole.tailEndCharlie => const Color(0xFFB58CFF),
-        _ => participant.riderColor.color,
-      };
 
   static String _lastSeenLabel(DateTime value, DateTime now) {
     final age = now.difference(value);

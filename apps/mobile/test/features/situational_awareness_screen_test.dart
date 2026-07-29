@@ -229,6 +229,10 @@ class _FakeLocationPlatform implements DeviceLocationPlatform {
   Future<bool> isServiceEnabled() async => true;
 
   @override
+  Future<DeviceLocationPermission> requestBackgroundPermission() async =>
+      DeviceLocationPermission.whileInUse;
+
+  @override
   Stream<LocationSample> positionStream() => _positions.stream;
 
   @override

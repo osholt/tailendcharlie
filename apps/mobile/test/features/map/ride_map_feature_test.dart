@@ -391,8 +391,83 @@ void main() {
       );
       expect(find.text('Import GPX'), findsNothing);
       expect(find.text('Use demo route'), findsNothing);
+      expect(
+        find.byKey(const Key('dismiss-waiting-route-prompt')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('dismiss-waiting-route-prompt')));
+      await tester.pumpAndSettle();
+      expect(find.text('Waiting for the leader’s route'), findsNothing);
     },
   );
+
+  testWidgets('a started route-less ride does not block a follower', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-started-follower-no-route-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          canEditRoute: false,
+          rideStarted: true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Waiting for the leader’s route'), findsNothing);
+    expect(find.text('Choose a route'), findsNothing);
+  });
+
+  testWidgets('every route source is reachable on a small iPhone viewport', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync(
+      'map-small-route-chooser-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Enter destination'), findsOneWidget);
+    expect(find.text('Use a saved route'), findsOneWidget);
+    await tester.ensureVisible(find.text('Import GPX'));
+    expect(find.text('Import GPX'), findsOneWidget);
+    await tester.ensureVisible(find.text('Use demo route'));
+    expect(find.text('Use demo route'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('draws rider and leader trails with no route imported', (
     tester,
@@ -3567,6 +3642,7 @@ void main() {
       ),
     ]);
     addTearDown(alerts.dispose);
+    final dismissedInterrupts = <String>{};
 
     await tester.pumpWidget(
       MaterialApp(
@@ -3579,6 +3655,8 @@ void main() {
           offlineTileCache: cache,
           distanceUnit: DistanceUnit.kilometres,
           quickMessageAlerts: alerts,
+          dismissedQuickMessageInterruptIds: dismissedInterrupts,
+          onDismissQuickMessageInterrupt: dismissedInterrupts.add,
           onAcknowledgeQuickMessage: (_) async {},
           onEmergencyAlert: () async {},
           onLeaveRide: () async {},
@@ -3607,6 +3685,35 @@ void main() {
     expect(find.byKey(const Key('quick-message-interrupt')), findsNothing);
     expect(find.byKey(const Key('quick-message-alert')), findsOneWidget);
     expect(find.text('Ana needs help'), findsOneWidget);
+    expect(dismissedInterrupts, const {'help-1'});
+
+    // Opening the ride menu rebuilds the map tab. The interrupt must remember
+    // that it was dismissed while leaving the persistent alert row available.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(
+            _testRoute(id: 'quick', name: 'Quick route'),
+          ),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          distanceUnit: DistanceUnit.kilometres,
+          quickMessageAlerts: alerts,
+          dismissedQuickMessageInterruptIds: dismissedInterrupts,
+          onDismissQuickMessageInterrupt: dismissedInterrupts.add,
+          onAcknowledgeQuickMessage: (_) async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('quick-message-interrupt')), findsNothing);
+    expect(find.byKey(const Key('quick-message-alert')), findsOneWidget);
   });
 
   testWidgets('the sender is shown that their own alert was seen', (
@@ -3637,6 +3744,7 @@ void main() {
       ),
     );
     addTearDown(navigation.dispose);
+    final dismissedReceipts = <String>{};
 
     await tester.pumpWidget(
       MaterialApp(
@@ -3649,6 +3757,8 @@ void main() {
           offlineTileCache: cache,
           navigationPosition: navigation,
           quickMessageAlerts: alerts,
+          dismissedQuickMessageReceiptIds: dismissedReceipts,
+          onDismissQuickMessageReceipt: dismissedReceipts.add,
           onAcknowledgeQuickMessage: (_) async {},
           onEmergencyAlert: () async {},
           onLeaveRide: () async {},
@@ -3688,6 +3798,32 @@ void main() {
     // A receipt is not an alert: there is nothing to acknowledge, only to clear.
     expect(find.byKey(const Key('quick-message-acknowledge')), findsNothing);
     await tester.tap(find.byKey(const Key('quick-message-receipt-dismiss')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('quick-message-alert')), findsNothing);
+    expect(dismissedReceipts, const {'own-sos'});
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(
+            _testRoute(id: 'quick', name: 'Quick route'),
+          ),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          quickMessageAlerts: alerts,
+          dismissedQuickMessageReceiptIds: dismissedReceipts,
+          onDismissQuickMessageReceipt: dismissedReceipts.add,
+          onAcknowledgeQuickMessage: (_) async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('quick-message-alert')), findsNothing);
   });

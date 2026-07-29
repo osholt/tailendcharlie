@@ -81,6 +81,10 @@ class RideSummary {
 class RideSummaryExporter {
   const RideSummaryExporter();
 
+  /// Position reports normally arrive seconds apart. Past this interval the
+  /// intervening path is unknown and must not be counted or drawn (#205).
+  static const maximumContinuousTrailGap = Duration(minutes: 2);
+
   RideSummary summarize(
     RideSession session,
     Iterable<RideEvent> events, {
@@ -187,6 +191,7 @@ class RideSummaryExporter {
       notBefore: lifecycle.startedAt,
     );
     if (trail.length < 2) return null;
+    final segments = _continuousTrailSegments(trail);
     final trackName = session.rideName ?? 'Ride ${session.rideCode}';
     return ImportedRoute(
       id: session.rideId,
@@ -194,18 +199,21 @@ class RideSummaryExporter {
       importedAt: generatedAt,
       sourceFileName: '${session.rideCode}.gpx',
       paths: [
-        RoutePath(
-          kind: RoutePathKind.track,
-          name: trackName,
-          points: [
-            for (final point in trail)
-              GeoPoint(
-                latitude: point.latitude,
-                longitude: point.longitude,
-                recordedAt: point.recordedAt,
-              ),
-          ],
-        ),
+        for (final (index, segment) in segments.indexed)
+          RoutePath(
+            kind: RoutePathKind.track,
+            name: segments.length == 1
+                ? trackName
+                : '$trackName · segment ${index + 1}',
+            points: [
+              for (final point in segment)
+                GeoPoint(
+                  latitude: point.latitude,
+                  longitude: point.longitude,
+                  recordedAt: point.recordedAt,
+                ),
+            ],
+          ),
       ],
       waypoints: const [],
     );
@@ -336,19 +344,38 @@ class RideSummaryExporter {
 
   static double _trailDistanceMeters(List<_TrailPoint> trail) {
     var total = 0.0;
-    for (var index = 1; index < trail.length; index += 1) {
-      total += GeoCalculations.distanceMeters(
-        geo.GeoPoint(
-          latitude: trail[index - 1].latitude,
-          longitude: trail[index - 1].longitude,
-        ),
-        geo.GeoPoint(
-          latitude: trail[index].latitude,
-          longitude: trail[index].longitude,
-        ),
-      );
+    for (final segment in _continuousTrailSegments(trail)) {
+      for (var index = 1; index < segment.length; index += 1) {
+        total += GeoCalculations.distanceMeters(
+          geo.GeoPoint(
+            latitude: segment[index - 1].latitude,
+            longitude: segment[index - 1].longitude,
+          ),
+          geo.GeoPoint(
+            latitude: segment[index].latitude,
+            longitude: segment[index].longitude,
+          ),
+        );
+      }
     }
     return total;
+  }
+
+  static List<List<_TrailPoint>> _continuousTrailSegments(
+    List<_TrailPoint> trail,
+  ) {
+    if (trail.isEmpty) return const [];
+    final segments = <List<_TrailPoint>>[
+      <_TrailPoint>[trail.first],
+    ];
+    for (final point in trail.skip(1)) {
+      final gap = point.recordedAt.difference(segments.last.last.recordedAt);
+      if (gap > maximumContinuousTrailGap) {
+        segments.add(<_TrailPoint>[]);
+      }
+      segments.last.add(point);
+    }
+    return segments;
   }
 
   static String _csvRow(List<Object?> values) =>

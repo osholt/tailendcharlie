@@ -218,6 +218,10 @@ class _FakeLocationPlatform implements DeviceLocationPlatform {
       DeviceLocationPermission.whileInUse;
 
   @override
+  Future<DeviceLocationPermission> requestBackgroundPermission() async =>
+      DeviceLocationPermission.whileInUse;
+
+  @override
   Stream<LocationSample> positionStream() => positions.stream;
 
   Future<void> dispose() => positions.close();

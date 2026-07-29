@@ -87,6 +87,12 @@ class SituationalAwarenessController extends ChangeNotifier {
   /// road-closure detour, doesn't read as the group having gone off course.
   List<GeoPoint> get leaderTrail => List.unmodifiable(_leaderTrailPoints);
 
+  /// The same durable leader trail with its fix times retained, so map
+  /// rendering can break an unknown interval instead of inventing a straight
+  /// line across it (#205).
+  List<({DateTime recordedAt, GeoPoint position})> get leaderTrailSamples =>
+      List.unmodifiable(_leaderTrail);
+
   List<RiderLocation> get riderLocations {
     final values = _locations.values.toList(growable: false);
     values.sort(

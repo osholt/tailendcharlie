@@ -14,8 +14,10 @@ import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/ride_summary_exporter.dart';
+import '../../services/stored_route_library.dart';
 import '../map/resolved_route_map_preview.dart'
     show embeddedMapGestureRecognizers;
+import '../map/stored_route_picker.dart';
 import 'ride_recap_screen.dart';
 
 class PreviousRidesScreen extends StatelessWidget {
@@ -28,12 +30,12 @@ class PreviousRidesScreen extends StatelessWidget {
   final CompletedRidesController completedRides;
   final DistanceUnitController distanceUnits;
 
-  static Future<void> show(
+  static Future<StoredRouteSelection?> show(
     BuildContext context,
     CompletedRidesController completedRides,
     DistanceUnitController distanceUnits,
-  ) => Navigator.of(context).push(
-    MaterialPageRoute<void>(
+  ) => Navigator.of(context).push<StoredRouteSelection>(
+    MaterialPageRoute<StoredRouteSelection>(
       builder: (_) => PreviousRidesScreen(
         completedRides: completedRides,
         distanceUnits: distanceUnits,
@@ -73,15 +75,20 @@ class PreviousRidesScreen extends StatelessWidget {
               distance: MeasurementFormatter(
                 distanceUnits.value,
               ).distance(ride.totalDistanceMeters),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => PreviousRideDetailScreen(
-                    ride: ride,
-                    completedRides: completedRides,
-                    distanceUnits: distanceUnits,
+              onTap: () async {
+                final selection = await Navigator.of(context).push(
+                  MaterialPageRoute<StoredRouteSelection>(
+                    builder: (_) => PreviousRideDetailScreen(
+                      ride: ride,
+                      completedRides: completedRides,
+                      distanceUnits: distanceUnits,
+                    ),
                   ),
-                ),
-              ),
+                );
+                if (selection != null && context.mounted) {
+                  Navigator.of(context).pop(selection);
+                }
+              },
             );
           },
         );
@@ -137,7 +144,11 @@ class _RideTile extends StatelessWidget {
       title: Text(ride.title),
       subtitle: Text(
         '${_date(ride.startedAt)} · $distance · ${ride.riderCount} riders\n'
-        '${ride.traveledRoute == null ? 'No GPX trail recorded' : 'GPX ready'}',
+        '${ride.traveledRoute == null
+            ? 'No GPX trail recorded'
+            : ride.hasRecordingGaps
+            ? 'Recorded trail has location gaps'
+            : 'GPX ready'}',
       ),
       isThreeLine: true,
       trailing: const Icon(Icons.chevron_right),
@@ -205,6 +216,22 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
             ),
           ],
           const SizedBox(height: 18),
+          if (ride.hasRecordingGaps) ...[
+            Card(
+              key: const Key('archived-ride-recording-gap'),
+              color: const Color(0xFF342B17),
+              child: const ListTile(
+                leading: Icon(Icons.location_disabled_outlined),
+                title: Text('This recording has gaps'),
+                subtitle: Text(
+                  'Location stopped for part of the ride. Missing sections are '
+                  'left blank rather than shown as straight lines, and are not '
+                  'included in the distance.',
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -226,6 +253,15 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
             ),
           ),
           const SizedBox(height: 18),
+          FilledButton.icon(
+            key: const Key('archived-ride-again'),
+            onPressed: ride.plannedRoute == null && ride.traveledRoute == null
+                ? null
+                : _rideAgain,
+            icon: const Icon(Icons.route_outlined),
+            label: const Text('Ride again'),
+          ),
+          const SizedBox(height: 10),
           FilledButton.icon(
             onPressed: _sharing ? null : () => _shareSummary(),
             icon: const Icon(Icons.ios_share),
@@ -269,6 +305,83 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
       sharePositionOrigin: _shareOrigin(),
     ),
   );
+
+  Future<void> _rideAgain() async {
+    final ride = widget.ride;
+    final candidates = <StoredRouteCandidate>[
+      if (ride.plannedRoute case final route?)
+        StoredRouteCandidate(
+          id: 'ride:${ride.rideId}:plan',
+          origin: StoredRouteOrigin.previousRidePlan,
+          title: ride.title,
+          storedAt: ride.startedAt,
+          geometry: route,
+          rideCode: ride.rideCode,
+        ),
+      if (ride.traveledRoute case final route?)
+        StoredRouteCandidate(
+          id: 'ride:${ride.rideId}:track',
+          origin: StoredRouteOrigin.previousRideTrack,
+          title: ride.title,
+          storedAt: ride.startedAt,
+          geometry: route,
+          rideCode: ride.rideCode,
+        ),
+    ];
+    if (candidates.isEmpty) return;
+    // A plan is the default because it describes the intended ride. The track
+    // remains an explicit choice where both exist.
+    var candidate = candidates.first;
+    if (candidates.length > 1) {
+      final chosen = await showModalBottomSheet<StoredRouteCandidate>(
+        context: context,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(
+                title: Text('Which route should be reused?'),
+                subtitle: Text(
+                  'The planned route is recommended. The recorded track '
+                  'includes where the bike actually went.',
+                ),
+              ),
+              for (final option in candidates)
+                ListTile(
+                  key: Key('ride-again-${option.origin.name}'),
+                  leading: Icon(
+                    option.origin == StoredRouteOrigin.previousRidePlan
+                        ? Icons.route_outlined
+                        : Icons.timeline_outlined,
+                  ),
+                  title: Text(
+                    option.origin == StoredRouteOrigin.previousRidePlan
+                        ? 'Planned route · recommended'
+                        : 'Recorded track',
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, option),
+                ),
+            ],
+          ),
+        ),
+      );
+      if (chosen == null || !mounted) return;
+      candidate = chosen;
+    }
+    final selection = await showModalBottomSheet<StoredRouteSelection>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => StoredRouteOptionsSheet(
+        candidate: candidate,
+        distanceUnit: widget.distanceUnits.value,
+      ),
+    );
+    if (selection != null && mounted) {
+      Navigator.of(context).pop(selection);
+    }
+  }
 
   Future<void> _exportGpx() => _runShare(
     () => widget.sharer.exportGpx(

@@ -73,6 +73,15 @@ class CompletedRide {
 
   Duration get duration => endedAt.difference(startedAt).abs();
 
+  /// More than one recorded track means the location stream stopped long
+  /// enough that joining the fixes would invent a straight line (#205).
+  bool get hasRecordingGaps =>
+      (traveledRoute?.paths
+              .where((path) => path.kind == RoutePathKind.track)
+              .length ??
+          0) >
+      1;
+
   Iterable<GeoPoint> get mapPoints sync* {
     if (plannedRoute case final route?) yield* route.allPoints;
     if (traveledRoute case final route?) yield* route.allPoints;
