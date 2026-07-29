@@ -2143,10 +2143,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 .where((alert) => activeRiderIds.contains(alert.riderId))
                 .toList(growable: false),
             activeHazards: awareness.activeHazards,
+            route: _activeRoute,
             routeName: _activeRoute?.name,
             rideState: _projectedRideState,
             guidanceTitle: _projectedGuidanceTitle,
             guidanceDetail: _projectedGuidanceDetail,
+            guidanceRoadName: _latestNavigationGuidance?.roadLabel,
+            guidanceDistanceMeters: _latestNavigationGuidance?.distanceMeters,
             groupStatus: '${visibleRiderLocations.length} riders visible',
             markerStatus: _junctionMarkerOverlay.value?.instruction,
           ) ??

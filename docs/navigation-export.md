@@ -42,19 +42,26 @@ preselect a third-party recipient.
 
 ## Projected navigation (CarPlay / Android Auto)
 
-CarPlay has a Driving Task companion: a `CPListTemplate` showing the selected
-route, current ride state, next manoeuvre, group status, marker status, the
-current highest-priority alert, and a bounded rider list. Its SOS button is
-wired to the same emergency alert as the phone's map. The app's Debug and
-Release signing configurations request the approved
-`com.apple.developer.carplay-driving-task` entitlement. The list is refreshed
-at most once every ten seconds to remain a low-interaction, glanceable surface.
+Apple approved Tail End Charlie's CarPlay Navigation entitlement under
+Case-ID 21286533. The CarPlay scene therefore uses the navigation-only
+window-bearing scene callback and a `CPMapTemplate` root. The app-owned MapKit
+canvas draws the active route and current rider positions behind CarPlay's
+controls; the local rider is followed until the map is panned, and the
+recenter control restores that view.
 
-This is not a native map. `CPMapTemplate` and turn-by-turn guidance require
-Apple's separate CarPlay Navigation entitlement; Driving Task approval does not
-grant that capability. Tail End Charlie therefore keeps route planning,
-ride setup, and detailed settings on the phone. The list can mirror the next
-instruction but cannot present itself as Apple turn-by-turn navigation.
+The phone's current guidance is published as a `CPManeuver` with live distance
+estimates through a `CPNavigationSession`, so CarPlay owns the turn card and
+navigation chrome. A **Ride** button opens the existing `CPListTemplate` with
+ride state, group/marker status, alerts and a bounded rider list. SOS remains
+wired to the same emergency alert as the phone map. Route setup and detailed
+settings stay on the phone.
+
+Debug and Release signing request both
+`com.apple.developer.carplay-driving-task` and
+`com.apple.developer.carplay-maps`. The App ID and every provisioning profile
+used for those builds must contain both restricted entitlements. Projected
+state is refreshed at most once every ten seconds; route geometry is reduced
+to at most 600 points before it crosses the platform channel.
 
 Android Auto uses Android for Cars App Library 1.7.0 and declares the
 navigation category. It renders the same bounded snapshot as a read-only

@@ -94,9 +94,11 @@ symbol choices.
   the problem happened over internet or nearby transport in every report.
 - Background location, multi-device TEC handover, mixed-version rider symbols,
   map gestures and a full off-route ride still require physical-device results.
-- CarPlay navigation is not in build 35. Apple has approved the navigation
-  entitlement under Case-ID 21286533, but the App ID, provisioning profile and
-  navigation scene still need to be configured and validated separately.
+- CarPlay navigation is not in build 35. Apple approved the navigation
+  entitlement under Case-ID 21286533; implementation and signed Profile
+  validation are complete on the development branch. Apple's simulator does
+  not launch restricted-entitlement builds, so physical CarPlay/head-unit
+  validation remains required before claiming production support.
 
 ## Android and iOS build 34 — 1.0.1 — 29 July 2026
 

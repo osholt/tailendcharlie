@@ -26,7 +26,7 @@ import UserNotifications
   private var pendingOpenedPush: [String: String]?
   private var pushTokenTimeout: DispatchWorkItem?
   private var backgroundLocationPermissionBridge: BackgroundLocationPermissionBridge?
-  weak var carPlayListTemplate: CPListTemplate?
+  weak var carPlaySceneDelegate: CarPlaySceneDelegate?
 
   override func application(
     _ application: UIApplication,
@@ -172,9 +172,7 @@ import UserNotifications
         return
       }
       self?.latestCarPlaySnapshot = snapshot
-      if let template = self?.carPlayListTemplate {
-        CarPlayStatusTemplate.apply(snapshot: snapshot, to: template)
-      }
+      self?.carPlaySceneDelegate?.apply(snapshot: snapshot)
       result(nil)
     }
     self.carPlayChannel = carPlayChannel
@@ -335,18 +333,20 @@ import UserNotifications
     pushChannel?.invokeMethod("notificationOpened", arguments: value)
   }
 
-  /// Called by CarPlaySceneDelegate once the CarPlay scene's list template is
+  /// Called by CarPlaySceneDelegate once the CarPlay navigation scene is
   /// ready. Applies whatever snapshot Dart already published - the CarPlay
   /// scene can connect well after the ride screen's first publish.
-  func carPlayDidConnect(_ template: CPListTemplate) {
-    carPlayListTemplate = template
+  func carPlayDidConnect(_ sceneDelegate: CarPlaySceneDelegate) {
+    carPlaySceneDelegate = sceneDelegate
     if let snapshot = latestCarPlaySnapshot {
-      CarPlayStatusTemplate.apply(snapshot: snapshot, to: template)
+      sceneDelegate.apply(snapshot: snapshot)
     }
   }
 
-  func carPlayDidDisconnect() {
-    carPlayListTemplate = nil
+  func carPlayDidDisconnect(_ sceneDelegate: CarPlaySceneDelegate) {
+    if carPlaySceneDelegate === sceneDelegate {
+      carPlaySceneDelegate = nil
+    }
   }
 
   func triggerCarPlayEmergency() {

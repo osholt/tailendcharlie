@@ -7,7 +7,7 @@
   <key>provisioningProfiles</key>
   <dict>
     <key>app.tailendcharlie</key>
-    <string>Tail End Charlie CI App Store</string>
+    <string>Tail End Charlie CarPlay Navigation App Store</string>
   </dict>
   <key>signingCertificate</key>
   <string>Apple Distribution</string>

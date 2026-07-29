@@ -44,14 +44,14 @@ Companion documents, all of which this one links into rather than duplicates:
 | Purpose | Configuration | Signing | Notes |
 | --- | --- | --- | --- |
 | iOS Simulator, day-to-day work | Debug | none required | Hot reload. `make ios-simulator` also spoofs GPS to the demo route. |
-| Physical iPhone, debugging with the tooling attached | Debug | `Apple Development` + `Tail End Charlie CarPlay Development` | Usable **only** while `flutter run` or Xcode stays attached. |
-| Physical iPhone, evaluation / a real ride / handing the phone to someone | **Profile** | `Apple Development` + `Tail End Charlie CarPlay Development` | The device-evaluation configuration. AOT-compiled, launches from the home screen, still exposes DevTools and the timeline. |
-| Physical iPhone, release-identical | Release | `Apple Distribution` + `Tail End Charlie CI App Store` | **Not installable directly.** Go through TestFlight. |
+| Physical iPhone, debugging with the tooling attached | Debug | `Apple Development` + `Tail End Charlie CarPlay Navigation Development` | Usable **only** while `flutter run` or Xcode stays attached. |
+| Physical iPhone, evaluation / a real ride / handing the phone to someone | **Profile** | `Apple Development` + `Tail End Charlie CarPlay Navigation Development` | The device-evaluation configuration. AOT-compiled, launches from the home screen, still exposes DevTools and the timeline. |
+| Physical iPhone, release-identical | Release | `Apple Distribution` + `Tail End Charlie CarPlay Navigation App Store` | **Not installable directly.** Go through TestFlight. |
 | Android emulator | Debug | local `~/.android/debug.keystore` | Fastest loop; no Play Console access needed. |
 | Android phone, evaluation | Debug or Profile | local `~/.android/debug.keystore` | Android has no equivalent of the iOS debug-JIT restriction: an Android debug build *does* launch from the launcher. |
 | Android phone, release-like | Release | **falls back to the debug key locally** | `android/key.properties` is git-ignored and absent locally, so a local `--release` build never touches real signing material. |
 | CI, every push (`mobile.yml`) | Debug | Android debug certificate; iOS `--no-codesign` | Analysis, tests, a debug APK, and an unsigned iOS `.app`. |
-| CI, TestFlight (`testflight.yml`, manual) | Release | `Apple Distribution` `.p12` + `Tail End Charlie CI App Store` in a temporary keychain | Archives with `xcodebuild`, exports per `ios/ExportOptions-TestFlight.plist`, uploads with `altool`. |
+| CI, TestFlight (`testflight.yml`, manual) | Release | `Apple Distribution` `.p12` + `Tail End Charlie CarPlay Navigation App Store` in a temporary keychain | Archives with `xcodebuild`, exports per `ios/ExportOptions-TestFlight.plist`, uploads with `altool`. |
 | CI, Play closed track (`android-internal.yml`, manual) | Release | upload keystore from secrets, Play App Signing on Google's side | Uploads to `internal`, promotes to `alpha` in the same run. |
 
 What the iOS project actually says, in
@@ -62,12 +62,13 @@ What the iOS project actually says, in
 | `CODE_SIGN_STYLE` | `Manual` | `Manual` | `Manual` |
 | `CODE_SIGN_IDENTITY` | `Apple Development` | `Apple Development` | `Apple Distribution` |
 | `CODE_SIGN_ENTITLEMENTS` | `Runner/DebugProfile.entitlements` | `Runner/DebugProfile.entitlements` | `Runner/Release.entitlements` |
-| `PROVISIONING_PROFILE_SPECIFIER` | `Tail End Charlie CarPlay Development` | `Tail End Charlie CarPlay Development` | `Tail End Charlie CI App Store` |
+| `PROVISIONING_PROFILE_SPECIFIER` | `Tail End Charlie CarPlay Navigation Development` | `Tail End Charlie CarPlay Navigation Development` | `Tail End Charlie CarPlay Navigation App Store` |
 | `DEVELOPMENT_TEAM` | `UY4624PH6X` | `UY4624PH6X` | `UY4624PH6X` |
 
 All three are manual by design. `aps-environment` is `development` in
 `DebugProfile.entitlements` and `production` in `Release.entitlements`; both
-carry `com.apple.developer.carplay-driving-task` and
+carry `com.apple.developer.carplay-driving-task`,
+`com.apple.developer.carplay-maps`, and
 `applinks:tailendcharlie.app`.
 
 ## What a device build must have stamped in
@@ -119,9 +120,10 @@ public default, so a device build gets a map without configuring anything.
   Developer Mode**, then reboot. The menu entry only appears once the device has
   been connected to a Mac running Xcode.
 - **The phone's UDID must already be in the
-  `Tail End Charlie CarPlay Development` profile.** Registering a device and
-  reissuing the profile is the maintainer's — see
-  [Not automatable](#not-automatable). Do not commit a UDID anywhere.
+  `Tail End Charlie CarPlay Navigation Development` profile.** Registering a
+  device and reissuing the profile is an Apple-account action — see
+  [Account-bound actions](#account-bound-actions). Do not commit a UDID
+  anywhere.
 
 ## Commands
 
@@ -144,15 +146,17 @@ make ios-simulator RIDE_RELAY_API_BASE_URL=https://relay.example.com/api
 
 ### A physical iPhone — the device-evaluation path
 
-This is the one to follow. It was exercised end to end on 26 July 2026: a
-`flutter build ios --profile` produced a `Runner.app` signed by an
-`Apple Development` authority with `TeamIdentifier=UY4624PH6X`, the embedded
-`Tail End Charlie CarPlay Development` profile, one provisioned device, and the
-CarPlay entitlement intact.
+This is the one to follow. The path was exercised end to end on 26 July 2026
+with the predecessor Driving Task profile. The navigation replacement was
+installed on 29 July and has both local development certificates and both test
+devices. A signed Profile build completed on 29 July with both CarPlay
+entitlements stamped into `Runner.app`; it still needs a physical CarPlay
+head-unit run as navigation-specific runtime evidence.
 
-It needs a Mac with Xcode, the `Tail End Charlie CarPlay Development` profile
-installed locally, and the matching Apple Development certificate in the login
-keychain. Check both first:
+It needs a Mac with Xcode, the
+`Tail End Charlie CarPlay Navigation Development` profile installed locally,
+and the matching Apple Development certificate in the login keychain. Check
+both first:
 
 ```bash
 security find-identity -v -p codesigning     # expect an "Apple Development" identity
@@ -161,7 +165,7 @@ security find-identity -v -p codesigning     # expect an "Apple Development" ide
 ```bash
 # Both directories are real. Search both - see the symptom index.
 # -a matters: without it, BSD grep -r finds nothing in these binary files.
-grep -rla "Tail End Charlie CarPlay Development" \
+grep -rla "Tail End Charlie CarPlay Navigation Development" \
   ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/ \
   ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null
 ```
@@ -220,8 +224,9 @@ codesign -d --entitlements - --xml "$app" | plutil -p -
 
 A correct profile build reports `TeamIdentifier=UY4624PH6X`, an
 `Apple Development` authority, an embedded profile named
-`Tail End Charlie CarPlay Development`, and entitlements containing
-`com.apple.developer.carplay-driving-task` with
+`Tail End Charlie CarPlay Navigation Development`, and entitlements containing
+`com.apple.developer.carplay-driving-task`,
+`com.apple.developer.carplay-maps`, and
 `aps-environment => development`. Note that the `Authority=` line's brackets
 carry the **Apple ID's** identifier, not the team — `TeamIdentifier` is the team.
 
@@ -336,10 +341,11 @@ binary.
 ### A release build will not install on a device
 
 The Runner target's Release configuration is pinned to
-`PROVISIONING_PROFILE_SPECIFIER = "Tail End Charlie CI App Store"`. An App Store
-profile has no `ProvisionedDevices` array — confirmed on the locally installed
-copy of that profile — so iOS has no basis on which to install the resulting
-binary on a development device.
+`PROVISIONING_PROFILE_SPECIFIER =
+"Tail End Charlie CarPlay Navigation App Store"`. An App Store profile has no
+`ProvisionedDevices` array — confirmed on the locally installed copy of that
+profile — so iOS has no basis on which to install the resulting binary on a
+development device.
 
 This is a consequence of the CI setup being correct, not a defect. **Profile**
 is the device configuration: it already uses the CarPlay Development profile and
@@ -362,12 +368,14 @@ Checking only one of them is what produced a confident, wrong conclusion that
 local signing was broken during the 26 July session. On the maintainer's Mac
 that same day the Xcode 16+ directory held six profiles and the legacy
 directory held exactly one — and the one in the legacy directory was
-`Tail End Charlie CarPlay Development`, the profile the Debug and Profile
-configurations name. Neither directory is authoritative. Search both:
+the predecessor `Tail End Charlie CarPlay Development` profile. The current
+Debug and Profile configurations name
+`Tail End Charlie CarPlay Navigation Development`. Neither directory is
+authoritative. Search both:
 
 ```bash
 # -a matters: without it, BSD grep -r finds nothing in these binary files.
-grep -rla "Tail End Charlie CarPlay Development" \
+grep -rla "Tail End Charlie CarPlay Navigation Development" \
   ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/ \
   ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null
 ```
@@ -379,7 +387,7 @@ security cms -D -i <profile>.mobileprovision | plutil -p - | less
 ```
 
 Creating or downloading the profile itself needs the maintainer's Apple
-account. See [Not automatable](#not-automatable).
+account. See [Account-bound actions](#account-bound-actions).
 
 ### The certificate exists but appears to be for another team
 
@@ -408,11 +416,12 @@ the `OU`.
 
 ### Automatic signing cannot work for this app
 
-`com.apple.developer.carplay-driving-task` is a restricted entitlement. Xcode
-cannot mint a profile that carries one, so `CODE_SIGN_STYLE = Automatic` can
-never satisfy this target. All three Runner configurations are deliberately
+`com.apple.developer.carplay-driving-task` and
+`com.apple.developer.carplay-maps` are restricted entitlements. Xcode cannot
+mint a profile that carries them, so `CODE_SIGN_STYLE = Automatic` cannot
+satisfy this target. All three Runner configurations are deliberately
 `Manual`. Switching any of them to automatic will fail, and the failure will
-point at the entitlement.
+point at an entitlement.
 
 Do not resolve that failure by removing the entitlement — see the next section.
 See also
@@ -423,10 +432,10 @@ See also
 `apps/mobile/ios/Runner/Info.plist` declares a
 `CPTemplateApplicationSceneSessionRoleApplication` scene whose delegate is
 `CarPlaySceneDelegate`. iOS terminates an app that declares a scene role it is
-not entitled to. The entitlement in
-`Runner/DebugProfile.entitlements`/`Runner/Release.entitlements` and that scene
-declaration are a **matched pair**; removing either alone kills the app at
-launch.
+not entitled to. The two CarPlay entitlements in
+`Runner/DebugProfile.entitlements`/`Runner/Release.entitlements`, the App ID
+capabilities, the provisioning profile and that scene declaration must agree;
+removing one part alone can kill the app at launch.
 
 Restore whichever you removed. If CarPlay ever genuinely has to come out, both
 sides go together, and that is a product decision recorded against issue #6,
@@ -470,17 +479,18 @@ both are paired.
 **Both CI signing paths work, are evidenced, and must not be "fixed".**
 
 **iOS — `.github/workflows/testflight.yml`.** Decodes an
-`Apple Distribution` `.p12` and the `Tail End Charlie CI App Store` provisioning
-profile from repository secrets into `$RUNNER_TEMP`, creates a temporary
-keychain, imports the certificate with `-T /usr/bin/codesign`, installs the
-profile by its UUID, archives the **Release** configuration with `xcodebuild`,
-exports it manually per `ios/ExportOptions-TestFlight.plist`
+`Apple Distribution` `.p12` and the
+`Tail End Charlie CarPlay Navigation App Store` provisioning profile from
+repository secrets into `$RUNNER_TEMP`, creates a temporary keychain, imports
+the certificate with `-T /usr/bin/codesign`, installs the profile by its UUID,
+archives the **Release** configuration with `xcodebuild`, exports it manually
+per `ios/ExportOptions-TestFlight.plist`
 (`signingStyle: manual`, `signingCertificate: Apple Distribution`,
 `teamID: UY4624PH6X`), and uploads with `xcrun altool`. Evidence: TestFlight
 workflow runs **20** and **23–26** completed successfully (24 July 2026), each
-including the upload step. Earlier runs mix successes under the retired
-`me.osholt.rideRelay` identifier with the failures from establishing this path
-and migrating the bundle ID; those are history, not a live problem.
+including the upload step with the predecessor profile. The replacement
+profile secret was installed on 29 July; a signed workflow run remains the
+release-signing evidence needed for navigation.
 
 **Android — `.github/workflows/android-internal.yml`.** Writes
 `android/key.properties` from the upload-keystore secrets in `$RUNNER_TEMP`,
@@ -498,29 +508,24 @@ Neither pipeline can observe the store. What still needs Play Console access, an
 App Store Connect session, or a physical phone is listed in
 [android-internal-testing.md § What cannot be verified from CI](./android-internal-testing.md#what-cannot-be-verified-from-ci).
 
-## Not automatable
+## Account-bound actions
 
-Do not spend time trying to automate these. The first three were attempted during
-the 26 July session; the rest are platform limits or maintainer policy.
+These require the maintainer's authenticated Apple account or remain
+intentionally manual.
 
-- **Creating a certificate or a provisioning profile.** An App Store Connect API
-  key scoped `Developer` returns `403` on `POST /v1/devices` and
-  `POST /v1/profiles`; both need **App Manager** or **Admin**. This was observed
-  in that session and is not something this repository can re-check — treat the
-  exact scope boundary as reported rather than proven, but treat the conclusion
-  as settled: profile and device creation is the maintainer's, through their
-  Apple account.
-- **Apple's web forms for registering a device and saving a profile.** Reported
-  from that session: with every field correctly filled and the submit button
-  enabled, programmatic clicks did nothing; a human click was required. Plan for
-  a maintainer step rather than retrying.
+- **Changing an App ID or issuing a provisioning profile.** A Developer-scoped
+  App Store Connect API key returned `403` on `POST /v1/devices` and
+  `POST /v1/profiles` during the 26 July session. The signed-in Developer portal
+  did work on 29 July after explicit maintainer confirmation: it enabled
+  CarPlay Navigation and created both replacement profiles. Do not treat an API
+  permission failure as proof that the portal action is impossible.
 - **Editing a provisioning profile through the API.** Reported from that
   session: profiles can be created and deleted but not modified. If you must
   work with profiles, probe your permissions by creating one with a throwaway
   name **first**, and only delete a real profile once you know you can recreate
-  it. Deleting `Tail End Charlie CarPlay Development` or
-  `Tail End Charlie CI App Store` without being able to recreate it breaks
-  device builds and TestFlight respectively.
+  it. Deleting `Tail End Charlie CarPlay Navigation Development` or
+  `Tail End Charlie CarPlay Navigation App Store` without being able to
+  recreate it breaks device builds and TestFlight respectively.
 - **The first USB pairing.** Wireless debugging is only offered afterwards.
 - **Erasing or resetting a device.** The maintainer's decision alone. Never do
   this, and never advise it as a debugging step for a build problem.
