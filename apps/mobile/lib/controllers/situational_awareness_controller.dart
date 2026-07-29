@@ -31,6 +31,7 @@ class SituationalAwarenessController extends ChangeNotifier {
     this.deduplicator = const HazardDeduplicator(),
     this.routeConfig = const RouteDeviationConfig(),
     this.freshnessPolicy = const PresenceFreshnessPolicy(),
+    this.onEventStored,
   }) : _route = List.unmodifiable(route),
        _routeSegments = List.unmodifiable(
          (routeSegments ?? [route]).map(
@@ -64,6 +65,13 @@ class SituationalAwarenessController extends ChangeNotifier {
   /// the journal side and the presence side cannot disagree about whether a
   /// position is live, ageing or stale.
   final PresenceFreshnessPolicy freshnessPolicy;
+
+  /// Receives an event after this controller has durably stored and applied it.
+  ///
+  /// The ride shell uses this to update the shared in-memory journal one event
+  /// at a time instead of re-reading the complete SQLite ride after every
+  /// position fix (#165).
+  final ValueChanged<RideEvent>? onEventStored;
   late SituationEventFactory _eventFactory;
 
   final Map<String, RiderLocation> _locations = {};
@@ -321,6 +329,7 @@ class SituationalAwarenessController extends ChangeNotifier {
     }
     await _eventStore.append(event);
     _applyEvent(event);
+    onEventStored?.call(event);
     notifyListeners();
   }
 
@@ -404,11 +413,13 @@ class SituationalAwarenessController extends ChangeNotifier {
       expiresAt: _clock().add(const Duration(hours: 2)),
     );
     await _eventStore.append(event);
+    onEventStored?.call(event);
   }
 
   Future<void> _appendAndApply(RideEvent event) async {
     await _eventStore.append(event);
     _applyEvent(event);
+    onEventStored?.call(event);
   }
 
   void _applyEvent(RideEvent event, {bool replaying = false}) {
@@ -518,7 +529,7 @@ class SituationalAwarenessController extends ChangeNotifier {
     }
     // Per-role, and re-applied on every fix so a hand-over mid-ride moves both
     // riders onto the right comparison without resetting their hysteresis.
-    final segments = _routeSegmentsFor(location.role);
+    final segments = _routeSegmentsFor();
     final detector = _detectors.putIfAbsent(
       location.riderId,
       () => RouteDeviationDetector(
@@ -564,31 +575,29 @@ class SituationalAwarenessController extends ChangeNotifier {
       recordedAt: sample.recordedAt,
       position: sample.position,
     ));
+    if (_leaderTrail.length > LeaderTrackExemption.defaultRecentPointLimit) {
+      _leaderTrail.removeRange(
+        0,
+        _leaderTrail.length - LeaderTrackExemption.defaultRecentPointLimit,
+      );
+    }
   }
 
   List<GeoPoint> get _leaderTrailPoints => [
     for (final point in _leaderTrail) point.position,
   ];
 
-  /// What a rider of [role] is compared against.
+  /// What each rider is compared against before exemptions.
   ///
-  /// A **follower** is compared against the planned route *and* the leader's
-  /// live trail: a rider near either is on route, so followers keep matching an
-  /// abandoned GPX until the leader has actually diverged from it.
+  /// Every rider is compared against the planned route here. Followers get the
+  /// separate leader-track exemption in [_applyLeaderFollowExemption].
   ///
-  /// The **leader** is compared against the planned route alone. Their own live
-  /// position is by definition the endpoint of their own trail, so including it
-  /// measures the leader against themselves and returns approximately zero from
-  /// anywhere on earth. That is why the leader was never once flagged off route
-  /// in the field, never got a reroute, and never got told why turn instructions
-  /// had stopped (#162). `_applyLeaderFollowExemption` already refuses to exempt
-  /// the leader for exactly this reason - but the exemption never had to fire,
-  /// because the geometry it guards had already been given the answer.
-  List<List<GeoPoint>> _routeSegmentsFor(RideRole role) {
-    if (role == RideRole.lead) return _routeSegments;
-    final leaderPoints = _leaderTrailPoints;
-    return [..._routeSegments, if (leaderPoints.length >= 2) leaderPoints];
-  }
+  /// Keeping the two questions separate avoids scanning the leader trail twice
+  /// per follower update, and avoids an older part of that growing trail
+  /// silently overriding [LeaderTrackExemption]'s deliberate "recent track"
+  /// rule (#165). The leader must also stay on this path: comparing them with
+  /// their own current endpoint would make them on-route anywhere (#162).
+  List<List<GeoPoint>> _routeSegmentsFor() => _routeSegments;
 
   // ---------------------------------------------------------------------------
   // Issue #102 - leader-follow exemption. Deliberately the only place this rule

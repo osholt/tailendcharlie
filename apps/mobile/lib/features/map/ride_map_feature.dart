@@ -7011,16 +7011,27 @@ class _GroupMiniMapPainter extends CustomPainter {
           style: TextStyle(
             color: RouteTrailStyle.markerGlyph,
             fontSize:
-                radius * (symbol.kind == RiderSymbolKind.initials ? 0.9 : 1.25),
-            height: 1,
+                radius * (symbol.kind == RiderSymbolKind.initials ? 2 : 1.25),
+            height: symbol.kind == RiderSymbolKind.initials ? 0.9 : 1,
             fontWeight: FontWeight.w900,
+            letterSpacing: symbol.kind == RiderSymbolKind.initials
+                ? -0.8
+                : null,
           ),
         ),
       )..layout();
-      painter.paint(
-        canvas,
-        offset - Offset(painter.width / 2, painter.height / 2),
-      );
+      final available = radius * 2 * 0.84;
+      final scale = symbol.kind == RiderSymbolKind.initials
+          ? math.min(available / painter.width, available / painter.height)
+          : 1.0;
+      final paintedWidth = painter.width * scale;
+      final paintedHeight = painter.height * scale;
+      canvas
+        ..save()
+        ..translate(offset.dx - paintedWidth / 2, offset.dy - paintedHeight / 2)
+        ..scale(scale);
+      painter.paint(canvas, Offset.zero);
+      canvas.restore();
     }
 
     final dots =

@@ -9,6 +9,7 @@ import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/services/external_hazard_provider.dart';
+import 'package:ride_relay/services/leader_track_exemption.dart';
 import 'package:ride_relay/services/route_deviation_detector.dart';
 import 'package:ride_relay/services/situation_event_factory.dart';
 
@@ -53,6 +54,81 @@ void main() {
         RideEventType.routeDeviationChanged,
       ]),
     );
+  });
+
+  test(
+    'stored situational events are projected into the shared journal',
+    () async {
+      final stored = <RideEvent>[];
+      final projecting = SituationalAwarenessController(
+        store,
+        _session,
+        route: const [
+          GeoPoint(latitude: 51, longitude: -1),
+          GeoPoint(latitude: 51, longitude: -0.99),
+        ],
+        clock: () => now,
+        idFactory: () => 'projected-${nextId++}',
+        routeConfig: const RouteDeviationConfig(samplesToConfirmOffRoute: 1),
+        onEventStored: stored.add,
+      );
+      addTearDown(projecting.dispose);
+      await projecting.initialize();
+
+      await projecting.recordLocalLocation(_sample(latitude: 51.002, at: now));
+
+      expect(
+        stored.map((event) => event.type),
+        containsAll([
+          RideEventType.riderLocationUpdated,
+          RideEventType.routeDeviationChanged,
+        ]),
+      );
+    },
+  );
+
+  test('leader working trail remains bounded throughout a long ride', () async {
+    final events = <RideEvent>[];
+    for (var index = 0; index < 1200; index += 1) {
+      final recordedAt = now.add(Duration(seconds: index));
+      final factory = SituationEventFactory(
+        session: _session,
+        clock: () => recordedAt,
+        idFactory: () => 'leader-$index',
+      );
+      final location = RiderLocation(
+        riderId: _session.localRiderId,
+        displayName: _session.displayName,
+        role: RideRole.lead,
+        sample: LocationSample(
+          position: GeoPoint(latitude: 51 + index * 0.00001, longitude: -0.995),
+          recordedAt: recordedAt,
+          accuracyMeters: 5,
+        ),
+        receivedAt: recordedAt,
+      );
+      events.add(
+        factory.create(
+          type: RideEventType.riderLocationUpdated,
+          payload: {'location': location.toJson()},
+        ),
+      );
+    }
+    final longRide = _controller(
+      store: store,
+      clock: () => now.add(const Duration(hours: 2)),
+      idFactory: () => 'unused',
+    );
+    addTearDown(longRide.dispose);
+
+    await longRide.initialize(restoredEvents: events);
+
+    expect(
+      longRide.leaderTrail,
+      hasLength(LeaderTrackExemption.defaultRecentPointLimit),
+    );
+    expect(longRide.leaderTrail.first.latitude, closeTo(51.006, 1e-9));
+    expect(longRide.leaderTrail.last.latitude, closeTo(51.01199, 1e-9));
   });
 
   test(

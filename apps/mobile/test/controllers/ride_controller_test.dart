@@ -13,6 +13,7 @@ import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
+import 'package:ride_relay/relay/live_presence.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:ride_relay/services/received_quick_message.dart';
@@ -64,6 +65,91 @@ void main() {
     final restored = await sessionStore.load();
     expect(restored?.rideId, controller.session?.rideId);
   });
+
+  test(
+    'a long ride does not re-project membership for coordinate-only updates',
+    () async {
+      await controller.createRide('Oliver');
+      await controller.startRide();
+      final session = controller.session!;
+      final startedAt = controller.rideStartedAt!;
+
+      // A realistic two-hour journal. Before the cache, every foreground GPS
+      // fix made RideMembershipReducer authenticate, sort and walk all 12,000
+      // positions again.
+      for (var index = 0; index < 12000; index += 1) {
+        final recordedAt = startedAt.add(Duration(milliseconds: index * 600));
+        final location = RiderLocation(
+          riderId: session.localRiderId,
+          displayName: session.displayName,
+          role: session.role,
+          sample: LocationSample(
+            position: GeoPoint(
+              latitude: 51.46 + index * 0.00001,
+              longitude: -2.5,
+            ),
+            recordedAt: recordedAt,
+            accuracyMeters: 5,
+          ),
+          receivedAt: recordedAt,
+        );
+        final event = _signedEvent(
+          session: session,
+          id: 'long-location-$index',
+          type: RideEventType.riderLocationUpdated,
+          createdAt: recordedAt,
+          payload: {'location': location.toJson()},
+        );
+        expect(controller.ingestStoredEvent(event), isTrue);
+      }
+
+      LiveRiderPresence presenceAt(int index) {
+        final recordedAt = startedAt.add(Duration(seconds: index));
+        return LiveRiderPresence(
+          riderId: session.localRiderId,
+          displayName: session.displayName,
+          role: session.role,
+          freshness: PresenceFreshness.live,
+          sources: const {LivePresenceSource.localDevice},
+          isLocal: true,
+          knownSince: session.joinedAt,
+          location: RiderLocation(
+            riderId: session.localRiderId,
+            displayName: session.displayName,
+            role: session.role,
+            sample: LocationSample(
+              position: GeoPoint(
+                latitude: 51.5 + index * 0.00001,
+                longitude: -2.5,
+              ),
+              recordedAt: recordedAt,
+              accuracyMeters: 5,
+            ),
+            receivedAt: recordedAt,
+          ),
+          age: Duration.zero,
+          contactAt: recordedAt,
+        );
+      }
+
+      controller.observeLivePresence([presenceAt(0)]);
+      expect(controller.liveView.renderedPositions, hasLength(1));
+      final projections = controller.debugMembershipProjectionCount;
+
+      for (var index = 1; index <= 1000; index += 1) {
+        controller.observeLivePresence([presenceAt(index)]);
+        expect(
+          controller.liveView.renderedPositions.single.sample.position.latitude,
+          closeTo(51.5 + index * 0.00001, 1e-9),
+        );
+      }
+
+      expect(controller.debugMembershipProjectionCount, projections);
+      controller.refreshMembershipFreshness();
+      controller.liveView;
+      expect(controller.debugMembershipProjectionCount, projections + 1);
+    },
+  );
 
   test('leader start is signed, durable, idempotent and restored', () async {
     await controller.createRide('Oliver');

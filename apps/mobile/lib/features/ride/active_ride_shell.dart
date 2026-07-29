@@ -44,7 +44,6 @@ import '../../internet/push_registration_client.dart';
 import '../../internet/shared_preferences_internet_cursor_store.dart';
 import '../../relay/live_presence.dart';
 import '../../relay/native_nearby_transport.dart';
-import '../../relay/nearby_event_source.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
@@ -869,7 +868,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   Timer? _externalHazardTimer;
   Timer? _simulationAwarenessTimer;
   Timer? _markerExitChromeTimer;
-  Future<void> _publishChain = Future.value();
+  int _observedNearbyPublishEventCount = -1;
+  bool _nearbyPublishWorkPending = true;
+  bool _nearbyPublishInFlight = false;
   String? _routeFingerprint;
   String? _trailLifecycleFingerprint;
   String? _appliedAuthoritativeRouteRevision;
@@ -898,7 +899,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final PositionReportGate _positionReportGate = PositionReportGate();
   bool _loading = true;
   bool _relayConfigured = false;
-  bool _refreshingRideEvents = false;
   bool _publishingRouteChange = false;
   bool _rideEndHandled = false;
   bool _holdingNavigationChromeForMarkerExit = false;
@@ -1530,6 +1530,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       externalProviders: externalProviders,
       rideStarted: widget.rideController.rideStarted,
       rideStartedAt: widget.rideController.rideStartedAt,
+      onEventStored: widget.rideController.ingestStoredEvent,
     );
     await controller.initialize(restoredEvents: widget.rideController.events);
     if (!mounted || generation != _routeGeneration) {
@@ -1882,16 +1883,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _updateMapOverlays();
     _refreshTrafficOfferState();
     _schedulePublish();
-    if (!_refreshingRideEvents) {
-      _refreshingRideEvents = true;
-      unawaited(() async {
-        try {
-          await widget.rideController.reloadEvents();
-        } finally {
-          _refreshingRideEvents = false;
-        }
-      }());
-    }
   }
 
   void _refreshTrafficOfferState() {
@@ -1930,8 +1921,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         ? const <LiveRiderPresence>[]
         : _reconciledLivePresence();
     if (!_isSimulation) _publishLivePresence(livePresence);
+    final liveView = widget.rideController.liveView;
     final participants = {
-      for (final participant in widget.rideController.participants)
+      for (final participant in liveView.participants)
         participant.riderId: participant,
     };
     final freshnessByRider = {
@@ -1945,7 +1937,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                     false,
               )
               .toList(growable: false)
-        : widget.rideController.liveView.renderedPositions;
+        : liveView.renderedPositions;
     final activeRiderIds = participants.values
         .where((participant) => participant.isEligibleForRouteAlerts)
         .map((participant) => participant.riderId)
@@ -2735,8 +2727,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   ) async {
     widget.rideController.noteTransportObservation(event.id, transport);
     if (_isSituationalEvent(event.type)) {
+      final awareness = _awarenessController;
+      if (awareness == null) {
+        widget.rideController.ingestStoredEvent(event);
+        return;
+      }
       try {
-        await _awarenessController?.ingestRemoteEvent(event);
+        await awareness.ingestRemoteEvent(event);
       } on Object catch (error, stackTrace) {
         if (kDebugMode) {
           debugPrint(
@@ -2744,8 +2741,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           );
         }
       }
+    } else {
+      widget.rideController.ingestStoredEvent(event);
     }
-    await widget.rideController.reloadEvents();
   }
 
   static bool _isSituationalEvent(RideEventType type) => switch (type) {
@@ -2934,27 +2932,43 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   void _schedulePublish() {
-    final previous = _publishChain;
-    _publishChain = () async {
+    final eventCount = widget.rideController.eventCount;
+    if (eventCount != _observedNearbyPublishEventCount) {
+      _observedNearbyPublishEventCount = eventCount;
+      _nearbyPublishWorkPending = true;
+    }
+    if (!_nearbyPublishWorkPending || _nearbyPublishInFlight) return;
+    _nearbyPublishWorkPending = false;
+    _nearbyPublishInFlight = true;
+    unawaited(() async {
+      var retryNeeded = false;
       try {
-        await previous;
-      } on Object {
-        // A later event must still be allowed to enter the durable queue.
+        retryNeeded = await _publishPendingEvents();
+      } finally {
+        _nearbyPublishInFlight = false;
+        if (retryNeeded) {
+          // A later controller or transport notification retries it. Do not
+          // spin immediately against an unavailable radio.
+          _nearbyPublishWorkPending = true;
+        } else if (_nearbyPublishWorkPending) {
+          // An event arrived while the scan was running.
+          _schedulePublish();
+        }
       }
-      await _publishPendingEvents();
-    }();
+    }());
   }
 
-  Future<void> _publishPendingEvents() async {
+  /// Returns true when at least one event could not be handed to Nearby.
+  Future<bool> _publishPendingEvents() async {
     _internetRelayController?.wake();
     final relay = _relayController;
     final session = widget.rideController.session;
-    if (!_relayConfigured || relay == null || session == null) return;
-    final events = await eventsEligibleForNearbyRelay(
-      widget.eventStore,
-      session.rideId,
-    );
-    for (final event in events) {
+    if (!_relayConfigured || relay == null || session == null) return false;
+    var retryNeeded = false;
+    // RideController is updated one event at a time as the shared store is
+    // written. Walking that in-memory view avoids querying and JSON-decoding
+    // the complete SQLite ride on every new position (#165).
+    for (final event in widget.rideController.events) {
       if (_publishedEventIds.contains(event.id)) continue;
       try {
         // Bounded, because this is an await on a transport from a chain that a
@@ -2972,11 +2986,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             );
         _publishedEventIds.add(event.id);
       } on Object catch (error) {
+        retryNeeded = true;
         if (kDebugMode) {
           debugPrint('Could not queue ${event.id} for nearby relay: $error');
         }
       }
     }
+    return retryNeeded;
   }
 
   /// One nearby publish is a local hand-off to the transport, not a round trip,

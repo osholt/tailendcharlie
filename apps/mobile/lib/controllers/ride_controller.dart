@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
 
@@ -116,7 +117,8 @@ class RideController extends ChangeNotifier {
   final RideCodeDirectory _rideCodeDirectory;
 
   RideSession? _session;
-  List<RideEvent> _events = const [];
+  List<RideEvent> _events = <RideEvent>[];
+  final Set<String> _eventIds = {};
   NearbyCapabilities _nearbyCapabilities =
       const NearbyCapabilities.unavailable();
   bool _busy = false;
@@ -135,6 +137,8 @@ class RideController extends ChangeNotifier {
   /// so this is what keeps their roster record when their membership events
   /// never reached this phone's journal (#144).
   List<PresenceRosterMember> _presenceRoster = const [];
+  List<RideParticipant>? _membershipParticipantsCache;
+  int _membershipProjectionCount = 0;
 
   /// True when this device cannot currently receive live positions at all, so a
   /// missing position is attributed to the transport rather than to the rider.
@@ -151,7 +155,8 @@ class RideController extends ChangeNotifier {
 
   RideSession? get session => _session;
   EventStore get eventStore => _eventStore;
-  List<RideEvent> get events => List.unmodifiable(_events);
+  List<RideEvent> get events => UnmodifiableListView(_events);
+  int get eventCount => _events.length;
   NearbyCapabilities get nearbyCapabilities => _nearbyCapabilities;
   bool get busy => _busy;
   String? get errorMessage => _errorMessage;
@@ -217,6 +222,15 @@ class RideController extends ChangeNotifier {
     positionChannelUnavailable: _positionChannelUnavailable,
   );
 
+  /// Counts full journal-to-membership projections in tests.
+  ///
+  /// A live position can move every second while a ride lasts for hours. The
+  /// position itself is reconciled cheaply by [RideLiveView]; it must not make
+  /// [RideMembershipReducer] walk the complete journal again unless an input
+  /// that can change membership has actually changed (#165).
+  @visibleForTesting
+  int get debugMembershipProjectionCount => _membershipProjectionCount;
+
   List<RideParticipant> get participants => liveView.participants;
 
   /// Whether this phone can receive live positions at all.
@@ -226,9 +240,12 @@ class RideController extends ChangeNotifier {
   bool get positionChannelUnavailable => _positionChannelUnavailable;
 
   List<RideParticipant> _participantsFromEvents() {
+    final cached = _membershipParticipantsCache;
+    if (cached != null) return cached;
     final activeSession = _session;
     if (activeSession == null) return const [];
-    return const RideMembershipReducer().fromEvents(
+    _membershipProjectionCount += 1;
+    final participants = const RideMembershipReducer().fromEvents(
       rideId: activeSession.rideId,
       inviteSecret: activeSession.inviteSecret,
       events: _events,
@@ -246,6 +263,8 @@ class RideController extends ChangeNotifier {
       livePresence: _livePresence,
       presenceRoster: _presenceRoster,
     );
+    _membershipParticipantsCache = participants;
+    return participants;
   }
 
   /// Records what the live-presence channels can currently see.
@@ -271,6 +290,10 @@ class RideController extends ChangeNotifier {
         _isSameRoster(_presenceRoster, nextRoster) &&
         positionChannelUnavailable == _positionChannelUnavailable) {
       return;
+    }
+    if (!_hasSameMembershipInputs(_livePresence, next) ||
+        !_isSameRoster(_presenceRoster, nextRoster)) {
+      _invalidateMembershipProjection();
     }
     _livePresence = next;
     _presenceRoster = nextRoster;
@@ -321,6 +344,36 @@ class RideController extends ChangeNotifier {
     return true;
   }
 
+  /// Ignores coordinate-only movement while retaining every presence field
+  /// that can change the membership projection. The current coordinates still
+  /// flow through [RideLiveView.reconcile] on every update.
+  static bool _hasSameMembershipInputs(
+    List<LiveRiderPresence> current,
+    List<LiveRiderPresence> next,
+  ) {
+    if (current.length != next.length) return false;
+    final currentById = {
+      for (final presence in current) presence.riderId: presence,
+    };
+    for (final right in next) {
+      final left = currentById[right.riderId];
+      if (left == null ||
+          left.displayName != right.displayName ||
+          left.role != right.role ||
+          left.freshness != right.freshness ||
+          !setEquals(left.sources, right.sources) ||
+          left.isLocal != right.isLocal ||
+          left.knownSince != right.knownSince ||
+          left.motorcycleStyle != right.motorcycleStyle ||
+          left.riderSymbol != right.riderSymbol ||
+          left.riderColor != right.riderColor ||
+          (left.contactAt == null) != (right.contactAt == null)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   List<RideParticipant> get liveParticipants => liveView.liveParticipants;
 
   RideParticipant? participantFor(String riderId) => participants
@@ -336,10 +389,20 @@ class RideController extends ChangeNotifier {
       return;
     }
     final values = _transportByEventId.putIfAbsent(eventId, () => {});
-    if (values.add(evidence)) notifyListeners();
+    if (values.add(evidence)) {
+      _invalidateMembershipProjection();
+      notifyListeners();
+    }
   }
 
-  void refreshMembershipFreshness() => notifyListeners();
+  void refreshMembershipFreshness() {
+    _invalidateMembershipProjection();
+    notifyListeners();
+  }
+
+  void _invalidateMembershipProjection() {
+    _membershipParticipantsCache = null;
+  }
 
   /// Whether the ride has ended, by the later of its end and reopen events.
   ///
@@ -569,13 +632,14 @@ class RideController extends ChangeNotifier {
     _session = await _sessionStore.load();
     final activeSession = _session;
     if (activeSession != null) {
-      _events = await _eventStore.eventsForRide(activeSession.rideId);
+      _replaceEvents(await _eventStore.eventsForRide(activeSession.rideId));
       _rebuildLifecycle();
       await _archiveCurrentRideIfComplete();
       await _expireEndedRideIfDue();
       await _purgeUnusedIceSharesIfEnded();
       _roleBeforeMarker = _activeMarkerPreviousRole();
     }
+    _invalidateMembershipProjection();
     notifyListeners();
   }
 
@@ -584,13 +648,77 @@ class RideController extends ChangeNotifier {
     if (activeSession == null) {
       return;
     }
-    _events = await _eventStore.eventsForRide(activeSession.rideId);
+    _replaceEvents(await _eventStore.eventsForRide(activeSession.rideId));
     _rebuildLifecycle();
     await _archiveCurrentRideIfComplete();
     await _expireEndedRideIfDue();
     await _purgeUnusedIceSharesIfEnded();
     notifyListeners();
   }
+
+  /// Projects an event that another controller has already stored.
+  ///
+  /// Live ride position and hazard events are written by
+  /// [SituationalAwarenessController]. Reloading and JSON-decoding the complete
+  /// SQLite journal after every one made the cost of a location update grow
+  /// with ride duration (#165). This accepts that one immutable event into the
+  /// in-memory journal instead. A cold start and explicit recovery still use
+  /// [reloadEvents] and therefore remain authoritative from disk.
+  bool ingestStoredEvent(RideEvent event) =>
+      _acceptStoredEvent(event, notify: true);
+
+  bool _acceptStoredEvent(RideEvent event, {required bool notify}) {
+    final activeSession = _session;
+    if (activeSession == null ||
+        event.rideId != activeSession.rideId ||
+        _eventIds.contains(event.id) ||
+        !RideEventAuthenticator.verify(event, activeSession.inviteSecret)) {
+      return false;
+    }
+
+    if (_events.isEmpty ||
+        RideLifecycleReducer.compareEvents(_events.last, event) <= 0) {
+      _events.add(event);
+    } else {
+      var lower = 0;
+      var upper = _events.length;
+      while (lower < upper) {
+        final middle = lower + ((upper - lower) >> 1);
+        if (RideLifecycleReducer.compareEvents(_events[middle], event) <= 0) {
+          lower = middle + 1;
+        } else {
+          upper = middle;
+        }
+      }
+      _events.insert(lower, event);
+    }
+    _eventIds.add(event.id);
+    _invalidateEventDerivedState();
+    // Position-only movement is reconciled through live presence and does not
+    // change membership identity. The 15-second freshness refresh performs a
+    // bounded-rate projection for last-seen state.
+    if (event.type != RideEventType.riderLocationUpdated) {
+      _invalidateMembershipProjection();
+    }
+    if (_affectsLifecycleOrRoute(event.type)) {
+      _rebuildLifecycle();
+    }
+    if (notify) notifyListeners();
+    return true;
+  }
+
+  static bool _affectsLifecycleOrRoute(RideEventType type) => switch (type) {
+    RideEventType.rideCreated ||
+    RideEventType.rideStarted ||
+    RideEventType.ridePaused ||
+    RideEventType.rideResumed ||
+    RideEventType.rideEnded ||
+    RideEventType.rideReopened ||
+    RideEventType.routeRevisionChunk ||
+    RideEventType.routeRevisionPublished ||
+    RideEventType.routeCleared => true,
+    _ => false,
+  };
 
   Future<void> createRide(
     String displayName, {
@@ -637,7 +765,8 @@ class RideController extends ChangeNotifier {
       await _eventStore.deleteRide(activeSession.rideId);
       await _sessionStore.clear();
       _session = null;
-      _events = const [];
+      _replaceEvents(const []);
+      _invalidateMembershipProjection();
       _roleBeforeMarker = null;
       await _createRide(
         displayName: 'Demo Lead',
@@ -709,7 +838,8 @@ class RideController extends ChangeNotifier {
       );
       _session = session;
       await _sessionStore.save(session);
-      _events = await _eventStore.eventsForRide(session.rideId);
+      _replaceEvents(await _eventStore.eventsForRide(session.rideId));
+      _invalidateMembershipProjection();
       _rebuildLifecycle();
       await _record(
         type: RideEventType.riderJoined,
@@ -1490,8 +1620,7 @@ class RideController extends ChangeNotifier {
       ),
     );
     await _eventStore.append(event);
-    _events = [..._events, event];
-    _rebuildLifecycle();
+    _acceptStoredEvent(event, notify: false);
     return event;
   }
 
@@ -1702,6 +1831,9 @@ class RideController extends ChangeNotifier {
     await _eventStore.deleteEvents(activeSession.rideId, toRemove);
     final removed = toRemove.toSet();
     _events = _events.where((event) => !removed.contains(event.id)).toList();
+    _eventIds.removeAll(removed);
+    _invalidateEventDerivedState();
+    _invalidateMembershipProjection();
   }
 
   Future<void> _removeRideData({bool deleteEvents = true}) async {
@@ -1712,9 +1844,8 @@ class RideController extends ChangeNotifier {
     if (deleteEvents) await _eventStore.deleteRide(rideId);
     await _sessionStore.clear();
     _session = null;
-    _events = const [];
-    _evidenceJournal = null;
-    _evidence = null;
+    _replaceEvents(const []);
+    _invalidateMembershipProjection();
     _lifecycle = const RideLifecycle();
     _routeState = const RideRouteState();
     _roleBeforeMarker = null;
@@ -1723,6 +1854,20 @@ class RideController extends ChangeNotifier {
     _livePresence = const [];
     _presenceRoster = const [];
     _positionChannelUnavailable = false;
+  }
+
+  void _invalidateEventDerivedState() {
+    _evidenceJournal = null;
+    _evidence = null;
+  }
+
+  void _replaceEvents(Iterable<RideEvent> events) {
+    _events = events.toList(growable: true);
+    _eventIds
+      ..clear()
+      ..addAll(_events.map((event) => event.id));
+    _invalidateEventDerivedState();
+    _invalidateMembershipProjection();
   }
 
   RideRole? _activeMarkerPreviousRole() {
