@@ -55,6 +55,7 @@ void main() {
     await profile.completeOnboarding(
       displayName: '  Oliver  ',
       motorcycleStyle: MotorcycleIconStyle.scrambler,
+      riderSymbol: const RiderSymbol.emoji('🦊'),
       riderColor: RiderColor.cyan,
       educationSkipped: false,
       rideChoice: OnboardingRideChoice.join,
@@ -66,6 +67,7 @@ void main() {
     expect(reloaded.onboardingCompleted, isTrue);
     expect(reloaded.displayName, 'Oliver');
     expect(reloaded.motorcycleStyle, MotorcycleIconStyle.scrambler);
+    expect(reloaded.riderSymbol, const RiderSymbol.emoji('🦊'));
     expect(reloaded.riderColor, RiderColor.cyan);
   });
 

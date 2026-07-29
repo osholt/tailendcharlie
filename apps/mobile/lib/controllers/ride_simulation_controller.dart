@@ -40,6 +40,7 @@ class SimulatedRiderSnapshot {
     required this.travelTrail,
     required this.motorcycleStyle,
     required this.riderColor,
+    this.riderSymbol = riderSymbolDefault,
   });
 
   final String id;
@@ -52,6 +53,7 @@ class SimulatedRiderSnapshot {
   final GeoPoint position;
   final double headingDegrees;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderSymbol riderSymbol;
   final RiderColor riderColor;
 
   /// Ephemeral visual trace for the current simulation run. Keeping this out
@@ -231,6 +233,7 @@ class RideSimulationController extends ChangeNotifier {
         offRouteTrail: List.unmodifiable(agent.offRouteTrail),
         travelTrail: List.unmodifiable(_displayTrailFor(agent)),
         motorcycleStyle: agent.motorcycleStyle,
+        riderSymbol: agent.riderSymbol,
         riderColor: agent.riderColor,
       );
     }),
@@ -264,6 +267,7 @@ class RideSimulationController extends ChangeNotifier {
       trafficPhaseSeconds: (3 + index * 12) % 58,
       isLocal: isLocal,
       motorcycleStyle: isLocal ? _session.motorcycleStyle : demoStyleFor(index),
+      riderSymbol: isLocal ? _session.riderSymbol : riderSymbolDefault,
       riderColor: isLocal ? _session.riderColor : demoColorFor(index),
     );
 
@@ -579,6 +583,9 @@ class RideSimulationController extends ChangeNotifier {
       role: agent.role,
       joinedAt: _session.joinedAt,
       isSimulation: true,
+      motorcycleStyle: agent.motorcycleStyle,
+      riderSymbol: agent.riderSymbol,
+      riderColor: agent.riderColor,
     );
     final location = RiderLocation(
       riderId: agent.id,
@@ -586,6 +593,9 @@ class RideSimulationController extends ChangeNotifier {
       role: agent.role,
       sample: sample,
       receivedAt: recordedAt,
+      motorcycleStyle: agent.motorcycleStyle,
+      riderSymbol: agent.riderSymbol,
+      riderColor: agent.riderColor,
     );
     final event =
         SituationEventFactory(
@@ -879,6 +889,7 @@ class _SimulatedAgent {
     required this.motorcycleStyle,
     required this.riderColor,
     this.isLocal = false,
+    this.riderSymbol = riderSymbolDefault,
   });
 
   final String id;
@@ -888,6 +899,7 @@ class _SimulatedAgent {
   final double speedFactor;
   final double trafficPhaseSeconds;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderSymbol riderSymbol;
   final RiderColor riderColor;
   final bool isLocal;
   bool isOffRoute = false;

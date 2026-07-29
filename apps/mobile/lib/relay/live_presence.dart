@@ -147,6 +147,7 @@ class PresenceRosterMember {
     this.left = false,
     this.leftAt,
     this.motorcycleStyle = motorcycleIconStyleDefault,
+    this.riderSymbol = riderSymbolDefault,
     this.riderColor = riderColorDefault,
   });
 
@@ -163,6 +164,7 @@ class PresenceRosterMember {
   /// may only add a departed row it alone knows about (#144).
   final DateTime? leftAt;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderSymbol riderSymbol;
   final RiderColor riderColor;
 }
 
@@ -178,6 +180,7 @@ class LiveRiderPresence {
     required this.isLocal,
     required this.knownSince,
     this.motorcycleStyle = motorcycleIconStyleDefault,
+    this.riderSymbol = riderSymbolDefault,
     this.riderColor = riderColorDefault,
     this.location,
     this.age,
@@ -198,6 +201,7 @@ class LiveRiderPresence {
   /// observed sample. Deterministic so a recomputed roster does not reorder.
   final DateTime knownSince;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderSymbol riderSymbol;
   final RiderColor riderColor;
 
   /// The newest position for this rider, or null when there is none worth
@@ -568,6 +572,7 @@ class LivePresenceReconciler {
             isLocal: isLocal,
             knownSince: member.joinedAt,
             motorcycleStyle: member.motorcycleStyle,
+            riderSymbol: member.riderSymbol,
             riderColor: member.riderColor,
           ),
         );
@@ -615,6 +620,7 @@ class LivePresenceReconciler {
           isLocal: isLocal,
           knownSince: member?.joinedAt ?? candidate.oldestSampleAt,
           motorcycleStyle: location.motorcycleStyle,
+          riderSymbol: location.riderSymbol,
           riderColor: location.riderColor,
           location: location,
           age: age,

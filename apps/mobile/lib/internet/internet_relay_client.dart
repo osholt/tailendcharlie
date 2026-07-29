@@ -1094,7 +1094,9 @@ class HttpPreStartPresenceClient implements PreStartPresenceApi {
             : {
                 'displayName': position.displayName,
                 'role': position.role.name,
-                'motorcycleStyle': position.motorcycleStyle.name,
+                'motorcycleStyle': position.riderSymbol.wireValue(
+                  position.motorcycleStyle,
+                ),
                 'riderColor': position.riderColor.name,
                 'sample': position.sample.toJson(),
               },

@@ -1128,6 +1128,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 sample: sample,
                 receivedAt: DateTime.now(),
                 motorcycleStyle: currentSession.motorcycleStyle,
+                riderSymbol: currentSession.riderSymbol,
                 riderColor: currentSession.riderColor,
               ),
               // A withheld fix is still held as the newest position and still
@@ -2030,6 +2031,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                         displayName: location.displayName,
                         role: location.role,
                         motorcycleStyle: location.motorcycleStyle,
+                        riderSymbol: location.riderSymbol,
                         riderColor: location.riderColor,
                         point: route_domain.GeoPoint(
                           latitude: location.sample.position.latitude,
@@ -2046,6 +2048,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                         displayName: rider.displayName,
                         role: rider.role,
                         motorcycleStyle: rider.motorcycleStyle,
+                        riderSymbol: rider.riderSymbol,
                         riderColor: rider.riderColor,
                         point: route_domain.GeoPoint(
                           latitude: rider.position.latitude,
@@ -2108,6 +2111,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               point: location.point,
               label: label,
               motorcycleStyle: location.motorcycleStyle,
+              riderSymbol: location.riderSymbol,
+              riderDisplayName: location.displayName,
               color: freshness == PresenceFreshness.live
                   ? baseColor
                   : _demotedMarkerColor(baseColor, freshness),
@@ -3147,6 +3152,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       localMotorcycleStyle:
           widget.rideController.session?.motorcycleStyle ??
           motorcycleIconStyleDefault,
+      localRiderSymbol:
+          widget.rideController.session?.riderSymbol ?? riderSymbolDefault,
+      localDisplayName: widget.rideController.session?.displayName ?? 'You',
       localBadgeColor: _localBadgeColor,
     );
   }

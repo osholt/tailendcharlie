@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
+import 'package:ride_relay/features/map/motorcycle_icon.dart';
 
 void main() {
   final session = RideSession(
@@ -51,6 +52,30 @@ void main() {
     final json = session.toJson()..remove('isSimulation');
     expect(RideSession.fromJson(json).isSimulation, isFalse);
   });
+
+  test(
+    'rider symbol survives session persistence and old sessions use a bike',
+    () {
+      final custom = RideSession(
+        rideId: 'ride',
+        rideCode: 'SIM123',
+        inviteSecret: 'secret',
+        joinToken: 'aTokenWithPlentyOfEntropy',
+        localRiderId: 'lead',
+        displayName: 'Demo Lead',
+        role: RideRole.lead,
+        joinedAt: DateTime.utc(2026, 7, 17),
+        riderSymbol: const RiderSymbol.initials(),
+      );
+      expect(
+        RideSession.fromJson(custom.toJson()).riderSymbol,
+        const RiderSymbol.initials(),
+      );
+
+      final legacy = custom.toJson()..remove('riderSymbol');
+      expect(RideSession.fromJson(legacy).riderSymbol, riderSymbolDefault);
+    },
+  );
 
   test(
     'a session persisted before join tokens existed gets a fresh one instead of crashing',

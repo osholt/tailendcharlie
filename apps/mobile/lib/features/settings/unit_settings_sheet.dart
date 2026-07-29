@@ -12,7 +12,6 @@ import '../../domain/map_style_mode.dart';
 import '../../domain/rider_color.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/build_identity.dart';
-import '../map/motorcycle_icon.dart';
 import 'about_build_sheet.dart';
 import 'rider_profile_sheet.dart';
 
@@ -95,7 +94,7 @@ class UnitSettingsSheet extends StatelessWidget {
                   : riderProfile.displayName,
             ),
             subtitle: Text(
-              '${riderProfile.motorcycleStyle.label} · ${riderProfile.riderColor.label}',
+              '${riderProfile.riderSymbol.label(riderProfile.displayName, riderProfile.motorcycleStyle)} · ${riderProfile.riderColor.label}',
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {

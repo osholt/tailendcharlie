@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../domain/rider_color.dart';
 import '../map/motorcycle_icon.dart';
+import '../map/rider_symbol_picker.dart';
 
 class RiderProfileSheet extends StatefulWidget {
   const RiderProfileSheet({
@@ -38,6 +39,7 @@ class _RiderProfileSheetState extends State<RiderProfileSheet> {
     text: widget.riderProfile.displayName,
   );
   late MotorcycleIconStyle _style = widget.riderProfile.motorcycleStyle;
+  late RiderSymbol _symbol = widget.riderProfile.riderSymbol;
   late RiderColor _color = widget.riderProfile.riderColor;
   String? _nameError;
   bool _saving = false;
@@ -74,9 +76,7 @@ class _RiderProfileSheetState extends State<RiderProfileSheet> {
             controller: _nameController,
             maxLength: 24,
             textCapitalization: TextCapitalization.words,
-            onChanged: (_) {
-              if (_nameError != null) setState(() => _nameError = null);
-            },
+            onChanged: (_) => setState(() => _nameError = null),
             decoration: InputDecoration(
               labelText: 'Rider name',
               counterText: '',
@@ -84,50 +84,15 @@ class _RiderProfileSheetState extends State<RiderProfileSheet> {
             ),
           ),
           const SizedBox(height: 18),
-          const Text('Your bike', style: TextStyle(color: Color(0xFFABB5C1))),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 68,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: MotorcycleIconStyle.values.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (context, index) {
-                final style = MotorcycleIconStyle.values[index];
-                final selected = style == _style;
-                return Semantics(
-                  button: true,
-                  selected: selected,
-                  label: '${style.label} motorcycle icon',
-                  child: InkWell(
-                    key: Key('profile-bike-${style.name}'),
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => setState(() => _style = style),
-                    child: Container(
-                      width: 56,
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? _color.color.withValues(alpha: 0.16)
-                            : const Color(0xFF1D2530),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: selected ? _color.color : Colors.transparent,
-                          width: 2,
-                        ),
-                      ),
-                      child: Center(
-                        child: RiderMarkerBadge(
-                          style: style,
-                          badgeColor: _color.color,
-                          size: 34,
-                          borderWidth: 0,
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
+          RiderSymbolPicker(
+            displayName: _nameController.text,
+            selectedSymbol: _symbol,
+            motorcycleStyle: _style,
+            badgeColor: _color.color,
+            keyPrefix: 'profile-symbol',
+            bikeKeyPrefix: 'profile-bike',
+            onSymbolChanged: (symbol) => setState(() => _symbol = symbol),
+            onMotorcycleStyleChanged: (style) => setState(() => _style = style),
           ),
           const SizedBox(height: 18),
           const Text('Your colour', style: TextStyle(color: Color(0xFFABB5C1))),
@@ -200,6 +165,7 @@ class _RiderProfileSheetState extends State<RiderProfileSheet> {
     await widget.riderProfile.save(
       displayName: name,
       motorcycleStyle: _style,
+      riderSymbol: _symbol,
       riderColor: _color,
     );
     if (mounted) Navigator.of(context).pop();

@@ -511,6 +511,8 @@ class _ParticipantTile extends StatelessWidget {
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         leading: RiderMarkerBadge(
           style: participant.motorcycleStyle,
+          symbol: participant.riderSymbol,
+          displayName: participant.displayName,
           badgeColor: _roleColor(participant),
           size: 42,
         ),

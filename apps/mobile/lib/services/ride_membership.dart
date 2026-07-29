@@ -91,6 +91,7 @@ class RideParticipant {
     required this.riderColor,
     required this.transportEvidence,
     required this.isLocal,
+    this.riderSymbol = riderSymbolDefault,
     this.leftAt,
     this.rejoinedAfterLeavingAt,
     this.lastKnownLocation,
@@ -125,6 +126,7 @@ class RideParticipant {
   final RiderLocation? lastKnownLocation;
   final RideMembershipState state;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderSymbol riderSymbol;
   final RiderColor riderColor;
   final Set<RideTransportEvidence> transportEvidence;
   final bool isLocal;
@@ -249,6 +251,7 @@ class RideParticipant {
     RiderLocation? lastKnownLocation,
     RideMembershipState? state,
     MotorcycleIconStyle? motorcycleStyle,
+    RiderSymbol? riderSymbol,
     RiderColor? riderColor,
     Set<RideTransportEvidence>? transportEvidence,
     bool? isLocal,
@@ -269,6 +272,7 @@ class RideParticipant {
     lastKnownLocation: lastKnownLocation ?? this.lastKnownLocation,
     state: state ?? this.state,
     motorcycleStyle: motorcycleStyle ?? this.motorcycleStyle,
+    riderSymbol: riderSymbol ?? this.riderSymbol,
     riderColor: riderColor ?? this.riderColor,
     transportEvidence: transportEvidence ?? this.transportEvidence,
     isLocal: isLocal ?? this.isLocal,
@@ -384,6 +388,7 @@ class RideMembershipReducer {
     required DateTime localJoinedAt,
     required MotorcycleIconStyle localMotorcycleStyle,
     required RiderColor localRiderColor,
+    RiderSymbol localRiderSymbol = riderSymbolDefault,
     DateTime? rideStartedAt,
     DateTime? rideEndedAt,
     Map<String, Set<RideTransportEvidence>> transportByEventId = const {},
@@ -408,6 +413,7 @@ class RideMembershipReducer {
         lastSeenAt: localJoinedAt,
         state: RideMembershipState.joined,
         motorcycleStyle: localMotorcycleStyle,
+        riderSymbol: localRiderSymbol,
         riderColor: localRiderColor,
         transportEvidence: const {RideTransportEvidence.localDevice},
         isLocal: true,
@@ -442,6 +448,11 @@ class RideMembershipReducer {
           motorcycleStyle: isLocal
               ? localMotorcycleStyle
               : motorcycleIconStyleFromName(
+                  event.payload['motorcycleStyle'] as String?,
+                ),
+          riderSymbol: isLocal
+              ? localRiderSymbol
+              : RiderSymbol.fromWireValue(
                   event.payload['motorcycleStyle'] as String?,
                 ),
           riderColor: isLocal
@@ -546,6 +557,7 @@ class RideMembershipReducer {
         lastSeenAt: presence.location?.sample.recordedAt ?? presence.knownSince,
         state: RideMembershipState.joined,
         motorcycleStyle: presence.motorcycleStyle,
+        riderSymbol: presence.riderSymbol,
         riderColor: presence.riderColor,
         // A roster entry with no position yet is still internet-relay evidence:
         // the relay named the rider.
@@ -596,6 +608,7 @@ class RideMembershipReducer {
         leftAt: departedAt,
         state: RideMembershipState.left,
         motorcycleStyle: member.motorcycleStyle,
+        riderSymbol: member.riderSymbol,
         riderColor: member.riderColor,
         transportEvidence: const {RideTransportEvidence.internetRelay},
         isLocal: false,
@@ -743,6 +756,7 @@ class RideMembershipReducer {
       lastSeenAt: event.createdAt,
       state: RideMembershipState.left,
       motorcycleStyle: location?.motorcycleStyle ?? motorcycleIconStyleDefault,
+      riderSymbol: location?.riderSymbol ?? riderSymbolDefault,
       riderColor: location?.riderColor ?? riderColorDefault,
       transportEvidence: _evidenceFor(
         event,
