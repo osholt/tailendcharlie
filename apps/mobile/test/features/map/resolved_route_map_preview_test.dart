@@ -15,4 +15,32 @@ void main() {
     expect(bounds.northeast.latitude, 54.1);
     expect(bounds.northeast.longitude, closeTo(-0.8, 1e-9));
   });
+
+  test(
+    'framing includes start and destination pins outside sparse geometry',
+    () {
+      final points = routePreviewFramingPoints(
+        const [
+          [
+            GeoPoint(latitude: 51.46, longitude: -2.3),
+            GeoPoint(latitude: 51.47, longitude: -2.2),
+          ],
+        ],
+        const [
+          RoutePreviewPin(
+            point: GeoPoint(latitude: 51.45, longitude: -2.5),
+            kind: 'start',
+          ),
+          RoutePreviewPin(
+            point: GeoPoint(latitude: 51.5, longitude: -2.0),
+            kind: 'finish',
+          ),
+        ],
+      );
+      final bounds = routePreviewBounds(points);
+
+      expect(bounds.southwest.longitude, -2.5);
+      expect(bounds.northeast.longitude, -2.0);
+    },
+  );
 }

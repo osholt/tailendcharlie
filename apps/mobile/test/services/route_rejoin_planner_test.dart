@@ -26,6 +26,36 @@ void main() {
     route,
   ).distanceAlongRouteMeters;
 
+  test('a routed rejoin keeps its manoeuvres for live guidance', () {
+    final plan = RouteRejoinPlan(
+      riderId: 'rider',
+      severity: RouteRejoinSeverity.offRoute,
+      status: RouteRejoinStatus.routed,
+      computedAt: start,
+      guidance: 'Rejoin the planned route.',
+      breadcrumb: const [
+        GeoPoint(latitude: 51.01, longitude: -0.96),
+        GeoPoint(latitude: 51.005, longitude: -0.95),
+        GeoPoint(latitude: 51, longitude: -0.94),
+      ],
+      maneuvers: const [
+        RoadRouteManeuver(
+          position: route_domain.GeoPoint(latitude: 51.005, longitude: -0.95),
+          type: 'turn',
+          modifier: 'right',
+          name: 'Rejoin Road',
+        ),
+      ],
+    );
+
+    final navigationRoute = rejoinNavigationRoute(plan);
+
+    expect(navigationRoute, isNotNull);
+    expect(navigationRoute!.paths.single.points, hasLength(3));
+    expect(navigationRoute.maneuvers, same(plan.maneuvers));
+    expect(navigationRoute.maneuvers.single.name, 'Rejoin Road');
+  });
+
   group('threshold classification', () {
     final planner = RouteRejoinPlanner(routingService: _StubRouting());
 

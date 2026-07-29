@@ -202,6 +202,16 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
           onPressed: () => Navigator.of(context).pop(RouteReviewAction.cancel),
           icon: const Icon(Icons.close),
         ),
+        actions: [
+          TextButton.icon(
+            key: const Key('confirm-reviewed-route'),
+            onPressed: () =>
+                Navigator.of(context).pop(RouteReviewAction.confirm),
+            icon: const Icon(Icons.check),
+            label: const Text('Confirm'),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -449,110 +459,147 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                       markerPlan.rejectedPoints.isNotEmpty ||
                       route.maneuvers.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Text(
-                      'Marker plan',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Advisory only. The leader must choose a visible, legal '
-                      'place away from live traffic lanes. Reject any position '
-                      'the group does not need; the rejection stays with this '
-                      'route.',
-                      style: TextStyle(color: Color(0xFF98A3B1)),
-                    ),
-                    const SizedBox(height: 6),
-                    for (final point in markerPlan.points)
-                      ListTile(
-                        key: Key('marker-plan-${point.id}'),
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          _markerPlanIcon(point),
-                          color: _markerPlanColor(point.kind),
-                        ),
-                        title: Text(point.label),
-                        subtitle: point.detail == null
-                            ? null
-                            : Text(point.detail!),
-                        trailing: IconButton(
-                          key: Key('marker-plan-reject-${point.id}'),
-                          tooltip: point.source == MarkerPlanPointSource.manual
-                              ? 'Remove this added position'
-                              : 'Not needed — reject this suggestion',
-                          onPressed: () =>
-                              point.source == MarkerPlanPointSource.manual
-                              ? _restore(point.id)
-                              : _reject(point),
-                          icon: const Icon(Icons.block_outlined),
-                        ),
+                    ExpansionTile(
+                      key: const Key('marker-plan-review-section'),
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: EdgeInsets.zero,
+                      initiallyExpanded:
+                          markerPlan.points.length +
+                              markerPlan.rejectedPoints.length <=
+                          8,
+                      title: Text(
+                        'Marker plan (${markerPlan.points.length})',
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                    if (markerPlan.rejectedPoints.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Rejected for this route',
-                        style: TextStyle(color: Color(0xFF98A3B1)),
+                      subtitle: const Text(
+                        'Tap to review, reject or add marking positions.',
                       ),
-                      for (final point in markerPlan.rejectedPoints)
-                        ListTile(
-                          key: Key('marker-plan-rejected-${point.id}'),
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(
-                            Icons.block_outlined,
-                            color: Color(0xFF98A3B1),
+                      children: [
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Advisory only. The leader must choose a visible, '
+                            'legal place away from live traffic lanes. Reject '
+                            'any position the group does not need; the rejection '
+                            'stays with this route.',
+                            style: TextStyle(color: Color(0xFF98A3B1)),
                           ),
-                          title: Text(
-                            point.label,
-                            style: const TextStyle(
-                              color: Color(0xFF98A3B1),
-                              decoration: TextDecoration.lineThrough,
+                        ),
+                        const SizedBox(height: 6),
+                        for (final point in markerPlan.points)
+                          ListTile(
+                            key: Key('marker-plan-${point.id}'),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              _markerPlanIcon(point),
+                              color: _markerPlanColor(point.kind),
+                            ),
+                            title: Text(point.label),
+                            subtitle: point.detail == null
+                                ? null
+                                : Text(point.detail!),
+                            trailing: IconButton(
+                              key: Key('marker-plan-reject-${point.id}'),
+                              tooltip:
+                                  point.source == MarkerPlanPointSource.manual
+                                  ? 'Remove this added position'
+                                  : 'Not needed — reject this suggestion',
+                              onPressed: () =>
+                                  point.source == MarkerPlanPointSource.manual
+                                  ? _restore(point.id)
+                                  : _reject(point),
+                              icon: const Icon(Icons.block_outlined),
                             ),
                           ),
-                          trailing: IconButton(
-                            key: Key('marker-plan-restore-${point.id}'),
-                            tooltip: 'Restore this suggestion',
-                            onPressed: () => _restore(point.id),
-                            icon: const Icon(Icons.undo),
+                        if (markerPlan.rejectedPoints.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Rejected for this route',
+                              style: TextStyle(color: Color(0xFF98A3B1)),
+                            ),
                           ),
+                          for (final point in markerPlan.rejectedPoints)
+                            ListTile(
+                              key: Key('marker-plan-rejected-${point.id}'),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(
+                                Icons.block_outlined,
+                                color: Color(0xFF98A3B1),
+                              ),
+                              title: Text(
+                                point.label,
+                                style: const TextStyle(
+                                  color: Color(0xFF98A3B1),
+                                  decoration: TextDecoration.lineThrough,
+                                ),
+                              ),
+                              trailing: IconButton(
+                                key: Key('marker-plan-restore-${point.id}'),
+                                tooltip: 'Restore this suggestion',
+                                onPressed: () => _restore(point.id),
+                                icon: const Icon(Icons.undo),
+                              ),
+                            ),
+                        ],
+                        const SizedBox(height: 6),
+                        OutlinedButton.icon(
+                          key: const Key('marker-plan-add'),
+                          onPressed: _addMissedJunction,
+                          icon: const Icon(Icons.add_location_alt_outlined),
+                          label: const Text('Add a missed junction'),
                         ),
-                    ],
-                    const SizedBox(height: 6),
-                    OutlinedButton.icon(
-                      key: const Key('marker-plan-add'),
-                      onPressed: _addMissedJunction,
-                      icon: const Icon(Icons.add_location_alt_outlined),
-                      label: const Text('Add a missed junction'),
+                      ],
                     ),
                   ],
                   const SizedBox(height: 8),
-                  Text(
-                    'Route order',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 6),
-                  if (reviewWaypoints.isEmpty)
-                    const Text(
-                      'This imported route has geometry but no named waypoints.',
-                      style: TextStyle(color: Color(0xFF98A3B1)),
-                    )
-                  else
-                    for (final entry in reviewWaypoints.indexed)
-                      ListTile(
-                        key: Key('route-review-waypoint-${entry.$1}'),
-                        contentPadding: EdgeInsets.zero,
-                        leading: CircleAvatar(child: Text('${entry.$1 + 1}')),
-                        title: Text(
-                          _waypointLabel(
-                            entry.$1,
-                            reviewWaypoints.length,
-                            entry.$2,
+                  ExpansionTile(
+                    key: const Key('route-review-points-section'),
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    initiallyExpanded: reviewWaypoints.length <= 8,
+                    title: Text(
+                      'Route points (${reviewWaypoints.length})',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    subtitle: Text(
+                      reviewWaypoints.length > 8
+                          ? 'Tap to review the full ordered list.'
+                          : 'Start, stops and destination in order.',
+                    ),
+                    children: [
+                      if (reviewWaypoints.isEmpty)
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'This imported route has geometry but no named waypoints.',
+                            style: TextStyle(color: Color(0xFF98A3B1)),
                           ),
-                        ),
-                        subtitle: entry.$2.description == null
-                            ? null
-                            : Text(entry.$2.description!),
-                      ),
+                        )
+                      else
+                        for (final entry in reviewWaypoints.indexed)
+                          ListTile(
+                            key: Key('route-review-waypoint-${entry.$1}'),
+                            contentPadding: EdgeInsets.zero,
+                            leading: CircleAvatar(
+                              child: Text('${entry.$1 + 1}'),
+                            ),
+                            title: Text(
+                              _waypointLabel(
+                                entry.$1,
+                                reviewWaypoints.length,
+                                entry.$2,
+                              ),
+                            ),
+                            subtitle: entry.$2.description == null
+                                ? null
+                                : Text(entry.$2.description!),
+                          ),
+                    ],
+                  ),
                   const SizedBox(height: 18),
                   if (maneuverCount > 0) ...[
                     OutlinedButton.icon(
@@ -576,14 +623,6 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                       label: const Text('Edit stops'),
                     ),
                   if (canEditStops) const SizedBox(height: 10),
-                  FilledButton.icon(
-                    key: const Key('confirm-reviewed-route'),
-                    onPressed: () =>
-                        Navigator.of(context).pop(RouteReviewAction.confirm),
-                    icon: const Icon(Icons.check),
-                    label: const Text('Confirm route'),
-                  ),
-                  const SizedBox(height: 8),
                   TextButton(
                     key: const Key('cancel-reviewed-route'),
                     onPressed: () =>

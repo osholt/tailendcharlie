@@ -425,6 +425,36 @@ class RouteRejoinPlan {
       status != RouteRejoinStatus.routed;
 }
 
+/// Adapts a routed rejoin response to the same immutable route model the live
+/// turn-by-turn planner already consumes.
+///
+/// The rejoin breadcrumb has always reached the map, but its routing-engine
+/// manoeuvres used to stop at [RouteRejoinPlan]. That drew a useful line while
+/// leaving the guidance banner on the original route. Keeping this adapter here
+/// makes geometry and directions one indivisible result.
+route_domain.ImportedRoute? rejoinNavigationRoute(RouteRejoinPlan? plan) {
+  if (plan == null || !plan.hasBreadcrumb || plan.maneuvers.isEmpty) {
+    return null;
+  }
+  return route_domain.ImportedRoute(
+    id:
+        'rejoin-${plan.riderId}-'
+        '${plan.computedAt.microsecondsSinceEpoch}',
+    name: 'Advisory rejoin route',
+    description: plan.guidance,
+    importedAt: plan.computedAt.toUtc(),
+    sourceFileName: 'advisory-rejoin.gpx',
+    paths: [
+      route_domain.RoutePath(
+        kind: route_domain.RoutePathKind.track,
+        points: [for (final point in plan.breadcrumb) _toRouteDomain(point)],
+      ),
+    ],
+    waypoints: const [],
+    maneuvers: plan.maneuvers,
+  );
+}
+
 /// Computes rejoin routes for riders who have left the planned route.
 ///
 /// Deliberately advisory: every drawn metre comes from [routingService]. When

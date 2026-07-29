@@ -128,6 +128,96 @@ void main() {
     expect(groupMiniMapGridColor(Brightness.dark), const Color(0xFF263443));
   });
 
+  testWidgets('a routed rejoin takes over the live turn guidance', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'rejoin-navigation-guidance',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final originalRoute = ImportedRoute(
+      id: 'original-route',
+      name: 'Original route',
+      importedAt: DateTime.utc(2026, 7, 29, 10),
+      sourceFileName: 'original.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51, longitude: -2),
+            GeoPoint(latitude: 51, longitude: -1.98),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    final rejoinRoute = ImportedRoute(
+      id: 'rejoin-route',
+      name: 'Advisory rejoin route',
+      importedAt: DateTime.utc(2026, 7, 29, 10, 5),
+      sourceFileName: 'rejoin.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.01, longitude: -2),
+            GeoPoint(latitude: 51.01, longitude: -1.99),
+            GeoPoint(latitude: 51, longitude: -1.98),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.01, longitude: -1.995),
+          type: 'turn',
+          modifier: 'right',
+          name: 'Rejoin Road',
+        ),
+      ],
+    );
+    final rejoin = ValueNotifier<ImportedRoute?>(rejoinRoute);
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.01, longitude: -1.999),
+        recordedAt: DateTime.utc(2026, 7, 29, 10, 5),
+        speedMetersPerSecond: 8,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(rejoin.dispose);
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(originalRoute),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          rejoinNavigationRoute: rejoin,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('navigation-guidance-banner')), findsOneWidget);
+    expect(find.text('Rejoin Road'), findsOneWidget);
+
+    rejoin.value = null;
+    await tester.pump();
+
+    expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
+  });
+
   testWidgets('group mini-map appears before a route is loaded', (
     tester,
   ) async {

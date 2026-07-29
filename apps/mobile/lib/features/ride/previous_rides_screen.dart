@@ -14,6 +14,8 @@ import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/ride_summary_exporter.dart';
+import '../map/resolved_route_map_preview.dart'
+    show embeddedMapGestureRecognizers;
 import 'ride_recap_screen.dart';
 
 class PreviousRidesScreen extends StatelessWidget {
@@ -438,6 +440,7 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
                 ),
                 onMapCreated: (controller) => _controller = controller,
                 onStyleLoadedCallback: () => unawaited(_prepareStyle()),
+                gestureRecognizers: embeddedMapGestureRecognizers,
                 logoEnabled: false,
                 compassEnabled: true,
                 minMaxZoomPreference: ml.MinMaxZoomPreference(
@@ -457,6 +460,21 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
                     'OpenFreeMap · © OSM',
                     style: TextStyle(color: Colors.white, fontSize: 8),
                   ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 8,
+              top: 8,
+              child: Material(
+                color: const Color(0xD9182029),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  key: const Key('archived-ride-fit-route'),
+                  tooltip: 'Fit the whole ride',
+                  onPressed: _fit,
+                  color: Colors.white,
+                  icon: const Icon(Icons.fit_screen),
                 ),
               ),
             ),
