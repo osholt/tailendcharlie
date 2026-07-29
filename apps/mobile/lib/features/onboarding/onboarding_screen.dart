@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../domain/rider_color.dart';
 import '../map/motorcycle_icon.dart';
+import '../map/rider_symbol_picker.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key, required this.riderProfile});
@@ -21,6 +22,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   );
   late MotorcycleIconStyle _motorcycleStyle =
       widget.riderProfile.motorcycleStyle;
+  late RiderSymbol _riderSymbol = widget.riderProfile.riderSymbol;
   late RiderColor _riderColor = widget.riderProfile.riderColor;
   int _step = 0;
   bool _educationSkipped = false;
@@ -139,7 +141,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       ),
       const SizedBox(height: 10),
       const Text(
-        'Your saved name, bike and colour are prefilled whenever you create or join a ride.',
+        'Your saved name, symbol and colour are prefilled whenever you create or join a ride.',
         style: TextStyle(color: Color(0xFFABB5C1), height: 1.4),
       ),
       const SizedBox(height: 24),
@@ -159,50 +161,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       const SizedBox(height: 20),
       _profilePreview(),
       const SizedBox(height: 24),
-      const Text('Your bike', style: TextStyle(color: Color(0xFFABB5C1))),
-      const SizedBox(height: 8),
-      SizedBox(
-        height: 68,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: MotorcycleIconStyle.values.length,
-          separatorBuilder: (_, _) => const SizedBox(width: 8),
-          itemBuilder: (context, index) {
-            final style = MotorcycleIconStyle.values[index];
-            final selected = style == _motorcycleStyle;
-            return Semantics(
-              button: true,
-              selected: selected,
-              label: '${style.label} motorcycle icon',
-              child: InkWell(
-                key: Key('onboarding-bike-${style.name}'),
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => setState(() => _motorcycleStyle = style),
-                child: Container(
-                  width: 56,
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? _riderColor.color.withValues(alpha: 0.16)
-                        : const Color(0xFF1D2530),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: selected ? _riderColor.color : Colors.transparent,
-                      width: 2,
-                    ),
-                  ),
-                  child: Center(
-                    child: RiderMarkerBadge(
-                      style: style,
-                      badgeColor: _riderColor.color,
-                      size: 34,
-                      borderWidth: 0,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
+      RiderSymbolPicker(
+        displayName: _nameController.text,
+        selectedSymbol: _riderSymbol,
+        motorcycleStyle: _motorcycleStyle,
+        badgeColor: _riderColor.color,
+        keyPrefix: 'onboarding-symbol',
+        bikeKeyPrefix: 'onboarding-bike',
+        onSymbolChanged: (symbol) => setState(() => _riderSymbol = symbol),
+        onMotorcycleStyleChanged: (style) =>
+            setState(() => _motorcycleStyle = style),
       ),
       const SizedBox(height: 20),
       const Text('Your colour', style: TextStyle(color: Color(0xFFABB5C1))),
@@ -253,6 +221,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         children: [
           RiderMarkerBadge(
             style: _motorcycleStyle,
+            symbol: _riderSymbol,
+            displayName: _nameController.text,
             badgeColor: _riderColor.color,
             size: 48,
           ),
@@ -268,7 +238,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
                 Text(
-                  '${_motorcycleStyle.label} · ${_riderColor.label}',
+                  '${_riderSymbol.label(_nameController.text, _motorcycleStyle)} · ${_riderColor.label}',
                   style: const TextStyle(color: Color(0xFFABB5C1)),
                 ),
               ],
@@ -501,6 +471,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     await widget.riderProfile.completeOnboarding(
       displayName: _nameController.text,
       motorcycleStyle: _motorcycleStyle,
+      riderSymbol: _riderSymbol,
       riderColor: _riderColor,
       educationSkipped: _educationSkipped,
       rideChoice: choice,

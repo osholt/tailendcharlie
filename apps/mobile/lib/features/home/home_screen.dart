@@ -20,6 +20,7 @@ import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
 import '../../services/gpx_import_source.dart';
 import '../map/motorcycle_icon.dart';
+import '../map/rider_symbol_picker.dart';
 import '../ride/route_recorder_screen.dart';
 import '../ride/previous_rides_screen.dart';
 import '../settings/about_build_sheet.dart';
@@ -591,6 +592,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
   final _codeFocusNode = FocusNode();
   final _codeFieldKey = GlobalKey();
   late MotorcycleIconStyle _selectedStyle = widget.riderProfile.motorcycleStyle;
+  late RiderSymbol _selectedSymbol = widget.riderProfile.riderSymbol;
   late RiderColor _selectedColor = widget.riderProfile.riderColor;
 
   /// Set once a created ride's code needs sharing before handing off to the
@@ -704,6 +706,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                 autofocus: true,
                 maxLength: 24,
                 textCapitalization: TextCapitalization.words,
+                onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(
                   labelText: 'Rider name',
                   hintText: 'How the group will recognise you',
@@ -711,53 +714,17 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Your bike',
-                style: TextStyle(color: Color(0xFFABB5C1)),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 68,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: MotorcycleIconStyle.values.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final style = MotorcycleIconStyle.values[index];
-                    final selected = style == _selectedStyle;
-                    return Tooltip(
-                      message: style.label,
-                      child: InkWell(
-                        key: Key('bike-style-${style.name}'),
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () => setState(() => _selectedStyle = style),
-                        child: Container(
-                          width: 56,
-                          decoration: BoxDecoration(
-                            color: selected
-                                ? _selectedColor.color.withValues(alpha: 0.16)
-                                : const Color(0xFF1D2530),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: selected
-                                  ? _selectedColor.color
-                                  : Colors.transparent,
-                              width: 2,
-                            ),
-                          ),
-                          child: Center(
-                            child: RiderMarkerBadge(
-                              style: style,
-                              badgeColor: _selectedColor.color,
-                              size: 34,
-                              borderWidth: 0,
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+              RiderSymbolPicker(
+                displayName: _nameController.text,
+                selectedSymbol: _selectedSymbol,
+                motorcycleStyle: _selectedStyle,
+                badgeColor: _selectedColor.color,
+                keyPrefix: 'ride-symbol',
+                bikeKeyPrefix: 'bike-style',
+                onSymbolChanged: (symbol) =>
+                    setState(() => _selectedSymbol = symbol),
+                onMotorcycleStyleChanged: (style) =>
+                    setState(() => _selectedStyle = style),
               ),
               const SizedBox(height: 16),
               const Text(
@@ -953,6 +920,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
       await widget.controller.createRide(
         name,
         motorcycleStyle: _selectedStyle,
+        riderSymbol: _selectedSymbol,
         riderColor: _selectedColor,
         rideName: _rideNameController.text,
       );
@@ -962,6 +930,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
         code,
         name,
         motorcycleStyle: _selectedStyle,
+        riderSymbol: _selectedSymbol,
         riderColor: _selectedColor,
         joinToken: _pastedJoinToken,
       );
@@ -978,6 +947,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
       await widget.riderProfile.save(
         displayName: name.trim(),
         motorcycleStyle: _selectedStyle,
+        riderSymbol: _selectedSymbol,
         riderColor: _selectedColor,
       );
       if (widget.creating) {

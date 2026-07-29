@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/rider_profile_controller.dart';
+import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/features/onboarding/onboarding_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -31,6 +32,10 @@ void main() {
       find.byKey(const Key('onboarding-name-field')),
       'Oliver',
     );
+    final initialsChoice = find.byKey(const Key('onboarding-symbol-initials'));
+    await tester.ensureVisible(initialsChoice);
+    await tester.tap(initialsChoice);
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
     await tester.pumpAndSettle();
     expect(find.text('You are ready to ride'), findsOneWidget);
@@ -41,6 +46,7 @@ void main() {
     expect(profile.onboardingCompleted, isTrue);
     expect(profile.onboardingEducationSkipped, isTrue);
     expect(profile.displayName, 'Oliver');
+    expect(profile.riderSymbol, const RiderSymbol.initials());
     expect(profile.takePendingRideChoice(), OnboardingRideChoice.join);
   });
 

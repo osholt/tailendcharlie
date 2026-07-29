@@ -57,6 +57,7 @@ class RiderLocation {
     required this.sample,
     required this.receivedAt,
     this.motorcycleStyle = motorcycleIconStyleDefault,
+    this.riderSymbol = riderSymbolDefault,
     this.riderColor = riderColorDefault,
   });
 
@@ -66,6 +67,7 @@ class RiderLocation {
   final LocationSample sample;
   final DateTime receivedAt;
   final MotorcycleIconStyle motorcycleStyle;
+  final RiderSymbol riderSymbol;
   final RiderColor riderColor;
 
   Map<String, Object?> toJson() => {
@@ -74,7 +76,7 @@ class RiderLocation {
     'role': role.name,
     'sample': sample.toJson(),
     'receivedAt': receivedAt.toUtc().toIso8601String(),
-    'motorcycleStyle': motorcycleStyle.name,
+    'motorcycleStyle': riderSymbol.wireValue(motorcycleStyle),
     'riderColor': riderColor.name,
   };
 
@@ -89,6 +91,7 @@ class RiderLocation {
     motorcycleStyle: motorcycleIconStyleFromName(
       json['motorcycleStyle'] as String?,
     ),
+    riderSymbol: RiderSymbol.fromWireValue(json['motorcycleStyle'] as String?),
     riderColor: riderColorFromName(json['riderColor'] as String?),
   );
 }

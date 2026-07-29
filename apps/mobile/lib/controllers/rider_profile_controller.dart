@@ -16,6 +16,7 @@ class RiderProfileController extends ChangeNotifier {
     this._installationId,
     this._displayName,
     this._motorcycleStyle,
+    this._riderSymbol,
     this._riderColor,
     this._emergencyContactName,
     this._emergencyContactPhone,
@@ -29,6 +30,7 @@ class RiderProfileController extends ChangeNotifier {
   static const _nameKey = 'rider_profile_display_name';
   static const _installationIdKey = 'rider_profile_installation_id';
   static const _styleKey = 'rider_profile_motorcycle_style';
+  static const _symbolKey = 'rider_profile_symbol';
   static const _colorKey = 'rider_profile_colour';
   static const _emergencyContactNameKey = 'rider_profile_ice_contact_name';
   static const _emergencyContactPhoneKey = 'rider_profile_ice_contact_phone';
@@ -48,6 +50,7 @@ class RiderProfileController extends ChangeNotifier {
   final String _installationId;
   String _displayName;
   MotorcycleIconStyle _motorcycleStyle;
+  RiderSymbol _riderSymbol;
   RiderColor _riderColor;
   String _emergencyContactName;
   String _emergencyContactPhone;
@@ -61,6 +64,7 @@ class RiderProfileController extends ChangeNotifier {
   String get installationId => _installationId;
   String get displayName => _displayName;
   MotorcycleIconStyle get motorcycleStyle => _motorcycleStyle;
+  RiderSymbol get riderSymbol => _riderSymbol;
   RiderColor get riderColor => _riderColor;
   bool get onboardingCompleted => _onboardingCompleted;
   bool get needsOnboarding => !_onboardingCompleted;
@@ -116,6 +120,7 @@ class RiderProfileController extends ChangeNotifier {
       installationId,
       displayName,
       motorcycleIconStyleFromName(preferences.getString(_styleKey)),
+      RiderSymbol.fromStorageValue(preferences.getString(_symbolKey)),
       riderColorFromName(preferences.getString(_colorKey)),
       preferences.getString(_emergencyContactNameKey) ?? '',
       preferences.getString(_emergencyContactPhoneKey) ?? '',
@@ -130,14 +135,17 @@ class RiderProfileController extends ChangeNotifier {
   Future<void> save({
     required String displayName,
     required MotorcycleIconStyle motorcycleStyle,
+    RiderSymbol? riderSymbol,
     required RiderColor riderColor,
   }) async {
     _displayName = displayName;
     _motorcycleStyle = motorcycleStyle;
+    _riderSymbol = riderSymbol ?? _riderSymbol;
     _riderColor = riderColor;
     await Future.wait([
       _preferences.setString(_nameKey, displayName),
       _preferences.setString(_styleKey, motorcycleStyle.name),
+      _preferences.setString(_symbolKey, _riderSymbol.storageValue),
       _preferences.setString(_colorKey, riderColor.name),
     ]);
     notifyListeners();
@@ -146,6 +154,7 @@ class RiderProfileController extends ChangeNotifier {
   Future<void> completeOnboarding({
     required String displayName,
     required MotorcycleIconStyle motorcycleStyle,
+    RiderSymbol? riderSymbol,
     required RiderColor riderColor,
     required bool educationSkipped,
     required OnboardingRideChoice rideChoice,
@@ -156,6 +165,7 @@ class RiderProfileController extends ChangeNotifier {
     }
     _displayName = normalizedName;
     _motorcycleStyle = motorcycleStyle;
+    _riderSymbol = riderSymbol ?? riderSymbolDefault;
     _riderColor = riderColor;
     _onboardingCompleted = true;
     _onboardingEducationSkipped = educationSkipped;
@@ -163,6 +173,7 @@ class RiderProfileController extends ChangeNotifier {
     await Future.wait([
       _preferences.setString(_nameKey, normalizedName),
       _preferences.setString(_styleKey, motorcycleStyle.name),
+      _preferences.setString(_symbolKey, _riderSymbol.storageValue),
       _preferences.setString(_colorKey, riderColor.name),
       _preferences.setBool(_onboardingCompletedKey, true),
       _preferences.setBool(_onboardingEducationSkippedKey, educationSkipped),
