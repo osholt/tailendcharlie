@@ -64,8 +64,12 @@
             <strong id="assistance-label"></strong>
             <span id="assistance-time"></span>
           </div>
+          <section id="rider-list-section" class="observer-riders" hidden>
+            <h2>Riders</h2>
+            <ul id="rider-list"></ul>
+          </section>
           <p class="observer-caution">
-            This is a last-known location, not proof that the rider is safe.
+            These are last-known locations, not proof that anyone is safe.
             Mobile signal, GPS, background restrictions, or battery loss can
             delay updates. Contact the rider or emergency services if you are
             concerned.
@@ -74,6 +78,9 @@
       </section>
       <section class="observer-map-shell" aria-label="Last-known rider position">
         <div id="observer-map"></div>
+        <button id="recenter-map" class="observer-recenter" type="button" hidden>
+          Re-centre ride
+        </button>
         <div id="map-empty" class="observer-map-empty">
           Waiting for the first shared location.
         </div>

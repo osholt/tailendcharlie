@@ -30,6 +30,7 @@ import '../../domain/geo_point.dart' as awareness_geo;
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/quick_message.dart';
+import '../../domain/ride_coordination_mode.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/ride_session.dart';
@@ -122,6 +123,109 @@ ObserverPublishedSnapshot buildLocalObserverSnapshot({
           ),
     assistance: assistance,
   );
+}
+
+/// The leader-published, bounded whole-group watcher snapshot.
+///
+/// This deliberately accepts only the reconciled live roster, current rendered
+/// positions and planned route. Durable events, trails, nearby identifiers,
+/// contact/ICE state and ride credentials are not inputs, so they cannot leak
+/// into a watcher response by accident.
+@visibleForTesting
+ObserverPublishedSnapshot buildGroupObserverSnapshot({
+  required RideSession session,
+  required DateTime snapshotGeneratedAt,
+  required String rideStatus,
+  required DateTime statusUpdatedAt,
+  required DateTime assistanceUpdatedAt,
+  required Iterable<RideParticipant> liveParticipants,
+  required Iterable<RiderLocation> renderedPositions,
+  required LocationSample? localLocation,
+  required route_domain.ImportedRoute? route,
+}) {
+  final positionsByRider = {
+    for (final location in renderedPositions) location.riderId: location.sample,
+  };
+  if (localLocation != null) {
+    positionsByRider[session.localRiderId] = localLocation;
+  }
+  final participants = liveParticipants
+      .take(50)
+      .map((participant) {
+        final sample = positionsByRider[participant.riderId];
+        final color = participant.riderColor.color
+            .toARGB32()
+            .toRadixString(16)
+            .padLeft(8, '0')
+            .substring(2)
+            .toUpperCase();
+        return ObserverPublishedGroupParticipant(
+          displayName: _boundedObserverText(participant.displayName, 80),
+          role: participant.role.name,
+          color: '#$color',
+          position: sample == null
+              ? null
+              : ObserverPublishedPosition(
+                  latitude: sample.position.latitude,
+                  longitude: sample.position.longitude,
+                  accuracyMeters: sample.accuracyMeters,
+                  recordedAt: sample.recordedAt,
+                ),
+        );
+      })
+      .toList(growable: false);
+  final routePoints = _boundedObserverRoutePoints(route);
+  return ObserverPublishedSnapshot(
+    scope: ObserverAccessScope.group,
+    subjectName: _boundedObserverText(
+      session.rideName ?? 'Group ride led by ${session.displayName}',
+      80,
+    ),
+    snapshotGeneratedAt: snapshotGeneratedAt,
+    rideStatus: rideStatus,
+    statusUpdatedAt: statusUpdatedAt,
+    assistanceUpdatedAt: assistanceUpdatedAt,
+    participants: participants,
+    route: route == null || routePoints.length < 2
+        ? null
+        : ObserverPublishedRoute(
+            name: _boundedObserverText(route.name, 80),
+            points: routePoints,
+          ),
+  );
+}
+
+String _boundedObserverText(String value, int maximumLength) {
+  final trimmed = value.trim();
+  if (trimmed.length <= maximumLength) return trimmed;
+  return trimmed.substring(0, maximumLength);
+}
+
+List<ObserverPublishedRoutePoint> _boundedObserverRoutePoints(
+  route_domain.ImportedRoute? route, {
+  int maximum = 500,
+}) {
+  if (route == null || maximum < 2) return const [];
+  final source = [
+    for (final path in route.paths)
+      for (final point in path.points) point,
+    if (route.paths.isEmpty)
+      for (final waypoint in route.waypoints) waypoint.point,
+  ];
+  if (source.length < 2) return const [];
+  final indexes = source.length <= maximum
+      ? List<int>.generate(source.length, (index) => index)
+      : List<int>.generate(
+          maximum,
+          (index) => (index * (source.length - 1) / (maximum - 1)).round(),
+        );
+  return List.unmodifiable([
+    for (final index in indexes)
+      ObserverPublishedRoutePoint(
+        latitude: source[index].latitude,
+        longitude: source[index].longitude,
+      ),
+  ]);
 }
 
 /// Owns the active-ride feature lifecycle and keeps each feature independently
@@ -464,9 +568,9 @@ class _RideNavigationMenu extends StatelessWidget {
               ListTile(
                 key: const Key('ride-menu-observer-access'),
                 leading: const Icon(Icons.visibility_outlined),
-                title: const Text('Share my progress'),
+                title: const Text('Share watcher link'),
                 subtitle: const Text(
-                  'Private, time-limited link for a trusted safety contact',
+                  'Private, read-only web view for a trusted contact',
                 ),
                 onTap: () {
                   Navigator.of(context).pop();
@@ -557,6 +661,7 @@ class _PreStartRidePanel extends StatelessWidget {
   const _PreStartRidePanel({
     required this.rideCode,
     required this.participants,
+    required this.coordinationMode,
     required this.isLeader,
     required this.busy,
     required this.routeName,
@@ -566,6 +671,7 @@ class _PreStartRidePanel extends StatelessWidget {
 
   final String rideCode;
   final List<RideParticipant> participants;
+  final RideCoordinationMode coordinationMode;
   final bool isLeader;
   final bool busy;
   final String? routeName;
@@ -585,18 +691,27 @@ class _PreStartRidePanel extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.groups_outlined, color: Color(0xFFFFC857)),
+                Icon(
+                  coordinationMode == RideCoordinationMode.solo
+                      ? Icons.person_outline
+                      : Icons.groups_outlined,
+                  color: const Color(0xFFFFC857),
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Waiting to start',
+                      Text(
+                        coordinationMode == RideCoordinationMode.solo
+                            ? 'Ready for solo ride'
+                            : 'Waiting to start',
                         style: TextStyle(fontWeight: FontWeight.w800),
                       ),
                       Text(
-                        'Ride $rideCode · Current positions only · no tracks recorded',
+                        coordinationMode == RideCoordinationMode.solo
+                            ? 'Tracking begins when you start'
+                            : 'Ride $rideCode · Current positions only until the leader starts',
                         style: const TextStyle(
                           color: Color(0xFFA9B4C2),
                           fontSize: 12,
@@ -656,29 +771,32 @@ class _PreStartRidePanel extends StatelessWidget {
                   ),
               ],
             ),
-            const SizedBox(height: 6),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
+            if (coordinationMode.isGroup) ...[
+              const SizedBox(height: 4),
+              Row(
                 key: const Key('pre-start-roster'),
                 children: [
-                  for (final participant in participants) ...[
-                    Chip(
-                      avatar: Icon(
-                        participant.role == RideRole.lead
-                            ? Icons.navigation
-                            : Icons.motorcycle,
-                        size: 16,
-                      ),
-                      label: Text(
-                        '${participant.displayName}${participant.isLocal ? ' (you)' : ''}',
+                  const Icon(
+                    Icons.people_outline,
+                    size: 17,
+                    color: Color(0xFFA9B4C2),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      '${participants.length} ready'
+                      '${participants.isEmpty ? '' : ' · ${participants.map((participant) => '${participant.displayName}${participant.isLocal ? ' (you)' : ''}').join(', ')}'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFA9B4C2),
+                        fontSize: 12,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                  ],
+                  ),
                 ],
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -1107,7 +1225,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
     if (widget.enableNativeServices && !_isSimulation) {
       final session = widget.rideController.session;
-      if (session?.role == RideRole.lead) {
+      final groupRide = widget.rideController.coordinationMode.isGroup;
+      if (groupRide && session?.role == RideRole.lead) {
         try {
           await widget.rideController.publishRideCode();
         } on RideCodeDirectoryException catch (error) {
@@ -1230,42 +1349,46 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             _publishObserverSnapshot();
           }
         }
-        final pushNotificationController = RidePushNotificationController(
-          tokenSource:
-              widget.pushTokenSource ??
-              NativePushTokenSource(NativePushConfiguration.fromEnvironment()),
-          registrationApi:
-              widget.pushRegistrationApi ??
-              HttpPushRegistrationClient(
-                configuration: InternetRelayConfiguration.fromEnvironment(),
-                client: http.Client(),
-              ),
-          preferencesStore: await SharedPreferences.getInstance(),
-        );
-        _pushNotificationController = pushNotificationController;
-        pushNotificationController.addListener(
-          _onPushNotificationStatusChanged,
-        );
-        _pushOpenSubscription = pushNotificationController.openedNotifications
-            .listen(_onPushNotificationOpened);
-        await pushNotificationController.start(session);
-        _lastPushRole = session.role;
-        final preStartPresenceController = PreStartPresenceController(
-          HttpPreStartPresenceClient(
-            configuration: InternetRelayConfiguration.fromEnvironment(),
-            client: http.Client(),
-          ),
-        );
-        _preStartPresenceController = preStartPresenceController;
-        preStartPresenceController.addListener(_onPreStartPresenceChanged);
-        // Presence runs for the whole ride, not only before the start. It is
-        // what keeps a rider visible across `rideStarted` and what makes a
-        // rider who joins an already-started ride appear immediately.
-        if (!widget.rideController.rideEnded) {
-          await preStartPresenceController.start(session);
+        if (groupRide) {
+          final pushNotificationController = RidePushNotificationController(
+            tokenSource:
+                widget.pushTokenSource ??
+                NativePushTokenSource(
+                  NativePushConfiguration.fromEnvironment(),
+                ),
+            registrationApi:
+                widget.pushRegistrationApi ??
+                HttpPushRegistrationClient(
+                  configuration: InternetRelayConfiguration.fromEnvironment(),
+                  client: http.Client(),
+                ),
+            preferencesStore: await SharedPreferences.getInstance(),
+          );
+          _pushNotificationController = pushNotificationController;
+          pushNotificationController.addListener(
+            _onPushNotificationStatusChanged,
+          );
+          _pushOpenSubscription = pushNotificationController.openedNotifications
+              .listen(_onPushNotificationOpened);
+          await pushNotificationController.start(session);
+          _lastPushRole = session.role;
+          final preStartPresenceController = PreStartPresenceController(
+            HttpPreStartPresenceClient(
+              configuration: InternetRelayConfiguration.fromEnvironment(),
+              client: http.Client(),
+            ),
+          );
+          _preStartPresenceController = preStartPresenceController;
+          preStartPresenceController.addListener(_onPreStartPresenceChanged);
+          // Presence runs for the whole ride, not only before the start. It is
+          // what keeps a rider visible across `rideStarted` and what makes a
+          // rider who joins an already-started ride appear immediately.
+          if (!widget.rideController.rideEnded) {
+            await preStartPresenceController.start(session);
+          }
         }
       }
-      if (session != null && session.inviteSecret.length >= 16) {
+      if (groupRide && session != null && session.inviteSecret.length >= 16) {
         final relayController = NearbyRelayController(
           RelayEngine(
             transport: NativeNearbyTransport(),
@@ -1481,7 +1604,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final lifecycleFingerprint =
         widget.rideController.rideStartedAt?.toUtc().toIso8601String() ??
         'open';
-    final effectiveFingerprint = '$fingerprint:$lifecycleFingerprint';
+    final effectiveFingerprint =
+        '$fingerprint:$lifecycleFingerprint:'
+        '${widget.rideController.coordinationMode.name}';
     if (_awarenessController != null &&
         effectiveFingerprint == _routeFingerprint) {
       return;
@@ -1538,52 +1663,53 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
 
-    final markerRoute = _markerRouteFor(route);
-    final markerReview =
-        route?.markerReview ?? route_domain.MarkerPlanReview.empty;
-    final decisionPoints = const RouteDecisionPointExtractor().extract(
-      route: markerRoute,
-      explicitPoints:
-          route?.waypoints
-              .map(
-                (waypoint) => ExplicitDecisionPoint(
-                  position: awareness_geo.GeoPoint(
-                    latitude: waypoint.point.latitude,
-                    longitude: waypoint.point.longitude,
+    MarkerAssistanceController? markerController;
+    if (widget.rideController.coordinationMode.usesSecondBikeDropOff) {
+      final markerRoute = _markerRouteFor(route);
+      final markerReview =
+          route?.markerReview ?? route_domain.MarkerPlanReview.empty;
+      final decisionPoints = const RouteDecisionPointExtractor().extract(
+        route: markerRoute,
+        explicitPoints:
+            route?.waypoints
+                .map(
+                  (waypoint) => ExplicitDecisionPoint(
+                    position: awareness_geo.GeoPoint(
+                      latitude: waypoint.point.latitude,
+                      longitude: waypoint.point.longitude,
+                    ),
+                    label: waypoint.name,
                   ),
-                  label: waypoint.name,
-                ),
-              )
-              .toList(growable: false) ??
-          const [],
-      // The review the planner or the roadside made for this route decides what
-      // the live detector may suggest (#179).
-      rejectedPositions: markerReview.rejected
-          .map(
-            (point) => awareness_geo.GeoPoint(
-              latitude: point.position.latitude,
-              longitude: point.position.longitude,
-            ),
-          )
-          .toList(growable: false),
-      addedPositions: markerReview.added
-          .map(
-            (point) => ExplicitDecisionPoint(
-              position: awareness_geo.GeoPoint(
+                )
+                .toList(growable: false) ??
+            const [],
+        rejectedPositions: markerReview.rejected
+            .map(
+              (point) => awareness_geo.GeoPoint(
                 latitude: point.position.latitude,
                 longitude: point.position.longitude,
               ),
-              label: point.label,
-            ),
-          )
-          .toList(growable: false),
-    );
-    final markerController = MarkerAssistanceController(
-      widget.rideController,
-      controller,
-      route: markerRoute,
-      decisionPoints: decisionPoints,
-    )..initialize();
+            )
+            .toList(growable: false),
+        addedPositions: markerReview.added
+            .map(
+              (point) => ExplicitDecisionPoint(
+                position: awareness_geo.GeoPoint(
+                  latitude: point.position.latitude,
+                  longitude: point.position.longitude,
+                ),
+                label: point.label,
+              ),
+            )
+            .toList(growable: false),
+      );
+      markerController = MarkerAssistanceController(
+        widget.rideController,
+        controller,
+        route: markerRoute,
+        decisionPoints: decisionPoints,
+      )..initialize();
+    }
 
     final previous = _awarenessController;
     final previousMarker = _markerAssistanceController;
@@ -3036,6 +3162,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 // lobby is a live list, and a rider who has left keeps their
                 // record in the ride roster instead (#144).
                 participants: widget.rideController.liveParticipants,
+                coordinationMode: widget.rideController.coordinationMode,
                 isLeader: session.role == RideRole.lead,
                 busy: widget.rideController.busy || _loading,
                 routeName: _activeRoute?.name,
@@ -3185,6 +3312,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       ridePaused: widget.rideController.ridePaused,
       rideHasNoLeader: widget.rideController.rideHasNoLeader,
       rideStarted: widget.rideController.rideStarted,
+      markerFeaturesEnabled:
+          widget.rideController.coordinationMode.usesSecondBikeDropOff,
       onLeaveRide: _confirmLeaveRideFromMap,
       onOpenRideMenu: _openRideMenu,
       onRouteCommitted: _onRouteChanged,
@@ -3603,6 +3732,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// solo scouting ride is legitimate. It only ever runs inside the start
   /// confirmation, so it cannot nag during the ride.
   Future<bool> _confirmStartWithoutTec() async {
+    if (widget.rideController.coordinationMode == RideCoordinationMode.solo) {
+      return true;
+    }
     if (_effectiveTecRiderIds.isNotEmpty) return true;
     final decision = await showDialog<_MissingTecDecision>(
       context: context,
@@ -3845,7 +3977,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   Future<void> _openObserverAccess() async {
     final controller = _observerAccessController;
     if (controller == null) return;
-    await ObserverAccessSheet.show(context, controller);
+    await ObserverAccessSheet.show(
+      context,
+      controller,
+      canShareGroup:
+          widget.rideController.coordinationMode.isGroup &&
+          widget.rideController.isLocalRideLeader,
+    );
     if (!mounted || !controller.hasActiveGrants) return;
     await _locationController?.requestAndStart();
     _publishObserverSnapshot();
@@ -3858,22 +3996,42 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     final sample = _latestObserverLocationSample;
-    controller.publishSnapshot(
-      buildLocalObserverSnapshot(
+    final generatedAt = controller.nextSnapshotGeneratedAt();
+    final rideStatus = widget.rideController.rideEnded
+        ? 'ended'
+        : widget.rideController.ridePaused
+        ? 'paused'
+        : widget.rideController.rideStarted
+        ? 'active'
+        : 'waiting';
+    final statusUpdatedAt = _observerStatusUpdatedAt();
+    final assistanceUpdatedAt = controller.localAssistanceUpdatedAt;
+    final liveView = widget.rideController.liveView;
+    controller.publishSnapshots(
+      rider: buildLocalObserverSnapshot(
         session: session,
-        snapshotGeneratedAt: controller.nextSnapshotGeneratedAt(),
-        rideStatus: widget.rideController.rideEnded
-            ? 'ended'
-            : widget.rideController.ridePaused
-            ? 'paused'
-            : widget.rideController.rideStarted
-            ? 'active'
-            : 'waiting',
-        statusUpdatedAt: _observerStatusUpdatedAt(),
-        assistanceUpdatedAt: controller.localAssistanceUpdatedAt,
+        snapshotGeneratedAt: generatedAt,
+        rideStatus: rideStatus,
+        statusUpdatedAt: statusUpdatedAt,
+        assistanceUpdatedAt: assistanceUpdatedAt,
         localLocation: sample,
         assistance: controller.localAssistance,
       ),
+      group:
+          widget.rideController.coordinationMode.isGroup &&
+              widget.rideController.isLocalRideLeader
+          ? buildGroupObserverSnapshot(
+              session: session,
+              snapshotGeneratedAt: generatedAt,
+              rideStatus: rideStatus,
+              statusUpdatedAt: statusUpdatedAt,
+              assistanceUpdatedAt: assistanceUpdatedAt,
+              liveParticipants: liveView.liveParticipants,
+              renderedPositions: liveView.renderedPositions,
+              localLocation: sample,
+              route: _activeRoute,
+            )
+          : null,
     );
   }
 

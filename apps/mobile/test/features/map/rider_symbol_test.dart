@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/geo_point.dart';
@@ -126,5 +128,36 @@ void main() {
     final text = tester.widget<Text>(find.text('KS'));
     expect(text.style?.fontSize, 34);
     expect(find.byKey(const Key('rider-marker-initials-fill')), findsOneWidget);
+  });
+
+  test('MapLibre raster keeps two initials on one line', () async {
+    final result = await rasterizeRiderSymbolPng(
+      symbol: const RiderSymbol.initials(),
+      displayName: 'Keith Simmonds',
+      motorcycleStyle: MotorcycleIconStyle.scrambler,
+      size: 128,
+    );
+    final codec = await ui.instantiateImageCodec(result.bytes);
+    final frame = await codec.getNextFrame();
+    final data = await frame.image.toByteData(
+      format: ui.ImageByteFormat.rawRgba,
+    );
+    final pixels = data!.buffer.asUint8List();
+    var left = 128;
+    var right = -1;
+    var top = 128;
+    var bottom = -1;
+    for (var y = 0; y < 128; y += 1) {
+      for (var x = 0; x < 128; x += 1) {
+        if (pixels[(y * 128 + x) * 4 + 3] == 0) continue;
+        left = x < left ? x : left;
+        right = x > right ? x : right;
+        top = y < top ? y : top;
+        bottom = y > bottom ? y : bottom;
+      }
+    }
+
+    expect(right - left, greaterThan(bottom - top));
+    expect(right - left, greaterThan(100));
   });
 }

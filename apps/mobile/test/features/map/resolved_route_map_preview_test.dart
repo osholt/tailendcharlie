@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/resolved_route_map_preview.dart';
 
@@ -43,4 +44,21 @@ void main() {
       expect(bounds.northeast.longitude, -2.0);
     },
   );
+
+  test('Android reshape gestures use native-view pixels', () {
+    expect(
+      previewPlatformPixelScale(
+        platform: TargetPlatform.android,
+        devicePixelRatio: 3,
+      ),
+      3,
+    );
+    expect(
+      previewPlatformPixelScale(
+        platform: TargetPlatform.iOS,
+        devicePixelRatio: 3,
+      ),
+      1,
+    );
+  });
 }

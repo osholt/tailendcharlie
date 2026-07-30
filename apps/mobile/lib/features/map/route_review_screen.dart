@@ -35,6 +35,7 @@ class RouteReviewScreen extends StatefulWidget {
     this.warnings = const [],
     this.previousRoute,
     this.canEditStops = false,
+    this.showMarkerPlan = true,
     this.onMarkerReviewChanged,
     this.onReshapeRoute,
     this.onRouteChanged,
@@ -53,6 +54,7 @@ class RouteReviewScreen extends StatefulWidget {
   final List<String> warnings;
   final ImportedRoute? previousRoute;
   final bool canEditStops;
+  final bool showMarkerPlan;
 
   /// Reports each change to the route's marker review so the caller can store
   /// it with the route it belongs to. Assistance only suggests; this is where
@@ -72,6 +74,7 @@ class RouteReviewScreen extends StatefulWidget {
     List<String> warnings = const [],
     ImportedRoute? previousRoute,
     bool canEditStops = false,
+    bool showMarkerPlan = true,
     ValueChanged<MarkerPlanReview>? onMarkerReviewChanged,
     RouteReshapeCallback? onReshapeRoute,
     ValueChanged<ImportedRoute>? onRouteChanged,
@@ -89,6 +92,7 @@ class RouteReviewScreen extends StatefulWidget {
             warnings: warnings,
             previousRoute: previousRoute,
             canEditStops: canEditStops,
+            showMarkerPlan: showMarkerPlan,
             onMarkerReviewChanged: onMarkerReviewChanged,
             onReshapeRoute: onReshapeRoute,
             onRouteChanged: onRouteChanged,
@@ -328,7 +332,9 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
         .where((points) => points.isNotEmpty)
         .toList(growable: false);
     final reviewWaypoints = _reviewWaypoints(route);
-    final markerPlan = _analyzer.analyze(route);
+    final markerPlan = widget.showMarkerPlan
+        ? _analyzer.analyze(route)
+        : const RouteMarkerPlan(points: []);
     final allPoints = [
       ...routeSegments.expand((points) => points),
       ...reviewWaypoints.map((waypoint) => _latLng(waypoint.point)),
@@ -695,9 +701,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                       ),
                     ],
                   ],
-                  if (markerPlan.points.isNotEmpty ||
-                      markerPlan.rejectedPoints.isNotEmpty ||
-                      route.maneuvers.isNotEmpty) ...[
+                  if (widget.showMarkerPlan &&
+                      (markerPlan.points.isNotEmpty ||
+                          markerPlan.rejectedPoints.isNotEmpty ||
+                          route.maneuvers.isNotEmpty)) ...[
                     const SizedBox(height: 8),
                     ExpansionTile(
                       key: const Key('marker-plan-review-section'),

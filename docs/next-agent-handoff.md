@@ -1,6 +1,44 @@
 # Next-agent handoff
 
-Updated: 2026-07-29
+Updated: 2026-07-30
+
+## Current work: tester feedback 7
+
+Active work is on `codex/tester-feedback-7`, based on `origin/main` at
+`d2bf8ba`. The original checkout contains unrelated work and must not be
+modified; this branch lives in the clean worktree
+`/Users/osholt/Projects/Personal/tailendcharlie-feedback7`.
+
+The 30 July WhatsApp export and direct tester report are tracked in #157, #242,
+#254, #259, #261 and #262. The full group watcher is tracked in #263. This
+branch:
+
+- replaces the recap's uncapturable native MapLibre view with a pure-Flutter
+  vector map inside the exported `RepaintBoundary`;
+- fixes Android route-drag hit testing by converting logical gesture
+  coordinates to native pixels;
+- prevents two initials wrapping vertically and enlarges every initials
+  renderer to fill the rider badge;
+- removes ride-time controls and guidance from the pre-start map and condenses
+  its participant summary;
+- offers a routed **Navigate to start** leg when the planned route begins more
+  than 250 m away; and
+- adds explicit Solo, Second-bike drop-off and Keep-together ride modes, with
+  participant transports skipped for solo and marker behaviour restricted to
+  the drop-off mode; and
+- preserves the existing **Just me** watcher while adding a leader-only
+  **Whole group** scope. The leader must confirm the group has been told; the
+  bounded encrypted snapshot contains the current roster, last-known positions
+  and planned-route outline but no rider IDs, credentials, trails, messages,
+  speed, phone/ICE data or participant controls. The watcher remains read-only
+  and outside the roster. Relay migration `0009` and the updated web assets
+  must deploy before the mobile build.
+
+`dart format`, `flutter analyze`, all 1,306 mobile tests (with two intentional
+build-stamp skips), 141 server tests, all 61 website tests, an Android debug APK
+build and an unsigned iOS simulator build pass. The App Store Connect tab is
+waiting for the user to complete login; do not close or replace that browser
+group.
 
 ## Current work: CarPlay Navigation
 

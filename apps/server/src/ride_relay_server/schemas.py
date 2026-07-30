@@ -351,6 +351,16 @@ class CreateObserverGrantRequest(BaseModel):
     label: str = Field(min_length=1, max_length=80)
     durationMinutes: int = Field(ge=30, le=24 * 60)
     consentConfirmed: Literal[True]
+    scope: Literal["rider", "group"] = "rider"
+    groupDisclosureConfirmed: Literal[True] | None = None
+
+    @model_validator(mode="after")
+    def group_scope_requires_disclosure(self) -> CreateObserverGrantRequest:
+        if self.scope == "group" and self.groupDisclosureConfirmed is not True:
+            raise ValueError("Group observer access requires group disclosure")
+        if self.scope == "rider" and self.groupDisclosureConfirmed is not None:
+            raise ValueError("Personal observer access has no group disclosure")
+        return self
 
 
 class ObserverGrantResponse(BaseModel):
@@ -358,6 +368,7 @@ class ObserverGrantResponse(BaseModel):
 
     id: str
     label: str
+    scope: Literal["rider", "group"] = "rider"
     createdAt: datetime
     expiresAt: datetime
     revokedAt: datetime | None
@@ -395,14 +406,43 @@ class PublishObserverAssistance(BaseModel):
         return _aware_utc(value)
 
 
+class PublishObserverGroupParticipant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    displayName: str = Field(min_length=1, max_length=80)
+    role: Literal["lead", "tailEndCharlie", "marker", "rider"]
+    color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+    position: ObserverPosition | None
+
+
+class ObserverRoutePoint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
+class ObserverRoute(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80)
+    points: list[ObserverRoutePoint] = Field(min_length=2, max_length=500)
+
+
 class PublishObserverSnapshotRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    scope: Literal["rider", "group"] = "rider"
     subjectName: str = Field(min_length=1, max_length=80)
     snapshotGeneratedAt: datetime
     rideStatus: Literal["waiting", "active", "paused", "ended"]
     statusUpdatedAt: datetime
     position: ObserverPosition | None
+    participants: list[PublishObserverGroupParticipant] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+    route: ObserverRoute | None = None
     assistanceUpdatedAt: datetime
     assistance: PublishObserverAssistance | None
 
@@ -415,15 +455,29 @@ class PublishObserverSnapshotRequest(BaseModel):
     def timestamps_require_timezone(cls, value: datetime) -> datetime:
         return _aware_utc(value)
 
+    @model_validator(mode="after")
+    def scope_matches_payload(self) -> PublishObserverSnapshotRequest:
+        if self.scope == "rider":
+            if self.participants or self.route is not None:
+                raise ValueError("Personal observer snapshots cannot contain group data")
+        elif self.position is not None or self.assistance is not None:
+            raise ValueError("Group observer snapshots cannot contain personal-only state")
+        return self
+
 
 class ObserverAssistance(PublishObserverAssistance):
     label: str
 
 
+class ObserverGroupParticipant(PublishObserverGroupParticipant):
+    freshness: Literal["unavailable", "fresh", "delayed", "offline"]
+
+
 class ObserverSnapshotResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    protocolVersion: Literal[1] = 1
+    protocolVersion: Literal[1, 2] = 1
+    scope: Literal["rider", "group"] = "rider"
     label: str
     subjectName: str | None
     rideStatus: Literal["waiting", "active", "paused", "ended"]
@@ -432,6 +486,8 @@ class ObserverSnapshotResponse(BaseModel):
     serverTime: datetime
     expiresAt: datetime
     position: ObserverPosition | None
+    participants: list[ObserverGroupParticipant] = Field(default_factory=list)
+    route: ObserverRoute | None = None
     assistance: ObserverAssistance | None
 
 

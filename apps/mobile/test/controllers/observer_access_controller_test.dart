@@ -201,6 +201,52 @@ void main() {
       );
     },
   );
+
+  test(
+    'personal and group grants receive only their scoped snapshot',
+    () async {
+      final api = _FakeObserverApi();
+      final controller = ObserverAccessController(
+        api,
+        _MemoryObserverGrantStore(),
+        clock: _clock,
+        publishInterval: Duration.zero,
+      );
+      await controller.attach(_session);
+      await controller.create(
+        label: 'Personal',
+        duration: const Duration(hours: 1),
+      );
+      await controller.create(
+        label: 'Group',
+        duration: const Duration(hours: 1),
+        scope: ObserverAccessScope.group,
+      );
+      final rider = _snapshot(1);
+      final group = ObserverPublishedSnapshot(
+        scope: ObserverAccessScope.group,
+        subjectName: 'Group ride',
+        snapshotGeneratedAt: rider.snapshotGeneratedAt,
+        rideStatus: 'active',
+        statusUpdatedAt: rider.statusUpdatedAt,
+        assistanceUpdatedAt: rider.assistanceUpdatedAt,
+        participants: const [
+          ObserverPublishedGroupParticipant(
+            displayName: 'Oliver',
+            role: 'lead',
+            color: '#B58CFF',
+          ),
+        ],
+      );
+
+      controller.publishSnapshots(rider: rider, group: group);
+      await controller.waitForPendingPublishes();
+
+      expect(api.published, hasLength(2));
+      expect(api.publishedByGrant['grant-1']?.scope, ObserverAccessScope.rider);
+      expect(api.publishedByGrant['grant-2']?.scope, ObserverAccessScope.group);
+    },
+  );
 }
 
 DateTime _clock() => DateTime.utc(2026, 7, 24, 13);
@@ -284,6 +330,7 @@ class _FakeObserverApi implements ObserverAccessApi {
   final firstPublishStarted = Completer<void>();
   final releaseFirstPublish = Completer<void>();
   final published = <ObserverPublishedSnapshot>[];
+  final publishedByGrant = <String, ObserverPublishedSnapshot>{};
   var _nextGrant = 0;
 
   @override
@@ -299,6 +346,7 @@ class _FakeObserverApi implements ObserverAccessApi {
     RideSession session, {
     required String label,
     required Duration duration,
+    ObserverAccessScope scope = ObserverAccessScope.rider,
   }) async {
     _nextGrant += 1;
     return ObserverGrantCredentials(
@@ -307,6 +355,7 @@ class _FakeObserverApi implements ObserverAccessApi {
         label: label,
         createdAt: _clock(),
         expiresAt: _clock().add(duration),
+        scope: scope,
       ),
       managementToken: 'om1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       publisherToken: 'op1_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
@@ -324,6 +373,7 @@ class _FakeObserverApi implements ObserverAccessApi {
     ObserverPublishedSnapshot snapshot,
   ) async {
     published.add(snapshot);
+    publishedByGrant[credentials.grant.id] = snapshot;
     if (published.length == 1 && failFirstPublishRetryable) {
       throw const InternetRelayException(
         'Temporary outage',

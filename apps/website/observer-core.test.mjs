@@ -4,9 +4,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  describeGroupFreshness,
   describeFreshness,
+  observerCoordinates,
   observerServiceOrigin,
   parseObserverFragment,
+  participantFreshnessLabel,
+  participantRoleLabel,
   remainingLabel,
   rideStatusLabel,
 } from "./observer-core.mjs";
@@ -77,6 +81,48 @@ test("ride and expiry labels are bounded and explicit", () => {
       new Date("2026-07-24T12:00:00Z"),
     ),
     "Access expired",
+  );
+});
+
+test("group watcher reports every rider freshness state without implying safety", () => {
+  const snapshot = {
+    scope: "group",
+    participants: [
+      { freshness: "fresh" },
+      { freshness: "delayed" },
+      { freshness: "offline" },
+      { freshness: "unavailable" },
+    ],
+  };
+  assert.deepEqual(describeGroupFreshness(snapshot), {
+    label: "1 rider offline",
+    age: "3 of 4 positions available",
+    counts: { fresh: 1, delayed: 1, offline: 1, unavailable: 1 },
+  });
+  assert.equal(participantFreshnessLabel("unavailable"), "No position yet");
+  assert.equal(participantRoleLabel("tailEndCharlie"), "Tail End Charlie");
+});
+
+test("group map bounds contain only validated rider and route coordinates", () => {
+  assert.deepEqual(
+    observerCoordinates({
+      scope: "group",
+      participants: [
+        { position: { latitude: 51.5, longitude: -2.5 } },
+        { position: null },
+        { position: { latitude: 999, longitude: -2 } },
+      ],
+      route: {
+        points: [
+          { latitude: 51.6, longitude: -2.4 },
+          { latitude: "51.7", longitude: -2.3 },
+        ],
+      },
+    }),
+    [
+      [-2.5, 51.5],
+      [-2.4, 51.6],
+    ],
   );
 });
 

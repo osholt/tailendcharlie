@@ -65,6 +65,28 @@ void main() {
     expect(backwards.progressMeters, forward.progressMeters);
     expect(offRoute.progressMeters, forward.progressMeters);
   });
+
+  test('distance to a sparse route measures its segments, not only points', () {
+    final route = _route(const [
+      GeoPoint(latitude: 0, longitude: 0),
+      GeoPoint(latitude: 0, longitude: 0.2),
+    ]);
+
+    expect(
+      distanceToRouteMeters(
+        route,
+        const GeoPoint(latitude: 0.0001, longitude: 0.1),
+      ),
+      lessThan(12),
+    );
+    expect(
+      distanceToRouteMeters(
+        route,
+        const GeoPoint(latitude: 0.05, longitude: 0.1),
+      ),
+      greaterThan(5000),
+    );
+  });
 }
 
 ImportedRoute _route(List<GeoPoint> points) => ImportedRoute(

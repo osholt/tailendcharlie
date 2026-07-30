@@ -150,6 +150,7 @@ class RideMapFeature extends StatefulWidget {
     this.ridePaused = false,
     this.rideHasNoLeader = false,
     this.rideStarted = false,
+    this.markerFeaturesEnabled = true,
     this.onLeaveRide,
     this.onOpenRideMenu,
     this.onRouteChanged,
@@ -203,6 +204,7 @@ class RideMapFeature extends StatefulWidget {
     bool ridePaused = false,
     bool rideHasNoLeader = false,
     bool rideStarted = false,
+    bool markerFeaturesEnabled = true,
     Future<void> Function()? onLeaveRide,
     Future<void> Function()? onOpenRideMenu,
     ValueChanged<ImportedRoute?>? onRouteChanged,
@@ -249,6 +251,7 @@ class RideMapFeature extends StatefulWidget {
     ridePaused: ridePaused,
     rideHasNoLeader: rideHasNoLeader,
     rideStarted: rideStarted,
+    markerFeaturesEnabled: markerFeaturesEnabled,
     onLeaveRide: onLeaveRide,
     onOpenRideMenu: onOpenRideMenu,
     onRouteChanged: onRouteChanged,
@@ -308,6 +311,7 @@ class RideMapFeature extends StatefulWidget {
   final bool ridePaused;
   final bool rideHasNoLeader;
   final bool rideStarted;
+  final bool markerFeaturesEnabled;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
@@ -452,6 +456,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         ridePaused: widget.ridePaused,
         rideHasNoLeader: widget.rideHasNoLeader,
         rideStarted: widget.rideStarted,
+        markerFeaturesEnabled: widget.markerFeaturesEnabled,
         onLeaveRide: widget.onLeaveRide,
         onOpenRideMenu: widget.onOpenRideMenu,
         canEditRoute: widget.canEditRoute,
@@ -523,7 +528,11 @@ class RideMapScreen extends StatefulWidget {
     this.onEmergencyContactUsed,
     this.ridePaused = false,
     this.rideHasNoLeader = false,
-    this.rideStarted = false,
+    // This injectable screen represents an active map unless a focused test or
+    // embedder says otherwise. RideMapFeature always passes the real lifecycle
+    // value, including false during assembly.
+    this.rideStarted = true,
+    this.markerFeaturesEnabled = true,
     this.onLeaveRide,
     this.onOpenRideMenu,
     this.canEditRoute = true,
@@ -537,6 +546,7 @@ class RideMapScreen extends StatefulWidget {
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.destinationRoutePlanner,
+    this.roadRoutingService,
     this.routeGeometryEnricher,
     this.demoRouteLoader,
     this.recordedRouteStore,
@@ -594,6 +604,7 @@ class RideMapScreen extends StatefulWidget {
   final bool ridePaused;
   final bool rideHasNoLeader;
   final bool rideStarted;
+  final bool markerFeaturesEnabled;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
   final bool canEditRoute;
@@ -607,6 +618,7 @@ class RideMapScreen extends StatefulWidget {
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final DestinationRoutePlanner? destinationRoutePlanner;
+  final RoadRoutingService? roadRoutingService;
   final RouteGeometryEnricher? routeGeometryEnricher;
   final Future<ImportedRoute> Function()? demoRouteLoader;
 
@@ -692,11 +704,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// a justification here and at the site before adding another test, or the
   /// route-less ride quietly loses another control.
   ImportedRoute? _route;
+  ImportedRoute? _routeStartConnector;
   Object? _loadError;
   bool _loading = true;
   bool _importing = false;
   bool _exporting = false;
   bool _routing = false;
+  bool _routingToStart = false;
   bool _navigationMode = false;
   bool _navigationCanvasActive = false;
   bool _markerOverviewVisible = false;
@@ -773,13 +787,42 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
-  ImportedRoute? get _rejoinRoute => widget.rejoinNavigationRoute?.value;
+  ImportedRoute? get _externalRejoinRoute =>
+      widget.rejoinNavigationRoute?.value;
+
+  ImportedRoute? get _rejoinRoute =>
+      _externalRejoinRoute ?? _routeStartConnector;
+
+  GeoPoint? get _plannedRouteStart => _route?.paths
+      .where((path) => path.points.isNotEmpty)
+      .firstOrNull
+      ?.points
+      .first;
+
+  double? get _routeStartOfferDistance {
+    if (!widget.rideStarted ||
+        _routeStartConnector != null ||
+        _externalRejoinRoute != null) {
+      return null;
+    }
+    final position = _effectivePosition;
+    final start = _plannedRouteStart;
+    final route = _route;
+    if (position == null || start == null || route == null) return null;
+    if (_progressGeometry.progressMeters > 50 ||
+        distanceToRouteMeters(route, position) <= 250) {
+      return null;
+    }
+    final distance = _mapDistanceMeters(position, start);
+    return distance > 250 ? distance : null;
+  }
 
   RouteProgressGeometry get _navigationProgressGeometry =>
       _rejoinRoute == null ? _progressGeometry : _rejoinProgressGeometry;
 
   /// Route-derived: the marker plan is an analysis of the planned route.
-  RouteMarkerPlan get _markerPlan => _route == null
+  RouteMarkerPlan get _markerPlan =>
+      !widget.markerFeaturesEnabled || _route == null
       ? const RouteMarkerPlan(points: [])
       : const RouteMarkerPlanAnalyzer().analyze(_route!);
 
@@ -868,16 +911,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // Preferences the OSRM driving profile cannot express are sent to the same
     // Valhalla motorcycle service the web planner uses, by the same rule, so the
     // two surfaces agree about what a preference means (#182).
-    _roadRoutingService = PreferenceAwareRoadRoutingService(
-      osrm: OsrmRoadRoutingService(
-        client: _routingClient,
-        baseUrl: routingConfiguration.routingBaseUrl,
-      ),
-      motorcycle: ValhallaMotorcycleRoutingService(
-        client: _routingClient,
-        routeUrl: routingConfiguration.motorcycleRoutingUrl,
-      ),
-    );
+    _roadRoutingService =
+        widget.roadRoutingService ??
+        PreferenceAwareRoadRoutingService(
+          osrm: OsrmRoadRoutingService(
+            client: _routingClient,
+            baseUrl: routingConfiguration.routingBaseUrl,
+          ),
+          motorcycle: ValhallaMotorcycleRoutingService(
+            client: _routingClient,
+            routeUrl: routingConfiguration.motorcycleRoutingUrl,
+          ),
+        );
     _defaultDestinationRoutePlanner = DestinationRoutePlanner(
       searchService: NominatimDestinationSearchService(
         client: _routingClient,
@@ -996,6 +1041,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
       if (!mounted) return;
       setState(() {
         _route = route;
+        _routeStartConnector = null;
+        _rejoinProgressTracker.reset();
+        _rejoinProgressGeometry = _rejoinProgressTracker.update(
+          _externalRejoinRoute,
+          _effectivePosition,
+        );
         _progressGeometry = _routeProgressTracker.update(
           route,
           _effectivePosition,
@@ -1086,13 +1137,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // A route can contain manoeuvres before the device has a usable location.
     // The guidance banner is only composed into the band while guidance is
     // actually visible, so nothing reserves space for a banner that is absent.
-    final hasGuidance = _navigationGuidance.value.isVisible;
+    final routeStartOfferDistance = _routeStartOfferDistance;
+    final hasGuidance =
+        routeStartOfferDistance == null &&
+        widget.rideStarted &&
+        _navigationGuidance.value.isVisible;
     // Leaving a ride is a ride-lifecycle action, not a route action (#124).
-    final showLeaveRide = widget.onLeaveRide != null;
+    final showLeaveRide = widget.rideStarted && widget.onLeaveRide != null;
     // "Follow me" is the way into the navigation viewport, and it is on screen
     // whenever the camera is not locked into it (#141). The junction overview owns
     // the whole screen while it is up, so nothing is offered underneath it.
-    final showFollowMe = !markerOverviewActive && !_navigationViewportLocked;
+    final showFollowMe =
+        widget.rideStarted &&
+        !markerOverviewActive &&
+        !_navigationViewportLocked;
     return Scaffold(
       appBar: hideChrome
           ? null
@@ -1207,14 +1265,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         value: _MapAction.maneuverList,
                         child: Text('All turns for this route'),
                       ),
-                      PopupMenuItem(
-                        value: _MapAction.markerPlan,
-                        child: Text(
-                          _markerPlanVisible
-                              ? 'Hide marker plan'
-                              : 'Show marker plan',
+                      if (widget.markerFeaturesEnabled)
+                        PopupMenuItem(
+                          value: _MapAction.markerPlan,
+                          child: Text(
+                            _markerPlanVisible
+                                ? 'Hide marker plan'
+                                : 'Show marker plan',
+                          ),
                         ),
-                      ),
                     ],
                     if (!kIsWeb &&
                         defaultTargetPlatform == TargetPlatform.android)
@@ -1274,6 +1333,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     hideChrome: hideChrome,
                     markerOverviewActive: markerOverviewActive,
                     hasGuidance: hasGuidance,
+                    routeStartOfferDistance: routeStartOfferDistance,
                     showRideMenu: showRideMenu,
                     showLeaveRide: showLeaveRide,
                     showFollowMe: showFollowMe,
@@ -1412,6 +1472,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     required bool hideChrome,
     required bool markerOverviewActive,
     required bool hasGuidance,
+    required double? routeStartOfferDistance,
     required bool showRideMenu,
     required bool showLeaveRide,
     required bool showFollowMe,
@@ -1482,7 +1543,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
             },
           ),
       ];
-      final guidance = hasGuidance
+      final guidance = routeStartOfferDistance != null
+          ? _RouteStartBanner(
+              distanceMeters: routeStartOfferDistance,
+              distanceUnit: widget.distanceUnit,
+              compact: landscape,
+              routing: _routingToStart,
+              onNavigate: _routingToStart ? null : _navigateToRouteStart,
+            )
+          : hasGuidance
           ? ValueListenableBuilder<NavigationGuidanceAssessment>(
               valueListenable: _navigationGuidance,
               builder: (context, assessment, _) {
@@ -1604,7 +1673,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 alert.message.isAcknowledged &&
                 alert.message.message == QuickMessage.emergencyStop,
           );
-      final sosButton = widget.onEmergencyAlert == null
+      final sosButton = !widget.rideStarted || widget.onEmergencyAlert == null
           ? null
           : FloatingActionButton.extended(
               key: const Key('emergency-alert-button'),
@@ -1663,7 +1732,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           : null;
       // Reporting a camera or a patrol car is a ride action, not a route action,
       // and it earns a place beside them (#125).
-      final reportButton = widget.onReportHazard == null
+      final reportButton = !widget.rideStarted || widget.onReportHazard == null
           ? null
           : _ReportSightingButton(onPressed: _reportEnforcementSighting);
       final hasActions =
@@ -1731,7 +1800,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // The speed sign owns its own slot at the edge of the band, clear of the
       // action row: portrait puts it under the actions and hard right, landscape
       // in the right-hand rail away from the centre column (#125).
-      final speedLimit = markerOverviewActive
+      final speedLimit = markerOverviewActive || !widget.rideStarted
           ? null
           : KeyedSubtree(
               key: const Key('posted-speed-limit-position'),
@@ -2637,6 +2706,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _lastHandledCurrentPosition = position;
       _lastHandledNavigationFix = null;
     }
+    _finishRouteStartConnectorIfReached(position);
     final suppliedHeading = _navigationFix?.headingDegrees;
     double? observedHeading;
     if (suppliedHeading != null && suppliedHeading.isFinite) {
@@ -2792,12 +2862,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   void _onRejoinNavigationRouteChanged() {
+    if (_externalRejoinRoute != null && _routeStartConnector != null) {
+      setState(() {
+        _routeStartConnector = null;
+        _rejoinProgressTracker.reset();
+      });
+    }
     _rejoinProgressGeometry = _rejoinProgressTracker.update(
       _rejoinRoute,
       _effectivePosition,
     );
     _updateNavigationGuidance(_effectivePosition);
     _observeSpeedLimit(_navigationFix);
+    _scheduleMapLibreSync(progress: true, overlays: true);
   }
 
   void _onOverlayDataChanged() {
@@ -3879,10 +3956,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   /// Every rider's travelled trail with enough geometry to draw. Rendering is
   /// deliberately independent of whether a route is loaded or matched (#100).
-  List<MapOverlayTrace> get _visibleRiderTrails =>
-      (widget.riderTrails?.value ?? const <MapOverlayTrace>[])
-          .where((trace) => trace.points.length >= 2)
-          .toList(growable: false);
+  List<MapOverlayTrace> get _visibleRiderTrails {
+    final connector = _externalRejoinRoute == null
+        ? _routeStartConnector
+        : null;
+    return [
+      ...(widget.riderTrails?.value ?? const <MapOverlayTrace>[]),
+      if (connector != null)
+        MapOverlayTrace(
+          id: 'route-start-connector',
+          points: connector.paths
+              .expand((path) => path.points)
+              .toList(growable: false),
+          label: 'Route to planned start',
+          kind: RiderTrailKind.rejoin,
+        ),
+    ].where((trace) => trace.points.length >= 2).toList(growable: false);
+  }
 
   Polyline _routePolyline(List<GeoPoint> path, RouteLineStyle style) =>
       Polyline(
@@ -4431,6 +4521,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       warnings: reviewWarnings,
       previousRoute: previousRoute ?? _route,
       canEditStops: canEditStops,
+      showMarkerPlan: widget.markerFeaturesEnabled,
       onMarkerReviewChanged: (review) => markerReview = review,
       onReshapeRoute: (candidate, shapingPoints) => RouteReshapePlanner(
         routingService: _roadRoutingService,
@@ -4449,6 +4540,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _routeProgressTracker.reset();
     setState(() {
       _route = activeRoute;
+      _routeStartConnector = null;
+      _rejoinProgressTracker.reset();
+      _rejoinProgressGeometry = _rejoinProgressTracker.update(
+        _externalRejoinRoute,
+        _effectivePosition,
+      );
       _progressGeometry = _routeProgressTracker.update(
         activeRoute,
         _effectivePosition,
@@ -4548,6 +4645,69 @@ class _RideMapScreenState extends State<RideMapScreen> {
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
+  }
+
+  Future<void> _navigateToRouteStart() async {
+    final position = _effectivePosition;
+    final start = _plannedRouteStart;
+    if (position == null || start == null || _routingToStart) return;
+    setState(() => _routingToStart = true);
+    try {
+      final result = await _roadRoutingService.routeThrough([position, start]);
+      if (result.points.length < 2) {
+        throw const FormatException(
+          'The routing service returned no usable route.',
+        );
+      }
+      final connector = ImportedRoute(
+        id: 'route-start-${DateTime.now().microsecondsSinceEpoch}',
+        name: 'Ride to route start',
+        importedAt: DateTime.now().toUtc(),
+        sourceFileName: 'route-start',
+        paths: [
+          RoutePath(
+            kind: RoutePathKind.route,
+            name: 'Route to planned start',
+            points: result.points,
+          ),
+        ],
+        waypoints: const [],
+        maneuvers: result.maneuvers,
+      );
+      if (!mounted) return;
+      setState(() {
+        _routeStartConnector = connector;
+        _rejoinProgressTracker.reset();
+        _rejoinProgressGeometry = _rejoinProgressTracker.update(
+          connector,
+          _effectivePosition,
+        );
+      });
+      _updateNavigationGuidance(_effectivePosition);
+      _scheduleMapLibreSync(progress: true, overlays: true);
+      _showMessage('Directions to the planned route start are ready.');
+    } on Object catch (error) {
+      _showMessage('Could not plan a route to the start: $error');
+    } finally {
+      if (mounted) setState(() => _routingToStart = false);
+    }
+  }
+
+  void _finishRouteStartConnectorIfReached(GeoPoint? position) {
+    final start = _plannedRouteStart;
+    if (_routeStartConnector == null ||
+        position == null ||
+        start == null ||
+        _mapDistanceMeters(position, start) > 100) {
+      return;
+    }
+    setState(() {
+      _routeStartConnector = null;
+      _rejoinProgressTracker.reset();
+      _rejoinProgressGeometry = const RouteProgressGeometry.empty();
+    });
+    _scheduleMapLibreSync(progress: true, overlays: true);
+    _showMessage('Planned route reached. Following the main route.');
   }
 
   /// Frames the whole route, or the rider when there is no route.
@@ -4965,6 +5125,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _routeProgressTracker.reset();
           setState(() {
             _route = null;
+            _routeStartConnector = null;
+            _rejoinProgressTracker.reset();
+            _rejoinProgressGeometry = _rejoinProgressTracker.update(
+              _externalRejoinRoute,
+              _effectivePosition,
+            );
             _progressGeometry = const RouteProgressGeometry.empty();
             _navigationMode = false;
             _navigationCanvasActive = false;
@@ -7020,7 +7186,7 @@ class _GroupMiniMapPainter extends CustomPainter {
           ),
         ),
       )..layout();
-      final available = radius * 2 * 0.84;
+      final available = radius * 2 * 0.94;
       final scale = symbol.kind == RiderSymbolKind.initials
           ? math.min(available / painter.width, available / painter.height)
           : 1.0;
@@ -7860,6 +8026,102 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
               // not lost: [semanticLabel] and the tooltip above still say which
               // number is which, where the limit came from, and how stale it is.
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RouteStartBanner extends StatelessWidget {
+  const _RouteStartBanner({
+    required this.distanceMeters,
+    required this.distanceUnit,
+    required this.compact,
+    required this.routing,
+    required this.onNavigate,
+  });
+
+  final double distanceMeters;
+  final DistanceUnit distanceUnit;
+  final bool compact;
+  final bool routing;
+  final VoidCallback? onNavigate;
+
+  @override
+  Widget build(BuildContext context) {
+    final distance = MeasurementFormatter(
+      distanceUnit,
+    ).distance(distanceMeters);
+    return Semantics(
+      key: const Key('route-start-guidance-banner'),
+      container: true,
+      liveRegion: true,
+      label: 'The planned route starts $distance away.',
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 8 : 10,
+              vertical: compact ? 6 : 8,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xF2252E39),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFF445262)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x55000000),
+                  blurRadius: 10,
+                  offset: Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.route_rounded,
+                  color: Color(0xFF68A9FF),
+                  size: 26,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Planned route starts $distance away',
+                    maxLines: compact ? 1 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: compact ? 13 : 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.tonalIcon(
+                  key: const Key('navigate-to-route-start'),
+                  onPressed: onNavigate,
+                  style: FilledButton.styleFrom(
+                    padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 12),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: routing
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.navigation_rounded, size: 18),
+                  label: Text(
+                    routing
+                        ? 'Planning…'
+                        : compact
+                        ? 'To start'
+                        : 'Navigate to start',
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

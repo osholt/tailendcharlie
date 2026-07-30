@@ -22,7 +22,8 @@ class ObserverAccessController extends ChangeNotifier {
   RideSession? _session;
   List<ObserverGrantCredentials> _credentials = const [];
   ObserverInvite? _latestInvite;
-  ObserverPublishedSnapshot? _pendingSnapshot;
+  ({ObserverPublishedSnapshot rider, ObserverPublishedSnapshot? group})?
+  _pendingSnapshots;
   Future<void>? _publishLoop;
   Timer? _publishTimer;
   Future<void> _grantMutationChain = Future.value();
@@ -123,6 +124,7 @@ class ObserverAccessController extends ChangeNotifier {
   Future<void> create({
     required String label,
     required Duration duration,
+    ObserverAccessScope scope = ObserverAccessScope.rider,
   }) async {
     final session = _session;
     if (session == null || _busy) return;
@@ -131,6 +133,7 @@ class ObserverAccessController extends ChangeNotifier {
         session,
         label: label,
         duration: duration,
+        scope: scope,
       );
       try {
         await _serializeGrantMutation(() async {
@@ -211,13 +214,21 @@ class ObserverAccessController extends ChangeNotifier {
   }
 
   void publishSnapshot(ObserverPublishedSnapshot snapshot) {
-    _pendingSnapshot = snapshot;
+    publishSnapshots(rider: snapshot);
+  }
+
+  void publishSnapshots({
+    required ObserverPublishedSnapshot rider,
+    ObserverPublishedSnapshot? group,
+  }) {
+    _pendingSnapshots = (rider: rider, group: group);
     _ensurePublishing();
   }
 
   void _ensurePublishing({bool force = false}) {
-    final snapshot = _pendingSnapshot;
-    if (snapshot == null || _publishLoop != null) return;
+    final snapshots = _pendingSnapshots;
+    if (snapshots == null || _publishLoop != null) return;
+    final snapshot = snapshots.rider;
     final immediate =
         _lastDispatchedAt == null ||
         snapshot.statusUpdatedAt != _lastDispatchedStatusAt ||
@@ -266,8 +277,9 @@ class ObserverAccessController extends ChangeNotifier {
   }
 
   Future<void> _publishOne() async {
-    final snapshot = _pendingSnapshot!;
-    _pendingSnapshot = null;
+    final snapshots = _pendingSnapshots!;
+    final snapshot = snapshots.rider;
+    _pendingSnapshots = null;
     _lastDispatchedAt = _clock();
     _lastDispatchedStatusAt = snapshot.statusUpdatedAt;
     _lastDispatchedAssistanceAt = snapshot.assistanceUpdatedAt;
@@ -280,8 +292,20 @@ class ObserverAccessController extends ChangeNotifier {
     for (var index = 0; index < active.length; index += 4) {
       final results = await Future.wait(
         active.skip(index).take(4).map((credentials) async {
+          final scopedSnapshot =
+              credentials.grant.scope == ObserverAccessScope.group
+              ? snapshots.group
+              : snapshots.rider;
+          if (scopedSnapshot == null) {
+            return (
+              credentials: credentials,
+              unavailable: false,
+              retryable: false,
+              retryAfter: null as Duration?,
+            );
+          }
           try {
-            await _api.publish(credentials, snapshot);
+            await _api.publish(credentials, scopedSnapshot);
             return (
               credentials: credentials,
               unavailable: false,
@@ -341,7 +365,7 @@ class ObserverAccessController extends ChangeNotifier {
     }
     if (retryableFailure &&
         _credentials.any((value) => value.grant.isActiveAt(_clock()))) {
-      _pendingSnapshot ??= snapshot;
+      _pendingSnapshots ??= snapshots;
       _retryAttempt = _retryAttempt >= 5 ? 5 : _retryAttempt + 1;
       final exponentialSeconds = 5 * (1 << (_retryAttempt - 1));
       final requestedSeconds = requestedRetryDelay?.inSeconds ?? 0;

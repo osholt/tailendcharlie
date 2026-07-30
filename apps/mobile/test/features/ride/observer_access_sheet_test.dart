@@ -25,7 +25,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Watcher link'), findsOneWidget);
     expect(find.textContaining('last-known position'), findsOneWidget);
+    expect(find.textContaining('does not join the ride'), findsOneWidget);
     expect(find.textContaining('does not share the ride code'), findsOneWidget);
     expect(find.textContaining('not proof that you are safe'), findsOneWidget);
     FilledButton createButton = tester.widget(
@@ -45,6 +47,44 @@ void main() {
     expect(find.text('Link ready'), findsOneWidget);
     expect(find.text('Revoke'), findsOneWidget);
   });
+
+  testWidgets('leader can create a disclosed whole-group watcher link', (
+    tester,
+  ) async {
+    final api = _FakeObserverApi();
+    final controller = ObserverAccessController(api, _MemoryStore());
+    await controller.attach(_session);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: ObserverAccessSheet(
+            controller: controller,
+            canShareGroup: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Whole group'));
+    await tester.pump();
+    expect(find.textContaining('Tell the whole group'), findsOneWidget);
+    expect(find.textContaining('I have told the group'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('observer-consent')));
+    await tester.tap(find.byKey(const Key('observer-consent')));
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key('create-observer-link')));
+    await tester.tap(find.byKey(const Key('create-observer-link')));
+    await tester.pumpAndSettle();
+
+    expect(api.lastScope, ObserverAccessScope.group);
+    expect(find.text('Share group watcher link'), findsOneWidget);
+    expect(find.textContaining('Whole group ·'), findsOneWidget);
+  });
 }
 
 final _session = RideSession(
@@ -60,6 +100,7 @@ final _session = RideSession(
 
 class _FakeObserverApi implements ObserverAccessApi {
   int createCount = 0;
+  ObserverAccessScope? lastScope;
 
   @override
   final configuration = ObserverAccessConfiguration(
@@ -74,14 +115,17 @@ class _FakeObserverApi implements ObserverAccessApi {
     RideSession session, {
     required String label,
     required Duration duration,
+    ObserverAccessScope scope = ObserverAccessScope.rider,
   }) async {
     createCount += 1;
+    lastScope = scope;
     return ObserverGrantCredentials(
       grant: ObserverGrant(
         id: 'grant-a',
         label: label,
         createdAt: DateTime.now(),
         expiresAt: DateTime.now().add(duration),
+        scope: scope,
       ),
       managementToken: 'om1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       publisherToken: 'op1_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',

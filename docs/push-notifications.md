@@ -26,9 +26,10 @@ revoked registrations.
 | Ride paused, resumed or ended | Current group | Administrative |
 | ICE information shared | Explicit recipients, or the current group for an explicit group share | Critical; lock-screen text contains no ICE data |
 
-Trusted external observers are not included until the separate observer
-authorisation and privacy work exists. A ride code or ordinary group bearer
-credential must not be repurposed as an observer credential.
+Trusted external watchers never receive push registrations or notifications.
+Their separate personal/group observer credential reads only the current
+bounded snapshot. A ride code or ordinary group bearer credential must not be
+repurposed as an observer credential.
 
 Repeated delivery of the same durable event to the same registration is
 deduplicated in PostgreSQL. The `/metrics` endpoint reports only aggregate

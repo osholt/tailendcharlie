@@ -45,7 +45,7 @@
     <main class="wrap legal">
       <h1>Privacy Policy</h1>
       <p class="legal-meta">
-        Effective 24 July 2026 &middot; Tail End Charlie is operated by
+        Effective 30 July 2026 &middot; Tail End Charlie is operated by
         <strong>Holt Racing Limited</strong> ("we", "us")
       </p>
 
@@ -54,10 +54,13 @@
           <strong>In short:</strong> Tail End Charlie shares your live
           location with your own ride group while a ride is active, so the
           group can stay together. If you explicitly create a time-limited
-          safety link, one trusted contact can also see your last-known
-          position, its freshness, ride status, and your help or
-          emergency-stop status until you revoke the link or it expires. That
-          data is encrypted at rest, kept only briefly, and deleted
+          personal safety link, one trusted contact can also see your
+          last-known position and status. A group leader can instead create a
+          whole-group watcher link after confirming the group has been told;
+          it shows the current roster, each rider's last-known position and
+          freshness, and the planned-route outline. Both links are read-only,
+          revocable and automatically expire. That data is encrypted at rest,
+          kept only briefly, and deleted
           automatically. The app has no analytics, no
           advertising, no trackers, and does not sell data. Your emergency
           contact details stay on your phone unless you choose to share them,
@@ -118,17 +121,28 @@
         relay server described below.
       </p>
 
-      <h3>Optional safety-contact link</h3>
+      <h3>Optional personal and group watcher links</h3>
       <p>
-        If you explicitly create a safety link, anyone you give that private
-        link to can use a read-only web page to see your single last-known
-        position, when it was recorded, update freshness, whether the ride is
-        waiting, active, paused or ended, and whether you most recently sent a
-        help or emergency-stop status. The link does not show other riders,
-        your location trail, the route, ride code, nearby identifiers, or your
-        ICE contact or medical notes. You choose a duration of up to 24 hours
-        and can revoke it from the app. An old or missing update is not proof
-        that you are safe.
+        If you explicitly create a personal safety link, anyone you give that
+        private link to can use a read-only web page to see your single
+        last-known position, when it was recorded, update freshness, whether
+        the ride is waiting, active, paused or ended, and whether you most
+        recently sent a help or emergency-stop status.
+      </p>
+      <p>
+        If you are the group leader, you can instead create a whole-group
+        watcher link after confirming you have told the group. It shows the
+        current rider display names, roles and colours, each rider's
+        last-known position and freshness, ride status, and a bounded outline
+        of the planned route. It does not show location trails, ride or join
+        codes, rider identifiers, speed or heading, phone or ICE information,
+        medical notes, quick-message history, rejoin routes, or any participant
+        control. The watcher does not join the ride or appear in its roster.
+      </p>
+      <p>
+        You choose a duration of up to 24 hours and can revoke either kind of
+        link from the app. An old or missing update is not proof that anybody
+        is safe.
       </p>
 
       <h3>Emergency contact (ICE) sharing</h3>
@@ -334,9 +348,9 @@
         Store and Google Play, under their own privacy policies.
       </p>
       <p>
-        <strong>Safety-contact maps.</strong> The private observer view does
-        not send a rider's last-known viewport to OpenFreeMap. It requests map
-        assets only from the same Tail End Charlie relay that serves the
+        <strong>Watcher maps.</strong> The private observer view does not send
+        a rider's or group's last-known viewport to OpenFreeMap. It requests
+        map assets only from the same Tail End Charlie relay that serves the
         observer snapshot, or shows coordinates when those private map assets
         are not configured.
       </p>
@@ -429,7 +443,8 @@
           Safety-contact access uses three separate high-entropy credentials
           for management, publishing and read-only viewing. The relay stores
           only their hashes, automatically expires them, and cannot use them
-          to join a ride or retrieve the ride event feed.
+          to join a ride or retrieve the ride event feed. Personal and group
+          grants have distinct server-enforced scopes.
         </li>
       </ul>
 

@@ -168,4 +168,76 @@ void main() {
     expect(find.byKey(const Key('interactive-recap-map')), findsOneWidget);
     expect(find.byKey(const Key('recap-route-sketch')), findsNothing);
   });
+
+  testWidgets('configured recap uses a Flutter-rendered capture-safe map', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideRecapScreen(
+          summary: summary,
+          routePoints: route,
+          basemapConfiguration: const BasemapConfiguration(
+            styleUrl: 'https://example.com/style.json',
+            darkStyleUrl: 'https://example.com/dark.json',
+            attribution: 'Map data',
+          ),
+          mapBuilder: (key, paths, configuration, onReady, onFailure) =>
+              ColoredBox(key: key, color: Colors.blue),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('recap-basemap-light')), findsOneWidget);
+    expect(find.byKey(const Key('recap-route-sketch')), findsNothing);
+    expect(find.text('Map data'), findsOneWidget);
+  });
+
+  testWidgets('a failed vector map falls back to the route outline', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideRecapScreen(
+          summary: summary,
+          routePoints: route,
+          basemapConfiguration: const BasemapConfiguration(
+            styleUrl: 'https://example.com/style.json',
+            attribution: 'Map data',
+          ),
+          mapBuilder: (key, paths, configuration, onReady, onFailure) =>
+              _FailingMap(key: key, onFailure: onFailure),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const Key('recap-route-sketch')), findsOneWidget);
+    expect(find.textContaining('will use the route outline'), findsOneWidget);
+    expect(find.text('Map data'), findsNothing);
+  });
+}
+
+class _FailingMap extends StatefulWidget {
+  const _FailingMap({super.key, required this.onFailure});
+
+  final ValueChanged<Object> onFailure;
+
+  @override
+  State<_FailingMap> createState() => _FailingMapState();
+}
+
+class _FailingMapState extends State<_FailingMap> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => widget.onFailure(StateError('offline')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.expand();
 }

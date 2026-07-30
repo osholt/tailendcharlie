@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 import '../../domain/distance_unit.dart';
@@ -16,7 +14,6 @@ class RideRecapCard extends StatelessWidget {
     required this.summary,
     required this.routePoints,
     this.distanceUnit = DistanceUnit.kilometres,
-    this.basemap,
     this.mapLayer,
     this.basemapAttribution,
     this.dark = true,
@@ -26,24 +23,11 @@ class RideRecapCard extends StatelessWidget {
   final List<GeoPoint> routePoints;
   final DistanceUnit distanceUnit;
 
-  /// A basemap already rasterised to an image, drawn behind the route.
+  /// A Flutter-rendered map included directly in the exported image.
   ///
-  /// An image rather than a map widget on purpose. MapLibre renders as a platform
-  /// view, which `RepaintBoundary.toImage` cannot capture - it would export a
-  /// blank rectangle, the same class of failure as #29. The snapshot is taken
-  /// through MapLibre's own `takeSnapshot` and handed here already flattened, so
-  /// the capture only ever sees Flutter-drawn layers (#157).
-  ///
-  /// Null means no basemap: offline, unconfigured, or a snapshot that failed. The
-  /// card falls back to the route sketch and says so rather than exporting an
-  /// empty map.
-  final ui.Image? basemap;
-
-  /// The live map shown while the rider is looking at the card, before Share.
-  ///
-  /// [basemap] wins when both are given: at capture time the platform view is
-  /// replaced by its own snapshot, because that is the only form
-  /// `RepaintBoundary.toImage` can see.
+  /// This must never be a platform view: `RepaintBoundary.toImage` cannot see
+  /// those. The production recap uses [FlutterVectorRoutePreview], so the map
+  /// the rider frames is the map captured into the PNG (#157).
   final Widget? mapLayer;
 
   /// Rendered into the card, because a shared image leaves the app and the
@@ -117,14 +101,7 @@ class RideRecapCard extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (basemap case final tiles?)
-                          RawImage(
-                            key: const Key('recap-basemap'),
-                            image: tiles,
-                            fit: BoxFit.cover,
-                          )
-                        else
-                          ?mapLayer,
+                        ?mapLayer,
                         if (routePoints.length < 2)
                           // #124: a ride with no route is valid, and its recap
                           // says so rather than failing.
@@ -137,12 +114,11 @@ class RideRecapCard extends StatelessWidget {
                               textAlign: TextAlign.center,
                             ),
                           )
-                        else if (basemap == null && mapLayer == null)
-                          // The fallback owns its route sketch. A live MapLibre
-                          // view and its captured snapshot already contain the
-                          // geographically aligned route layer; painting this
-                          // fixed sketch over them made the line stay put while
-                          // the rider panned the map.
+                        else if (mapLayer == null)
+                          // The fallback owns its route sketch. The live Flutter
+                          // map already contains the geographically aligned
+                          // route layer; painting this fixed sketch over it made
+                          // the line stay put while the rider panned the map.
                           Padding(
                             padding: const EdgeInsets.all(20),
                             child: CustomPaint(

@@ -218,6 +218,165 @@ void main() {
     expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
   });
 
+  testWidgets('pre-start map keeps riding controls and guidance hidden', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'pre-start-map-chrome',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'pre-start',
+      name: 'Pre-start route',
+      importedAt: DateTime.utc(2026, 7, 30),
+      sourceFileName: 'pre-start.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.route,
+          points: [
+            GeoPoint(latitude: 51, longitude: -2),
+            GeoPoint(latitude: 51, longitude: -1.98),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51, longitude: -1.99),
+          type: 'turn',
+          modifier: 'right',
+          name: 'Test Road',
+        ),
+      ],
+    );
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51, longitude: -1.999),
+        recordedAt: DateTime.utc(2026, 7, 30, 10),
+        speedMetersPerSecond: 0,
+        headingDegrees: 90,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          rideStarted: false,
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final key in const [
+      'navigation-guidance-banner',
+      'navigation-guidance-status-banner',
+      'route-start-guidance-banner',
+      'emergency-alert-button',
+      'leave-ride-button',
+      'report-sighting-button',
+      'navigation-follow-button',
+      'posted-speed-limit-position',
+    ]) {
+      expect(
+        find.byKey(Key(key)),
+        findsNothing,
+        reason: '$key belongs to an active ride, not the pre-start map',
+      );
+    }
+  });
+
+  testWidgets('a distant planned route offers directions to its start', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'route-start-guidance',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'distant-route',
+      name: 'Distant route',
+      importedAt: DateTime.utc(2026, 7, 30),
+      sourceFileName: 'distant.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.route,
+          points: [
+            GeoPoint(latitude: 51, longitude: -2),
+            GeoPoint(latitude: 51, longitude: -1.98),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.1, longitude: -2),
+        recordedAt: DateTime.utc(2026, 7, 30, 10),
+        speedMetersPerSecond: 0,
+        headingDegrees: 180,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final routing = _RouteStartRoutingService();
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          roadRoutingService: routing,
+          distanceUnit: DistanceUnit.miles,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('route-start-guidance-banner')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Planned route starts'), findsOneWidget);
+    expect(find.text('To start'), findsOneWidget);
+    expect(
+      find.byKey(const Key('navigation-guidance-status-banner')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const Key('navigate-to-route-start')));
+    await tester.pumpAndSettle();
+
+    expect(routing.calls, hasLength(1));
+    expect(routing.calls.single.first, navigation.value!.point);
+    expect(routing.calls.single.last, route.paths.first.points.first);
+    expect(find.byKey(const Key('route-start-guidance-banner')), findsNothing);
+    expect(find.byKey(const Key('navigation-guidance-banner')), findsOneWidget);
+    expect(find.text('Road to start'), findsOneWidget);
+  });
+
   testWidgets('group mini-map appears before a route is loaded', (
     tester,
   ) async {
@@ -378,6 +537,7 @@ void main() {
             routeImporter: RouteImporter(source: const _NoFileSource()),
             offlineTileCache: cache,
             canEditRoute: false,
+            rideStarted: false,
           ),
         ),
       );
@@ -4181,6 +4341,35 @@ class _StraightRoadRoutingService implements RoadRoutingService {
     distanceMeters: 12000,
     duration: const Duration(minutes: 22),
   );
+}
+
+class _RouteStartRoutingService implements RoadRoutingService {
+  final calls = <List<GeoPoint>>[];
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+  }) async {
+    calls.add(List<GeoPoint>.of(waypoints));
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: 11000,
+      duration: const Duration(minutes: 15),
+      maneuvers: [
+        RoadRouteManeuver(
+          position: GeoPoint(
+            latitude: (waypoints.first.latitude + waypoints.last.latitude) / 2,
+            longitude:
+                (waypoints.first.longitude + waypoints.last.longitude) / 2,
+          ),
+          type: 'turn',
+          modifier: 'left',
+          name: 'Road to start',
+        ),
+      ],
+    );
+  }
 }
 
 class _WidgetSpeedLimitProvider implements SpeedLimitProvider {

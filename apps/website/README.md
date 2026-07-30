@@ -48,11 +48,13 @@ the relay.
 Cloudflare Pages is connected directly to this repository and publishes the
 site automatically from `main`.
 
-`observer.html` is the no-index, read-only safety-contact view. A rider creates
-its time-limited link in the mobile ride menu; the high-entropy secret remains
-in the URL fragment and is sent only to the relay in an authorization header.
-The page shows one last-known point with age/freshness and never accepts a ride
-join code. Released apps share the copy served by their own relay host, so
+`observer.html` is the no-index, read-only watcher view. A rider can share one
+phone's last-known status; a group leader can instead disclose a bounded live
+roster, individual position freshness and planned-route outline. Both use a
+time-limited link whose high-entropy secret remains in the URL fragment and is
+sent only to the relay in an authorization header. The page never accepts a
+ride join code or makes the watcher a participant. Released apps share the copy
+served by their own relay host, so
 production and pre-production credentials cannot cross environments. The
 Cloudflare Pages copy uses the `tec-observer-api` meta value only as a
 production-site fallback. Observer map requests are same-origin and fall back

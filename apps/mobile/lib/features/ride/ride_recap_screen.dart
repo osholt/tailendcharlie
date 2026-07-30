@@ -2,16 +2,14 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:share_plus/share_plus.dart';
 
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/basemap_configuration.dart';
-import '../../services/recap_basemap_snapshot.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/trail_display_simplifier.dart';
-import '../map/resolved_route_map_preview.dart';
+import '../map/flutter_vector_route_preview.dart';
 import 'ride_recap_card.dart';
 
 /// Shows [RideRecapCard] full-screen and shares it as a PNG - a purpose-made
@@ -24,14 +22,21 @@ class RideRecapScreen extends StatefulWidget {
     required this.routePoints,
     this.distanceUnit = DistanceUnit.kilometres,
     this.basemapConfiguration = const BasemapConfiguration(),
-    this.snapshotter = const RecapBasemapSnapshotter(),
+    this.mapBuilder,
   });
 
   final RideSummary summary;
   final List<GeoPoint> routePoints;
   final DistanceUnit distanceUnit;
   final BasemapConfiguration basemapConfiguration;
-  final RecapBasemapSnapshotter snapshotter;
+  final Widget Function(
+    Key key,
+    List<List<GeoPoint>> paths,
+    BasemapConfiguration configuration,
+    VoidCallback onReady,
+    ValueChanged<Object> onFailure,
+  )?
+  mapBuilder;
 
   static Future<void> show(
     BuildContext context, {
@@ -77,16 +82,8 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
     }
   }
 
-  ml.MapLibreMapController? _mapController;
-  bool _mapStyleReady = false;
-
-  /// The rasterised basemap, present only while capturing.
-  ///
-  /// The live map is a platform view, which `RepaintBoundary.toImage` cannot
-  /// see - capturing with it on screen produced a blank panel, which is the
-  /// reported defect (#157). So the snapshot replaces it for exactly the frames
-  /// the capture needs, then goes.
-  ui.Image? _capturedBasemap;
+  bool _mapReady = false;
+  bool _mapFailed = false;
 
   /// Light or dark, for this image only. Seeded from the app's theme so the
   /// first Share does what a rider expects, and stored nowhere.
@@ -104,20 +101,16 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
       _error = null;
     });
     try {
-      final snapshot = await widget.snapshotter.capture(
-        takeSnapshot: _mapStyleReady && _mapController != null
-            ? _mapController!.takeSnapshot
-            : null,
-        basemapConfigured: _canShowBasemap,
-      );
-      if (!mounted) return;
-      if (snapshot.hasImage) {
-        setState(() => _capturedBasemap = snapshot.image);
-        // One frame for the image to replace the platform view before the
-        // boundary is read, or the capture still sees the hole.
-        await WidgetsBinding.instance.endOfFrame;
-        if (!mounted) return;
+      if (_canShowBasemap && !_mapReady && !_mapFailed) {
+        setState(() {
+          _sharing = false;
+          _error =
+              'The recap map is still loading. Try Share again in a moment.';
+        });
+        return;
       }
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
       final boundary =
           _boundaryKey.currentContext!.findRenderObject()
               as RenderRepaintBoundary;
@@ -133,12 +126,6 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
           fileNameOverrides: [fileName],
         ),
       );
-      if (mounted && snapshot.degradedMessage != null) {
-        // Said rather than swallowed: an export with no tiles is the defect
-        // being fixed, so if it happens again the rider is told which of the
-        // reasons it was.
-        setState(() => _error = snapshot.degradedMessage);
-      }
     } on Object catch (error) {
       if (mounted) {
         setState(() => _error = 'Could not share recap image: $error');
@@ -147,27 +134,45 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
       if (mounted) {
         setState(() {
           _sharing = false;
-          _capturedBasemap = null;
         });
       }
     }
   }
 
-  /// The live map behind the route while the rider is looking at the card.
-  ///
-  /// Keyed on the palette so switching light and dark rebuilds the map with the
-  /// other style rather than leaving the old tiles behind.
-  Widget _liveBasemap() => ResolvedRouteMapPreview(
-    key: ValueKey('recap-basemap-${_dark ? 'dark' : 'light'}'),
-    paths: [_routePoints],
-    basemapConfiguration: widget.basemapConfiguration.forBrightness(
+  Widget _liveBasemap() {
+    final key = ValueKey('recap-basemap-${_dark ? 'dark' : 'light'}');
+    final configuration = widget.basemapConfiguration.forBrightness(
       dark: _dark,
-    ),
-    onControllerReady: (controller) => _mapController = controller,
-    onStyleReady: () {
-      if (mounted) setState(() => _mapStyleReady = true);
-    },
-  );
+    );
+    void ready() {
+      if (mounted) setState(() => _mapReady = true);
+    }
+
+    void failed(Object _) {
+      if (!mounted) return;
+      setState(() {
+        _mapFailed = true;
+        _mapReady = false;
+        _error =
+            'The map could not load, so this recap will use the route outline.';
+      });
+    }
+
+    return widget.mapBuilder?.call(
+          key,
+          [_routePoints],
+          configuration,
+          ready,
+          failed,
+        ) ??
+        FlutterVectorRoutePreview(
+          key: key,
+          paths: [_routePoints],
+          basemapConfiguration: configuration,
+          onReady: ready,
+          onFailure: failed,
+        );
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -186,11 +191,12 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
                     routePoints: _routePoints,
                     distanceUnit: widget.distanceUnit,
                     dark: _dark,
-                    basemap: _capturedBasemap,
-                    basemapAttribution: _canShowBasemap
+                    basemapAttribution: _canShowBasemap && !_mapFailed
                         ? widget.basemapConfiguration.attribution
                         : null,
-                    mapLayer: _canShowBasemap ? _liveBasemap() : null,
+                    mapLayer: _canShowBasemap && !_mapFailed
+                        ? _liveBasemap()
+                        : null,
                   ),
                 ),
               ),
@@ -217,8 +223,12 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
               selected: {_dark},
               // The image only. Nothing here touches the app theme, the ride
               // map, or any stored preference (#157).
-              onSelectionChanged: (selection) =>
-                  setState(() => _darkOverride = selection.first),
+              onSelectionChanged: (selection) => setState(() {
+                _darkOverride = selection.first;
+                _mapReady = false;
+                _mapFailed = false;
+                _error = null;
+              }),
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
