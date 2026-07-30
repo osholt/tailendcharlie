@@ -2,7 +2,8 @@
 
 Status: development alpha implemented; physical-device and production gates open
 Brand: **Tail End Charlie**
-Initial market: UK motorcycle groups using the second-bike drop-off system
+Initial market: UK solo riders and motorcycle groups using either the
+second-bike drop-off system or a keep-together group
 Platforms: iOS and Android
 
 ## Implementation status
@@ -10,7 +11,8 @@ Platforms: iOS and Android
 The repository now contains an integrated development alpha:
 
 - shared Flutter application plus native Swift and Kotlin shells;
-- persistent anonymous ride sessions;
+- persistent anonymous solo, second-bike drop-off and keep-together ride
+  sessions;
 - an idempotent SQLite event journal and versioned event envelope;
 - HMAC-tagged ride, role, marker, and priority-message events;
 - authenticated private invitation sharing and paste-to-join, QR display, and a
@@ -29,7 +31,9 @@ The repository now contains an integrated development alpha:
 - GPX sharing, documented Google Maps/Waze handoffs, share-sheet handoff for
   Calimoto/MyRoute/Garmin/BMW, and CSV/text ride summaries;
 - an active-ride shell joining Ride, Map, and Awareness around the same event
-  journal; and
+  journal;
+- revocable personal and leader-created whole-group watcher links that expose
+  only bounded, last-known state to a read-only browser view; and
 - CI definitions for mobile/server analysis and tests, container builds,
   PostgreSQL migrations, Android debug APKs, and unsigned iOS apps.
 
@@ -60,10 +64,12 @@ Calimoto, MyRoute-app, BMW Connected, Garmin, and other navigation products.
 
 ## 2. Problem statement
 
-Existing group-location apps become least reliable on the rural roads where
-motorcyclists most need them. The second-bike drop-off system works socially,
-but leaders and markers cannot reliably know who has passed, whether someone
-missed a junction, or whether a message has reached the rest of the group.
+Existing navigation and group-location apps become least reliable on the rural
+roads where motorcyclists most need them. Solo riders still need route recording
+and clear route-start guidance without group controls. Groups may either use the
+second-bike drop-off system or stay together; drop-off leaders and markers
+cannot reliably know who has passed, whether someone missed a junction, or
+whether a message has reached the rest of the group.
 
 The rider needs confidence that essential state will survive loss of signal,
 move between nearby phones without manual pairing during the ride, and reach the
@@ -88,7 +94,9 @@ server automatically when any rider regains connectivity.
 
 ## 4. Goals
 
-- A group of 5–30 riders can create and join a ride in under two minutes.
+- A rider can explicitly start a solo ride, a second-bike drop-off group, or a
+  keep-together group; group rides of 5–30 riders can be created and joined in
+  under two minutes.
 - Group progress, marker events, and essential messages continue when all phones
   lose mobile data but at least some riders periodically come within peer range.
 - A marker can see a reliable unique count of riders that passed and know when
@@ -99,6 +107,9 @@ server automatically when any rider regains connectivity.
   available, without opening a repair screen or resending manually.
 - A known route and its map corridor are usable offline and shareable to common
   navigation apps with the smallest practical number of taps.
+- A rider can share their own last-known state with a trusted contact, and a
+  group leader can share a bounded roster, last-known positions and route
+  outline after telling the group, without making the watcher a participant.
 
 ## 5. Non-goals for the first public version
 
@@ -176,6 +187,10 @@ Acceptance:
 - Reinstalling or joining from an uninvited device does not reveal the ride.
 - Ending a ride prevents further live-location exchange and starts the retention
   deletion timer.
+- A watcher link is time-limited and revocable, never grants ride membership,
+  and exposes neither ride credentials nor location trails; whole-group links
+  are available only to the current group leader and require an explicit
+  disclosure confirmation.
 
 #### Hybrid event transport
 

@@ -15,6 +15,7 @@ import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
+import '../../domain/ride_coordination_mode.dart';
 import '../../domain/rider_color.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
@@ -141,8 +142,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'Create a group or join with a six-digit ride code. You will go '
-                        'straight to the navigation map.',
+                        'Ride solo, create a group, or join with a six-digit ride '
+                        'code. You will go straight to the navigation map.',
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           color: const Color(0xFFB7C0CC),
                           height: 1.5,
@@ -617,6 +618,8 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
   late MotorcycleIconStyle _selectedStyle = widget.riderProfile.motorcycleStyle;
   late RiderSymbol _selectedSymbol = widget.riderProfile.riderSymbol;
   late RiderColor _selectedColor = widget.riderProfile.riderColor;
+  RideCoordinationMode _selectedCoordinationMode =
+      RideCoordinationMode.secondBikeDropOff;
 
   /// Set once a created ride's code needs sharing before handing off to the
   /// map - the moment a leader most needs it, with people waiting nearby.
@@ -689,6 +692,69 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 24),
               if (widget.creating) ...[
+                Text(
+                  'Who is riding?',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                SegmentedButton<bool>(
+                  key: const Key('ride-scope-selector'),
+                  segments: const [
+                    ButtonSegment(
+                      value: false,
+                      icon: Icon(Icons.person_outline),
+                      label: Text('Solo'),
+                    ),
+                    ButtonSegment(
+                      value: true,
+                      icon: Icon(Icons.groups_2_outlined),
+                      label: Text('Group'),
+                    ),
+                  ],
+                  selected: {_selectedCoordinationMode.isGroup},
+                  onSelectionChanged: (selection) => setState(() {
+                    _selectedCoordinationMode = selection.first
+                        ? RideCoordinationMode.secondBikeDropOff
+                        : RideCoordinationMode.solo;
+                  }),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _selectedCoordinationMode == RideCoordinationMode.solo
+                      ? RideCoordinationMode.solo.description
+                      : 'Choose how this group will handle junctions.',
+                  style: const TextStyle(
+                    color: Color(0xFFABB5C1),
+                    fontSize: 13,
+                  ),
+                ),
+                if (_selectedCoordinationMode.isGroup) ...[
+                  const SizedBox(height: 12),
+                  RadioGroup<RideCoordinationMode>(
+                    groupValue: _selectedCoordinationMode,
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _selectedCoordinationMode = value);
+                      }
+                    },
+                    child: Column(
+                      children: [
+                        for (final mode in const [
+                          RideCoordinationMode.secondBikeDropOff,
+                          RideCoordinationMode.keepTogether,
+                        ])
+                          RadioListTile<RideCoordinationMode>(
+                            key: Key('ride-mode-${mode.name}'),
+                            contentPadding: EdgeInsets.zero,
+                            value: mode,
+                            title: Text(mode.label),
+                            subtitle: Text(mode.description),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
                 TextField(
                   controller: _rideNameController,
                   maxLength: 32,
@@ -945,6 +1011,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
         motorcycleStyle: _selectedStyle,
         riderSymbol: _selectedSymbol,
         riderColor: _selectedColor,
+        coordinationMode: _selectedCoordinationMode,
         rideName: _rideNameController.text,
       );
     } else {
@@ -974,7 +1041,11 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
         riderColor: _selectedColor,
       );
       if (widget.creating) {
-        setState(() => _showShareStep = true);
+        if (_selectedCoordinationMode.isGroup) {
+          setState(() => _showShareStep = true);
+        } else {
+          _finishCreating();
+        }
       } else {
         widget.onComplete();
       }

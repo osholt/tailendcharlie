@@ -10,6 +10,7 @@ import 'package:ride_relay/domain/marker_assistance.dart';
 import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/imported_route.dart' as route_domain;
 import 'package:ride_relay/domain/ride_event.dart';
+import 'package:ride_relay/domain/ride_coordination_mode.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
@@ -64,6 +65,23 @@ void main() {
 
     final restored = await sessionStore.load();
     expect(restored?.rideId, controller.session?.rideId);
+  });
+
+  test('ride coordination mode is persisted and published', () async {
+    await controller.createRide(
+      'Oliver',
+      coordinationMode: RideCoordinationMode.keepTogether,
+    );
+
+    expect(
+      controller.session?.coordinationMode,
+      RideCoordinationMode.keepTogether,
+    );
+    expect(controller.coordinationMode, RideCoordinationMode.keepTogether);
+    expect(
+      controller.events.single.payload['coordinationMode'],
+      RideCoordinationMode.keepTogether.name,
+    );
   });
 
   test(
@@ -583,6 +601,22 @@ void main() {
         (event) => event.type == RideEventType.markerPass,
       ),
       hasLength(2),
+    );
+  });
+
+  test('non-drop-off rides cannot start junction marker mode', () async {
+    await controller.createRide(
+      'Oliver',
+      coordinationMode: RideCoordinationMode.keepTogether,
+    );
+    await controller.startRide();
+
+    await controller.startMarker();
+
+    expect(controller.markerActive, isFalse);
+    expect(
+      controller.errorMessage,
+      contains('only available in Second-bike drop-off rides'),
     );
   });
 

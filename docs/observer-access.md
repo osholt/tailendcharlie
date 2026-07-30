@@ -1,14 +1,20 @@
-# Safety-contact observer access
+# Personal and whole-group watcher access
 
-Status: experimental MVP. Issue #36 remains open until the physical-device and
-deployment evidence below is recorded.
+Status: personal MVP merged in issue #36; whole-group scope implemented in
+issue #263. The physical-device evidence below is still required before
+treating background safety tracking as production-validated.
 
 ## User boundary
 
-A rider may explicitly create a private, read-only link for one trusted safety
-contact. It follows only that phone's rider, lasts from 30 minutes to 24 hours,
-and can be reviewed or revoked from that phone. It is not a group monitoring
-link and does not make the viewer a ride member.
+A rider may explicitly create a private, read-only **personal watcher link**
+for one trusted safety contact. It follows only that phone's rider. A group
+leader may instead create a **whole-group watcher link** after confirming they
+have told the group. It shows the reconciled live roster, last-known rider
+positions and the planned-route outline.
+
+Both scopes last from 30 minutes to 24 hours and can be reviewed or revoked
+from the creating phone. A watcher never joins the ride or appears in its rider
+list.
 
 The app receives three independent 256-bit credentials:
 
@@ -31,7 +37,8 @@ contains the ride credential, management credential, or publisher credential.
 ## Data flow and minimization
 
 The relay does not read or transform the group event journal for an observer.
-The consenting app publishes a separate encrypted snapshot containing only:
+For a personal grant, the consenting app publishes a separate encrypted
+snapshot containing only:
 
 - local display name;
 - the local device's one last-known latitude/longitude, recorded time and
@@ -41,10 +48,18 @@ The consenting app publishes a separate encrypted snapshot containing only:
   action on this installation; and
 - component update times used to prevent stale requests rolling state back.
 
-Speed, heading, ride ID/code, join/invite secrets, raw signed events, other
-riders, trails, route/destination, markers, hazards, ICE details and medical
-notes are excluded. A forged shared-journal `deviceId` therefore cannot select
-another rider's position or create observer assistance.
+For a group grant, the leader app publishes only:
+
+- up to 50 currently included riders' display names, roles, identity colours,
+  last-known latitude/longitude, accuracy and recorded time;
+- ride lifecycle; and
+- the current planned-route name and an outline sampled to at most 500 points.
+
+Speed, heading, ride ID/code, join/invite secrets, raw signed events, rider
+identifiers, trails, marker history, hazards, quick-message history, rejoin
+routes, phone/ICE details and medical notes are excluded in both scopes. A
+group snapshot is assembled from the same reconciled live view used by the
+roster and map; the relay never projects the group journal for a watcher.
 
 Ride lifecycle is the local app's view of the shared ride journal. That journal
 uses the group credential and is not per-device authenticated, so a malicious
@@ -57,9 +72,16 @@ imply that the rider is safe.
 
 ## Consent, restart, expiry and revocation
 
-Creation requires an explicit disclosure checkbox. Creating a grant does not
-start ride-track recording. While the app is open, an active grant may publish
-foreground GPS independently of whether the ride has started.
+Creation requires an explicit disclosure checkbox. Group scope is offered only
+to the current group leader and requires a separate confirmation that the
+group has been told. If the publishing phone is no longer the leader, it stops
+publishing group snapshots. This is client-enforced because the ride bearer is
+group-scoped rather than per-device authenticated; the relay cryptographically
+enforces the grant scope, not the rider's role.
+
+Creating a grant does not start ride-track recording. While the app is open,
+an active grant may publish foreground GPS independently of whether the ride
+has started.
 
 After app restart, active grants are restored from secure storage and foreground
 sampling resumes only when location permission is already granted. The resume
@@ -111,15 +133,17 @@ GET    /api/v1/observer-grants/{grant-id}
 Authorization: Bearer ro1_<viewer credential>
 ```
 
-All timestamps require an explicit timezone. Snapshot generations are
+All timestamps require an explicit timezone. Personal snapshot generations are
 monotonic, and position, lifecycle and assistance components merge using their
-own timestamps. Rapid phone samples coalesce to at most one in-flight and one
-latest pending snapshot; up to four independent grants publish concurrently.
+own timestamps. A group publish replaces the bounded roster and route as one
+versioned view. The relay rejects a scope mismatch. Rapid phone samples
+coalesce to at most one in-flight and one latest pending snapshot; up to four
+independent grants publish concurrently.
 
 ## Evidence gate
 
-Deploy migration `0006`, then the relay, then the static observer page before a
-mobile build advertises `observer-access-v1`. Record:
+Deploy migrations through `0009`, then the relay, then the static observer page
+before a mobile build advertises group watcher support. Record:
 
 1. foreground, lock, background and force-quit behaviour on oldest/current iOS
    and representative stock/aggressive-battery Android;
@@ -129,12 +153,14 @@ mobile build advertises `observer-access-v1`. Record:
    expiry;
 5. four-hour battery impact with and without active sharing;
 6. link leakage across share previews, browser history and server logs; and
-7. recursively validated same-party map URLs plus CSP rejection of a
+7. personal/group scope mismatch rejection and former-leader publish stopping;
+8. a multi-rider watcher with missing, fresh, delayed and offline positions;
+9. recursively validated same-party map URLs plus CSP rejection of a
    third-party fixture, or a recorded coordinate-only fallback.
 
-Deferred: route/destination sharing, whole-group consent, app-based observers,
-observer push notifications, background guarantees and per-device
-authentication for the shared ride journal.
+Deferred: app-based observers, observer push notifications, background
+guarantees, per-device authentication for the shared ride journal, and a
+cryptographic per-rider group-watcher consent protocol.
 
 Production builds use:
 

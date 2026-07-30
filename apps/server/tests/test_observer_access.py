@@ -28,7 +28,13 @@ def _create_ride(client, ride_id: str, events: list[dict] | None = None) -> None
     assert response.status_code == 200
 
 
-def _create_grant(client, ride_id: str, device_header: str = "rider-a"):
+def _create_grant(
+    client,
+    ride_id: str,
+    device_header: str = "rider-a",
+    *,
+    scope: str = "rider",
+):
     return client.post(
         f"/api/v1/rides/{ride_id}/observer-grants",
         headers={
@@ -41,6 +47,8 @@ def _create_grant(client, ride_id: str, device_header: str = "rider-a"):
             "label": "Home contact",
             "durationMinutes": 60,
             "consentConfirmed": True,
+            "scope": scope,
+            **({"groupDisclosureConfirmed": True} if scope == "group" else {}),
         },
     )
 
@@ -79,6 +87,45 @@ def _snapshot(
             if assistance is not None
             else None
         ),
+    }
+
+
+def _group_snapshot(now: datetime) -> dict:
+    return {
+        "scope": "group",
+        "subjectName": "Sunday ride",
+        "snapshotGeneratedAt": now.isoformat(),
+        "rideStatus": "active",
+        "statusUpdatedAt": now.isoformat(),
+        "position": None,
+        "participants": [
+            {
+                "displayName": "Oliver",
+                "role": "lead",
+                "color": "#B58CFF",
+                "position": {
+                    "latitude": 51.5074,
+                    "longitude": -0.1278,
+                    "accuracyMeters": 7.5,
+                    "recordedAt": now.isoformat(),
+                },
+            },
+            {
+                "displayName": "Tail rider",
+                "role": "tailEndCharlie",
+                "color": "#5AC8FA",
+                "position": None,
+            },
+        ],
+        "route": {
+            "name": "Sunday route",
+            "points": [
+                {"latitude": 51.5074, "longitude": -0.1278},
+                {"latitude": 51.51, "longitude": -0.12},
+            ],
+        },
+        "assistanceUpdatedAt": now.isoformat(),
+        "assistance": None,
     }
 
 
@@ -159,6 +206,65 @@ def test_independent_publisher_supplies_only_the_minimized_snapshot(client) -> N
     assert body["position"]["latitude"] == 51.5074
     assert body["assistance"]["kind"] == "assistance"
     assert ride_id not in observed.text
+
+
+def test_group_grant_publishes_a_bounded_read_only_group_snapshot(client) -> None:
+    ride_id = "ride-observer-group"
+    now = datetime.now(UTC)
+    _create_ride(client, ride_id)
+    created = _create_grant(client, ride_id, scope="group")
+    assert created.status_code == 201
+    grant = created.json()
+    assert grant["scope"] == "group"
+
+    published = client.put(
+        f"/api/v1/observer-grants/{grant['id']}/snapshot",
+        headers=_authorization(grant["publisherToken"]),
+        json=_group_snapshot(now),
+    )
+    assert published.status_code == 204
+
+    observed = client.get(
+        f"/api/v1/observer-grants/{grant['id']}",
+        headers=_authorization(grant["observerToken"]),
+    )
+    assert observed.status_code == 200
+    body = observed.json()
+    assert body["protocolVersion"] == 2
+    assert body["scope"] == "group"
+    assert body["subjectName"] == "Sunday ride"
+    assert [rider["displayName"] for rider in body["participants"]] == [
+        "Oliver",
+        "Tail rider",
+    ]
+    assert body["participants"][0]["freshness"] == "fresh"
+    assert body["participants"][1]["freshness"] == "unavailable"
+    assert body["route"]["name"] == "Sunday route"
+    assert body["position"] is None
+    assert body["assistance"] is None
+    assert ride_id not in observed.text
+    assert SECRET not in observed.text
+
+
+def test_observer_grant_scope_cannot_be_changed_by_its_publisher(client) -> None:
+    ride_id = "ride-observer-scope"
+    now = datetime.now(UTC)
+    _create_ride(client, ride_id)
+    personal = _create_grant(client, ride_id).json()
+    group = _create_grant(client, ride_id, scope="group").json()
+
+    group_to_personal = client.put(
+        f"/api/v1/observer-grants/{personal['id']}/snapshot",
+        headers=_authorization(personal["publisherToken"]),
+        json=_group_snapshot(now),
+    )
+    personal_to_group = client.put(
+        f"/api/v1/observer-grants/{group['id']}/snapshot",
+        headers=_authorization(group["publisherToken"]),
+        json=_snapshot(now),
+    )
+    assert group_to_personal.status_code == 409
+    assert personal_to_group.status_code == 409
 
 
 def test_tokens_are_hash_only_and_role_separated(client) -> None:
@@ -298,8 +404,19 @@ def test_consent_and_bounded_duration_are_required(client) -> None:
             "consentConfirmed": True,
         },
     )
+    group_without_disclosure = client.post(
+        f"/api/v1/rides/{ride_id}/observer-grants",
+        headers=headers,
+        json={
+            "label": "Home",
+            "durationMinutes": 60,
+            "consentConfirmed": True,
+            "scope": "group",
+        },
+    )
     assert missing_consent.status_code == 400
     assert too_long.status_code == 400
+    assert group_without_disclosure.status_code == 400
 
 
 def test_bad_or_missing_observer_credentials_are_indistinguishable(client) -> None:

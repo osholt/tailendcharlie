@@ -107,6 +107,37 @@ void main() {
     );
   });
 
+  test('group creation sends the distinct disclosure and scope', () async {
+    late http.Request captured;
+    final client = HttpObserverAccessClient(
+      configuration: configuration,
+      client: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          jsonEncode({..._grantJson(includeTokens: true), 'scope': 'group'}),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final credentials = await client.create(
+      session,
+      label: 'Ride watcher',
+      duration: const Duration(hours: 1),
+      scope: ObserverAccessScope.group,
+    );
+
+    expect(jsonDecode(captured.body), {
+      'label': 'Ride watcher',
+      'durationMinutes': 60,
+      'consentConfirmed': true,
+      'scope': 'group',
+      'groupDisclosureConfirmed': true,
+    });
+    expect(credentials.grant.scope, ObserverAccessScope.group);
+  });
+
   test('uses a different credential for inspect, publish and revoke', () async {
     final requests = <http.Request>[];
     final client = HttpObserverAccessClient(

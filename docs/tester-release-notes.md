@@ -36,6 +36,63 @@ permissions by design.
 - ...
 ```
 
+## Next Android and iOS tester build — unreleased — 30 July 2026
+
+### What to test
+
+1. **Start each ride type.** Create a solo ride, a
+   **Second-bike drop-off** group, and a **Keep-together group**. Solo must have
+   no join code or group radios. Keep-together must retain the roster and group
+   messages without marker prompts or marker statistics.
+2. **Open both watcher-link types.** From any solo or group ride, create
+   **Just me** and confirm the browser sees only that phone's last-known
+   position and status. As the group leader, create **Whole group**, confirm
+   that you have told the group, and check that the browser lists the current
+   roster, each rider's coloured last-known position and freshness, and the
+   planned route. Pan the map, then use **Re-centre ride**. Neither watcher
+   should appear in the rider list.
+3. **Check initials on both maps.** Choose two-letter initials and confirm they
+   fill the rider circle horizontally rather than appearing as a tiny vertical
+   stack on Android or iOS.
+4. **Export a ride recap.** Pan and zoom the recap map, then share it in both
+   light and dark modes. The PNG must contain the framed vector basemap, route
+   and attribution.
+5. **Start away from the route.** A route more than 250 m away should offer
+   **Navigate to start** instead of saying turn guidance is unavailable. Once
+   the planned route is reached, guidance should continue on the main route.
+6. **Reshape on Android.** Drag the route and purple shaping handle at display
+   scaling above 1×. It should behave the same as iOS.
+7. **Review the waiting screen.** Before Start, SOS, Leave, Report, speed and
+   turn guidance must stay hidden; the participant list is one compact line.
+
+### Fixed and new
+
+- Recap export now uses a capture-safe Flutter vector map instead of a native
+  platform view that disappeared from the PNG (#157).
+- Initials no longer wrap inside Android MapLibre and occupy 94% of the rider
+  badge (#259).
+- Android route reshaping converts Flutter gesture points to native-view pixels
+  before hit-testing (#242).
+- Distant routes offer a routed leg to the planned start, while all
+  riding-time guidance and controls remain hidden before Start (#254, #262).
+- Ride creation now distinguishes solo, second-bike drop-off and keep-together
+  coordination. Solo skips participant transports but retains the private
+  watcher link; keep-together disables marker behaviour without losing group
+  communication (#261).
+- A group leader can create a distinct, revocable whole-group watcher link
+  after confirming the group has been told. The read-only browser shows a
+  bounded live roster, per-rider freshness, last-known positions and planned
+  route, without joining the ride or receiving ride credentials (#263).
+
+### Known validation still needed
+
+- Recap PNG export, Android route reshaping, initials and route-to-start
+  handover still need physical-device confirmation in the next tester build.
+- Group watcher creation, leader handover, expiry/revocation and mixed
+  fresh/delayed/offline rider states need multi-phone validation.
+- The previously reported long-ride lag was materially improved in build 37;
+  keep reporting the phone model and elapsed ride time if it returns.
+
 ## Android and iOS build 35 — 1.0.1 — 29 July 2026
 
 This build supersedes build 34 on Google Play closed testing (`alpha`) and

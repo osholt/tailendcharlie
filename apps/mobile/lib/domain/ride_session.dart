@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import '../features/map/motorcycle_icon.dart';
+import 'ride_coordination_mode.dart';
 import 'ride_role.dart';
 import 'rider_color.dart';
 
@@ -24,6 +25,7 @@ class RideSession {
     this.motorcycleStyle = motorcycleIconStyleDefault,
     this.riderSymbol = riderSymbolDefault,
     this.riderColor = riderColorDefault,
+    this.coordinationMode = RideCoordinationMode.secondBikeDropOff,
     this.rideName,
   }) : assert(
          !isSimulation ||
@@ -50,6 +52,7 @@ class RideSession {
   final MotorcycleIconStyle motorcycleStyle;
   final RiderSymbol riderSymbol;
   final RiderColor riderColor;
+  final RideCoordinationMode coordinationMode;
 
   /// Optional, leader-chosen at creation. Never required: rides are always
   /// identifiable by their six-digit code even with no name set.
@@ -59,6 +62,7 @@ class RideSession {
     RideRole? role,
     String? rideCode,
     int? simulationRiderCount,
+    RideCoordinationMode? coordinationMode,
   }) => RideSession(
     rideId: rideId,
     rideCode: rideCode ?? this.rideCode,
@@ -73,6 +77,7 @@ class RideSession {
     motorcycleStyle: motorcycleStyle,
     riderSymbol: riderSymbol,
     riderColor: riderColor,
+    coordinationMode: coordinationMode ?? this.coordinationMode,
     rideName: rideName,
   );
 
@@ -90,6 +95,7 @@ class RideSession {
     'motorcycleStyle': motorcycleStyle.name,
     'riderSymbol': riderSymbol.storageValue,
     'riderColor': riderColor.name,
+    'coordinationMode': coordinationMode.name,
     if (rideName != null) 'rideName': rideName,
   };
 
@@ -109,6 +115,9 @@ class RideSession {
     ),
     riderSymbol: RiderSymbol.fromStorageValue(json['riderSymbol'] as String?),
     riderColor: riderColorFromName(json['riderColor'] as String?),
+    coordinationMode: RideCoordinationMode.fromName(
+      json['coordinationMode'] as String?,
+    ),
     rideName: json['rideName'] as String?,
   );
 

@@ -82,9 +82,14 @@ and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
 14. Ride/walk past at 20, 40, and 60 mph using safe test conditions.
 15. Run four hours with GPS sampling and radio activity to measure battery use.
 16. Force-quit each platform separately and document loss/recovery honestly.
-17. Run the safety-contact observer matrix in `observer-access.md`: fresh,
-    delayed and offline states; lock/background/force-quit; signal loss;
-    revocation; expiry; ride end; and four-hour battery impact.
+17. Run the watcher matrix in `observer-access.md`. For **Just me**, cover
+    fresh, delayed and offline states; lock/background/force-quit; signal loss;
+    revocation; expiry; ride end; and four-hour battery impact. For **Whole
+    group**, use at least three mixed-platform phones and verify the bounded
+    roster, independent per-rider freshness, route outline, map re-centre,
+    grant expiry/revocation, and that a former leader stops publishing after
+    role handover. Confirm neither watcher appears in the ride roster or can
+    access participant controls.
 18. Fetch the deployed observer MapLibre style and recursively inspect every
     source tile URL, sprite URL, glyph URL and imported style. Confirm each is
     HTTPS on the ride-relay host, then verify the observer-specific CSP blocks

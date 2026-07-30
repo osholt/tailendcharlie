@@ -268,7 +268,7 @@ class RiderMarkerBadge extends StatelessWidget {
           size: size * 0.62,
         ),
         RiderSymbolKind.initials => Padding(
-          padding: EdgeInsets.all(size * 0.08),
+          padding: EdgeInsets.all(size * 0.03),
           child: FittedBox(
             key: const Key('rider-marker-initials-fill'),
             fit: BoxFit.contain,
@@ -328,6 +328,7 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
         final painter = TextPainter(
           textDirection: TextDirection.ltr,
           textAlign: TextAlign.center,
+          maxLines: 1,
           text: TextSpan(
             text: glyph,
             style: TextStyle(
@@ -338,9 +339,9 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
               letterSpacing: initials ? -3 : null,
             ),
           ),
-        )..layout(maxWidth: size);
+        )..layout();
         if (initials) {
-          final available = size * 0.84;
+          final available = size * 0.94;
           final scale = math.min(
             available / painter.width,
             available / painter.height,

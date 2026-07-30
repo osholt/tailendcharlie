@@ -15,6 +15,7 @@ import '../domain/completed_ride_store.dart';
 import '../domain/join_invite.dart';
 import '../domain/marker_assistance.dart';
 import '../domain/quick_message.dart';
+import '../domain/ride_coordination_mode.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
@@ -168,6 +169,19 @@ class RideController extends ChangeNotifier {
   /// staring at a sentence about a relay handshake with nothing to press (#208).
   bool get errorIsRetryable => _errorMessage != null && _errorIsRetryable;
   bool get hasActiveRide => _session != null;
+
+  /// The leader persists this in the session and publishes it in `rideCreated`.
+  /// A joining phone starts from the backward-compatible drop-off default, then
+  /// adopts the leader's value as soon as the signed journal arrives.
+  RideCoordinationMode get coordinationMode {
+    final created = _events
+        .where((event) => event.type == RideEventType.rideCreated)
+        .firstOrNull;
+    return RideCoordinationMode.fromName(
+      created?.payload['coordinationMode'] as String? ??
+          _session?.coordinationMode.name,
+    );
+  }
 
   /// True when the rider has stepped away from an ended ride without filing it.
   ///
@@ -725,6 +739,8 @@ class RideController extends ChangeNotifier {
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
     RiderSymbol riderSymbol = riderSymbolDefault,
     RiderColor riderColor = riderColorDefault,
+    RideCoordinationMode coordinationMode =
+        RideCoordinationMode.secondBikeDropOff,
     String? rideName,
   }) async {
     await _run(() async {
@@ -733,6 +749,7 @@ class RideController extends ChangeNotifier {
         motorcycleStyle: motorcycleStyle,
         riderSymbol: riderSymbol,
         riderColor: riderColor,
+        coordinationMode: coordinationMode,
         rideName: rideName,
       );
     });
@@ -787,7 +804,9 @@ class RideController extends ChangeNotifier {
   /// event traffic continues to use the authenticated relay protocols.
   Future<void> publishRideCode() async {
     final activeSession = _requireSession();
-    if (activeSession.isSimulation || activeSession.role != RideRole.lead) {
+    if (activeSession.isSimulation ||
+        activeSession.coordinationMode == RideCoordinationMode.solo ||
+        activeSession.role != RideRole.lead) {
       return;
     }
     var session = activeSession;
@@ -1397,6 +1416,11 @@ class RideController extends ChangeNotifier {
       if (!rideStarted) {
         throw const FormatException('Start the ride before using marker mode.');
       }
+      if (!coordinationMode.usesSecondBikeDropOff) {
+        throw const FormatException(
+          'Junction markers are only available in Second-bike drop-off rides.',
+        );
+      }
       final activeSession = _requireSession();
       _roleBeforeMarker = activeSession.role;
       final markerSessionId = _idFactory();
@@ -1631,6 +1655,8 @@ class RideController extends ChangeNotifier {
     MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
     RiderSymbol riderSymbol = riderSymbolDefault,
     RiderColor riderColor = riderColorDefault,
+    RideCoordinationMode coordinationMode =
+        RideCoordinationMode.secondBikeDropOff,
     String? rideName,
   }) async {
     final now = _clock();
@@ -1650,6 +1676,7 @@ class RideController extends ChangeNotifier {
       motorcycleStyle: motorcycleStyle,
       riderSymbol: riderSymbol,
       riderColor: riderColor,
+      coordinationMode: coordinationMode,
       rideName: normalisedRideName == null || normalisedRideName.isEmpty
           ? null
           : normalisedRideName,
@@ -1666,6 +1693,7 @@ class RideController extends ChangeNotifier {
           session.motorcycleStyle,
         ),
         'riderColor': session.riderColor.name,
+        'coordinationMode': session.coordinationMode.name,
         if (session.rideName != null) 'rideName': session.rideName,
       },
     );

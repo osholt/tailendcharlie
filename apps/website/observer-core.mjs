@@ -51,6 +51,92 @@ export function describeFreshness(snapshot, now = new Date()) {
   return { label, age };
 }
 
+export function describeGroupFreshness(snapshot) {
+  const riders = Array.isArray(snapshot?.participants)
+    ? snapshot.participants
+    : [];
+  const counts = {
+    fresh: 0,
+    delayed: 0,
+    offline: 0,
+    unavailable: 0,
+  };
+  for (const rider of riders) {
+    const value = Object.hasOwn(counts, rider?.freshness)
+      ? rider.freshness
+      : "unavailable";
+    counts[value] += 1;
+  }
+  const available = riders.length - counts.unavailable;
+  const label =
+    riders.length === 0
+      ? "Awaiting the rider list"
+      : counts.offline > 0
+        ? `${counts.offline} rider${counts.offline === 1 ? "" : "s"} offline`
+        : counts.delayed > 0
+          ? `${counts.delayed} update${counts.delayed === 1 ? "" : "s"} delayed`
+          : available === 0
+            ? "Awaiting rider positions"
+            : "Group recently updated";
+  return {
+    label,
+    age: `${available} of ${riders.length} position${riders.length === 1 ? "" : "s"} available`,
+    counts,
+  };
+}
+
+export function participantFreshnessLabel(freshness) {
+  return (
+    {
+      fresh: "Recently updated",
+      delayed: "Update delayed",
+      offline: "No recent update",
+      unavailable: "No position yet",
+    }[freshness] || "Position state unavailable"
+  );
+}
+
+export function participantRoleLabel(role) {
+  return (
+    {
+      lead: "Leader",
+      tailEndCharlie: "Tail End Charlie",
+      marker: "Marker",
+      rider: "Rider",
+    }[role] || "Rider"
+  );
+}
+
+export function observerCoordinates(snapshot) {
+  const values = [];
+  if (snapshot?.scope === "group") {
+    for (const rider of snapshot.participants || []) {
+      if (validCoordinate(rider?.position)) {
+        values.push([rider.position.longitude, rider.position.latitude]);
+      }
+    }
+    for (const point of snapshot.route?.points || []) {
+      if (validCoordinate(point)) {
+        values.push([point.longitude, point.latitude]);
+      }
+    }
+  } else if (validCoordinate(snapshot?.position)) {
+    values.push([snapshot.position.longitude, snapshot.position.latitude]);
+  }
+  return values;
+}
+
+function validCoordinate(point) {
+  return (
+    Number.isFinite(point?.latitude) &&
+    point.latitude >= -90 &&
+    point.latitude <= 90 &&
+    Number.isFinite(point?.longitude) &&
+    point.longitude >= -180 &&
+    point.longitude <= 180
+  );
+}
+
 export function rideStatusLabel(status) {
   return (
     {

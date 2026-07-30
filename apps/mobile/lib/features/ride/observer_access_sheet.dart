@@ -7,18 +7,27 @@ import '../../controllers/observer_access_controller.dart';
 import '../../internet/observer_access_client.dart';
 
 class ObserverAccessSheet extends StatefulWidget {
-  const ObserverAccessSheet({super.key, required this.controller});
+  const ObserverAccessSheet({
+    super.key,
+    required this.controller,
+    this.canShareGroup = false,
+  });
 
   final ObserverAccessController controller;
+  final bool canShareGroup;
 
   static Future<void> show(
     BuildContext context,
-    ObserverAccessController controller,
-  ) => showModalBottomSheet<void>(
+    ObserverAccessController controller, {
+    bool canShareGroup = false,
+  }) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
     isScrollControlled: true,
-    builder: (_) => ObserverAccessSheet(controller: controller),
+    builder: (_) => ObserverAccessSheet(
+      controller: controller,
+      canShareGroup: canShareGroup,
+    ),
   );
 
   @override
@@ -28,6 +37,7 @@ class ObserverAccessSheet extends StatefulWidget {
 class _ObserverAccessSheetState extends State<ObserverAccessSheet> {
   final _labelController = TextEditingController(text: 'Safety contact');
   Duration _duration = const Duration(hours: 4);
+  ObserverAccessScope _scope = ObserverAccessScope.rider;
   bool _consent = false;
 
   @override
@@ -58,22 +68,65 @@ class _ObserverAccessSheetState extends State<ObserverAccessSheet> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Share my progress',
+              'Watcher link',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
             const Text(
               'Creates a private, read-only web link for one trusted contact. '
               'It shares your last-known position, update freshness, ride '
-              'status and your help or emergency-stop status.',
+              'status and your help or emergency-stop status. The watcher '
+              'does not join the ride or appear in the rider list.',
             ),
             const SizedBox(height: 8),
-            const Text(
-              'It does not share the ride code, other riders, your location '
-              'trail, route, nearby identities or emergency contact details. '
-              'A missing update is not proof that you are safe.',
-              style: TextStyle(color: Color(0xFFA9B4C2)),
+            Text(
+              _scope == ObserverAccessScope.group
+                  ? 'It never shares the ride code, location trails, nearby '
+                        'identifiers, phone numbers, emergency-contact details '
+                        'or participant controls. A missing update is not proof '
+                        'that a rider is safe.'
+                  : 'It does not share the ride code, other riders, your '
+                        'location trail, route, nearby identities or emergency '
+                        'contact details. A missing update is not proof that '
+                        'you are safe.',
+              style: const TextStyle(color: Color(0xFFA9B4C2)),
             ),
+            if (widget.canShareGroup) ...[
+              const SizedBox(height: 18),
+              SegmentedButton<ObserverAccessScope>(
+                key: const Key('observer-scope'),
+                segments: const [
+                  ButtonSegment(
+                    value: ObserverAccessScope.rider,
+                    icon: Icon(Icons.person_outline),
+                    label: Text('Just me'),
+                  ),
+                  ButtonSegment(
+                    value: ObserverAccessScope.group,
+                    icon: Icon(Icons.groups_outlined),
+                    label: Text('Whole group'),
+                  ),
+                ],
+                selected: {_scope},
+                onSelectionChanged: widget.controller.busy
+                    ? null
+                    : (values) => setState(() {
+                        _scope = values.single;
+                        _consent = false;
+                      }),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _scope == ObserverAccessScope.group
+                    ? 'The watcher will see the current rider list, each '
+                          'rider’s last-known position and freshness, and the '
+                          'planned route outline. Tell the whole group before '
+                          'creating this link.'
+                    : 'This follows only your phone. Other riders and the '
+                          'planned route stay private.',
+                style: const TextStyle(color: Color(0xFFA9B4C2)),
+              ),
+            ],
             const SizedBox(height: 18),
             TextField(
               key: const Key('observer-label'),
@@ -114,8 +167,12 @@ class _ObserverAccessSheetState extends State<ObserverAccessSheet> {
               key: const Key('observer-consent'),
               value: _consent,
               contentPadding: EdgeInsets.zero,
-              title: const Text(
-                'I choose to share this information for the selected time.',
+              title: Text(
+                _scope == ObserverAccessScope.group
+                    ? 'I have told the group and choose to share this '
+                          'read-only group view for the selected time.'
+                    : 'I choose to share this information for the selected '
+                          'time.',
               ),
               onChanged: widget.controller.busy
                   ? null
@@ -128,6 +185,7 @@ class _ObserverAccessSheetState extends State<ObserverAccessSheet> {
                   : () => widget.controller.create(
                       label: _labelController.text,
                       duration: _duration,
+                      scope: _scope,
                     ),
               icon: widget.controller.busy
                   ? const SizedBox.square(
@@ -162,9 +220,13 @@ class _ObserverAccessSheetState extends State<ObserverAccessSheet> {
                       const SizedBox(height: 10),
                       FilledButton.icon(
                         key: const Key('share-observer-link'),
-                        onPressed: () => _share(context, invite.shareUri),
+                        onPressed: () => _share(context, invite),
                         icon: const Icon(Icons.share),
-                        label: const Text('Share safety link'),
+                        label: Text(
+                          invite.grant.scope == ObserverAccessScope.group
+                              ? 'Share group watcher link'
+                              : 'Share safety link',
+                        ),
                       ),
                     ],
                   ),
@@ -191,7 +253,7 @@ class _ObserverAccessSheetState extends State<ObserverAccessSheet> {
                       : Icons.visibility_off_outlined,
                 ),
                 title: Text(grant.label),
-                subtitle: Text(_grantStatus(grant)),
+                subtitle: Text('${grant.scope.label} · ${_grantStatus(grant)}'),
                 trailing: grant.isActiveAt(DateTime.now())
                     ? TextButton(
                         onPressed: widget.controller.busy
@@ -207,16 +269,18 @@ class _ObserverAccessSheetState extends State<ObserverAccessSheet> {
     ),
   );
 
-  Future<void> _share(BuildContext context, Uri uri) async {
+  Future<void> _share(BuildContext context, ObserverInvite invite) async {
     final renderObject = context.findRenderObject();
     final origin = renderObject is RenderBox && renderObject.hasSize
         ? renderObject.localToGlobal(Offset.zero) & renderObject.size
         : null;
     await SharePlus.instance.share(
       ShareParams(
-        text:
-            'Follow my last-known ride progress using this private, '
-            'time-limited Tail End Charlie link:\n$uri',
+        text: invite.grant.scope == ObserverAccessScope.group
+            ? 'Watch our group ride using this private, read-only, '
+                  'time-limited Tail End Charlie link:\n${invite.shareUri}'
+            : 'Follow my last-known ride progress using this private, '
+                  'time-limited Tail End Charlie link:\n${invite.shareUri}',
         sharePositionOrigin: origin,
       ),
     );

@@ -98,6 +98,16 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
   List<GeoPoint> get _points =>
       routePreviewFramingPoints(widget.paths, widget.pins);
 
+  double get _platformPixelScale => previewPlatformPixelScale(
+    platform: defaultTargetPlatform,
+    devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+  );
+
+  math.Point<double> _platformPoint(Offset position) => math.Point<double>(
+    position.dx * _platformPixelScale,
+    position.dy * _platformPixelScale,
+  );
+
   @override
   void didUpdateWidget(ResolvedRouteMapPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -417,7 +427,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     final controller = _controller;
     final callback = widget.onReshapeStart;
     if (controller == null || callback == null) return;
-    final tap = math.Point<double>(localPosition.dx, localPosition.dy);
+    final tap = _platformPoint(localPosition);
     final shapePins = widget.pins
         .where((pin) => pin.kind == 'shape')
         .toList(growable: false);
@@ -436,7 +446,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
           shapeIndex = index;
         }
       }
-      if (closestDistance > 32) shapeIndex = null;
+      if (closestDistance > 32 * _platformPixelScale) shapeIndex = null;
     }
     if (shapeIndex == null && !await _tapIsNearRoute(controller, tap)) return;
     final location = await controller.toLatLng(tap);
@@ -475,9 +485,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
         update != _reshapeUpdate) {
       return;
     }
-    final location = await controller.toLatLng(
-      math.Point<double>(localPosition.dx, localPosition.dy),
-    );
+    final location = await controller.toLatLng(_platformPoint(localPosition));
     if (gesture != _reshapeGesture || update != _reshapeUpdate) return;
     callback(
       GeoPoint(latitude: location.latitude, longitude: location.longitude),
@@ -517,7 +525,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
       );
       for (var index = 1; index < screens.length; index += 1) {
         if (_pointToSegmentDistance(tap, screens[index - 1], screens[index]) <=
-            28) {
+            28 * _platformPixelScale) {
           return true;
         }
       }
@@ -570,6 +578,16 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     };
   }
 }
+
+/// MapLibre Android reports and accepts native-view pixels, while Flutter
+/// gestures arrive in logical pixels. iOS uses points for both. Comparing the
+/// two coordinate spaces made every Android drag look far away from the route,
+/// so reshaping never began on physical Android devices (#242).
+@visibleForTesting
+double previewPlatformPixelScale({
+  required TargetPlatform platform,
+  required double devicePixelRatio,
+}) => platform == TargetPlatform.android ? devicePixelRatio : 1;
 
 double _screenDistance(math.Point<num> first, math.Point<num> second) {
   final dx = first.x - second.x;

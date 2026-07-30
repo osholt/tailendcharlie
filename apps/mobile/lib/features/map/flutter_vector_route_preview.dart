@@ -1,0 +1,190 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
+
+import '../../domain/imported_route.dart';
+import '../../services/basemap_configuration.dart';
+import 'route_trail_style.dart';
+
+/// A capture-safe route map rendered entirely inside Flutter's layer tree.
+///
+/// Unlike MapLibre's native platform view, this widget is included by
+/// `RepaintBoundary.toImage`, so the recap PNG contains the same basemap and
+/// route the rider can see on screen (#157).
+class FlutterVectorRoutePreview extends StatefulWidget {
+  const FlutterVectorRoutePreview({
+    super.key,
+    required this.paths,
+    required this.basemapConfiguration,
+    this.onReady,
+    this.onFailure,
+  });
+
+  final List<List<GeoPoint>> paths;
+  final BasemapConfiguration basemapConfiguration;
+  final VoidCallback? onReady;
+  final ValueChanged<Object>? onFailure;
+
+  @override
+  State<FlutterVectorRoutePreview> createState() =>
+      _FlutterVectorRoutePreviewState();
+}
+
+class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
+  late Future<vmt.Style> _style = _loadStyle();
+  Timer? _paintSettledTimer;
+  bool _reportedReady = false;
+  bool _reportedFailure = false;
+
+  List<LatLng> get _points => widget.paths
+      .expand((path) => path)
+      .map((point) => LatLng(point.latitude, point.longitude))
+      .toList(growable: false);
+
+  @override
+  void didUpdateWidget(FlutterVectorRoutePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.basemapConfiguration.styleUrl !=
+        widget.basemapConfiguration.styleUrl) {
+      _paintSettledTimer?.cancel();
+      _reportedReady = false;
+      _reportedFailure = false;
+      _style = _loadStyle();
+    }
+  }
+
+  @override
+  void dispose() {
+    _paintSettledTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<vmt.Style> _loadStyle() => vmt.StyleReader(
+    uri: widget.basemapConfiguration.styleUrl,
+    httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
+  ).read().timeout(const Duration(seconds: 7));
+
+  void _mapReady() {
+    if (_reportedReady) return;
+    // Map ready means the camera exists; vector tiles are requested during the
+    // following frames. A short quiet window keeps Share disabled while those
+    // first tile paints settle, without ever blocking the UI or the fallback.
+    _paintSettledTimer?.cancel();
+    _paintSettledTimer = Timer(const Duration(milliseconds: 700), () {
+      if (!mounted || _reportedReady) return;
+      _reportedReady = true;
+      widget.onReady?.call();
+    });
+  }
+
+  void _reportFailure(Object error) {
+    if (_reportedFailure) return;
+    _reportedFailure = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onFailure?.call(error);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<vmt.Style>(
+    future: _style,
+    builder: (context, snapshot) {
+      final style = snapshot.data;
+      if (style == null) {
+        if (snapshot.hasError) {
+          _reportFailure(snapshot.error!);
+          return const SizedBox.shrink();
+        }
+        return const ColoredBox(
+          color: Color(0xFF111820),
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
+      final points = _points;
+      if (points.length < 2) return const SizedBox.shrink();
+      return FlutterMap(
+        key: ValueKey(
+          'flutter-vector-route-${widget.basemapConfiguration.styleUrl}',
+        ),
+        options: MapOptions(
+          initialCameraFit: CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(points),
+            padding: const EdgeInsets.all(30),
+            maxZoom: 16,
+          ),
+          initialCenter: points.first,
+          initialZoom: 12,
+          minZoom: 3,
+          maxZoom: 18,
+          interactionOptions: const InteractionOptions(
+            flags: InteractiveFlag.all,
+          ),
+          onMapReady: _mapReady,
+        ),
+        children: [
+          vmt.VectorTileLayer(
+            tileProviders: style.providers,
+            theme: style.theme,
+            sprites: style.sprites,
+            maximumZoom: 16,
+            concurrency: 2,
+            fileCacheTtl: Duration.zero,
+            fileCacheMaximumSizeInBytes: 0,
+          ),
+          PolylineLayer(
+            polylines: [
+              for (final path in widget.paths)
+                if (path.length >= 2)
+                  Polyline(
+                    points: path
+                        .map((point) => LatLng(point.latitude, point.longitude))
+                        .toList(growable: false),
+                    color: RouteTrailStyle.routeAhead.color,
+                    strokeWidth: RouteTrailStyle.routeAhead.widthPixels,
+                    borderColor: RouteTrailStyle.casing,
+                    borderStrokeWidth:
+                        RouteTrailStyle.routeAhead.casingWidthPixels -
+                        RouteTrailStyle.routeAhead.widthPixels,
+                  ),
+            ],
+          ),
+          MarkerLayer(
+            markers: [
+              Marker(
+                point: points.first,
+                width: 22,
+                height: 22,
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.fromBorderSide(
+                      BorderSide(color: RouteTrailStyle.casing, width: 2),
+                    ),
+                  ),
+                ),
+              ),
+              Marker(
+                point: points.last,
+                width: 22,
+                height: 22,
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Color(0xFFFFC857),
+                    shape: BoxShape.circle,
+                    border: Border.fromBorderSide(
+                      BorderSide(color: RouteTrailStyle.casing, width: 2),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    },
+  );
+}

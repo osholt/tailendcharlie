@@ -7,6 +7,21 @@ import 'package:http/http.dart' as http;
 import '../domain/ride_session.dart';
 import 'internet_relay_client.dart';
 
+enum ObserverAccessScope {
+  rider,
+  group;
+
+  String get label => switch (this) {
+    ObserverAccessScope.rider => 'Just me',
+    ObserverAccessScope.group => 'Whole group',
+  };
+
+  static ObserverAccessScope fromName(Object? name) =>
+      name == ObserverAccessScope.group.name
+      ? ObserverAccessScope.group
+      : ObserverAccessScope.rider;
+}
+
 class ObserverAccessConfiguration {
   const ObserverAccessConfiguration({
     required this.relay,
@@ -53,11 +68,13 @@ class ObserverGrant {
     required this.label,
     required this.createdAt,
     required this.expiresAt,
+    this.scope = ObserverAccessScope.rider,
     this.revokedAt,
   });
 
   final String id;
   final String label;
+  final ObserverAccessScope scope;
   final DateTime createdAt;
   final DateTime expiresAt;
   final DateTime? revokedAt;
@@ -67,6 +84,7 @@ class ObserverGrant {
   Map<String, Object?> toJson() => {
     'id': id,
     'label': label,
+    'scope': scope.name,
     'createdAt': createdAt.toUtc().toIso8601String(),
     'expiresAt': expiresAt.toUtc().toIso8601String(),
     'revokedAt': revokedAt?.toUtc().toIso8601String(),
@@ -75,6 +93,7 @@ class ObserverGrant {
   factory ObserverGrant.fromJson(Map<String, Object?> json) => ObserverGrant(
     id: json['id']! as String,
     label: json['label']! as String,
+    scope: ObserverAccessScope.fromName(json['scope']),
     createdAt: DateTime.parse(json['createdAt']! as String).toLocal(),
     expiresAt: DateTime.parse(json['expiresAt']! as String).toLocal(),
     revokedAt: switch (json['revokedAt']) {
@@ -154,6 +173,54 @@ class ObserverPublishedPosition {
   };
 }
 
+class ObserverPublishedGroupParticipant {
+  const ObserverPublishedGroupParticipant({
+    required this.displayName,
+    required this.role,
+    required this.color,
+    this.position,
+  });
+
+  final String displayName;
+  final String role;
+  final String color;
+  final ObserverPublishedPosition? position;
+
+  Map<String, Object?> toJson() => {
+    'displayName': displayName,
+    'role': role,
+    'color': color,
+    'position': position?.toJson(),
+  };
+}
+
+class ObserverPublishedRoutePoint {
+  const ObserverPublishedRoutePoint({
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final double latitude;
+  final double longitude;
+
+  Map<String, Object?> toJson() => {
+    'latitude': latitude,
+    'longitude': longitude,
+  };
+}
+
+class ObserverPublishedRoute {
+  const ObserverPublishedRoute({required this.name, required this.points});
+
+  final String name;
+  final List<ObserverPublishedRoutePoint> points;
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'points': points.map((point) => point.toJson()).toList(growable: false),
+  };
+}
+
 class ObserverPublishedAssistance {
   const ObserverPublishedAssistance({
     required this.kind,
@@ -211,25 +278,37 @@ class ObserverPublishedSnapshot {
     required this.rideStatus,
     required this.statusUpdatedAt,
     required this.assistanceUpdatedAt,
+    this.scope = ObserverAccessScope.rider,
     this.position,
+    this.participants = const [],
+    this.route,
     this.assistance,
   });
 
+  final ObserverAccessScope scope;
   final String subjectName;
   final DateTime snapshotGeneratedAt;
   final String rideStatus;
   final DateTime statusUpdatedAt;
   final DateTime assistanceUpdatedAt;
   final ObserverPublishedPosition? position;
+  final List<ObserverPublishedGroupParticipant> participants;
+  final ObserverPublishedRoute? route;
   final ObserverPublishedAssistance? assistance;
 
   Map<String, Object?> toJson() => {
+    if (scope != ObserverAccessScope.rider) 'scope': scope.name,
     'subjectName': subjectName,
     'snapshotGeneratedAt': snapshotGeneratedAt.toUtc().toIso8601String(),
     'rideStatus': rideStatus,
     'statusUpdatedAt': statusUpdatedAt.toUtc().toIso8601String(),
     'assistanceUpdatedAt': assistanceUpdatedAt.toUtc().toIso8601String(),
     'position': position?.toJson(),
+    if (scope == ObserverAccessScope.group)
+      'participants': participants
+          .map((participant) => participant.toJson())
+          .toList(growable: false),
+    if (route != null) 'route': route!.toJson(),
     'assistance': assistance?.toJson(),
   };
 }
@@ -241,6 +320,7 @@ abstract interface class ObserverAccessApi {
     RideSession session, {
     required String label,
     required Duration duration,
+    ObserverAccessScope scope = ObserverAccessScope.rider,
   });
 
   Future<ObserverGrant> inspect(ObserverGrantCredentials credentials);
@@ -274,6 +354,7 @@ class HttpObserverAccessClient implements ObserverAccessApi {
     RideSession session, {
     required String label,
     required Duration duration,
+    ObserverAccessScope scope = ObserverAccessScope.rider,
   }) async {
     final minutes = duration.inMinutes;
     if (label.trim().isEmpty || label.trim().length > 80) {
@@ -292,6 +373,10 @@ class HttpObserverAccessClient implements ObserverAccessApi {
         'label': label.trim(),
         'durationMinutes': minutes,
         'consentConfirmed': true,
+        if (scope == ObserverAccessScope.group) ...{
+          'scope': scope.name,
+          'groupDisclosureConfirmed': true,
+        },
       });
     final response = await _send(request, bearer: _rideBearer(session));
     final decoded = _jsonObject(response);

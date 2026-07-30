@@ -144,12 +144,13 @@ ICE share. The event names its intended recipient, the sharer refuses to record
 anything when no leader is known, and every consumer drops a share it is not
 addressed to — but the ride relay is ride-scoped rather than per-recipient
 encrypted, so this is not a cryptographic guarantee against another member who
-already holds the ride secret. Trusted observers (#36) get nothing: the observer
-snapshot has no field a route could travel in, the publish schema forbids extra
-fields, and both halves are asserted in
+already holds the ride secret. Personal observers (#36) get nothing. A
+whole-group watcher (#263) may receive only the separately disclosed planned
+route outline; it never receives this rider-specific rejoin route. The publish
+schema separates those scopes, and both halves are asserted in
 `test/features/ride/observer_snapshot_privacy_test.dart` and
-`apps/server/tests/test_tec_role_and_rejoin_sharing.py`. Sharing to an observer
-would be a separate authorisation decision.
+`apps/server/tests/test_tec_role_and_rejoin_sharing.py`. Group watcher sharing
+is a separate leader disclosure and credential.
 
 ## The Tail End Charlie role (#128)
 

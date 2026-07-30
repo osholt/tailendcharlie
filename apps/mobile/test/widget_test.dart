@@ -17,6 +17,7 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_event.dart';
+import 'package:ride_relay/domain/ride_coordination_mode.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
@@ -155,6 +156,33 @@ void main() {
 
     await tester.tap(find.text('Continue to ride'));
     expect(_sharedRoutes.pending?.name, 'Peak Loop.gpx');
+  });
+
+  testWidgets('a solo ride skips the group share-code step', (tester) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+    await tester.tap(find.text('Create a ride'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ride-scope-selector')), findsOneWidget);
+    expect(find.text('Second-bike drop-off'), findsOneWidget);
+    expect(find.text('Keep-together group'), findsOneWidget);
+
+    await tester.tap(find.text('Solo'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Create ride'),
+      180,
+      scrollable: _rideFormScrollable,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await tester.pumpAndSettle();
+
+    expect(controller.coordinationMode, RideCoordinationMode.solo);
+    expect(find.text('Continue to ride'), findsNothing);
+    expect(find.text('Ready for solo ride'), findsOneWidget);
   });
 
   testWidgets('join form keeps the active ride code above an iOS keyboard', (
@@ -390,7 +418,7 @@ void main() {
     expect(find.text('Waiting to start'), findsOneWidget);
     expect(find.textContaining('Current positions only'), findsOneWidget);
     expect(find.byKey(const Key('pre-start-roster')), findsOneWidget);
-    expect(find.text('Oliver (you)'), findsOneWidget);
+    expect(find.textContaining('Oliver (you)'), findsOneWidget);
     expect(controller.rideStarted, isFalse);
 
     await tester.tap(find.byKey(const Key('start-ride-button')));

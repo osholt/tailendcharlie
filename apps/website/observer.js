@@ -1,7 +1,11 @@
 import {
+  describeGroupFreshness,
   describeFreshness,
+  observerCoordinates,
   observerServiceOrigin,
   parseObserverFragment,
+  participantFreshnessLabel,
+  participantRoleLabel,
   remainingLabel,
   rideStatusLabel,
 } from "./observer-core.mjs";
@@ -27,13 +31,20 @@ const elements = {
   assistance: document.querySelector("#assistance-alert"),
   assistanceLabel: document.querySelector("#assistance-label"),
   assistanceTime: document.querySelector("#assistance-time"),
+  riderListSection: document.querySelector("#rider-list-section"),
+  riderList: document.querySelector("#rider-list"),
   mapEmpty: document.querySelector("#map-empty"),
+  recenterMap: document.querySelector("#recenter-map"),
 };
 
 let snapshot = null;
 let map = null;
-let marker = null;
+let mapReady = false;
+let markers = [];
+let hasFramedMap = false;
 let refreshTimer = null;
+
+elements.recenterMap.addEventListener("click", () => frameMap(true));
 
 if (!credential || !API_URL) {
   showError(
@@ -92,7 +103,10 @@ function render() {
     snapshot.subjectName || "Shared rider progress";
   elements.accessLabel.textContent = snapshot.label;
   elements.rideStatus.textContent = rideStatusLabel(snapshot.rideStatus);
-  const freshness = describeFreshness(snapshot);
+  const freshness =
+    snapshot.scope === "group"
+      ? describeGroupFreshness(snapshot)
+      : describeFreshness(snapshot);
   elements.freshness.textContent = freshness.label;
   elements.positionAge.textContent = freshness.age;
   elements.assistance.hidden = !snapshot.assistance;
@@ -102,8 +116,30 @@ function render() {
       snapshot.assistance.reportedAt,
     ).toLocaleString()}`;
   }
+  renderRiders();
   renderTimes();
   renderPosition();
+}
+
+function renderRiders() {
+  const group = snapshot?.scope === "group";
+  elements.riderListSection.hidden = !group;
+  elements.riderList.replaceChildren();
+  if (!group) return;
+  for (const rider of snapshot.participants || []) {
+    const item = document.createElement("li");
+    item.className = "observer-rider";
+    const dot = document.createElement("span");
+    dot.className = "observer-rider-dot";
+    dot.style.setProperty("--rider-color", rider.color);
+    dot.setAttribute("aria-hidden", "true");
+    const name = document.createElement("strong");
+    name.textContent = rider.displayName;
+    const status = document.createElement("span");
+    status.textContent = `${participantRoleLabel(rider.role)} · ${participantFreshnessLabel(rider.freshness)}`;
+    item.append(dot, name, status);
+    elements.riderList.append(item);
+  }
 }
 
 function renderTimes() {
@@ -112,11 +148,15 @@ function renderTimes() {
 }
 
 function renderPosition() {
-  const position = snapshot?.position;
-  elements.mapEmpty.hidden = Boolean(position);
-  if (!position) return;
+  const coordinates = observerCoordinates(snapshot);
+  elements.mapEmpty.hidden = coordinates.length > 0;
+  elements.recenterMap.hidden =
+    coordinates.length === 0 || !window.maplibregl;
+  if (coordinates.length === 0) return;
   elements.mapEmpty.textContent =
-    `Last known: ${position.latitude.toFixed(5)}, ${position.longitude.toFixed(5)}`;
+    snapshot.scope === "group"
+      ? `${(snapshot.participants || []).filter((rider) => rider.position).length} rider positions available.`
+      : `Last known: ${snapshot.position.latitude.toFixed(5)}, ${snapshot.position.longitude.toFixed(5)}`;
   if (!window.maplibregl || !MAP_STYLE_URL) {
     elements.mapEmpty.hidden = false;
     return;
@@ -125,7 +165,7 @@ function renderPosition() {
     map = new window.maplibregl.Map({
       container: "observer-map",
       style: MAP_STYLE_URL,
-      center: [position.longitude, position.latitude],
+      center: coordinates[0],
       zoom: 13,
       attributionControl: true,
     });
@@ -133,21 +173,98 @@ function renderPosition() {
       elements.mapEmpty.hidden = false;
     });
     map.addControl(new window.maplibregl.NavigationControl(), "top-right");
+    map.on("load", () => {
+      mapReady = true;
+      renderMapData();
+      frameMap();
+    });
   }
-  if (!marker) {
+  renderMapData();
+  if (mapReady && !hasFramedMap) frameMap();
+}
+
+function renderMapData() {
+  if (!map || !mapReady || !snapshot) return;
+  for (const marker of markers) marker.remove();
+  markers = [];
+  if (snapshot.scope === "group") {
+    for (const rider of snapshot.participants || []) {
+      if (!rider.position) continue;
+      const markerElement = document.createElement("div");
+      markerElement.className = "observer-group-marker";
+      markerElement.style.setProperty("--rider-color", rider.color);
+      markerElement.setAttribute(
+        "aria-label",
+        `${rider.displayName}, ${participantFreshnessLabel(rider.freshness)}`,
+      );
+      markerElement.title = rider.displayName;
+      markers.push(
+        new window.maplibregl.Marker({ element: markerElement })
+          .setLngLat([rider.position.longitude, rider.position.latitude])
+          .addTo(map),
+      );
+    }
+  } else if (snapshot.position) {
     const markerElement = document.createElement("div");
     markerElement.className = "observer-position-marker";
     markerElement.setAttribute("aria-label", "Last-known rider position");
-    marker = new window.maplibregl.Marker({ element: markerElement })
-      .setLngLat([position.longitude, position.latitude])
-      .addTo(map);
-  } else {
-    marker.setLngLat([position.longitude, position.latitude]);
+    markers.push(
+      new window.maplibregl.Marker({ element: markerElement })
+        .setLngLat([snapshot.position.longitude, snapshot.position.latitude])
+        .addTo(map),
+    );
   }
-  map.easeTo({
-    center: [position.longitude, position.latitude],
-    duration: 700,
-  });
+  const routeCoordinates = (snapshot.route?.points || []).map((point) => [
+    point.longitude,
+    point.latitude,
+  ]);
+  const route = {
+    type: "FeatureCollection",
+    features:
+      routeCoordinates.length < 2
+        ? []
+        : [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "LineString",
+                coordinates: routeCoordinates,
+              },
+            },
+          ],
+  };
+  if (map.getSource("observer-route")) {
+    map.getSource("observer-route").setData(route);
+  } else {
+    map.addSource("observer-route", { type: "geojson", data: route });
+    map.addLayer({
+      id: "observer-route",
+      type: "line",
+      source: "observer-route",
+      paint: {
+        "line-color": "#5ac8fa",
+        "line-width": 5,
+        "line-opacity": 0.85,
+      },
+    });
+  }
+}
+
+function frameMap(force = false) {
+  if (!map || !mapReady || (!force && hasFramedMap)) return;
+  const coordinates = observerCoordinates(snapshot);
+  if (coordinates.length === 0) return;
+  hasFramedMap = true;
+  if (coordinates.length === 1) {
+    map.easeTo({ center: coordinates[0], zoom: 13, duration: 700 });
+    return;
+  }
+  const bounds = coordinates.reduce(
+    (value, coordinate) => value.extend(coordinate),
+    new window.maplibregl.LngLatBounds(coordinates[0], coordinates[0]),
+  );
+  map.fitBounds(bounds, { padding: 70, maxZoom: 15, duration: 700 });
 }
 
 function showError(message) {

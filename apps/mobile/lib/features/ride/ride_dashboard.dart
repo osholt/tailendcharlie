@@ -12,7 +12,7 @@ import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../domain/quick_message.dart';
-
+import '../../domain/ride_coordination_mode.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
 import '../../services/ride_connectivity_summary.dart';
@@ -63,6 +63,9 @@ class RideDashboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = controller.session!;
+    final mode = controller.coordinationMode;
+    final isSolo = mode == RideCoordinationMode.solo;
+    final usesMarkers = mode.usesSecondBikeDropOff;
 
     return Scaffold(
       appBar: AppBar(
@@ -113,60 +116,71 @@ class RideDashboard extends StatelessWidget {
                   rideCode: session.rideCode,
                   displayName: session.displayName,
                   role: controller.session!.role,
+                  coordinationMode: mode,
                   onRoleChanged: controller.setRole,
                 ),
-                const SizedBox(height: 14),
-                _ConnectionCard(
-                  controller: controller,
-                  onOpenRoster: onOpenRoster,
-                ),
+                if (!isSolo) ...[
+                  const SizedBox(height: 14),
+                  _ConnectionCard(
+                    controller: controller,
+                    onOpenRoster: onOpenRoster,
+                  ),
+                ],
                 // One answer above the per-channel cards (#174). Three accurate
                 // cards that disagreed left a rider unable to tell whether the
                 // app was working; the channels keep their own detail below.
-                if (connectivity case final connectivity?) ...[
-                  const SizedBox(height: 14),
-                  _ConnectivitySummaryCard(summary: connectivity),
-                ],
-                if (relayController case final relayController?) ...[
-                  const SizedBox(height: 14),
-                  RelayStatusCard(controller: relayController),
-                ],
-                if (internetRelayController
-                    case final internetRelayController?) ...[
-                  const SizedBox(height: 14),
-                  InternetRelayStatusCard(controller: internetRelayController),
+                if (!isSolo) ...[
+                  if (connectivity case final connectivity?) ...[
+                    const SizedBox(height: 14),
+                    _ConnectivitySummaryCard(summary: connectivity),
+                  ],
+                  if (relayController case final relayController?) ...[
+                    const SizedBox(height: 14),
+                    RelayStatusCard(controller: relayController),
+                  ],
+                  if (internetRelayController
+                      case final internetRelayController?) ...[
+                    const SizedBox(height: 14),
+                    InternetRelayStatusCard(
+                      controller: internetRelayController,
+                    ),
+                  ],
                 ],
                 if (serviceWarning case final warning?) ...[
                   const SizedBox(height: 14),
                   _ServiceWarning(message: warning),
                 ],
-                const SizedBox(height: 14),
-                if (markerAssistanceController case final assistance?) ...[
-                  MarkerAssistancePrompt(
-                    controller: assistance,
-                    distanceUnit: distanceUnits.value,
-                  ),
-                  if (assistance.hasSuggestion) const SizedBox(height: 14),
+                if (usesMarkers) ...[
+                  const SizedBox(height: 14),
+                  if (markerAssistanceController case final assistance?) ...[
+                    MarkerAssistancePrompt(
+                      controller: assistance,
+                      distanceUnit: distanceUnits.value,
+                    ),
+                    if (assistance.hasSuggestion) const SizedBox(height: 14),
+                  ],
+                  _MarkerCard(controller: controller),
+                  const SizedBox(height: 14),
+                  MarkerStatisticsCard(summary: controller.markingSummary),
                 ],
-                _MarkerCard(controller: controller),
-                const SizedBox(height: 14),
-                MarkerStatisticsCard(summary: controller.markingSummary),
-                const SizedBox(height: 22),
-                Text(
-                  'QUICK MESSAGES',
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: const Color(0xFF8D98A7),
-                    letterSpacing: 1.1,
+                if (!isSolo) ...[
+                  const SizedBox(height: 22),
+                  Text(
+                    'QUICK MESSAGES',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: const Color(0xFF8D98A7),
+                      letterSpacing: 1.1,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                QuickMessageGrid(
-                  busy: controller.busy,
-                  onSend: onSendQuickMessage ?? controller.sendQuickMessage,
-                  showResolved: localObserverAssistanceActive,
-                ),
-                const SizedBox(height: 22),
-                _RideCodeCard(controller: controller),
+                  const SizedBox(height: 10),
+                  QuickMessageGrid(
+                    busy: controller.busy,
+                    onSend: onSendQuickMessage ?? controller.sendQuickMessage,
+                    showResolved: localObserverAssistanceActive,
+                  ),
+                  const SizedBox(height: 22),
+                  _RideCodeCard(controller: controller),
+                ],
                 const SizedBox(height: 22),
                 _EventTimeline(controller: controller),
               ],
@@ -271,12 +285,14 @@ class _RideHeader extends StatelessWidget {
     required this.rideCode,
     required this.displayName,
     required this.role,
+    required this.coordinationMode,
     required this.onRoleChanged,
   });
 
   final String rideCode;
   final String displayName;
   final RideRole role;
+  final RideCoordinationMode coordinationMode;
   final ValueChanged<RideRole> onRoleChanged;
 
   @override
@@ -299,7 +315,9 @@ class _RideHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'RIDE $rideCode',
+                  coordinationMode == RideCoordinationMode.solo
+                      ? 'SOLO RIDE'
+                      : 'RIDE $rideCode',
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.w800,
@@ -315,26 +333,29 @@ class _RideHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<RideRole>(
-              value: role,
-              borderRadius: BorderRadius.circular(14),
-              items: RideRole.values
-                  .where((item) => item != RideRole.marker || role == item)
-                  .map(
-                    (item) =>
-                        DropdownMenuItem(value: item, child: Text(item.label)),
-                  )
-                  .toList(),
-              onChanged: role == RideRole.marker
-                  ? null
-                  : (value) {
-                      if (value != null) {
-                        onRoleChanged(value);
-                      }
-                    },
+          if (coordinationMode != RideCoordinationMode.solo)
+            DropdownButtonHideUnderline(
+              child: DropdownButton<RideRole>(
+                value: role,
+                borderRadius: BorderRadius.circular(14),
+                items: RideRole.values
+                    .where((item) => item != RideRole.marker || role == item)
+                    .map(
+                      (item) => DropdownMenuItem(
+                        value: item,
+                        child: Text(item.label),
+                      ),
+                    )
+                    .toList(),
+                onChanged: role == RideRole.marker
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          onRoleChanged(value);
+                        }
+                      },
+              ),
             ),
-          ),
         ],
       ),
     );

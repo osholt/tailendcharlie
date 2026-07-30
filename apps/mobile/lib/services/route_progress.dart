@@ -26,6 +26,33 @@ class RouteProgressGeometry {
   final double totalMeters;
 }
 
+/// Straight-line distance from [position] to the nearest point on any route
+/// segment.
+///
+/// This is independent of progress: callers can distinguish "the route starts
+/// elsewhere" from "the rider is already somewhere on this route" even when
+/// the GPX has only a few widely spaced points.
+double distanceToRouteMeters(ImportedRoute route, GeoPoint position) {
+  var nearest = double.infinity;
+  for (final path in route.paths) {
+    if (path.points.length == 1) {
+      nearest = math.min(nearest, _distance(position, path.points.single));
+      continue;
+    }
+    for (var index = 0; index < path.points.length - 1; index += 1) {
+      nearest = math.min(
+        nearest,
+        _projectToSegment(
+          position,
+          path.points[index],
+          path.points[index + 1],
+        ).distanceMeters,
+      );
+    }
+  }
+  return nearest;
+}
+
 /// Maintains monotonic progress along the primary route path.
 ///
 /// A stateful tracker avoids a closed loop's finish point being mistaken for

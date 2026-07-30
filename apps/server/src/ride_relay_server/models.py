@@ -249,6 +249,12 @@ class ObserverGrant(Base):
         nullable=False,
     )
     label: Mapped[str] = mapped_column(String(80), nullable=False)
+    scope: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="rider",
+        server_default="rider",
+    )
     management_token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
     publisher_token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
     observer_token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)

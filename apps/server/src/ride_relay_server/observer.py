@@ -71,6 +71,7 @@ def create_observer_grant(
                 id=str(uuid.uuid4()),
                 ride_id=ride_id,
                 label=label,
+                scope=request.scope,
                 management_token_hash=token_hash(management_token),
                 publisher_token_hash=token_hash(publisher_token),
                 observer_token_hash=token_hash(observer_token),
@@ -150,6 +151,13 @@ def publish_observer_snapshot(
             raise RelayServiceError(400, "Observer position is from the future")
         if request.position.recordedAt < now - timedelta(hours=24):
             raise RelayServiceError(400, "Observer position is too old")
+    for participant in request.participants:
+        if participant.position is None:
+            continue
+        if participant.position.recordedAt > now + timedelta(minutes=2):
+            raise RelayServiceError(400, "Observer participant position is from the future")
+        if participant.position.recordedAt < now - timedelta(hours=24):
+            raise RelayServiceError(400, "Observer participant position is too old")
     if request.assistance is not None:
         if request.assistance.reportedAt > now + timedelta(minutes=2):
             raise RelayServiceError(400, "Observer assistance status is from the future")
@@ -167,6 +175,8 @@ def publish_observer_snapshot(
             now=now,
             lock_for_update=True,
         )
+        if grant.scope != request.scope:
+            raise RelayServiceError(409, "Observer snapshot scope does not match grant")
         if (
             grant.snapshot_version_at is not None
             and _as_utc(grant.snapshot_version_at) >= request.snapshotGeneratedAt
@@ -188,10 +198,13 @@ def publish_observer_snapshot(
 
         incoming = request.model_dump(mode="json")
         merged = {
+            "scope": grant.scope,
             "subjectName": incoming["subjectName"],
             "rideStatus": current.get("rideStatus", "waiting"),
             "statusUpdatedAt": current.get("statusUpdatedAt"),
             "position": current.get("position"),
+            "participants": current.get("participants", []),
+            "route": current.get("route"),
             "assistanceUpdatedAt": current.get("assistanceUpdatedAt"),
             "assistance": current.get("assistance"),
         }
@@ -210,6 +223,12 @@ def publish_observer_snapshot(
             current_position_at is None or request.position.recordedAt >= current_position_at
         ):
             merged["position"] = incoming["position"]
+
+        if grant.scope == "group":
+            merged["position"] = None
+            merged["participants"] = incoming["participants"]
+            merged["route"] = incoming["route"]
+            merged["assistance"] = None
 
         current_assistance_at = _timestamp(current.get("assistanceUpdatedAt"))
         if current_assistance_at is None or request.assistanceUpdatedAt >= current_assistance_at:
@@ -271,7 +290,8 @@ def observer_snapshot(
                 raise RelayServiceError(500, "Stored observer state is invalid")
             snapshot = value
 
-        position = snapshot.get("position")
+        scope = grant.scope if grant.scope in {"rider", "group"} else "rider"
+        position = snapshot.get("position") if scope == "rider" else None
         recorded_at = _timestamp(position.get("recordedAt")) if isinstance(position, dict) else None
         freshness = "unavailable"
         if recorded_at is not None:
@@ -298,8 +318,44 @@ def observer_snapshot(
             )
         else:
             assistance = None
+        participants: list[dict[str, Any]] = []
+        if scope == "group":
+            for raw_participant in snapshot.get("participants", []):
+                if not isinstance(raw_participant, dict):
+                    continue
+                raw_position = raw_participant.get("position")
+                participant_recorded_at = (
+                    _timestamp(raw_position.get("recordedAt"))
+                    if isinstance(raw_position, dict)
+                    else None
+                )
+                participant_freshness = _freshness(participant_recorded_at, now)
+                participants.append(
+                    {
+                        "displayName": raw_participant.get("displayName"),
+                        "role": raw_participant.get("role"),
+                        "color": raw_participant.get("color"),
+                        "position": raw_position,
+                        "freshness": participant_freshness,
+                    }
+                )
+            available_freshness = [
+                participant["freshness"]
+                for participant in participants
+                if participant["freshness"] != "unavailable"
+            ]
+            freshness = (
+                max(
+                    available_freshness,
+                    key={"fresh": 0, "delayed": 1, "offline": 2}.__getitem__,
+                )
+                if available_freshness
+                else "unavailable"
+            )
+            assistance = None
         return {
-            "protocolVersion": 1,
+            "protocolVersion": 2 if scope == "group" else 1,
+            "scope": scope,
             "label": grant.label,
             "subjectName": snapshot.get("subjectName"),
             "rideStatus": snapshot.get("rideStatus", "waiting"),
@@ -308,6 +364,8 @@ def observer_snapshot(
             "serverTime": now,
             "expiresAt": _as_utc(grant.expires_at),
             "position": position,
+            "participants": participants,
+            "route": snapshot.get("route") if scope == "group" else None,
             "assistance": assistance,
         }
 
@@ -316,6 +374,7 @@ def grant_json(grant: ObserverGrant) -> dict[str, Any]:
     return {
         "id": grant.id,
         "label": grant.label,
+        "scope": grant.scope if grant.scope in {"rider", "group"} else "rider",
         "createdAt": _as_utc(grant.created_at),
         "expiresAt": _as_utc(grant.expires_at),
         "revokedAt": _as_utc(grant.revoked_at) if grant.revoked_at else None,
@@ -388,6 +447,19 @@ def _timestamp(value: Any) -> datetime | None:
     if result.tzinfo is None:
         return None
     return result.astimezone(UTC)
+
+
+def _freshness(recorded_at: datetime | None, now: datetime) -> str:
+    if recorded_at is None:
+        return "unavailable"
+    age = max(timedelta(0), now - recorded_at)
+    return (
+        "fresh"
+        if age <= timedelta(seconds=90)
+        else "delayed"
+        if age <= timedelta(minutes=5)
+        else "offline"
+    )
 
 
 def _snapshot_aad(grant_id: str) -> bytes:
