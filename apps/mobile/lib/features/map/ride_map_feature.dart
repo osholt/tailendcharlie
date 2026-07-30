@@ -1353,7 +1353,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 // it gives way. Route entry stays reachable from the ride
                 // menu's "Change route" and from the app bar whenever this card
                 // is showing.
-                if (_route == null && !hideChrome)
+                if (_route == null &&
+                    !hideChrome &&
+                    !widget.rideStarted &&
+                    !_waitingRoutePromptDismissed)
                   Positioned(
                     left: 0,
                     right: 0,
@@ -1367,13 +1370,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             onImport: _importGpx,
                             onUseStoredRoute: _useStoredRoute,
                             onLoadDemo: _loadDemoRoute,
+                            onDismiss: _continueWithoutRoute,
                           )
-                        : widget.rideStarted || _waitingRoutePromptDismissed
-                        ? const SizedBox.shrink()
                         : _WaitingForLeaderRoutePrompt(
-                            onDismiss: () => setState(
-                              () => _waitingRoutePromptDismissed = true,
-                            ),
+                            onDismiss: _continueWithoutRoute,
                           ),
                   ),
                 // Last in the stack: an approaching camera or police report
@@ -5448,6 +5448,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
+                key: const Key('continue-without-route-sheet-item'),
+                leading: const Icon(Icons.map_outlined),
+                title: Text(
+                  _route == null
+                      ? 'Continue without a route'
+                      : 'Keep current route',
+                ),
+                subtitle: _route == null
+                    ? const Text('Use the live group map without navigation')
+                    : null,
+                onTap: () {
+                  _continueWithoutRoute();
+                  Navigator.of(sheetContext).pop();
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
                 leading: const Icon(Icons.add_road),
                 title: const Text('Plan a destination'),
                 onTap: () {
@@ -5509,6 +5526,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ),
       ),
     );
+  }
+
+  void _continueWithoutRoute() {
+    if (_waitingRoutePromptDismissed) return;
+    setState(() => _waitingRoutePromptDismissed = true);
   }
 }
 
@@ -5798,6 +5820,7 @@ class _EmptyRoutePrompt extends StatelessWidget {
     required this.onImport,
     required this.onUseStoredRoute,
     required this.onLoadDemo,
+    required this.onDismiss,
   });
 
   final bool importing;
@@ -5806,6 +5829,7 @@ class _EmptyRoutePrompt extends StatelessWidget {
   final VoidCallback onImport;
   final VoidCallback onUseStoredRoute;
   final VoidCallback onLoadDemo;
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) => SafeArea(
@@ -5835,13 +5859,20 @@ class _EmptyRoutePrompt extends StatelessWidget {
                         ),
                         const SizedBox(height: 8),
                         const Text(
-                          'Enter a destination, reuse a recorded route or a '
-                          'previous ride, import a GPX file, or use the demo '
-                          'route.',
+                          'A route is optional. Continue to the live group map '
+                          'without navigation, or add directions using a '
+                          'destination, saved route or GPX file.',
                           style: TextStyle(color: Color(0xFF98A3B1)),
                         ),
                         const SizedBox(height: 20),
                         FilledButton.icon(
+                          key: const Key('continue-without-route-button'),
+                          onPressed: onDismiss,
+                          icon: const Icon(Icons.map_outlined),
+                          label: const Text('Continue without a route'),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
                           key: const Key('plan-destination-empty-button'),
                           onPressed: routing ? null : onPlanDestination,
                           icon: routing

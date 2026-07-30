@@ -242,6 +242,9 @@ Future<void> _pumpMap(
     MaterialApp(
       theme: ThemeData.dark(useMaterial3: true),
       home: RideMapScreen(
+        // These tests exercise the pre-ride route chooser. A live route-less
+        // ride deliberately dismisses that chooser so it cannot block the map.
+        rideStarted: false,
         routeStore: store,
         routeImporter: RouteImporter(source: const _NoFileSource()),
         offlineTileCache: cache,
