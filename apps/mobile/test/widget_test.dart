@@ -630,6 +630,40 @@ void main() {
 
     controller.dispose();
   });
+
+  testWidgets('creating after a set-aside ended ride opens the new ride', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    await controller.createRide('Oliver');
+    final endedRideId = controller.session!.rideId;
+    await controller.endRide();
+    controller.setEndedRideAside();
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
+
+    await tester.tap(find.text('Create a ride'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Create ride'),
+      180,
+      scrollable: _rideFormScrollable,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await tester.pumpAndSettle();
+    expect(find.text('Continue to ride'), findsOneWidget);
+
+    await tester.tap(find.text('Continue to ride'));
+    await tester.pumpAndSettle();
+
+    expect(controller.session?.rideId, isNot(endedRideId));
+    expect(controller.rideEnded, isFalse);
+    expect(controller.endedRideSetAside, isFalse);
+    expect(find.text('Navigation map'), findsOneWidget);
+  });
 }
 
 late RiderProfileController _riderProfile;

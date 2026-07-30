@@ -795,6 +795,43 @@ void main() {
     expect(controller.session?.rideId, rideId);
   });
 
+  test(
+    'creating after a set-aside ended ride starts with clean state',
+    () async {
+      await controller.createRide('Oliver', rideName: 'First ride');
+      final endedRideId = controller.session!.rideId;
+      await controller.endRide();
+      controller.setEndedRideAside();
+
+      await controller.createRide('Oliver', rideName: 'Second ride');
+
+      expect(controller.session?.rideId, isNot(endedRideId));
+      expect(controller.session?.rideName, 'Second ride');
+      expect(controller.rideEnded, isFalse);
+      expect(controller.endedRideSetAside, isFalse);
+      expect(
+        controller.events.map((event) => event.rideId),
+        everyElement(controller.session!.rideId),
+      );
+      expect(await eventStore.eventsForRide(endedRideId), isEmpty);
+      expect((await completedRideStore.list()).single.title, 'First ride');
+    },
+  );
+
+  test('creating cannot replace a ride which has not ended', () async {
+    await controller.createRide('Oliver', rideName: 'Current ride');
+    final rideId = controller.session!.rideId;
+
+    await controller.createRide('Oliver', rideName: 'Replacement');
+
+    expect(controller.session?.rideId, rideId);
+    expect(controller.session?.rideName, 'Current ride');
+    expect(
+      controller.errorMessage,
+      'Finish or leave your current ride before creating another.',
+    );
+  });
+
   test('a set-aside ride cannot outlive the ride it refers to', () async {
     await controller.createRide('Oliver');
     await controller.endRide();
