@@ -574,7 +574,6 @@ void main() {
       configuration: const BasemapConfiguration(),
       httpClient: MockClient((_) async => http.Response('', 404)),
     );
-
     await tester.pumpWidget(
       MaterialApp(
         home: RideMapScreen(
@@ -589,6 +588,74 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Waiting for the leader’s route'), findsNothing);
+    expect(find.text('Choose a route'), findsNothing);
+  });
+
+  testWidgets('leader can dismiss the route chooser and use the live map', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-leader-no-route-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final store = InMemoryRouteStore();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: store,
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          rideStarted: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Choose a route'), findsOneWidget);
+    expect(
+      find.byKey(const Key('continue-without-route-button')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('A route is optional'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('continue-without-route-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Choose a route'), findsNothing);
+    expect(await store.loadActiveRoute(), isNull);
+  });
+
+  testWidgets('a started route-less ride does not block its leader', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-started-leader-no-route-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          rideStarted: true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
     expect(find.text('Choose a route'), findsNothing);
   });
 
@@ -615,6 +682,7 @@ void main() {
           routeStore: InMemoryRouteStore(),
           routeImporter: RouteImporter(source: const _NoFileSource()),
           offlineTileCache: cache,
+          rideStarted: false,
         ),
       ),
     );
@@ -627,6 +695,51 @@ void main() {
     await tester.ensureVisible(find.text('Use demo route'));
     expect(find.text('Use demo route'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('route picker has an explicit route-less exit', (tester) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-route-picker-exit-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          rideStarted: false,
+          changeRouteRequestToken: Object(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('continue-without-route-sheet-item')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Use the live group map without navigation'),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const Key('continue-without-route-sheet-item')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('continue-without-route-sheet-item')),
+      findsNothing,
+    );
+    expect(find.text('Choose a route'), findsNothing);
   });
 
   testWidgets('draws rider and leader trails with no route imported', (
@@ -1530,6 +1643,7 @@ void main() {
           leaderStatus: leaderStatus,
           distanceUnit: DistanceUnit.miles,
           onRouteChanged: publishedRoutes.add,
+          rideStarted: false,
         ),
       ),
     );
@@ -1546,6 +1660,7 @@ void main() {
     expect(find.textContaining('2.0 mi'), findsOneWidget);
     expect(find.textContaining('0.1 mi'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('Use demo route'));
     await tester.tap(find.text('Use demo route'));
     for (var i = 0; i < 5; i += 1) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -1603,6 +1718,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Load demo route'));
     await tester.tap(find.text('Load demo route'));
     await tester.pumpAndSettle();
 
@@ -1761,6 +1877,7 @@ void main() {
             searchService: search,
             routingService: routing,
           ),
+          rideStarted: false,
         ),
       ),
     );

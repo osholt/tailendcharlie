@@ -1659,6 +1659,24 @@ class RideController extends ChangeNotifier {
         RideCoordinationMode.secondBikeDropOff,
     String? rideName,
   }) async {
+    // The home screen deliberately remains available while an ended ride is
+    // set aside (#207). Creating its replacement must file that completed ride
+    // and reset the active journal first; otherwise its `rideEnded` event stays
+    // in memory and makes the new session look ended as soon as it is created.
+    //
+    // Validate user input before giving up the previous ride's recovery window,
+    // and never let this path overwrite a ride which has not ended.
+    final normalisedDisplayName = _normaliseName(displayName);
+    if (_session != null) {
+      if (!rideEnded) {
+        throw const FormatException(
+          'Finish or leave your current ride before creating another.',
+        );
+      }
+      await _archiveCurrentRideIfComplete();
+      await _removeRideData();
+    }
+
     final now = _clock();
     final normalisedRideName = rideName?.trim();
     final rideId = _idFactory();
@@ -1668,7 +1686,7 @@ class RideController extends ChangeNotifier {
       inviteSecret: _generateInviteSecret(),
       joinToken: _generateJoinToken(),
       localRiderId: _localRiderIdForRide(rideId),
-      displayName: _normaliseName(displayName),
+      displayName: normalisedDisplayName,
       role: RideRole.lead,
       joinedAt: now,
       isSimulation: isSimulation,
