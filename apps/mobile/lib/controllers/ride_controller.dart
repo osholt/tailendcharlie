@@ -430,6 +430,30 @@ class RideController extends ChangeNotifier {
       })?.type ==
       RideEventType.rideEnded;
 
+  /// Who ended the ride, when it has ended.
+  ///
+  /// A tester whose ride was ended by the leader read it as a crash: "You can see
+  /// that the ride has ended but not super obvious unless you are looking for
+  /// it... Otherwise looks like the app just crashes?" (#283). An unexplained stop
+  /// is the worst ambiguity a safety app can offer, because the rider cannot tell
+  /// whether the group can still see them.
+  ///
+  /// Resolved from the journal rather than from a live callback, so it is just as
+  /// available to a phone that was offline when it happened, or that has restarted
+  /// since. `deviceId` is the author's rider id - `_record` sets it from the
+  /// session's `localRiderId` - so the roster can name them.
+  ({String riderId, String? displayName, bool isLocalRider})? get rideEndedBy {
+    if (!rideEnded) return null;
+    final event = _latestOf(const {RideEventType.rideEnded});
+    if (event == null) return null;
+    final riderId = event.deviceId;
+    return (
+      riderId: riderId,
+      displayName: participantFor(riderId)?.displayName,
+      isLocalRider: riderId == _session?.localRiderId,
+    );
+  }
+
   /// The newest event of any of [types], or null when the journal holds none.
   ///
   /// Local clocks can produce equal timestamps for back-to-back actions; events

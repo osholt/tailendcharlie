@@ -152,6 +152,57 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     body: ListView(
       padding: const EdgeInsets.all(18),
       children: [
+        // Named, prominent, and first. A tester read an unexplained end as a
+        // crash (#283): the screen said the ride had ended but not that somebody
+        // had ended it, nor who, so it was indistinguishable from the app
+        // falling over. "Ride summary ready" is the wrong first thing to say to
+        // a rider who did not ask for the ride to stop.
+        if (widget.controller.rideEndedBy case final endedBy?
+            when !endedBy.isLocalRider)
+          Padding(
+            key: const Key('ride-ended-by-notice'),
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A2136),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFFFA76B)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline, color: Color(0xFFFFC79B)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          endedBy.displayName == null
+                              ? 'The ride leader ended this ride for everyone'
+                              : '${endedBy.displayName} ended this ride for '
+                                    'everyone',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(color: const Color(0xFFFFF1E4)),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'The app did not stop on its own and nothing has gone '
+                          'wrong. Your position is no longer being shared with '
+                          'the group.',
+                          style: TextStyle(
+                            color: Color(0xFFE3CBB6),
+                            height: 1.45,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         Text(
           'Ride summary ready',
           style: Theme.of(context).textTheme.headlineMedium,

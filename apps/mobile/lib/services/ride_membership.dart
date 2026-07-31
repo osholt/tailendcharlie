@@ -419,6 +419,10 @@ class RideMembershipReducer {
         isLocal: true,
       ),
     };
+    // When each rider last claimed lead, so a second claimant is resolved
+    // deterministically rather than by whichever event happened to arrive last on
+    // this particular phone. See [_withOneLeader].
+    final leadClaimedAt = <String, DateTime>{};
     final lastActivityAt = <String, DateTime>{};
     // The newest journal position per rider, and the one frozen at a departure.
     // Both come from the ride's own journal, so a retained record is deleted
@@ -438,10 +442,14 @@ class RideMembershipReducer {
         final role = _role(event.payload['role']);
         if (displayName == null || role == null) continue;
         final isLocal = event.deviceId == localRiderId;
+        final joiningRole = isLocal ? localRole : role;
+        if (joiningRole == RideRole.lead) {
+          leadClaimedAt[event.deviceId] = event.createdAt;
+        }
         participants[event.deviceId] = RideParticipant(
           riderId: event.deviceId,
           displayName: isLocal ? localDisplayName : displayName,
-          role: isLocal ? localRole : role,
+          role: joiningRole,
           joinedAt: event.createdAt,
           lastSeenAt: event.createdAt,
           state: RideMembershipState.joined,
@@ -523,6 +531,9 @@ class RideMembershipReducer {
       if (event.type == RideEventType.roleChanged) {
         final role = _role(event.payload['role']);
         if (role == null) continue;
+        if (role == RideRole.lead) {
+          leadClaimedAt[event.deviceId] = event.createdAt;
+        }
         participants[event.deviceId] = existing.copyWith(
           role: existing.isLocal ? localRole : role,
           lastSeenAt: event.createdAt,
@@ -716,7 +727,68 @@ class RideMembershipReducer {
             if (byJoin != 0) return byJoin;
             return left.riderId.compareTo(right.riderId);
           });
-    return List.unmodifiable(result);
+    return List.unmodifiable(_withOneLeader(result, leadClaimedAt));
+  }
+
+  /// Leaves exactly one rider holding [RideRole.lead].
+  ///
+  /// A tester found that two riders could hold lead at the same time, and that
+  /// either could then end the ride for everyone (#284). #241 restricted that
+  /// action to the leader, and `endRide` guards on it - but the guard asks only
+  /// whether *this phone* believes it leads, so if two phones both believe it,
+  /// both pass. A leader-only rule is worth no more than the guarantee that there
+  /// is one leader.
+  ///
+  /// The rule is the latest claim wins, ties broken by rider id. Both halves
+  /// matter: latest-wins makes a handover work without a separate protocol, and
+  /// the id tiebreak is what makes every device agree. Ordering by arrival would
+  /// let two phones that were offline together reach opposite conclusions, which
+  /// is the failure this is supposed to remove rather than relocate.
+  ///
+  /// This is the narrow half of the problem. Roles are still not bound to a
+  /// device: trust rests on one shared per-ride HMAC secret, so anyone holding it
+  /// can mint an event that verifies as any role, and no reducer can detect that.
+  /// #272 is the review that has to settle it. What this removes is two *honest*
+  /// phones both believing they lead.
+  static List<RideParticipant> _withOneLeader(
+    List<RideParticipant> participants,
+    Map<String, DateTime> leadClaimedAt,
+  ) {
+    final leaders = participants
+        .where((participant) => participant.role == RideRole.lead)
+        .toList(growable: false);
+    if (leaders.length < 2) return participants;
+
+    RideParticipant? winner;
+    for (final candidate in leaders) {
+      if (winner == null) {
+        winner = candidate;
+        continue;
+      }
+      final candidateAt = leadClaimedAt[candidate.riderId];
+      final winnerAt = leadClaimedAt[winner.riderId];
+      if (candidateAt == null) continue;
+      if (winnerAt == null) {
+        winner = candidate;
+        continue;
+      }
+      final byTime = candidateAt.compareTo(winnerAt);
+      if (byTime > 0 ||
+          (byTime == 0 && candidate.riderId.compareTo(winner.riderId) > 0)) {
+        winner = candidate;
+      }
+    }
+
+    return [
+      for (final participant in participants)
+        participant.role == RideRole.lead &&
+                participant.riderId != winner!.riderId
+            // Demoted to rider rather than dropped: they are still in the ride,
+            // they just do not lead it, and saying so is what stops their phone
+            // offering leader-only actions.
+            ? participant.copyWith(role: RideRole.rider)
+            : participant,
+    ];
   }
 
   /// The rider's own position from an authenticated journal location event, or

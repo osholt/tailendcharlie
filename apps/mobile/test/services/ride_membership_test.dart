@@ -132,6 +132,85 @@ void main() {
     expect(rider.isIncludedInLiveCount, isTrue);
   });
 
+  test('only one rider holds lead, whichever order the claims arrive', () {
+    // #284: "still 2 people can be leader at the same time, which allows either of
+    // them to end the ride for all". #241 restricted ending a ride for everyone to
+    // the leader, and endRide guards on it - but the guard asks only whether this
+    // phone believes it leads, so two believers both pass.
+    //
+    // The rule is latest claim wins, ties broken by rider id. The tiebreak is the
+    // part that matters here: ordering by arrival would let two phones that were
+    // offline together reach opposite conclusions, which relocates the bug rather
+    // than removing it.
+    final earlier = _event(
+      id: 'join-first-leader',
+      deviceId: 'rider-a',
+      type: RideEventType.riderJoined,
+      createdAt: joinedAt,
+      payload: const {
+        'displayName': 'Alex',
+        'role': 'lead',
+        'motorcycleStyle': 'adventure',
+        'riderColor': 'blue',
+      },
+      secret: secret,
+    );
+    final later = _event(
+      id: 'join-second-leader',
+      deviceId: 'rider-b',
+      type: RideEventType.riderJoined,
+      createdAt: joinedAt.add(const Duration(minutes: 5)),
+      payload: const {
+        'displayName': 'Blake',
+        'role': 'lead',
+        'motorcycleStyle': 'adventure',
+        'riderColor': 'green',
+      },
+      secret: secret,
+    );
+
+    List<RideParticipant> reduce(List<RideEvent> events) =>
+        const RideMembershipReducer().fromEvents(
+          rideId: 'ride-a',
+          inviteSecret: secret,
+          events: events,
+          now: joinedAt.add(const Duration(minutes: 6)),
+          localRiderId: 'observer',
+          localDisplayName: 'Observer',
+          localRole: RideRole.rider,
+          localJoinedAt: joinedAt,
+          localMotorcycleStyle: motorcycleIconStyleDefault,
+          localRiderColor: riderColorDefault,
+          rideStartedAt: joinedAt,
+        );
+
+    for (final ordering in [
+      [earlier, later],
+      [later, earlier],
+    ]) {
+      final participants = reduce(ordering);
+      final leaders = participants
+          .where((participant) => participant.role == RideRole.lead)
+          .toList();
+
+      expect(
+        leaders,
+        hasLength(1),
+        reason: 'two riders may not hold lead at once',
+      );
+      expect(
+        leaders.single.riderId,
+        'rider-b',
+        reason: 'the later claim wins, whichever order the events arrived in',
+      );
+      // Demoted, not removed: they are still in the ride, they just do not lead
+      // it, and saying so is what stops their phone offering leader-only actions.
+      final demoted = participants.firstWhere((p) => p.riderId == 'rider-a');
+      expect(demoted.role, RideRole.rider);
+      expect(demoted.hasLeft, isFalse);
+    }
+  });
+
   test('a forged departure cannot remove a participant', () {
     final joined = _event(
       id: 'join',
