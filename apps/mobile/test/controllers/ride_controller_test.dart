@@ -1079,6 +1079,28 @@ void main() {
     expect(controller.sentIceShares.single.toWholeGroup, isFalse);
   });
 
+  test('the ride names who ended it', () async {
+    // #283: a tester whose ride the leader ended read it as a crash. Naming the
+    // person is the difference between "something broke" and "the leader stopped
+    // the ride", and it comes from the journal so a phone that was offline or has
+    // restarted since can still say it.
+    await controller.createRide('Leader');
+    await controller.startRide();
+
+    expect(
+      controller.rideEndedBy,
+      isNull,
+      reason: 'a running ride has nobody who ended it',
+    );
+
+    await controller.endRide();
+
+    final endedBy = controller.rideEndedBy;
+    expect(endedBy, isNotNull);
+    expect(endedBy!.isLocalRider, isTrue);
+    expect(endedBy.displayName, 'Leader');
+  });
+
   test('received ICE shares include broadcasts and shares addressed to me, '
       'not shares addressed elsewhere', () async {
     await controller.createRide('Oliver');
