@@ -19,6 +19,7 @@ import '../../services/ride_connectivity_summary.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
+import '../../controllers/test_control_controller.dart';
 import '../settings/unit_settings_sheet.dart';
 import 'marker_assistance_widgets.dart';
 
@@ -40,6 +41,7 @@ class RideDashboard extends StatelessWidget {
     this.serviceWarning,
     this.connectivity,
     this.summarySharer,
+    this.testControl,
   });
 
   final RideController controller;
@@ -59,6 +61,11 @@ class RideDashboard extends StatelessWidget {
   /// The reconciled answer to "is the group seeing where I am".
   final RideConnectivitySummary? connectivity;
   final RideSummarySharer? summarySharer;
+
+  /// Null unless this build carries the test-control define; forwarded to the
+  /// settings sheet so a running test can be switched off without leaving the
+  /// ride.
+  final TestControlController? testControl;
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +89,7 @@ class RideDashboard extends StatelessWidget {
               speedLimitDisplay: speedLimitDisplay,
               currentRideActive: true,
               lastRelaySync: internetRelayController?.status.lastSuccessfulSync,
+              testControl: testControl,
             ),
             icon: const Icon(Icons.settings_outlined),
           ),

@@ -38,17 +38,73 @@ The repository now contains an integrated development alpha:
   PostgreSQL migrations, Android debug APKs, and unsigned iOS apps.
 
 The remaining P0 gates require physical evidence, deployment ownership, or
-external data rather than more UI claims: Android/iPhone radio and background
-testing, foreground-route alert calibration, battery testing, per-device
-identity/application-layer encryption review, deployment of the included relay,
-and field-tested marker/pass detection. A basemap archive/style and licensed
-traffic provider are not configured. Waze is unavailable as a hazard-read
-source: its partner data programme is limited to government agencies and road
-operators, and this project applied and is not eligible. Manual six-character
-joining cannot start authenticated nearby or internet relay because it does not
-carry the high-entropy invitation secret; sharing and pasting the private invite
-is the supported alpha path. OS deep-link registration and an in-app QR scanner
-remain open release work.
+external data rather than more UI claims, and each is now tracked: Android/iPhone
+radio and background testing (#268), battery testing (#269), foreground-route
+alert calibration (#270), field-tested marker/pass detection (#271), and
+per-device identity/application-layer encryption review (#272).
+
+**The relay is deployed.** `relay.tailendcharlie.app` answers `/health/live` with
+`{"status":"ok"}` and advertises a capability set identical to this tree's
+`supported_capabilities` default, so the earlier statement that deployment of the
+included relay was outstanding was wrong. What genuinely remains is operational
+rather than deployment work — named ownership, a tested restore, monitoring that
+reaches a human, verified retention cleanup, and a way to check the deployed
+commit against an installed build (#273). That last one is not cosmetic: rule 0 of
+[docs/build-and-run.md](docs/build-and-run.md) exists because on 26 July three app
+builds were tested against a relay two days behind `main`, and the failures
+re-reported each time were the undeployed server.
+
+A basemap archive/style (#274) and licensed traffic provider (#277) are not
+configured. The basemap position is worse than "unconfigured": a build with no
+overrides points at a public OpenFreeMap style and leaves
+`RIDE_RELAY_TILE_CACHE_ALLOWED` at `false`, so an offline-first app currently
+fetches third-party tiles on every ride and persists none of them. Offline map
+coverage is not available in a default build.
+
+Waze is unavailable as a hazard-read source: its partner data programme is
+limited to government agencies and road operators, and this project applied and
+is not eligible.
+
+Manual six-character joining cannot start authenticated nearby or internet relay
+because it does not carry the high-entropy invitation secret; sharing and pasting
+the private invite is the supported alpha path. OS deep-link registration is done
+for planner route codes — the associated-domains entitlement, the published
+`apple-app-site-association` and an Android `autoVerify` filter all cover
+`/planner.html` — but a ride invitation is shared as pasteable text and has no
+registered link, so it cannot be tapped to join (#275). An in-app QR scanner does
+not exist; both `qr_code` icons in the app are decorative (#276).
+
+### Test hardware reality (31 July 2026)
+
+Two iPhones are held: an iPhone 15 Pro on iOS 26.5.2 and an iPhone SE 3rd
+generation on iOS 26.1. **No Android phone is held.**
+
+This is a hard limit on what the P0 evidence can currently say, and it is not a
+scheduling problem:
+
+- The cross-platform premise — iOS and Android phones in one group — cannot be
+  evidenced at all. #268 cannot close on this hardware, and #132's mixed-platform
+  evidence cannot be produced.
+- Both phones run iOS 26.x against a 16.0 deployment target, so the oldest
+  supported iOS is untested. No claim about iOS 16, 17 or 18 is supported by
+  evidence.
+- The Android half of #269 (battery), including the aggressive-battery-management
+  case, is unrunnable.
+
+Acquiring one current Google/Samsung Android phone and one with aggressive
+battery management is a prerequisite for those gates, not an optimisation.
+[docs/field-test-plan.md](docs/field-test-plan.md) records which individual steps
+are runnable on the current inventory and which are blocked.
+
+An Android emulator is configured and closes part of that gap, but only the part
+that does not involve a radio. It is real evidence for the internet-relay
+transport — idle-device delivery, presence convergence, leave/rejoin, route
+convergence and protocol negotiation, which is most of what #99, #132 and #134
+are owed — plus Android UI, stock Doze behaviour and App Links. It is not, and
+cannot be made to be, evidence for peer-to-peer radio, battery, or real-GPS
+accuracy. An emulator has no battery and no radio path to an iPhone. The split is
+recorded step by step in [docs/field-test-plan.md](docs/field-test-plan.md), and
+an emulator result never satisfies a radio, battery or real-GPS pass gate.
 
 ## 1. Product summary
 
@@ -497,7 +553,10 @@ Non-blocking:
 
 ## 14. First implementation backlog
 
-1. Create a four-phone field-test protocol and reference-device matrix.
+1. Create a four-phone field-test protocol and reference-device matrix. The
+   protocol exists in [docs/field-test-plan.md](docs/field-test-plan.md); the
+   matrix is recorded there but only half-filled, because no Android phone is
+   held. A four-phone test is not currently possible (#268).
 2. Prototype Swift Nearby Connections advertising/discovery and byte messages.
 3. Prototype Android Nearby Connections using the same cluster service.
 4. Measure reconnect/background/locked-screen behaviour and battery.
