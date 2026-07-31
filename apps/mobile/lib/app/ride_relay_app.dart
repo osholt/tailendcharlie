@@ -11,6 +11,7 @@ import '../controllers/rider_profile_controller.dart';
 import '../controllers/road_rating_controller.dart';
 import '../controllers/shared_route_controller.dart';
 import '../controllers/speed_limit_display_controller.dart';
+import '../controllers/spoken_guidance_controller.dart';
 import '../controllers/test_control_controller.dart';
 import '../domain/recorded_route_store.dart';
 import '../features/home/home_screen.dart';
@@ -35,6 +36,7 @@ class RideRelayApp extends StatelessWidget {
     this.roadRatings,
     this.testControl,
     this.testControlRegistry,
+    this.spokenGuidance,
     this.enableNativeServices = true,
     this.initializeController,
     this.startupFallbackAfter = const Duration(seconds: 2),
@@ -58,6 +60,9 @@ class RideRelayApp extends StatelessWidget {
   /// row and the registry hand-off are the only two places they are used.
   final TestControlController? testControl;
   final TestControlRegistry? testControlRegistry;
+
+  /// Whether turn instructions are spoken (#286). Off by default.
+  final SpokenGuidanceController? spokenGuidance;
 
   final bool enableNativeServices;
 
@@ -179,6 +184,7 @@ class RideRelayApp extends StatelessWidget {
               completedRides: completedRides,
               planDirectory: planDirectory,
               testControl: testControl,
+              spokenGuidance: spokenGuidance,
               restoringRideCode: controller.session?.rideCode,
               restorationError: restorationError,
               onRetryRestoration: retryRestoration,
@@ -200,6 +206,7 @@ class RideRelayApp extends StatelessWidget {
               roadRatings: roadRatings,
               testControl: testControl,
               testControlRegistry: testControlRegistry,
+              spokenGuidance: spokenGuidance,
             );
           }
           if (riderProfile.needsOnboarding) {
@@ -217,6 +224,7 @@ class RideRelayApp extends StatelessWidget {
             completedRides: completedRides,
             planDirectory: planDirectory,
             testControl: testControl,
+            spokenGuidance: spokenGuidance,
           );
         },
       ),

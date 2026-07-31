@@ -13,6 +13,7 @@ import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
@@ -44,6 +45,7 @@ class HomeScreen extends StatefulWidget {
     required this.completedRides,
     this.planDirectory,
     this.testControl,
+    this.spokenGuidance,
     this.restoringRideCode,
     this.restorationError,
     this.onRetryRestoration,
@@ -63,6 +65,10 @@ class HomeScreen extends StatefulWidget {
   /// Null unless this build carries the test-control define; only forwarded to
   /// the settings sheet.
   final TestControlController? testControl;
+
+  /// Whether turn instructions are spoken (#286). Forwarded to the settings
+  /// sheet, which is where a rider opts in.
+  final SpokenGuidanceController? spokenGuidance;
 
   final String? restoringRideCode;
   final Object? restorationError;
@@ -260,6 +266,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       widget.riderProfile,
                       speedLimitDisplay: widget.speedLimitDisplay,
                       testControl: widget.testControl,
+                      spokenGuidance: widget.spokenGuidance,
                     ),
                     icon: const Icon(Icons.settings_outlined),
                   ),

@@ -7,6 +7,7 @@ import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
@@ -28,6 +29,7 @@ class UnitSettingsSheet extends StatelessWidget {
     this.lastRelaySync,
     this.buildIdentity,
     this.testControl,
+    this.spokenGuidance,
   });
 
   final DistanceUnitController controller;
@@ -35,6 +37,11 @@ class UnitSettingsSheet extends StatelessWidget {
   final RiderProfileController riderProfile;
   final SpeedLimitDisplayController speedLimitDisplay;
   final bool currentRideActive;
+
+  /// Whether turn instructions are spoken. Off by default: most riders already
+  /// have an intercom carrying music or another app's prompts, and a second
+  /// uninvited voice is worse than silence (#286).
+  final SpokenGuidanceController? spokenGuidance;
 
   /// Present only in a build carrying the test-control define. Null everywhere
   /// else, and [TestControlSection] renders nothing when the define is absent,
@@ -59,6 +66,7 @@ class UnitSettingsSheet extends StatelessWidget {
     DateTime? lastRelaySync,
     BuildIdentity? buildIdentity,
     TestControlController? testControl,
+    SpokenGuidanceController? spokenGuidance,
   }) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -72,6 +80,7 @@ class UnitSettingsSheet extends StatelessWidget {
       lastRelaySync: lastRelaySync,
       buildIdentity: buildIdentity,
       testControl: testControl,
+      spokenGuidance: spokenGuidance,
     ),
   );
 
@@ -221,6 +230,30 @@ class UnitSettingsSheet extends StatelessWidget {
             style: const TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
           ),
           const SizedBox(height: 22),
+          Text(
+            'GUIDANCE',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF8D98A7),
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (spokenGuidance case final spoken?)
+            AnimatedBuilder(
+              animation: spoken,
+              builder: (context, _) => SwitchListTile.adaptive(
+                key: const Key('spoken-guidance-toggle'),
+                contentPadding: EdgeInsets.zero,
+                value: spoken.enabled,
+                onChanged: spoken.setEnabled,
+                title: const Text('Speak turn instructions'),
+                subtitle: const Text(
+                  'Reads the next turn aloud so you do not have to look down. '
+                  'Mixes with music or an intercom rather than stopping it.',
+                ),
+              ),
+            ),
+          const SizedBox(height: 20),
           Text(
             'ABOUT',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(

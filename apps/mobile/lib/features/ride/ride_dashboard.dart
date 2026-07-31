@@ -19,6 +19,7 @@ import '../../services/ride_connectivity_summary.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
+import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import '../settings/unit_settings_sheet.dart';
 import 'marker_assistance_widgets.dart';
@@ -42,6 +43,7 @@ class RideDashboard extends StatelessWidget {
     this.connectivity,
     this.summarySharer,
     this.testControl,
+    this.spokenGuidance,
   });
 
   final RideController controller;
@@ -67,6 +69,9 @@ class RideDashboard extends StatelessWidget {
   /// ride.
   final TestControlController? testControl;
 
+  /// Whether turn instructions are spoken (#286).
+  final SpokenGuidanceController? spokenGuidance;
+
   @override
   Widget build(BuildContext context) {
     final session = controller.session!;
@@ -90,6 +95,7 @@ class RideDashboard extends StatelessWidget {
               currentRideActive: true,
               lastRelaySync: internetRelayController?.status.lastSuccessfulSync,
               testControl: testControl,
+              spokenGuidance: spokenGuidance,
             ),
             icon: const Icon(Icons.settings_outlined),
           ),

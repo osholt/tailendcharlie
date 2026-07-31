@@ -13,6 +13,7 @@ import 'controllers/rider_profile_controller.dart';
 import 'controllers/road_rating_controller.dart';
 import 'controllers/shared_route_controller.dart';
 import 'controllers/speed_limit_display_controller.dart';
+import 'controllers/spoken_guidance_controller.dart';
 import 'controllers/test_control_controller.dart';
 import 'data/json_file_recorded_route_store.dart';
 import 'data/json_file_completed_ride_store.dart';
@@ -58,6 +59,7 @@ Future<void> main() async {
     // because Dart's parallel-wait extension stops at nine futures, and this
     // must not become a tenth serial await - see the #209 note above.
     testControl,
+    spokenGuidance,
   ) = await (
     (
       RiderProfileController.load(),
@@ -73,6 +75,7 @@ Future<void> main() async {
       JsonFileCompletedRideStore.openDefault(),
     ).wait,
     TestControlController.load(),
+    SpokenGuidanceController.load(),
   ).wait;
 
   final completedRides = await CompletedRidesController.load(
@@ -115,6 +118,7 @@ Future<void> main() async {
       roadRatings: roadRatings,
       testControl: testControl,
       testControlRegistry: testControlRegistry,
+      spokenGuidance: spokenGuidance,
       initializeController: controller.initialize,
     ),
   );

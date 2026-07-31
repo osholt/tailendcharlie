@@ -20,6 +20,7 @@ import '../../controllers/ride_push_notification_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
+import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
@@ -49,6 +50,7 @@ import '../../relay/native_nearby_transport.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
+import '../../services/spoken_guidance.dart';
 import '../../services/test_control_registry.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
@@ -251,6 +253,7 @@ class ActiveRideShell extends StatefulWidget {
     this.roadRatings,
     this.testControl,
     this.testControlRegistry,
+    this.spokenGuidance,
   });
 
   final RideController rideController;
@@ -261,6 +264,10 @@ class ActiveRideShell extends StatefulWidget {
   /// the driven surface always talks to the live one.
   final TestControlController? testControl;
   final TestControlRegistry? testControlRegistry;
+
+  /// Whether turn instructions are spoken. Null in surfaces that do not offer it,
+  /// which is treated as off (#286).
+  final SpokenGuidanceController? spokenGuidance;
 
   final DistanceUnitController distanceUnits;
   final MapStyleModeController mapStyleMode;
@@ -934,6 +941,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   // accepted again (#282). These live here because this shell outlives the tabs.
   String? _dismissedEnforcementAlertId;
   route_domain.ImportedRoute? _routeStartConnector;
+
+  /// Built only in a surface that offers spoken guidance. The engine itself is
+  /// not touched until something is actually spoken, so a rider who leaves the
+  /// option off never has a speech engine initialised behind their back.
+  SpokenGuidanceSpeaker? _spokenGuidance;
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -3374,7 +3386,40 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   void _onNavigationGuidanceChanged(NavigationGuidance? guidance) {
     _latestNavigationGuidance = guidance;
+    _speakGuidance(guidance);
     _updateMapOverlays(updateDerivedState: false);
+  }
+
+  /// Speaks the instruction the phone banner and the car rows are already showing
+  /// (#286).
+  ///
+  /// Deliberately driven from here rather than from its own timer or a second
+  /// derivation of the route. This is the one place the current instruction
+  /// changes, so audio cannot disagree with the screen - and a rider who hears
+  /// one thing and sees another will trust neither.
+  ///
+  /// [ManeuverInstruction.standaloneText] is the wording, for the reason it
+  /// already exists: it is what surfaces with no symbol beside them use, which is
+  /// exactly what audio is. A roundabout says so out loud, where the banner can
+  /// leave it to the drawn glyph.
+  void _speakGuidance(NavigationGuidance? guidance) {
+    final speaker = _spokenGuidance;
+    if (speaker == null) return;
+    if (guidance == null) return;
+    final controller = widget.rideController;
+    unawaited(
+      speaker.speakManoeuvre(
+        // The manoeuvre's identity, not its wording, so re-deriving the same turn
+        // on every position fix does not speak it again.
+        key: '${guidance.instruction.maneuver.hashCode}',
+        phrase: guidance.instruction.standaloneText,
+        enabled: widget.spokenGuidance?.enabled ?? false,
+        rideActive:
+            controller.rideStarted &&
+            !controller.rideEnded &&
+            !controller.ridePaused,
+      ),
+    );
   }
 
   String get _projectedRideState {
@@ -4248,6 +4293,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     speedLimitDisplay: widget.speedLimitDisplay,
     riderProfile: widget.riderProfile,
     testControl: widget.testControl,
+    spokenGuidance: widget.spokenGuidance,
     onLeaveRide: _leaveRide,
     onOpenRoster: _openRoster,
     relayController: _relayController,
@@ -4374,6 +4420,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _simulationController?.removeListener(_onSimulationVisualChanged);
     _simulationController?.dispose();
     _preStartPresenceController?.removeListener(_onPreStartPresenceChanged);
+    unawaited(_spokenGuidance?.stop());
     _awarenessController?.removeListener(_onAwarenessChanged);
     _markerAssistanceController?.dispose();
     if (_awarenessController case final awareness?) {

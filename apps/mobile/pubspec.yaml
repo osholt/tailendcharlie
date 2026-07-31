@@ -53,6 +53,7 @@ dependencies:
   vector_map_tiles: 9.0.0-beta.11
   wakelock_plus: ^1.7.0
   xml: ^7.0.1
+  flutter_tts: ^4.2.5
 
 dev_dependencies:
   flutter_test:
