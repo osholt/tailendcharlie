@@ -1368,6 +1368,106 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('a fix without a speed holds the readout instead of blanking it', (
+    tester,
+  ) async {
+    // #285: "Current speed pops on for 2-3 secs then off for 4-5 seconds."
+    //
+    // Not the silence window expiring - that is #210's rule and is asserted
+    // above. This was a fix *arriving* with no usable speed, which cleared the
+    // readout outright. On Android plenty of fixes carry no speed, so the number
+    // was wiped several times a minute while the rider was moving normally.
+    final directory = Directory.systemTemp.createTempSync('speed-hold');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final now = DateTime.utc(2026, 7, 31, 9);
+    final navigation = ValueNotifier<MapNavigationPosition>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 54.15, longitude: -4.48),
+        recordedAt: now,
+        accuracyMeters: 5,
+        headingDegrees: 0,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: _WidgetSpeedLimitProvider(),
+      clock: () => now,
+    );
+    addTearDown(speedLimitDisplay.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          speedLimitDisplay: speedLimitDisplay,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    Text readout() => tester.widget<Text>(
+      find.byKey(const Key('posted-speed-limit-rider-speed')),
+    );
+
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 54.1504, longitude: -4.48),
+      recordedAt: now.add(const Duration(seconds: 1)),
+      accuracyMeters: 5,
+      headingDegrees: 0,
+      speedMetersPerSecond: 8,
+    );
+    await speedLimitDisplay.waitForIdle();
+    await tester.pump();
+    expect(readout().data, '18');
+
+    // The rider keeps moving, but this fix reports no speed.
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 54.1508, longitude: -4.48),
+      recordedAt: now.add(const Duration(seconds: 2)),
+      accuracyMeters: 5,
+      headingDegrees: 0,
+    );
+    await tester.pump();
+
+    expect(
+      readout().data,
+      '18',
+      reason:
+          'a speed-less fix means the platform reported no speed, not that '
+          'the rider stopped',
+    );
+
+    // And it is still held once older than the freshness window, as long as
+    // fixes keep arriving - marked as held rather than presented as current.
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 54.1512, longitude: -4.48),
+      recordedAt: now.add(const Duration(seconds: 6)),
+      accuracyMeters: 5,
+      headingDegrees: 0,
+    );
+    await tester.pump();
+    expect(readout().data, '18');
+    expect(
+      readout().style?.color,
+      isNot(const Color(0xFFFFFFFF)),
+      reason:
+          'a held number must be visibly distinguishable from a current one',
+    );
+
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('reports a gloved enforcement sighting from the map', (
     tester,
   ) async {
