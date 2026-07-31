@@ -15,7 +15,7 @@ The repository now contains an integrated development alpha:
   sessions;
 - an idempotent SQLite event journal and versioned event envelope;
 - HMAC-tagged ride, role, marker, and priority-message events;
-- authenticated private invitation sharing and paste-to-join, QR display, and a
+- authenticated private invitation sharing and paste-to-join, and a
   gloves-oriented development UI;
 - GPX 1.1 import, persistent route geometry, offline route display, and a
   provider/licence-gated MapLibre native offline-region cache;
@@ -65,9 +65,19 @@ Waze is unavailable as a hazard-read source: its partner data programme is
 limited to government agencies and road operators, and this project applied and
 is not eligible.
 
-Manual six-character joining cannot start authenticated nearby or internet relay
-because it does not carry the high-entropy invitation secret; sharing and pasting
-the private invite is the supported alpha path. OS deep-link registration is done
+Six-digit code joining **does** yield authenticated credentials: the relay returns
+the ride's invite secret for a bare code and only verifies a resolve token when one
+is supplied
+([service.py](apps/server/src/ride_relay_server/service.py)). The resolve token
+exempts the lookup from a stricter global rate limit and stops a six-digit code
+being enumerated, so sharing the private invite remains better practice - but the
+earlier claim here, that a typed code cannot start authenticated nearby or internet
+relay, was wrong.
+
+**Every join path needs connectivity once.** Both code and invite go through the
+relay's join-code directory, so there is no way to join a ride offline at all
+today - which is a real gap for a group standing in a car park with no signal, and
+the strongest argument for the QR work in #276. OS deep-link registration is done
 for planner route codes — the associated-domains entitlement, the published
 `apple-app-site-association` and an Android `autoVerify` filter all cover
 `/planner.html` — but a ride invitation is shared as pasteable text and has no

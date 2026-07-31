@@ -9,7 +9,6 @@ import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/services/external_hazard_provider.dart';
-import 'package:ride_relay/services/leader_track_exemption.dart';
 import 'package:ride_relay/services/route_deviation_detector.dart';
 import 'package:ride_relay/services/situation_event_factory.dart';
 
@@ -87,7 +86,7 @@ void main() {
     },
   );
 
-  test('leader working trail remains bounded throughout a long ride', () async {
+  test('the leader keeps their whole trail across a long ride', () async {
     final events = <RideEvent>[];
     for (var index = 0; index < 1200; index += 1) {
       final recordedAt = now.add(Duration(seconds: index));
@@ -123,13 +122,59 @@ void main() {
 
     await longRide.initialize(restoredEvents: events);
 
+    // This test previously asserted the opposite - that the trail was truncated
+    // to LeaderTrackExemption.defaultRecentPointLimit (600). That bound cost a
+    // tester the tail of a 6 h 4 m, 112 mile ride: at these rates 600 points is
+    // the last 40 minutes, and everything earlier was deleted from memory, so it
+    // could never be drawn, exported or recapped again.
+    //
+    // The performance property #165 needed is that no *per-update* work grows
+    // with the ride, and that is now held by two things instead: the projection
+    // is cached rather than rebuilt per read, and the follow-corridor check is
+    // handed only the recent window. Neither requires throwing history away.
+    expect(longRide.leaderTrail, hasLength(1200));
     expect(
-      longRide.leaderTrail,
-      hasLength(LeaderTrackExemption.defaultRecentPointLimit),
+      longRide.leaderTrail.first.latitude,
+      closeTo(51, 1e-9),
+      reason: 'the earliest point of the ride must survive',
     );
-    expect(longRide.leaderTrail.first.latitude, closeTo(51.006, 1e-9));
     expect(longRide.leaderTrail.last.latitude, closeTo(51.01199, 1e-9));
   });
+
+  test(
+    'the cached trail projection stays consistent as points arrive',
+    () async {
+      // The cache is what makes retaining the whole trail affordable, so a stale
+      // cache would be a silently wrong trail rather than a slow one.
+      var nextId = 0;
+      final controller = _controller(
+        store: InMemoryEventStore(),
+        clock: () => now,
+        idFactory: () => 'cached-${nextId++}',
+      );
+      addTearDown(controller.dispose);
+      await controller.initialize(restoredEvents: const []);
+
+      expect(controller.leaderTrail, isEmpty);
+
+      for (var index = 0; index < 3; index += 1) {
+        await controller.recordLocalLocation(
+          LocationSample(
+            position: GeoPoint(latitude: 51 + index * 0.001, longitude: -0.995),
+            recordedAt: now.add(Duration(seconds: index)),
+            accuracyMeters: 5,
+          ),
+        );
+        expect(
+          controller.leaderTrail,
+          hasLength(index + 1),
+          reason: 'the projection must reflect every recorded point',
+        );
+        expect(controller.leaderTrailSamples, hasLength(index + 1));
+      }
+      expect(controller.leaderTrail.last.latitude, closeTo(51.002, 1e-9));
+    },
+  );
 
   test(
     'pre-start location fixes are neither persisted nor displayed',
