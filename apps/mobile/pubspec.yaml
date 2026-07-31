@@ -54,6 +54,8 @@ dependencies:
   wakelock_plus: ^1.7.0
   xml: ^7.0.1
   flutter_tts: ^4.2.5
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.4.0
 
 dev_dependencies:
   flutter_test:

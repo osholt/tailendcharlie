@@ -14,6 +14,7 @@ import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
+import 'scan_invitation_screen.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
@@ -905,10 +906,24 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                           ? null
                           : 'Saved from your last successful join',
                       counterText: '',
-                      suffixIcon: IconButton(
-                        tooltip: 'Paste ride code',
-                        onPressed: _pasteRideCode,
-                        icon: const Icon(Icons.content_paste),
+                      // Scanning sits beside pasting rather than replacing it.
+                      // A camera is the only join path that works with no signal
+                      // (#279), and must never become the only path at all.
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            key: const Key('scan-invitation-button'),
+                            tooltip: 'Scan an invitation code',
+                            onPressed: _scanInvitation,
+                            icon: const Icon(Icons.qr_code_scanner),
+                          ),
+                          IconButton(
+                            tooltip: 'Paste ride code',
+                            onPressed: _pasteRideCode,
+                            icon: const Icon(Icons.content_paste),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -1106,6 +1121,39 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     final savedCode = widget.rideCodePreference.savedCode;
     await widget.rideCodePreference.clear();
     if (_codeController.text == savedCode) _codeController.clear();
+  }
+
+  /// Scans an invitation and joins from it, with no relay lookup (#279).
+  ///
+  /// The whole point is that this works with no signal, so it joins directly from
+  /// the scanned credentials rather than filling in the code field and going
+  /// through the online path - which would defeat it.
+  Future<void> _scanInvitation() async {
+    final invitation = await ScanInvitationScreen.show(context);
+    if (invitation == null || !mounted) return;
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      // Ask for the name rather than joining as nobody: the roster is how a group
+      // finds each other.
+      setState(() => _codeController.text = invitation.rideCode);
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Add your rider name, then join.')),
+      );
+      return;
+    }
+    await widget.controller.joinRideFromInvitation(
+      invitation,
+      name,
+      motorcycleStyle: _selectedStyle,
+      riderSymbol: _selectedSymbol,
+      riderColor: _selectedColor,
+    );
+    if (!mounted) return;
+    if (widget.controller.hasActiveRide) {
+      await widget.rideCodePreference.rememberSuccessfulJoin(
+        invitation.rideCode,
+      );
+    }
   }
 
   Future<void> _pasteRideCode() async {

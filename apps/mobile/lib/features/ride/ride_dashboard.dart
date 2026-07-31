@@ -21,6 +21,7 @@ import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
+import 'ride_invitation_qr_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
 import 'marker_assistance_widgets.dart';
 
@@ -721,6 +722,16 @@ class _RideCodeCard extends StatelessWidget {
                         ),
                         icon: const Icon(Icons.ios_share),
                         label: const Text('Share code'),
+                      ),
+                      // The only way in that needs no signal. Sharing a code or
+                      // an invite both end in a relay lookup, so in a car park
+                      // with no bars they do nothing at all (#279).
+                      TextButton.icon(
+                        key: const Key('show-invitation-qr'),
+                        onPressed: () =>
+                            RideInvitationQrSheet.show(context, session),
+                        icon: const Icon(Icons.qr_code_2),
+                        label: const Text('Show QR'),
                       ),
                     ],
                   ),

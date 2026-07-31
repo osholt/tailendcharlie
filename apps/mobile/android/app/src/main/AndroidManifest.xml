@@ -4,6 +4,10 @@
          simply not found and spoken guidance fails silently, which is the worst
          outcome available: the switch is on, nothing is said, and nothing
          explains why (#286). -->
+    <!-- Scanning a ride invitation, which is the only join path that works with
+         no signal (#279). Requested at the point of scanning, and every other way
+         in keeps working if it is refused. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
