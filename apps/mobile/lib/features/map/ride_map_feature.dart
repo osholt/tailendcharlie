@@ -142,6 +142,10 @@ class RideMapFeature extends StatefulWidget {
     this.dismissedQuickMessageReceiptIds = const {},
     this.onDismissQuickMessageInterrupt,
     this.onDismissQuickMessageReceipt,
+    this.dismissedEnforcementAlertId,
+    this.onDismissEnforcementAlert,
+    this.initialRouteStartConnector,
+    this.onRouteStartConnectorChanged,
     this.onReportHazard,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -196,6 +200,10 @@ class RideMapFeature extends StatefulWidget {
     Set<String> dismissedQuickMessageReceiptIds = const {},
     ValueChanged<String>? onDismissQuickMessageInterrupt,
     ValueChanged<String>? onDismissQuickMessageReceipt,
+    String? dismissedEnforcementAlertId,
+    ValueChanged<String>? onDismissEnforcementAlert,
+    ImportedRoute? initialRouteStartConnector,
+    ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged,
     Future<void> Function(HazardType type)? onReportHazard,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
@@ -241,6 +249,10 @@ class RideMapFeature extends StatefulWidget {
     onAcknowledgeQuickMessage: onAcknowledgeQuickMessage,
     dismissedQuickMessageInterruptIds: dismissedQuickMessageInterruptIds,
     dismissedQuickMessageReceiptIds: dismissedQuickMessageReceiptIds,
+    dismissedEnforcementAlertId: dismissedEnforcementAlertId,
+    onDismissEnforcementAlert: onDismissEnforcementAlert,
+    initialRouteStartConnector: initialRouteStartConnector,
+    onRouteStartConnectorChanged: onRouteStartConnectorChanged,
     onDismissQuickMessageInterrupt: onDismissQuickMessageInterrupt,
     onDismissQuickMessageReceipt: onDismissQuickMessageReceipt,
     onReportHazard: onReportHazard,
@@ -301,6 +313,24 @@ class RideMapFeature extends StatefulWidget {
   final Set<String> dismissedQuickMessageReceiptIds;
   final ValueChanged<String>? onDismissQuickMessageInterrupt;
   final ValueChanged<String>? onDismissQuickMessageReceipt;
+
+  /// Held by the ride shell, not by this widget, because the shell outlives a
+  /// tab change and this widget does not (#282).
+  ///
+  /// The active-ride tabs are a `switch` on the selected index rather than an
+  /// IndexedStack - deliberately, so a MapLibre view is not left composing
+  /// behind another tab - so moving to Ride details and back **disposes and
+  /// rebuilds this widget**. Anything a rider has decided that lives in local
+  /// `State` is therefore silently undone by a tab change, which is what a
+  /// tester hit: cleared alerts returning, and an accepted route-start leg
+  /// having to be accepted again.
+  final String? dismissedEnforcementAlertId;
+  final ValueChanged<String>? onDismissEnforcementAlert;
+
+  /// The routed "navigate to start" leg the rider has already accepted (#262),
+  /// seeded from the shell so accepting it survives a tab change.
+  final ImportedRoute? initialRouteStartConnector;
+  final ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged;
   final Future<void> Function(HazardType type)? onReportHazard;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -446,6 +476,10 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         dismissedQuickMessageInterruptIds:
             widget.dismissedQuickMessageInterruptIds,
         dismissedQuickMessageReceiptIds: widget.dismissedQuickMessageReceiptIds,
+        dismissedEnforcementAlertId: widget.dismissedEnforcementAlertId,
+        onDismissEnforcementAlert: widget.onDismissEnforcementAlert,
+        initialRouteStartConnector: widget.initialRouteStartConnector,
+        onRouteStartConnectorChanged: widget.onRouteStartConnectorChanged,
         onDismissQuickMessageInterrupt: widget.onDismissQuickMessageInterrupt,
         onDismissQuickMessageReceipt: widget.onDismissQuickMessageReceipt,
         onReportHazard: widget.onReportHazard,
@@ -519,6 +553,10 @@ class RideMapScreen extends StatefulWidget {
     this.onAcknowledgeQuickMessage,
     this.dismissedQuickMessageInterruptIds = const {},
     this.dismissedQuickMessageReceiptIds = const {},
+    this.dismissedEnforcementAlertId,
+    this.onDismissEnforcementAlert,
+    this.initialRouteStartConnector,
+    this.onRouteStartConnectorChanged,
     this.onDismissQuickMessageInterrupt,
     this.onDismissQuickMessageReceipt,
     this.onReportHazard,
@@ -591,6 +629,13 @@ class RideMapScreen extends StatefulWidget {
   onAcknowledgeQuickMessage;
   final Set<String> dismissedQuickMessageInterruptIds;
   final Set<String> dismissedQuickMessageReceiptIds;
+
+  /// Held by the ride shell rather than by this widget, because a tab change
+  /// disposes this widget and the shell survives it (#282).
+  final String? dismissedEnforcementAlertId;
+  final ValueChanged<String>? onDismissEnforcementAlert;
+  final ImportedRoute? initialRouteStartConnector;
+  final ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged;
   final ValueChanged<String>? onDismissQuickMessageInterrupt;
   final ValueChanged<String>? onDismissQuickMessageReceipt;
   final Future<void> Function(HazardType type)? onReportHazard;
@@ -726,6 +771,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
   // Dismissal is per hazard, so passing this one and approaching the next
   // still raises a fresh warning.
   String? _dismissedEnforcementAlertId;
+
+  /// Assigns the accepted route-start leg **and** tells the shell, so the two
+  /// cannot drift. Every assignment goes through here for that reason.
+  void _setRouteStartConnector(ImportedRoute? connector) {
+    _routeStartConnector = connector;
+    widget.onRouteStartConnectorChanged?.call(connector);
+  }
+
   // Quick messages whose full-screen interrupt this rider has already closed,
   // and receipts of their own messages they have already read (#151). Per event
   // id in both cases: closing one interrupt must not suppress the next rider's
@@ -903,6 +956,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   @override
   void initState() {
     super.initState();
+    // Restored from the shell, which outlives a tab change: see the field
+    // comments on RideMapFeature (#282).
+    _dismissedEnforcementAlertId = widget.dismissedEnforcementAlertId;
+    _routeStartConnector = widget.initialRouteStartConnector;
     _routingClient = http.Client();
     _suggestionQueue = DiscoverySuggestionQueue.openDefault();
     _suggestionConfiguration =
@@ -1041,7 +1098,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       if (!mounted) return;
       setState(() {
         _route = route;
-        _routeStartConnector = null;
+        _setRouteStartConnector(null);
         _rejoinProgressTracker.reset();
         _rejoinProgressGeometry = _rejoinProgressTracker.update(
           _externalRejoinRoute,
@@ -1390,10 +1447,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         return _EnforcementAlertOverlay(
                           alert: alert,
                           distanceUnit: widget.distanceUnit,
-                          onDismiss: () => setState(
-                            () =>
-                                _dismissedEnforcementAlertId = alert.hazard.id,
-                          ),
+                          onDismiss: () {
+                            setState(
+                              () => _dismissedEnforcementAlertId =
+                                  alert.hazard.id,
+                            );
+                            // Reported up so the decision survives this widget
+                            // being rebuilt by a tab change (#282).
+                            widget.onDismissEnforcementAlert?.call(
+                              alert.hazard.id,
+                            );
+                          },
                         );
                       },
                     ),
@@ -2864,7 +2928,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _onRejoinNavigationRouteChanged() {
     if (_externalRejoinRoute != null && _routeStartConnector != null) {
       setState(() {
-        _routeStartConnector = null;
+        _setRouteStartConnector(null);
         _rejoinProgressTracker.reset();
       });
     }
@@ -4540,7 +4604,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _routeProgressTracker.reset();
     setState(() {
       _route = activeRoute;
-      _routeStartConnector = null;
+      _setRouteStartConnector(null);
       _rejoinProgressTracker.reset();
       _rejoinProgressGeometry = _rejoinProgressTracker.update(
         _externalRejoinRoute,
@@ -4676,7 +4740,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
       if (!mounted) return;
       setState(() {
-        _routeStartConnector = connector;
+        _setRouteStartConnector(connector);
         _rejoinProgressTracker.reset();
         _rejoinProgressGeometry = _rejoinProgressTracker.update(
           connector,
@@ -4702,7 +4766,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       return;
     }
     setState(() {
-      _routeStartConnector = null;
+      _setRouteStartConnector(null);
       _rejoinProgressTracker.reset();
       _rejoinProgressGeometry = const RouteProgressGeometry.empty();
     });
@@ -5125,7 +5189,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _routeProgressTracker.reset();
           setState(() {
             _route = null;
-            _routeStartConnector = null;
+            _setRouteStartConnector(null);
             _rejoinProgressTracker.reset();
             _rejoinProgressGeometry = _rejoinProgressTracker.update(
               _externalRejoinRoute,
