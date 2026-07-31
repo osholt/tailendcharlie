@@ -58,12 +58,15 @@ void main() {
         expect(controller.isOn, isFalse);
         expect(controller.token, isNull);
 
-        await controller.turnOn();
+        await controller.setForTesting(
+          on: true,
+          token: 'field-test-token-abcdefghij',
+        );
 
         expect(
           controller.isOn,
           isFalse,
-          reason: 'turnOn must be inert without the compile-time define',
+          reason: 'no switch or token may open the surface without the define',
         );
         expect(controller.token, isNull);
       });

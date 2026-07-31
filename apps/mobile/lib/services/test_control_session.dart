@@ -74,12 +74,19 @@ class TestControlSession with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
-    // The app can serve again from now, so the idle clock starts again from now.
-    // Without this, time spent suspended counts against a timeout the operator
-    // had no way to refresh.
-    _control.touch();
-    // A suspended app's listener does not necessarily survive; re-binding is
-    // cheap and start() is a no-op when it is already listening.
-    if (_control.isOn) unawaited(_server.start());
+    // The switch lives in the iOS Settings app, and showing that suspends this
+    // one - so a resume is exactly when the value may have changed underneath us.
+    // Re-reading here is the only thing that makes the out-of-app switch work.
+    unawaited(
+      _control.refresh().then((_) {
+        // The app can serve again from now, so the idle clock starts again from
+        // now. Without this, time spent suspended counts against a timeout the
+        // operator had no way to refresh.
+        _control.touch();
+        // A suspended app's listener does not necessarily survive; re-binding is
+        // cheap and start() is a no-op when it is already listening.
+        if (_control.isOn) unawaited(_server.start());
+      }),
+    );
   }
 }

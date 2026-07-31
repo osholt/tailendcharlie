@@ -68,8 +68,31 @@ flutter build ios --profile \
   --dart-define=RIDE_RELAY_API_BASE_URL=https://relay.tailendcharlie.app/api
 ```
 
-Then on the phone: **Settings → Field test control → Allow another machine to
-drive this app**, and copy the token. Port `8477`.
+Then on the phone, in the **iOS Settings app** (not in Tail End Charlie):
+**Settings → Tail End Charlie → Field test control** → set an **Access token** of
+at least 20 characters, then turn the switch on. Port `8477`.
+
+The switch and the token both live outside the app on purpose. A rider who finds
+an in-app control offering to let another machine drive their safety app is a
+worse outcome than a tester having to leave the app to turn it on, so while the
+surface is off the app shows no trace of it.
+
+**The operator supplies the token; the app does not mint one.** The first version
+minted a random token per launch and displayed it in the app, and that made the
+surface unusable: every install, relaunch and crash issued a new token needing a
+person to read 32 characters off a screen — and on iOS the act of leaving the app
+to send them suspends it. Setting up two phones took five attempts, none of the
+failures having anything to do with the ride under test. An operator-supplied
+token survives restarts, reinstalls and suspension, can be agreed in advance, and
+is what makes the restart, force-quit and eviction tests drivable without a human
+in the loop.
+
+A switch with no usable token is not half-on: it binds no port and authorises
+nothing, and the app says so rather than looking broken.
+
+**Android has no switch yet.** The surface itself is shared Flutter code and runs
+there, but the switch is an iOS Settings bundle, so an Android phone cannot be
+driven. Worth closing before the next mixed-platform session.
 
 The listener is dual-stack (`anyIPv6`, `v6Only: false`), which matters for how you
 reach it. Xcode's CoreDevice tunnel to a paired phone is IPv6-only, so a paired or

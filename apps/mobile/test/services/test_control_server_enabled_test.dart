@@ -92,7 +92,10 @@ void main() {
         reason: 'the define alone must not open a port',
       );
 
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       expect(server.isListening, isTrue);
@@ -100,7 +103,10 @@ void main() {
     });
 
     test('stops listening when the switch is turned off', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
       expect(server.isListening, isTrue);
 
@@ -113,7 +119,10 @@ void main() {
     });
 
     test('health is unauthenticated and says nothing about the ride', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       final body = await readJson(await send('GET', '/v1/health'));
@@ -129,7 +138,10 @@ void main() {
     });
 
     test('a missing, empty or wrong token is rejected', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       for (final token in <String?>[null, '', 'not-the-token']) {
@@ -143,7 +155,10 @@ void main() {
     });
 
     test('the issued token is accepted and returns a snapshot', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       final response = await send('GET', '/v1/state', token: control.token);
@@ -158,7 +173,10 @@ void main() {
     });
 
     test('a snapshot never carries capability material', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       final raw = await (await send(
@@ -173,7 +191,10 @@ void main() {
     });
 
     test('a forbidden action is refused even with a valid token', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       for (final path in <String>[
@@ -192,7 +213,10 @@ void main() {
     });
 
     test('a hazard with no active ride is a conflict, not a crash', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       final response = await send(
@@ -207,7 +231,10 @@ void main() {
     });
 
     test('a malformed body is a bad request naming the field', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       final response = await send(
@@ -222,7 +249,10 @@ void main() {
     });
 
     test('a swallowed controller failure is reported, not answered 200', () async {
-      await control.turnOn();
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
       await server.start();
 
       // endRide on a ride the local rider does not lead throws a
@@ -258,28 +288,45 @@ void main() {
       );
     });
 
-    test('turning the switch off invalidates the token it issued', () async {
-      await control.turnOn();
-      final issued = control.token;
+    test('a token shorter than the minimum serves nothing', () async {
+      // A weak token is a worse failure than a missing one, because it looks
+      // like it works. The switch alone must not open the surface.
+      await control.setForTesting(on: true, token: 'short');
+      expect(control.isOn, isFalse);
+      expect(control.needsToken, isTrue);
+
       await server.start();
       expect(
-        (await send('GET', '/v1/state', token: issued)).statusCode,
+        server.isListening,
+        isFalse,
+        reason: 'no port may be bound without a usable token',
+      );
+    });
+
+    test('the operator token survives a controller reload', () async {
+      // The point of the re-architecture: a restart must not invalidate the
+      // token, because the previous design needed a person to read a new one
+      // after every launch and that made restart tests undrivable.
+      await control.setForTesting(
+        on: true,
+        token: 'field-test-token-abcdefghij',
+      );
+      await server.start();
+      expect(
+        (await send(
+          'GET',
+          '/v1/state',
+          token: 'field-test-token-abcdefghij',
+        )).statusCode,
         HttpStatus.ok,
       );
 
-      await control.turnOff();
-      await control.turnOn();
-
+      final reloaded = await TestControlController.load();
+      expect(reloaded.isOn, isTrue);
       expect(
-        control.token,
-        isNot(issued),
-        reason: 'a fresh session must mint a fresh token',
-      );
-      await server.start();
-      expect(
-        (await send('GET', '/v1/state', token: issued)).statusCode,
-        HttpStatus.unauthorized,
-        reason: 'the retired token must be dead',
+        reloaded.token,
+        'field-test-token-abcdefghij',
+        reason: 'the same token must still authenticate after a relaunch',
       );
     });
   }, skip: withoutDefine);
