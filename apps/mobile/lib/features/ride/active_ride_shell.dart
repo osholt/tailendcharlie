@@ -925,6 +925,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   );
   final _dismissedQuickMessageInterruptIds = <String>{};
   final _dismissedQuickMessageReceiptIds = <String>{};
+
+  // The active-ride tabs are a `switch` on the selected index, not an
+  // IndexedStack, so moving to Ride details and back disposes and rebuilds the
+  // map. Anything the rider has decided that lives in the map's own State is
+  // therefore undone by a tab change - which is what a tester hit: cleared
+  // enforcement alerts coming back, and an accepted route-start leg having to be
+  // accepted again (#282). These live here because this shell outlives the tabs.
+  String? _dismissedEnforcementAlertId;
+  route_domain.ImportedRoute? _routeStartConnector;
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -3318,6 +3327,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       dismissedQuickMessageReceiptIds: _dismissedQuickMessageReceiptIds,
       onDismissQuickMessageInterrupt: _dismissedQuickMessageInterruptIds.add,
       onDismissQuickMessageReceipt: _dismissedQuickMessageReceiptIds.add,
+      dismissedEnforcementAlertId: _dismissedEnforcementAlertId,
+      onDismissEnforcementAlert: (id) => _dismissedEnforcementAlertId = id,
+      initialRouteStartConnector: _routeStartConnector,
+      onRouteStartConnectorChanged: (connector) =>
+          _routeStartConnector = connector,
       onReportHazard: _awarenessController == null
           ? null
           : _reportHazardFromMap,

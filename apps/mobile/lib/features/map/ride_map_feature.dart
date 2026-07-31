@@ -142,6 +142,10 @@ class RideMapFeature extends StatefulWidget {
     this.dismissedQuickMessageReceiptIds = const {},
     this.onDismissQuickMessageInterrupt,
     this.onDismissQuickMessageReceipt,
+    this.dismissedEnforcementAlertId,
+    this.onDismissEnforcementAlert,
+    this.initialRouteStartConnector,
+    this.onRouteStartConnectorChanged,
     this.onReportHazard,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
@@ -196,6 +200,10 @@ class RideMapFeature extends StatefulWidget {
     Set<String> dismissedQuickMessageReceiptIds = const {},
     ValueChanged<String>? onDismissQuickMessageInterrupt,
     ValueChanged<String>? onDismissQuickMessageReceipt,
+    String? dismissedEnforcementAlertId,
+    ValueChanged<String>? onDismissEnforcementAlert,
+    ImportedRoute? initialRouteStartConnector,
+    ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged,
     Future<void> Function(HazardType type)? onReportHazard,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
@@ -241,6 +249,10 @@ class RideMapFeature extends StatefulWidget {
     onAcknowledgeQuickMessage: onAcknowledgeQuickMessage,
     dismissedQuickMessageInterruptIds: dismissedQuickMessageInterruptIds,
     dismissedQuickMessageReceiptIds: dismissedQuickMessageReceiptIds,
+    dismissedEnforcementAlertId: dismissedEnforcementAlertId,
+    onDismissEnforcementAlert: onDismissEnforcementAlert,
+    initialRouteStartConnector: initialRouteStartConnector,
+    onRouteStartConnectorChanged: onRouteStartConnectorChanged,
     onDismissQuickMessageInterrupt: onDismissQuickMessageInterrupt,
     onDismissQuickMessageReceipt: onDismissQuickMessageReceipt,
     onReportHazard: onReportHazard,
@@ -301,6 +313,24 @@ class RideMapFeature extends StatefulWidget {
   final Set<String> dismissedQuickMessageReceiptIds;
   final ValueChanged<String>? onDismissQuickMessageInterrupt;
   final ValueChanged<String>? onDismissQuickMessageReceipt;
+
+  /// Held by the ride shell, not by this widget, because the shell outlives a
+  /// tab change and this widget does not (#282).
+  ///
+  /// The active-ride tabs are a `switch` on the selected index rather than an
+  /// IndexedStack - deliberately, so a MapLibre view is not left composing
+  /// behind another tab - so moving to Ride details and back **disposes and
+  /// rebuilds this widget**. Anything a rider has decided that lives in local
+  /// `State` is therefore silently undone by a tab change, which is what a
+  /// tester hit: cleared alerts returning, and an accepted route-start leg
+  /// having to be accepted again.
+  final String? dismissedEnforcementAlertId;
+  final ValueChanged<String>? onDismissEnforcementAlert;
+
+  /// The routed "navigate to start" leg the rider has already accepted (#262),
+  /// seeded from the shell so accepting it survives a tab change.
+  final ImportedRoute? initialRouteStartConnector;
+  final ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged;
   final Future<void> Function(HazardType type)? onReportHazard;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
@@ -446,6 +476,10 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         dismissedQuickMessageInterruptIds:
             widget.dismissedQuickMessageInterruptIds,
         dismissedQuickMessageReceiptIds: widget.dismissedQuickMessageReceiptIds,
+        dismissedEnforcementAlertId: widget.dismissedEnforcementAlertId,
+        onDismissEnforcementAlert: widget.onDismissEnforcementAlert,
+        initialRouteStartConnector: widget.initialRouteStartConnector,
+        onRouteStartConnectorChanged: widget.onRouteStartConnectorChanged,
         onDismissQuickMessageInterrupt: widget.onDismissQuickMessageInterrupt,
         onDismissQuickMessageReceipt: widget.onDismissQuickMessageReceipt,
         onReportHazard: widget.onReportHazard,
@@ -519,6 +553,10 @@ class RideMapScreen extends StatefulWidget {
     this.onAcknowledgeQuickMessage,
     this.dismissedQuickMessageInterruptIds = const {},
     this.dismissedQuickMessageReceiptIds = const {},
+    this.dismissedEnforcementAlertId,
+    this.onDismissEnforcementAlert,
+    this.initialRouteStartConnector,
+    this.onRouteStartConnectorChanged,
     this.onDismissQuickMessageInterrupt,
     this.onDismissQuickMessageReceipt,
     this.onReportHazard,
@@ -591,6 +629,13 @@ class RideMapScreen extends StatefulWidget {
   onAcknowledgeQuickMessage;
   final Set<String> dismissedQuickMessageInterruptIds;
   final Set<String> dismissedQuickMessageReceiptIds;
+
+  /// Held by the ride shell rather than by this widget, because a tab change
+  /// disposes this widget and the shell survives it (#282).
+  final String? dismissedEnforcementAlertId;
+  final ValueChanged<String>? onDismissEnforcementAlert;
+  final ImportedRoute? initialRouteStartConnector;
+  final ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged;
   final ValueChanged<String>? onDismissQuickMessageInterrupt;
   final ValueChanged<String>? onDismissQuickMessageReceipt;
   final Future<void> Function(HazardType type)? onReportHazard;
@@ -726,6 +771,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
   // Dismissal is per hazard, so passing this one and approaching the next
   // still raises a fresh warning.
   String? _dismissedEnforcementAlertId;
+
+  /// Assigns the accepted route-start leg **and** tells the shell, so the two
+  /// cannot drift. Every assignment goes through here for that reason.
+  void _setRouteStartConnector(ImportedRoute? connector) {
+    _routeStartConnector = connector;
+    widget.onRouteStartConnectorChanged?.call(connector);
+  }
+
   // Quick messages whose full-screen interrupt this rider has already closed,
   // and receipts of their own messages they have already read (#151). Per event
   // id in both cases: closing one interrupt must not suppress the next rider's
@@ -746,7 +799,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
   // The speed readout is its own notifier so a new fix repaints the badge
   // without rebuilding the map: MapLibre keeps its platform view mounted and
   // only calls setState when navigation mode changes.
-  final ValueNotifier<double?> _riderSpeedMetersPerSecond = ValueNotifier(null);
+  /// The readout, and whether it is still current. Carrying both in one value
+  /// keeps the badge from having to guess: a held number is shown differently
+  /// from a fresh one rather than being indistinguishable from it.
+  final ValueNotifier<({double value, bool ageing})?> _riderSpeed =
+      ValueNotifier(null);
 
   /// Retires the speed readout when fixes stop arriving.
   ///
@@ -759,7 +816,34 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// Restarted by every speed-bearing fix, so the timer firing is itself the
   /// proof that none arrived inside the window.
   Timer? _riderSpeedStalenessTimer;
+
+  /// How long the readout survives **without a fix of any kind**, and how long a
+  /// speed reads as current.
+  ///
+  /// Two issues meet here and the distinction between them is the whole fix.
+  ///
+  /// #210: a stationary rider produces no fixes at all, because the platform
+  /// stream carries a `distanceFilter` - standing still is silence, not a stream
+  /// of zeroes. So silence has to retire the number, and quickly, or a bike in a
+  /// lay-by keeps reading 18 mph.
+  ///
+  /// #285: the readout flickered on a real ride, "on for 2-3 secs then off for
+  /// 4-5 seconds". That was **not** this window expiring. A fix arriving without
+  /// a usable speed cleared the readout outright, and on Android plenty of fixes
+  /// carry no speed - so the number was being wiped several times a minute while
+  /// the rider was moving normally.
+  ///
+  /// The signal that separates them is not elapsed time, it is whether a fix
+  /// arrived at all. A fix without a speed is evidence the platform is still
+  /// tracking and simply did not report one; only silence is evidence of having
+  /// stopped. So **any** fix restarts this window, while only a speed-bearing fix
+  /// replaces the value - and a value older than this window is marked as held
+  /// rather than presented as current.
   static const _riderSpeedFreshness = Duration(seconds: 3);
+
+  /// When the displayed speed was last actually observed, as opposed to when a
+  /// fix last arrived.
+  DateTime? _riderSpeedObservedAt;
   GeoPoint? _previousNavigationPoint;
   MapNavigationPosition? _lastHandledNavigationFix;
   GeoPoint? _lastHandledCurrentPosition;
@@ -903,6 +987,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   @override
   void initState() {
     super.initState();
+    // Restored from the shell, which outlives a tab change: see the field
+    // comments on RideMapFeature (#282).
+    _dismissedEnforcementAlertId = widget.dismissedEnforcementAlertId;
+    _routeStartConnector = widget.initialRouteStartConnector;
     _routingClient = http.Client();
     _suggestionQueue = DiscoverySuggestionQueue.openDefault();
     _suggestionConfiguration =
@@ -1027,7 +1115,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _navigationGuidance.dispose();
     _riderSpeedStalenessTimer?.cancel();
     _riderSpeedStalenessTimer = null;
-    _riderSpeedMetersPerSecond.dispose();
+    _riderSpeed.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     unawaited(_groupPipBridge.dispose());
     _routingClient.close();
@@ -1041,7 +1129,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       if (!mounted) return;
       setState(() {
         _route = route;
-        _routeStartConnector = null;
+        _setRouteStartConnector(null);
         _rejoinProgressTracker.reset();
         _rejoinProgressGeometry = _rejoinProgressTracker.update(
           _externalRejoinRoute,
@@ -1390,10 +1478,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         return _EnforcementAlertOverlay(
                           alert: alert,
                           distanceUnit: widget.distanceUnit,
-                          onDismiss: () => setState(
-                            () =>
-                                _dismissedEnforcementAlertId = alert.hazard.id,
-                          ),
+                          onDismiss: () {
+                            setState(
+                              () => _dismissedEnforcementAlertId =
+                                  alert.hazard.id,
+                            );
+                            // Reported up so the decision survives this widget
+                            // being rebuilt by a tab change (#282).
+                            widget.onDismissEnforcementAlert?.call(
+                              alert.hazard.id,
+                            );
+                          },
                         );
                       },
                     ),
@@ -1807,14 +1902,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
               child: AnimatedBuilder(
                 animation: _speedLimitDisplay,
                 builder: (context, _) => _speedLimitDisplay.enabled
-                    ? ValueListenableBuilder<double?>(
-                        valueListenable: _riderSpeedMetersPerSecond,
+                    ? ValueListenableBuilder<({double value, bool ageing})?>(
+                        valueListenable: _riderSpeed,
                         builder: (context, riderSpeed, _) =>
                             _PostedSpeedLimitBadge(
                               status: _speedLimitDisplay.status,
                               outcome: _speedLimitDisplay.lastOutcome,
                               limit: _speedLimitDisplay.limit,
-                              riderSpeedMetersPerSecond: riderSpeed,
+                              riderSpeedMetersPerSecond: riderSpeed?.value,
+                              riderSpeedIsAgeing: riderSpeed?.ageing ?? false,
                             ),
                       )
                     : _SpeedLimitOptInChip(
@@ -2447,10 +2543,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
     return _isMoving ? _headingSmoother.freezeBelowMetersPerSecond : 0;
   }
 
-  /// Restarts the freshness window for a speed that has just been observed.
-  void _markRiderSpeedObserved() {
+  /// Restarts the silence window. Called for **every** fix, with or without a
+  /// speed, because a fix arriving is evidence the platform is still tracking.
+  void _markRiderTrackingObserved() {
     _riderSpeedStalenessTimer?.cancel();
     _riderSpeedStalenessTimer = Timer(_riderSpeedFreshness, _clearRiderSpeed);
+  }
+
+  /// Marks a held value as no longer current once it is older than the freshness
+  /// window, while fixes are still arriving.
+  void _ageRiderSpeedIfStale(DateTime at) {
+    final observedAt = _riderSpeedObservedAt;
+    if (observedAt == null) return;
+    if (at.difference(observedAt) < _riderSpeedFreshness) return;
+    if (_riderSpeed.value case final current? when !current.ageing) {
+      _riderSpeed.value = (value: current.value, ageing: true);
+    }
   }
 
   /// Clears the readout and the smoother together.
@@ -2461,8 +2569,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _clearRiderSpeed() {
     _riderSpeedStalenessTimer?.cancel();
     _riderSpeedStalenessTimer = null;
+    _riderSpeedObservedAt = null;
     _smoothedNavigationSpeedMetersPerSecond = null;
-    _riderSpeedMetersPerSecond.value = null;
+    _riderSpeed.value = null;
   }
 
   /// The rotation deadband tightens inside this distance so the map bearing
@@ -2718,19 +2827,31 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
     if (observedHeading != null) _lastHeadingDegrees = observedHeading;
     _previousNavigationPoint = position;
-    if (navigationFix?.speedMetersPerSecond case final speed?
-        when speed.isFinite) {
-      final boundedSpeed = speed.clamp(0.0, 50.0);
-      final previousSpeed = _smoothedNavigationSpeedMetersPerSecond;
-      _smoothedNavigationSpeedMetersPerSecond = previousSpeed == null
-          ? boundedSpeed
-          : previousSpeed * 0.72 + boundedSpeed * 0.28;
-      _riderSpeedMetersPerSecond.value =
-          _smoothedNavigationSpeedMetersPerSecond;
-      _markRiderSpeedObserved();
-    } else if (navigationFix != null) {
-      // A fix without a usable speed must not leave a stale number on screen.
-      _clearRiderSpeed();
+    if (navigationFix != null) {
+      // Any fix, with or without a speed, proves the platform is still tracking,
+      // so it restarts the silence window that #210 relies on.
+      final at = navigationFix.recordedAt;
+      _markRiderTrackingObserved();
+      if (navigationFix.speedMetersPerSecond case final speed?
+          when speed.isFinite) {
+        final boundedSpeed = speed.clamp(0.0, 50.0);
+        final previousSpeed = _smoothedNavigationSpeedMetersPerSecond;
+        _smoothedNavigationSpeedMetersPerSecond = previousSpeed == null
+            ? boundedSpeed
+            : previousSpeed * 0.72 + boundedSpeed * 0.28;
+        _riderSpeedObservedAt = at;
+        _riderSpeed.value = (
+          value: _smoothedNavigationSpeedMetersPerSecond!,
+          ageing: false,
+        );
+      } else {
+        // Deliberately does not clear. Clearing here is what made the readout
+        // flicker on a real ride (#285): on Android plenty of fixes carry no
+        // speed, so the number was wiped several times a minute while the rider
+        // was moving normally. The held value is marked as no longer current
+        // instead, and genuine silence still retires it above.
+        _ageRiderSpeedIfStale(at);
+      }
     }
     // The camera follows a smoothed bearing, never the raw per-fix course. The
     // marker keeps the raw heading: it is only drawn rotated while the map is
@@ -2864,7 +2985,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _onRejoinNavigationRouteChanged() {
     if (_externalRejoinRoute != null && _routeStartConnector != null) {
       setState(() {
-        _routeStartConnector = null;
+        _setRouteStartConnector(null);
         _rejoinProgressTracker.reset();
       });
     }
@@ -4540,7 +4661,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _routeProgressTracker.reset();
     setState(() {
       _route = activeRoute;
-      _routeStartConnector = null;
+      _setRouteStartConnector(null);
       _rejoinProgressTracker.reset();
       _rejoinProgressGeometry = _rejoinProgressTracker.update(
         _externalRejoinRoute,
@@ -4676,7 +4797,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
       if (!mounted) return;
       setState(() {
-        _routeStartConnector = connector;
+        _setRouteStartConnector(connector);
         _rejoinProgressTracker.reset();
         _rejoinProgressGeometry = _rejoinProgressTracker.update(
           connector,
@@ -4702,7 +4823,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       return;
     }
     setState(() {
-      _routeStartConnector = null;
+      _setRouteStartConnector(null);
       _rejoinProgressTracker.reset();
       _rejoinProgressGeometry = const RouteProgressGeometry.empty();
     });
@@ -5125,7 +5246,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           _routeProgressTracker.reset();
           setState(() {
             _route = null;
-            _routeStartConnector = null;
+            _setRouteStartConnector(null);
             _rejoinProgressTracker.reset();
             _rejoinProgressGeometry = _rejoinProgressTracker.update(
               _externalRejoinRoute,
@@ -7913,12 +8034,18 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
     required this.outcome,
     required this.limit,
     required this.riderSpeedMetersPerSecond,
+    this.riderSpeedIsAgeing = false,
   });
 
   final SpeedLimitDisplayStatus status;
   final SpeedLimitLookupOutcome? outcome;
   final PostedSpeedLimit? limit;
   final double? riderSpeedMetersPerSecond;
+
+  /// True while the number is the last one observed rather than a current
+  /// reading. Shown dimmed so a glance can tell the two apart - a held number
+  /// presented as current is what #210 was about.
+  final bool riderSpeedIsAgeing;
 
   @override
   Widget build(BuildContext context) {
@@ -8043,8 +8170,14 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                 speedValue,
                 fillKey: const Key('posted-speed-limit-rider-speed'),
                 strokeWidth: 4,
-                style: const TextStyle(
-                  color: Color(0xFFFFFFFF),
+                style: TextStyle(
+                  // Dimmed while the number is held rather than current, so a
+                  // glance can tell the difference without a caption to read
+                  // (#125 removed the caption; #210 is why the difference has to
+                  // be visible at all).
+                  color: riderSpeedIsAgeing
+                      ? const Color(0xFFFFFFFF).withValues(alpha: 0.55)
+                      : const Color(0xFFFFFFFF),
                   fontSize: 26,
                   height: 1,
                   fontWeight: FontWeight.w900,
