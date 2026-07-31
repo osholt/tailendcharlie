@@ -11,11 +11,13 @@ import '../controllers/rider_profile_controller.dart';
 import '../controllers/road_rating_controller.dart';
 import '../controllers/shared_route_controller.dart';
 import '../controllers/speed_limit_display_controller.dart';
+import '../controllers/test_control_controller.dart';
 import '../domain/recorded_route_store.dart';
 import '../features/home/home_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/ride/active_ride_shell.dart';
 import '../internet/plan_directory.dart';
+import '../services/test_control_registry.dart';
 
 class RideRelayApp extends StatelessWidget {
   const RideRelayApp({
@@ -31,6 +33,8 @@ class RideRelayApp extends StatelessWidget {
     required this.completedRides,
     this.planDirectory,
     this.roadRatings,
+    this.testControl,
+    this.testControlRegistry,
     this.enableNativeServices = true,
     this.initializeController,
     this.startupFallbackAfter = const Duration(seconds: 2),
@@ -49,6 +53,11 @@ class RideRelayApp extends StatelessWidget {
 
   /// Drives the end-of-ride catalogued-road rating card (#159).
   final RoadRatingController? roadRatings;
+
+  /// Both null unless this build carries the test-control define. The settings
+  /// row and the registry hand-off are the only two places they are used.
+  final TestControlController? testControl;
+  final TestControlRegistry? testControlRegistry;
 
   final bool enableNativeServices;
 
@@ -169,6 +178,7 @@ class RideRelayApp extends StatelessWidget {
               recordedRoutes: recordedRoutes,
               completedRides: completedRides,
               planDirectory: planDirectory,
+              testControl: testControl,
               restoringRideCode: controller.session?.rideCode,
               restorationError: restorationError,
               onRetryRestoration: retryRestoration,
@@ -188,6 +198,8 @@ class RideRelayApp extends StatelessWidget {
               sharedRoutes: sharedRoutes,
               speedLimitDisplay: speedLimitDisplay,
               roadRatings: roadRatings,
+              testControl: testControl,
+              testControlRegistry: testControlRegistry,
             );
           }
           if (riderProfile.needsOnboarding) {
@@ -204,6 +216,7 @@ class RideRelayApp extends StatelessWidget {
             recordedRoutes: recordedRoutes,
             completedRides: completedRides,
             planDirectory: planDirectory,
+            testControl: testControl,
           );
         },
       ),

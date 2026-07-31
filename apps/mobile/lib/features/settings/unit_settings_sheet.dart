@@ -7,6 +7,7 @@ import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/test_control_controller.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
 import '../../domain/rider_color.dart';
@@ -14,6 +15,7 @@ import '../../services/basemap_configuration.dart';
 import '../../services/build_identity.dart';
 import 'about_build_sheet.dart';
 import 'rider_profile_sheet.dart';
+import 'test_control_section.dart';
 
 class UnitSettingsSheet extends StatelessWidget {
   const UnitSettingsSheet({
@@ -25,6 +27,7 @@ class UnitSettingsSheet extends StatelessWidget {
     this.currentRideActive = false,
     this.lastRelaySync,
     this.buildIdentity,
+    this.testControl,
   });
 
   final DistanceUnitController controller;
@@ -32,6 +35,11 @@ class UnitSettingsSheet extends StatelessWidget {
   final RiderProfileController riderProfile;
   final SpeedLimitDisplayController speedLimitDisplay;
   final bool currentRideActive;
+
+  /// Present only in a build carrying the test-control define. Null everywhere
+  /// else, and [TestControlSection] renders nothing when the define is absent,
+  /// so an ordinary build shows no trace of this surface.
+  final TestControlController? testControl;
 
   /// Most recent successful relay sync, when the caller knows it. Shown on the
   /// About & build sheet so a bug report can say whether the app was talking to
@@ -50,6 +58,7 @@ class UnitSettingsSheet extends StatelessWidget {
     bool currentRideActive = false,
     DateTime? lastRelaySync,
     BuildIdentity? buildIdentity,
+    TestControlController? testControl,
   }) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -62,6 +71,7 @@ class UnitSettingsSheet extends StatelessWidget {
       currentRideActive: currentRideActive,
       lastRelaySync: lastRelaySync,
       buildIdentity: buildIdentity,
+      testControl: testControl,
     ),
   );
 
@@ -219,6 +229,8 @@ class UnitSettingsSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
+          if (testControl case final testControl?)
+            TestControlSection(controller: testControl),
           _AboutBuildTile(
             identity: buildIdentity ?? BuildIdentity.fromEnvironment(),
             lastRelaySync: lastRelaySync,

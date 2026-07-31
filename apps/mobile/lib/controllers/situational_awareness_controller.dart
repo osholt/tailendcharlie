@@ -93,13 +93,13 @@ class SituationalAwarenessController extends ChangeNotifier {
   /// ground truth. Riders are judged against this (as well as the planned
   /// route, if any) so a leader's deliberate on-route deviation, such as a
   /// road-closure detour, doesn't read as the group having gone off course.
-  List<GeoPoint> get leaderTrail => List.unmodifiable(_leaderTrailPoints);
+  List<GeoPoint> get leaderTrail => _leaderTrailPoints;
 
   /// The same durable leader trail with its fix times retained, so map
   /// rendering can break an unknown interval instead of inventing a straight
   /// line across it (#205).
   List<({DateTime recordedAt, GeoPoint position})> get leaderTrailSamples =>
-      List.unmodifiable(_leaderTrail);
+      _leaderTrailSamplesCache ??= List.unmodifiable(_leaderTrail);
 
   List<RiderLocation> get riderLocations {
     final values = _locations.values.toList(growable: false);
@@ -575,17 +575,58 @@ class SituationalAwarenessController extends ChangeNotifier {
       recordedAt: sample.recordedAt,
       position: sample.position,
     ));
-    if (_leaderTrail.length > LeaderTrackExemption.defaultRecentPointLimit) {
+    _leaderTrailPointsCache = null;
+    _leaderTrailSamplesCache = null;
+    // A runaway guard, not a display policy. The trail used to be truncated to
+    // LeaderTrackExemption.defaultRecentPointLimit (600) here, which cost a
+    // tester the tail of a 6 h 4 m, 112 mile ride: 600 points is roughly the
+    // last 40 minutes, so everything before that was deleted and could never be
+    // drawn, exported or recapped again. This bound exists only so a pathological
+    // session cannot grow without limit - at one fix per second it is over 27
+    // hours, which no ride reaches.
+    if (_leaderTrail.length > maximumRetainedTrailPoints) {
       _leaderTrail.removeRange(
         0,
-        _leaderTrail.length - LeaderTrackExemption.defaultRecentPointLimit,
+        _leaderTrail.length - maximumRetainedTrailPoints,
       );
     }
   }
 
-  List<GeoPoint> get _leaderTrailPoints => [
-    for (final point in _leaderTrail) point.position,
-  ];
+  /// Memory backstop for the retained leader trail. Deliberately far above any
+  /// real ride; see [_recordLeaderTrailPoint].
+  static const maximumRetainedTrailPoints = 100000;
+
+  List<GeoPoint>? _leaderTrailPointsCache;
+  List<({DateTime recordedAt, GeoPoint position})>? _leaderTrailSamplesCache;
+
+  /// Built once per change rather than per read.
+  ///
+  /// This is what makes retaining the whole trail affordable. The 600-point
+  /// truncation was guarding a real cost, but the wrong one: it was not the
+  /// renderer, which already simplifies once per change through
+  /// `TrailDisplaySimplifier` (#165). It was this projection, which rebuilt the
+  /// entire list on every call - and [_applyLeaderFollowExemption] calls it on
+  /// every follower position update. Caching it removes the per-update cost
+  /// without deleting any history.
+  List<GeoPoint> get _leaderTrailPoints => _leaderTrailPointsCache ??=
+      List.unmodifiable([for (final point in _leaderTrail) point.position]);
+
+  /// The most recent points only, for the "is this rider following the leader"
+  /// corridor check.
+  ///
+  /// [LeaderTrackExemption.isFollowingLeaderTrack] slices to its own limit
+  /// anyway, so passing the whole trail would be correct - but it would copy the
+  /// whole thing to throw most of it away. Slicing here keeps that call bounded
+  /// by the exemption's own rule regardless of how long the ride has run, which
+  /// is the performance property #165 actually needed.
+  List<GeoPoint> get _recentLeaderTrailPoints {
+    const limit = LeaderTrackExemption.defaultRecentPointLimit;
+    final from = _leaderTrail.length > limit ? _leaderTrail.length - limit : 0;
+    return [
+      for (var i = from; i < _leaderTrail.length; i += 1)
+        _leaderTrail[i].position,
+    ];
+  }
 
   /// What each rider is compared against before exemptions.
   ///
@@ -623,7 +664,7 @@ class SituationalAwarenessController extends ChangeNotifier {
         LeaderTrackExemption.isFollowingLeaderTrack(
           position: location.sample.position,
           accuracyMeters: location.sample.accuracyMeters,
-          leaderTrack: _leaderTrailPoints,
+          leaderTrack: _recentLeaderTrailPoints,
           corridorMeters: routeConfig.leaderTrackCorridorMeters,
         );
     _followingLeaderTrack[location.riderId] = exempt;

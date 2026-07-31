@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>StringsTable</key>
+	<string>Root</string>
+	<key>PreferenceSpecifiers</key>
+	<array>
+		<dict>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+			<key>Title</key>
+			<string>Field test control</string>
+			<key>FooterText</key>
+			<string>Only for a field test you are running yourself. When this is on, a computer on the same network can create rides, join, start them, report hazards, inject positions and read this ride's roster on this phone.
+
+The screen will stay awake while it is on. Turn it off when the test is finished.</string>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSToggleSwitchSpecifier</string>
+			<key>Title</key>
+			<string>Allow another machine to drive this app</string>
+			<key>Key</key>
+			<string>flutter.test_control_enabled</string>
+			<key>DefaultValue</key>
+			<false/>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSTextFieldSpecifier</string>
+			<key>Title</key>
+			<string>Access token</string>
+			<key>Key</key>
+			<string>flutter.test_control_token</string>
+			<key>DefaultValue</key>
+			<string></string>
+			<key>IsSecure</key>
+			<false/>
+			<key>AutocapitalizationType</key>
+			<string>None</string>
+			<key>AutocorrectionType</key>
+			<string>No</string>
+			<key>KeyboardType</key>
+			<string>Alphabet</string>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+			<key>FooterText</key>
+			<string>Set the same token here and in whatever is driving the tests. At least 20 characters; the switch above does nothing without one, so a blank or short token means nothing will be served.
+
+Anyone who knows this token and can reach this phone on the network can drive the app while the switch is on. Change it if you think it has been seen.</string>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+			<key>FooterText</key>
+			<string>SOS and emergency actions, anyone's phone number, emergency-contact details, and placing calls or messages can never be reached this way. Those always need a person on this phone.
+
+This switch does nothing unless the app was built for field testing. If you did not build it for that, leave it off.</string>
+		</dict>
+	</array>
+</dict>
+</plist>

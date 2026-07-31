@@ -13,6 +13,7 @@ import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_coordination_mode.dart';
@@ -42,6 +43,7 @@ class HomeScreen extends StatefulWidget {
     required this.recordedRoutes,
     required this.completedRides,
     this.planDirectory,
+    this.testControl,
     this.restoringRideCode,
     this.restorationError,
     this.onRetryRestoration,
@@ -57,6 +59,11 @@ class HomeScreen extends StatefulWidget {
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final PlanDirectory? planDirectory;
+
+  /// Null unless this build carries the test-control define; only forwarded to
+  /// the settings sheet.
+  final TestControlController? testControl;
+
   final String? restoringRideCode;
   final Object? restorationError;
   final VoidCallback? onRetryRestoration;
@@ -252,6 +259,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       widget.mapStyleMode,
                       widget.riderProfile,
                       speedLimitDisplay: widget.speedLimitDisplay,
+                      testControl: widget.testControl,
                     ),
                     icon: const Icon(Icons.settings_outlined),
                   ),

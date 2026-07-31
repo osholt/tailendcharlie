@@ -20,6 +20,147 @@ Use at least:
 
 Record model, OS, battery health, app state, screen state, placement, weather,
 and whether Wi-Fi/Bluetooth were enabled. Do not record a public precise route.
+Identify a phone by model and OS version only; a UDID or serial number must
+never be committed.
+
+### Hardware actually available (31 July 2026)
+
+| Class required | Device held | State |
+| --- | --- | --- |
+| Newest supported iOS | iPhone 15 Pro (`iPhone16,1`), iOS 26.5.2 | Paired and reachable |
+| Oldest supported iOS | iPhone SE 3rd generation (`iPhone14,6`), iOS 26.1 | Connected, charged, Developer Mode enabled |
+| Current Google/Samsung Android | **none held** | Scheduled: test group, early August 2026 |
+| Aggressive battery management Android | **none held** | Scheduled: test group, early August 2026 |
+
+Two iPhones in hand, no Android phone. Android coverage depends on a session with
+the tester group rather than on owned hardware, so the Android steps are scheduled
+work with a dependency on other people's phones and other people's time — plan for
+one pass, not an iterative loop.
+
+Both iPhones are in the `Tail End Charlie CarPlay Navigation Development` profile,
+which expires 2027-07-29, so the device-evaluation path in
+[build-and-run.md](build-and-run.md) is open for both.
+
+The relay is deployed and live at `relay.tailendcharlie.app`. Rule 0 of
+[build-and-run.md](build-and-run.md) still applies: confirm the deployed commit
+matches any build being installed before concluding an app-side fix did not work.
+The deployed capability set matches this tree, but a capability list is not a
+commit.
+
+The iOS deployment target is 16.0, so the "oldest supported iOS" leg is **not**
+covered either: both phones run iOS 26.x. Nothing here exercises iOS 16, 17 or
+18, and no evidence from this hardware supports a claim about them.
+
+### What this hardware can and cannot evidence
+
+**Runnable now, on iPhone↔iPhone only:** steps 1 (iPhone↔iPhone pairing only),
+3, 4, 5, 6, 8, 8a (iOS↔iOS only), 8b, 9, 10, 11, 13, 14, 15 (iOS only), 16
+(iOS only), 17, 18, 20 and 21.
+
+**Blocked for want of an Android phone:** step 1's Android↔Android,
+Android→iPhone and iPhone→Android pairings, step 2 in full (it repeats every
+cross-platform pairing with mobile data disabled), step 7's mixed-transport
+convergence, step 12's reduced-capability peer, and the Android half of steps
+15 and 16.
+
+**Blocked on other issues, not hardware:** step 19 needs a licensed traffic
+provider (#277) and step 18 needs an operator-owned map style (#274).
+
+Two consequences worth stating plainly, because they are the difference between
+a completed gate and a partial one:
+
+- The **cross-platform premise is untested**. The objective above is about "iOS
+  and Android phones" moving through a group. On this hardware that sentence
+  cannot be evidenced at all.
+- #132's evidence is specifically owed on a **mixed-platform pair**, run both
+  ways round. Step 8b's "swap the roles - the SE leads" was written for an
+  iOS/Android pair. An iPhone-to-iPhone run is worth doing and is not that
+  evidence.
+
+Acquiring one current Android phone and one with aggressive battery management
+is therefore a prerequisite for closing #268, and for the Android half of #269.
+
+### What the Android emulator substitutes for, and what it does not
+
+An Android emulator is available and already configured for this project: AVD
+`tailendcharlie_test`, a Pixel 9 Pro on API 34 (`google_apis_playstore`,
+`arm64-v8a`, `hw.gps=yes`), plus `tailendcharlie_auto_clean` for Android Auto.
+
+The repository already draws the correct line and it is worth keeping.
+[nearby-relay.md:111](nearby-relay.md#L111) records an Android 14 emulator run on
+2026-07-25 that confirmed Bluetooth, BLE and Wi-Fi LAN advertising plus BLE and
+Wi-Fi LAN discovery — that is evidence about the **permission and API contract**,
+which the emulator can give. [nearby-relay.md:116](nearby-relay.md#L116) then
+requires physical devices for the radio gate. Both statements are right.
+
+**The emulator is real evidence for the internet-relay transport.** The relay path
+is HTTPS, the emulator has full networking, and the code path is identical to a
+phone's. An iPhone paired with an emulator through a relay genuinely evidences:
+
+- step 8b in full — idle-device delivery, "both phones awake with the map open
+  and both stationary on a desk". An idle emulator is a perfectly valid phone
+  with nothing to send, which is the whole point of that test;
+- the internet-only leg of step 8a, though not its nearby-only or mixed legs;
+- steps 9 (duplicate delivery, restart, reconnect), 10 (leave/rejoin, ghost
+  riders), 11 (route publish/replace/clear convergence) and 12 (old
+  protocol/capability client);
+- the clock-skew case in 8b step 5, which needs no radio at all.
+
+That recovers most of the evidence owed on #99, #132 and #134 — a correction to
+the note on #268, which described #132's evidence as needing a physical
+mixed-platform pair. For 8b specifically it does not.
+
+**Also emulator-testable:** Android UI and layout in both orientations and both
+map styles (#29, #104, #125, #142, #143, #172 — though a black-`SurfaceView`
+fault may not reproduce through the host GPU translation layer, so a reproduction
+is informative and a non-reproduction proves nothing); stock Doze and
+foreground-service survival via `adb shell dumpsys deviceidle force-idle` and
+standby buckets (#205, for stock AOSP behaviour only); App Links verification and
+deep-link launches via `adb shell pm get-app-links` and `am start` (#275); and
+navigation-instruction and route-progress logic under mock-location playback,
+which Ride Lab already covers ([ride-simulator.md](ride-simulator.md)).
+
+**The emulator is not evidence for, and cannot be made to be:**
+
+- any peer-to-peer radio between two devices — no BT or Wi-Fi Direct path exists
+  between an emulator and an iPhone, so steps 1 (beyond iPhone↔iPhone), 2, 7's
+  nearby and mixed transports, 13's A→B→C carry and 14's pass-by at speed all
+  still need two physical phones;
+- battery, at all. There is no battery. The Android half of #269 is unrunnable,
+  and the aggressive-battery-management case is OEM behaviour by definition;
+- real GPS. Mock locations arrive with perfect accuracy, so the multipath and
+  accuracy-rejection behaviour behind `maxAcceptedAccuracyMeters = 75` — the
+  urban-canyon and parallel-road cases in #270 — cannot be exercised;
+- locked-screen radio behaviour, physical placement, or thermal behaviour.
+
+**Practical setup for the cross-platform relay tests.** They need a reachable
+relay, which is #273. Until one is deployed, the tailnet-only field-test host in
+[server-runbook.md:190](server-runbook.md#L190) is the intended private path; an
+emulator can alternatively reach a relay on the host Mac directly at `10.0.2.2`
+while the iPhone uses the Mac's LAN or tailnet address.
+
+**Recording rule.** An emulator result is labelled as such in the results record.
+It never satisfies a radio, battery or real-GPS pass gate, and a step passed on an
+emulator is not a step passed — per [AGENTS.md:61](../AGENTS.md#L61).
+
+### Driving the sequence instead of tapping it
+
+A build can carry a gated HTTP surface that another machine drives — create a
+ride, join, start, report a hazard, inject a position, read the roster — so the
+step-8b delays are measured rather than estimated. See
+[test-control-api.md](test-control-api.md); `tools/field-test-8b.sh` runs 8b end
+to end.
+
+This matters most for 8b, because its assertions are about phones sitting
+**untouched**, and picking one up to read it ends the condition under test. The
+field report behind #132 was "it started working when I touched it" — which is the
+defect rather than a recovery, and is not something a person holding the phone can
+tell apart.
+
+The recording rule above applies unchanged. Driving exercises the app's own code
+paths, so it is evidence for delivery, convergence and roster agreement, and is
+**not** evidence for radio, battery or real-GPS accuracy. Label a driven result as
+driven.
 
 ## Test sequence
 

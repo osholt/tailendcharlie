@@ -21,6 +21,7 @@ import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/test_control_controller.dart';
 import '../../controllers/situational_awareness_controller.dart';
 import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
@@ -48,6 +49,7 @@ import '../../relay/native_nearby_transport.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
+import '../../services/test_control_registry.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/device_location_source.dart';
@@ -247,9 +249,19 @@ class ActiveRideShell extends StatefulWidget {
     this.pushTokenSource,
     this.pushRegistrationApi,
     this.roadRatings,
+    this.testControl,
+    this.testControlRegistry,
   });
 
   final RideController rideController;
+
+  /// Both null unless this build carries the test-control define. The shell
+  /// forwards [testControl] to the settings sheet and publishes each
+  /// situational-awareness controller it creates into [testControlRegistry], so
+  /// the driven surface always talks to the live one.
+  final TestControlController? testControl;
+  final TestControlRegistry? testControlRegistry;
+
   final DistanceUnitController distanceUnits;
   final MapStyleModeController mapStyleMode;
   final EventStore eventStore;
@@ -1662,6 +1674,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       controller.dispose();
       return;
     }
+    // Publish only after the generation check: a controller built for a
+    // superseded route is disposed above, and driving a disposed controller is
+    // exactly the stale-reference bug TestControlRegistry exists to avoid.
+    widget.testControlRegistry?.publish(controller);
 
     MarkerAssistanceController? markerController;
     if (widget.rideController.coordinationMode.usesSecondBikeDropOff) {
@@ -4217,6 +4233,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     mapStyleMode: widget.mapStyleMode,
     speedLimitDisplay: widget.speedLimitDisplay,
     riderProfile: widget.riderProfile,
+    testControl: widget.testControl,
     onLeaveRide: _leaveRide,
     onOpenRoster: _openRoster,
     relayController: _relayController,
@@ -4345,6 +4362,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _preStartPresenceController?.removeListener(_onPreStartPresenceChanged);
     _awarenessController?.removeListener(_onAwarenessChanged);
     _markerAssistanceController?.dispose();
+    if (_awarenessController case final awareness?) {
+      widget.testControlRegistry?.withdraw(awareness);
+    }
     _awarenessController?.dispose();
     unawaited(_receivedEventSubscription?.cancel());
     unawaited(_internetReceivedEventSubscription?.cancel());
