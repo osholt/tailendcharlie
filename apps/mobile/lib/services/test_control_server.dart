@@ -10,6 +10,7 @@ import '../controllers/test_control_controller.dart';
 import '../domain/hazard.dart';
 import '../domain/geo_point.dart';
 import '../domain/rider_location.dart';
+import '../domain/ride_join_payload.dart';
 import '../domain/ride_role.dart';
 import 'test_control_configuration.dart';
 import 'test_control_registry.dart';
@@ -201,6 +202,15 @@ class TestControlServer {
       await _send(response, HttpStatus.ok, {
         'rideCode': session.rideCode,
         'joinToken': session.joinToken,
+        // The same string a QR code carries (#279). Exposed here rather than in
+        // /v1/state because it is capability material - anyone holding it can join
+        // - and this endpoint is already the explicit read for that.
+        'invitation': RideJoinPayload(
+          rideId: session.rideId,
+          rideCode: session.rideCode,
+          inviteSecret: session.inviteSecret,
+          joinToken: session.joinToken,
+        ).encode(),
       });
       return;
     }
@@ -243,6 +253,14 @@ class TestControlServer {
     switch (path) {
       case '/v1/ride':
         await _ride.createRide(_requireString(body, 'displayName'));
+      // Joins from a scanned invitation, which is the only path that touches no
+      // network (#279). Driving it is how the offline claim gets proven against a
+      // relay that is genuinely unreachable rather than merely slow.
+      case '/v1/ride/join-invitation':
+        await _ride.joinRideFromInvitation(
+          RideJoinPayload.decode(_requireString(body, 'invitation')),
+          _requireString(body, 'displayName'),
+        );
       case '/v1/ride/join':
         await _ride.joinRide(
           _requireString(body, 'rideCode'),
