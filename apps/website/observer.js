@@ -8,6 +8,7 @@ import {
   participantRoleLabel,
   remainingLabel,
   rideStatusLabel,
+  describeAssistance,
 } from "./observer-core.mjs";
 
 const CONFIGURED_API_URL = document
@@ -109,12 +110,14 @@ function render() {
       : describeFreshness(snapshot);
   elements.freshness.textContent = freshness.label;
   elements.positionAge.textContent = freshness.age;
-  elements.assistance.hidden = !snapshot.assistance;
-  if (snapshot.assistance) {
-    elements.assistanceLabel.textContent = snapshot.assistance.label;
-    elements.assistanceTime.textContent = `Reported ${new Date(
-      snapshot.assistance.reportedAt,
-    ).toLocaleString()}`;
+  // Visibility and wording are decided together, so the bar cannot appear with
+  // nothing in it (#278). Deciding them separately is what produced a red alert
+  // containing no words on a tester's phone.
+  const assistance = describeAssistance(snapshot);
+  elements.assistance.hidden = assistance === null;
+  if (assistance) {
+    elements.assistanceLabel.textContent = assistance.label;
+    elements.assistanceTime.textContent = assistance.time;
   }
   renderRiders();
   renderTimes();
