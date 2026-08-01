@@ -12,6 +12,7 @@ import 'package:ride_relay/domain/imported_route.dart' as route_domain;
 import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_coordination_mode.dart';
 import 'package:ride_relay/domain/ride_role.dart';
+import 'package:ride_relay/domain/ride_join_payload.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/relay/live_presence.dart';
@@ -1079,6 +1080,53 @@ void main() {
     expect(controller.sentIceShares.single.toWholeGroup, isFalse);
   });
 
+  test('a scanned invitation joins with the relay unreachable', () async {
+    // #279: every other join path ends in RideCodeDirectory.resolve, an HTTPS
+    // call, so a group with no signal cannot form a ride at all - which is the
+    // situation this product is for. The directory here throws on any call, so
+    // this asserts the absence of a network round trip rather than assuming it.
+    final offline = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+      clock: () => DateTime.utc(2026, 8, 1, 9),
+      idFactory: () => 'offline-${id++}',
+      random: Random(7),
+      rideCodeDirectory: _UnreachableRideCodeDirectory(),
+      completedRideStore: completedRideStore,
+    );
+    addTearDown(offline.dispose);
+
+    const invitation = RideJoinPayload(
+      rideId: 'ride-from-qr',
+      rideCode: '135627',
+      inviteSecret: '0123456789abcdef0123456789abcdef',
+      joinToken: 'resolve-token-0123456789',
+    );
+
+    await offline.joinRideFromInvitation(invitation, 'Scanned rider');
+
+    expect(offline.errorMessage, isNull, reason: 'the join must succeed');
+    final session = offline.session;
+    expect(session, isNotNull);
+    expect(session!.rideId, 'ride-from-qr');
+    expect(session.rideCode, '135627');
+    // The credentials that make authenticated transport possible have to arrive
+    // intact, or the rider is in a session that looks joined and can talk to
+    // nobody.
+    expect(session.inviteSecret, invitation.inviteSecret);
+    expect(session.joinToken, invitation.joinToken);
+    expect(session.role, RideRole.rider);
+    expect(session.displayName, 'Scanned rider');
+
+    // And it is a real join, not just a stored session: the roster has to show
+    // this rider, which means the riderJoined event was recorded.
+    expect(
+      offline.participants.map((participant) => participant.displayName),
+      contains('Scanned rider'),
+    );
+  });
+
   test('the ride names who ended it', () async {
     // #283: a tester whose ride the leader ended read it as a crash. Naming the
     // person is the difference between "something broke" and "the leader stopped
@@ -1597,6 +1645,21 @@ class _FakeNearbyBridge extends NearbyBridge {
     nearbyApiLinked: false,
     status: 'phase0',
   );
+}
+
+/// Refuses every lookup, so a test that joins through it is proving the join made
+/// no network call rather than merely not noticing one (#279).
+class _UnreachableRideCodeDirectory implements RideCodeDirectory {
+  @override
+  Future<void> register(RideSession session) async =>
+      throw StateError('the relay must not be reached');
+
+  @override
+  Future<RideCodeCredentials> resolve(String rideCode, {String? joinToken}) =>
+      throw StateError('the relay must not be reached');
+
+  @override
+  void close() {}
 }
 
 class _InMemoryRideCodeDirectory implements RideCodeDirectory {

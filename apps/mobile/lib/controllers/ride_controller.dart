@@ -18,6 +18,7 @@ import '../domain/quick_message.dart';
 import '../domain/ride_coordination_mode.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_role.dart';
+import '../domain/ride_join_payload.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_color.dart';
 import '../domain/session_store.dart';
@@ -848,6 +849,38 @@ class RideController extends ChangeNotifier {
     }
   }
 
+  /// Joins using credentials carried in a scanned invitation, with **no network
+  /// call at all** (#279).
+  ///
+  /// Every other join path ends in `RideCodeDirectory.resolve`, whose only job is
+  /// turning a six-digit code into exactly the fields a [RideJoinPayload] already
+  /// holds. So this is the same join with the lookup removed, and it is what lets
+  /// a group with no signal form a ride - the situation the product is for.
+  ///
+  /// Deliberately shares [_joinWithCredentials] with [joinRide] rather than
+  /// duplicating it: an offline join that diverged from the online one would be a
+  /// second definition of what being in a ride means, and the two would drift.
+  Future<void> joinRideFromInvitation(
+    RideJoinPayload invitation,
+    String displayName, {
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderSymbol riderSymbol = riderSymbolDefault,
+    RiderColor riderColor = riderColorDefault,
+  }) async {
+    await _run(
+      () => _joinWithCredentials(
+        rideId: invitation.rideId,
+        rideCode: invitation.rideCode,
+        inviteSecret: invitation.inviteSecret,
+        joinToken: invitation.joinToken,
+        displayName: displayName,
+        motorcycleStyle: motorcycleStyle,
+        riderSymbol: riderSymbol,
+        riderColor: riderColor,
+      ),
+    );
+  }
+
   Future<void> joinRide(
     String rideCode,
     String displayName, {
@@ -863,6 +896,37 @@ class RideController extends ChangeNotifier {
       }
       final credentials = await _rideCodeDirectory.resolve(
         normalisedCode,
+        joinToken: joinToken,
+      );
+      await _joinWithCredentials(
+        rideId: credentials.rideId,
+        rideCode: credentials.rideCode,
+        inviteSecret: credentials.inviteSecret,
+        joinToken: credentials.joinToken,
+        displayName: displayName,
+        motorcycleStyle: motorcycleStyle,
+        riderSymbol: riderSymbol,
+        riderColor: riderColor,
+      );
+    });
+  }
+
+  /// The join itself, once credentials exist however they were obtained.
+  Future<void> _joinWithCredentials({
+    required String rideId,
+    required String rideCode,
+    required String inviteSecret,
+    required String joinToken,
+    required String displayName,
+    required MotorcycleIconStyle motorcycleStyle,
+    required RiderSymbol riderSymbol,
+    required RiderColor riderColor,
+  }) async {
+    {
+      final credentials = RideCodeCredentials(
+        rideId: rideId,
+        rideCode: rideCode,
+        inviteSecret: inviteSecret,
         joinToken: joinToken,
       );
       final now = _clock();
@@ -895,7 +959,7 @@ class RideController extends ChangeNotifier {
           'riderColor': session.riderColor.name,
         },
       );
-    });
+    }
   }
 
   Future<void> setRole(RideRole role) async {
