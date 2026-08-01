@@ -90,9 +90,50 @@ in the loop.
 A switch with no usable token is not half-on: it binds no port and authorises
 nothing, and the app says so rather than looking broken.
 
-**Android has no switch yet.** The surface itself is shared Flutter code and runs
-there, but the switch is an iOS Settings bundle, so an Android phone cannot be
-driven. Worth closing before the next mixed-platform session.
+### Android: `adb`, and deliberately no in-app switch
+
+Android has no equivalent of an iOS Settings bundle, and rather than add one this
+uses `adb` — which turns out to be a **stronger** gate than iOS gets, and needs no
+app code at all, so it adds no attack surface.
+
+Flutter's SharedPreferences on Android is a plain XML file, so the switch and token
+are set from outside the app entirely:
+
+```bash
+PKG=app.tailendcharlie
+XML=/data/data/$PKG/shared_prefs/FlutterSharedPreferences.xml
+
+adb shell am force-stop $PKG          # prefs are read at launch and flushed on exit
+adb shell "run-as $PKG cat $XML" > prefs.xml
+# add, inside <map>:
+#   <boolean name="flutter.test_control_enabled" value="true" />
+#   <string name="flutter.test_control_token">your-token-here</string>
+adb push prefs.xml /data/local/tmp/prefs.xml
+adb shell "run-as $PKG cp /data/local/tmp/prefs.xml $XML"
+adb shell am start -n $PKG/me.osholt.ride_relay.MainActivity
+```
+
+The emulator's loopback is not the host's, so forward the port:
+
+```bash
+adb forward tcp:8478 tcp:8477
+curl -s http://127.0.0.1:8478/v1/health
+```
+
+**Why this is the right answer rather than a compromise.** `run-as` only works on a
+**debuggable** build, so on a release build there is no way to set either value —
+Android's own debuggable flag becomes the gate, on top of the compile-time define.
+A BroadcastReceiver would have been the obvious alternative and is worse: it has to
+be exported to be reachable from `adb`, which means any app on the device could
+target it.
+
+The app notices on resume, the same as iOS: `TestControlSession` re-reads on
+foreground, which is why the relaunch above is enough.
+
+Verified on an Android 14 emulator: switch and token set entirely by `adb`, surface
+answered `/v1/health`, an authenticated `/v1/state` returned 200, and a ride was
+created, its invitation read and the ride ended — all driven, with no app code
+added for Android.
 
 The listener is dual-stack (`anyIPv6`, `v6Only: false`), which matters for how you
 reach it. Xcode's CoreDevice tunnel to a paired phone is IPv6-only, so a paired or
