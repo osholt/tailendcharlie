@@ -4,8 +4,8 @@ class BasemapConfiguration {
     this.darkStyleUrl = '',
     this.urlTemplate = '',
     this.attribution = '',
-    this.cacheNamespace = '',
-    this.persistentCachingAllowed = false,
+    this.cacheNamespace = defaultCacheNamespace,
+    this.persistentCachingAllowed = true,
     this.maximumNativeZoom = 18,
   });
 
@@ -25,9 +25,17 @@ class BasemapConfiguration {
     ),
     cacheNamespace: const String.fromEnvironment(
       'RIDE_RELAY_TILE_CACHE_NAMESPACE',
+      defaultValue: defaultCacheNamespace,
     ),
     persistentCachingAllowed: const bool.fromEnvironment(
       'RIDE_RELAY_TILE_CACHE_ALLOWED',
+      // Approved by the project owner for the default provider, so caching is on
+      // unless a build deliberately turns it off. It defaulted to false while the
+      // licence question was open, and that default was itself a bug on an
+      // offline-first app: with no cached tiles a rural signal gap leaves no
+      // basemap at all and nothing to fall back on, which is what a tester saw as
+      // "just a blob or dot where you are and a tail where you been" (#274, #281).
+      defaultValue: true,
     ),
     maximumNativeZoom: const int.fromEnvironment(
       'RIDE_RELAY_TILE_MAX_ZOOM',
@@ -48,6 +56,11 @@ class BasemapConfiguration {
   final String attribution;
   final String cacheNamespace;
   final bool persistentCachingAllowed;
+
+  /// Names the provider whose tiles are cached, so a build that changes provider
+  /// cannot serve the previous one's tiles out of the old cache. Tied to the
+  /// default style; override it alongside the style URL.
+  static const defaultCacheNamespace = 'openfreemap';
   final int maximumNativeZoom;
 
   /// A copy using [darkStyleUrl] in place of [styleUrl] when [dark] is true
@@ -92,7 +105,7 @@ class BasemapConfiguration {
       return 'No MapLibre style is configured. Route geometry still works offline.';
     }
     if (!persistentCachingAllowed) {
-      return 'Online basemap configured; its licence has not been approved for offline caching.';
+      return 'Online basemap configured; offline caching is switched off for this build.';
     }
     if (!RegExp(r'^[a-zA-Z0-9._-]{1,64}$').hasMatch(cacheNamespace)) {
       return 'Offline caching needs a safe provider cache namespace.';

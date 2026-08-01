@@ -54,12 +54,20 @@ commit against an installed build (#273). That last one is not cosmetic: rule 0 
 builds were tested against a relay two days behind `main`, and the failures
 re-reported each time were the undeployed server.
 
-A basemap archive/style (#274) and licensed traffic provider (#277) are not
-configured. The basemap position is worse than "unconfigured": a build with no
-overrides points at a public OpenFreeMap style and leaves
-`RIDE_RELAY_TILE_CACHE_ALLOWED` at `false`, so an offline-first app currently
-fetches third-party tiles on every ride and persists none of them. Offline map
-coverage is not available in a default build.
+**Offline tile caching is now on by default.** The project owner has approved
+caching for the default provider, so `RIDE_RELAY_TILE_CACHE_ALLOWED` defaults to
+true with a provider-named cache namespace. The previous default of false was
+itself a bug on an offline-first app: with nothing cached, a rural signal gap left
+no basemap at all and nothing to fall back on, which is what a tester reported as a
+dot and a trail on blank background (#274, #281). Route-corridor download is
+available in a default build as a result.
+
+What remains of #274 is the **operator-owned style**, which is a separate thing:
+the observer page fetches its style from the relay
+(`/maps/styles/ride-relay.json`), that returns 404, and until a style is deployed
+there a safety contact sees coordinates instead of a map.
+
+A licensed traffic provider (#277) is deferred by decision; see that issue.
 
 Waze is unavailable as a hazard-read source: its partner data programme is
 limited to government agencies and road operators, and this project applied and
