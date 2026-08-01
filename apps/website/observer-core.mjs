@@ -156,3 +156,44 @@ export function remainingLabel(expiresAt, now = new Date()) {
   const hours = Math.ceil(seconds / 3600);
   return `Expires in ${hours} ${hours === 1 ? "hour" : "hours"}`;
 }
+
+/// Whether the assistance alert should be shown, and with what words.
+///
+/// A tester's safety-contact page showed a red alert bar containing **nothing**
+/// (#278). The page decided visibility from the presence of `snapshot.assistance`
+/// but took its wording from `label` inside it, so an assistance object without a
+/// usable label rendered an alarm with `undefined` written into it - a coloured
+/// bar that says something is wrong and refuses to say what, to the one person
+/// who cannot ask the rider directly.
+///
+/// The failure direction matters and is chosen deliberately. A missing label is
+/// **not** treated as "no alert": suppressing a genuine assistance report because
+/// its wording went missing would be the worse mistake on a safety surface. It
+/// falls back to saying that something was reported without inventing detail
+/// about what.
+///
+/// Returns `null` when there is nothing to show, otherwise `{ label, time }`
+/// where `time` is an empty string if no usable timestamp came with it - printing
+/// "Reported Invalid Date" tells a worried person nothing.
+export function describeAssistance(snapshot, formatTime = defaultAssistanceTime) {
+  const assistance = snapshot?.assistance;
+  if (!assistance || typeof assistance !== "object") return null;
+
+  const rawLabel =
+    typeof assistance.label === "string" ? assistance.label.trim() : "";
+  const label = rawLabel || "Assistance was reported for this ride";
+
+  const reportedAt = assistance.reportedAt
+    ? new Date(assistance.reportedAt)
+    : null;
+  const time =
+    reportedAt && !Number.isNaN(reportedAt.valueOf())
+      ? `Reported ${formatTime(reportedAt)}`
+      : "";
+
+  return { label, time };
+}
+
+function defaultAssistanceTime(date) {
+  return date.toLocaleString();
+}

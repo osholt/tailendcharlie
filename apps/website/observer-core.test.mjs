@@ -13,6 +13,7 @@ import {
   participantRoleLabel,
   remainingLabel,
   rideStatusLabel,
+  describeAssistance,
 } from "./observer-core.mjs";
 
 test("observer credentials are accepted only in the high-entropy fragment shape", () => {
@@ -172,4 +173,64 @@ test("observer MapLibre assets are the reviewed vendored release", async () => {
     "uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK",
   );
   assert.match(license, /Copyright \(c\) 2023, MapLibre contributors/);
+});
+
+test("an assistance alert never renders without words", () => {
+  // #278: a tester's safety-contact page showed a red alert bar containing
+  // nothing. Visibility came from the presence of `assistance`, the wording from
+  // `label` inside it, so an object without a usable label produced an alarm that
+  // says something is wrong and refuses to say what - to the one person who
+  // cannot ask the rider directly.
+  const described = describeAssistance({
+    assistance: { reportedAt: "2026-07-31T10:00:00Z" },
+  });
+
+  assert.notEqual(described, null, "a reported assistance must not vanish");
+  assert.ok(
+    described.label.length > 0,
+    "the bar must never appear with an empty label",
+  );
+});
+
+test("a missing assistance shows nothing at all", () => {
+  assert.equal(describeAssistance({}), null);
+  assert.equal(describeAssistance({ assistance: null }), null);
+  assert.equal(describeAssistance(undefined), null);
+});
+
+test("a real label is used as given", () => {
+  const described = describeAssistance({
+    assistance: { label: "Help requested", reportedAt: "2026-07-31T10:00:00Z" },
+  });
+
+  assert.equal(described.label, "Help requested");
+  assert.match(described.time, /^Reported /);
+});
+
+test("a missing timestamp omits the time rather than printing Invalid Date", () => {
+  // "Reported Invalid Date" tells a worried person nothing, and looks like the
+  // page is broken at the moment they most need to trust it.
+  const described = describeAssistance({
+    assistance: { label: "Emergency stop" },
+  });
+
+  assert.equal(described.label, "Emergency stop");
+  assert.equal(described.time, "");
+});
+
+test("a malformed timestamp is treated as no timestamp", () => {
+  const described = describeAssistance({
+    assistance: { label: "Help requested", reportedAt: "not a date" },
+  });
+
+  assert.equal(described.time, "");
+});
+
+test("a blank label falls back rather than suppressing the alert", () => {
+  // Chosen deliberately: suppressing a genuine assistance report because its
+  // wording went missing is the worse mistake on a safety surface.
+  const described = describeAssistance({ assistance: { label: "   " } });
+
+  assert.notEqual(described, null);
+  assert.ok(described.label.trim().length > 0);
 });
