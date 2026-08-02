@@ -251,6 +251,7 @@ private final class CarPlayNavigationViewController: UIViewController,
   MKMapViewDelegate
 {
   private let mapView = MKMapView(frame: .zero)
+  private let tecBadge = CarPlayTecBadge()
   private var routeOverlay: MKPolyline?
   private var routeID: String?
   private var localCoordinate: CLLocationCoordinate2D?
@@ -262,7 +263,36 @@ private final class CarPlayNavigationViewController: UIViewController,
     mapView.delegate = self
     mapView.showsCompass = true
     mapView.pointOfInterestFilter = .excludingAll
+    // Issue #295: without these the first thing a rider saw on plugging in was
+    // MKMapView's default region - the whole United Kingdom - with nothing
+    // drawn on it, because before a ride starts there is no rider position and
+    // no route, so neither camera branch in `apply(snapshot:)` ever ran and
+    // `setCamera`/`setVisibleMapRect` were never called at all. Handing the
+    // camera to MapKit's own follow mode means the map is framed on the rider
+    // from the first fix, ride or no ride, and the blue dot gives it something
+    // to be framed on.
+    mapView.showsUserLocation = true
+    mapView.userTrackingMode = .follow
     view = mapView
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    // Top-leading inside the safe area: CarPlay's own templates own the
+    // navigation bar and the trailing map buttons, and the safe area is what
+    // keeps this clear of both.
+    tecBadge.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(tecBadge)
+    NSLayoutConstraint.activate([
+      tecBadge.leadingAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+        constant: 12
+      ),
+      tecBadge.topAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.topAnchor,
+        constant: 12
+      ),
+    ])
   }
 
   func apply(snapshot: [String: Any]) {
@@ -273,6 +303,12 @@ private final class CarPlayNavigationViewController: UIViewController,
       routeID = incomingRouteID
     }
     updateRiders(snapshot["riders"])
+    tecBadge.apply(snapshot["tec"] as? [String: Any])
+    // The ride's own marker for this rider carries their name and role and is
+    // the one the group is drawn against. MapKit's blue dot is the stand-in
+    // for it before a ride starts (#295), so exactly one of the two is ever
+    // on the map.
+    mapView.showsUserLocation = localCoordinate == nil
     if localCoordinate != nil, followsLocalRider {
       recenter()
     } else if routeChanged {
@@ -286,6 +322,11 @@ private final class CarPlayNavigationViewController: UIViewController,
       showCompleteRoute()
       return
     }
+    // Taking the camera back off MapKit's follow mode, or it animates against
+    // every camera this sets. The ride's own fix is preferred once there is
+    // one: it carries the rider's heading and is the position the rest of the
+    // group is being measured against.
+    mapView.userTrackingMode = .none
     let camera = MKMapCamera(
       lookingAtCenter: coordinate,
       fromDistance: 1_800,
@@ -297,6 +338,7 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func pan(direction: CPMapTemplate.PanDirection) {
     followsLocalRider = false
+    mapView.userTrackingMode = .none
     var center = MKMapPoint(mapView.centerCoordinate)
     let rect = mapView.visibleMapRect
     if direction.contains(.left) {
@@ -316,6 +358,7 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func beginPanGesture() {
     followsLocalRider = false
+    mapView.userTrackingMode = .none
     panGestureStartCoordinate = mapView.centerCoordinate
   }
 
@@ -348,7 +391,11 @@ private final class CarPlayNavigationViewController: UIViewController,
   }
 
   private func updateRiders(_ raw: Any?) {
-    mapView.removeAnnotations(mapView.annotations)
+    // MKUserLocation is MapKit's, not ours - removing it here would fight
+    // `showsUserLocation` rather than clear a rider marker.
+    mapView.removeAnnotations(
+      mapView.annotations.filter { !($0 is MKUserLocation) }
+    )
     localCoordinate = nil
     localHeading = nil
     let riders = raw as? [[String: Any]] ?? []
@@ -360,6 +407,7 @@ private final class CarPlayNavigationViewController: UIViewController,
         title: rider["label"] as? String ?? "Rider",
         subtitle: rider["role"] as? String,
         isLocal: isLocal,
+        isTec: (rider["isTec"] as? NSNumber)?.boolValue ?? false,
         needsAttention: (rider["needsAttention"] as? NSNumber)?.boolValue ?? false
       )
       mapView.addAnnotation(annotation)
@@ -370,8 +418,18 @@ private final class CarPlayNavigationViewController: UIViewController,
     }
   }
 
+  /// Frames the whole planned route, or - with no route to frame - hands the
+  /// camera back to the rider rather than leaving it wherever it was.
+  ///
+  /// The bare `guard let routeOverlay else { return }` this replaces is half of
+  /// #295: a route-less ride reached here, nothing happened, and the map stayed
+  /// at MKMapView's country-level default with no way back.
   private func showCompleteRoute() {
-    guard let routeOverlay else { return }
+    guard let routeOverlay else {
+      mapView.userTrackingMode = .follow
+      return
+    }
+    mapView.userTrackingMode = .none
     mapView.setVisibleMapRect(
       routeOverlay.boundingMapRect,
       edgePadding: UIEdgeInsets(top: 80, left: 80, bottom: 80, right: 80),
@@ -416,10 +474,15 @@ private final class CarPlayNavigationViewController: UIViewController,
       ?? MKMarkerAnnotationView(annotation: rider, reuseIdentifier: reuseID)
     view.annotation = rider
     view.canShowCallout = true
+    // The back-marker is picked out from the rest of the group. A leader
+    // glancing at a head unit is looking for one rider in particular, and
+    // reading initials off a moving map at speed is not a way to find them.
     view.markerTintColor = rider.needsAttention
       ? .systemOrange
-      : rider.isLocal ? .systemBlue : .systemGray
-    view.glyphText = rider.isLocal ? "You" : String(rider.title?.prefix(1) ?? "•")
+      : rider.isLocal ? .systemBlue : rider.isTec ? .systemGreen : .systemGray
+    view.glyphText = rider.isLocal
+      ? "You"
+      : rider.isTec ? "TEC" : String(rider.title?.prefix(1) ?? "•")
     return view
   }
 
@@ -430,6 +493,7 @@ private final class CarPlayNavigationViewController: UIViewController,
       .contains { $0.state == .began || $0.state == .changed }
     if userIsMovingMap {
       followsLocalRider = false
+      mapView.userTrackingMode = .none
     }
   }
 }
@@ -439,6 +503,11 @@ private final class CarPlayRiderAnnotation: NSObject, MKAnnotation {
   let title: String?
   let subtitle: String?
   let isLocal: Bool
+
+  /// The one effective back-marker, already resolved by Dart. Two riders can
+  /// carry the role in the journal at once (#128); exactly one arrives here
+  /// flagged, so the map cannot draw two backs to one group.
+  let isTec: Bool
   let needsAttention: Bool
 
   init(
@@ -446,12 +515,69 @@ private final class CarPlayRiderAnnotation: NSObject, MKAnnotation {
     title: String,
     subtitle: String?,
     isLocal: Bool,
+    isTec: Bool,
     needsAttention: Bool
   ) {
     self.coordinate = coordinate
     self.title = title
     self.subtitle = subtitle
     self.isLocal = isLocal
+    self.isTec = isTec
     self.needsAttention = needsAttention
+  }
+}
+
+/// The persistent back-marker readout on the CarPlay map canvas.
+///
+/// The ride-status list already carries the full sentence, but it is a template
+/// a rider has to navigate to. This is the version that is simply *there* while
+/// the map is up, which is the whole point on a screen nobody should be reading
+/// for more than a moment.
+///
+/// Colour is never the only signal: the trend arrow is already in the text, and
+/// the states differ in words as well as tint. Riders wear tinted visors in
+/// direct sunlight, and some cannot tell the tints apart at all.
+private final class CarPlayTecBadge: UIView {
+  private let label = UILabel()
+
+  init() {
+    super.init(frame: .zero)
+    isHidden = true
+    layer.cornerRadius = 8
+    layer.cornerCurve = .continuous
+    backgroundColor = UIColor.black.withAlphaComponent(0.65)
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.font = .systemFont(ofSize: 15, weight: .semibold)
+    label.textColor = .white
+    addSubview(label)
+    NSLayoutConstraint.activate([
+      label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      label.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+      label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  func apply(_ tec: [String: Any]?) {
+    // No TEC block at all means no ride is being projected yet, which is not
+    // the same as a ride with no back-marker - that arrives with state "none"
+    // and is shown, deliberately, as "No TEC".
+    guard let tec, let headline = tec["headline"] as? String else {
+      isHidden = true
+      return
+    }
+    isHidden = false
+    label.text = headline
+    switch tec["state"] as? String {
+    case "none":
+      backgroundColor = UIColor.systemRed.withAlphaComponent(0.75)
+    case "stale", "awaitingLocation":
+      backgroundColor = UIColor.systemOrange.withAlphaComponent(0.75)
+    default:
+      backgroundColor = UIColor.black.withAlphaComponent(0.65)
+    }
   }
 }

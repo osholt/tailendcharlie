@@ -844,6 +844,35 @@ Provider references:
 - [Valhalla attribution requirements](https://valhalla.github.io/valhalla/mjolnir/attribution/)
 - [Public demo fair-use and client identification](https://github.com/valhalla/valhalla#demo-server)
 
+## CarPlay draws with MapKit, and that is a decision
+
+The phone draws with MapLibre. The CarPlay canvas
+(`CarPlayNavigationViewController` in `apps/mobile/ios/Runner/CarPlaySceneDelegate.swift`)
+draws with `MKMapView`. That divergence was noticed as a possible accident in
+#295 and is now deliberate, with what it costs stated rather than discovered
+later:
+
+- **Kept**: MapKit is the basemap CarPlay head units are built and tested
+  against, it is already resident on the phone, it needs no tile budget or key,
+  and it is the only renderer that gives the projected `CPWindow` a follow
+  camera and a blue dot without the app owning a second GL context on a screen
+  it does not control.
+- **Given up**: the styling in [Riding display](#riding-display) — the dark
+  basemap, the measured route palette, the marker badges — none of it reaches
+  CarPlay. So does the offline tile cache: **the CarPlay basemap needs a
+  connection, and goes blank-grey without one, while the phone in the rider's
+  pocket keeps its cached tiles.** The app-owned content on top of it (route
+  polyline, rider markers, the TEC badge) is drawn by us and survives a signal
+  drop; only the basemap under it does not.
+- **Kept ours regardless**: everything that carries meaning. The route line,
+  every rider marker, the back-marker's distinct pin and the TEC badge are the
+  app's, so the two surfaces cannot disagree about where the group is even
+  though they disagree about what the roads look like.
+
+Revisit only if the offline basemap becomes a stated CarPlay requirement; that
+means putting MapLibre on a `CPWindow` and owning its lifecycle across
+connect/disconnect, which is a considerably larger change than restyling.
+
 ## MapLibre provider configuration
 
 Development-alpha builds default to OpenFreeMap's public Liberty style for an
