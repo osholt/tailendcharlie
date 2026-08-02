@@ -136,6 +136,16 @@ test("both Caddyfiles render the style rather than serving it raw", async () => 
         `templates only processes text/html and plain text by default, so a ` +
           `.json style in ${caddyfile.pathname} passes through unrendered`,
       );
+      // observer-core.mjs sends the marketing-site copy of the observer to the
+      // relay for its API origin, so that deployment reads this style
+      // cross-origin. The proxied tiles and glyphs answer with a wildcard
+      // already; the style is served by file_server and gets none by default.
+      assert.match(
+        body,
+        /header Access-Control-Allow-Origin/,
+        `the style route in ${caddyfile.pathname} sends no CORS header, so an ` +
+          `observer served from another origin cannot load it`,
+      );
     }
   }
 });

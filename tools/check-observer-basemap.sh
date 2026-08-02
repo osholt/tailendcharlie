@@ -50,6 +50,24 @@ else
   else
     echo "  ok: version 8 style"
   fi
+  # Unrendered placeholders mean the templates directive is not applying, which
+  # serves a style MapLibre cannot parse.
+  case "$style_body" in
+    *'{{placeholder'*)
+      fail "style still contains raw template placeholders - Caddy is serving
+        it unrendered. Check the templates directive declares
+        'mime application/json'."
+      ;;
+  esac
+  # The observer served from the marketing site reads this cross-origin.
+  if ! curl -sS -D- -o /dev/null --max-time 20 -H 'Origin: https://example.invalid' \
+    "$origin/maps/styles/ride-relay.json" 2>/dev/null \
+    | grep -qi '^access-control-allow-origin'; then
+    fail "style sends no Access-Control-Allow-Origin, so an observer served
+        from a different origin cannot load it"
+  else
+    echo "  ok: readable cross-origin"
+  fi
 fi
 
 # 2. A tile must have bytes. This is the check that catches the empty-200 trap.

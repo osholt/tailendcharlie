@@ -36,6 +36,13 @@
 		templates {
 			mime application/json
 		}
+		# The observer is also served from the marketing site, which resolves its
+		# API origin to this relay - so that page fetches this style cross-origin.
+		# The proxied tiles and glyphs already answer with a wildcard from
+		# upstream; without the same here the style fetch fails and only that
+		# deployment of the observer draws a blank map. The style is public and
+		# holds nothing about any ride.
+		header Access-Control-Allow-Origin "*"
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
@@ -128,6 +135,13 @@
 		templates {
 			mime application/json
 		}
+		# The observer is also served from the marketing site, which resolves its
+		# API origin to this relay - so that page fetches this style cross-origin.
+		# The proxied tiles and glyphs already answer with a wildcard from
+		# upstream; without the same here the style fetch fails and only that
+		# deployment of the observer draws a blank map. The style is public and
+		# holds nothing about any ride.
+		header Access-Control-Allow-Origin "*"
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
