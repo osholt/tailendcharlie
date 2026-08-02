@@ -243,7 +243,10 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
       widget.basemapConfiguration,
     );
     try {
-      return await repository.resolve();
+      // A still preview of a route, not the live ride map: it has no chrome to
+      // report a basemap failure through, so the outcome is dropped here
+      // deliberately rather than by omission (#281).
+      return (await repository.resolve()).style;
     } finally {
       repository.dispose();
     }

@@ -9,6 +9,55 @@ import 'package:path_provider/path_provider.dart';
 
 import 'basemap_configuration.dart';
 
+/// Where the style the map is about to render actually came from.
+///
+/// [MapStyleRepository.resolve] used to answer with a bare style string, so a
+/// provider that could not be reached and a provider that answered were
+/// indistinguishable to every caller: both got a `String`, and the failure was
+/// swallowed by the `catch` that produced the fallback. On the ride map that
+/// fallback draws as a plain dark rectangle, which is pixel-identical to a
+/// working map of empty countryside — the rider sees "just a blob or dot where
+/// you are and a tail where you been" and has no way to tell us which one it
+/// was (#281). The outcome travels with the style so the map can say.
+enum MapStyleOutcome {
+  /// Fetched from the configured provider on this call.
+  live,
+
+  /// Served from the on-device cache. The provider was either not due a refresh
+  /// or could not be reached, but the style itself is real and carries sources.
+  cached,
+
+  /// This build configures no MapLibre style. Route-only by design, not a
+  /// failure, and the map already says so.
+  unconfigured,
+
+  /// A style is configured, could not be fetched, and nothing usable was
+  /// cached. The map will draw [MapStyleRepository.fallbackStyle]: a background
+  /// colour and no sources at all.
+  unavailable,
+}
+
+/// A resolved style together with where it came from.
+class MapStyleResolution {
+  const MapStyleResolution(this.style, this.outcome, {this.error});
+
+  /// The MapLibre style document, always usable — a failure resolves to
+  /// [MapStyleRepository.fallbackStyle] rather than throwing, because losing
+  /// the basemap must never take the locally rendered route with it.
+  final String style;
+
+  final MapStyleOutcome outcome;
+
+  /// Why the fetch failed, when it did. Carried so a rider can report the
+  /// actual fault rather than "the map was blank".
+  final Object? error;
+
+  /// Whether [style] carries real basemap data. False means the map will render
+  /// the rider's own overlays over an empty background.
+  bool get hasBasemap =>
+      outcome == MapStyleOutcome.live || outcome == MapStyleOutcome.cached;
+}
+
 class MapStyleRepository {
   MapStyleRepository({
     required this.directory,
@@ -41,13 +90,18 @@ class MapStyleRepository {
     );
   }
 
-  Future<String> resolve() async {
-    if (!configuration.usesMapLibre) return fallbackStyle;
+  Future<MapStyleResolution> resolve() async {
+    if (!configuration.usesMapLibre) {
+      return const MapStyleResolution(
+        fallbackStyle,
+        MapStyleOutcome.unconfigured,
+      );
+    }
     final cached = _cacheFile();
     final cachedStyle = await _readValid(cached);
     if (cachedStyle != null &&
         DateTime.now().difference(await cached.lastModified()) < refreshAfter) {
-      return cachedStyle;
+      return MapStyleResolution(cachedStyle, MapStyleOutcome.cached);
     }
     try {
       final style = await _downloadWithRetries();
@@ -58,9 +112,23 @@ class MapStyleRepository {
         if (await cached.exists()) await cached.delete();
         await temporary.rename(cached.path);
       }
-      return style;
-    } on Object {
-      return cachedStyle ?? fallbackStyle;
+      return MapStyleResolution(style, MapStyleOutcome.live);
+    } on Object catch (error) {
+      // A stale cached style is still a real basemap, so it is reported as one.
+      // Only the case with nothing to fall back on is a failure, and it is
+      // named rather than dressed up as a map (#281).
+      if (cachedStyle != null) {
+        return MapStyleResolution(
+          cachedStyle,
+          MapStyleOutcome.cached,
+          error: error,
+        );
+      }
+      return MapStyleResolution(
+        fallbackStyle,
+        MapStyleOutcome.unavailable,
+        error: error,
+      );
     }
   }
 
