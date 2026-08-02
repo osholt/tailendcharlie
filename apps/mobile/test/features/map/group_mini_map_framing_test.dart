@@ -222,7 +222,8 @@ void main() {
       expect(
         framing.zoom,
         lessThan(GroupMiniMapFraming.singleRiderZoom),
-        reason: 'a group that cannot all be drawn must not be framed on one '
+        reason:
+            'a group that cannot all be drawn must not be framed on one '
             'rider at street level',
       );
     });

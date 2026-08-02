@@ -6901,7 +6901,10 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         _refreshRequestedWhileBusy = false;
         final snapshot = _snapshot();
         await _registerSymbolImages(controller, snapshot);
-        await controller.setGeoJsonSource(_routeSource, _routeGeoJson(snapshot));
+        await controller.setGeoJsonSource(
+          _routeSource,
+          _routeGeoJson(snapshot),
+        );
         await controller.setGeoJsonSource(
           _riderSource,
           _riderGeoJson(snapshot),
