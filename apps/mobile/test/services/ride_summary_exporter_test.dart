@@ -374,6 +374,91 @@ void main() {
       isNull,
     );
   });
+
+  // The decisive experiment for #299: "in single rider mode it forgets your
+  // track after a while and then doesn't save the ride properly when you end
+  // it." A recap shared the same day proved a 20-minute group ride saves fine,
+  // and location events carry a 30-minute expiry, so the question is whether a
+  // ride longer than that keeps its whole track through the save.
+  //
+  // Run here rather than on a bike: the saved track is derived purely from the
+  // event log, so a 90-minute ride can be constructed exactly.
+  group('a long solo ride with no route', () {
+    const exporter = RideSummaryExporter();
+    final session = RideSession(
+      rideId: 'ride-1',
+      rideCode: 'ABC123',
+      inviteSecret: 'secret',
+      joinToken: 'test-join-token-0123456789',
+      localRiderId: 'device-a',
+      displayName: 'Oliver',
+      // Solo: the rider creates the ride, so they lead it.
+      role: RideRole.lead,
+      joinedAt: DateTime.utc(2026, 7, 16, 9, 55),
+    );
+
+    /// Ninety minutes of riding, one fix a minute, and no route anywhere.
+    List<RideEvent> ninetyMinutesOfRiding() => [
+      _event('created', RideEventType.rideCreated, 0),
+      _event('started', RideEventType.rideStarted, 1),
+      for (var minute = 1; minute <= 90; minute += 1)
+        _locationEvent(
+          'fix-$minute',
+          deviceId: 'device-a',
+          riderId: 'device-a',
+          minute: minute,
+          latitude: 51.45 + minute * 0.001,
+          longitude: -2.47 + minute * 0.001,
+        ),
+      _event('ended', RideEventType.rideEnded, 91),
+    ];
+
+    test('the whole track survives, not just the last 30 minutes', () {
+      final track = exporter.traveledRoute(
+        session,
+        ninetyMinutesOfRiding(),
+        generatedAt: DateTime.utc(2026, 7, 16, 11, 31),
+      );
+
+      expect(track, isNotNull, reason: 'a 90-minute ride must save a track');
+      final points = track!.paths.expand((path) => path.points).toList();
+      expect(
+        points.length,
+        90,
+        reason:
+            'every recorded fix belongs in the saved ride; anything near 30 '
+            'would mean the 30-minute event expiry reaches the saved track',
+      );
+      // The earliest fix is still the first minute, not a rolling window.
+      // Compared in UTC because the exporter converts to local time, and a test
+      // that only passes in one timezone is worse than no test.
+      expect(
+        points.first.recordedAt?.toUtc(),
+        DateTime.utc(2026, 7, 16, 10, 1),
+      );
+      expect(
+        points.last.recordedAt?.toUtc(),
+        DateTime.utc(2026, 7, 16, 11, 30),
+      );
+    });
+
+    test('the summary reports the full duration and a distance', () {
+      final summary = exporter.summarize(
+        session,
+        ninetyMinutesOfRiding(),
+        generatedAt: DateTime.utc(2026, 7, 16, 11, 31),
+      );
+
+      // startedAt is non-nullable; only endedAt can be absent, and a ride that
+      // was ended must have it.
+      expect(summary.endedAt, isNotNull);
+      expect(
+        summary.endedAt!.difference(summary.startedAt).inMinutes,
+        greaterThanOrEqualTo(89),
+      );
+      expect(summary.totalDistanceMeters, greaterThan(0));
+    });
+  });
 }
 
 RideEvent _joinEvent(
