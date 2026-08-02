@@ -24,6 +24,12 @@ class ObserverAccessSheet extends StatefulWidget {
     context: context,
     showDragHandle: true,
     isScrollControlled: true,
+    // Without this an `isScrollControlled` sheet can reach full height and take
+    // the drag handle behind the status bar and Dynamic Island, where it cannot
+    // be grabbed. The body is a `SingleChildScrollView`, which consumes vertical
+    // drags, so the handle is the only dismissing gesture there is - and a rider
+    // reported being unable to leave this screen at all (#304).
+    useSafeArea: true,
     builder: (_) => ObserverAccessSheet(
       controller: controller,
       canShareGroup: canShareGroup,
@@ -67,9 +73,25 @@ class _ObserverAccessSheetState extends State<ObserverAccessSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'Watcher link',
-              style: Theme.of(context).textTheme.headlineSmall,
+            // An explicit way out, not only a gesture. This sheet is used at a
+            // kerbside, often with gloves on, and a drag handle is a small
+            // target; a rider who could not leave it was left stuck in the app
+            // while trying to set off (#304).
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Watcher link',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ),
+                IconButton(
+                  key: const Key('close-observer-access-sheet'),
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             const Text(
