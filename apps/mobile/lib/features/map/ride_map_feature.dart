@@ -6399,6 +6399,10 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   bool _styleReady = false;
   bool _vectorMapReady = false;
   bool _refreshing = false;
+
+  /// Set when a refresh is asked for while one is running, so the in-flight pass
+  /// repeats instead of the request being lost. See [_refreshMap].
+  bool _refreshRequestedWhileBusy = false;
   final Set<String> _registeredSymbolImages = {};
 
   /// Captured once per refresh so the windowed route, rider dots, and camera
@@ -6881,20 +6885,39 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
 
   Future<void> _refreshMap() async {
     final controller = _controller;
-    if (!_styleReady || controller == null || _refreshing) return;
+    if (!_styleReady || controller == null) return;
+    // A refresh arriving mid-refresh is remembered rather than dropped. Each one
+    // awaits several platform-channel calls, so on a moving group the updates
+    // that used to be discarded here were precisely the ones carrying a rider's
+    // first position - leaving the camera at the zoom it chose before anyone else
+    // could be placed (#172).
+    if (_refreshing) {
+      _refreshRequestedWhileBusy = true;
+      return;
+    }
     _refreshing = true;
     try {
-      final snapshot = _snapshot();
-      await _registerSymbolImages(controller, snapshot);
-      await controller.setGeoJsonSource(_routeSource, _routeGeoJson(snapshot));
-      await controller.setGeoJsonSource(_riderSource, _riderGeoJson(snapshot));
-      await _fitGroup(snapshot);
+      do {
+        _refreshRequestedWhileBusy = false;
+        final snapshot = _snapshot();
+        await _registerSymbolImages(controller, snapshot);
+        await controller.setGeoJsonSource(
+          _routeSource,
+          _routeGeoJson(snapshot),
+        );
+        await controller.setGeoJsonSource(
+          _riderSource,
+          _riderGeoJson(snapshot),
+        );
+        await _fitGroup(snapshot);
+      } while (_refreshRequestedWhileBusy && mounted);
     } on Object catch (error) {
       if (kDebugMode) {
         debugPrint('Could not refresh group mini-map: $error');
       }
     } finally {
       _refreshing = false;
+      _refreshRequestedWhileBusy = false;
     }
   }
 
@@ -6913,6 +6936,11 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       points,
       width: widget.width - _fitHorizontalPadding,
       height: widget.height - _fitVerticalPadding,
+      // The caption counts the roster; this only receives riders the map can
+      // place. When they disagree, someone has joined whose first position has
+      // not arrived, and framing at street level would show one rider under a
+      // caption saying two (#172).
+      awaitingOtherRiders: widget.riderCount > points.length,
     );
     if (widget.renderer == GroupMiniMapRenderer.flutterVector) {
       if (!_vectorMapReady) return;
