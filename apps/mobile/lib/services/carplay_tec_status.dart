@@ -163,6 +163,42 @@ class CarPlayTecStatus {
   };
 }
 
+/// An unanswered leader request for the Tail End Charlie role, addressed to
+/// this rider, projected for the head unit (#128).
+///
+/// The role is a request the target answers, never a silent assignment: a rider
+/// who has not noticed they are TEC is worse than no TEC, because the group
+/// then believes the back is covered when nobody is watching it. That is
+/// exactly the case for putting the question on the screen the rider is already
+/// looking at rather than the phone in their pocket.
+class CarPlayTecRequest {
+  const CarPlayTecRequest({required this.requestId, required this.leaderName});
+
+  final String requestId;
+
+  /// The leader who asked, when they can be named. Null falls back to the role
+  /// rather than inventing a name - a rider agreeing to watch the back should
+  /// not be told it was "someone".
+  final String? leaderName;
+
+  /// Deliberately says what the role *is*, not just its initials. A rider who
+  /// has never held it is exactly the rider most likely to be asked.
+  String get title => 'Be Tail End Charlie?';
+
+  String get message => leaderName == null
+      ? 'The ride leader has asked you to ride at the back and keep the group '
+            'together.'
+      : '$leaderName has asked you to ride at the back and keep the group '
+            'together.';
+
+  Map<String, Object?> toSnapshot() => {
+    'requestId': requestId,
+    'leaderName': leaderName,
+    'title': title,
+    'message': message,
+  };
+}
+
 /// Matches the phone's wording exactly - see `_durationLabel` in
 /// `ride_map_feature.dart`.
 String _durationLabel(Duration duration) {

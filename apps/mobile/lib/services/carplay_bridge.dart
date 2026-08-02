@@ -32,6 +32,7 @@ import 'carplay_tec_status.dart';
 class CarPlayBridge {
   CarPlayBridge({
     this.onEmergencyTriggered,
+    this.onTecRoleAnswered,
     @visibleForTesting MethodChannel? channel,
     @visibleForTesting DateTime Function()? clock,
     @visibleForTesting
@@ -46,7 +47,16 @@ class CarPlayBridge {
   final DateTime Function() _clock;
   final Duration _minimumPublishInterval;
   final Future<void> Function()? onEmergencyTriggered;
+
+  /// The rider's answer to a leader's Tail End Charlie request, given on the
+  /// head unit (#128).
+  final Future<void> Function(String requestId, bool accepted)?
+  onTecRoleAnswered;
   DateTime? _lastPublishedAt;
+
+  /// The request the head unit was last told about, so a new one can jump the
+  /// throttle and an answered one can take its alert down.
+  String? _publishedTecRequestId;
 
   /// Driving Task templates are deliberately low-frequency, glanceable
   /// surfaces. Active rides supply regular location updates, so dropping
@@ -54,8 +64,21 @@ class CarPlayBridge {
   /// refreshing the CarPlay list more often than once every ten seconds.
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
-    if (call.method == 'triggerEmergency') {
-      await onEmergencyTriggered?.call();
+    switch (call.method) {
+      case 'triggerEmergency':
+        await onEmergencyTriggered?.call();
+      case 'answerTecRoleRequest':
+        final arguments = call.arguments;
+        if (arguments is! Map) return;
+        final requestId = arguments['requestId'];
+        final accepted = arguments['accepted'];
+        // A malformed answer is dropped rather than guessed at: recording
+        // "accepted" for a request this phone cannot identify would put a rider
+        // on the back of the group without them having agreed to it.
+        if (requestId is! String || requestId.isEmpty || accepted is! bool) {
+          return;
+        }
+        await onTecRoleAnswered?.call(requestId, accepted);
     }
   }
 
@@ -75,13 +98,22 @@ class CarPlayBridge {
     String? markerStatus,
     CarPlayTecStatus tec = CarPlayTecStatus.absent,
     Set<String> effectiveTecRiderIds = const {},
+    CarPlayTecRequest? tecRequest,
   }) async {
     final now = _clock();
-    if (_lastPublishedAt != null &&
+    // A question addressed to this rider is an event, not a state refresh. It
+    // jumps the ten-second throttle in both directions: a leader who asks at a
+    // fuel stop is standing there waiting, and an alert left on the head unit
+    // after the request is answered, expired or superseded is asking a rider to
+    // agree to something that is no longer on offer.
+    final requestChanged = tecRequest?.requestId != _publishedTecRequestId;
+    if (!requestChanged &&
+        _lastPublishedAt != null &&
         now.difference(_lastPublishedAt!) < _minimumPublishInterval) {
       return;
     }
     _lastPublishedAt = now;
+    _publishedTecRequestId = tecRequest?.requestId;
     final alertsByRider = {
       for (final alert in routeAlerts) alert.riderId: alert,
     };
@@ -97,6 +129,7 @@ class CarPlayBridge {
       'groupStatus': groupStatus,
       'markerStatus': markerStatus,
       'tec': tec.toSnapshot(),
+      'tecRequest': tecRequest?.toSnapshot(),
       'updatedAtMillis': now.millisecondsSinceEpoch,
       'riders': [
         for (final location in riderLocations)

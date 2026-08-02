@@ -1111,6 +1111,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(_initialize());
     _carPlayBridge = CarPlayBridge(
       onEmergencyTriggered: _sendEmergencyMapAlert,
+      onTecRoleAnswered: _answerTecRoleRequestFromCarPlay,
     );
   }
 
@@ -2351,6 +2352,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (bridge == null) return;
     final session = widget.rideController.session;
     final effectiveTecRiderIds = _effectiveTecRiderIds;
+    // Ride Lab drives a virtual roster and has no relayed requests to answer.
+    final pendingTecRequest = _isSimulation
+        ? null
+        : widget.rideController.pendingTecRoleRequestForLocalRider;
     final tec = session == null
         ? CarPlayTecStatus.absent
         : CarPlayTecStatus.from(
@@ -2385,8 +2390,37 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         markerStatus: _junctionMarkerOverlay.value?.instruction,
         tec: tec,
         effectiveTecRiderIds: effectiveTecRiderIds,
+        tecRequest: pendingTecRequest == null
+            ? null
+            : CarPlayTecRequest(
+                requestId: pendingTecRequest.requestId,
+                leaderName: widget.rideController
+                    .participantFor(pendingTecRequest.leaderRiderId)
+                    ?.displayName,
+              ),
       ),
     );
+  }
+
+  /// Answers a leader's TEC request from the head unit (#128).
+  ///
+  /// The same call the phone's roster sheet makes, so the journal cannot tell
+  /// the two apart: accepting records the answer *and* this rider's own
+  /// `roleChanged`, and the reducer still admits an answer only from the rider
+  /// the request named. A stale alert — the request expired, was superseded, or
+  /// was already answered on the phone — is rejected there rather than here,
+  /// which is why this passes the request id straight through.
+  Future<void> _answerTecRoleRequestFromCarPlay(
+    String requestId,
+    bool accepted,
+  ) async {
+    if (_isSimulation) return;
+    await widget.rideController.respondToTecRoleRequest(
+      requestId: requestId,
+      accepted: accepted,
+    );
+    if (!mounted) return;
+    _updateMapOverlays(updateNavigationPosition: false);
   }
 
   /// Publishes the quick messages the ride map has to present, and returns the

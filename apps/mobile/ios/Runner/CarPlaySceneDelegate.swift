@@ -14,6 +14,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var activeRouteID: String?
   private var activeManeuverKey: String?
   private var activeManeuver: CPManeuver?
+  private weak var interfaceController: CPInterfaceController?
+
+  /// The request the presented alert is asking about, so the same question is
+  /// not raised twice and a question that has gone away takes its alert with
+  /// it.
+  private var presentedTecRequestID: String?
 
   func templateApplicationScene(
     _ templateApplicationScene: CPTemplateApplicationScene,
@@ -27,6 +33,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     self.mapTemplate = mapTemplate
     self.mapViewController = mapViewController
     self.statusTemplate = statusTemplate
+    self.interfaceController = interfaceController
 
     window.rootViewController = mapViewController
     mapTemplate.mapDelegate = self
@@ -49,6 +56,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     navigationSession?.cancelTrip()
     navigationSession = nil
     window.rootViewController = nil
+    self.interfaceController = nil
+    presentedTecRequestID = nil
     (UIApplication.shared.delegate as? AppDelegate)?.carPlayDidDisconnect(self)
   }
 
@@ -58,6 +67,54 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       CarPlayStatusTemplate.apply(snapshot: snapshot, to: statusTemplate)
     }
     updateNavigationSession(snapshot: snapshot)
+    updateTecRoleRequest(snapshot["tecRequest"] as? [String: Any])
+  }
+
+  /// Raises, and takes down, the leader's "will you be Tail End Charlie?"
+  /// question (#128).
+  ///
+  /// A two-action alert is the whole interaction: the role is a request the
+  /// target answers, and asking it on the screen the rider is already looking
+  /// at is the point. Once the request is answered, expires, is superseded or
+  /// the target leaves, Dart stops publishing it and the alert comes down —
+  /// leaving it up would be asking a rider to agree to something no longer on
+  /// offer.
+  private func updateTecRoleRequest(_ request: [String: Any]?) {
+    guard
+      let request,
+      let requestID = request["requestId"] as? String,
+      !requestID.isEmpty
+    else {
+      if presentedTecRequestID != nil {
+        presentedTecRequestID = nil
+        interfaceController?.dismissTemplate(animated: true, completion: nil)
+      }
+      return
+    }
+    guard requestID != presentedTecRequestID else { return }
+    guard let interfaceController else { return }
+
+    let answer: (Bool) -> Void = { [weak self] accepted in
+      self?.presentedTecRequestID = nil
+      interfaceController.dismissTemplate(animated: true, completion: nil)
+      (UIApplication.shared.delegate as? AppDelegate)?
+        .answerCarPlayTecRoleRequest(requestID: requestID, accepted: accepted)
+    }
+    let alert = CPAlertTemplate(
+      titleVariants: [
+        request["title"] as? String ?? "Be Tail End Charlie?",
+        "Be Tail End Charlie?",
+        "Ride at the back?",
+      ],
+      actions: [
+        // Declining first would put the destructive answer under the thumb
+        // that is reaching for the screen at a fuel stop.
+        CPAlertAction(title: "Accept", style: .default) { _ in answer(true) },
+        CPAlertAction(title: "Not now", style: .cancel) { _ in answer(false) },
+      ]
+    )
+    presentedTecRequestID = requestID
+    interfaceController.presentTemplate(alert, animated: true, completion: nil)
   }
 
   @available(iOS 17.4, *)

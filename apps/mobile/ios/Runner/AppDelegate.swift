@@ -353,6 +353,17 @@ import UserNotifications
     carPlayChannel?.invokeMethod("triggerEmergency", arguments: nil)
   }
 
+  /// Relays the rider's answer to a leader's Tail End Charlie request (#128).
+  /// Dart owns whether the answer is admissible - the reducer accepts one only
+  /// from the rider the request named, and rejects an expired or superseded
+  /// request - so this passes the id through untouched rather than deciding.
+  func answerCarPlayTecRoleRequest(requestID: String, accepted: Bool) {
+    carPlayChannel?.invokeMethod(
+      "answerTecRoleRequest",
+      arguments: ["requestId": requestID, "accepted": accepted]
+    )
+  }
+
   /// Called from SceneDelegate when the OS hands this app a file URL (Open
   /// in..., a share sheet, or a cold launch from one of those). Dart pulls
   /// this on its own schedule via consumePendingGpxImport rather than being

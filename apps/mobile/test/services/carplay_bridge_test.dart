@@ -76,6 +76,7 @@ void main() {
           'trend': 'unknown',
           'trendLabel': null,
         },
+        'tecRequest': null,
         'updatedAtMillis': DateTime.utc(2026, 7, 23, 12).millisecondsSinceEpoch,
         'riders': <Object?>[],
         'alert': null,
@@ -252,5 +253,99 @@ void main() {
     expect(tec['state'], 'tracking');
     expect(tec['headline'], 'TEC · 1.2 mi ↓');
     expect(tec['detail'], 'Dave · 1.2 mi · about 3 min · ↓ Closing');
+  });
+
+  // A leader asking at a fuel stop is standing there waiting, and an alert left
+  // up after the question has gone is asking a rider to agree to something no
+  // longer on offer. Both directions therefore jump the ten-second throttle.
+  test('a TEC request and its withdrawal both jump the throttle', () async {
+    final calls = <MethodCall>[];
+    var now = DateTime.utc(2026, 8, 2, 12);
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel, clock: () => now);
+    addTearDown(bridge.dispose);
+
+    Future<void> publish({CarPlayTecRequest? request}) => bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+      tecRequest: request,
+    );
+
+    await publish();
+    now = now.add(const Duration(seconds: 1));
+    // No request either time: the ordinary throttle still applies.
+    await publish();
+    expect(calls, hasLength(1));
+
+    now = now.add(const Duration(seconds: 1));
+    await publish(
+      request: const CarPlayTecRequest(requestId: 'req-1', leaderName: 'Sam'),
+    );
+    expect(calls, hasLength(2));
+
+    now = now.add(const Duration(seconds: 1));
+    // The same request again is not news.
+    await publish(
+      request: const CarPlayTecRequest(requestId: 'req-1', leaderName: 'Sam'),
+    );
+    expect(calls, hasLength(2));
+
+    now = now.add(const Duration(seconds: 1));
+    await publish();
+    expect(calls, hasLength(3));
+    expect((calls.last.arguments as Map)['tecRequest'], isNull);
+
+    final request = (calls[1].arguments as Map)['tecRequest'] as Map;
+    expect(request['requestId'], 'req-1');
+    expect(request['title'], 'Be Tail End Charlie?');
+    expect(
+      request['message'],
+      'Sam has asked you to ride at the back and keep the group together.',
+    );
+  });
+
+  test('names the role rather than a rider when the leader is unknown', () {
+    const request = CarPlayTecRequest(requestId: 'req-1', leaderName: null);
+
+    expect(
+      request.message,
+      'The ride leader has asked you to ride at the back and keep the group '
+      'together.',
+    );
+  });
+
+  // Accepting puts a rider on the back of the group. An answer this phone
+  // cannot identify is dropped rather than guessed at.
+  test('relays a well-formed answer and drops a malformed one', () async {
+    final answers = <(String, bool)>[];
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onTecRoleAnswered: (requestId, accepted) async {
+        answers.add((requestId, accepted));
+      },
+    );
+    addTearDown(bridge.dispose);
+
+    Future<void> answer(Object? arguments) => messenger.handlePlatformMessage(
+      channel.name,
+      channel.codec.encodeMethodCall(
+        MethodCall('answerTecRoleRequest', arguments),
+      ),
+      (_) {},
+    );
+
+    await answer({'requestId': 'req-1', 'accepted': true});
+    await answer({'requestId': 'req-2', 'accepted': false});
+    await answer({'requestId': '', 'accepted': true});
+    await answer({'accepted': true});
+    await answer({'requestId': 'req-3'});
+    await answer('req-4');
+
+    expect(answers, [('req-1', true), ('req-2', false)]);
   });
 }
