@@ -3892,7 +3892,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   Future<void> _confirmLeaveRideFromMap() async {
-    final isLeader = widget.rideController.session?.role == RideRole.lead;
+    final isLeader = canEndRideForEveryone(widget.rideController);
     final decision = await showRideExitDialog(context, isLeader: isLeader);
     switch (decision) {
       case RideExitDecision.leave:
@@ -3959,7 +3959,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             widget.rideController.rideStarted &&
             widget.rideController.session?.role == RideRole.lead,
         onToggleRidePause: _toggleRidePause,
-        canEndRide: widget.rideController.isLocalRideLeader,
+        canEndRide: canEndRideForEveryone(widget.rideController),
         onEndRide: _confirmEndRide,
       ),
     );

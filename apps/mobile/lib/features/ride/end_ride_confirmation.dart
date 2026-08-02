@@ -22,25 +22,28 @@ import 'marker_assistance_widgets.dart';
 /// said is lost, and both entry points now say all of it. Which of the two
 /// entry points survives the consolidation is a separate question — this makes
 /// them agree in the meantime.
+/// Whether this rider may end the ride for everyone.
+///
+/// One named decision for every surface that offers it, because there were
+/// three separate expressions of it and two were wrong. `RideController.endRide`
+/// accepts `isLocalRideLeader`, and the ride menu offers the action on the same
+/// — but the shell's end-ride guard and the map's exit dialog both read
+/// `session?.role == RideRole.lead`, which is **false while the leader is acting
+/// as the marker**. So a leader marking a junction was refused an action the
+/// controller would have accepted: End ride did nothing at all, and LEAVE showed
+/// the follower's dialog with no "End for everyone" (#306).
+bool canEndRideForEveryone(RideController controller) =>
+    controller.isLocalRideLeader;
+
 Future<bool> confirmEndRide(
   BuildContext context, {
   required RideController controller,
   required bool relayCanCarryReopen,
   Future<void> Function()? onShareSummary,
 }) async {
-  // `isLocalRideLeader`, which is the app's own definition of who may end a
-  // ride, and the same condition both entry points use to decide whether to
-  // offer it at all.
-  //
-  // Consolidating the two dialogs exposed a latent defect here. The ride menu
-  // offers End ride on `isLocalRideLeader`, but the shell's own guard read
-  // `session?.role != RideRole.lead` and returned — and those differ, because
-  // `isLocalRideLeader` is also true for a leader currently acting as the
-  // marker, where `session.role` is not `lead`. So a leader who took the marker
-  // role could see End ride in the ride menu, tap it, and have nothing happen
-  // at all. Offering an action and refusing it silently is worse than not
-  // offering it.
-  if (!controller.isLocalRideLeader) return false;
+  // Offering an action and then silently refusing it is worse than not
+  // offering it; see [canEndRideForEveryone].
+  if (!canEndRideForEveryone(controller)) return false;
   final summary = controller.markingSummary;
   final confirmed = await showDialog<bool>(
     context: context,

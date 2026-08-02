@@ -1,5 +1,14 @@
+import 'dart:math';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/controllers/ride_controller.dart';
+import 'package:ride_relay/data/in_memory_event_store.dart';
+import 'package:ride_relay/data/in_memory_session_store.dart';
+import 'package:ride_relay/domain/ride_role.dart';
+import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/features/ride/end_ride_confirmation.dart';
+import 'package:ride_relay/internet/internet_relay_client.dart';
+import 'package:ride_relay/services/nearby_bridge.dart';
 
 /// Ending a ride stops the group, not just this phone, and it was reachable two
 /// ways with a different dialog behind each (#306: "every destructive or safety
@@ -54,4 +63,86 @@ void main() {
       expect(reopenable, isNot(permanent));
     });
   });
+
+  group('who may end the ride for everyone', () {
+    // Three surfaces offered this and expressed the condition three ways, two
+    // of them wrong. `RideController.endRide` accepts `isLocalRideLeader`; the
+    // shell's end-ride guard and the map's exit dialog both read
+    // `session?.role == RideRole.lead`, which is a different thing.
+    Future<RideController> controllerFor({required bool marking}) async {
+      var id = 0;
+      final controller = RideController(
+        InMemoryEventStore(),
+        InMemorySessionStore(),
+        const _FakeNearbyBridge(),
+        clock: () => DateTime.utc(2026, 8, 3, 9),
+        idFactory: () => 'id-${id++}',
+        random: Random(3),
+        rideCodeDirectory: _OfflineRideCodeDirectory(),
+      );
+      await controller.initialize();
+      await controller.createRide('Oliver');
+      await controller.startRide();
+      if (marking) await controller.startMarker();
+      return controller;
+    }
+
+    test('a leader may', () async {
+      final controller = await controllerFor(marking: false);
+      addTearDown(controller.dispose);
+
+      expect(controller.session?.role, RideRole.lead);
+      expect(canEndRideForEveryone(controller), isTrue);
+    });
+
+    test('a leader currently acting as the marker may', () async {
+      // The case the two wrong expressions refused. `endRide` would have
+      // accepted it, so refusing it meant the app offering an action and then
+      // doing nothing.
+      final controller = await controllerFor(marking: true);
+      addTearDown(controller.dispose);
+
+      expect(
+        controller.session?.role,
+        isNot(RideRole.lead),
+        reason: 'the precondition: marking changes the session role',
+      );
+      expect(canEndRideForEveryone(controller), isTrue);
+    });
+
+    test('the decision matches what the controller will accept', () async {
+      // If these ever diverge again, one surface offers what another refuses.
+      for (final marking in [false, true]) {
+        final controller = await controllerFor(marking: marking);
+        addTearDown(controller.dispose);
+        expect(
+          canEndRideForEveryone(controller),
+          controller.isLocalRideLeader,
+          reason: 'marking: $marking',
+        );
+      }
+    });
+  });
+}
+
+class _FakeNearbyBridge extends NearbyBridge {
+  const _FakeNearbyBridge();
+
+  @override
+  Future<NearbyCapabilities> capabilities() async =>
+      const NearbyCapabilities.unavailable();
+}
+
+class _OfflineRideCodeDirectory implements RideCodeDirectory {
+  @override
+  Future<void> register(RideSession session) async {}
+
+  @override
+  Future<RideCodeCredentials> resolve(
+    String rideCode, {
+    String? joinToken,
+  }) async => throw const RideCodeDirectoryException('Offline in tests.');
+
+  @override
+  void close() {}
 }
