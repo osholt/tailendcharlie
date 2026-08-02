@@ -36,6 +36,70 @@ permissions by design.
 - ...
 ```
 
+## iOS build 40 — 1.0.1 — 2 August 2026
+
+Everything in the 30 July section below is also in this build; it was never
+released on its own.
+
+### What to test
+
+1. **Ride for longer than 40 minutes and look at the leader's trail.** It used
+   to vanish after roughly that long. It should now stay for the whole ride.
+   This is the one most worth confirming - it came straight from tester
+   feedback and has only been proven by test, not on a bike.
+2. **Join a ride with no signal at all.** The leader opens **Scan to join** and
+   shows the QR code; another rider scans it. Both phones can be in aeroplane
+   mode. Everything needed to join is inside the code, so no network is used.
+   The six-digit code still needs signal - that has not changed.
+3. **Listen to the turn prompts.** Turn instructions are now spoken. They should
+   duck music rather than stop it, and should not speak when no ride is running.
+4. **Watch the speed readout.** It used to flicker on and off while riding.
+   It should now stay steady while you are moving and disappear only when
+   position updates genuinely stop.
+5. **Leave the map mid-ride and come back.** The started ride must still be
+   there, and alerts you already dismissed must stay dismissed.
+6. **End a ride as leader.** Everyone else should be told who ended it.
+7. **Check the map in a patchy-signal area you have ridden before.** Tiles are
+   now kept, so somewhere you have already been should still draw. Somewhere
+   genuinely new with no signal will still be blank.
+
+### Fixed and new
+
+- The leader's trail is no longer discarded partway through a ride. The limit
+  that caused it was raised from 600 points to about 27 hours' worth, which was
+  only safe because the map work behind it no longer gets slower as a ride goes
+  on (#280).
+- A ride can now be formed offline by scanning a QR code. The invitation carries
+  its own credentials, so nothing is fetched (#279).
+- Turn instructions are spoken aloud, mixed with and ducking other audio rather
+  than interrupting it (#286).
+- The live speed readout no longer flickers. It now hides when position updates
+  stop rather than after a fixed delay, which also keeps a parked bike from
+  showing a stale speed (#285).
+- Leaving the map no longer loses a started ride or resurrects alerts you had
+  already cleared (#282).
+- Everyone is told who ended a ride, instead of it just disappearing (#283).
+- Exactly one rider can hold the lead at a time; the most recent claim wins
+  (#284).
+- Map tiles are kept between sessions by default, so a revisited area still
+  draws without signal and a route corridor can be downloaded before setting
+  off (#274, #281).
+
+### Known limitations
+
+- **The watcher map needs no action from you, but it is new.** The relay now
+  serves a map for watcher links, so a safety contact should see roads rather
+  than a pair of coordinates. If they still see coordinates, say so.
+- Caching only helps where you have already been. A first visit to a dead spot
+  still has nothing to draw; download the route before you leave if you expect
+  no signal.
+- The mobile ride map showing no roads while you *do* have signal (#281) is not
+  fixed. If it happens, note where you were.
+- CarPlay opens on an unzoomed map of the whole UK with nothing on it (#295).
+  Known, not yet worked on.
+- The trail fix, spoken prompts and offline QR joining have not been confirmed
+  on a physical bike - that is what this build is for.
+
 ## Next Android and iOS tester build — unreleased — 30 July 2026
 
 ### What to test
