@@ -91,6 +91,8 @@ ssh oracle-relay '
   git log --oneline -1
   docker compose --env-file deploy/.env -f deploy/compose.yaml config >/dev/null
   docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
+  # Only if this deploy changed deploy/Caddyfile - see below for why.
+  docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --force-recreate caddy
 '
 
 # 4. Verify from outside, not from the box.
@@ -108,6 +110,18 @@ Things worth knowing before you run it:
   a schema change is applied when the container starts. There is no separate
   migration step to forget — but it also means a bad migration stops the server
   coming up rather than failing later, so watch step 4.
+- **A Caddyfile change needs `--force-recreate caddy`.** Plain `up -d` leaves
+  Caddy alone: nothing in its service definition changed, only the contents of a
+  file it bind-mounts. Worse, `git checkout` writes a new file and renames it
+  over the old one, so the mount still resolves to the *original inode* — the
+  running container keeps reading the file from before the deploy. `restart`
+  does not help either, because mounts are resolved when a container is created.
+
+  This fails silently and convincingly. `caddy reload` answers
+  `config is unchanged` and exits 0, and `caddy validate` run *inside* the
+  container happily validates the stale file. On 2 August that cost a deploy
+  that reported success while serving the old config. Verify from outside the
+  box, never from within it — that is what step 4 is for.
 - **`docker` needs no `sudo`** for the deploy user.
 - `RIDE_RELAY_AUTO_CREATE_SCHEMA` is `false` in production. Alembic is the only
   thing that may touch the schema.
