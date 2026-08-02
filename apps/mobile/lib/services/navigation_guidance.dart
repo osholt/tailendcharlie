@@ -277,6 +277,27 @@ class NavigationGuidancePlanner {
     return projection.progressMeters;
   }
 
+  /// Shown when the route has turnable geometry but no turn instructions.
+  ///
+  /// The old wording for this was "Turn guidance is unavailable for this route",
+  /// which a rider read as the route having failed - it was reported that way from
+  /// a ride where the line on the map was perfectly good (#303). The route is
+  /// followable; only the prompts are missing, and saying so is the difference
+  /// between a rider carrying on and a rider stopping to work out what broke.
+  ///
+  /// It deliberately does not offer to fetch directions. There is no
+  /// snap-a-track-to-roads capability in the app today, so offering one would
+  /// send riders looking for a button that does not exist.
+  static const noTurnInstructionsMessage =
+      'No turn prompts for this route — follow the line on the map.';
+
+  /// Shown when there is no line to follow at all, which is a different problem:
+  /// the rider has nothing, rather than something without prompts. These two
+  /// shared one message until #303, which made a followable route and a broken
+  /// one indistinguishable.
+  static const noRouteLineMessage =
+      'This route has no path to follow. Choose or import it again.';
+
   NavigationGuidance? plan({
     required ImportedRoute? route,
     required GeoPoint? position,
@@ -301,17 +322,23 @@ class NavigationGuidancePlanner {
         message: 'Waiting for GPS — directions will resume automatically.',
       );
     }
-    if (route.maneuvers.isEmpty || route.paths.isEmpty) {
+    if (route.paths.isEmpty) {
       return const NavigationGuidanceAssessment(
         state: NavigationGuidanceState.noManeuvers,
-        message: 'Turn guidance is unavailable for this route.',
+        message: noRouteLineMessage,
+      );
+    }
+    if (route.maneuvers.isEmpty) {
+      return const NavigationGuidanceAssessment(
+        state: NavigationGuidanceState.noManeuvers,
+        message: noTurnInstructionsMessage,
       );
     }
     final path = _primaryPath(route.paths);
     if (path.length < 2) {
       return const NavigationGuidanceAssessment(
         state: NavigationGuidanceState.noManeuvers,
-        message: 'Turn guidance is unavailable for this route.',
+        message: noRouteLineMessage,
       );
     }
     final riderProjection = _project(position, path);

@@ -143,6 +143,105 @@ void main() {
     );
   });
 
+  // A route without turn prompts and a route with no line at all shared one
+  // message, so a rider whose map showed a perfectly good route was told turn
+  // guidance was "unavailable for this route" and read it as a failure (#303).
+  group('a route that cannot be narrated', () {
+    ImportedRoute routeWith({
+      required List<RoutePath> paths,
+      List<RouteManeuver> maneuvers = const [],
+    }) => ImportedRoute(
+      id: 'r',
+      name: 'R',
+      importedAt: DateTime.utc(2026, 8, 2),
+      sourceFileName: 'r.gpx',
+      paths: paths,
+      waypoints: const [],
+      maneuvers: maneuvers,
+    );
+
+    const followableLine = RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 0, longitude: 0),
+        GeoPoint(latitude: 0, longitude: 0.01),
+      ],
+    );
+
+    test('a followable line without prompts says to follow the line', () {
+      final assessment = planner.assess(
+        route: routeWith(paths: const [followableLine]),
+        position: const GeoPoint(latitude: 0, longitude: 0),
+        progressMeters: 0,
+      );
+
+      expect(assessment.state, NavigationGuidanceState.noManeuvers);
+      expect(
+        assessment.message,
+        NavigationGuidancePlanner.noTurnInstructionsMessage,
+      );
+      expect(
+        assessment.message,
+        contains('follow the line'),
+        reason: 'the route is usable; only the prompts are missing',
+      );
+    });
+
+    test('a route with no line at all says something different', () {
+      final assessment = planner.assess(
+        route: routeWith(paths: const []),
+        position: const GeoPoint(latitude: 0, longitude: 0),
+        progressMeters: 0,
+      );
+
+      expect(assessment.state, NavigationGuidanceState.noManeuvers);
+      expect(assessment.message, NavigationGuidancePlanner.noRouteLineMessage);
+    });
+
+    test('a one-point line is treated as no line, not as no prompts', () {
+      final assessment = planner.assess(
+        route: routeWith(
+          paths: const [
+            RoutePath(
+              kind: RoutePathKind.track,
+              points: [GeoPoint(latitude: 0, longitude: 0)],
+            ),
+          ],
+          // Manoeuvres present, so this cannot fall through the empty-manoeuvre
+          // branch and must be caught by the path-length check.
+          maneuvers: [
+            RouteManeuver(
+              position: const GeoPoint(latitude: 0, longitude: 0),
+              type: 'turn',
+              modifier: 'left',
+            ),
+          ],
+        ),
+        position: const GeoPoint(latitude: 0, longitude: 0),
+        progressMeters: 0,
+      );
+
+      expect(assessment.message, NavigationGuidancePlanner.noRouteLineMessage);
+    });
+
+    test('the two messages are not the same words', () {
+      // The whole point of the change. A single shared message is what made a
+      // good route and a broken one indistinguishable on the ride.
+      expect(
+        NavigationGuidancePlanner.noTurnInstructionsMessage,
+        isNot(NavigationGuidancePlanner.noRouteLineMessage),
+      );
+      // And neither promises an action the app cannot perform - there is no
+      // snap-a-track-to-roads feature to send a rider looking for.
+      for (final message in [
+        NavigationGuidancePlanner.noTurnInstructionsMessage,
+        NavigationGuidancePlanner.noRouteLineMessage,
+      ]) {
+        expect(message.toLowerCase(), isNot(contains('get directions')));
+      }
+    });
+  });
+
   test('skips non-instructional route-engine steps', () {
     final route = ImportedRoute(
       id: 'route',
