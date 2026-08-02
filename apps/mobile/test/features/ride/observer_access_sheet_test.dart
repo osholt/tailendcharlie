@@ -85,6 +85,84 @@ void main() {
     expect(find.text('Share group watcher link'), findsOneWidget);
     expect(find.textContaining('Whole group ·'), findsOneWidget);
   });
+
+  // A rider reported being unable to leave this screen after sharing a link, at
+  // the kerbside while trying to set off (#304). The body is a scroll view, which
+  // consumes the vertical drag that would otherwise dismiss the sheet, so there
+  // has to be a button that does not depend on a gesture at all.
+  group('leaving the sheet', () {
+    Future<void> openSheet(WidgetTester tester, ObserverAccessController c) =>
+        tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(),
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => ElevatedButton(
+                  onPressed: () => ObserverAccessSheet.show(context, c),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+    testWidgets('the close button dismisses it', (tester) async {
+      final controller = ObserverAccessController(
+        _FakeObserverApi(),
+        _MemoryStore(),
+      );
+      await controller.attach(_session);
+      addTearDown(controller.dispose);
+
+      await openSheet(tester, controller);
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('Watcher link'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('close-observer-access-sheet')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Watcher link'),
+        findsNothing,
+        reason: 'the sheet must be leavable without a drag gesture',
+      );
+    });
+
+    testWidgets('it can still be left after a link has been created', (
+      tester,
+    ) async {
+      // The reported case: sharing had already happened. Backing out must not
+      // depend on having done nothing.
+      final api = _FakeObserverApi();
+      final controller = ObserverAccessController(api, _MemoryStore());
+      await controller.attach(_session);
+      addTearDown(controller.dispose);
+
+      await openSheet(tester, controller);
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.byKey(const Key('observer-consent')));
+      await tester.tap(find.byKey(const Key('observer-consent')));
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const Key('create-observer-link')));
+      await tester.tap(find.byKey(const Key('create-observer-link')));
+      await tester.pumpAndSettle();
+      expect(api.createCount, 1);
+
+      await tester.ensureVisible(
+        find.byKey(const Key('close-observer-access-sheet')),
+      );
+      await tester.tap(find.byKey(const Key('close-observer-access-sheet')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Watcher link'), findsNothing);
+      // And the link it created survives being dismissed, so leaving is not a
+      // way to lose a grant a contact is already relying on.
+      expect(controller.grants, isNotEmpty);
+    });
+  });
 }
 
 final _session = RideSession(
