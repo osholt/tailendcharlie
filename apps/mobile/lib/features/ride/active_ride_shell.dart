@@ -50,6 +50,7 @@ import '../../relay/native_nearby_transport.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
+import '../../services/carplay_tec_status.dart';
 import '../../services/spoken_guidance.dart';
 import '../../services/test_control_registry.dart';
 import '../../services/basemap_configuration.dart';
@@ -2292,26 +2293,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       hazards: awareness.activeHazards,
       now: now,
     );
-    unawaited(
-      _carPlayBridge?.publish(
-            session: widget.rideController.session,
-            riderLocations: visibleRiderLocations,
-            routeAlerts: awareness.routeAlerts
-                .where((alert) => activeRiderIds.contains(alert.riderId))
-                .toList(growable: false),
-            activeHazards: awareness.activeHazards,
-            route: _activeRoute,
-            routeName: _activeRoute?.name,
-            rideState: _projectedRideState,
-            guidanceTitle: _projectedGuidanceTitle,
-            guidanceDetail: _projectedGuidanceDetail,
-            guidanceRoadName: _latestNavigationGuidance?.roadLabel,
-            guidanceDistanceMeters: _latestNavigationGuidance?.distanceMeters,
-            groupStatus: '${visibleRiderLocations.length} riders visible',
-            markerStatus: _junctionMarkerOverlay.value?.instruction,
-          ) ??
-          Future<void>.value(),
-    );
     if (updateDerivedState && widget.rideController.rideStarted) {
       final session = widget.rideController.session;
       _leaderStatus.value = session == null
@@ -2340,7 +2321,72 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       _tecGapTrendTracker.reset();
       _tecGapTrend.value = TecGapTrend.unknown;
     }
+    // Published after the leader status and the gap trend, not before: a
+    // snapshot built first would carry the previous frame's back-marker, so
+    // the head unit would always be one update behind the phone about the one
+    // thing the app is named after.
+    _publishCarPlaySnapshot(
+      awareness: awareness,
+      visibleRiderLocations: visibleRiderLocations,
+      activeRiderIds: activeRiderIds,
+    );
     _updateSharedRejoinTraces();
+  }
+
+  /// Projects the ride onto CarPlay, including the back-marker.
+  ///
+  /// The TEC is resolved through [LeaderRideStatusCalculator.resolveTecTarget]
+  /// rather than read off the rider list, for the same reason every other
+  /// surface does: "nobody is TEC", "registered but never reported" and "last
+  /// fix too old to trust" are three different answers and a car screen must
+  /// not blur them into a missing row. [_leaderStatus] then adds the gap and
+  /// the trend, and is null for everyone who is not the leader — that means
+  /// this device has no gap to show, never that there is no TEC.
+  void _publishCarPlaySnapshot({
+    required SituationalAwarenessController awareness,
+    required List<RiderLocation> visibleRiderLocations,
+    required Set<String> activeRiderIds,
+  }) {
+    final bridge = _carPlayBridge;
+    if (bridge == null) return;
+    final session = widget.rideController.session;
+    final effectiveTecRiderIds = _effectiveTecRiderIds;
+    final tec = session == null
+        ? CarPlayTecStatus.absent
+        : CarPlayTecStatus.from(
+            target: const LeaderRideStatusCalculator().resolveTecTarget(
+              localRiderId: session.localRiderId,
+              riderLocations: visibleRiderLocations,
+              registeredTecRiderIds: effectiveTecRiderIds,
+              assignedTecRiderId: _assignedTecRiderId,
+              now: DateTime.now(),
+            ),
+            leaderStatus: _leaderStatus.value,
+            trend: _tecGapTrend.value,
+            distanceUnit: widget.distanceUnits.value,
+            now: DateTime.now(),
+          );
+    unawaited(
+      bridge.publish(
+        session: session,
+        riderLocations: visibleRiderLocations,
+        routeAlerts: awareness.routeAlerts
+            .where((alert) => activeRiderIds.contains(alert.riderId))
+            .toList(growable: false),
+        activeHazards: awareness.activeHazards,
+        route: _activeRoute,
+        routeName: _activeRoute?.name,
+        rideState: _projectedRideState,
+        guidanceTitle: _projectedGuidanceTitle,
+        guidanceDetail: _projectedGuidanceDetail,
+        guidanceRoadName: _latestNavigationGuidance?.roadLabel,
+        guidanceDistanceMeters: _latestNavigationGuidance?.distanceMeters,
+        groupStatus: '${visibleRiderLocations.length} riders visible',
+        markerStatus: _junctionMarkerOverlay.value?.instruction,
+        tec: tec,
+        effectiveTecRiderIds: effectiveTecRiderIds,
+      ),
+    );
   }
 
   /// Publishes the quick messages the ride map has to present, and returns the

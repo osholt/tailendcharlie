@@ -1,7 +1,13 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/domain/ride_role.dart';
+import 'package:ride_relay/domain/geo_point.dart' as presence;
+import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/carplay_bridge.dart';
+import 'package:ride_relay/services/carplay_tec_status.dart';
+import 'package:ride_relay/services/leader_ride_status.dart';
+import 'package:ride_relay/services/tec_gap_trend.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -58,6 +64,18 @@ void main() {
         'guidanceDistanceMeters': null,
         'groupStatus': '5 riders visible',
         'markerStatus': 'Marker at the next junction',
+        'tec': {
+          'state': 'none',
+          'riderId': null,
+          'name': null,
+          'headline': 'No TEC',
+          'detail': 'Nobody is covering the back',
+          'distanceMeters': null,
+          'etaSeconds': null,
+          'locationAgeSeconds': null,
+          'trend': 'unknown',
+          'trendLabel': null,
+        },
         'updatedAtMillis': DateTime.utc(2026, 7, 23, 12).millisecondsSinceEpoch,
         'riders': <Object?>[],
         'alert': null,
@@ -123,4 +141,116 @@ void main() {
       ]);
     },
   );
+
+  // Issue #128: one rider self-selects the role, the leader asks another, and
+  // both carry RideRole.tailEndCharlie in the journal. The phone map already
+  // resolves that to one back-marker; a head unit showing two is telling the
+  // leader the group has two backs.
+  test('marks only the effective back-marker as Tail End Charlie', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+    final now = DateTime.utc(2026, 8, 2, 12);
+    RiderLocation holder(String riderId, String displayName) => RiderLocation(
+      riderId: riderId,
+      displayName: displayName,
+      role: RideRole.tailEndCharlie,
+      sample: LocationSample(
+        position: const presence.GeoPoint(latitude: 51.45, longitude: -2.58),
+        recordedAt: now,
+        accuracyMeters: 6,
+      ),
+      receivedAt: now,
+    );
+
+    await bridge.publish(
+      session: null,
+      riderLocations: [holder('bill', 'Bill'), holder('dave', 'Dave')],
+      routeAlerts: const [],
+      activeHazards: const [],
+      effectiveTecRiderIds: const {'dave'},
+    );
+
+    final riders = (received!.arguments as Map)['riders'] as List;
+    final byName = {
+      for (final rider in riders.cast<Map>()) rider['label']: rider,
+    };
+    expect(byName['Dave']!['isTec'], isTrue);
+    expect(byName['Dave']!['role'], 'Tail End Charlie');
+    expect(byName['Bill']!['isTec'], isFalse);
+    expect(byName['Bill']!['role'], 'Rider');
+  });
+
+  // A caller that has not resolved a back-marker must not have its riders
+  // silently demoted: an empty set means "not resolved", not "nobody".
+  test('leaves the journal role alone when no TEC has been resolved', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+    final now = DateTime.utc(2026, 8, 2, 12);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: [
+        RiderLocation(
+          riderId: 'bill',
+          displayName: 'Bill',
+          role: RideRole.tailEndCharlie,
+          sample: LocationSample(
+            position: const presence.GeoPoint(
+              latitude: 51.45,
+              longitude: -2.58,
+            ),
+            recordedAt: now,
+            accuracyMeters: 6,
+          ),
+          receivedAt: now,
+        ),
+      ],
+      routeAlerts: const [],
+      activeHazards: const [],
+    );
+
+    final riders = (received!.arguments as Map)['riders'] as List;
+    expect((riders.single as Map)['role'], 'Tail End Charlie');
+    expect((riders.single as Map)['isTec'], isFalse);
+  });
+
+  test('publishes the resolved back-marker beside the rider list', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+      tec: const CarPlayTecStatus(
+        availability: TecAvailability.tracking,
+        riderId: 'dave',
+        name: 'Dave',
+        distanceMeters: 1931,
+        estimatedTime: Duration(minutes: 3),
+        trend: TecGapTrend.closing,
+      ),
+    );
+
+    final tec = (received!.arguments as Map)['tec'] as Map;
+    expect(tec['state'], 'tracking');
+    expect(tec['headline'], 'TEC · 1.2 mi ↓');
+    expect(tec['detail'], 'Dave · 1.2 mi · about 3 min · ↓ Closing');
+  });
 }

@@ -9,6 +9,7 @@ import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
+import 'carplay_tec_status.dart';
 
 /// Publishes projected ride and navigation state to the native CarPlay and
 /// Android Auto scenes, and relays the CarPlay emergency button back to
@@ -16,6 +17,12 @@ import '../domain/route_alert.dart';
 ///
 /// CarPlay renders the route and rider positions in its navigation scene and
 /// keeps the existing glanceable ride-status list available from that map.
+///
+/// The snapshot carries the back-marker as its own block ([CarPlayTecStatus])
+/// rather than leaving a head unit to infer it from the rider list. The app is
+/// named after that role, and a leader who can see five riders listed but not
+/// whether anybody is watching the back has been told the least useful half of
+/// the group's state.
 ///
 /// One bidirectional method channel rather than a channel pair: unlike the
 /// nearby transport (native is the continuous data source there, so it uses
@@ -66,6 +73,8 @@ class CarPlayBridge {
     double? guidanceDistanceMeters,
     String? groupStatus,
     String? markerStatus,
+    CarPlayTecStatus tec = CarPlayTecStatus.absent,
+    Set<String> effectiveTecRiderIds = const {},
   }) async {
     final now = _clock();
     if (_lastPublishedAt != null &&
@@ -87,6 +96,7 @@ class CarPlayBridge {
       'guidanceDistanceMeters': guidanceDistanceMeters,
       'groupStatus': groupStatus,
       'markerStatus': markerStatus,
+      'tec': tec.toSnapshot(),
       'updatedAtMillis': now.millisecondsSinceEpoch,
       'riders': [
         for (final location in riderLocations)
@@ -94,7 +104,12 @@ class CarPlayBridge {
             'label': location.displayName,
             'isLocal':
                 session != null && location.riderId == session.localRiderId,
-            'role': location.role.label,
+            'role': _roleLabel(location, effectiveTecRiderIds),
+            // Issue #128: two riders can hold the role at once, and the group
+            // needs one answer. The phone map resolves that before it draws a
+            // marker; the head unit now resolves it the same way rather than
+            // labelling both of them the back of the group.
+            'isTec': effectiveTecRiderIds.contains(location.riderId),
             'needsAttention': _needsAttention(location, alertsByRider),
             'latitude': location.sample.position.latitude,
             'longitude': location.sample.position.longitude,
@@ -177,6 +192,27 @@ class CarPlayBridge {
     return earthRadiusMeters *
         2 *
         math.atan2(math.sqrt(haversine), math.sqrt(1 - haversine));
+  }
+
+  /// The role a head unit shows against one rider.
+  ///
+  /// Every role but the back-marker is the rider's own journal role. The TEC is
+  /// the exception: two riders can legitimately carry
+  /// [RideRole.tailEndCharlie] at once - one self-selected, one asked by the
+  /// leader (#128) - and a car screen listing both as the back of the group
+  /// tells the leader something that is not true. Only the effective
+  /// back-marker keeps the label, which is what the phone's map already draws.
+  ///
+  /// An empty [effectiveTecRiderIds] means the caller did not resolve one, not
+  /// that nobody holds the role, so the journal role stands.
+  String _roleLabel(RiderLocation location, Set<String> effectiveTecRiderIds) {
+    if (location.role != RideRole.tailEndCharlie ||
+        effectiveTecRiderIds.isEmpty) {
+      return location.role.label;
+    }
+    return effectiveTecRiderIds.contains(location.riderId)
+        ? RideRole.tailEndCharlie.label
+        : RideRole.rider.label;
   }
 
   bool _needsAttention(
