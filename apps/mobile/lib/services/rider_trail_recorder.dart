@@ -101,9 +101,38 @@ class RiderTrailRecorder {
   }) : assert(maximumPointsPerRider >= 2),
        assert(minimumSeparationDegrees >= 0);
 
-  /// Bounded per-rider memory. Applied identically to every rider, including
-  /// the local one, so no rider's trail can grow without limit on a long ride.
-  static const defaultMaximumPointsPerRider = 120;
+  /// A runaway guard, not a display policy — and the second place that
+  /// distinction had to be made.
+  ///
+  /// This was 120 points. Positions become durable reports at roughly one per
+  /// 20 m of travel (`PositionReportPolicy`: 18 m of travel, met at the first
+  /// 10 m platform fix at or beyond it), so 120 points was **about 2.4 km of
+  /// riding, whatever the length of the ride**. Past that the oldest points
+  /// were deleted and the drawn trail slid along behind the rider like a tail,
+  /// which is exactly the report in #299: "it forgets your track after a
+  /// while". A solo rider reaches it in two or three minutes.
+  ///
+  /// It also silently undid #280. That issue raised the leader trail's bound in
+  /// `SituationalAwarenessController` from 600 to 100,000 after a 112 mile ride
+  /// lost its tail — but that trail is handed to this recorder as
+  /// [RiderTrailUpdate.journalTrail] and cut back down to 120 here by
+  /// [boundedTrail], so the fix never reached the map. A bound below its own
+  /// source is not a bound, it is a deletion.
+  ///
+  /// Nothing needed it. The renderer already bounds what it draws:
+  /// `TrailDisplaySimplifier` reduces every trace to at most 2,000 points with
+  /// adaptive tolerance, once per change, before either map implementation sees
+  /// it. This constant was only ever protecting memory, so it is now sized as a
+  /// memory backstop and matched to the journal trail it must not contradict:
+  /// 100,000 points is 2,000 km of riding at the report rate above, or over a
+  /// fortnight at the stationary keep-alive rate of four a minute. No ride
+  /// reaches either.
+  ///
+  /// It is per rider, so a large group's live history now scales with how far
+  /// the ride has gone rather than with a constant — around 20,000 points each
+  /// for a six-hour ride. That is the intended trade: a rider's own track is
+  /// not something to economise on.
+  static const defaultMaximumPointsPerRider = 100000;
 
   /// A healthy ride reports every few seconds. Beyond this interval the app
   /// does not know where the rider went, so joining the fixes would invent a
