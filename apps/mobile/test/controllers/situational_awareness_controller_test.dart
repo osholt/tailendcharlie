@@ -177,7 +177,14 @@ void main() {
   );
 
   test(
-    'pre-start location fixes are neither persisted nor displayed',
+    // The rule, decided for #300: a rider is visible to the group from the
+    // moment they join, and the channel that carries that is presence — see
+    // `pre_start_visibility_test.dart`. The durable journal is history, and
+    // history starts at Start ride. This test used to be named "pre-start
+    // location fixes are neither persisted nor displayed", which described
+    // both halves as one policy; only the persistence half was ever this
+    // controller's to enforce, and only that half survives the decision.
+    'the durable journal records no fixes before the ride starts',
     () async {
       final waiting = SituationalAwarenessController(
         store,
@@ -203,9 +210,21 @@ void main() {
         ),
       );
 
-      expect(waiting.riderLocations, isEmpty);
+      expect(
+        waiting.riderLocations,
+        isEmpty,
+        reason:
+            'the journal projection is history, and history starts at '
+            'Start ride; visibility before then comes from presence',
+      );
       final stored = await store.eventsForRide(_session.rideId);
-      expect(stored, hasLength(1));
+      expect(
+        stored,
+        hasLength(1),
+        reason:
+            'this device authored nothing — the one row is the remote '
+            'peer\'s own event, kept as received',
+      );
       expect(stored.single.id, 'early-rider-event');
       waiting.dispose();
     },

@@ -52,7 +52,7 @@ void main() {
         client: MockClient((_) async => throw const SocketException('offline')),
       );
 
-      final style = jsonDecode(await repository.resolve()) as Map;
+      final style = jsonDecode((await repository.resolve()).style) as Map;
 
       expect(style['name'], 'Tail End Charlie offline fallback');
       expect(style['sources'], isEmpty);
@@ -83,7 +83,7 @@ void main() {
       ),
     );
 
-    final style = jsonDecode(await repository.resolve()) as Map;
+    final style = jsonDecode((await repository.resolve()).style) as Map;
     final source = (style['sources'] as Map)['basemap'] as Map;
 
     expect(style['sprite'], 'https://maps.example.test/styles/sprite');
@@ -109,7 +109,7 @@ void main() {
         ),
       );
 
-      final style = jsonDecode(await repository.resolve()) as Map;
+      final style = jsonDecode((await repository.resolve()).style) as Map;
       final layers = (style['layers'] as List).cast<Map>();
       Map paintOf(String id) =>
           layers.singleWhere((layer) => layer['id'] == id)['paint'] as Map;
@@ -142,7 +142,7 @@ void main() {
       ),
     );
 
-    final style = jsonDecode(await repository.resolve()) as Map;
+    final style = jsonDecode((await repository.resolve()).style) as Map;
     final layers = (style['layers'] as List).cast<Map>();
     final major = layers.singleWhere(
       (layer) => layer['id'] == 'highway_major_inner',
@@ -183,7 +183,7 @@ void main() {
       ),
     );
 
-    final style = jsonDecode(await repository.resolve()) as Map;
+    final style = jsonDecode((await repository.resolve()).style) as Map;
     final wood = (style['layers'] as List).cast<Map>().singleWhere(
       (layer) => layer['id'] == 'landcover_wood',
     );
@@ -218,10 +218,105 @@ void main() {
       ),
     );
 
-    final style = jsonDecode(await repository.resolve()) as Map;
+    final style = jsonDecode((await repository.resolve()).style) as Map;
     final background = (style['layers'] as List).cast<Map>().single;
 
     expect((background['paint'] as Map)['background-color'], 'rgb(12,12,12)');
+  });
+
+  group('the resolution says where the style came from (#281)', () {
+    // Every one of these used to be a bare `String`, so the ride map could not
+    // tell a provider that answered from one that did not, and drew the empty
+    // fallback as though it were the map.
+    test('a fetched style is reported as live', () async {
+      final repository = MapStyleRepository(
+        directory: directory,
+        configuration: _configuration,
+        client: MockClient((_) async => http.Response(_minimalStyle, 200)),
+      );
+
+      final resolution = await repository.resolve();
+
+      expect(resolution.outcome, MapStyleOutcome.live);
+      expect(resolution.hasBasemap, isTrue);
+      expect(resolution.error, isNull);
+    });
+
+    test('a style served from the cache is reported as cached', () async {
+      var requests = 0;
+      MapStyleRepository open() => MapStyleRepository(
+        directory: directory,
+        configuration: _configuration,
+        client: MockClient((_) async {
+          requests++;
+          return http.Response(_minimalStyle, 200);
+        }),
+      );
+
+      await open().resolve();
+      final resolution = await open().resolve();
+
+      expect(requests, 1);
+      expect(resolution.outcome, MapStyleOutcome.cached);
+      expect(resolution.hasBasemap, isTrue);
+    });
+
+    test('an unfetchable style with nothing cached is unavailable', () async {
+      final repository = MapStyleRepository(
+        directory: directory,
+        configuration: _configuration,
+        client: MockClient((_) async => throw const SocketException('offline')),
+      );
+
+      final resolution = await repository.resolve();
+
+      expect(resolution.outcome, MapStyleOutcome.unavailable);
+      expect(resolution.hasBasemap, isFalse);
+      expect(resolution.style, MapStyleRepository.fallbackStyle);
+      expect(
+        resolution.error,
+        isA<SocketException>(),
+        reason: 'the rider should be able to report the actual fault',
+      );
+    });
+
+    test('a stale cache beats the fallback and still counts as a map', () async {
+      // Roads from yesterday are still roads. Reporting this as a failure would
+      // put a warning on a perfectly usable map.
+      await MapStyleRepository(
+        directory: directory,
+        configuration: _configuration,
+        client: MockClient((_) async => http.Response(_minimalStyle, 200)),
+      ).resolve();
+
+      final resolution = await MapStyleRepository(
+        directory: directory,
+        configuration: _configuration,
+        refreshAfter: Duration.zero,
+        client: MockClient((_) async => throw const SocketException('offline')),
+      ).resolve();
+
+      expect(resolution.outcome, MapStyleOutcome.cached);
+      expect(resolution.hasBasemap, isTrue);
+      expect(resolution.style, isNot(MapStyleRepository.fallbackStyle));
+    });
+
+    test(
+      'a build with no style configured is unconfigured, not failed',
+      () async {
+        final repository = MapStyleRepository(
+          directory: directory,
+          configuration: const BasemapConfiguration(),
+          client: MockClient((_) async => http.Response(_minimalStyle, 200)),
+        );
+
+        final resolution = await repository.resolve();
+
+        expect(resolution.outcome, MapStyleOutcome.unconfigured);
+        expect(resolution.hasBasemap, isFalse);
+        expect(resolution.style, MapStyleRepository.fallbackStyle);
+      },
+    );
   });
 
   group('dark basemap palette (#143)', () {
@@ -555,6 +650,19 @@ const _darkStyleFixture = <String, Object?>{
     {'id': 'unrelated_layer', 'type': 'fill', 'paint': <String, Object?>{}},
   ],
 };
+
+/// The smallest document that satisfies the repository's validation, for the
+/// tests that care where a style came from rather than what is in it.
+final _minimalStyle = jsonEncode({
+  'version': 8,
+  'sources': {
+    'planet': {
+      'type': 'vector',
+      'tiles': ['https://maps.example.test/tiles/{z}/{x}/{y}.pbf'],
+    },
+  },
+  'layers': <Object>[],
+});
 
 const _configuration = BasemapConfiguration(
   styleUrl: 'https://maps.example.test/styles/ride-relay.json',
