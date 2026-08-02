@@ -1343,6 +1343,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       if (widget.rideController.rideStarted &&
           !widget.rideController.rideEnded) {
         await _resumeLocationForActiveRide();
+      } else {
+        await _startLocationForPreStartMap();
       }
 
       if (session != null) {
@@ -2948,6 +2950,43 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       unawaited(_handleRideEnded());
     }
     _schedulePublish();
+  }
+
+  /// Starts location for the map before the ride does, so a rider can see
+  /// themselves while the group is still gathering (#300).
+  ///
+  /// Location used to start only once the ride had, which left the pre-start map
+  /// with no own position and no way to get one - reported as "before I started
+  /// a ride I couldn't see my own position and there was no way to get it".
+  /// Gathering is exactly when a group is checking who has arrived and where
+  /// they are.
+  ///
+  /// **Starting the stream does not start recording.** Fixes reach the map
+  /// through `_onDeviceLocationChanged`, which only redraws overlays;
+  /// `SituationalAwarenessController.recordLocalLocation` refuses every sample
+  /// until `rideStarted`, and relay publishing is driven by the event journal
+  /// rather than by fixes. So nothing is journalled or shared before Start ride,
+  /// which is the half of the request that must not be broken.
+  ///
+  /// Deliberately not [_resumeLocationForActiveRide]: that resets the
+  /// position-report gate, which paces *sharing*, and there is nothing to pace
+  /// yet. A failure here is also silent rather than a warning banner - #262 asks
+  /// for a calmer pre-start screen, and Follow me still surfaces a genuine
+  /// permission problem when the rider asks for it.
+  Future<void> _startLocationForPreStartMap() async {
+    final locationController = _locationController;
+    if (locationController == null ||
+        widget.rideController.rideStarted ||
+        widget.rideController.rideEnded) {
+      return;
+    }
+    try {
+      await locationController.resumeIfAuthorized();
+    } on Object catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Could not start GPS before the ride: $error\n$stackTrace');
+      }
+    }
   }
 
   Future<void> _resumeLocationForActiveRide() async {
