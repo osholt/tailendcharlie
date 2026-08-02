@@ -111,10 +111,21 @@ executable origin.
 
 An observer map is optional. The configured style is
 `<current-relay-origin>/maps/styles/ride-relay.json`; every style import,
-source, tile, sprite and glyph URL must also remain on that host. The
-repository does not include the operator map archive or production style, so
-the page falls back to bounded coordinates until those assets pass deployment
-verification. Do not claim the observer map is operational before that gate.
+source, tile, sprite and glyph URL must also remain on that host. That
+constraint is why the relay proxies the basemap under `/maps/basemap` and
+`/maps/fonts` rather than letting the browser reach a tile CDN: the tiles an
+observer requests reveal roughly where the watched rider is, and same-origin
+keeps that inside a service that already holds the ride.
+
+The style ships in `deploy/maps/styles/`, but a **relay that has not been
+redeployed since #281 still returns 404** and the page falls back to bounded
+coordinates. Confirm with `tools/check-observer-basemap.sh <origin>`, which
+asserts on tile bytes - a misconfigured path answers 200 with an empty body and
+draws a blank map without erroring. Do not claim the observer map is operational
+before that check passes against the origin in question.
+
+The tiles are still fetched from an upstream service, so the observer map is not
+yet independent of one; the operator-owned archive is #274.
 
 ## API
 
