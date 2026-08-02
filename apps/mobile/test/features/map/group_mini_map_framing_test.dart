@@ -190,4 +190,83 @@ void main() {
       expect(framing.zoom, lessThanOrEqualTo(GroupMiniMapFraming.maximumZoom));
     });
   });
+
+  // The 2 August 2026 report: the caption read "2 RIDERS", the mini-map drew no
+  // markers at all, and the scale bar said 200 m. The caption counts the roster
+  // while the framing only receives riders the map can place, so a rider who has
+  // joined without a first position leaves one point here and two in the caption.
+  group('a rider who has joined but cannot be placed yet', () {
+    const warmley = GeoPoint(latitude: 51.4569, longitude: -2.4735);
+    // Where the other rider turned out to be, about 4 km away.
+    const oldlandCommon = GeoPoint(latitude: 51.4372, longitude: -2.4560);
+
+    test('one placeable rider alone still gets the street-level view', () {
+      final framing = GroupMiniMapFraming.forPoints(
+        const [warmley],
+        width: width,
+        height: height,
+      );
+
+      expect(framing.zoom, GroupMiniMapFraming.singleRiderZoom);
+    });
+
+    test('one placeable rider in a larger group is framed wider', () {
+      final framing = GroupMiniMapFraming.forPoints(
+        const [warmley],
+        width: width,
+        height: height,
+        awaitingOtherRiders: true,
+      );
+
+      expect(framing.zoom, GroupMiniMapFraming.awaitingOtherRidersZoom);
+      expect(
+        framing.zoom,
+        lessThan(GroupMiniMapFraming.singleRiderZoom),
+        reason: 'a group that cannot all be drawn must not be framed on one '
+            'rider at street level',
+      );
+    });
+
+    test(
+      'the wider view already holds a rider who appears kilometres away',
+      () {
+        // The point of the wider zoom: the first position to arrive should
+        // usually already be inside the viewport, so the rider becomes visible
+        // even if the refit that would have framed them is late.
+        final framing = GroupMiniMapFraming.forPoints(
+          const [warmley],
+          width: width,
+          height: height,
+          awaitingOtherRiders: true,
+        );
+
+        expect(isVisible(framing, oldlandCommon), isTrue);
+      },
+    );
+
+    test('the street-level view would have hidden them', () {
+      // Establishes that the case above is a real fix and not a tautology.
+      final framing = GroupMiniMapFraming.forPoints(
+        const [warmley],
+        width: width,
+        height: height,
+      );
+
+      expect(isVisible(framing, oldlandCommon), isFalse);
+    });
+
+    test('both riders are framed once the second position arrives', () {
+      final framing = GroupMiniMapFraming.forPoints(
+        const [warmley, oldlandCommon],
+        width: width,
+        height: height,
+        // Still set, because the roster and the placeable count can disagree
+        // for other reasons. With two points it must not change the outcome.
+        awaitingOtherRiders: true,
+      );
+
+      expect(isVisible(framing, warmley), isTrue);
+      expect(isVisible(framing, oldlandCommon), isTrue);
+    });
+  });
 }

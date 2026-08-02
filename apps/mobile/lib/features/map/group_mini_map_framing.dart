@@ -38,6 +38,23 @@ class GroupMiniMapFraming {
   /// A lone rider gets a street-level view; there is no spread to show.
   static const singleRiderZoom = 14.5;
 
+  /// Used when only one rider can be placed but the group is known to be larger.
+  ///
+  /// The rider count comes from the roster, while the framing only receives
+  /// riders the map can actually place, so the two disagree whenever someone has
+  /// joined but their first position has not arrived. Framing at
+  /// [singleRiderZoom] then reads as a street map of one rider while the caption
+  /// says two - which is what a tester photographed: "2 RIDERS", no markers, and
+  /// a 200 m scale bar (#172).
+  ///
+  /// Chosen for the *shorter* axis: at UK latitudes this covers roughly 6 km
+  /// vertically in the portrait mini-map, so a rider a few kilometres away is
+  /// already inside the viewport when their first position arrives, rather than
+  /// depending on a refit to become visible. Erring wide is right here because
+  /// the state is temporary - the ordinary bounds fit takes over the moment there
+  /// are two points to fit.
+  static const awaitingOtherRidersZoom = 10.0;
+
   /// Web Mercator bottoms out at 0, where the whole world is 256 px wide. No
   /// group on one planet needs further out than this, so the framing never has
   /// to admit defeat - which is what the old behaviour effectively did by
@@ -58,16 +75,20 @@ class GroupMiniMapFraming {
   /// [width] and [height] are the *usable* pixels - the caller subtracts its own
   /// padding first, because padding that exceeds the box is one of the ways the
   /// old fit produced nonsense.
+  /// [awaitingOtherRiders] is true when the roster holds riders the map cannot
+  /// place yet. It only affects the single-point case, where it is the difference
+  /// between "this rider is alone" and "this is the only rider we can draw".
   factory GroupMiniMapFraming.forPoints(
     List<GeoPoint> points, {
     required double width,
     required double height,
+    bool awaitingOtherRiders = false,
   }) {
     assert(points.isNotEmpty, 'Framing needs at least one point');
     if (points.length == 1) {
       return GroupMiniMapFraming(
         centre: points.single,
-        zoom: singleRiderZoom,
+        zoom: awaitingOtherRiders ? awaitingOtherRidersZoom : singleRiderZoom,
         spanMeters: 0,
       );
     }
