@@ -844,34 +844,45 @@ Provider references:
 - [Valhalla attribution requirements](https://valhalla.github.io/valhalla/mjolnir/attribution/)
 - [Public demo fair-use and client identification](https://github.com/valhalla/valhalla#demo-server)
 
-## CarPlay draws with MapKit, and that is a decision
+## CarPlay draws with MapLibre, and shares the phone's tiles
 
-The phone draws with MapLibre. The CarPlay canvas
-(`CarPlayNavigationViewController` in `apps/mobile/ios/Runner/CarPlaySceneDelegate.swift`)
-draws with `MKMapView`. That divergence was noticed as a possible accident in
-#295 and is now deliberate, with what it costs stated rather than discovered
-later:
+The head unit renders with `MLNMapView`
+(`CarPlayNavigationViewController` in
+`apps/mobile/ios/Runner/CarPlaySceneDelegate.swift`), the same renderer and the
+same style documents as the phone.
 
-- **Kept**: MapKit is the basemap CarPlay head units are built and tested
-  against, it is already resident on the phone, it needs no tile budget or key,
-  and it is the only renderer that gives the projected `CPWindow` a follow
-  camera and a blue dot without the app owning a second GL context on a screen
-  it does not control.
-- **Given up**: the styling in [Riding display](#riding-display) — the dark
-  basemap, the measured route palette, the marker badges — none of it reaches
-  CarPlay. So does the offline tile cache: **the CarPlay basemap needs a
-  connection, and goes blank-grey without one, while the phone in the rider's
-  pocket keeps its cached tiles.** The app-owned content on top of it (route
-  polyline, rider markers, the TEC badge) is drawn by us and survives a signal
-  drop; only the basemap under it does not.
-- **Kept ours regardless**: everything that carries meaning. The route line,
-  every rider marker, the back-marker's distinct pin and the TEC badge are the
-  app's, so the two surfaces cannot disagree about where the group is even
-  though they disagree about what the roads look like.
+It began on MapKit, which was easier to stand up on a projected `CPWindow` and
+cost two things that turned out to matter more on a car screen than on a phone:
 
-Revisit only if the offline basemap becomes a stated CarPlay requirement; that
-means putting MapLibre on a `CPWindow` and owning its lifecycle across
-connect/disconnect, which is a considerably larger change than restyling.
+- **The basemap needed a connection.** MapKit has no access to the ambient tile
+  cache the phone fills, so the surface a rider actually looks at while moving
+  was the first one to go grey in a signal gap — the opposite of the
+  offline-first behaviour the rest of the app is built for, and the same shape
+  of fault as #274/#281.
+- **None of the measured styling reached it.** The dark basemap and route
+  palette in [Riding display](#riding-display) were chosen against #107 and
+  #143 for a rider reading through a tinted visor in daylight. CarPlay got
+  Apple's defaults instead.
+
+Both styles travel in the projected snapshot (`basemap.styleUrl` and
+`basemap.darkStyleUrl`) rather than being read from the environment natively,
+because the car has its own day/night state and picks between them from its own
+trait collection — the head unit can be in night mode while the phone is not.
+
+Two things about the MapLibre lifecycle here are not obvious and are the reason
+this is written down:
+
+- **A style load clears every annotation with it.** The last snapshot is
+  retained and replayed from `mapView(_:didFinishLoading:)`, or the route and
+  riders vanish the moment the car switches to night mode.
+- **The map view is built when the first style arrives, not in `loadView()`.**
+  An `MLNMapView` with no style URL renders nothing useful and does not restyle
+  cleanly afterwards, so the canvas starts as a plain black view and installs
+  the map once Dart has named a style.
+
+CarPlay's own map buttons own the bottom-trailing corner, so MapLibre's logo and
+attribution are moved to the bottom-leading one. Attribution stays visible: it
+is a licence condition, not decoration.
 
 ## MapLibre provider configuration
 

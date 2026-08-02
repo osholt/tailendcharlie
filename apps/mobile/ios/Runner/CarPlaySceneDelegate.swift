@@ -1,4 +1,6 @@
 import CarPlay
+import CoreLocation
+import MapLibre
 import MapKit
 import UIKit
 
@@ -300,37 +302,47 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     return UIImage(systemName: "arrow.up")
   }
 }
-
 /// Draws app-owned route and group-location content behind the CarPlay
-/// templates. CarPlay owns the turn cards and controls; MapKit owns only the
-/// map canvas.
+/// templates. CarPlay owns the turn cards and controls; this owns only the map
+/// canvas.
+///
+/// MapLibre, not MapKit (#321). The head unit shares the phone's MapLibre style
+/// and its ambient tile cache — same process, same cache — so a rider who loses
+/// signal keeps the basemap they had a mile ago instead of watching the car
+/// screen go grey, and the deliberate day/night styling measured in #107 and
+/// #143 reaches the surface a rider actually looks at while moving.
 private final class CarPlayNavigationViewController: UIViewController,
-  MKMapViewDelegate
+  MLNMapViewDelegate
 {
-  private let mapView = MKMapView(frame: .zero)
+  private var mapView: MLNMapView?
   private let tecBadge = CarPlayTecBadge()
-  private var routeOverlay: MKPolyline?
+  private var routeAnnotation: MLNPolyline?
   private var routeID: String?
+  private var riderAnnotations: [CarPlayRiderAnnotation] = []
   private var localCoordinate: CLLocationCoordinate2D?
   private var localHeading: CLLocationDirection?
   private var followsLocalRider = true
   private var panGestureStartCoordinate: CLLocationCoordinate2D?
 
+  /// The styles Dart published, and the one currently applied. Held because the
+  /// car's day/night state can change at any time and the snapshot that carried
+  /// the styles may be minutes old by then.
+  private var lightStyleURL: URL?
+  private var darkStyleURL: URL?
+  private var appliedStyleURL: URL?
+
+  /// The last snapshot, replayed once the style finishes loading. A style load
+  /// clears every annotation with it, so route and riders have to go back on
+  /// afterwards or the map comes back empty (#295 by a different route).
+  private var latestSnapshot: [String: Any]?
+
   override func loadView() {
-    mapView.delegate = self
-    mapView.showsCompass = true
-    mapView.pointOfInterestFilter = .excludingAll
-    // Issue #295: without these the first thing a rider saw on plugging in was
-    // MKMapView's default region - the whole United Kingdom - with nothing
-    // drawn on it, because before a ride starts there is no rider position and
-    // no route, so neither camera branch in `apply(snapshot:)` ever ran and
-    // `setCamera`/`setVisibleMapRect` were never called at all. Handing the
-    // camera to MapKit's own follow mode means the map is framed on the rider
-    // from the first fix, ride or no ride, and the blue dot gives it something
-    // to be framed on.
-    mapView.showsUserLocation = true
-    mapView.userTrackingMode = .follow
-    view = mapView
+    // A plain view until Dart supplies a style. MLNMapView with no style URL
+    // renders nothing useful and cannot be restyled cleanly afterwards, so the
+    // map is built once the first snapshot names one.
+    let container = UIView(frame: .zero)
+    container.backgroundColor = .black
+    view = container
   }
 
   override func viewDidLoad() {
@@ -352,9 +364,20 @@ private final class CarPlayNavigationViewController: UIViewController,
     ])
   }
 
+  override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+    super.traitCollectionDidChange(previous)
+    guard
+      traitCollection.userInterfaceStyle != previous?.userInterfaceStyle
+    else { return }
+    applyPreferredStyle()
+  }
+
   func apply(snapshot: [String: Any]) {
+    latestSnapshot = snapshot
+    updateStyleURLs(snapshot["basemap"] as? [String: Any])
+    guard let mapView else { return }
     let incomingRouteID = snapshot["routeId"] as? String
-    let routeChanged = incomingRouteID != routeID || routeOverlay == nil
+    let routeChanged = incomingRouteID != routeID || routeAnnotation == nil
     if routeChanged {
       updateRoute(snapshot["routePoints"])
       routeID = incomingRouteID
@@ -362,9 +385,9 @@ private final class CarPlayNavigationViewController: UIViewController,
     updateRiders(snapshot["riders"])
     tecBadge.apply(snapshot["tec"] as? [String: Any])
     // The ride's own marker for this rider carries their name and role and is
-    // the one the group is drawn against. MapKit's blue dot is the stand-in
-    // for it before a ride starts (#295), so exactly one of the two is ever
-    // on the map.
+    // the one the group is drawn against. MapLibre's location dot is the
+    // stand-in for it before a ride starts (#295), so exactly one of the two is
+    // ever on the map.
     mapView.showsUserLocation = localCoordinate == nil
     if localCoordinate != nil, followsLocalRider {
       recenter()
@@ -375,18 +398,19 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func recenter() {
     followsLocalRider = true
+    guard let mapView else { return }
     guard let coordinate = localCoordinate else {
       showCompleteRoute()
       return
     }
-    // Taking the camera back off MapKit's follow mode, or it animates against
-    // every camera this sets. The ride's own fix is preferred once there is
-    // one: it carries the rider's heading and is the position the rest of the
-    // group is being measured against.
+    // Taking the camera back off MapLibre's follow mode, or it animates against
+    // every camera this sets. The ride's own fix is preferred once there is one:
+    // it carries the rider's heading and is the position the rest of the group
+    // is being measured against.
     mapView.userTrackingMode = .none
-    let camera = MKMapCamera(
+    let camera = MLNMapCamera(
       lookingAtCenter: coordinate,
-      fromDistance: 1_800,
+      altitude: 1_800,
       pitch: 25,
       heading: localHeading ?? 0
     )
@@ -395,64 +419,116 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func pan(direction: CPMapTemplate.PanDirection) {
     followsLocalRider = false
+    guard let mapView else { return }
     mapView.userTrackingMode = .none
-    var center = MKMapPoint(mapView.centerCoordinate)
-    let rect = mapView.visibleMapRect
-    if direction.contains(.left) {
-      center.x -= rect.size.width * 0.25
-    }
-    if direction.contains(.right) {
-      center.x += rect.size.width * 0.25
-    }
-    if direction.contains(.up) {
-      center.y -= rect.size.height * 0.25
-    }
-    if direction.contains(.down) {
-      center.y += rect.size.height * 0.25
-    }
-    mapView.setCenter(center.coordinate, animated: true)
+    var point = mapView.convert(mapView.centerCoordinate, toPointTo: mapView)
+    let step = CGPoint(x: mapView.bounds.width * 0.25, y: mapView.bounds.height * 0.25)
+    if direction.contains(.left) { point.x -= step.x }
+    if direction.contains(.right) { point.x += step.x }
+    if direction.contains(.up) { point.y -= step.y }
+    if direction.contains(.down) { point.y += step.y }
+    mapView.setCenter(
+      mapView.convert(point, toCoordinateFrom: mapView),
+      animated: true
+    )
   }
 
   func beginPanGesture() {
     followsLocalRider = false
-    mapView.userTrackingMode = .none
-    panGestureStartCoordinate = mapView.centerCoordinate
+    mapView?.userTrackingMode = .none
+    panGestureStartCoordinate = mapView?.centerCoordinate
   }
 
   func updatePanGesture(translation: CGPoint) {
-    guard let start = panGestureStartCoordinate else { return }
+    guard let mapView, let start = panGestureStartCoordinate else { return }
     let startPoint = mapView.convert(start, toPointTo: mapView)
-    let translatedPoint = CGPoint(
+    let translated = CGPoint(
       x: startPoint.x - translation.x,
       y: startPoint.y - translation.y
     )
-    mapView.centerCoordinate = mapView.convert(translatedPoint, toCoordinateFrom: mapView)
+    mapView.setCenter(
+      mapView.convert(translated, toCoordinateFrom: mapView),
+      animated: false
+    )
   }
 
   func endPanGesture() {
     panGestureStartCoordinate = nil
   }
 
-  private func updateRoute(_ raw: Any?) {
-    if let routeOverlay {
-      mapView.removeOverlay(routeOverlay)
-    }
-    let points = (raw as? [[String: Any]] ?? []).compactMap(coordinate(from:))
-    guard points.count >= 2 else {
-      routeOverlay = nil
+  // MARK: - Style
+
+  private func updateStyleURLs(_ basemap: [String: Any]?) {
+    guard let basemap else { return }
+    let light = (basemap["styleUrl"] as? String).flatMap(URL.init(string:))
+    let dark = (basemap["darkStyleUrl"] as? String).flatMap(URL.init(string:))
+    guard light != nil || dark != nil else { return }
+    lightStyleURL = light ?? dark
+    darkStyleURL = dark ?? light
+    applyPreferredStyle()
+  }
+
+  private func applyPreferredStyle() {
+    let preferred = traitCollection.userInterfaceStyle == .dark
+      ? darkStyleURL
+      : lightStyleURL
+    guard let preferred, preferred != appliedStyleURL else { return }
+    appliedStyleURL = preferred
+    guard let mapView else {
+      installMapView(styleURL: preferred)
       return
     }
-    let overlay = MKPolyline(coordinates: points, count: points.count)
-    routeOverlay = overlay
-    mapView.addOverlay(overlay, level: .aboveRoads)
+    mapView.styleURL = preferred
+  }
+
+  private func installMapView(styleURL: URL) {
+    let mapView = MLNMapView(frame: view.bounds, styleURL: styleURL)
+    mapView.delegate = self
+    mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    mapView.showsUserLocation = true
+    mapView.userTrackingMode = .follow
+    // CarPlay owns the bottom-trailing corner for its own map buttons, so
+    // MapLibre's ornaments go to the other side rather than underneath them.
+    // Attribution stays visible: it is a licence condition, not decoration.
+    mapView.logoViewPosition = .bottomLeft
+    mapView.attributionButtonPosition = .bottomLeft
+    mapView.compassViewPosition = .topRight
+    view.insertSubview(mapView, at: 0)
+    self.mapView = mapView
+    if let latestSnapshot { apply(snapshot: latestSnapshot) }
+  }
+
+  func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
+    // A style load takes the annotations with it. Put the ride back on.
+    routeAnnotation = nil
+    riderAnnotations = []
+    routeID = nil
+    if let latestSnapshot { apply(snapshot: latestSnapshot) }
+  }
+
+  // MARK: - Content
+
+  private func updateRoute(_ raw: Any?) {
+    guard let mapView else { return }
+    if let routeAnnotation {
+      mapView.removeAnnotation(routeAnnotation)
+    }
+    var points = (raw as? [[String: Any]] ?? []).compactMap(coordinate(from:))
+    guard points.count >= 2 else {
+      routeAnnotation = nil
+      return
+    }
+    let polyline = MLNPolyline(coordinates: &points, count: UInt(points.count))
+    routeAnnotation = polyline
+    mapView.addAnnotation(polyline)
   }
 
   private func updateRiders(_ raw: Any?) {
-    // MKUserLocation is MapKit's, not ours - removing it here would fight
-    // `showsUserLocation` rather than clear a rider marker.
-    mapView.removeAnnotations(
-      mapView.annotations.filter { !($0 is MKUserLocation) }
-    )
+    guard let mapView else { return }
+    if !riderAnnotations.isEmpty {
+      mapView.removeAnnotations(riderAnnotations)
+      riderAnnotations = []
+    }
     localCoordinate = nil
     localHeading = nil
     let riders = raw as? [[String: Any]] ?? []
@@ -467,30 +543,35 @@ private final class CarPlayNavigationViewController: UIViewController,
         isTec: (rider["isTec"] as? NSNumber)?.boolValue ?? false,
         needsAttention: (rider["needsAttention"] as? NSNumber)?.boolValue ?? false
       )
-      mapView.addAnnotation(annotation)
+      riderAnnotations.append(annotation)
       if isLocal {
         localCoordinate = coordinate
         localHeading = (rider["headingDegrees"] as? NSNumber)?.doubleValue
       }
+    }
+    if !riderAnnotations.isEmpty {
+      mapView.addAnnotations(riderAnnotations)
     }
   }
 
   /// Frames the whole planned route, or - with no route to frame - hands the
   /// camera back to the rider rather than leaving it wherever it was.
   ///
-  /// The bare `guard let routeOverlay else { return }` this replaces is half of
-  /// #295: a route-less ride reached here, nothing happened, and the map stayed
-  /// at MKMapView's country-level default with no way back.
+  /// Returning silently with no route is half of #295: a route-less ride
+  /// reached here, nothing happened, and the map stayed wherever it had been
+  /// left with no way back.
   private func showCompleteRoute() {
-    guard let routeOverlay else {
+    guard let mapView else { return }
+    guard let routeAnnotation else {
       mapView.userTrackingMode = .follow
       return
     }
     mapView.userTrackingMode = .none
-    mapView.setVisibleMapRect(
-      routeOverlay.boundingMapRect,
-      edgePadding: UIEdgeInsets(top: 80, left: 80, bottom: 80, right: 80),
-      animated: true
+    mapView.setVisibleCoordinateBounds(
+      routeAnnotation.overlayBounds,
+      edgePadding: UIEdgeInsets(top: 60, left: 60, bottom: 60, right: 60),
+      animated: true,
+      completionHandler: nil
     )
   }
 
@@ -504,58 +585,56 @@ private final class CarPlayNavigationViewController: UIViewController,
     return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
   }
 
+  // MARK: - MLNMapViewDelegate
+
   func mapView(
-    _ mapView: MKMapView,
-    rendererFor overlay: MKOverlay
-  ) -> MKOverlayRenderer {
-    guard let polyline = overlay as? MKPolyline else {
-      return MKOverlayRenderer(overlay: overlay)
-    }
-    let renderer = MKPolylineRenderer(polyline: polyline)
-    renderer.strokeColor = UIColor.systemYellow
-    renderer.lineWidth = 7
-    renderer.lineJoin = .round
-    renderer.lineCap = .round
-    return renderer
+    _ mapView: MLNMapView,
+    strokeColorForShapeAnnotation annotation: MLNShape
+  ) -> UIColor {
+    annotation is MLNPolyline ? .systemYellow : .clear
   }
 
   func mapView(
-    _ mapView: MKMapView,
-    viewFor annotation: MKAnnotation
-  ) -> MKAnnotationView? {
+    _ mapView: MLNMapView,
+    lineWidthForPolylineAnnotation annotation: MLNPolyline
+  ) -> CGFloat {
+    7
+  }
+
+  func mapView(
+    _ mapView: MLNMapView,
+    viewFor annotation: MLNAnnotation
+  ) -> MLNAnnotationView? {
     guard let rider = annotation as? CarPlayRiderAnnotation else { return nil }
     let reuseID = "CarPlayRider"
     let view =
       mapView.dequeueReusableAnnotationView(withIdentifier: reuseID)
-      as? MKMarkerAnnotationView
-      ?? MKMarkerAnnotationView(annotation: rider, reuseIdentifier: reuseID)
-    view.annotation = rider
-    view.canShowCallout = true
-    // The back-marker is picked out from the rest of the group. A leader
-    // glancing at a head unit is looking for one rider in particular, and
-    // reading initials off a moving map at speed is not a way to find them.
-    view.markerTintColor = rider.needsAttention
-      ? .systemOrange
-      : rider.isLocal ? .systemBlue : rider.isTec ? .systemGreen : .systemGray
-    view.glyphText = rider.isLocal
-      ? "You"
-      : rider.isTec ? "TEC" : String(rider.title?.prefix(1) ?? "•")
+      as? CarPlayRiderAnnotationView
+      ?? CarPlayRiderAnnotationView(reuseIdentifier: reuseID)
+    view.apply(rider)
     return view
   }
 
-  func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-    let userIsMovingMap = mapView.subviews
-      .compactMap(\.gestureRecognizers)
-      .flatMap { $0 }
-      .contains { $0.state == .began || $0.state == .changed }
-    if userIsMovingMap {
+  func mapView(
+    _ mapView: MLNMapView,
+    regionWillChangeWith reason: MLNCameraChangeReason,
+    animated: Bool
+  ) {
+    // MapLibre names the reason, so a rider taking the map over is detected
+    // outright rather than inferred from gesture-recogniser state the way the
+    // MapKit implementation had to.
+    let gestures: MLNCameraChangeReason = [
+      .gesturePan, .gesturePinch, .gestureRotate, .gestureZoomIn,
+      .gestureZoomOut, .gestureOneFingerZoom, .gestureTilt,
+    ]
+    if !reason.intersection(gestures).isEmpty {
       followsLocalRider = false
       mapView.userTrackingMode = .none
     }
   }
 }
 
-private final class CarPlayRiderAnnotation: NSObject, MKAnnotation {
+private final class CarPlayRiderAnnotation: NSObject, MLNAnnotation {
   @objc dynamic var coordinate: CLLocationCoordinate2D
   let title: String?
   let subtitle: String?
@@ -581,6 +660,48 @@ private final class CarPlayRiderAnnotation: NSObject, MKAnnotation {
     self.isLocal = isLocal
     self.isTec = isTec
     self.needsAttention = needsAttention
+  }
+}
+
+/// One rider on the CarPlay map.
+///
+/// A filled pill carrying a word rather than a bare coloured dot: the
+/// back-marker is the rider a leader is looking *for*, and picking one dot out
+/// of a group through a visor at speed is not a way to find them.
+private final class CarPlayRiderAnnotationView: MLNAnnotationView {
+  private let label = UILabel()
+
+  init(reuseIdentifier: String) {
+    super.init(reuseIdentifier: reuseIdentifier)
+    isEnabled = false
+    layer.cornerRadius = 11
+    layer.cornerCurve = .continuous
+    layer.borderWidth = 2
+    layer.borderColor = UIColor.white.cgColor
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.font = .systemFont(ofSize: 12, weight: .heavy)
+    label.textColor = .white
+    label.textAlignment = .center
+    addSubview(label)
+    NSLayoutConstraint.activate([
+      label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
+      label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+      label.centerYAnchor.constraint(equalTo: centerYAnchor),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  func apply(_ rider: CarPlayRiderAnnotation) {
+    label.text = rider.isLocal
+      ? "You"
+      : rider.isTec ? "TEC" : String(rider.title?.prefix(1) ?? "•")
+    backgroundColor = rider.needsAttention
+      ? .systemOrange
+      : rider.isLocal ? .systemBlue : rider.isTec ? .systemGreen : .systemGray
+    let width = max(30, label.intrinsicContentSize.width + 14)
+    frame = CGRect(x: 0, y: 0, width: width, height: 22)
   }
 }
 

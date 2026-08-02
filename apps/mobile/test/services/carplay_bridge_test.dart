@@ -4,6 +4,7 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/geo_point.dart' as presence;
 import 'package:ride_relay/domain/rider_location.dart';
+import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/carplay_bridge.dart';
 import 'package:ride_relay/services/carplay_tec_status.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
@@ -77,6 +78,7 @@ void main() {
           'trendLabel': null,
         },
         'tecRequest': null,
+        'basemap': null,
         'updatedAtMillis': DateTime.utc(2026, 7, 23, 12).millisecondsSinceEpoch,
         'riders': <Object?>[],
         'alert': null,
@@ -308,6 +310,65 @@ void main() {
       'Sam has asked you to ride at the back and keep the group together.',
     );
   });
+
+  // #321: the head unit renders with the phone's own MapLibre styles so it
+  // shares the tile cache and survives a signal drop. Both styles travel
+  // because the car has its own day/night state.
+  test('carries both basemap styles to the head unit', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+      basemap: const BasemapConfiguration(
+        styleUrl: 'https://tiles.example.com/day',
+        darkStyleUrl: 'https://tiles.example.com/night',
+      ),
+    );
+
+    expect((received!.arguments as Map)['basemap'], {
+      'styleUrl': 'https://tiles.example.com/day',
+      'darkStyleUrl': 'https://tiles.example.com/night',
+    });
+  });
+
+  // A build that configures only one style must not leave the car with an
+  // empty URL and a blank map in whichever mode it happens to be in.
+  test(
+    'falls back to the day style when no dark style is configured',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
+      final bridge = CarPlayBridge(channel: channel);
+      addTearDown(bridge.dispose);
+
+      await bridge.publish(
+        session: null,
+        riderLocations: const [],
+        routeAlerts: const [],
+        activeHazards: const [],
+        basemap: const BasemapConfiguration(
+          styleUrl: 'https://tiles.example.com/day',
+        ),
+      );
+
+      expect((received!.arguments as Map)['basemap'], {
+        'styleUrl': 'https://tiles.example.com/day',
+        'darkStyleUrl': 'https://tiles.example.com/day',
+      });
+    },
+  );
 
   test('names the role rather than a rider when the leader is unknown', () {
     const request = CarPlayTecRequest(requestId: 'req-1', leaderName: null);

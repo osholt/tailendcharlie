@@ -9,6 +9,7 @@ import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
+import 'basemap_configuration.dart';
 import 'carplay_tec_status.dart';
 
 /// Publishes projected ride and navigation state to the native CarPlay and
@@ -99,6 +100,7 @@ class CarPlayBridge {
     CarPlayTecStatus tec = CarPlayTecStatus.absent,
     Set<String> effectiveTecRiderIds = const {},
     CarPlayTecRequest? tecRequest,
+    BasemapConfiguration? basemap,
   }) async {
     final now = _clock();
     // A question addressed to this rider is an event, not a state refresh. It
@@ -130,6 +132,18 @@ class CarPlayBridge {
       'markerStatus': markerStatus,
       'tec': tec.toSnapshot(),
       'tecRequest': tecRequest?.toSnapshot(),
+      // The head unit draws with the same MapLibre styles as the phone, and
+      // shares its tile cache, so it keeps a basemap through a signal drop
+      // instead of going grey (#321). Both styles travel: the car has its own
+      // day/night state and picks between them itself.
+      'basemap': basemap == null
+          ? null
+          : {
+              'styleUrl': basemap.styleUrl,
+              'darkStyleUrl': basemap.darkStyleUrl.isEmpty
+                  ? basemap.styleUrl
+                  : basemap.darkStyleUrl,
+            },
       'updatedAtMillis': now.millisecondsSinceEpoch,
       'riders': [
         for (final location in riderLocations)

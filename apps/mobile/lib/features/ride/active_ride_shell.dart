@@ -2390,6 +2390,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         markerStatus: _junctionMarkerOverlay.value?.instruction,
         tec: tec,
         effectiveTecRiderIds: effectiveTecRiderIds,
+        basemap: BasemapConfiguration.fromEnvironment(),
         tecRequest: pendingTecRequest == null
             ? null
             : CarPlayTecRequest(
