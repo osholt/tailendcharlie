@@ -627,8 +627,30 @@ bool? _leftHandTraffic(String? drivingSide) =>
       _ => null,
     };
 
+/// The direction a routing engine's `modifier` states, or
+/// [ManeuverDirection.unstated] where it says nothing this app understands.
+///
+/// Public so a manoeuvre can be shown the engine's own words beside what the
+/// app made of them (#302): a modifier that arrives as `unstated` here is the
+/// difference between the app repeating the engine and the app working the
+/// direction out from geometry, and that is the first thing worth knowing
+/// about a turn that came out wrong.
+ManeuverDirection directionFromModifier(String? modifier) =>
+    _directionFromModifier(modifier);
+
 ManeuverDirection _directionFromModifier(String? modifier) {
-  final normalized = modifier?.trim().toLowerCase().replaceAll('-', '');
+  // A hyphen is a separator, not a character to delete. This used to
+  // `replaceAll('-', '')`, which is right for `u-turn` and wrong for every
+  // other modifier: `sharp-right` became `sharpright`, matched nothing, and
+  // returned `unstated`, so an engine that hyphenates silently lost its stated
+  // direction and fell through to geometry. Splitting on either separator
+  // handles both, and `uturn` collapses because it is one word either way.
+  final normalized = modifier
+      ?.trim()
+      .toLowerCase()
+      .split(RegExp(r'[\s-]+'))
+      .where((word) => word.isNotEmpty)
+      .join(' ');
   return switch (normalized) {
     'sharp left' => ManeuverDirection.sharpLeft,
     'left' => ManeuverDirection.left,
@@ -637,13 +659,44 @@ ManeuverDirection _directionFromModifier(String? modifier) {
     'slight right' => ManeuverDirection.slightRight,
     'right' => ManeuverDirection.right,
     'sharp right' => ManeuverDirection.sharpRight,
-    'uturn' => ManeuverDirection.uTurn,
+    'uturn' || 'u turn' => ManeuverDirection.uTurn,
     _ => ManeuverDirection.unstated,
   };
 }
 
 /// The straight band for an ordinary junction, where the roads meet directly.
 const _straightBandDegrees = 20.0;
+
+/// The straight band for an ordinary junction. Public so the boundaries can be
+/// asserted where they are declared rather than restated as literals (#302).
+const maneuverStraightBandDegrees = _straightBandDegrees;
+
+/// The straight band for a roundabout exit; see [_roundaboutStraightBandDegrees].
+const maneuverRoundaboutStraightBandDegrees = _roundaboutStraightBandDegrees;
+
+/// How far the rider's heading turns through [maneuver], positive clockwise,
+/// or null where the engine reported no bearings for it.
+///
+/// This is the number #302 asks to be captured before any threshold is moved:
+/// it is what [directionFromHeadingChange] buckets, so a turn that came out
+/// with the wrong severity is either this number being wrong or the buckets
+/// being wrong, and the two have different fixes.
+double? maneuverHeadingChangeDegrees(RouteManeuver maneuver) {
+  final before = maneuver.bearingBeforeDegrees;
+  final after = maneuver.bearingAfterDegrees;
+  if (before == null || after == null) return null;
+  return _signedBearingDelta(before, after);
+}
+
+/// Buckets a signed heading change into a direction. See
+/// [_directionFromTurnDegrees].
+ManeuverDirection directionFromHeadingChange(
+  double degrees, {
+  double straightBandDegrees = _straightBandDegrees,
+}) => _directionFromTurnDegrees(
+  degrees,
+  straightBandDegrees: straightBandDegrees,
+);
 
 /// The straight band for a roundabout exit.
 ///
