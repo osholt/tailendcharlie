@@ -449,10 +449,11 @@ void main() {
         generatedAt: DateTime.utc(2026, 7, 16, 11, 31),
       );
 
-      expect(summary.startedAt, isNotNull);
+      // startedAt is non-nullable; only endedAt can be absent, and a ride that
+      // was ended must have it.
       expect(summary.endedAt, isNotNull);
       expect(
-        summary.endedAt!.difference(summary.startedAt!).inMinutes,
+        summary.endedAt!.difference(summary.startedAt).inMinutes,
         greaterThanOrEqualTo(89),
       );
       expect(summary.totalDistanceMeters, greaterThan(0));
