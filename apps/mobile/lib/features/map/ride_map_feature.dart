@@ -3944,7 +3944,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _positionSource,
         'ride-relay-position-badge',
         ml.CircleLayerProperties(
-          circleRadius: 16,
+          circleRadius: _localBadgeRadius,
           circleColor: _hexColor(widget.localBadgeColor),
           circleStrokeWidth: 3,
           circleStrokeColor: '#FFFFFF',
@@ -3961,7 +3961,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ),
           // Dark on a light badge: see [RouteTrailStyle.markerGlyph] (#133).
           iconColor: RouteTrailStyle.markerGlyphHex,
-          iconSize: 0.2,
+          // One image, so the size is settled here rather than per feature —
+          // but by the same rule the other rider layers use (#259).
+          iconSize: widget.localRiderSymbol.kind == RiderSymbolKind.initials
+              ? riderInitialsIconSize(badgeDiameter: _localBadgeRadius * 2)
+              : 0.2,
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -3978,8 +3982,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addCircleLayer(
         _overlaySource,
         'ride-relay-overlay-badges',
-        const ml.CircleLayerProperties(
-          circleRadius: 15,
+        ml.CircleLayerProperties(
+          circleRadius: _riderBadgeRadius,
           circleColor: ['get', 'color'],
           circleStrokeWidth: 2,
           circleStrokeColor: '#10151C',
@@ -3990,12 +3994,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addSymbolLayer(
         _overlaySource,
         'ride-relay-overlay-icons',
-        const ml.SymbolLayerProperties(
+        ml.SymbolLayerProperties(
           iconImage: ['get', 'iconImage'],
           // As above: the badge carries the colour, the glyph carries the shape,
           // and a dark glyph is the only way the shape survives on a light badge.
           iconColor: RouteTrailStyle.markerGlyphHex,
-          iconSize: 0.19,
+          iconSize: _riderIconSize(_riderBadgeRadius * 2, 0.19),
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -4454,6 +4458,33 @@ class _RideMapScreenState extends State<RideMapScreen> {
     true,
   ];
 
+  /// Radius of the coloured badge behind another rider's glyph.
+  static const _riderBadgeRadius = 15.0;
+
+  /// Radius of the local rider's own badge, which is drawn a little larger.
+  static const _localBadgeRadius = 16.0;
+
+  /// `icon-size` for a rider glyph, as an expression that gives initials their
+  /// own size.
+  ///
+  /// A bike or an emoji is a pictogram: it sits *inside* the badge, and
+  /// [pictogramIconSize] is the value each layer already had for one, passed
+  /// through untouched so no bike or emoji moves by a pixel. Initials are not a
+  /// pictogram — they are meant to fill the circle — and inheriting the
+  /// pictogram's size is what left them at about three quarters of what the
+  /// symbol picker's preview promised (#259). Theirs is derived from the badge
+  /// instead, by the one rule in `motorcycle_icon.dart`, so the three rider
+  /// layers and the picker cannot answer differently again.
+  static Object _riderIconSize(
+    double badgeDiameter,
+    double pictogramIconSize,
+  ) => <Object>[
+    'case',
+    <Object>['get', 'initialsSymbol'],
+    riderInitialsIconSize(badgeDiameter: badgeDiameter),
+    pictogramIconSize,
+  ];
+
   Map<String, dynamic> _overlayGeoJson() => MapGeoJson.points(
     (widget.overlayMarkers?.value ?? const <MapOverlayMarker>[])
         .take(1000)
@@ -4466,6 +4497,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
               'color': _hexColor(overlay.color),
               'hazardSymbol': overlay.hazardSymbol != null,
               'iconImage': _overlayIconImage(overlay),
+              'initialsSymbol':
+                  overlay.hazardSymbol == null &&
+                  overlay.riderSymbol.kind == RiderSymbolKind.initials,
             },
           ),
         ),
@@ -6521,6 +6555,10 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   static const _routeSource = 'ride-relay-mini-route';
   static const _riderSource = 'ride-relay-mini-riders';
 
+  /// Radius of a rider's badge on the group overview, which is smaller than the
+  /// main map's because the whole map is.
+  static const _miniBadgeRadius = 7.0;
+
   /// Left plus right, and top plus bottom, of the fit padding the old bounds
   /// call used. Subtracted before framing so padding can never exceed the box.
   static const _fitHorizontalPadding = 40.0;
@@ -6989,7 +7027,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         _riderSource,
         'ride-relay-mini-rider-circles',
         const ml.CircleLayerProperties(
-          circleRadius: 7,
+          circleRadius: _miniBadgeRadius,
           circleColor: ['get', 'color'],
           circleStrokeWidth: 1.5,
           circleStrokeColor: '#FFFFFF',
@@ -6999,10 +7037,14 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       await controller.addSymbolLayer(
         _riderSource,
         'ride-relay-mini-rider-symbols',
-        const ml.SymbolLayerProperties(
+        ml.SymbolLayerProperties(
           iconImage: ['get', 'iconImage'],
           iconColor: RouteTrailStyle.markerGlyphHex,
-          iconSize: 0.09,
+          // The same rule as the main map, at this map's badge size (#259).
+          iconSize: _RideMapScreenState._riderIconSize(
+            _miniBadgeRadius * 2,
+            0.09,
+          ),
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -7169,6 +7211,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 rider.riderDisplayName ?? rider.label,
                 rider.motorcycleStyle ?? motorcycleIconStyleDefault,
               ),
+              'initialsSymbol':
+                  rider.riderSymbol.kind == RiderSymbolKind.initials,
             },
           ),
         if (snapshot.currentPosition case final point?)
@@ -7181,6 +7225,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 widget.localDisplayName,
                 widget.localMotorcycleStyle,
               ),
+              'initialsSymbol':
+                  widget.localRiderSymbol.kind == RiderSymbolKind.initials,
             },
           ),
       ]);
