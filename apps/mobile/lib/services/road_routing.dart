@@ -646,9 +646,18 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
       );
     }
     final points = <GeoPoint>[];
+    // Each leg's shape repeats the previous leg's last point, so a leg's own
+    // shape index maps into the combined line at this offset. Recorded as the
+    // legs are joined because it is the only place the two indexings meet.
+    final legShapeOffsets = <int>[];
+    final rawLegManeuvers = <List<Object?>>[];
     for (final leg in trip['legs'] as List) {
       if (leg is! Map) continue;
       final shape = decodeValhallaShape(leg['shape']);
+      legShapeOffsets.add(points.isEmpty ? 0 : points.length - 1);
+      rawLegManeuvers.add(
+        leg['maneuvers'] is List ? leg['maneuvers'] as List : const [],
+      );
       points.addAll(points.isEmpty ? shape : shape.skip(1));
     }
     if (points.length < 2) {
@@ -668,13 +677,182 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
       points: List.unmodifiable(points),
       distanceMeters: distanceMeters,
       duration: Duration(milliseconds: (seconds.toDouble() * 1000).round()),
-      maneuvers: miniRoundabouts.enrich(route: points, maneuvers: const []),
+      maneuvers: miniRoundabouts.enrich(
+        route: points,
+        maneuvers: parseManeuvers(
+          route: points,
+          legManeuvers: rawLegManeuvers,
+          legShapeOffsets: legShapeOffsets,
+        ),
+      ),
       twistinessScore: RouteTwistiness.score(
         points,
         distanceMeters: distanceMeters,
       ),
       preferences: resolved,
     );
+  }
+
+  /// How far either side of a manoeuvre the approach and departure headings are
+  /// measured.
+  ///
+  /// Valhalla states a manoeuvre's direction in its `type`, so this only feeds
+  /// the roundabout instruction, which is derived from geometry because neither
+  /// of a roundabout's own modifiers describes the direction through the
+  /// junction. 20 m is chosen against that: a mini-roundabout is 10–25 m
+  /// across, so it reaches the approach and exit roads rather than sampling the
+  /// ring itself, while staying short enough that the next bend along is not
+  /// mistaken for part of the turn.
+  static const maneuverBearingSampleMeters = 20.0;
+
+  /// Valhalla's manoeuvres, translated into the same shape the OSRM path
+  /// produces.
+  ///
+  /// This used to be `const []`. Every route planned with a motorcycle
+  /// preference — avoid motorways, prefer twisty roads (#182) — therefore
+  /// arrived with **no turn instructions at all**, which is why navigation
+  /// "sometimes worked and sometimes didn't" (#303): whether a rider got turn
+  /// guidance depended on whether they had set a preference. Valhalla does
+  /// return manoeuvres; they were simply never read.
+  ///
+  /// Exposed for tests so the mapping can be asserted against a real response
+  /// body rather than through a mock client.
+  static List<RoadRouteManeuver> parseManeuvers({
+    required List<GeoPoint> route,
+    required List<List<Object?>> legManeuvers,
+    required List<int> legShapeOffsets,
+  }) {
+    final maneuvers = <RoadRouteManeuver>[];
+    for (final (legIndex, raw) in legManeuvers.indexed) {
+      final offset = legIndex < legShapeOffsets.length
+          ? legShapeOffsets[legIndex]
+          : 0;
+      for (final rawManeuver in raw) {
+        if (rawManeuver is! Map) continue;
+        final type = rawManeuver['type'];
+        if (type is! num) continue;
+        final mapped = _valhallaManeuverType(type.toInt());
+        if (mapped == null) continue;
+        final beginIndex = rawManeuver['begin_shape_index'];
+        if (beginIndex is! num) continue;
+        final index = (offset + beginIndex.toInt()).clamp(0, route.length - 1);
+        final position = route[index];
+        final isRingEntry = mapped.type == 'roundabout';
+        final isRingExit = mapped.type == 'exit roundabout';
+        maneuvers.add(
+          RoadRouteManeuver(
+            position: position,
+            type: mapped.type,
+            modifier: mapped.modifier,
+            name: _valhallaStreetName(rawManeuver['street_names']),
+            // Valhalla counts roundabout exits on the manoeuvre that enters the
+            // ring, which is the same place OSRM reports `exit`.
+            exitNumber: isRingEntry
+                ? (rawManeuver['roundabout_exit_count'] as num?)?.toInt()
+                : null,
+            // Only where the roundabout instruction needs them. An ordinary
+            // turn's direction comes from its type, so measuring a heading for
+            // it would add a second, weaker opinion about the same thing.
+            bearingBeforeDegrees: isRingEntry
+                ? _bearingApproaching(route, index)
+                : null,
+            bearingAfterDegrees: isRingExit
+                ? _bearingLeaving(route, index)
+                : null,
+          ),
+        );
+      }
+    }
+    return List.unmodifiable(maneuvers);
+  }
+
+  /// Valhalla's `DirectionsLeg.Maneuver.Type` as the app's own step type and
+  /// modifier, or null for a manoeuvre this app has nothing to say about.
+  ///
+  /// The strings on the right are the OSRM vocabulary the rest of the app
+  /// already speaks — `navigation_guidance.dart` maps them to a kind and a
+  /// direction — so both engines converge before anything downstream sees them.
+  static ({String type, String? modifier})? _valhallaManeuverType(int type) =>
+      switch (type) {
+        1 || 2 || 3 => (type: 'depart', modifier: null),
+        4 || 5 || 6 => (type: 'arrive', modifier: null),
+        7 => (type: 'new name', modifier: null),
+        8 => (type: 'continue', modifier: 'straight'),
+        9 => (type: 'turn', modifier: 'slight right'),
+        10 => (type: 'turn', modifier: 'right'),
+        11 => (type: 'turn', modifier: 'sharp right'),
+        // Valhalla distinguishes which way round a U-turn is ridden; the app
+        // deliberately never names a side for one, because that depends on the
+        // driving side rather than on the route.
+        12 || 13 => (type: 'turn', modifier: 'uturn'),
+        14 => (type: 'turn', modifier: 'sharp left'),
+        15 => (type: 'turn', modifier: 'left'),
+        16 => (type: 'turn', modifier: 'slight left'),
+        17 => (type: 'on ramp', modifier: 'straight'),
+        18 => (type: 'on ramp', modifier: 'right'),
+        19 => (type: 'on ramp', modifier: 'left'),
+        20 => (type: 'off ramp', modifier: 'right'),
+        21 => (type: 'off ramp', modifier: 'left'),
+        22 => (type: 'fork', modifier: 'straight'),
+        23 => (type: 'fork', modifier: 'right'),
+        24 => (type: 'fork', modifier: 'left'),
+        25 => (type: 'merge', modifier: null),
+        26 => (type: 'roundabout', modifier: null),
+        27 => (type: 'exit roundabout', modifier: null),
+        37 => (type: 'merge', modifier: 'right'),
+        38 => (type: 'merge', modifier: 'left'),
+        // Ferries, transit, lifts and building entrances are not steps a
+        // motorcycle route can act on, and inventing a direction for one would
+        // be worse than leaving it out.
+        _ => null,
+      };
+
+  static String? _valhallaStreetName(Object? streetNames) {
+    if (streetNames is! List) return null;
+    for (final name in streetNames) {
+      if (name is String && name.trim().isNotEmpty) return name.trim();
+    }
+    return null;
+  }
+
+  /// Heading on the way in, measured back along the route.
+  static double? _bearingApproaching(List<GeoPoint> route, int index) {
+    final from = _pointBackFrom(route, index, maneuverBearingSampleMeters);
+    if (from == null) return null;
+    return _bearingDegrees(from, route[index]);
+  }
+
+  /// Heading on the way out, measured forward along the route.
+  static double? _bearingLeaving(List<GeoPoint> route, int index) {
+    final to = _pointForwardFrom(route, index, maneuverBearingSampleMeters);
+    if (to == null) return null;
+    return _bearingDegrees(route[index], to);
+  }
+
+  static GeoPoint? _pointBackFrom(
+    List<GeoPoint> route,
+    int index,
+    double meters,
+  ) {
+    var remaining = meters;
+    for (var i = index; i > 0; i -= 1) {
+      remaining -= _distanceMeters(route[i - 1], route[i]);
+      if (remaining <= 0) return route[i - 1];
+    }
+    return index > 0 ? route.first : null;
+  }
+
+  static GeoPoint? _pointForwardFrom(
+    List<GeoPoint> route,
+    int index,
+    double meters,
+  ) {
+    var remaining = meters;
+    for (var i = index; i < route.length - 1; i += 1) {
+      remaining -= _distanceMeters(route[i], route[i + 1]);
+      if (remaining <= 0) return route[i + 1];
+    }
+    return index < route.length - 1 ? route.last : null;
   }
 
   /// Valhalla encodes leg shapes as a precision-6 encoded polyline.
@@ -725,13 +903,22 @@ class PreferenceAwareRoadRoutingService implements RoadRoutingService {
     required this.motorcycle,
   });
 
-  /// Warning shown when the motorcycle engine had to be used and therefore no
-  /// turn instructions came back. Stated rather than hidden: the route is still
-  /// correct, but the app will infer junctions from its shape.
+  /// Warning shown when a planned route came back with no turn instructions.
+  ///
+  /// It used to say the motorcycle router "does not return turn instructions",
+  /// and to be shown on every preference-routed plan. Both halves were wrong:
+  /// Valhalla does return manoeuvres — they were being discarded — and nothing
+  /// in the app ever worked ordinary junctions out from the route shape, so the
+  /// sentence described a fallback that did not exist. A rider setting "avoid
+  /// motorways" was silently choosing a route with no turn guidance (#303).
+  ///
+  /// It is kept, because a route with no manoeuvres is still possible and must
+  /// still be said out loud, but it is now raised on the fact rather than on
+  /// the engine.
   static const motorcycleManeuverWarning =
-      'These preferences need the motorcycle router, which does not return turn '
-      'instructions. Reviewed mapped mini-roundabouts are retained; other '
-      'junctions are worked out from the route shape.';
+      'This route came back with no turn instructions, so the app will not '
+      'announce junctions on it. The line on the map is still the route to '
+      'follow.';
 
   final RoadRoutingService osrm;
   final RoadRoutingService motorcycle;
@@ -905,8 +1092,10 @@ class DestinationRoutePlanner {
       ...resolvedStops.map((stop) => stop.point),
       destination.point,
     ], preferences: preferences);
-    if (routingService case final PreferenceAwareRoadRoutingService dispatcher
-        when dispatcher.usesMotorcycleCosting(preferences)) {
+    // Raised on what came back, not on which engine was asked. Warning every
+    // preference-routed plan was how a real absence of turn guidance stayed
+    // invisible: it was indistinguishable from the standing notice (#303).
+    if (roadRoute.maneuvers.isEmpty) {
       warnings.add(PreferenceAwareRoadRoutingService.motorcycleManeuverWarning);
     }
     final id = _idFactory();
