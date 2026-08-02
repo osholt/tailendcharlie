@@ -503,8 +503,200 @@ void main() {
       expect(result.points.last.longitude, closeTo(-1.01, 1e-9));
       expect(result.distanceMeters, 12500);
       expect(result.duration, const Duration(seconds: 900));
-      // Honest about what the motorcycle service does not return.
+      // This response carries no manoeuvres of its own, and none are invented
+      // for it. What changed in #303 is that a response which *does* carry them
+      // no longer has them discarded — see the group below.
       expect(result.maneuvers, isEmpty);
+    });
+
+    group('the motorcycle router keeps its turn instructions (#303)', () {
+      // `maneuvers: const []`. Every route planned with a motorcycle
+      // preference — avoid motorways, prefer twisty roads (#182) — arrived with
+      // no turn instructions at all, so whether a rider got guidance depended
+      // on whether they had set a preference. "Sometimes the navigation worked
+      // well and sometimes it didn't."
+
+      /// Fifty metres north, then east: an approach road, a junction at index
+      /// 5, and an exit road, at roughly 10 m spacing.
+      List<GeoPoint> lRoute() => [
+        for (var i = 0; i <= 5; i += 1)
+          GeoPoint(latitude: 53 + i * 0.00009, longitude: -1),
+        for (var i = 1; i <= 5; i += 1)
+          GeoPoint(latitude: 53 + 5 * 0.00009, longitude: -1 + i * 0.000148),
+      ];
+
+      test('an ordinary turn keeps its direction and its road name', () {
+        final maneuvers = ValhallaMotorcycleRoutingService.parseManeuvers(
+          route: lRoute(),
+          legShapeOffsets: const [0],
+          legManeuvers: const [
+            [
+              {'type': 1, 'begin_shape_index': 0},
+              {
+                'type': 10,
+                'begin_shape_index': 5,
+                'street_names': ['Bath Road'],
+              },
+              {'type': 4, 'begin_shape_index': 10},
+            ],
+          ],
+        );
+
+        expect(maneuvers.map((m) => m.type), ['depart', 'turn', 'arrive']);
+        expect(maneuvers[1].modifier, 'right');
+        expect(maneuvers[1].name, 'Bath Road');
+        expect(maneuvers[1].position.latitude, closeTo(53.00045, 1e-9));
+      });
+
+      test('every turn severity maps to the vocabulary the app speaks', () {
+        // These strings are the OSRM vocabulary `navigation_guidance.dart`
+        // already parses, so both engines converge before anything downstream
+        // sees them. A mapping that drifted would silently produce `unstated`
+        // and the rider would be told a junction is coming with no direction.
+        const expected = <int, String>{
+          9: 'slight right',
+          10: 'right',
+          11: 'sharp right',
+          14: 'sharp left',
+          15: 'left',
+          16: 'slight left',
+          12: 'uturn',
+          13: 'uturn',
+        };
+
+        final maneuvers = ValhallaMotorcycleRoutingService.parseManeuvers(
+          route: lRoute(),
+          legShapeOffsets: const [0],
+          legManeuvers: [
+            [
+              for (final type in expected.keys)
+                {'type': type, 'begin_shape_index': 5},
+            ],
+          ],
+        );
+
+        expect(
+          maneuvers.map((m) => m.modifier).toList(),
+          expected.values.toList(),
+        );
+        expect(maneuvers.every((m) => m.type == 'turn'), isTrue);
+      });
+
+      test('a roundabout keeps its exit count and gets usable bearings', () {
+        // Neither of a roundabout's own modifiers describes the direction
+        // through the junction, so the instruction is derived from the heading
+        // on the way in against the heading on the way out. Those are the only
+        // manoeuvres given bearings.
+        final maneuvers = ValhallaMotorcycleRoutingService.parseManeuvers(
+          route: lRoute(),
+          legShapeOffsets: const [0],
+          legManeuvers: const [
+            [
+              {'type': 26, 'begin_shape_index': 5, 'roundabout_exit_count': 3},
+              {
+                'type': 27,
+                'begin_shape_index': 6,
+                'street_names': ['Bridgeyate Road'],
+              },
+            ],
+          ],
+        );
+
+        expect(maneuvers[0].type, 'roundabout');
+        expect(maneuvers[0].exitNumber, 3);
+        expect(
+          maneuvers[0].bearingBeforeDegrees,
+          closeTo(0, 1),
+          reason: 'the approach road runs due north',
+        );
+        expect(maneuvers[1].type, 'exit roundabout');
+        expect(
+          maneuvers[1].bearingAfterDegrees,
+          closeTo(90, 1),
+          reason: 'the exit road runs due east',
+        );
+        expect(
+          maneuvers[1].exitNumber,
+          isNull,
+          reason: 'the count belongs to the manoeuvre that enters the ring',
+        );
+      });
+
+      test('a second leg indexes into the joined line, not its own', () {
+        // Each leg's shape repeats the previous leg's last point, so a leg's
+        // own index is not the combined one. Getting this wrong would place
+        // every manoeuvre after the first stop at the wrong junction.
+        final route = lRoute();
+        final maneuvers = ValhallaMotorcycleRoutingService.parseManeuvers(
+          route: route,
+          legShapeOffsets: const [0, 5],
+          legManeuvers: const [
+            [
+              {'type': 10, 'begin_shape_index': 2},
+            ],
+            [
+              {'type': 15, 'begin_shape_index': 2},
+            ],
+          ],
+        );
+
+        expect(maneuvers[0].position, route[2]);
+        expect(maneuvers[1].position, route[7]);
+      });
+
+      test('a manoeuvre the app cannot act on is left out, not guessed at', () {
+        // Ferries, transit and building entrances. Inventing a direction for
+        // one would be worse than omitting it.
+        final maneuvers = ValhallaMotorcycleRoutingService.parseManeuvers(
+          route: lRoute(),
+          legShapeOffsets: const [0],
+          legManeuvers: const [
+            [
+              {'type': 28, 'begin_shape_index': 1},
+              {'type': 30, 'begin_shape_index': 2},
+              {'type': 10, 'begin_shape_index': 5},
+              {'type': 999, 'begin_shape_index': 6},
+            ],
+          ],
+        );
+
+        expect(maneuvers, hasLength(1));
+        expect(maneuvers.single.modifier, 'right');
+      });
+
+      test(
+        'a routed response reaches the caller with its manoeuvres',
+        () async {
+          final service = ValhallaMotorcycleRoutingService(
+            client: MockClient(
+              (_) async => http.Response(
+                _valhallaResponse(
+                  maneuvers: const [
+                    {'type': 1, 'begin_shape_index': 0},
+                    {
+                      'type': 11,
+                      'begin_shape_index': 1,
+                      'street_names': ['Cloud Hill'],
+                    },
+                    {'type': 4, 'begin_shape_index': 2},
+                  ],
+                ),
+                200,
+              ),
+            ),
+            routeUrl: Uri.parse('https://valhalla.example.test/route'),
+          );
+
+          final result = await service.routeThrough(
+            _twoPoints,
+            preferences: const RoutePreferences(avoidMotorways: true),
+          );
+
+          expect(result.maneuvers, hasLength(3));
+          expect(result.maneuvers[1].modifier, 'sharp right');
+          expect(result.maneuvers[1].name, 'Cloud Hill');
+        },
+      );
     });
 
     test('allowing unsurfaced byways relaxes both surface levers', () async {
@@ -616,6 +808,49 @@ void main() {
       );
     });
 
+    test('a preference-routed plan that has turn instructions is not warned '
+        'about (#303)', () async {
+      // The warning used to be raised on the engine, so every preference-routed
+      // plan carried it whether or not it had turns — which is precisely how a
+      // real absence of turn guidance stayed invisible. It is now raised on
+      // what came back.
+      final plan =
+          await DestinationRoutePlanner(
+            searchService: const _FakeDestinationSearchService({
+              'Start': [
+                DestinationMatch(
+                  label: 'Start',
+                  point: GeoPoint(latitude: 53, longitude: -1),
+                ),
+              ],
+              'Finish': [
+                DestinationMatch(
+                  label: 'Finish',
+                  point: GeoPoint(latitude: 53.2, longitude: -1.2),
+                ),
+              ],
+            }),
+            routingService: PreferenceAwareRoadRoutingService(
+              osrm: _FakeRoadRoutingService(),
+              // The same motorcycle engine, now returning what Valhalla
+              // actually sends.
+              motorcycle: _FakeRoadRoutingService(),
+            ),
+          ).planForReview(
+            originQuery: 'Start',
+            query: 'Finish',
+            preferences: const RoutePreferences(avoidMotorways: true),
+          );
+
+      expect(plan.route.maneuvers, isNotEmpty);
+      expect(
+        plan.warnings,
+        isNot(
+          contains(PreferenceAwareRoadRoutingService.motorcycleManeuverWarning),
+        ),
+      );
+    });
+
     test('re-snapping a shared route reuses its own preferences', () async {
       final routing = _FakeRoadRoutingService();
       final route = ImportedRoute(
@@ -700,15 +935,16 @@ String _osrmAlternativesResponse() {
   });
 }
 
-String _valhallaResponse() => jsonEncode({
-  'trip': {
-    'legs': [
-      // Precision-6 encoded polyline for three points near 53.0, -1.0.
-      {'shape': _encodedShape},
-    ],
-    'summary': {'length': 12.5, 'time': 900},
-  },
-});
+String _valhallaResponse({List<Map<String, Object?>>? maneuvers}) =>
+    jsonEncode({
+      'trip': {
+        'legs': [
+          // Precision-6 encoded polyline for three points near 53.0, -1.0.
+          {'shape': _encodedShape, 'maneuvers': ?maneuvers},
+        ],
+        'summary': {'length': 12.5, 'time': 900},
+      },
+    });
 
 /// `(53.0, -1.0), (53.005, -1.005), (53.01, -1.01)` at precision 6.
 const _encodedShape = '_szadB~b`|@owHnwHowHnwH';
