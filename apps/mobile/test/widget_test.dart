@@ -548,6 +548,13 @@ void main() {
     await controller.startRide();
     await controller.startMarker();
     await controller.recordMarkerPass('rider-a');
+    // The state that exposed the guard defect (#306). Marking changes the
+    // session role, so `session.role` is no longer `lead` while
+    // `isLocalRideLeader` still is — and the shell's own end-ride guard read the
+    // former while both entry points offer the action on the latter. A leader
+    // marking a junction could tap End ride and have nothing happen.
+    expect(controller.session?.role, isNot(RideRole.lead));
+    expect(controller.isLocalRideLeader, isTrue);
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
@@ -558,6 +565,10 @@ void main() {
 
     expect(find.byKey(const Key('end-ride-marking-summary')), findsOneWidget);
     expect(find.textContaining('1 session'), findsOneWidget);
+    // Both entry points now share one dialog, so the consequence a leader reads
+    // no longer depends on which button they pressed (#306). This is the half
+    // the dashboard's own dialog never had.
+    expect(find.textContaining('ends the group ride for everyone'), findsOne);
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
