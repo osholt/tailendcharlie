@@ -158,6 +158,30 @@ see #274.
 
 Observed alongside it: an empty red assistance alert with no text, filed as #278.
 
+### 2026-08-02 — step 18 re-run against a local relay (#281)
+
+Status: **passes locally; the deployed relay is unchanged.** A style now exists
+at `deploy/maps/styles/ride-relay.json`, and Caddy serves it alongside proxied
+tiles and glyphs.
+
+Verified by running the production `deploy/Caddyfile` unmodified in a container
+and loading a MapLibre map against it under the observer's exact CSP: roads,
+water, parks and labels all draw, `map.on("error")` stays empty, and the marker
+reads clearly against the basemap. `tools/check-observer-basemap.sh` passes all
+three checks, and fails as expected when pointed at a relay without the fix.
+
+Two failures found only because the map was rendered rather than curl-checked,
+both of which return a healthy-looking `200`:
+
+- Relative tile URLs never resolve. MapLibre fetches from a worker with no
+  document base, so `../basemap/...` throws inside the worker and the map stays
+  blank with no error surfaced. The style now emits absolute URLs.
+- The upstream answers `200` with a zero-byte body when the tile path is one
+  component short, which also draws nothing and reports nothing.
+
+Not yet confirmed against the real relay, because CI does not deploy it. Until
+someone redeploys, a safety contact still sees `Last known: <lat>, <lon>`.
+
 ### 2026-07-31 — iPhone↔iPhone subset
 
 Status: **not yet run.** Steps 3, 4, 5, 6, 8, 9, 10, 11, 13, 14, 16, 17, 20, 21,

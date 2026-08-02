@@ -27,12 +27,52 @@
 
 	handle_path /maps/styles/* {
 		root * /srv/maps/styles
+		# The style has to emit absolute tile and glyph URLs, and the correct host
+		# differs between production, preproduction and a local run. Rendering it
+		# per request keeps one file correct everywhere. Without this the URLs stay
+		# as raw template text, MapLibre cannot parse them, and the map is blank.
+		# The mime list is required: templates only processes text/html and plain
+		# text by default, so a .json style is passed through untouched.
+		templates {
+			mime application/json
+		}
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
 
 	handle_path /maps/tiles/* {
 		reverse_proxy martin:3000
+	}
+
+	# Basemap tiles and glyphs for the observer map, proxied rather than fetched
+	# by the browser. The observer page shows someone's live position, so the
+	# tiles it requests reveal roughly where that person is. Same-origin keeps
+	# that inside the relay, which already holds the ride. It is also what lets
+	# the observer keep its strict connect-src 'self' policy.
+	#
+	# The build segment must be present but its value does not matter: upstream
+	# serves byte-identical tiles for any value, and 404s for none. Drop the
+	# segment and the request is one component short, which answers 200 with a
+	# zero-byte body - a blank map that raises no MapLibre error, which is the
+	# failure being fixed. It stays an env var so a switch to self-hosted or to
+	# genuinely pinned builds is a config change, not an edit here.
+	# tools/check-observer-basemap.sh asserts on tile bytes, so a future upstream
+	# change that reintroduces the empty response fails loudly instead of
+	# quietly blanking the map.
+	handle_path /maps/basemap/* {
+		rewrite * /planet/{$RIDE_RELAY_BASEMAP_VERSION:20260726_080001_pt}{path}
+		reverse_proxy https://tiles.openfreemap.org {
+			header_up Host tiles.openfreemap.org
+		}
+		header Cache-Control "public, max-age=86400"
+	}
+
+	handle_path /maps/fonts/* {
+		rewrite * /fonts{path}
+		reverse_proxy https://tiles.openfreemap.org {
+			header_up Host tiles.openfreemap.org
+		}
+		header Cache-Control "public, max-age=604800"
 	}
 
 	handle_path /plan/* {

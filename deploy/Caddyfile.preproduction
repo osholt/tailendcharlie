@@ -27,12 +27,40 @@
 
 	handle_path /maps/styles/* {
 		root * /srv/maps/styles
+		# The style has to emit absolute tile and glyph URLs, and the correct host
+		# differs between production, preproduction and a local run. Rendering it
+		# per request keeps one file correct everywhere. Without this the URLs stay
+		# as raw template text, MapLibre cannot parse them, and the map is blank.
+		# The mime list is required: templates only processes text/html and plain
+		# text by default, so a .json style is passed through untouched.
+		templates {
+			mime application/json
+		}
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
 
 	handle_path /maps/tiles/* {
 		reverse_proxy martin:3000
+	}
+
+	# Mirrors production. See deploy/Caddyfile for why the observer's basemap is
+	# proxied rather than fetched direct, and why the build segment must be
+	# present even though its value is ignored upstream.
+	handle_path /maps/basemap/* {
+		rewrite * /planet/{$RIDE_RELAY_BASEMAP_VERSION:20260726_080001_pt}{path}
+		reverse_proxy https://tiles.openfreemap.org {
+			header_up Host tiles.openfreemap.org
+		}
+		header Cache-Control "public, max-age=86400"
+	}
+
+	handle_path /maps/fonts/* {
+		rewrite * /fonts{path}
+		reverse_proxy https://tiles.openfreemap.org {
+			header_up Host tiles.openfreemap.org
+		}
+		header Cache-Control "public, max-age=604800"
 	}
 
 	handle_path /plan/* {
@@ -85,6 +113,40 @@
 
 	@private_health path /health/*
 	respond @private_health 404
+
+	# This block serves the observer too, so it needs the same basemap routes as
+	# the production one. Without them the observer here draws no map, and the
+	# preproduction host cannot be used to check the thing most likely to break.
+	handle_path /maps/styles/* {
+		root * /srv/maps/styles
+		# The style has to emit absolute tile and glyph URLs, and the correct host
+		# differs between production, preproduction and a local run. Rendering it
+		# per request keeps one file correct everywhere. Without this the URLs stay
+		# as raw template text, MapLibre cannot parse them, and the map is blank.
+		# The mime list is required: templates only processes text/html and plain
+		# text by default, so a .json style is passed through untouched.
+		templates {
+			mime application/json
+		}
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
+
+	handle_path /maps/basemap/* {
+		rewrite * /planet/{$RIDE_RELAY_BASEMAP_VERSION:20260726_080001_pt}{path}
+		reverse_proxy https://tiles.openfreemap.org {
+			header_up Host tiles.openfreemap.org
+		}
+		header Cache-Control "public, max-age=86400"
+	}
+
+	handle_path /maps/fonts/* {
+		rewrite * /fonts{path}
+		reverse_proxy https://tiles.openfreemap.org {
+			header_up Host tiles.openfreemap.org
+		}
+		header Cache-Control "public, max-age=604800"
+	}
 
 	@observer_static path /observer.html /observer.css /observer.js /observer-core.mjs /styles.css /assets/*
 	handle @observer_static {

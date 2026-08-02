@@ -62,10 +62,16 @@ no basemap at all and nothing to fall back on, which is what a tester reported a
 dot and a trail on blank background (#274, #281). Route-corridor download is
 available in a default build as a result.
 
-What remains of #274 is the **operator-owned style**, which is a separate thing:
-the observer page fetches its style from the relay
-(`/maps/styles/ride-relay.json`), that returns 404, and until a style is deployed
-there a safety contact sees coordinates instead of a map.
+The observer map has a style now (#281). `/maps/styles/ride-relay.json` used to
+404, so a safety contact saw coordinates instead of a map; the relay serves a
+style and proxies its tiles and glyphs, keeping the observer's viewport inside a
+service that already holds the ride. **It only takes effect once the relay is
+redeployed** - CI does not deploy the relay - and
+`tools/check-observer-basemap.sh <origin>` confirms it.
+
+What remains of #274 is an **operator-owned tile archive**. The style is ours,
+but the tiles come from an upstream service, so the observer map still depends on
+someone else being up, and there is no offline region download.
 
 A licensed traffic provider (#277) is deferred by decision; see that issue.
 
