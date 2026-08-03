@@ -3199,6 +3199,7 @@ void main() {
     addTearDown(navigation.dispose);
     final speedLimitDisplay = SpeedLimitDisplayController.inMemory();
     addTearDown(speedLimitDisplay.dispose);
+    NavigationCameraViewport? projectedViewport;
     final cache = OfflineTileCache(
       rootDirectory: directory,
       configuration: const BasemapConfiguration(),
@@ -3219,6 +3220,9 @@ void main() {
           onEmergencyAlert: () async {},
           onLeaveRide: () async {},
           onReportHazard: (_) async {},
+          onNavigationViewportChanged: (viewport) {
+            projectedViewport = viewport;
+          },
         ),
       ),
     );
@@ -3243,6 +3247,13 @@ void main() {
     // it. The band no longer pushes it past the middle.
     expect(plan.forwardBiasPixels, greaterThan(0));
     expect(plan.riderViewportFraction, greaterThan(0.5));
+    expect(projectedViewport, isNotNull);
+    expect(projectedViewport!.latitude, closeTo(53, 0.01));
+    expect(projectedViewport!.longitude, greaterThan(-1.015));
+    expect(projectedViewport!.zoom, closeTo(plan.zoom, 0.01));
+    expect(projectedViewport!.tilt, 0);
+    expect(projectedViewport!.sourceViewportHeightPixels, size.height);
+    expect(projectedViewport!.mapStyleUrl, isEmpty);
     // Each round of decluttering has to buy the camera real look-ahead, so both
     // previous bands are held against this one: 431 pixels before #125, 342
     // after it, 296 now that the group overview has left the band (#133).

@@ -913,6 +913,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _mapNavigationPosition = ValueNotifier<MapNavigationPosition?>(null);
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
   final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
+  final _carPlayRouteProgressTracker = RouteProgressTracker();
   final _trailSimplifier = const TrailDisplaySimplifier();
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
 
@@ -2372,6 +2373,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             distanceUnit: widget.distanceUnits.value,
             now: DateTime.now(),
           );
+    final navigationRoute = _rejoinNavigationRoute.value ?? _activeRoute;
+    final routeProgress = _carPlayRouteProgressTracker.update(
+      navigationRoute,
+      _mapPosition.value,
+    );
+    final selectedBasemap = BasemapConfiguration.fromEnvironment()
+        .forBrightness(
+          dark: widget.mapStyleMode.resolveDark(
+            MediaQuery.platformBrightnessOf(context),
+          ),
+        );
     unawaited(
       bridge.publish(
         session: session,
@@ -2380,8 +2392,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             .where((alert) => activeRiderIds.contains(alert.riderId))
             .toList(growable: false),
         activeHazards: awareness.activeHazards,
-        route: _activeRoute,
-        routeName: _activeRoute?.name,
+        route: navigationRoute,
+        routeName: navigationRoute?.name,
         rideState: _projectedRideState,
         followRider:
             widget.rideController.rideStarted &&
@@ -2390,11 +2402,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         guidanceDetail: _projectedGuidanceDetail,
         guidanceRoadName: _latestNavigationGuidance?.roadLabel,
         guidanceDistanceMeters: _latestNavigationGuidance?.distanceMeters,
+        distanceUnit: widget.distanceUnits.value,
         groupStatus: '${visibleRiderLocations.length} riders visible',
         markerStatus: _junctionMarkerOverlay.value?.instruction,
         tec: tec,
         effectiveTecRiderIds: effectiveTecRiderIds,
-        basemap: BasemapConfiguration.fromEnvironment(),
+        basemap: selectedBasemap,
+        routeProgress: routeProgress,
         tecRequest: pendingTecRequest == null
             ? null
             : CarPlayTecRequest(
@@ -3501,6 +3515,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onOpenRideMenu: _openRideMenu,
       onRouteCommitted: _onRouteChanged,
       onNavigationGuidanceChanged: _onNavigationGuidanceChanged,
+      onNavigationViewportChanged: (viewport) {
+        final bridge = _carPlayBridge;
+        if (bridge != null) unawaited(bridge.publishViewport(viewport));
+      },
       changeRouteRequestToken: _changeRouteRequestToken,
       onChangeRouteRequestHandled: _clearChangeRouteRequest,
       pendingSharedGpxFile: _pendingSharedGpxFile,

@@ -5,12 +5,15 @@ import 'package:flutter/services.dart';
 
 import '../domain/hazard.dart';
 import '../domain/imported_route.dart';
+import '../domain/distance_unit.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 import 'basemap_configuration.dart';
 import 'carplay_tec_status.dart';
+import 'navigation_camera.dart';
+import 'route_progress.dart';
 
 /// Publishes projected ride and navigation state to the native CarPlay and
 /// Android Auto scenes, and relays the CarPlay emergency button back to
@@ -37,7 +40,7 @@ class CarPlayBridge {
     @visibleForTesting MethodChannel? channel,
     @visibleForTesting DateTime Function()? clock,
     @visibleForTesting
-    this._minimumPublishInterval = const Duration(seconds: 10),
+    this._minimumPublishInterval = const Duration(seconds: 1),
   }) : _channel =
            channel ?? const MethodChannel('me.osholt.ride_relay/carplay'),
        _clock = clock ?? DateTime.now {
@@ -60,10 +63,11 @@ class CarPlayBridge {
   String? _publishedTecRequestId;
   int _publishAttempt = 0;
 
-  /// Driving Task templates are deliberately low-frequency, glanceable
-  /// surfaces. Active rides supply regular location updates, so dropping
-  /// intermediate snapshots keeps the latest rider state flowing without
-  /// refreshing the CarPlay list more often than once every ten seconds.
+  /// The status list is glanceable, but the same snapshot also drives the live
+  /// rider markers, manoeuvre distance and route progress. Ten seconds left the
+  /// head unit visibly behind the phone during a ride, so full snapshots are
+  /// bounded to one per second while the much smaller camera viewport follows
+  /// the phone's own 400 ms camera cadence independently.
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
@@ -97,16 +101,18 @@ class CarPlayBridge {
     String? guidanceDetail,
     String? guidanceRoadName,
     double? guidanceDistanceMeters,
+    DistanceUnit? distanceUnit,
     String? groupStatus,
     String? markerStatus,
     CarPlayTecStatus tec = CarPlayTecStatus.absent,
     Set<String> effectiveTecRiderIds = const {},
     CarPlayTecRequest? tecRequest,
     BasemapConfiguration? basemap,
+    RouteProgressGeometry? routeProgress,
   }) async {
     final now = _clock();
     // A question addressed to this rider is an event, not a state refresh. It
-    // jumps the ten-second throttle in both directions: a leader who asks at a
+    // jumps the normal snapshot throttle in both directions: a leader who asks at a
     // fuel stop is standing there waiting, and an alert left on the head unit
     // after the request is answered, expired or superseded is asking a rider to
     // agree to something that is no longer on offer.
@@ -134,18 +140,25 @@ class CarPlayBridge {
       // rider camera. CarPlay needs that state explicitly; the presence of a
       // local fix alone cannot distinguish those two map views.
       'followRider': followRider,
+      'routeProgressMeters': routeProgress?.progressMeters,
+      'routeTotalMeters': routeProgress?.totalMeters,
+      'remainingRoutePoints': _projectProgressPath(
+        routeProgress?.remainingPaths,
+      ),
+      'riddenRoutePoints': _projectProgressPath(routeProgress?.riddenPaths),
       'guidanceTitle': guidanceTitle,
       'guidanceDetail': guidanceDetail,
       'guidanceRoadName': guidanceRoadName,
       'guidanceDistanceMeters': guidanceDistanceMeters,
+      'distanceUnit': distanceUnit?.name,
       'groupStatus': groupStatus,
       'markerStatus': markerStatus,
       'tec': tec.toSnapshot(),
       'tecRequest': tecRequest?.toSnapshot(),
       // The head unit draws with the same MapLibre styles as the phone, and
       // shares its tile cache, so it keeps a basemap through a signal drop
-      // instead of going grey (#321). Both styles travel: the car has its own
-      // day/night state and picks between them itself.
+      // instead of going grey (#321). The selected URL makes the car match the
+      // phone; both URLs remain as safe fallbacks before that selection arrives.
       'basemap': basemap == null
           ? null
           : {
@@ -153,6 +166,7 @@ class CarPlayBridge {
               'darkStyleUrl': basemap.darkStyleUrl.isEmpty
                   ? basemap.styleUrl
                   : basemap.darkStyleUrl,
+              'selectedStyleUrl': basemap.styleUrl,
             },
       'updatedAtMillis': now.millisecondsSinceEpoch,
       'riders': [
@@ -193,6 +207,37 @@ class CarPlayBridge {
     _channel.setMethodCallHandler(null);
   }
 
+  /// Sends the phone map's actual navigation viewport without rebuilding the
+  /// heavier route/rider snapshot. The phone already throttles camera commands
+  /// to 400 ms, so adding another timer here would only reintroduce visible lag.
+  Future<void> publishViewport(NavigationCameraViewport viewport) async {
+    try {
+      await _channel.invokeMethod('updateViewport', {
+        'latitude': viewport.latitude,
+        'longitude': viewport.longitude,
+        'zoom': viewport.zoom,
+        'tilt': viewport.tilt,
+        'bearing': viewport.bearing,
+        'sourceViewportHeightPixels': viewport.sourceViewportHeightPixels,
+        'mapStyleUrl': viewport.mapStyleUrl,
+      });
+    } on Object catch (error) {
+      if (kDebugMode) debugPrint('Could not publish CarPlay viewport: $error');
+    }
+  }
+
+  List<Map<String, double>> _projectProgressPath(List<List<GeoPoint>>? paths) {
+    if (paths == null || paths.isEmpty) return const [];
+    final viable = paths.where((path) => path.length >= 2);
+    if (viable.isEmpty) return const [];
+    final primary = viable.reduce((first, second) {
+      return _pointPathLength(second) > _pointPathLength(first)
+          ? second
+          : first;
+    });
+    return _projectPoints(primary);
+  }
+
   /// CarPlay needs enough geometry to draw the complete route, but sending a
   /// multi-thousand-point GPX file through a platform channel on every live
   /// update is unnecessary. Use the longest path (the same primary-path rule
@@ -202,8 +247,11 @@ class CarPlayBridge {
     final primary = route.paths.reduce((first, second) {
       return _pathLength(second) > _pathLength(first) ? second : first;
     });
+    return _projectPoints(primary.points);
+  }
+
+  List<Map<String, double>> _projectPoints(List<GeoPoint> points) {
     const maximumPoints = 600;
-    final points = primary.points;
     if (points.length <= maximumPoints) {
       return [
         for (final point in points)
@@ -230,12 +278,13 @@ class CarPlayBridge {
   }
 
   double _pathLength(RoutePath path) {
+    return _pointPathLength(path.points);
+  }
+
+  double _pointPathLength(List<GeoPoint> points) {
     var length = 0.0;
-    for (var index = 1; index < path.points.length; index += 1) {
-      length += _importedPointDistance(
-        path.points[index - 1],
-        path.points[index],
-      );
+    for (var index = 1; index < points.length; index += 1) {
+      length += _importedPointDistance(points[index - 1], points[index]);
     }
     return length;
   }

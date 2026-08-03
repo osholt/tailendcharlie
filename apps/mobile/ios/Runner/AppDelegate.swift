@@ -20,6 +20,7 @@ import UserNotifications
   private var pendingPlannerLink: String?
   private var carPlayChannel: FlutterMethodChannel?
   private var latestCarPlaySnapshot: [String: Any]?
+  private var latestCarPlayViewport: [String: Any]?
   private var pushChannel: FlutterMethodChannel?
   private var apnsToken: String?
   private var pendingPushTokenResult: FlutterResult?
@@ -163,17 +164,26 @@ import UserNotifications
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     carPlayChannel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "updateSnapshot" else {
+      switch call.method {
+      case "updateSnapshot":
+        guard let value = call.arguments as? [String: Any] else {
+          result(FlutterError(code: "invalid_arguments", message: "Snapshot must be a map", details: nil))
+          return
+        }
+        self?.latestCarPlaySnapshot = value
+        self?.carPlaySceneDelegate?.apply(snapshot: value)
+        result(nil)
+      case "updateViewport":
+        guard let value = call.arguments as? [String: Any] else {
+          result(FlutterError(code: "invalid_arguments", message: "Viewport must be a map", details: nil))
+          return
+        }
+        self?.latestCarPlayViewport = value
+        self?.carPlaySceneDelegate?.apply(viewport: value)
+        result(nil)
+      default:
         result(FlutterMethodNotImplemented)
-        return
       }
-      guard let snapshot = call.arguments as? [String: Any] else {
-        result(FlutterError(code: "invalid_arguments", message: "Snapshot must be a map", details: nil))
-        return
-      }
-      self?.latestCarPlaySnapshot = snapshot
-      self?.carPlaySceneDelegate?.apply(snapshot: snapshot)
-      result(nil)
     }
     self.carPlayChannel = carPlayChannel
   }
@@ -340,6 +350,9 @@ import UserNotifications
     carPlaySceneDelegate = sceneDelegate
     if let snapshot = latestCarPlaySnapshot {
       sceneDelegate.apply(snapshot: snapshot)
+    }
+    if let viewport = latestCarPlayViewport {
+      sceneDelegate.apply(viewport: viewport)
     }
   }
 

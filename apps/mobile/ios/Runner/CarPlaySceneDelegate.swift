@@ -72,6 +72,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     updateTecRoleRequest(snapshot["tecRequest"] as? [String: Any])
   }
 
+  func apply(viewport: [String: Any]) {
+    mapViewController?.apply(viewport: viewport)
+  }
+
   /// Raises, and takes down, the leader's "will you be Tail End Charlie?"
   /// question (#128).
   ///
@@ -211,10 +215,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     let distance = max(0, (snapshot["guidanceDistanceMeters"] as? NSNumber)?.doubleValue ?? 0)
+    let distanceMeasurement: Measurement<UnitLength>
+    if snapshot["distanceUnit"] as? String == "miles" {
+      distanceMeasurement = Measurement(
+        value: distance / 1_609.344,
+        unit: UnitLength.miles
+      )
+    } else {
+      distanceMeasurement = Measurement(value: distance, unit: UnitLength.meters)
+    }
     let roadName = nonEmptyString(snapshot["guidanceRoadName"])
     let maneuverKey = "\(title)|\(roadName ?? "")"
     let estimates = CPTravelEstimates(
-      distanceRemaining: Measurement(value: distance, unit: UnitLength.meters),
+      distanceRemaining: distanceMeasurement,
       timeRemaining: -1
     )
     let maneuver: CPManeuver
@@ -324,6 +337,7 @@ private enum CarPlayPalette {
   static let casing = UIColor(red: 0x10 / 255, green: 0x15 / 255, blue: 0x1C / 255, alpha: 1)
   static let markerGlyph = casing
   static let routeAhead = UIColor(red: 0x3D / 255, green: 0xDC / 255, blue: 0x84 / 255, alpha: 1)
+  static let travelled = UIColor(red: 0xFF / 255, green: 0x7A / 255, blue: 0x1A / 255, alpha: 1)
   static let ownRider = UIColor(red: 0x2F / 255, green: 0x80 / 255, blue: 0xED / 255, alpha: 1)
   static let tailEndCharlie = UIColor(red: 0x68 / 255, green: 0xA9 / 255, blue: 0xFF / 255, alpha: 1)
   static let rider = UIColor(red: 0x6E / 255, green: 0xD8 / 255, blue: 0x9A / 255, alpha: 1)
@@ -337,6 +351,10 @@ private enum CarPlayPalette {
   /// `RouteLineStyle.routeAhead`: 6pt line on a 10pt casing.
   static let routeWidth: CGFloat = 6
   static let routeCasingWidth: CGFloat = 10
+
+  /// `RouteLineStyle.travelled`: 5pt line on a 9pt casing.
+  static let travelledWidth: CGFloat = 5
+  static let travelledCasingWidth: CGFloat = 9
 }
 
 /// Draws app-owned route and group-location content behind the CarPlay
@@ -353,10 +371,12 @@ private final class CarPlayNavigationViewController: UIViewController,
 {
   private var mapView: MLNMapView?
   private let tecBadge = CarPlayTecBadge()
-  private var routeAnnotation: MLNPolyline?
-  private var routeCasingAnnotation: MLNPolyline?
+  private var routeSource: MLNShapeSource?
+  private var travelledRouteAnnotation: MLNPolyline?
+  private var travelledRouteCasingAnnotation: MLNPolyline?
   private var routeCoordinates: [CLLocationCoordinate2D] = []
   private var routeID: String?
+  private var routeProjectionKey: String?
   private var riderAnnotations: [CarPlayRiderAnnotation] = []
   private var localCoordinate: CLLocationCoordinate2D?
   private var localHeading: CLLocationDirection?
@@ -365,17 +385,19 @@ private final class CarPlayNavigationViewController: UIViewController,
   private var panGestureStartCoordinate: CLLocationCoordinate2D?
   private var hasFramedFirstFix = false
 
-  /// The styles Dart published, and the one currently applied. Held because the
-  /// car's day/night state can change at any time and the snapshot that carried
-  /// the styles may be minutes old by then.
+  /// The styles Dart published, the exact style selected on the phone, and the
+  /// one currently applied. CarPlay's trait remains a fallback until Dart has
+  /// supplied the phone selection; after that both screens change together.
   private var lightStyleURL: URL?
   private var darkStyleURL: URL?
   private var appliedStyleURL: URL?
+  private var phoneStyleURL: URL?
 
   /// The last snapshot, replayed once the style finishes loading. A style load
   /// clears every annotation with it, so route and riders have to go back on
   /// afterwards or the map comes back empty (#295 by a different route).
   private var latestSnapshot: [String: Any]?
+  private var latestViewport: [String: Any]?
 
   /// Used only until Dart's first snapshot names a style, which it does on the
   /// first ride-state change. Without it a rider who plugs in before starting a
@@ -438,10 +460,19 @@ private final class CarPlayNavigationViewController: UIViewController,
     updateStyleURLs(snapshot["basemap"] as? [String: Any])
     guard let mapView else { return }
     let incomingRouteID = snapshot["routeId"] as? String
-    let routeChanged = incomingRouteID != routeID || routeAnnotation == nil
+    let progress = (snapshot["routeProgressMeters"] as? NSNumber)?.doubleValue ?? 0
+    let routeKey = "\(incomingRouteID ?? "none"):\(Int(progress / 2))"
+    let routeChanged =
+      routeKey != routeProjectionKey
+      || routeSource == nil
     if routeChanged {
-      updateRoute(snapshot["routePoints"])
+      updateRoute(
+        snapshot["routePoints"],
+        remaining: snapshot["remainingRoutePoints"],
+        travelled: snapshot["riddenRoutePoints"]
+      )
       routeID = incomingRouteID
+      routeProjectionKey = routeKey
     }
     updateRiders(snapshot["riders"])
     tecBadge.apply(snapshot["tec"] as? [String: Any])
@@ -468,8 +499,29 @@ private final class CarPlayNavigationViewController: UIViewController,
     }
   }
 
+  /// Applies the camera the phone actually commanded, rather than independently
+  /// planning a second navigation camera on the head unit. The target already
+  /// includes the phone's look-ahead; only the zoom is adjusted for CarPlay's
+  /// different viewport height so both screens cover the same ground distance.
+  func apply(viewport: [String: Any]) {
+    latestViewport = viewport
+    if
+      let rawStyleURL = viewport["mapStyleUrl"] as? String,
+      let styleURL = URL(string: rawStyleURL)
+    {
+      phoneStyleURL = styleURL
+      applyPreferredStyle()
+    }
+    guard snapshotWantsRiderFollow, followsLocalRider else { return }
+    applyPhoneViewport(animated: true)
+  }
+
   func recenter() {
     followsLocalRider = true
+    if snapshotWantsRiderFollow, latestViewport != nil {
+      applyPhoneViewport(animated: true)
+      return
+    }
     guard let mapView else { return }
     guard let coordinate = localCoordinate else {
       showCompleteRoute()
@@ -534,16 +586,18 @@ private final class CarPlayNavigationViewController: UIViewController,
     guard let basemap else { return }
     let light = (basemap["styleUrl"] as? String).flatMap(URL.init(string:))
     let dark = (basemap["darkStyleUrl"] as? String).flatMap(URL.init(string:))
+    let selected =
+      (basemap["selectedStyleUrl"] as? String).flatMap(URL.init(string:))
     guard light != nil || dark != nil else { return }
     lightStyleURL = light ?? dark
     darkStyleURL = dark ?? light
+    phoneStyleURL = selected
     applyPreferredStyle()
   }
 
   private func applyPreferredStyle() {
-    let preferred = traitCollection.userInterfaceStyle == .dark
-      ? darkStyleURL
-      : lightStyleURL
+    let preferred = phoneStyleURL
+      ?? (traitCollection.userInterfaceStyle == .dark ? darkStyleURL : lightStyleURL)
     guard let preferred, preferred != appliedStyleURL else { return }
     appliedStyleURL = preferred
     guard let mapView else {
@@ -569,6 +623,54 @@ private final class CarPlayNavigationViewController: UIViewController,
     view.insertSubview(mapView, at: 0)
     self.mapView = mapView
     if let latestSnapshot { apply(snapshot: latestSnapshot) }
+    if let latestViewport { apply(viewport: latestViewport) }
+  }
+
+  private func applyPhoneViewport(animated: Bool) {
+    guard
+      let mapView,
+      mapView.bounds.height > 0,
+      let viewport = latestViewport,
+      let latitude = (viewport["latitude"] as? NSNumber)?.doubleValue,
+      let longitude = (viewport["longitude"] as? NSNumber)?.doubleValue,
+      let phoneZoom = (viewport["zoom"] as? NSNumber)?.doubleValue,
+      let phoneHeight = (viewport["sourceViewportHeightPixels"] as? NSNumber)?.doubleValue,
+      phoneHeight > 0,
+      latitude.isFinite,
+      longitude.isFinite,
+      phoneZoom.isFinite,
+      (-90 ... 90).contains(latitude),
+      (-180 ... 180).contains(longitude)
+    else { return }
+
+    let heightRatio = Double(mapView.bounds.height) / phoneHeight
+    guard heightRatio.isFinite, heightRatio > 0 else { return }
+    let adjustedZoom = phoneZoom + log2(heightRatio)
+    let rawTilt = (viewport["tilt"] as? NSNumber)?.doubleValue ?? 0
+    let tilt = min(60, max(0, rawTilt))
+    let bearing = (viewport["bearing"] as? NSNumber)?.doubleValue ?? 0
+    guard adjustedZoom.isFinite, tilt.isFinite, bearing.isFinite else { return }
+
+    // MapLibre's zoom is the scale of 512 px Web Mercator tiles. Convert that
+    // scale back to the MLNMapCamera altitude API while preserving the phone's
+    // pitch and look-ahead target.
+    let latitudeRadians = latitude * .pi / 180
+    let metresPerPoint =
+      78_271.516_964_020_48 * abs(cos(latitudeRadians)) / pow(2, adjustedZoom)
+    let fieldOfView = 0.643_501_108_793_284_4
+    let cameraToCenterDistance =
+      Double(mapView.bounds.height) * 0.5 / tan(fieldOfView * 0.5)
+    let altitude = cameraToCenterDistance * metresPerPoint * cos(tilt * .pi / 180)
+    guard altitude.isFinite, altitude > 0 else { return }
+
+    mapView.userTrackingMode = .none
+    let camera = MLNMapCamera(
+      lookingAtCenter: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+      altitude: altitude,
+      pitch: tilt,
+      heading: bearing
+    )
+    mapView.setCamera(camera, animated: animated)
   }
 
   /// MapKit's follow mode picks an altitude for you; MapLibre's only recentres
@@ -590,34 +692,147 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
     // A style load takes the annotations with it. Put the ride back on.
-    routeAnnotation = nil
+    var previousAnnotations = riderAnnotations.map { $0 as MLNAnnotation }
+    for annotation in [
+      travelledRouteCasingAnnotation,
+      travelledRouteAnnotation,
+    ].compactMap({ $0 }) {
+      previousAnnotations.append(annotation)
+    }
+    if !previousAnnotations.isEmpty {
+      // MapLibre normally clears these during the style swap. Removing the
+      // retained objects as well closes the short timing window where a
+      // snapshot lands between the swap and this callback and would otherwise
+      // leave two local-rider badges on the CarPlay map.
+      mapView.removeAnnotations(previousAnnotations)
+    }
+    routeSource = nil
+    travelledRouteAnnotation = nil
+    travelledRouteCasingAnnotation = nil
     riderAnnotations = []
     routeID = nil
+    routeProjectionKey = nil
     if let latestSnapshot { apply(snapshot: latestSnapshot) }
+    if let latestViewport { apply(viewport: latestViewport) }
   }
 
   // MARK: - Content
 
-  private func updateRoute(_ raw: Any?) {
+  private func updateRoute(_ raw: Any?, remaining: Any?, travelled: Any?) {
     guard let mapView else { return }
-    for existing in [routeCasingAnnotation, routeAnnotation].compactMap({ $0 }) {
+    for existing in [
+      travelledRouteCasingAnnotation,
+      travelledRouteAnnotation,
+    ].compactMap({ $0 }) {
       mapView.removeAnnotation(existing)
     }
-    var points = (raw as? [[String: Any]] ?? []).compactMap(coordinate(from:))
-    guard points.count >= 2 else {
+    var allPoints = (raw as? [[String: Any]] ?? []).compactMap(coordinate(from:))
+    guard allPoints.count >= 2 else {
       routeCoordinates = []
-      routeAnnotation = nil
-      routeCasingAnnotation = nil
+      routeSource?.shape = nil
+      travelledRouteAnnotation = nil
+      travelledRouteCasingAnnotation = nil
       return
     }
-    routeCoordinates = points
-    // Casing first: MapLibre draws shape annotations in the order they are
-    // added, so the route has to go on second to sit on top of its own casing.
-    let casing = MLNPolyline(coordinates: &points, count: UInt(points.count))
-    let polyline = MLNPolyline(coordinates: &points, count: UInt(points.count))
-    routeCasingAnnotation = casing
-    routeAnnotation = polyline
-    mapView.addAnnotations([casing, polyline])
+    routeCoordinates = allPoints
+    var remainingPoints =
+      (remaining as? [[String: Any]] ?? []).compactMap(coordinate(from:))
+    var travelledPoints =
+      (travelled as? [[String: Any]] ?? []).compactMap(coordinate(from:))
+    if remainingPoints.count < 2 && travelledPoints.count < 2 {
+      remainingPoints = allPoints
+    }
+    updateRemainingRoute(remainingPoints)
+
+    var annotations: [MLNPolyline] = []
+    if travelledPoints.count >= 2 {
+      let casing = MLNPolyline(
+        coordinates: &travelledPoints,
+        count: UInt(travelledPoints.count)
+      )
+      let polyline = MLNPolyline(
+        coordinates: &travelledPoints,
+        count: UInt(travelledPoints.count)
+      )
+      travelledRouteCasingAnnotation = casing
+      travelledRouteAnnotation = polyline
+      annotations.append(contentsOf: [casing, polyline])
+    } else {
+      travelledRouteCasingAnnotation = nil
+      travelledRouteAnnotation = nil
+    }
+    if !annotations.isEmpty { mapView.addAnnotations(annotations) }
+  }
+
+  /// The phone's route ahead is a long dash, not a solid line. Shape
+  /// annotations have no dash property, so this one part of the route uses two
+  /// MapLibre style layers over a shared source: an aligned dashed casing and
+  /// the aligned green stroke above it. Travelled geometry remains a solid
+  /// annotation and therefore keeps the same draw order as the phone.
+  private func updateRemainingRoute(_ points: [CLLocationCoordinate2D]) {
+    guard let mapView, let style = mapView.style else { return }
+    let sourceIdentifier = "tailendcharlie-route-ahead-source"
+    let casingIdentifier = "tailendcharlie-route-ahead-casing"
+    let lineIdentifier = "tailendcharlie-route-ahead-line"
+    let source: MLNShapeSource
+    if let routeSource {
+      source = routeSource
+    } else if
+      let existing = style.source(withIdentifier: sourceIdentifier)
+        as? MLNShapeSource
+    {
+      routeSource = existing
+      source = existing
+    } else {
+      let created = MLNShapeSource(
+        identifier: sourceIdentifier,
+        shape: nil,
+        options: nil
+      )
+      style.addSource(created)
+      routeSource = created
+      source = created
+    }
+
+    if style.layer(withIdentifier: casingIdentifier) == nil {
+      let casing = MLNLineStyleLayer(
+        identifier: casingIdentifier,
+        source: source
+      )
+      casing.lineColor = NSExpression(forConstantValue: CarPlayPalette.casing)
+      casing.lineWidth = NSExpression(
+        forConstantValue: CarPlayPalette.routeCasingWidth
+      )
+      casing.lineDashPattern = NSExpression(forConstantValue: [2.2, 1.1])
+      casing.lineCap = NSExpression(forConstantValue: "round")
+      casing.lineJoin = NSExpression(forConstantValue: "round")
+      style.addLayer(casing)
+    }
+
+    if style.layer(withIdentifier: lineIdentifier) == nil {
+      let line = MLNLineStyleLayer(
+        identifier: lineIdentifier,
+        source: source
+      )
+      line.lineColor = NSExpression(forConstantValue: CarPlayPalette.routeAhead)
+      line.lineWidth = NSExpression(forConstantValue: CarPlayPalette.routeWidth)
+      line.lineDashPattern = NSExpression(
+        forConstantValue: [22.0 / 6.0, 11.0 / 6.0]
+      )
+      line.lineCap = NSExpression(forConstantValue: "round")
+      line.lineJoin = NSExpression(forConstantValue: "round")
+      style.addLayer(line)
+    }
+
+    guard points.count >= 2 else {
+      source.shape = nil
+      return
+    }
+    var coordinates = points
+    source.shape = MLNPolyline(
+      coordinates: &coordinates,
+      count: UInt(coordinates.count)
+    )
   }
 
   private func updateRiders(_ raw: Any?) {
@@ -693,8 +908,8 @@ private final class CarPlayNavigationViewController: UIViewController,
     _ mapView: MLNMapView,
     strokeColorForShapeAnnotation annotation: MLNShape
   ) -> UIColor {
-    if annotation === routeCasingAnnotation { return CarPlayPalette.casing }
-    if annotation === routeAnnotation { return CarPlayPalette.routeAhead }
+    if annotation === travelledRouteCasingAnnotation { return CarPlayPalette.casing }
+    if annotation === travelledRouteAnnotation { return CarPlayPalette.travelled }
     return .clear
   }
 
@@ -702,9 +917,11 @@ private final class CarPlayNavigationViewController: UIViewController,
     _ mapView: MLNMapView,
     lineWidthForPolylineAnnotation annotation: MLNPolyline
   ) -> CGFloat {
-    annotation === routeCasingAnnotation
-      ? CarPlayPalette.routeCasingWidth
-      : CarPlayPalette.routeWidth
+    if annotation === travelledRouteCasingAnnotation {
+      return CarPlayPalette.travelledCasingWidth
+    }
+    if annotation === travelledRouteAnnotation { return CarPlayPalette.travelledWidth }
+    return CarPlayPalette.routeWidth
   }
 
   func mapView(

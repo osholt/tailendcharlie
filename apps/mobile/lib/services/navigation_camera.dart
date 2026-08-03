@@ -68,6 +68,36 @@ const double navigationCameraViewportSettleTolerancePixels = 12;
 /// pass for the viewport.
 const double navigationCameraViewportSettleZoomTolerance = 0.08;
 
+/// The navigation viewport the phone has actually commanded.
+///
+/// Projected displays have a different aspect ratio, so they cannot reproduce
+/// the phone pixel-for-pixel. They can, however, use the same ground target,
+/// scale, pitch and bearing and compensate only for their viewport height.
+/// Publishing the commanded viewport keeps that calculation in one place —
+/// [NavigationCameraPlanner] — instead of maintaining a second collection of
+/// approximate CarPlay camera constants.
+class NavigationCameraViewport {
+  const NavigationCameraViewport({
+    required this.latitude,
+    required this.longitude,
+    required this.zoom,
+    required this.tilt,
+    required this.bearing,
+    required this.sourceViewportHeightPixels,
+    required this.mapStyleUrl,
+  });
+
+  final double latitude;
+  final double longitude;
+  final double zoom;
+  final double tilt;
+  final double bearing;
+  final double sourceViewportHeightPixels;
+
+  /// The exact day/night style selected for the phone map.
+  final String mapStyleUrl;
+}
+
 /// A camera framing for one ride update.
 class NavigationCameraPlan {
   const NavigationCameraPlan({
