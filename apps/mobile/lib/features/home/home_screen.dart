@@ -928,6 +928,24 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
+                // The same action as the camera icon in the field above, said
+                // out loud.
+                //
+                // #279 shipped QR joining and #306 found it had not been
+                // delivered: the owner concluded it was missing entirely,
+                // because the only affordance was an unlabelled icon and a
+                // tooltip, and a tooltip does not appear when you tap a phone.
+                // The icon stays for riders who have learned it; this is the
+                // one a rider who has never seen the app can read.
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const Key('scan-invitation-labelled-button'),
+                    onPressed: _scanInvitation,
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text('Scan an invitation code'),
+                  ),
+                ),
                 CheckboxListTile(
                   key: const Key('keep-ride-code'),
                   contentPadding: EdgeInsets.zero,

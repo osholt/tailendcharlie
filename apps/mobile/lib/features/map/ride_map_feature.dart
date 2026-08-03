@@ -27,6 +27,7 @@ import '../../domain/ride_role.dart';
 import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/basemap_status.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
@@ -412,12 +413,18 @@ class _RideMapFeatureState extends State<RideMapFeature> {
             widget.mapLibreOfflineManager ??
             MapLibreOfflineManager(configuration: widget.basemapConfiguration),
         mapStyleString: suppliedStyle,
+        // An embedder handing over a style vouches for it; there is no fetch
+        // here whose outcome could be reported.
+        mapStyleOutcome: MapStyleOutcome.live,
       );
     }
     final styleRepository = await MapStyleRepository.openDefault(
       widget.basemapConfiguration,
     );
     try {
+      final resolution = suppliedStyle == null
+          ? await styleRepository.resolve()
+          : MapStyleResolution(suppliedStyle, MapStyleOutcome.live);
       return _MapDependencies(
         store: suppliedStore ?? await JsonFileRouteStore.openDefault(),
         cache:
@@ -426,7 +433,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         mapLibreOfflineManager:
             widget.mapLibreOfflineManager ??
             MapLibreOfflineManager(configuration: widget.basemapConfiguration),
-        mapStyleString: suppliedStyle ?? await styleRepository.resolve(),
+        mapStyleString: resolution.style,
+        mapStyleOutcome: resolution.outcome,
       );
     } finally {
       styleRepository.dispose();
@@ -459,6 +467,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         offlineTileCache: dependencies.cache,
         mapLibreOfflineManager: dependencies.mapLibreOfflineManager,
         mapStyleString: dependencies.mapStyleString,
+        mapStyleOutcome: dependencies.mapStyleOutcome,
         disposeOfflineTileCache: widget.offlineTileCache == null,
         currentPosition: widget.currentPosition,
         navigationPosition: widget.navigationPosition,
@@ -520,12 +529,14 @@ class _MapDependencies {
     required this.cache,
     required this.mapLibreOfflineManager,
     required this.mapStyleString,
+    required this.mapStyleOutcome,
   });
 
   final RouteStore store;
   final OfflineTileCache cache;
   final MapLibreOfflineManager mapLibreOfflineManager;
   final String mapStyleString;
+  final MapStyleOutcome mapStyleOutcome;
 }
 
 /// Injectable map screen used by app integration and focused tests.
@@ -538,6 +549,8 @@ class RideMapScreen extends StatefulWidget {
     required this.offlineTileCache,
     this.mapLibreOfflineManager,
     this.mapStyleString = MapStyleRepository.fallbackStyle,
+    this.mapStyleOutcome = MapStyleOutcome.live,
+    this.basemapTileProbe = const BasemapTileProbe(),
     this.currentPosition,
     this.navigationPosition,
     this.overlayMarkers,
@@ -605,6 +618,17 @@ class RideMapScreen extends StatefulWidget {
   final OfflineTileCache offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String mapStyleString;
+
+  /// Where [mapStyleString] came from, so the map can tell a rider that its
+  /// background is missing instead of presenting an empty one as the map
+  /// (#281).
+  final MapStyleOutcome mapStyleOutcome;
+
+  /// Checks the tile endpoint once the view reports the style loaded, which is
+  /// the only way this app learns that tiles are not arriving — the native
+  /// engine fetches them and reports nothing back.
+  final BasemapTileProbe basemapTileProbe;
+
   final ValueListenable<GeoPoint?>? currentPosition;
   final ValueListenable<MapNavigationPosition?>? navigationPosition;
   final ValueListenable<List<MapOverlayMarker>>? overlayMarkers;
@@ -728,6 +752,48 @@ class _RideMapScreenState extends State<RideMapScreen> {
   ml.MapLibreMapController? _mapLibreController;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
   bool _mapLibreStyleReady = false;
+
+  // Everything the map knows about its own background (#281). Until this
+  // existed, a failed style, an unreachable tile endpoint and a working map of
+  // an empty area were the same picture, and the rider was left to guess.
+  //
+  /// Set when the platform view calls back to say it loaded the style. Not the
+  /// same as [_mapLibreStyleReady], which is set after the app's own layers go
+  /// on afterwards and would be false for an unrelated reason.
+  bool _basemapViewLoadedStyle = false;
+
+  /// Set when [_basemapViewLoadWindow] elapses with no such callback.
+  bool _basemapViewLoadTimedOut = false;
+
+  /// Null until the probe has answered, and null forever if there was nothing
+  /// it could sensibly ask for.
+  bool? _basemapTilesReachable;
+
+  Timer? _basemapViewLoadWatchdog;
+
+  /// Which style string the observations above belong to, so a style change
+  /// starts them over rather than reporting the previous one's verdict.
+  String? _observedBasemapStyle;
+
+  /// How long the platform view gets to report a style load before the map
+  /// says it did not. Generous on purpose: a slow, cold device that gets there
+  /// eventually must not be accused of failing, because a badge that cries
+  /// wolf is the same fault as no badge at all.
+  static const _basemapViewLoadWindow = Duration(seconds: 20);
+
+  BasemapStatus get _basemapStatus {
+    if (!_basemap.isConfigured) return BasemapStatus.routeOnly;
+    // The legacy raster path draws through flutter_map's own tile layer, which
+    // has no style document, no platform view and none of the observations
+    // below. It keeps the behaviour it had.
+    if (!_basemap.usesMapLibre) return BasemapStatus.drawing;
+    return resolveBasemapStatus(
+      styleOutcome: widget.mapStyleOutcome,
+      viewLoadedStyle: _basemapViewLoadedStyle,
+      viewLoadTimedOut: _basemapViewLoadTimedOut,
+      tilesReachable: _basemapTilesReachable,
+    );
+  }
 
   /// The imported or leader-published route, when there is one.
   ///
@@ -1040,6 +1106,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _effectivePosition,
     );
     _observeSpeedLimit(_navigationFix);
+    _watchBasemapViewLoad();
     _markerOverviewVisible =
         widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
     _loadPersistedRoute();
@@ -1095,6 +1162,34 @@ class _RideMapScreenState extends State<RideMapScreen> {
           widget.speedLimitDisplay ?? SpeedLimitDisplayController.inMemory();
       _observeSpeedLimit(_navigationFix);
     }
+    _watchBasemapViewLoad();
+  }
+
+  /// Starts the clock on the platform view for a style it has not been given
+  /// before.
+  ///
+  /// Guarded on the style string so a rebuild does not restart the window, and
+  /// so a style change starts over rather than inheriting the previous style's
+  /// verdict.
+  void _watchBasemapViewLoad() {
+    if (_observedBasemapStyle == widget.mapStyleString) return;
+    _observedBasemapStyle = widget.mapStyleString;
+    _basemapViewLoadWatchdog?.cancel();
+    _basemapViewLoadWatchdog = null;
+    _basemapViewLoadedStyle = false;
+    _basemapViewLoadTimedOut = false;
+    _basemapTilesReachable = null;
+    // Nothing to wait for. Either there is no platform view on this path, or
+    // the style never arrived and the badge already says which.
+    if (!_basemap.usesMapLibre ||
+        widget.mapStyleOutcome == MapStyleOutcome.unavailable ||
+        widget.mapStyleOutcome == MapStyleOutcome.unconfigured) {
+      return;
+    }
+    _basemapViewLoadWatchdog = Timer(_basemapViewLoadWindow, () {
+      if (!mounted || _basemapViewLoadedStyle) return;
+      setState(() => _basemapViewLoadTimedOut = true);
+    });
   }
 
   @override
@@ -1115,6 +1210,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _navigationGuidance.dispose();
     _riderSpeedStalenessTimer?.cancel();
     _riderSpeedStalenessTimer = null;
+    _basemapViewLoadWatchdog?.cancel();
+    _basemapViewLoadWatchdog = null;
     _riderSpeed.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     unawaited(_groupPipBridge.dispose());
@@ -1970,7 +2067,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         onCancel: _downloadCancellation?.cancel,
                       ),
                     ),
-                  if (!_basemap.isConfigured) const _RouteOnlyBadge(),
+                  if (_basemapStatus.isFault)
+                    _BasemapStatusBadge(
+                      status: _basemapStatus,
+                      onTap: () => _showMessage(_basemapStatus.explanation),
+                    ),
                   ...urgent,
                   ?tecGap,
                   // Last before the targets: see [_buildRideChrome] (#133).
@@ -2057,10 +2158,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   // In the rail, not free-floating on the map: anchoring this
                   // independently at the same corner put it underneath the map
                   // controls.
-                  if (!_basemap.isConfigured)
-                    const Align(
+                  if (_basemapStatus.isFault)
+                    Align(
                       alignment: Alignment.centerLeft,
-                      child: _RouteOnlyBadge(),
+                      child: _BasemapStatusBadge(status: _basemapStatus),
                     ),
                   ...urgent,
                   ?tecGap,
@@ -2432,6 +2533,33 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
+  /// Records that the view got as far as loading the style, and asks the tile
+  /// endpoint whether it is answering.
+  ///
+  /// The engine fetches tiles itself and tells the Flutter side nothing, so
+  /// without this one request a style that loads over a dead tile endpoint is
+  /// a silent blank map — the exact report in #281, and the one case the style
+  /// outcome above cannot see.
+  Future<void> _onBasemapStyleLoaded() async {
+    _basemapViewLoadWatchdog?.cancel();
+    _basemapViewLoadWatchdog = null;
+    if (mounted && (!_basemapViewLoadedStyle || _basemapViewLoadTimedOut)) {
+      setState(() {
+        _basemapViewLoadedStyle = true;
+        _basemapViewLoadTimedOut = false;
+      });
+    }
+    final style = widget.mapStyleString;
+    final reachable = await widget.basemapTileProbe.reachable(
+      style,
+      client: _routingClient,
+    );
+    // A style change during the probe makes its answer about the wrong map.
+    if (!mounted || style != widget.mapStyleString) return;
+    if (reachable == _basemapTilesReachable) return;
+    setState(() => _basemapTilesReachable = reachable);
+  }
+
   Widget _buildMapLibreMap() {
     final planned = _route?.allPoints.toList(growable: false) ?? const [];
     // As above: no route still frames the rider rather than the whole country.
@@ -2452,7 +2580,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
             styleString: widget.mapStyleString,
             initialCameraPosition: initial,
             onMapCreated: _onMapLibreCreated,
-            onStyleLoadedCallback: () => unawaited(_prepareMapLibreStyle()),
+            onStyleLoadedCallback: () {
+              // Recorded before the app's own layers go on: this callback is
+              // the platform's only signal that it read the style at all, and
+              // it must not be conditional on the layer set-up below
+              // succeeding (#281).
+              unawaited(_onBasemapStyleLoaded());
+              unawaited(_prepareMapLibreStyle());
+            },
             onCameraMove: _onMapLibreCameraMove,
             // Without this the platform never reports its camera, and
             // `MapLibreMapController.cameraPosition` keeps the value it was
@@ -3809,7 +3944,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _positionSource,
         'ride-relay-position-badge',
         ml.CircleLayerProperties(
-          circleRadius: 16,
+          circleRadius: _localBadgeRadius,
           circleColor: _hexColor(widget.localBadgeColor),
           circleStrokeWidth: 3,
           circleStrokeColor: '#FFFFFF',
@@ -3826,7 +3961,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ),
           // Dark on a light badge: see [RouteTrailStyle.markerGlyph] (#133).
           iconColor: RouteTrailStyle.markerGlyphHex,
-          iconSize: 0.2,
+          // One image, so the size is settled here rather than per feature —
+          // but by the same rule the other rider layers use (#259).
+          iconSize: widget.localRiderSymbol.kind == RiderSymbolKind.initials
+              ? riderInitialsIconSize(badgeDiameter: _localBadgeRadius * 2)
+              : 0.2,
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -3843,8 +3982,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addCircleLayer(
         _overlaySource,
         'ride-relay-overlay-badges',
-        const ml.CircleLayerProperties(
-          circleRadius: 15,
+        ml.CircleLayerProperties(
+          circleRadius: _riderBadgeRadius,
           circleColor: ['get', 'color'],
           circleStrokeWidth: 2,
           circleStrokeColor: '#10151C',
@@ -3855,12 +3994,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.addSymbolLayer(
         _overlaySource,
         'ride-relay-overlay-icons',
-        const ml.SymbolLayerProperties(
+        ml.SymbolLayerProperties(
           iconImage: ['get', 'iconImage'],
           // As above: the badge carries the colour, the glyph carries the shape,
           // and a dark glyph is the only way the shape survives on a light badge.
           iconColor: RouteTrailStyle.markerGlyphHex,
-          iconSize: 0.19,
+          iconSize: _riderIconSize(_riderBadgeRadius * 2, 0.19),
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -4319,6 +4458,33 @@ class _RideMapScreenState extends State<RideMapScreen> {
     true,
   ];
 
+  /// Radius of the coloured badge behind another rider's glyph.
+  static const _riderBadgeRadius = 15.0;
+
+  /// Radius of the local rider's own badge, which is drawn a little larger.
+  static const _localBadgeRadius = 16.0;
+
+  /// `icon-size` for a rider glyph, as an expression that gives initials their
+  /// own size.
+  ///
+  /// A bike or an emoji is a pictogram: it sits *inside* the badge, and
+  /// [pictogramIconSize] is the value each layer already had for one, passed
+  /// through untouched so no bike or emoji moves by a pixel. Initials are not a
+  /// pictogram — they are meant to fill the circle — and inheriting the
+  /// pictogram's size is what left them at about three quarters of what the
+  /// symbol picker's preview promised (#259). Theirs is derived from the badge
+  /// instead, by the one rule in `motorcycle_icon.dart`, so the three rider
+  /// layers and the picker cannot answer differently again.
+  static Object _riderIconSize(
+    double badgeDiameter,
+    double pictogramIconSize,
+  ) => <Object>[
+    'case',
+    <Object>['get', 'initialsSymbol'],
+    riderInitialsIconSize(badgeDiameter: badgeDiameter),
+    pictogramIconSize,
+  ];
+
   Map<String, dynamic> _overlayGeoJson() => MapGeoJson.points(
     (widget.overlayMarkers?.value ?? const <MapOverlayMarker>[])
         .take(1000)
@@ -4331,6 +4497,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
               'color': _hexColor(overlay.color),
               'hazardSymbol': overlay.hazardSymbol != null,
               'iconImage': _overlayIconImage(overlay),
+              'initialsSymbol':
+                  overlay.hazardSymbol == null &&
+                  overlay.riderSymbol.kind == RiderSymbolKind.initials,
             },
           ),
         ),
@@ -6386,6 +6555,10 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   static const _routeSource = 'ride-relay-mini-route';
   static const _riderSource = 'ride-relay-mini-riders';
 
+  /// Radius of a rider's badge on the group overview, which is smaller than the
+  /// main map's because the whole map is.
+  static const _miniBadgeRadius = 7.0;
+
   /// Left plus right, and top plus bottom, of the fit padding the old bounds
   /// call used. Subtracted before framing so padding can never exceed the box.
   static const _fitHorizontalPadding = 40.0;
@@ -6854,7 +7027,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         _riderSource,
         'ride-relay-mini-rider-circles',
         const ml.CircleLayerProperties(
-          circleRadius: 7,
+          circleRadius: _miniBadgeRadius,
           circleColor: ['get', 'color'],
           circleStrokeWidth: 1.5,
           circleStrokeColor: '#FFFFFF',
@@ -6864,10 +7037,14 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       await controller.addSymbolLayer(
         _riderSource,
         'ride-relay-mini-rider-symbols',
-        const ml.SymbolLayerProperties(
+        ml.SymbolLayerProperties(
           iconImage: ['get', 'iconImage'],
           iconColor: RouteTrailStyle.markerGlyphHex,
-          iconSize: 0.09,
+          // The same rule as the main map, at this map's badge size (#259).
+          iconSize: _RideMapScreenState._riderIconSize(
+            _miniBadgeRadius * 2,
+            0.09,
+          ),
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -7034,6 +7211,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 rider.riderDisplayName ?? rider.label,
                 rider.motorcycleStyle ?? motorcycleIconStyleDefault,
               ),
+              'initialsSymbol':
+                  rider.riderSymbol.kind == RiderSymbolKind.initials,
             },
           ),
         if (snapshot.currentPosition case final point?)
@@ -7046,6 +7225,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 widget.localDisplayName,
                 widget.localMotorcycleStyle,
               ),
+              'initialsSymbol':
+                  widget.localRiderSymbol.kind == RiderSymbolKind.initials,
             },
           ),
       ]);
@@ -9229,17 +9410,63 @@ class _IconBadge extends StatelessWidget {
   );
 }
 
-class _RouteOnlyBadge extends StatelessWidget {
-  const _RouteOnlyBadge();
+/// Says what the map is drawing behind the rider's position and trail, and
+/// appears only when that is not the map (#281).
+///
+/// Its absence carries as much as its presence: an empty-looking map with no
+/// badge is genuinely empty countryside, which is the distinction the ride map
+/// could not previously make. The three fault labels are deliberately
+/// different from each other so a screenshot alone identifies which fault
+/// occurred — the reason this issue survived three rounds of diagnosis is that
+/// every occurrence produced the same uninformative picture.
+///
+/// A build with no style configured keeps the wording it always had; that one
+/// is a statement of design, not a failure.
+class _BasemapStatusBadge extends StatelessWidget {
+  const _BasemapStatusBadge({required this.status, this.onTap});
+
+  final BasemapStatus status;
+  final VoidCallback? onTap;
+
+  /// Route-only is expected and unremarkable; the rest are faults and are
+  /// outlined so they read as one at a glance on a moving map.
+  bool get _isFailure => status.isFault && status != BasemapStatus.routeOnly;
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-    decoration: BoxDecoration(
-      color: const Color(0xDD171D25),
-      borderRadius: BorderRadius.circular(9),
+  Widget build(BuildContext context) => Semantics(
+    button: onTap != null,
+    // Both halves, so the fault is legible to a screen reader without the
+    // rider having to open the message to find out what the label means.
+    label: '${status.badgeLabel}. ${status.explanation}',
+    excludeSemantics: true,
+    child: GestureDetector(
+      key: const Key('basemap-status-badge'),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0xDD171D25),
+          borderRadius: BorderRadius.circular(9),
+          border: _isFailure
+              ? Border.all(color: const Color(0xFFFF8A6B))
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_isFailure) ...[
+              const Icon(
+                Icons.layers_clear_outlined,
+                size: 12,
+                color: Color(0xFFFF8A6B),
+              ),
+              const SizedBox(width: 5),
+            ],
+            Text(status.badgeLabel, style: const TextStyle(fontSize: 10)),
+          ],
+        ),
+      ),
     ),
-    child: const Text('ROUTE-ONLY OFFLINE MAP', style: TextStyle(fontSize: 10)),
   );
 }
 

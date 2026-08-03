@@ -60,32 +60,60 @@ class RideRecapCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Both halves shrink to fit rather than clipping, and neither can
+              // starve the other.
+              //
+              // They were two `Flexible`s with `TextOverflow.ellipsis`. Two
+              // flexible children with the same flex factor split the row
+              // evenly whatever they need, so the app name got half the content
+              // width — about 143 logical pixels at the export size — against
+              // the roughly 170 it takes at this weight and letter spacing. It
+              // clipped to "TAIL END CHA…" on every recap anyone shared (#308).
+              //
+              // Loose `Flexible` lets each side take less than its share, and
+              // `BoxFit.scaleDown` only ever reduces: at the export size both
+              // render at full size, and a narrower card shrinks them instead
+              // of eating the words. The 3:2 split reflects what the two
+              // strings actually need. Nothing here can end in an ellipsis,
+              // which matters because this image leaves the app.
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Flexible(
-                    child: Text(
-                      'TAIL END CHARLIE',
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: _accent,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
-                        letterSpacing: 1.2,
+                    flex: 3,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'TAIL END CHARLIE',
+                        maxLines: 1,
+                        softWrap: false,
+                        style: TextStyle(
+                          color: _accent,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          letterSpacing: 1.2,
+                        ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 12),
                   Flexible(
-                    child: Text(
-                      'RIDE ${summary.rideCode}',
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: _muted,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                        letterSpacing: 1,
+                    flex: 2,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'RIDE ${summary.rideCode}',
+                        maxLines: 1,
+                        softWrap: false,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          color: _muted,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          letterSpacing: 1,
+                        ),
                       ),
                     ),
                   ),
