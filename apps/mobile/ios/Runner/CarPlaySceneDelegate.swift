@@ -302,6 +302,43 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     return UIImage(systemName: "arrow.up")
   }
 }
+/// The app's own map palette, mirrored for the CarPlay canvas.
+///
+/// Every value here is `RouteTrailStyle` in
+/// `apps/mobile/lib/features/map/route_trail_style.dart`, and the reasoning for
+/// each lives there rather than being restated: these are measured contrast
+/// choices from #107, #133 and #143, not decoration. System colours were used
+/// while the canvas was being stood up and were wrong on every count — the
+/// route was `systemYellow`, which #107 rejected outright because it disappears
+/// into the `#FFEEAA` trunk-road fill it is drawn on.
+///
+/// Two in particular are easy to "correct" back into a bug:
+///
+/// * **Glyph ink is dark, not white.** Every badge fill is deliberately light so
+///   it can be found on a dark basemap, which makes a white glyph the one ink on
+///   the map with nothing behind it — 1.53:1 on caution yellow. Dark reverses it
+///   to 4.74:1 at worst.
+/// * **Every line gets an opaque casing under it.** The casing is what keeps a
+///   route readable where it crosses a light road fill.
+private enum CarPlayPalette {
+  static let casing = UIColor(red: 0x10 / 255, green: 0x15 / 255, blue: 0x1C / 255, alpha: 1)
+  static let markerGlyph = casing
+  static let routeAhead = UIColor(red: 0x3D / 255, green: 0xDC / 255, blue: 0x84 / 255, alpha: 1)
+  static let ownRider = UIColor(red: 0x2F / 255, green: 0x80 / 255, blue: 0xED / 255, alpha: 1)
+  static let tailEndCharlie = UIColor(red: 0x68 / 255, green: 0xA9 / 255, blue: 0xFF / 255, alpha: 1)
+  static let rider = UIColor(red: 0x6E / 255, green: 0xD8 / 255, blue: 0x9A / 255, alpha: 1)
+  static let alerting = UIColor(red: 0xFF / 255, green: 0x5D / 255, blue: 0x73 / 255, alpha: 1)
+
+  /// The ride chrome's card fill and its label ink, from the phone's TEC card.
+  static let cardFill = UIColor(red: 0x25 / 255, green: 0x2E / 255, blue: 0x39 / 255, alpha: 0.90)
+  static let cardLabel = UIColor(red: 0xB7 / 255, green: 0xC2 / 255, blue: 0xCF / 255, alpha: 1)
+  static let cardTitle = UIColor.white
+
+  /// `RouteLineStyle.routeAhead`: 6pt line on a 10pt casing.
+  static let routeWidth: CGFloat = 6
+  static let routeCasingWidth: CGFloat = 10
+}
+
 /// Draws app-owned route and group-location content behind the CarPlay
 /// templates. CarPlay owns the turn cards and controls; this owns only the map
 /// canvas.
@@ -317,12 +354,14 @@ private final class CarPlayNavigationViewController: UIViewController,
   private var mapView: MLNMapView?
   private let tecBadge = CarPlayTecBadge()
   private var routeAnnotation: MLNPolyline?
+  private var routeCasingAnnotation: MLNPolyline?
   private var routeID: String?
   private var riderAnnotations: [CarPlayRiderAnnotation] = []
   private var localCoordinate: CLLocationCoordinate2D?
   private var localHeading: CLLocationDirection?
   private var followsLocalRider = true
   private var panGestureStartCoordinate: CLLocationCoordinate2D?
+  private var hasFramedFirstFix = false
 
   /// The styles Dart published, and the one currently applied. Held because the
   /// car's day/night state can change at any time and the snapshot that carried
@@ -507,15 +546,33 @@ private final class CarPlayNavigationViewController: UIViewController,
     mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     mapView.showsUserLocation = true
     mapView.userTrackingMode = .follow
-    // CarPlay owns the bottom-trailing corner for its own map buttons, so
-    // MapLibre's ornaments go to the other side rather than underneath them.
-    // Attribution stays visible: it is a licence condition, not decoration.
-    mapView.logoViewPosition = .bottomLeft
+    // The logo goes, as it does on every phone surface (`logoEnabled: false`);
+    // the attribution button stays, because that is a licence condition rather
+    // than decoration. CarPlay owns the bottom-trailing corner for its own map
+    // buttons, so what remains sits on the other side.
+    mapView.logoView.isHidden = true
     mapView.attributionButtonPosition = .bottomLeft
     mapView.compassViewPosition = .topRight
     view.insertSubview(mapView, at: 0)
     self.mapView = mapView
     if let latestSnapshot { apply(snapshot: latestSnapshot) }
+  }
+
+  /// MapKit's follow mode picks an altitude for you; MapLibre's only recentres
+  /// and keeps whatever zoom the map already had. Left alone that framed the
+  /// head unit on the whole world and then politely centred the whole world on
+  /// the rider. Setting the zoom up front is worse still - with no fix yet the
+  /// default centre is null island, so the canvas is featureless grey - so the
+  /// driving zoom is taken on the first fix instead, once and only once.
+  func mapView(_ mapView: MLNMapView, didUpdate userLocation: MLNUserLocation?) {
+    guard
+      !hasFramedFirstFix,
+      let coordinate = userLocation?.location?.coordinate,
+      CLLocationCoordinate2DIsValid(coordinate)
+    else { return }
+    hasFramedFirstFix = true
+    guard followsLocalRider, localCoordinate == nil else { return }
+    mapView.setCenter(coordinate, zoomLevel: 14, animated: true)
   }
 
   func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
@@ -530,17 +587,22 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   private func updateRoute(_ raw: Any?) {
     guard let mapView else { return }
-    if let routeAnnotation {
-      mapView.removeAnnotation(routeAnnotation)
+    for existing in [routeCasingAnnotation, routeAnnotation].compactMap({ $0 }) {
+      mapView.removeAnnotation(existing)
     }
     var points = (raw as? [[String: Any]] ?? []).compactMap(coordinate(from:))
     guard points.count >= 2 else {
       routeAnnotation = nil
+      routeCasingAnnotation = nil
       return
     }
+    // Casing first: MapLibre draws shape annotations in the order they are
+    // added, so the route has to go on second to sit on top of its own casing.
+    let casing = MLNPolyline(coordinates: &points, count: UInt(points.count))
     let polyline = MLNPolyline(coordinates: &points, count: UInt(points.count))
+    routeCasingAnnotation = casing
     routeAnnotation = polyline
-    mapView.addAnnotation(polyline)
+    mapView.addAnnotations([casing, polyline])
   }
 
   private func updateRiders(_ raw: Any?) {
@@ -611,14 +673,18 @@ private final class CarPlayNavigationViewController: UIViewController,
     _ mapView: MLNMapView,
     strokeColorForShapeAnnotation annotation: MLNShape
   ) -> UIColor {
-    annotation is MLNPolyline ? .systemYellow : .clear
+    if annotation === routeCasingAnnotation { return CarPlayPalette.casing }
+    if annotation === routeAnnotation { return CarPlayPalette.routeAhead }
+    return .clear
   }
 
   func mapView(
     _ mapView: MLNMapView,
     lineWidthForPolylineAnnotation annotation: MLNPolyline
   ) -> CGFloat {
-    7
+    annotation === routeCasingAnnotation
+      ? CarPlayPalette.routeCasingWidth
+      : CarPlayPalette.routeWidth
   }
 
   func mapView(
@@ -697,10 +763,10 @@ private final class CarPlayRiderAnnotationView: MLNAnnotationView {
     layer.cornerRadius = 11
     layer.cornerCurve = .continuous
     layer.borderWidth = 2
-    layer.borderColor = UIColor.white.cgColor
+    layer.borderColor = CarPlayPalette.casing.cgColor
     label.translatesAutoresizingMaskIntoConstraints = false
     label.font = .systemFont(ofSize: 12, weight: .heavy)
-    label.textColor = .white
+    label.textColor = CarPlayPalette.markerGlyph
     label.textAlignment = .center
     addSubview(label)
     NSLayoutConstraint.activate([
@@ -718,8 +784,10 @@ private final class CarPlayRiderAnnotationView: MLNAnnotationView {
       ? "You"
       : rider.isTec ? "TEC" : String(rider.title?.prefix(1) ?? "•")
     backgroundColor = rider.needsAttention
-      ? .systemOrange
-      : rider.isLocal ? .systemBlue : rider.isTec ? .systemGreen : .systemGray
+      ? CarPlayPalette.alerting
+      : rider.isLocal
+        ? CarPlayPalette.ownRider
+        : rider.isTec ? CarPlayPalette.tailEndCharlie : CarPlayPalette.rider
     let width = max(30, label.intrinsicContentSize.width + 14)
     frame = CGRect(x: 0, y: 0, width: width, height: 22)
   }
@@ -743,10 +811,10 @@ private final class CarPlayTecBadge: UIView {
     isHidden = true
     layer.cornerRadius = 8
     layer.cornerCurve = .continuous
-    backgroundColor = UIColor.black.withAlphaComponent(0.65)
+    backgroundColor = CarPlayPalette.cardFill
     label.translatesAutoresizingMaskIntoConstraints = false
     label.font = .systemFont(ofSize: 15, weight: .semibold)
-    label.textColor = .white
+    label.textColor = CarPlayPalette.cardTitle
     addSubview(label)
     NSLayoutConstraint.activate([
       label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -769,13 +837,17 @@ private final class CarPlayTecBadge: UIView {
     }
     isHidden = false
     label.text = headline
+    // The card keeps the app's own fill and the *ink* carries the state, for the
+    // same reason the trend is a word and an arrow rather than a colour: a
+    // tinted visor in daylight flattens these, and some riders cannot tell them
+    // apart at all. The headline already says which state it is in words.
     switch tec["state"] as? String {
     case "none":
-      backgroundColor = UIColor.systemRed.withAlphaComponent(0.75)
+      label.textColor = CarPlayPalette.alerting
     case "stale", "awaitingLocation":
-      backgroundColor = UIColor.systemOrange.withAlphaComponent(0.75)
+      label.textColor = CarPlayPalette.cardLabel
     default:
-      backgroundColor = UIColor.black.withAlphaComponent(0.65)
+      label.textColor = CarPlayPalette.cardTitle
     }
   }
 }
