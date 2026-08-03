@@ -63,8 +63,9 @@ cross-platform pairing with mobile data disabled), step 7's mixed-transport
 convergence, step 12's reduced-capability peer, and the Android half of steps
 15 and 16.
 
-**Blocked on other issues, not hardware:** step 19 needs a licensed traffic
-provider (#277) and step 18 needs an operator-owned map style (#274).
+**Deferred by product decision:** step 19 has no licensed traffic provider and
+is not a release gate while live traffic remains disabled (#277). **Blocked on
+another issue, not hardware:** step 18 needs an operator-owned map style (#274).
 
 Two consequences worth stating plainly, because they are the difference between
 a completed gate and a partial one:
@@ -237,7 +238,10 @@ driven.
     a fixture that points any of them at a third party. If the operator map
     archive and style are absent, verify the page shows bounded coordinates
     without making a tile request and record the observer map as unavailable.
-19. Stage one route-intersecting closure and one nearby unrelated incident
+19. **Deferred while no licensed provider is selected (#277).** If the decision
+    is reopened, first satisfy the contract gates in
+    [traffic-provider-decision.md](traffic-provider-decision.md), then stage one
+    route-intersecting closure and one nearby unrelated incident
     through the licensed traffic provider. Verify only the intersecting
     incident appears, its source/freshness/expiry remain visible, and a provider
     outage retains the last useful result only until expiry. Repeat with a
@@ -296,9 +300,9 @@ driven.
 - The observed iOS limitations are reflected in product wording and onboarding.
 - Observer revocation and expiry deny the next refresh, freshness never labels
   a stale point as current, and the page never exposes another rider.
-- Live traffic never erases or silently replaces the authoritative route;
-  unrelated incidents do not trigger leader action, and provider failure is
-  distinguishable from a verified all-clear.
+- If licensed live traffic is enabled, it never erases or silently replaces the
+  authoritative route; unrelated incidents do not trigger leader action, and
+  provider failure is distinguishable from a verified all-clear.
 - On a mounted phone, in portrait and landscape on iOS and Android, the upper
   third of the map carries no persistent overlay during an active ride, every
   surface stays readable at a glance, none covers another at the maximum

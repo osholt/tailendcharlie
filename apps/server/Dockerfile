@@ -2,10 +2,12 @@ FROM ghcr.io/astral-sh/uv:0.11.16 AS uv
 
 FROM python:3.12-slim AS runtime
 
+ARG RIDE_RELAY_BUILD_COMMIT=unknown
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    RIDE_RELAY_BUILD_COMMIT=${RIDE_RELAY_BUILD_COMMIT}
 
 WORKDIR /app
 COPY --from=uv /uv /usr/local/bin/uv
