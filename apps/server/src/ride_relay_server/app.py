@@ -269,6 +269,7 @@ def create_app(
     @app.get("/api/v1/compatibility", include_in_schema=False)
     def compatibility() -> CompatibilityResponse:
         return CompatibilityResponse(
+            serverBuildCommit=settings.build_commit,
             serverProtocol=settings.protocol_version,
             minimumClientProtocol=settings.minimum_client_protocol,
             maximumClientProtocol=settings.protocol_version,

@@ -22,6 +22,8 @@ services:
   preproduction-server:
     build:
       context: ../apps/server
+      args:
+        RIDE_RELAY_BUILD_COMMIT: ${RIDE_RELAY_BUILD_COMMIT:-unknown}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -81,6 +83,8 @@ services:
   cleanup:
     build:
       context: ../apps/server
+      args:
+        RIDE_RELAY_BUILD_COMMIT: ${RIDE_RELAY_BUILD_COMMIT:-unknown}
     restart: unless-stopped
     read_only: true
     tmpfs:

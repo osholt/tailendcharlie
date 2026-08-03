@@ -39,14 +39,16 @@ X-TailEndCharlie-App-Build: <build>
 X-TailEndCharlie-Capabilities: ride-start-v1,membership-v1,route-revisions-v1,pre-start-presence-v1,push-notifications-v1
 ```
 
-The server advertises its minimum/maximum protocol, supported and required
-capabilities, a 30–3600 second cache interval and platform update URLs. An old
-client receives HTTP 426 `update_required`; a client newer than the server
-receives HTTP 409 `server_upgrade_required`. A relay returning 404 for this
-endpoint is treated as legacy protocol 1 for five minutes. Core events can
-still synchronize, but capability-dependent events stay durable and local
-instead of being silently misinterpreted. The cache is in memory; after an app
-restart, an offline compatibility check must succeed before a new join/sync.
+The server advertises its deployed Git commit, minimum/maximum protocol,
+supported and required capabilities, a 30–3600 second cache interval and
+platform update URLs. `serverBuildCommit: "unknown"` means the image was built
+outside the documented deployment path and is not parity evidence. An old client
+receives HTTP 426 `update_required`; a client newer than the server receives
+HTTP 409 `server_upgrade_required`. A relay returning 404 for this endpoint is
+treated as legacy protocol 1 for five minutes. Core events can still
+synchronize, but capability-dependent events stay durable and local instead of
+being silently misinterpreted. The cache is in memory; after an app restart, an
+offline compatibility check must succeed before a new join/sync.
 
 ### Compatibility rollout and emergency cutoff
 
