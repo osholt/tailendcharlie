@@ -46,6 +46,24 @@ check signs, closures, restrictions, weather, surface and current conditions.
 
 ## Riding display
 
+### Navigation surfaces
+
+The app has two primary contexts, split by when the rider uses them:
+
+- **Kerbside:** the labelled `Map`, `Details` and `Safety` navigation bar (or
+  rail in landscape). Setup, roster, settings, history and sharing use words,
+  and nothing in this context is reachable only through an unexplained icon.
+- **Riding:** the map and its glanceable controls. Icon-only controls are
+  allowed here because they must remain large enough for a gloved hand and the
+  labelled navigation chrome is hidden while moving.
+
+**Ride actions** is the one secondary surface shared by both contexts. The
+labelled button on Details and the map's riding-time menu icon open the same
+sheet. It contains settings, route setup, roster and sharing actions; it does
+not duplicate Map/Details/Safety navigation. Leaving and ending a ride use one
+combined **Leave or end ride** decision, so leaders see the option to end for
+everyone without hunting for a separate End action.
+
 While an active-ride screen is foregrounded, the app requests the platform
 screen wake lock for the whole ride surface, not only while GPS says the bike
 is moving or while the Map tab is selected. It reasserts that request when the

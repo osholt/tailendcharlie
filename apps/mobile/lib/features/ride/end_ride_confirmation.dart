@@ -6,10 +6,8 @@ import 'marker_assistance_widgets.dart';
 /// The one confirmation for ending a ride, wherever it is reached from.
 ///
 /// Ending a ride is the app's most destructive action — it stops the group, not
-/// just this phone — and it was reachable two ways, from the ride menu and from
-/// the dashboard header, each with its own dialog saying different things
-/// (#306: "every destructive or safety action reachable by the same gesture
-/// every time").
+/// just this phone. It used to be offered independently by the ride menu and
+/// dashboard header, with different dialogs saying different things (#306).
 ///
 /// The two were not merely worded differently. Only the ride menu's told the
 /// leader whether the ride could be resumed, including the sentence "this
@@ -19,9 +17,8 @@ import 'marker_assistance_widgets.dart';
 /// depended on which button they happened to press.**
 ///
 /// This is the union of the two, not the intersection: nothing either of them
-/// said is lost, and both entry points now say all of it. Which of the two
-/// entry points survives the consolidation is a separate question — this makes
-/// them agree in the meantime.
+/// said was lost. The consolidation now routes the map and Ride actions through
+/// one combined Leave-or-end decision before this confirmation.
 /// Whether this rider may end the ride for everyone.
 ///
 /// One named decision for every surface that offers it, because there were
