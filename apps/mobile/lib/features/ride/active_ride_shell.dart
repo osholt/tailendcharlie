@@ -69,6 +69,7 @@ import '../../services/ride_completion_detector.dart';
 import '../../services/route_progress.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
+import '../../services/ride_summary_exporter.dart';
 import '../../services/enforcement_alert_detector.dart';
 import '../../services/hazard_map_relevance.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
@@ -87,6 +88,7 @@ import '../map/ride_map.dart';
 import '../map/route_review_screen.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/notification_preferences_sheet.dart';
+import '../settings/unit_settings_sheet.dart';
 import 'ice_share_inbox_sheet.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
@@ -414,13 +416,14 @@ Set<String> registeredTecRiderIds({
       .toSet();
 }
 
-/// Compact, always-available navigation for the full-screen map canvas.
+/// The one secondary action surface shared by the labelled Details screen and
+/// the riding-time map button. Primary destination navigation stays in the
+/// bottom bar/rail, so this sheet contains actions rather than another menu.
 class _RideNavigationMenu extends StatelessWidget {
   const _RideNavigationMenu({
-    required this.simulation,
-    required this.selectedIndex,
-    required this.onSelected,
     required this.canChangeRoute,
+    required this.onSettings,
+    required this.onShareSummary,
     required this.onOpenRoster,
     required this.onShareRoster,
     required this.onChangeRoute,
@@ -441,14 +444,12 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.ridePaused,
     required this.canToggleRidePause,
     required this.onToggleRidePause,
-    required this.canEndRide,
-    required this.onEndRide,
+    required this.onLeaveOrEndRide,
   });
 
-  final bool simulation;
-  final int selectedIndex;
-  final ValueChanged<int> onSelected;
   final bool canChangeRoute;
+  final VoidCallback onSettings;
+  final VoidCallback onShareSummary;
   final VoidCallback onOpenRoster;
   final VoidCallback onShareRoster;
   final VoidCallback onChangeRoute;
@@ -473,26 +474,10 @@ class _RideNavigationMenu extends StatelessWidget {
   final bool ridePaused;
   final bool canToggleRidePause;
   final VoidCallback onToggleRidePause;
-  final bool canEndRide;
-  final VoidCallback onEndRide;
+  final VoidCallback onLeaveOrEndRide;
 
   @override
   Widget build(BuildContext context) {
-    final destinations = <({int index, IconData icon, String label})>[
-      (index: 0, icon: Icons.map_outlined, label: 'Navigation map'),
-      if (simulation)
-        (index: 1, icon: Icons.science_outlined, label: 'Ride Lab'),
-      (
-        index: simulation ? 2 : 1,
-        icon: Icons.tune_outlined,
-        label: 'Ride details',
-      ),
-      (
-        index: simulation ? 3 : 2,
-        icon: Icons.health_and_safety_outlined,
-        label: 'Safety',
-      ),
-    ];
     return SafeArea(
       top: false,
       child: SingleChildScrollView(
@@ -501,18 +486,39 @@ class _RideNavigationMenu extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Ride menu', style: Theme.of(context).textTheme.headlineSmall),
+            Text(
+              'Ride actions',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Setup and sharing actions. Map, Details and Safety stay in the '
+              'labelled navigation bar.',
+              style: TextStyle(color: Color(0xFF98A3B1)),
+            ),
             const SizedBox(height: 8),
-            for (final destination in destinations)
-              ListTile(
-                key: Key('ride-menu-${destination.index}'),
-                leading: Icon(destination.icon),
-                title: Text(destination.label),
-                trailing: selectedIndex == destination.index
-                    ? const Icon(Icons.check, color: Color(0xFFFFC857))
-                    : null,
-                onTap: () => onSelected(destination.index),
+            ListTile(
+              key: const Key('ride-actions-settings'),
+              leading: const Icon(Icons.settings_outlined),
+              title: const Text('Settings'),
+              subtitle: const Text(
+                'Units, map style, rider symbol and ride preferences',
               ),
+              onTap: () {
+                Navigator.of(context).pop();
+                onSettings();
+              },
+            ),
+            ListTile(
+              key: const Key('ride-actions-share-summary'),
+              leading: const Icon(Icons.summarize_outlined),
+              title: const Text('Share ride summary'),
+              subtitle: const Text('Current ride details and recorded route'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onShareSummary();
+              },
+            ),
             const Divider(height: 20),
             if (maneuverCount > 0)
               ListTile(
@@ -646,7 +652,7 @@ class _RideNavigationMenu extends StatelessWidget {
                 onViewIceShares();
               },
             ),
-            if (canToggleRidePause || canEndRide) const Divider(height: 20),
+            if (canToggleRidePause) const Divider(height: 20),
             if (canToggleRidePause)
               ListTile(
                 key: const Key('ride-menu-toggle-pause'),
@@ -660,17 +666,18 @@ class _RideNavigationMenu extends StatelessWidget {
                   onToggleRidePause();
                 },
               ),
-            if (canEndRide)
-              ListTile(
-                key: const Key('ride-menu-end-ride'),
-                leading: const Icon(Icons.stop_circle_outlined),
-                title: const Text('End ride'),
-                subtitle: const Text('Ends the group ride for everyone'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  onEndRide();
-                },
+            ListTile(
+              key: const Key('ride-actions-leave-or-end'),
+              leading: const Icon(Icons.logout),
+              title: const Text('Leave or end ride'),
+              subtitle: const Text(
+                'Leaders can end it for everyone; other riders leave alone',
               ),
+              onTap: () {
+                Navigator.of(context).pop();
+                onLeaveOrEndRide();
+              },
+            ),
           ],
         ),
       ),
@@ -4165,6 +4172,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       context,
       controller: widget.rideController,
       relayCanCarryReopen: _relayCanCarryReopen,
+      onShareSummary: _shareCurrentRideSummary,
     );
   }
 
@@ -4174,14 +4182,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       showDragHandle: true,
       isScrollControlled: true,
       builder: (context) => _RideNavigationMenu(
-        simulation: _isSimulation,
-        selectedIndex: _selectedIndex,
         canChangeRoute:
             _isSimulation || widget.rideController.isLocalRideLeader,
-        onSelected: (index) {
-          Navigator.of(context).pop();
-          if (mounted) setState(() => _selectedIndex = index);
-        },
+        onSettings: _openUnitSettings,
+        onShareSummary: _shareCurrentRideSummary,
         onOpenRoster: _openRoster,
         onShareRoster: _shareRoster,
         onChangeRoute: _requestRouteChange,
@@ -4210,10 +4214,47 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             widget.rideController.rideStarted &&
             widget.rideController.session?.role == RideRole.lead,
         onToggleRidePause: _toggleRidePause,
-        canEndRide: canEndRideForEveryone(widget.rideController),
-        onEndRide: _confirmEndRide,
+        onLeaveOrEndRide: _confirmLeaveRideFromMap,
       ),
     );
+  }
+
+  void _openUnitSettings() {
+    unawaited(
+      UnitSettingsSheet.show(
+        context,
+        widget.distanceUnits,
+        widget.mapStyleMode,
+        widget.riderProfile,
+        speedLimitDisplay: widget.speedLimitDisplay,
+        currentRideActive: true,
+        lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
+        testControl: widget.testControl,
+        spokenGuidance: widget.spokenGuidance,
+      ),
+    );
+  }
+
+  Future<void> _shareCurrentRideSummary() async {
+    final session = widget.rideController.session;
+    if (session == null) return;
+    try {
+      final renderObject = context.findRenderObject();
+      final origin = renderObject is RenderBox && renderObject.hasSize
+          ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+          : null;
+      await const SystemRideSummarySharer().share(
+        session,
+        widget.rideController.events,
+        distanceUnit: widget.distanceUnits.value,
+        sharePositionOrigin: origin,
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not share ride summary: $error')),
+      );
+    }
   }
 
   bool get _relayCanCarryReopen =>
@@ -4560,14 +4601,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Widget _buildDetails() => RideDashboard(
     controller: widget.rideController,
-    relayCanCarryReopen: _relayCanCarryReopen,
     distanceUnits: widget.distanceUnits,
-    mapStyleMode: widget.mapStyleMode,
-    speedLimitDisplay: widget.speedLimitDisplay,
-    riderProfile: widget.riderProfile,
-    testControl: widget.testControl,
-    spokenGuidance: widget.spokenGuidance,
-    onLeaveRide: _leaveRide,
+    onOpenRideActions: _openRideMenu,
     onOpenRoster: _openRoster,
     relayController: _relayController,
     markerAssistanceController: _markerAssistanceController,

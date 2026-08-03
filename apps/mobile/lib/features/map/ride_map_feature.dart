@@ -1825,7 +1825,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ? FloatingActionButton.small(
               key: const Key('ride-menu-button'),
               heroTag: 'ride-relay-menu',
-              tooltip: 'Ride menu',
+              tooltip: 'Ride actions',
               onPressed: widget.onOpenRideMenu,
               backgroundColor: const Color(0xE6252E39),
               foregroundColor: Colors.white,
