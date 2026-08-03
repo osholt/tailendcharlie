@@ -18,6 +18,7 @@ import UserNotifications
   private var pendingGpxImport: (data: Data, fileName: String)?
   private var plannerLinkChannel: FlutterMethodChannel?
   private var pendingPlannerLink: String?
+  private var pendingRideInvitationLink: String?
   private var carPlayChannel: FlutterMethodChannel?
   private var latestCarPlaySnapshot: [String: Any]?
   private var latestCarPlayViewport: [String: Any]?
@@ -130,13 +131,18 @@ import UserNotifications
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     plannerChannel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "consumePendingPlannerLink" else {
+      switch call.method {
+      case "consumePendingPlannerLink":
+        let pending = self?.pendingPlannerLink
+        self?.pendingPlannerLink = nil
+        result(pending)
+      case "consumePendingRideInvitationLink":
+        let pending = self?.pendingRideInvitationLink
+        self?.pendingRideInvitationLink = nil
+        result(pending)
+      default:
         result(FlutterMethodNotImplemented)
-        return
       }
-      let pending = self?.pendingPlannerLink
-      self?.pendingPlannerLink = nil
-      result(pending)
     }
     plannerLinkChannel = plannerChannel
 
@@ -424,14 +430,17 @@ import UserNotifications
     pendingGpxImport = (data: data, fileName: url.lastPathComponent)
   }
 
-  func handleIncomingPlannerLink(url: URL) {
+  func handleIncomingAppLink(url: URL) {
     guard
       url.scheme == "https",
       url.host?.lowercased() == "tailendcharlie.app",
-      url.path == "/planner.html",
       url.absoluteString.count <= 2048
     else { return }
-    pendingPlannerLink = url.absoluteString
+    switch url.path {
+    case "/planner.html": pendingPlannerLink = url.absoluteString
+    case "/join.html": pendingRideInvitationLink = url.absoluteString
+    default: return
+    }
   }
 
   private func startNearby(serviceID: String, endpointName: String, result: @escaping FlutterResult) {

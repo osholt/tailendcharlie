@@ -10,6 +10,10 @@
               "code": "?*"
             },
             "comment": "Open a shared Tail End Charlie route code in the installed app."
+          },
+          {
+            "/": "/join.html",
+            "comment": "Open a private Tail End Charlie ride invitation in the installed app; capability material stays in the URL fragment."
           }
         ]
       }

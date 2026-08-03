@@ -7,6 +7,7 @@ import '../controllers/completed_rides_controller.dart';
 import '../controllers/map_style_mode_controller.dart';
 import '../controllers/ride_code_preference_controller.dart';
 import '../controllers/ride_controller.dart';
+import '../controllers/ride_invitation_link_controller.dart';
 import '../controllers/rider_profile_controller.dart';
 import '../controllers/road_rating_controller.dart';
 import '../controllers/shared_route_controller.dart';
@@ -15,6 +16,7 @@ import '../controllers/spoken_guidance_controller.dart';
 import '../controllers/test_control_controller.dart';
 import '../domain/recorded_route_store.dart';
 import '../features/home/home_screen.dart';
+import 'ride_invitation_link_gate.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/ride/active_ride_shell.dart';
 import '../internet/plan_directory.dart';
@@ -32,6 +34,7 @@ class RideRelayApp extends StatelessWidget {
     required this.speedLimitDisplay,
     required this.recordedRoutes,
     required this.completedRides,
+    this.rideInvitationLinks,
     this.planDirectory,
     this.roadRatings,
     this.testControl,
@@ -51,6 +54,7 @@ class RideRelayApp extends StatelessWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
+  final RideInvitationLinkController? rideInvitationLinks;
   final PlanDirectory? planDirectory;
 
   /// Drives the end-of-ride catalogued-road rating card (#159).
@@ -89,6 +93,79 @@ class RideRelayApp extends StatelessWidget {
     const background = Color(0xFF0D1117);
     const surface = Color(0xFF171D25);
     const orange = Color(0xFFFF7A1A);
+
+    final rideSurface = AnimatedBuilder(
+      animation: Listenable.merge([
+        controller,
+        distanceUnits,
+        mapStyleMode,
+        completedRides,
+        sharedRoutes,
+        riderProfile,
+        speedLimitDisplay,
+      ]),
+      builder: (context, _) {
+        if (!restorationComplete && !showRestorationFallback) {
+          return const _RideRestoreScreen();
+        }
+        if (!restorationComplete) {
+          return HomeScreen(
+            controller: controller,
+            distanceUnits: distanceUnits,
+            mapStyleMode: mapStyleMode,
+            rideCodePreference: rideCodePreference,
+            riderProfile: riderProfile,
+            sharedRoutes: sharedRoutes,
+            speedLimitDisplay: speedLimitDisplay,
+            recordedRoutes: recordedRoutes,
+            completedRides: completedRides,
+            planDirectory: planDirectory,
+            testControl: testControl,
+            spokenGuidance: spokenGuidance,
+            restoringRideCode: controller.session?.rideCode,
+            restorationError: restorationError,
+            onRetryRestoration: retryRestoration,
+          );
+        }
+        // An ended ride the rider has stepped away from stays on the phone and
+        // stays archived; it just stops owning the whole screen (#207).
+        if (controller.hasActiveRide && !controller.endedRideSetAside) {
+          return ActiveRideShell(
+            key: ValueKey(controller.session!.rideId),
+            rideController: controller,
+            distanceUnits: distanceUnits,
+            mapStyleMode: mapStyleMode,
+            eventStore: controller.eventStore,
+            enableNativeServices: enableNativeServices,
+            riderProfile: riderProfile,
+            sharedRoutes: sharedRoutes,
+            speedLimitDisplay: speedLimitDisplay,
+            roadRatings: roadRatings,
+            testControl: testControl,
+            testControlRegistry: testControlRegistry,
+            spokenGuidance: spokenGuidance,
+          );
+        }
+        if (riderProfile.needsOnboarding) {
+          return OnboardingScreen(riderProfile: riderProfile);
+        }
+        return HomeScreen(
+          controller: controller,
+          distanceUnits: distanceUnits,
+          mapStyleMode: mapStyleMode,
+          rideCodePreference: rideCodePreference,
+          riderProfile: riderProfile,
+          sharedRoutes: sharedRoutes,
+          speedLimitDisplay: speedLimitDisplay,
+          recordedRoutes: recordedRoutes,
+          completedRides: completedRides,
+          planDirectory: planDirectory,
+          testControl: testControl,
+          spokenGuidance: spokenGuidance,
+        );
+      },
+    );
+    final links = rideInvitationLinks;
 
     return MaterialApp(
       title: 'Tail End Charlie',
@@ -157,77 +234,16 @@ class RideRelayApp extends StatelessWidget {
           ),
         ),
       ),
-      home: AnimatedBuilder(
-        animation: Listenable.merge([
-          controller,
-          distanceUnits,
-          mapStyleMode,
-          completedRides,
-          sharedRoutes,
-          riderProfile,
-          speedLimitDisplay,
-        ]),
-        builder: (context, _) {
-          if (!restorationComplete && !showRestorationFallback) {
-            return const _RideRestoreScreen();
-          }
-          if (!restorationComplete) {
-            return HomeScreen(
-              controller: controller,
-              distanceUnits: distanceUnits,
-              mapStyleMode: mapStyleMode,
+      home: links == null
+          ? rideSurface
+          : RideInvitationLinkGate(
+              links: links,
+              rideController: controller,
               rideCodePreference: rideCodePreference,
               riderProfile: riderProfile,
-              sharedRoutes: sharedRoutes,
-              speedLimitDisplay: speedLimitDisplay,
-              recordedRoutes: recordedRoutes,
-              completedRides: completedRides,
-              planDirectory: planDirectory,
-              testControl: testControl,
-              spokenGuidance: spokenGuidance,
-              restoringRideCode: controller.session?.rideCode,
-              restorationError: restorationError,
-              onRetryRestoration: retryRestoration,
-            );
-          }
-          // An ended ride the rider has stepped away from stays on the phone and
-          // stays archived; it just stops owning the whole screen (#207).
-          if (controller.hasActiveRide && !controller.endedRideSetAside) {
-            return ActiveRideShell(
-              key: ValueKey(controller.session!.rideId),
-              rideController: controller,
-              distanceUnits: distanceUnits,
-              mapStyleMode: mapStyleMode,
-              eventStore: controller.eventStore,
-              enableNativeServices: enableNativeServices,
-              riderProfile: riderProfile,
-              sharedRoutes: sharedRoutes,
-              speedLimitDisplay: speedLimitDisplay,
-              roadRatings: roadRatings,
-              testControl: testControl,
-              testControlRegistry: testControlRegistry,
-              spokenGuidance: spokenGuidance,
-            );
-          }
-          if (riderProfile.needsOnboarding) {
-            return OnboardingScreen(riderProfile: riderProfile);
-          }
-          return HomeScreen(
-            controller: controller,
-            distanceUnits: distanceUnits,
-            mapStyleMode: mapStyleMode,
-            rideCodePreference: rideCodePreference,
-            riderProfile: riderProfile,
-            sharedRoutes: sharedRoutes,
-            speedLimitDisplay: speedLimitDisplay,
-            recordedRoutes: recordedRoutes,
-            completedRides: completedRides,
-            planDirectory: planDirectory,
-            testControl: testControl,
-            spokenGuidance: spokenGuidance,
-          );
-        },
-      ),
+              ready: restorationComplete,
+              child: rideSurface,
+            ),
     );
   }
 }

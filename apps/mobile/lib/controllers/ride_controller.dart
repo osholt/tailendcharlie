@@ -29,6 +29,7 @@ import '../services/completed_ride_archiver.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
 import '../services/ride_lifecycle.dart';
+import '../services/ride_invitation_link.dart';
 import '../services/ride_membership.dart';
 import '../services/received_quick_message.dart';
 import '../services/ride_route_reducer.dart';
@@ -662,8 +663,13 @@ class RideController extends ChangeNotifier {
       activeSession.rideCode,
       activeSession.joinToken,
     );
-    return 'Join $group. Enter ride code ${activeSession.rideCode} in the '
-        'app, or paste this invite: $invite.';
+    final link = rideInvitationUrl(
+      activeSession.rideCode,
+      activeSession.joinToken,
+    );
+    return 'Join $group in Tail End Charlie: $link\n\n'
+        'Enter ride code ${activeSession.rideCode} in the app, or paste this '
+        'private invite: $invite.';
   }
 
   Future<void> initialize() async {
@@ -923,6 +929,19 @@ class RideController extends ChangeNotifier {
     required RiderColor riderColor,
   }) async {
     {
+      // Deep links can arrive while any screen is open. Never let a join path
+      // replace a live session silently: that would discard this phone's role,
+      // journal and queued safety events. An ended ride may be filed exactly as
+      // createRide already does before the replacement is installed.
+      if (_session != null) {
+        if (!rideEnded) {
+          throw const FormatException(
+            'Finish or leave your current ride before joining another.',
+          );
+        }
+        await _archiveCurrentRideIfComplete();
+        await _removeRideData();
+      }
       final credentials = RideCodeCredentials(
         rideId: rideId,
         rideCode: rideCode,
