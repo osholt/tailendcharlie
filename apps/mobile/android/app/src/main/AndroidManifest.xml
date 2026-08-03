@@ -114,6 +114,15 @@
                     android:host="tailendcharlie.app"
                     android:path="/planner.html" />
             </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="tailendcharlie.app"
+                    android:path="/join.html" />
+            </intent-filter>
             <!-- Opening a .gpx file (Files, a browser download, Mail) with a
                  correctly-set MIME type. -->
             <intent-filter>
