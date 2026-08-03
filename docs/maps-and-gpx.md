@@ -12,11 +12,24 @@ not bulk-download from the public OpenStreetMap tile servers.
 - Stores a versioned parsed route in application support storage.
 - Accepts UTF-8 files up to 10 MB and 200,000 points.
 - Rejects invalid coordinates, document type declarations, and empty geometry.
-- Treats recorded `<trk>` geometry as authoritative and never reroutes it.
+- Treats recorded `<trk>` geometry as authoritative and never silently
+  reroutes it.
 - Recognises web-planner tracks carrying the Tail End Charlie
   `<tec:road-route>` extension as calculated road routes. During review the app
   can refresh those through the road router to recover manoeuvre instructions;
   an ordinary recorded track remains untouched.
+- Offers an imported track with no manoeuvres as either **Follow original
+  line** (fully offline) or **Generate navigable route** (online). The latter
+  sends at most 90 bounded samples per continuous segment to OSRM's Match
+  service, keeps the original in Saved routes, and creates a separately
+  identified candidate with the returned road geometry and manoeuvres.
+- Rejects a road-matched candidate before route review if the provider splits
+  it into separate matches, reports under 70% confidence, matches under 90% of
+  sampled points, moves the samples by more than 35 m on average, or moves any
+  sample by more than 150 m. A successful review shows the original as a grey
+  dashed line underneath the blue navigable candidate and states the measured
+  confidence, coverage and deviation. Only **Confirm** makes the candidate the
+  active route; cancellation and every failure leave the active route alone.
 - Attempts to match sparse `<rte>` geometry, or waypoint-only GPX files, to the
   road network after an explicit import. If routing is unavailable, the original
   GPX remains usable and is stored unchanged.

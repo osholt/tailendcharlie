@@ -285,9 +285,10 @@ class NavigationGuidancePlanner {
   /// followable; only the prompts are missing, and saying so is the difference
   /// between a rider carrying on and a rider stopping to work out what broke.
   ///
-  /// It deliberately does not offer to fetch directions. There is no
-  /// snap-a-track-to-roads capability in the app today, so offering one would
-  /// send riders looking for a button that does not exist.
+  /// The choice to road-match an imported track is made before route review,
+  /// where the original can be preserved and compared safely (#325). This
+  /// riding-state message stays concise and truthful for someone who chose to
+  /// follow the original line.
   static const noTurnInstructionsMessage =
       'No turn prompts for this route — follow the line on the map.';
 

@@ -33,6 +33,7 @@ import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/group_pip_bridge.dart';
+import '../../services/imported_track_matcher.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/tec_gap_trend.dart';
 import '../../services/map_geojson.dart';
@@ -95,6 +96,8 @@ enum GroupMiniMapRenderer {
   /// surface.
   flutterVector,
 }
+
+enum _ImportedTrackChoice { cancel, followOriginal, generateNavigable }
 
 @visibleForTesting
 Color groupMiniMapBackgroundColor(Brightness brightness) =>
@@ -611,6 +614,7 @@ class RideMapScreen extends StatefulWidget {
     this.destinationRoutePlanner,
     this.roadRoutingService,
     this.routeGeometryEnricher,
+    this.importedTrackMatcher,
     this.demoRouteLoader,
     this.recordedRouteStore,
     this.completedRideStore,
@@ -702,6 +706,7 @@ class RideMapScreen extends StatefulWidget {
   final DestinationRoutePlanner? destinationRoutePlanner;
   final RoadRoutingService? roadRoutingService;
   final RouteGeometryEnricher? routeGeometryEnricher;
+  final ImportedTrackMatcher? importedTrackMatcher;
   final Future<ImportedRoute> Function()? demoRouteLoader;
 
   /// Stored geometry, resolved from the app's own on-disk stores when these are
@@ -759,6 +764,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   late final DiscoverySuggestionConfiguration _suggestionConfiguration;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
+  late final ImportedTrackMatcher _defaultImportedTrackMatcher;
   late SpeedLimitDisplayController _speedLimitDisplay;
   late bool _ownsSpeedLimitDisplay;
   late final GroupPipBridge _groupPipBridge;
@@ -1063,6 +1069,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   RouteGeometryEnricher get _routeGeometryEnricher =>
       widget.routeGeometryEnricher ?? _defaultRouteGeometryEnricher;
 
+  ImportedTrackMatcher get _importedTrackMatcher =>
+      widget.importedTrackMatcher ?? _defaultImportedTrackMatcher;
+
   @override
   void initState() {
     super.initState();
@@ -1099,6 +1108,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
     _defaultRouteGeometryEnricher = RouteGeometryEnricher(
       routingService: _roadRoutingService,
+    );
+    _defaultImportedTrackMatcher = OsrmImportedTrackMatcher(
+      client: _routingClient,
+      baseUrl: routingConfiguration.routingBaseUrl,
     );
     _ownsSpeedLimitDisplay = widget.speedLimitDisplay == null;
     _speedLimitDisplay =
@@ -4783,11 +4796,42 @@ class _RideMapScreenState extends State<RideMapScreen> {
     Duration? duration,
     List<String> warnings = const [],
   }) async {
+    if (!widget.canEditRoute) {
+      throw const FormatException(
+        'Only the ride leader can replace the group route.',
+      );
+    }
+    ImportedRoute? comparisonRoute;
+    if (_canGenerateNavigableRoute(route)) {
+      final choice = await _chooseImportedTrackTreatment(route);
+      if (choice == _ImportedTrackChoice.cancel || !mounted) return null;
+      final savedRoutes =
+          widget.recordedRouteStore ??
+          await JsonFileRecordedRouteStore.openDefault();
+      await savedRoutes.save(route);
+      if (choice == _ImportedTrackChoice.generateNavigable) {
+        _showMessage('Matching the imported line to roads…');
+        if (mounted) setState(() => _routing = true);
+        late final ImportedTrackMatch match;
+        try {
+          match = await _importedTrackMatcher.match(route);
+        } finally {
+          if (mounted) setState(() => _routing = false);
+        }
+        comparisonRoute = route;
+        route = match.route;
+        distanceMeters = routeLengthMeters(route);
+        duration = null;
+        warnings = [...warnings, ...match.reviewWarnings];
+      }
+    }
     final review = await _reviewRoute(
       route,
       distanceMeters: distanceMeters,
       duration: duration,
       warnings: warnings,
+      previousRoute: comparisonRoute,
+      comparisonRoute: comparisonRoute,
     );
     if (review.action != RouteReviewAction.confirm) return null;
     return _commitRoute(review.route);
@@ -4801,6 +4845,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     List<String> warnings = const [],
     bool canEditStops = false,
     ImportedRoute? previousRoute,
+    ImportedRoute? comparisonRoute,
   }) async {
     if (!widget.canEditRoute) {
       throw const FormatException(
@@ -4835,6 +4880,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       twistinessScore: twistinessScore,
       warnings: reviewWarnings,
       previousRoute: previousRoute ?? _route,
+      comparisonRoute: comparisonRoute,
       canEditStops: canEditStops,
       showMarkerPlan: widget.markerFeaturesEnabled,
       onMarkerReviewChanged: (review) => markerReview = review,
@@ -4848,6 +4894,51 @@ class _RideMapScreenState extends State<RideMapScreen> {
       route: reviewedRoute.withMarkerReview(markerReview),
     );
   }
+
+  bool _canGenerateNavigableRoute(ImportedRoute route) =>
+      route.maneuvers.isEmpty &&
+      route.paths.isNotEmpty &&
+      route.paths.every(
+        (path) => path.kind == RoutePathKind.track && path.points.length >= 2,
+      );
+
+  Future<_ImportedTrackChoice> _chooseImportedTrackTreatment(
+    ImportedRoute route,
+  ) async =>
+      await showDialog<_ImportedTrackChoice>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Add turn directions?'),
+          content: Text(
+            '${route.name} is an imported line without turn instructions. '
+            'You can follow it exactly as supplied, or use an internet '
+            'connection to generate a navigable road route.\n\n'
+            'The original line will be kept in Saved routes either way.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_ImportedTrackChoice.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              key: const Key('follow-original-track'),
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(_ImportedTrackChoice.followOriginal),
+              child: const Text('Follow original line'),
+            ),
+            FilledButton(
+              key: const Key('generate-navigable-route'),
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(_ImportedTrackChoice.generateNavigable),
+              child: const Text('Generate navigable route'),
+            ),
+          ],
+        ),
+      ) ??
+      _ImportedTrackChoice.cancel;
 
   Future<ImportedRoute> _commitRoute(ImportedRoute activeRoute) async {
     await widget.routeStore.saveActiveRoute(activeRoute);

@@ -411,7 +411,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     }
     final parsed = routes
         .whereType<Map>()
-        .map((route) => _parseRoute(Map<String, dynamic>.from(route)))
+        .map((route) => parseRoute(Map<String, dynamic>.from(route)))
         .toList(growable: false);
     final chosen =
         RouteTwistiness.chooseWithinDetour(
@@ -435,7 +435,10 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     );
   }
 
-  RoadRouteResult _parseRoute(Map<String, dynamic> route) {
+  /// Parses the standard OSRM Route object shared by the route and match
+  /// services. Keeping one parser means imported-track matching cannot drift
+  /// from ordinary destination routing in geometry or manoeuvre handling.
+  static RoadRouteResult parseRoute(Map<String, dynamic> route) {
     final geometry = route['geometry'];
     if (geometry is! Map || geometry['coordinates'] is! List) {
       throw const FormatException('Road routing geometry is invalid.');
@@ -470,7 +473,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
       points: points,
       distanceMeters: distance.toDouble(),
       duration: Duration(milliseconds: (duration.toDouble() * 1000).round()),
-      maneuvers: _parseManeuvers(route['legs']),
+      maneuvers: parseManeuvers(route['legs']),
       twistinessScore: RouteTwistiness.score(
         points,
         distanceMeters: distance.toDouble(),
@@ -478,7 +481,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     );
   }
 
-  static List<RoadRouteManeuver> _parseManeuvers(Object? rawLegs) {
+  static List<RoadRouteManeuver> parseManeuvers(Object? rawLegs) {
     if (rawLegs is! List) return const [];
     final maneuvers = <RoadRouteManeuver>[];
     for (final rawLeg in rawLegs) {
