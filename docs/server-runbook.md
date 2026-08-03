@@ -242,6 +242,12 @@ topology before internet exposure.
 
 ## Operations
 
+- `.github/workflows/relay-health.yml` checks the public relay every 15 minutes.
+  It verifies HTTPS liveness, compatibility metadata and exact parity with the
+  current `main` commit, opens one repository issue on failure, and closes it
+  after recovery. Repository issue notifications are the maintainer-facing
+  alert, so keep them enabled. Every merge to `main` therefore needs a prompt
+  relay deploy, even when the server code itself did not change.
 - Alert if readiness fails, 5xx rises, sync latency grows, PostgreSQL storage
   grows unexpectedly, or cleanup stops logging hourly completion.
 - Back up with `pg_dump -Fc` to encrypted off-host storage and test restore.
