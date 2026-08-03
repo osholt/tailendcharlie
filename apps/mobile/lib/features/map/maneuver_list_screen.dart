@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
+import 'maneuver_diagnostics.dart';
 import 'maneuver_symbol.dart';
 
 /// Every manoeuvre for the current route, in order.
@@ -137,6 +140,13 @@ class _ManeuverListTile extends StatelessWidget {
     final showLanes = maneuverLanesAreShowable(instruction.lanes);
     return ListTile(
       isThreeLine: true,
+      // "All turns" is a kerbside screen, not a riding one, so a turn can
+      // afford to be openable. Tapping shows what the router actually said
+      // about it — the data #302 and #301 are both waiting on, in a form a
+      // rider can paste into the tester group.
+      onTap: () => unawaited(
+        ManeuverDiagnosticsSheet.show(context, instruction, position: position),
+      ),
       leading: SizedBox(
         width: 46,
         child: Row(

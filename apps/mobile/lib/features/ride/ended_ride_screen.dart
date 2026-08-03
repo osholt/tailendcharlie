@@ -152,6 +152,48 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     body: ListView(
       padding: const EdgeInsets.all(18),
       children: [
+        // Above everything, including who ended the ride. Recording the ride is
+        // the premise of the app; a rider who has lost one needs to know before
+        // they read its summary, not after (#299).
+        if (widget.controller.rideArchiveError case final message?)
+          Padding(
+            key: const Key('ride-archive-failed-notice'),
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF3A2126),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFFF8A6B)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.save_as_outlined, color: Color(0xFFFF8A6B)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'This ride was not saved',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          message,
+                          style: const TextStyle(
+                            color: Color(0xFFE6C3BB),
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         // Named, prominent, and first. A tester read an unexplained end as a
         // crash (#283): the screen said the ride had ended but not that somebody
         // had ended it, nor who, so it was indistinguishable from the app
