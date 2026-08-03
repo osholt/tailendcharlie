@@ -13,12 +13,28 @@ String joinInviteText(String rideCode, String joinToken) =>
 /// arbitrary pasted text - a bare code, a `code#token` invite, or a full
 /// shared sentence containing either one.
 ({String? code, String? token}) parseJoinInvite(String pastedText) {
+  // A shared invitation URL percent-encodes the separator inside its fragment.
+  // Decode only a valid URL's fragment, then fall through to the long-standing
+  // text grammar. Bare `123456#token` invitations keep working unchanged.
+  final uri = Uri.tryParse(pastedText.trim());
+  var searchable = pastedText;
+  if (uri != null &&
+      uri.scheme == 'https' &&
+      uri.host.toLowerCase() == 'tailendcharlie.app' &&
+      uri.path == '/join.html' &&
+      uri.hasFragment) {
+    try {
+      searchable = Uri.decodeComponent(uri.fragment);
+    } on FormatException {
+      return (code: null, token: null);
+    }
+  }
   final compound = RegExp(
     '($_codePattern)#($_tokenPattern)',
-  ).firstMatch(pastedText);
+  ).firstMatch(searchable);
   if (compound != null) {
     return (code: compound.group(1), token: compound.group(2));
   }
-  final bareCode = RegExp(r'\b\d{6}\b').firstMatch(pastedText);
+  final bareCode = RegExp(r'\b\d{6}\b').firstMatch(searchable);
   return (code: bareCode?.group(0), token: null);
 }

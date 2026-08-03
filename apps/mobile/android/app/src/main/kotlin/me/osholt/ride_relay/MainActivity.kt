@@ -50,6 +50,7 @@ class MainActivity : FlutterActivity() {
 
     private var pendingGpxImport: Pair<ByteArray, String>? = null
     private var pendingPlannerLink: String? = null
+    private var pendingRideInvitationLink: String? = null
 
     private val connectionsClient: ConnectionsClient by lazy {
         Nearby.getConnectionsClient(this)
@@ -138,13 +139,19 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             PLANNER_LINK_METHOD_CHANNEL,
         ).setMethodCallHandler { call, result ->
-            if (call.method != "consumePendingPlannerLink") {
-                result.notImplemented()
-                return@setMethodCallHandler
+            when (call.method) {
+                "consumePendingPlannerLink" -> {
+                    val pending = pendingPlannerLink
+                    pendingPlannerLink = null
+                    result.success(pending)
+                }
+                "consumePendingRideInvitationLink" -> {
+                    val pending = pendingRideInvitationLink
+                    pendingRideInvitationLink = null
+                    result.success(pending)
+                }
+                else -> result.notImplemented()
             }
-            val pending = pendingPlannerLink
-            pendingPlannerLink = null
-            result.success(pending)
         }
         val pushChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -230,7 +237,7 @@ class MainActivity : FlutterActivity() {
         super.onCreate(savedInstanceState)
         createNotificationChannels()
         captureGpxIntent(intent)
-        capturePlannerLinkIntent(intent)
+        captureAppLinkIntent(intent)
         capturePushIntent(intent)
     }
 
@@ -262,7 +269,7 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         captureGpxIntent(intent)
-        capturePlannerLinkIntent(intent)
+        captureAppLinkIntent(intent)
         capturePushIntent(intent)
     }
 
@@ -281,18 +288,20 @@ class MainActivity : FlutterActivity() {
         pendingGpxImport = bytes to (queryDisplayName(uri) ?: uri.lastPathSegment ?: "shared.gpx")
     }
 
-    private fun capturePlannerLinkIntent(intent: Intent?) {
+    private fun captureAppLinkIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_VIEW) return
         val uri = intent.data ?: return
         if (
             uri.scheme != "https" ||
             !uri.host.equals("tailendcharlie.app", ignoreCase = true) ||
-            uri.path != "/planner.html" ||
             uri.toString().length > 2048
         ) {
             return
         }
-        pendingPlannerLink = uri.toString()
+        when (uri.path) {
+            "/planner.html" -> pendingPlannerLink = uri.toString()
+            "/join.html" -> pendingRideInvitationLink = uri.toString()
+        }
     }
 
     @Suppress("DEPRECATION")
