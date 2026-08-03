@@ -87,6 +87,13 @@ the reports we had, so the app now captures the missing data itself.
    invitation code** action under the ride-code field. The camera icon in the
    field still works; the label is there because the icon alone was invisible
    enough that this feature was reported missing.
+9. **Import a GPX track with no turn instructions.** Choose **Generate
+   navigable route** while online. The original should appear as a grey dashed
+   line behind the proposed blue road route, with confidence and deviation
+   figures to review before confirming. Cancel and check that the current route
+   did not change; import it again and choose **Follow original line** to prove
+   the offline option still works. The original should be in **Saved routes**
+   after either choice (#325).
 
 ### Fixed and new
 
@@ -115,6 +122,10 @@ the reports we had, so the app now captures the missing data itself.
 - The mini-map frames riders it cannot place yet (#172).
 - A route with no turn prompts says that, rather than claiming the route failed
   (#303).
+- An imported track with no turn prompts can now be road-matched into a
+  navigable candidate. The original is preserved, uncertain matches are
+  rejected, and the candidate is compared against it before confirmation
+  (#325).
 
 ### Known limitations
 
@@ -127,8 +138,6 @@ the reports we had, so the app now captures the missing data itself.
 - **The second half of the lost-ride report (#299) is unexplained.** The saved
   track is proven complete by test, and the archive now says so when it fails.
   If a ride still goes missing, that is new information.
-- An imported GPX track still cannot be turned into a navigable route — there is
-  no snap-to-roads feature (#325). The app says so rather than offering it.
 - CarPlay opens on an unzoomed map of the whole UK with nothing on it (#295).
 - The app still has more menus than it should. Two of the worst unlabelled icons
   are fixed; the consolidation itself is not done (#306).

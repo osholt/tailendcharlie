@@ -231,8 +231,9 @@ void main() {
         NavigationGuidancePlanner.noTurnInstructionsMessage,
         isNot(NavigationGuidancePlanner.noRouteLineMessage),
       );
-      // And neither promises an action the app cannot perform - there is no
-      // snap-a-track-to-roads feature to send a rider looking for.
+      // #325 now offers road matching during import and review. These remain
+      // riding-state messages: someone who chose the original line should not
+      // be sent back into route preparation while moving.
       for (final message in [
         NavigationGuidancePlanner.noTurnInstructionsMessage,
         NavigationGuidancePlanner.noRouteLineMessage,

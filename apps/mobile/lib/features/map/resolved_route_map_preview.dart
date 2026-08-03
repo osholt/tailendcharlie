@@ -43,6 +43,7 @@ class ResolvedRouteMapPreview extends StatefulWidget {
     super.key,
     required this.paths,
     required this.basemapConfiguration,
+    this.referencePaths = const [],
     this.pins = const [],
     this.mapStyleString,
     this.lineColor = '#3478F6',
@@ -56,6 +57,7 @@ class ResolvedRouteMapPreview extends StatefulWidget {
   });
 
   final List<List<GeoPoint>> paths;
+  final List<List<GeoPoint>> referencePaths;
   final List<RoutePreviewPin> pins;
   final BasemapConfiguration basemapConfiguration;
   final String? mapStyleString;
@@ -82,6 +84,7 @@ class ResolvedRouteMapPreview extends StatefulWidget {
 
 class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
   static const _routeSource = 'route-preview-lines';
+  static const _referenceRouteSource = 'route-preview-reference-lines';
   static const _pinSource = 'route-preview-pins';
   ml.MapLibreMapController? _controller;
   bool _styleReady = false;
@@ -95,8 +98,10 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
   Offset? _latestReshapePosition;
   late final Future<String> _style = _resolveStyle();
 
-  List<GeoPoint> get _points =>
-      routePreviewFramingPoints(widget.paths, widget.pins);
+  List<GeoPoint> get _points => routePreviewFramingPoints([
+    ...widget.referencePaths,
+    ...widget.paths,
+  ], widget.pins);
 
   double get _platformPixelScale => previewPlatformPixelScale(
     platform: defaultTargetPlatform,
@@ -115,6 +120,10 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     // discarding the framing the rider had just chosen before the snapshot.
     if (_styleReady &&
         (!_samePreviewPaths(oldWidget.paths, widget.paths) ||
+            !_samePreviewPaths(
+              oldWidget.referencePaths,
+              widget.referencePaths,
+            ) ||
             !_samePreviewPins(oldWidget.pins, widget.pins))) {
       unawaited(_syncAndFit(fit: !widget.reshapeEnabled));
     }
@@ -205,6 +214,12 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                 ),
               ),
             ),
+            if (widget.referencePaths.isNotEmpty)
+              const Positioned(
+                right: 8,
+                top: 8,
+                child: _RouteComparisonLegend(),
+              ),
             if (widget.reshapeEnabled)
               const Positioned(
                 left: 58,
@@ -257,7 +272,27 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     if (controller == null) return;
     _styleReady = false;
     try {
-      await controller.addGeoJsonSource(_routeSource, _routeGeoJson());
+      await controller.addGeoJsonSource(
+        _referenceRouteSource,
+        _routeGeoJson(widget.referencePaths),
+      );
+      await controller.addLineLayer(
+        _referenceRouteSource,
+        'route-preview-reference-line',
+        const ml.LineLayerProperties(
+          lineColor: '#B8C0CC',
+          lineWidth: 5,
+          lineOpacity: 0.9,
+          lineDasharray: [2, 2],
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addGeoJsonSource(
+        _routeSource,
+        _routeGeoJson(widget.paths),
+      );
       await controller.addLineLayer(
         _routeSource,
         'route-preview-border',
@@ -354,7 +389,14 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     if (!_styleReady || controller == null) return;
     _syncing = true;
     try {
-      await controller.setGeoJsonSource(_routeSource, _routeGeoJson());
+      await controller.setGeoJsonSource(
+        _referenceRouteSource,
+        _routeGeoJson(widget.referencePaths),
+      );
+      await controller.setGeoJsonSource(
+        _routeSource,
+        _routeGeoJson(widget.paths),
+      );
       await controller.setGeoJsonSource(_pinSource, _pinGeoJson());
       if (fit) await _fit();
     } on Object catch (error) {
@@ -536,10 +578,10 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     return false;
   }
 
-  Map<String, dynamic> _routeGeoJson() => {
+  Map<String, dynamic> _routeGeoJson(List<List<GeoPoint>> paths) => {
     'type': 'FeatureCollection',
     'features': [
-      for (final path in widget.paths)
+      for (final path in paths)
         if (path.length >= 2)
           {
             'type': 'Feature',
@@ -580,6 +622,49 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
       ],
     };
   }
+}
+
+class _RouteComparisonLegend extends StatelessWidget {
+  const _RouteComparisonLegend();
+
+  @override
+  Widget build(BuildContext context) => const IgnorePointer(
+    child: DecoratedBox(
+      key: Key('route-comparison-legend'),
+      decoration: BoxDecoration(
+        color: Color(0xE61A2029),
+        borderRadius: BorderRadius.all(Radius.circular(8)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _RouteLegendRow(color: Color(0xFF3478F6), label: 'Navigable'),
+            SizedBox(height: 4),
+            _RouteLegendRow(color: Color(0xFFB8C0CC), label: 'Original'),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _RouteLegendRow extends StatelessWidget {
+  const _RouteLegendRow({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(width: 20, height: 3, color: color),
+      const SizedBox(width: 6),
+      Text(label, style: const TextStyle(color: Colors.white, fontSize: 11)),
+    ],
+  );
 }
 
 /// MapLibre Android reports and accepts native-view pixels, while Flutter

@@ -34,6 +34,7 @@ class RouteReviewScreen extends StatefulWidget {
     this.twistinessScore,
     this.warnings = const [],
     this.previousRoute,
+    this.comparisonRoute,
     this.canEditStops = false,
     this.showMarkerPlan = true,
     this.onMarkerReviewChanged,
@@ -53,6 +54,11 @@ class RouteReviewScreen extends StatefulWidget {
   final double? twistinessScore;
   final List<String> warnings;
   final ImportedRoute? previousRoute;
+
+  /// A route drawn underneath [route] for an explicit before/after review.
+  /// This is separate from [previousRoute], which also drives the material
+  /// length-change warning and is used by ordinary route editing flows.
+  final ImportedRoute? comparisonRoute;
   final bool canEditStops;
   final bool showMarkerPlan;
 
@@ -73,6 +79,7 @@ class RouteReviewScreen extends StatefulWidget {
     double? twistinessScore,
     List<String> warnings = const [],
     ImportedRoute? previousRoute,
+    ImportedRoute? comparisonRoute,
     bool canEditStops = false,
     bool showMarkerPlan = true,
     ValueChanged<MarkerPlanReview>? onMarkerReviewChanged,
@@ -91,6 +98,7 @@ class RouteReviewScreen extends StatefulWidget {
             twistinessScore: twistinessScore,
             warnings: warnings,
             previousRoute: previousRoute,
+            comparisonRoute: comparisonRoute,
             canEditStops: canEditStops,
             showMarkerPlan: showMarkerPlan,
             onMarkerReviewChanged: onMarkerReviewChanged,
@@ -132,6 +140,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   double? get twistinessScore => _twistinessScore;
   List<String> get warnings => widget.warnings;
   ImportedRoute? get previousRoute => widget.previousRoute;
+  ImportedRoute? get comparisonRoute => widget.comparisonRoute;
   bool get canEditStops => widget.canEditStops;
 
   /// The route as reviewed so far. Everything downstream - the plan, the pins,
@@ -331,11 +340,20 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
         .map((path) => path.points.map(_latLng).toList(growable: false))
         .where((points) => points.isNotEmpty)
         .toList(growable: false);
+    final comparisonPreviewPaths = comparisonRoute?.paths
+        .map((path) => path.points)
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
+    final comparisonSegments = comparisonRoute?.paths
+        .map((path) => path.points.map(_latLng).toList(growable: false))
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
     final reviewWaypoints = _reviewWaypoints(route);
     final markerPlan = widget.showMarkerPlan
         ? _analyzer.analyze(route)
         : const RouteMarkerPlan(points: []);
     final allPoints = [
+      ...?comparisonSegments?.expand((points) => points),
       ...routeSegments.expand((points) => points),
       ...reviewWaypoints.map((waypoint) => _latLng(waypoint.point)),
     ];
@@ -396,6 +414,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                     ? ResolvedRouteMapPreview(
                         key: const Key('route-review-map'),
                         paths: previewPaths,
+                        referencePaths: comparisonPreviewPaths ?? const [],
                         pins: reviewWaypoints.indexed
                             .map(
                               (entry) => RoutePreviewPin(
@@ -454,6 +473,25 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                               userAgentPackageName: 'me.osholt.ride_relay',
                               maxNativeZoom:
                                   basemapConfiguration.maximumNativeZoom,
+                            ),
+                          if (comparisonSegments?.any(
+                                (points) => points.length >= 2,
+                              ) ??
+                              false)
+                            PolylineLayer(
+                              key: const Key('route-review-original-line'),
+                              polylines: [
+                                for (final points in comparisonSegments!)
+                                  if (points.length >= 2)
+                                    Polyline(
+                                      points: points,
+                                      color: const Color(0xFFB8C0CC),
+                                      strokeWidth: 5,
+                                      pattern: StrokePattern.dashed(
+                                        segments: const [10, 8],
+                                      ),
+                                    ),
+                              ],
                             ),
                           if (routeSegments.any((points) => points.length >= 2))
                             PolylineLayer(

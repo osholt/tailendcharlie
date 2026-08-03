@@ -205,6 +205,51 @@ void main() {
     expect(find.text('Destination'), findsOneWidget);
   });
 
+  testWidgets('draws a road-matched candidate against the original line', (
+    tester,
+  ) async {
+    final original = _route(0.02);
+    final candidate = ImportedRoute(
+      id: 'matched',
+      name: 'Review route (navigable)',
+      importedAt: DateTime.utc(2026, 8, 3),
+      sourceFileName: 'matched-review.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51, longitude: -2),
+            GeoPoint(latitude: 51.001, longitude: -1.99),
+            GeoPoint(latitude: 51, longitude: -1.98),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RouteReviewScreen(
+          route: candidate,
+          comparisonRoute: original,
+          distanceUnit: DistanceUnit.kilometres,
+          basemapConfiguration: const BasemapConfiguration(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final originalLayer = tester.widget<PolylineLayer>(
+      find.byKey(const Key('route-review-original-line')),
+    );
+    expect(originalLayer.polylines, hasLength(1));
+    expect(originalLayer.polylines.single.color, const Color(0xFFB8C0CC));
+    final candidateLayer = tester
+        .widgetList<PolylineLayer>(find.byType(PolylineLayer))
+        .last;
+    expect(candidateLayer.polylines.single.color, const Color(0xFF3478F6));
+  });
+
   testWidgets('route review opens the full manoeuvre list before the ride', (
     tester,
   ) async {
