@@ -220,7 +220,12 @@ tell application "System Events" to tell process "Dock" to ¬
 ```
 
 Then wait for the CarPlay window to report `kCGWindowIsOnscreen` before posting
-the click. Note also that window AX enumeration fails while the windows are
+the click — and check its origin is not negative. The Simulator persists window
+geometry per device in `com.apple.iphonesimulator`'s `DevicePreferences`, and a
+stale entry parks the CarPlay window off the left of the display at an `X` of
+around `-1150`. It still reports as on-screen, so the click is accepted and
+lands nowhere. `Window > Center` does not recover it; quitting the Simulator and
+running `defaults delete com.apple.iphonesimulator DevicePreferences` does. Note also that window AX enumeration fails while the windows are
 off-Space (`count of windows` returns 0) even though the *menu bar* is fully
 scriptable — which is why the display can be attached but not tapped.
 
