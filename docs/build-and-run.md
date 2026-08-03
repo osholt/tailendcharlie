@@ -178,6 +178,34 @@ Two things that are **not** causes, both of which have been chased:
 - The app icon. It renders correctly on the CarPlay launcher from the existing
   `AppIcon` set.
 
+**Do not use an iOS 26.x runtime.** The script picks the newest runtime below
+26.0 for a reason: on iOS 26.x, opening any CarPlay app whose root template is a
+`CPMapTemplate` aborts `CarPlayTemplateUIHost`, and the head unit bounces
+straight back to its home screen. It reads exactly like "our app crashes on
+CarPlay" and it is not:
+
+```
+-[CPSTemplateInstance vehicleSupportsDestinationSharing]: unrecognized selector
+  -[CPSMapTemplateViewController _updateShareButtonVisibility]
+  -[CPSMapTemplateViewController _configureNavigationBarShareButton]
+  -[CPSMapTemplateViewController _viewDidLoad]
+```
+
+Apple's map-template controller asks the template instance whether *the vehicle*
+supports destination sharing while its view loads. On the simulator there is no
+vehicle to ask — `carkitd` logs the session as `session: (null), name: (null),
+modelName: (null), manufacturer: (null), serialNumber: (null)` — and it aborts.
+The path runs unconditionally for a map template, which a CarPlay navigation app
+must have at its root, and no app-side property reaches it:
+`mapTemplateShouldProvideNavigationMetadata` returning `false` gives a
+byte-identical stack. Destination sharing is iOS 26.1+ API
+(`CPTrip.hasShareableDestination`), so the crashing code does not exist on
+earlier runtimes, and the app's deployment target is 16.0.
+
+Crash reports are in `~/Library/Logs/DiagnosticReports/CarPlayTemplateUIHost-*.ips`.
+Check there **before** concluding anything about the app: an app that opens and
+vanishes looks identical to one that never opened.
+
 **Tap the head unit by hand.** Synthetic clicks into the CarPlay window
 (`CGEventPost`, AppleScript, `cliclick`) work for a while and then silently
 stop: the display keeps rendering — its clock still advances — but stops

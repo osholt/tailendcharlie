@@ -54,11 +54,44 @@ done
 
 log() { printf '==> %s\n' "$*"; }
 
-newest_runtime() {
-  xcrun simctl list runtimes -j \
-    | python3 -c 'import json,sys; rs=[r for r in json.load(sys.stdin)["runtimes"] if r["isAvailable"] and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS")]; rs.sort(key=lambda r: [int(p) for p in r["version"].split(".")]); print(rs[-1]["identifier"] if rs else "")'
+# Deliberately NOT the newest runtime. On iOS 26.x, opening any CarPlay app whose
+# root is a CPMapTemplate aborts CarPlayTemplateUIHost:
+#
+#   -[CPSTemplateInstance vehicleSupportsDestinationSharing]: unrecognized
+#   selector, from -[CPSMapTemplateViewController _updateShareButtonVisibility]
+#   via _configureNavigationBarShareButton in _viewDidLoad
+#
+# The head unit bounces straight back to its home screen, which reads as "our
+# app crashes". It is Apple's code, it runs unconditionally for a map template,
+# and no app-side property reaches it - `mapTemplateShouldProvideNavigationMetadata`
+# returning false gives a byte-identical stack. Destination sharing is iOS 26.1+
+# API (`CPTrip.hasShareableDestination`), so the crashing path does not exist on
+# older runtimes, and the app's deployment target is 16.0.
+#
+# Override with CARPLAY_SIM_RUNTIME to test a specific runtime deliberately.
+best_runtime() {
+  xcrun simctl list runtimes -j | python3 -c '
+import json, sys
+runtimes = [
+    r for r in json.load(sys.stdin)["runtimes"]
+    if r["isAvailable"] and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS")
+]
+def version(runtime):
+    return [int(part) for part in runtime["version"].split(".")]
+runtimes.sort(key=version)
+usable = [r for r in runtimes if version(r)[0] < 26]
+# Falling back to the newest rather than refusing: a machine with only iOS 26
+# installed should still get a CarPlay display, with the crash explained.
+print((usable or runtimes)[-1]["identifier"] if runtimes else "")
+'
 }
-RUNTIME="${CARPLAY_SIM_RUNTIME:-$(newest_runtime)}"
+RUNTIME="${CARPLAY_SIM_RUNTIME:-$(best_runtime)}"
+case "$RUNTIME" in
+  *iOS-2[6-9]*)
+    echo "Warning: $RUNTIME crashes CarPlayTemplateUIHost on a map template." >&2
+    echo "         See the comment in $0 and docs/build-and-run.md." >&2
+    ;;
+esac
 [ -n "$RUNTIME" ] || { echo "No iOS simulator runtime is installed." >&2; exit 1; }
 
 # 1. A healthy CoreSimulatorService. `simctl list` is the cheapest call that
