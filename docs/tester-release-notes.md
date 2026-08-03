@@ -36,6 +36,103 @@ permissions by design.
 - ...
 ```
 
+## Next Android and iOS tester build — unreleased — 3 August 2026
+
+The newest section is always first, so this is the one to read. Everything in
+the iOS build 40 section below is also in this build — and so is the 30 July
+section, which build 40 already carried despite still being headed
+"unreleased".
+
+This one is mostly the 2 August ride feedback. Several entries are **things to
+send us** rather than things to confirm: two faults could not be diagnosed from
+the reports we had, so the app now captures the missing data itself.
+
+### What to test
+
+1. **Ride solo for over half an hour with no route set, then end it.** Two
+   things to watch, and both matter:
+   - Does your own trail stay on the map for the whole ride? It used to be
+     dropped after about 2 km, whatever the length of the ride.
+   - Afterwards, is the ride in **Previous rides** with its whole track? If it
+     is missing and you did *not* see a "This ride was not saved" notice, say
+     so — that is the half we have not explained yet.
+2. **Plan a route with "avoid motorways" or a twisty preference, then ride it.**
+   Turns should now be announced. Routes planned with any of those preferences
+   previously arrived with **no turn instructions at all**, which is why
+   navigation "sometimes worked and sometimes didn't". This is the single most
+   worthwhile thing to confirm in this build.
+3. **Choose Initials as your rider symbol.** They should fill the coloured
+   circle, and should look the same on the map as they did in the picker you
+   chose them from. On the live map they were about a quarter smaller than the
+   preview promised.
+4. **If a turn is announced wrongly, send us the turn.** Open the ride menu →
+   **All turns**, tap the turn that was wrong, and press **Copy turn detail**.
+   Paste it into the group. That readout is what tells us whether the router got
+   it wrong or we did — we have two open reports we cannot progress without it:
+   a 90-degree right called a sharp right, and a roundabout icon that looked
+   like the wrong way round.
+5. **If the map shows no roads, photograph it.** The map now says *why* when its
+   background is missing — "NO MAP BACKGROUND", "NO MAP DATA" or "MAP DID NOT
+   LOAD", each a different fault, and tappable for a sentence. If there is no
+   badge at all, the map is working and you are somewhere genuinely empty.
+   Either way the screenshot now tells us which.
+6. **Share a ride recap.** The header used to clip to "TAIL END CHA…" on every
+   recap anyone shared. It should read in full.
+7. **Before setting off, look at the map.** You should see **your own** position
+   with no route set — previously there was no way to get it — and riders who
+   have joined should appear before the ride starts, not only once it begins.
+   Nothing is recorded or shared as a track before **Start ride**; that has not
+   changed.
+8. **Join a ride by QR using the labelled button.** There is now a **Scan an
+   invitation code** action under the ride-code field. The camera icon in the
+   field still works; the label is there because the icon alone was invisible
+   enough that this feature was reported missing.
+
+### Fixed and new
+
+- A long ride no longer loses the track drawn behind you. The limit was 120
+  points — roughly 2.4 km whatever the ride's length — which also silently
+  undid the leader-trail fix in the last build (#299).
+- Routes planned with a motorcycle preference now carry turn instructions. The
+  motorcycle router does return them; they were being discarded (#303).
+- The ride map says why it has no roads on it, instead of an empty background
+  that looks the same as open countryside (#281).
+- Rider initials are sized by one rule everywhere, so the map, the group
+  overview and the symbol picker agree (#259).
+- Any turn can be opened in **All turns** to see what the router said about it,
+  and copied for a report (#302, #301).
+- A ride that cannot be saved says so, and the 24-hour cleanup no longer deletes
+  a ride it failed to save (#299).
+- The recap header no longer clips (#308).
+- Your own position appears on the map before the ride starts, with no route
+  needed, and riders who have joined are visible before it starts too (#300).
+- QR joining, and the ride's four navigation destinations, now have words rather
+  than bare icons (#306).
+- Ending a ride asks the same question wherever you do it, and a leader who is
+  currently marking a junction can end the ride again — that had silently done
+  nothing (#306).
+- A rider can leave the watcher-link sheet (#304).
+- The mini-map frames riders it cannot place yet (#172).
+- A route with no turn prompts says that, rather than claiming the route failed
+  (#303).
+
+### Known limitations
+
+- **Two faults in this build are instrumented, not fixed.** The wrongly
+  announced turn (#302) and the roundabout icon (#301) both need the turn detail
+  from item 4 before they can be worked on. Nothing about them has changed
+  except that they can now be reported properly.
+- **The blank ride map (#281) is still not explained.** The badge tells us which
+  of four faults it is; it does not stop it happening.
+- **The second half of the lost-ride report (#299) is unexplained.** The saved
+  track is proven complete by test, and the archive now says so when it fails.
+  If a ride still goes missing, that is new information.
+- An imported GPX track still cannot be turned into a navigable route — there is
+  no snap-to-roads feature (#325). The app says so rather than offering it.
+- CarPlay opens on an unzoomed map of the whole UK with nothing on it (#295).
+- The app still has more menus than it should. Two of the worst unlabelled icons
+  are fixed; the consolidation itself is not done (#306).
+
 ## iOS build 40 — 1.0.1 — 2 August 2026
 
 Everything in the 30 July section below is also in this build; it was never
