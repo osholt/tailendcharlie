@@ -36,7 +36,7 @@ permissions by design.
 - ...
 ```
 
-## Next Android and iOS tester build — unreleased — 3 August 2026
+## iOS build 41 / Android build 40 — unreleased — 3 August 2026
 
 The newest section is always first, so this is the one to read. Everything in
 the iOS build 40 section below is also in this build — and so is the 30 July
@@ -100,6 +100,15 @@ the reports we had, so the app now captures the missing data itself.
     ride is active, it must keep that ride rather than silently replacing it.
     Uninstalling the app should make the same link open a help/install page;
     copying the whole link into **Paste** must still join (#275).
+11. **Prepare a ride on the phone, then connect to CarPlay.** The CarPlay map
+    should use the same style, route, riders and forward-looking framing as the
+    phone, with a smaller group overview, turn/marker symbols, speed and mapped
+    speed limit. As leader, use **Start prepared ride** and confirm both the
+    route summary and any no-TEC warning. Create/join and first-time permission
+    prompts deliberately remain on the phone (#295, #328).
+12. **From the CarPlay map, report a hazard and open SOS.** Report should use
+    the current location and SOS must require confirmation. Check the launcher
+    and map controls on a right-hand-drive display if one is available (#295).
 
 ### Fixed and new
 
