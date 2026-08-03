@@ -494,6 +494,37 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   });
 
+  testWidgets('the ride navigation bar names its destinations (#306)', (
+    tester,
+  ) async {
+    // It was `alwaysHide`, which made the app's primary navigation four
+    // unlabelled icons — the thing #306 says no feature may be reachable only
+    // through. The bar is hidden while the rider is moving, so the height the
+    // labels cost is only ever paid at a standstill.
+    //
+    // Portrait explicitly: the default test viewport is landscape, where the
+    // shell uses the rail instead and there is no bar to find.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
+    expect(bar.labelBehavior, NavigationDestinationLabelBehavior.alwaysShow);
+    for (final label in ['Map', 'Details', 'Safety']) {
+      expect(find.text(label), findsWidgets, reason: label);
+    }
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    controller.dispose();
+  });
+
   testWidgets(
     'active ride moves navigation chrome to a left rail in landscape',
     (tester) async {
@@ -513,8 +544,14 @@ void main() {
         findsOneWidget,
       );
       final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
-      expect(rail.minWidth, 56);
-      expect(rail.labelType, NavigationRailLabelType.none);
+      // Named destinations, not four bare icons (#306). The rail is hidden
+      // while the rider is moving, so the width the labels cost is only ever
+      // paid at a standstill.
+      expect(rail.minWidth, 72);
+      expect(rail.labelType, NavigationRailLabelType.all);
+      for (final label in ['Map', 'Details', 'Safety']) {
+        expect(find.text(label), findsWidgets, reason: label);
+      }
 
       controller.dispose();
     },
@@ -548,6 +585,13 @@ void main() {
     await controller.startRide();
     await controller.startMarker();
     await controller.recordMarkerPass('rider-a');
+    // The state that exposed the guard defect (#306). Marking changes the
+    // session role, so `session.role` is no longer `lead` while
+    // `isLocalRideLeader` still is — and the shell's own end-ride guard read the
+    // former while both entry points offer the action on the latter. A leader
+    // marking a junction could tap End ride and have nothing happen.
+    expect(controller.session?.role, isNot(RideRole.lead));
+    expect(controller.isLocalRideLeader, isTrue);
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
@@ -558,6 +602,10 @@ void main() {
 
     expect(find.byKey(const Key('end-ride-marking-summary')), findsOneWidget);
     expect(find.textContaining('1 session'), findsOneWidget);
+    // Both entry points now share one dialog, so the consequence a leader reads
+    // no longer depends on which button they pressed (#306). This is the half
+    // the dashboard's own dialog never had.
+    expect(find.textContaining('ends the group ride for everyone'), findsOne);
 
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();

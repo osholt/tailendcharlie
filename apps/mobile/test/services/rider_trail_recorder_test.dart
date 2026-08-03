@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/controllers/situational_awareness_controller.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/rider_trail_recorder.dart';
 
@@ -130,11 +131,6 @@ void main() {
       closeTo(0.006, 1e-9),
       reason: 'the oldest points are dropped, not the newest',
     );
-    expect(
-      RiderTrailRecorder.defaultMaximumPointsPerRider,
-      120,
-      reason: 'the documented per-rider bound',
-    );
   });
 
   test('bounds a journal trail with the same cap', () {
@@ -152,6 +148,83 @@ void main() {
     ]);
 
     expect(trails.single.points, hasLength(3));
+  });
+
+  group('a long ride keeps its whole drawn track (#299)', () {
+    // The bound was 120 points. Positions become durable reports at roughly one
+    // per 20 m of travel, so that was about 2.4 km of riding whatever the
+    // length of the ride: past it the oldest points were deleted and the drawn
+    // trail slid along behind the rider. "It forgets your track after a while."
+    test('a solo rider three hours in still has the start of their ride', () {
+      final recorder = RiderTrailRecorder();
+      final start = DateTime.utc(2026, 8, 2, 9);
+      // 6,000 reports is roughly 120 km at the report rate — a long solo day,
+      // and fifty times the old bound.
+      const reports = 6000;
+
+      for (var index = 0; index < reports; index += 1) {
+        recorder.update([
+          _update(
+            'me',
+            _point(
+              51.4,
+              -2.5 + index * 0.0002,
+              recordedAt: start.add(Duration(seconds: index * 2)),
+            ),
+            isLeader: true,
+          ),
+        ]);
+      }
+
+      final trail = recorder.trailFor('me');
+      expect(trail, hasLength(reports));
+      expect(
+        trail.first.recordedAt,
+        start,
+        reason: 'the first fix of the ride is still there at the end of it',
+      );
+      expect(
+        trail.last.recordedAt,
+        start.add(Duration(seconds: (reports - 1) * 2)),
+      );
+    });
+
+    test('the recorder no longer cuts the journal trail below its source', () {
+      // #280 raised the leader trail's bound in SituationalAwarenessController
+      // from 600 to 100,000 after a 112 mile ride lost its tail. That trail
+      // arrives here as `journalTrail`, and this recorder cut it back to 120,
+      // so the fix never reached the map. A bound below its own source is a
+      // deletion, not a bound.
+      final recorder = RiderTrailRecorder();
+      final journal = [
+        for (var index = 0; index < 5000; index += 1)
+          _point(51.4, -2.5 + index * 0.0002),
+      ];
+
+      final trails = recorder.update([
+        _update(
+          'leader',
+          _point(51.4, -2.5 + 5000 * 0.0002),
+          isLeader: true,
+          journalTrail: journal,
+        ),
+      ]);
+
+      expect(trails.single.points, hasLength(journal.length));
+    });
+
+    test('the bound is a memory backstop, not a display policy', () {
+      // It must sit at or above the journal trail it is handed, or it silently
+      // overrides it again. Drawing cost is bounded elsewhere and separately:
+      // TrailDisplaySimplifier reduces every trace to at most 2,000 points
+      // before either map implementation sees it.
+      expect(
+        RiderTrailRecorder.defaultMaximumPointsPerRider,
+        greaterThanOrEqualTo(
+          SituationalAwarenessController.maximumRetainedTrailPoints,
+        ),
+      );
+    });
   });
 
   test('breaks a trail across an implausible reporting gap', () {

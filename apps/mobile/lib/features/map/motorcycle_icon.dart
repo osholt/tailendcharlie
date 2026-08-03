@@ -191,6 +191,37 @@ String riderInitials(String displayName) {
       .toUpperCase();
 }
 
+/// Side of the square PNG every rider glyph is rasterised into for the native
+/// map.
+const double riderSymbolRasterSize = 128;
+
+/// The share of a rider badge's diameter that the rider's initials span.
+///
+/// This is the one number the whole app sizes initials by, and it exists
+/// because there were three different answers to the same question (#259).
+///
+/// A bike or an emoji is a pictogram: it sits *inside* the badge, and every
+/// symbol layer draws one at roughly 0.8 of the badge diameter. Initials are
+/// not a pictogram — they are the rider's identity, and the point of #259 is
+/// that they should fill the circle. They silently inherited the pictogram's
+/// size on the native map, so they were drawn at about **0.76** of the badge
+/// there, while the symbol picker's preview drew them at **0.94**. That is
+/// both halves of the report at once: a quarter smaller than they should be,
+/// and visibly not matching the preview a rider chose them from.
+const double riderInitialsBadgeFill = 0.94;
+
+/// `icon-size` for an initials raster drawn on a badge of [badgeDiameter].
+///
+/// [rasterizeRiderSymbolPng] already insets the glyph by
+/// [riderInitialsBadgeFill] inside its own square, so the raster maps one to
+/// one onto the badge and this is simply the ratio of the two. Derived rather
+/// than tuned, so a change to a badge's radius cannot leave its initials
+/// behind — which is exactly how they got left behind the first time.
+double riderInitialsIconSize({
+  required double badgeDiameter,
+  double rasterSize = riderSymbolRasterSize,
+}) => badgeDiameter / rasterSize;
+
 /// A motorcycle glyph standing in for the plain circle/Material icon
 /// previously used for rider map markers, tinted by the caller (role colour)
 /// exactly like the `Icon` widget it replaces.
@@ -268,7 +299,14 @@ class RiderMarkerBadge extends StatelessWidget {
           size: size * 0.62,
         ),
         RiderSymbolKind.initials => Padding(
-          padding: EdgeInsets.all(size * 0.03),
+          // The same fill as the raster the native map draws, so the two
+          // renderers of the same marker agree (#259). Measured against the
+          // coloured circle rather than the widget's outer box, because the
+          // border is drawn inside that box and the raster has no border at
+          // all — basing it on the outer box left the two 6% apart.
+          padding: EdgeInsets.all(
+            (size - 2 * borderWidth) * (1 - riderInitialsBadgeFill) / 2,
+          ),
           child: FittedBox(
             key: const Key('rider-marker-initials-fill'),
             fit: BoxFit.contain,
@@ -312,7 +350,7 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
   required RiderSymbol symbol,
   required String displayName,
   required MotorcycleIconStyle motorcycleStyle,
-  double size = 128,
+  double size = riderSymbolRasterSize,
 }) async {
   if (symbol.kind == RiderSymbolKind.motorcycle) {
     return (bytes: await loadMotorcycleIconPng(motorcycleStyle), sdf: true);
@@ -341,7 +379,11 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
           ),
         )..layout();
         if (initials) {
-          final available = size * 0.94;
+          // The same fill the Flutter badge uses, so the raster is the badge
+          // rather than something drawn inside it. The layer completes the
+          // other half by scaling this square onto the badge itself; see
+          // [riderInitialsIconSize].
+          final available = size * riderInitialsBadgeFill;
           final scale = math.min(
             available / painter.width,
             available / painter.height,

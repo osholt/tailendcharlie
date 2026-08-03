@@ -23,6 +23,7 @@ import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import 'ride_invitation_qr_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
+import 'end_ride_confirmation.dart';
 import 'marker_assistance_widgets.dart';
 
 class RideDashboard extends StatelessWidget {
@@ -40,6 +41,7 @@ class RideDashboard extends StatelessWidget {
     this.internetRelayController,
     this.onSendQuickMessage,
     this.localObserverAssistanceActive = false,
+    this.relayCanCarryReopen = true,
     this.serviceWarning,
     this.connectivity,
     this.summarySharer,
@@ -58,6 +60,12 @@ class RideDashboard extends StatelessWidget {
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
   final Future<void> Function(QuickMessage)? onSendQuickMessage;
+
+  /// Whether the relay can carry a reopen, which decides whether ending the
+  /// ride is reversible for the group. Passed through to the shared
+  /// confirmation so this entry point states the same consequence as the ride
+  /// menu's (#306).
+  final bool relayCanCarryReopen;
   final bool localObserverAssistanceActive;
   final String? serviceWarning;
 
@@ -233,45 +241,14 @@ class RideDashboard extends StatelessWidget {
   }
 
   Future<void> _confirmEndRide(BuildContext context) async {
-    final summary = controller.markingSummary;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('End this ride?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Location sharing will stop on this phone. Relay recovery stays '
-              'available for final queued events until you remove the ended '
-              'ride. Share the summary if you want a copy of marker times and '
-              'pass counts.',
-            ),
-            const SizedBox(height: 14),
-            EndRideMarkingSummary(summary: summary),
-          ],
-        ),
-        actions: [
-          TextButton.icon(
-            onPressed: () => _shareRideSummary(dialogContext),
-            icon: const Icon(Icons.summarize_outlined),
-            label: const Text('Share summary'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('End ride'),
-          ),
-        ],
-      ),
+    // The shared dialog, so this and the ride menu cannot say different things
+    // about whether ending the ride can be undone (#306).
+    await confirmEndRide(
+      context,
+      controller: controller,
+      relayCanCarryReopen: relayCanCarryReopen,
+      onShareSummary: () => _shareRideSummary(context),
     );
-    if (confirmed ?? false) {
-      await controller.endRide();
-    }
   }
 
   Future<void> _shareRideSummary(BuildContext context) async {

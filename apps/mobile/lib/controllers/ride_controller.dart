@@ -1906,6 +1906,15 @@ class RideController extends ChangeNotifier {
     final delay = expiresAt.difference(_clock());
     if (delay <= Duration.zero) {
       await _archiveCurrentRideIfComplete();
+      if (_rideArchiveError != null) {
+        // Never delete a ride that could not be archived. The 24-hour cleanup
+        // exists to reclaim space, and reclaiming it by destroying the only
+        // copy of a ride is the exact data loss #299 is about. Keeping the
+        // journal costs one ride's events and gives `initialize` another go at
+        // it on the next launch.
+        notifyListeners();
+        return;
+      }
       await _removeRideData();
       notifyListeners();
       return;
@@ -1914,6 +1923,22 @@ class RideController extends ChangeNotifier {
       unawaited(_expireEndedRideIfDue());
     });
   }
+
+  /// Set when a ride ended but could not be written to Previous rides.
+  ///
+  /// A rider whose record of a ride is missing has to be told (#299): the
+  /// premise of the app is that the ride is kept, and losing it silently is
+  /// worse than never starting, because they believed it was being kept.
+  ///
+  /// Cleared on the next successful archive. [initialize] retries while the
+  /// journal survives, which is the 24-hour ended-ride window, so this states a
+  /// risk rather than a certainty and says what happens next.
+  String? get rideArchiveError => _rideArchiveError;
+  String? _rideArchiveError;
+
+  static const rideArchiveFailedMessage =
+      'This ride could not be added to Previous rides. It is still on this '
+      'phone and will be saved again next time you open the app.';
 
   Future<void> _archiveCurrentRideIfComplete({bool force = false}) async {
     final store = _completedRideStore;
@@ -1932,7 +1957,21 @@ class RideController extends ChangeNotifier {
       archivedAt: archivedAt,
       plannedRoute: _routeState.route,
     );
-    await store.save(snapshot);
+    // Caught here rather than left to `_run`, for two reasons. It gets the
+    // rider a sentence about their ride record instead of the generic "that
+    // action could not be saved", which does not say what was lost. And it
+    // stops one failed write abandoning the rest of `endRide` — the unused-ICE
+    // purge after it is a privacy obligation, and it must not be skipped
+    // because a file could not be written (#299).
+    try {
+      await store.save(snapshot);
+      _rideArchiveError = null;
+    } on Object catch (error, stackTrace) {
+      _rideArchiveError = rideArchiveFailedMessage;
+      if (kDebugMode) {
+        debugPrint('Could not archive the completed ride: $error\n$stackTrace');
+      }
+    }
   }
 
   /// Removes personal-detail shares this device received (not ones it sent) as
