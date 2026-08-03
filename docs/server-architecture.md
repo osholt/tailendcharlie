@@ -114,6 +114,8 @@ admission guard, not a billing or multi-tenant quota system.
 - Four-second polling is simple and resilient but less efficient than a future
   push/long-poll channel; the journal remains the fallback either way.
 
-Revisit this design before public release for per-device keys, revocation,
-shared rate limiting, encryption-key rotation, privacy impact assessment, and
-multi-region deployment.
+The decisions for per-device keys, revocation, shared rate limiting,
+encryption-key rotation, privacy impact assessment and deployment regions are
+recorded in [security-threat-model.md](security-threat-model.md). They are not
+implemented yet; protocol 1 remains private-test-only and public release stays
+blocked on the protocol-2 implementation and validation gates.

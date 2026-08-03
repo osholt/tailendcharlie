@@ -37,11 +37,12 @@ The repository now contains an integrated development alpha:
 - CI definitions for mobile/server analysis and tests, container builds,
   PostgreSQL migrations, Android debug APKs, and unsigned iOS apps.
 
-The remaining P0 gates require physical evidence, deployment ownership, or
-external data rather than more UI claims, and each is now tracked: Android/iPhone
-radio and background testing (#268), battery testing (#269), foreground-route
-alert calibration (#270), field-tested marker/pass detection (#271), and
-per-device identity/application-layer encryption review (#272).
+The remaining P0 gates require physical evidence or foundational security work,
+rather than more UI claims, and each is now tracked: Android/iPhone radio and
+background testing (#268), battery testing (#269), foreground-route alert
+calibration (#270), field-tested marker/pass detection (#271), and protocol-2
+per-device identity/application-layer encryption implementation. The review is in
+[docs/security-threat-model.md](docs/security-threat-model.md) (#272).
 
 **The relay is deployed.** `relay.tailendcharlie.app` answers `/health/live` with
 `{"status":"ok"}` and advertises a capability set identical to this tree's
