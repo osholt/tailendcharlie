@@ -1002,6 +1002,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   SituationalAwarenessController? _awarenessController;
   CarPlayBridge? _carPlayBridge;
+  String? _carPlayMapStyleJson;
   ForegroundLocationController? _locationController;
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
@@ -1114,6 +1115,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _carPlayBridge = CarPlayBridge(
       onEmergencyTriggered: _sendEmergencyMapAlert,
       onTecRoleAnswered: _answerTecRoleRequestFromCarPlay,
+      onStateRequested: () async {
+        if (!mounted) return;
+        _updateMapOverlays(updateDerivedState: false);
+      },
     );
   }
 
@@ -2384,6 +2389,25 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             MediaQuery.platformBrightnessOf(context),
           ),
         );
+    final markerOverlay = _junctionMarkerOverlay.value;
+    final marker = markerOverlay == null
+        ? null
+        : CarPlayMarkerStatus(
+            stage: markerOverlay.stage.name,
+            title: switch (markerOverlay.stage) {
+              MapJunctionMarkerStage.waitingForRiders => 'Hold this junction',
+              MapJunctionMarkerStage.tecApproaching => 'TEC approaching',
+              MapJunctionMarkerStage.readyToRideOff => 'Ride off now',
+            },
+            detail: [
+              '${markerOverlay.ridersPassed}/${markerOverlay.ridersExpected} riders passed',
+              if (markerOverlay.tecDistanceMeters case final distance?)
+                'TEC ${MeasurementFormatter(widget.distanceUnits.value).distance(distance)} away',
+            ].join(' · '),
+            ridersPassed: markerOverlay.ridersPassed,
+            ridersExpected: markerOverlay.ridersExpected,
+            tecDistanceMeters: markerOverlay.tecDistanceMeters,
+          );
     unawaited(
       bridge.publish(
         session: session,
@@ -2404,10 +2428,14 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         guidanceDistanceMeters: _latestNavigationGuidance?.distanceMeters,
         distanceUnit: widget.distanceUnits.value,
         groupStatus: '${visibleRiderLocations.length} riders visible',
-        markerStatus: _junctionMarkerOverlay.value?.instruction,
+        markerStatus: markerOverlay?.instruction,
+        marker: marker,
         tec: tec,
         effectiveTecRiderIds: effectiveTecRiderIds,
         basemap: selectedBasemap,
+        mapStyleJson: _carPlayMapStyleJson,
+        localPosition: _mapPosition.value,
+        localHeadingDegrees: _mapNavigationPosition.value?.headingDegrees,
         routeProgress: routeProgress,
         tecRequest: pendingTecRequest == null
             ? null
@@ -3518,6 +3546,23 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onNavigationViewportChanged: (viewport) {
         final bridge = _carPlayBridge;
         if (bridge != null) unawaited(bridge.publishViewport(viewport));
+      },
+      onMapStyleResolved: (styleJson) {
+        if (!mounted) return;
+        _carPlayMapStyleJson = styleJson;
+        final bridge = _carPlayBridge;
+        if (bridge == null) return;
+        final basemap = BasemapConfiguration.fromEnvironment().forBrightness(
+          dark: widget.mapStyleMode.resolveDark(
+            MediaQuery.platformBrightnessOf(context),
+          ),
+        );
+        unawaited(
+          bridge.publishMapStyle(
+            styleJson: styleJson,
+            fallbackStyleUrl: basemap.styleUrl,
+          ),
+        );
       },
       changeRouteRequestToken: _changeRouteRequestToken,
       onChangeRouteRequestHandled: _clearChangeRouteRequest,

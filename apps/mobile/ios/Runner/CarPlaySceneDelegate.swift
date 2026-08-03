@@ -1,5 +1,6 @@
 import CarPlay
 import CoreLocation
+import Flutter
 import MapLibre
 import MapKit
 import UIKit
@@ -41,6 +42,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapTemplate.mapDelegate = self
     mapTemplate.automaticallyHidesNavigationBar = true
     mapTemplate.hidesButtonsWithNavigationBar = false
+    mapTemplate.guidanceBackgroundColor = CarPlayPalette.cardFill
     mapTemplate.mapButtons = [recenterButton(), panButton(mapTemplate: mapTemplate)]
     mapTemplate.trailingNavigationBarButtons = [
       statusButton(interfaceController: interfaceController, template: statusTemplate),
@@ -74,6 +76,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
   func apply(viewport: [String: Any]) {
     mapViewController?.apply(viewport: viewport)
+  }
+
+  func apply(mapStyle: [String: Any]) {
+    mapViewController?.apply(mapStyle: mapStyle)
   }
 
   /// Raises, and takes down, the leader's "will you be Tail End Charlie?"
@@ -167,7 +173,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   private func updateNavigationSession(snapshot: [String: Any]) {
+    let marker = snapshot["marker"] as? [String: Any]
+    let guidanceTitle = nonEmptyString(marker?["title"])
+      ?? nonEmptyString(snapshot["guidanceTitle"])
+    let terminalGuidance = marker == nil
+      && guidanceTitle?.lowercased().contains("no more turns") == true
     guard
+      let guidanceTitle,
+      !terminalGuidance,
       let mapTemplate,
       let routePoints = snapshot["routePoints"] as? [[String: Any]],
       let first = coordinate(from: routePoints.first),
@@ -204,41 +217,31 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       activeManeuver = nil
     }
 
-    guard
-      let navigationSession,
-      let title = nonEmptyString(snapshot["guidanceTitle"])
-    else {
-      navigationSession?.upcomingManeuvers = []
-      activeManeuverKey = nil
-      activeManeuver = nil
-      return
-    }
+    guard let navigationSession else { return }
+    let title = guidanceTitle
 
+    let markerDetail = nonEmptyString(marker?["detail"])
+    let roadName = markerDetail ?? nonEmptyString(snapshot["guidanceRoadName"])
+    let isMarkerMode = marker != nil
     let distance = max(0, (snapshot["guidanceDistanceMeters"] as? NSNumber)?.doubleValue ?? 0)
-    let distanceMeasurement: Measurement<UnitLength>
-    if snapshot["distanceUnit"] as? String == "miles" {
-      distanceMeasurement = Measurement(
-        value: distance / 1_609.344,
-        unit: UnitLength.miles
-      )
-    } else {
-      distanceMeasurement = Measurement(value: distance, unit: UnitLength.meters)
-    }
-    let roadName = nonEmptyString(snapshot["guidanceRoadName"])
-    let maneuverKey = "\(title)|\(roadName ?? "")"
-    let estimates = CPTravelEstimates(
-      distanceRemaining: distanceMeasurement,
-      timeRemaining: -1
-    )
+    let displayTitle = isMarkerMode || distance <= 0
+      ? title
+      : "\(formattedDistance(distance, unit: snapshot["distanceUnit"] as? String)) · \(title)"
+    let markerStage = nonEmptyString(marker?["stage"])
+    let maneuverKey = "\(isMarkerMode)|\(markerStage ?? "")|\(displayTitle)|\(roadName ?? "")"
     let maneuver: CPManeuver
     if activeManeuverKey == maneuverKey, let existing = activeManeuver {
       maneuver = existing
     } else {
       maneuver = CPManeuver()
-      maneuver.instructionVariants = [title]
-      maneuver.symbolImage = maneuverSymbol(for: title)
-      maneuver.initialTravelEstimates = estimates
+      maneuver.instructionVariants = [displayTitle, title]
+      maneuver.symbolImage = isMarkerMode
+        ? markerSymbol(for: markerStage)
+        : maneuverSymbol(for: title)
+      maneuver.cardBackgroundColor = CarPlayPalette.cardFill
       if #available(iOS 17.4, *) {
+        maneuver.maneuverType = isMarkerMode ? .noTurn : maneuverType(for: title)
+        maneuver.roadFollowingManeuverVariants = roadName.map { [$0] }
         navigationSession.add([maneuver])
       }
       navigationSession.upcomingManeuvers = [maneuver]
@@ -248,7 +251,38 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     if #available(iOS 17.4, *) {
       navigationSession.currentRoadNameVariants = roadName.map { [$0] } ?? []
     }
-    navigationSession.updateEstimates(estimates, for: maneuver)
+  }
+
+  private func formattedDistance(_ metres: Double, unit: String?) -> String {
+    if unit == "miles" {
+      let miles = metres / 1_609.344
+      return miles < 0.1
+        ? "\(Int((metres * 1.093_613).rounded())) yd"
+        : String(format: "%.1f mi", miles)
+    }
+    return metres < 1_000
+      ? "\(Int(metres.rounded())) m"
+      : String(format: "%.1f km", metres / 1_000)
+  }
+
+  private func markerSymbol(for stage: String?) -> UIImage? {
+    switch stage {
+    case "tecApproaching": return UIImage(systemName: "shield.lefthalf.filled")
+    case "readyToRideOff": return UIImage(systemName: "play.fill")
+    default: return UIImage(systemName: "arrow.triangle.branch")
+    }
+  }
+
+  @available(iOS 17.4, *)
+  private func maneuverType(for title: String) -> CPManeuverType {
+    let lowercased = title.lowercased()
+    if lowercased.contains("left") { return .leftTurn }
+    if lowercased.contains("right") { return .rightTurn }
+    if lowercased.contains("roundabout") { return .enterRoundabout }
+    if lowercased.contains("u-turn") || lowercased.contains("uturn") {
+      return .uTurn
+    }
+    return .straightAhead
   }
 
   private func recenterButton() -> CPMapButton {
@@ -392,6 +426,8 @@ private final class CarPlayNavigationViewController: UIViewController,
   private var darkStyleURL: URL?
   private var appliedStyleURL: URL?
   private var phoneStyleURL: URL?
+  private var phoneStyleJSON: String?
+  private var appliedStyleJSON: String?
 
   /// The last snapshot, replayed once the style finishes loading. A style load
   /// clears every annotation with it, so route and riders have to go back on
@@ -474,7 +510,7 @@ private final class CarPlayNavigationViewController: UIViewController,
       routeID = incomingRouteID
       routeProjectionKey = routeKey
     }
-    updateRiders(snapshot["riders"])
+    updateRiders(snapshot)
     tecBadge.apply(snapshot["tec"] as? [String: Any])
     let requestedRiderFollow =
       (snapshot["followRider"] as? NSNumber)?.boolValue ?? false
@@ -487,11 +523,10 @@ private final class CarPlayNavigationViewController: UIViewController,
       // phone map.
       followsLocalRider = requestedRiderFollow
     }
-    // The ride's own marker for this rider carries their name and role and is
-    // the one the group is drawn against. MapLibre's location dot is the
-    // stand-in for it before a ride starts (#295), so exactly one of the two is
-    // ever on the map.
-    mapView.showsUserLocation = localCoordinate == nil
+    // The ride's own marker carries the exact identity symbol and colour the
+    // rider chose on the phone. Do not replace it with MapLibre's unrelated
+    // blue location dot while snapshots settle.
+    mapView.showsUserLocation = false
     if requestedRiderFollow, localCoordinate != nil, followsLocalRider {
       recenter()
     } else if routeChanged || cameraModeChanged {
@@ -514,6 +549,25 @@ private final class CarPlayNavigationViewController: UIViewController,
     }
     guard snapshotWantsRiderFollow, followsLocalRider else { return }
     applyPhoneViewport(animated: true)
+  }
+
+  /// Uses the resolved style document from the phone, not another fetch of the
+  /// URL it originally came from. The phone may be rendering a normalised,
+  /// cached or dark-mode-repainted document, so loading the URL again can give
+  /// CarPlay visibly different roads, labels and tiles.
+  func apply(mapStyle: [String: Any]) {
+    guard
+      let styleJSON = mapStyle["styleJson"] as? String,
+      !styleJSON.isEmpty
+    else { return }
+    phoneStyleJSON = styleJSON
+    if
+      let rawURL = mapStyle["fallbackStyleUrl"] as? String,
+      let fallbackURL = URL(string: rawURL)
+    {
+      phoneStyleURL = fallbackURL
+    }
+    applyPreferredStyle()
   }
 
   func recenter() {
@@ -592,14 +646,29 @@ private final class CarPlayNavigationViewController: UIViewController,
     lightStyleURL = light ?? dark
     darkStyleURL = dark ?? light
     phoneStyleURL = selected
+    if let styleJSON = basemap["styleJson"] as? String, !styleJSON.isEmpty {
+      phoneStyleJSON = styleJSON
+    }
     applyPreferredStyle()
   }
 
   private func applyPreferredStyle() {
+    if let preferredJSON = phoneStyleJSON {
+      guard preferredJSON != appliedStyleJSON else { return }
+      appliedStyleJSON = preferredJSON
+      appliedStyleURL = nil
+      guard let mapView else {
+        installMapView(styleJSON: preferredJSON)
+        return
+      }
+      mapView.styleJSON = preferredJSON
+      return
+    }
     let preferred = phoneStyleURL
       ?? (traitCollection.userInterfaceStyle == .dark ? darkStyleURL : lightStyleURL)
     guard let preferred, preferred != appliedStyleURL else { return }
     appliedStyleURL = preferred
+    appliedStyleJSON = nil
     guard let mapView else {
       installMapView(styleURL: preferred)
       return
@@ -609,10 +678,22 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   private func installMapView(styleURL: URL) {
     let mapView = MLNMapView(frame: view.bounds, styleURL: styleURL)
+    configure(mapView)
+  }
+
+  private func installMapView(styleJSON: String) {
+    let mapView = MLNMapView(frame: view.bounds, styleJSON: styleJSON)
+    configure(mapView)
+  }
+
+  private func configure(_ mapView: MLNMapView) {
     mapView.delegate = self
     mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-    mapView.showsUserLocation = true
-    mapView.userTrackingMode = .follow
+    // The phone's own rider badge is projected below. A second system location
+    // dot has different styling and briefly duplicates the rider while the
+    // first group snapshot arrives.
+    mapView.showsUserLocation = false
+    mapView.userTrackingMode = .none
     // The logo goes, as it does on every phone surface (`logoEnabled: false`);
     // the attribution button stays, because that is a licence condition rather
     // than decoration. CarPlay owns the bottom-trailing corner for its own map
@@ -835,7 +916,7 @@ private final class CarPlayNavigationViewController: UIViewController,
     )
   }
 
-  private func updateRiders(_ raw: Any?) {
+  private func updateRiders(_ snapshot: [String: Any]) {
     guard let mapView else { return }
     if !riderAnnotations.isEmpty {
       mapView.removeAnnotations(riderAnnotations)
@@ -843,7 +924,19 @@ private final class CarPlayNavigationViewController: UIViewController,
     }
     localCoordinate = nil
     localHeading = nil
-    let riders = raw as? [[String: Any]] ?? []
+    var riders = snapshot["riders"] as? [[String: Any]] ?? []
+    if let projectedLocal = snapshot["localRider"] as? [String: Any] {
+      let localID = projectedLocal["riderId"] as? String
+      if
+        let index = riders.firstIndex(where: {
+          ($0["riderId"] as? String) == localID
+        })
+      {
+        riders[index].merge(projectedLocal) { _, localValue in localValue }
+      } else {
+        riders.append(projectedLocal)
+      }
+    }
     for rider in riders {
       guard let coordinate = coordinate(from: rider) else { continue }
       let isLocal = (rider["isLocal"] as? NSNumber)?.boolValue ?? false
@@ -853,13 +946,24 @@ private final class CarPlayNavigationViewController: UIViewController,
         subtitle: rider["role"] as? String,
         isLocal: isLocal,
         isTec: (rider["isTec"] as? NSNumber)?.boolValue ?? false,
-        needsAttention: (rider["needsAttention"] as? NSNumber)?.boolValue ?? false
+        needsAttention: (rider["needsAttention"] as? NSNumber)?.boolValue ?? false,
+        riderSymbol: rider["riderSymbol"] as? String ?? "motorcycle",
+        motorcycleStyle: rider["motorcycleStyle"] as? String ?? "adventureTourer",
+        riderColor: rider["riderColor"] as? String ?? "green"
       )
       riderAnnotations.append(annotation)
       if isLocal {
         localCoordinate = coordinate
         localHeading = (rider["headingDegrees"] as? NSNumber)?.doubleValue
       }
+    }
+    if
+      localCoordinate == nil,
+      let projectedPosition = snapshot["localPosition"] as? [String: Any],
+      let coordinate = coordinate(from: projectedPosition)
+    {
+      localCoordinate = coordinate
+      localHeading = (projectedPosition["headingDegrees"] as? NSNumber)?.doubleValue
     }
     if !riderAnnotations.isEmpty {
       mapView.addAnnotations(riderAnnotations)
@@ -875,7 +979,10 @@ private final class CarPlayNavigationViewController: UIViewController,
   private func showCompleteRoute() {
     guard let mapView else { return }
     guard routeCoordinates.count >= 2 else {
-      mapView.userTrackingMode = .follow
+      mapView.userTrackingMode = .none
+      if let localCoordinate {
+        mapView.setCenter(localCoordinate, zoomLevel: 14, animated: true)
+      }
       return
     }
     mapView.userTrackingMode = .none
@@ -968,6 +1075,9 @@ private final class CarPlayRiderAnnotation: NSObject, MLNAnnotation {
   /// flagged, so the map cannot draw two backs to one group.
   let isTec: Bool
   let needsAttention: Bool
+  let riderSymbol: String
+  let motorcycleStyle: String
+  let riderColor: String
 
   init(
     coordinate: CLLocationCoordinate2D,
@@ -975,7 +1085,10 @@ private final class CarPlayRiderAnnotation: NSObject, MLNAnnotation {
     subtitle: String?,
     isLocal: Bool,
     isTec: Bool,
-    needsAttention: Bool
+    needsAttention: Bool,
+    riderSymbol: String,
+    motorcycleStyle: String,
+    riderColor: String
   ) {
     self.coordinate = coordinate
     self.title = title
@@ -983,51 +1096,122 @@ private final class CarPlayRiderAnnotation: NSObject, MLNAnnotation {
     self.isLocal = isLocal
     self.isTec = isTec
     self.needsAttention = needsAttention
+    self.riderSymbol = riderSymbol
+    self.motorcycleStyle = motorcycleStyle
+    self.riderColor = riderColor
   }
 }
 
 /// One rider on the CarPlay map.
 ///
-/// A filled pill carrying a word rather than a bare coloured dot: the
-/// back-marker is the rider a leader is looking *for*, and picking one dot out
-/// of a group through a visor at speed is not a way to find them.
+/// This is deliberately the same circular identity badge as the phone: chosen
+/// colour plus chosen bike, initials or emoji. Local identity is no longer
+/// replaced by a CarPlay-only blue "You" pill, and role never replaces the
+/// colour a rider selected for every other surface.
 private final class CarPlayRiderAnnotationView: MLNAnnotationView {
   private let label = UILabel()
+  private let imageView = UIImageView()
 
   init(reuseIdentifier: String) {
     super.init(reuseIdentifier: reuseIdentifier)
     isEnabled = false
-    layer.cornerRadius = 11
+    frame = CGRect(x: 0, y: 0, width: 38, height: 38)
+    layer.cornerRadius = 19
     layer.cornerCurve = .continuous
     layer.borderWidth = 2
     layer.borderColor = CarPlayPalette.casing.cgColor
-    label.translatesAutoresizingMaskIntoConstraints = false
-    label.font = .systemFont(ofSize: 12, weight: .heavy)
+    label.font = .systemFont(ofSize: 30, weight: .heavy)
     label.textColor = CarPlayPalette.markerGlyph
     label.textAlignment = .center
+    label.adjustsFontSizeToFitWidth = true
+    label.minimumScaleFactor = 0.45
+    imageView.contentMode = .scaleAspectFit
+    imageView.tintColor = CarPlayPalette.markerGlyph
     addSubview(label)
-    NSLayoutConstraint.activate([
-      label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-      label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
-      label.centerYAnchor.constraint(equalTo: centerYAnchor),
-    ])
+    addSubview(imageView)
   }
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-  func apply(_ rider: CarPlayRiderAnnotation) {
-    label.text = rider.isLocal
-      ? "You"
-      : rider.isTec ? "TEC" : String(rider.title?.prefix(1) ?? "•")
-    backgroundColor = rider.needsAttention
-      ? CarPlayPalette.alerting
-      : rider.isLocal
-        ? CarPlayPalette.ownRider
-        : rider.isTec ? CarPlayPalette.tailEndCharlie : CarPlayPalette.rider
-    let width = max(30, label.intrinsicContentSize.width + 14)
-    frame = CGRect(x: 0, y: 0, width: width, height: 22)
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    label.frame = bounds.insetBy(dx: 2.5, dy: 2.5)
+    imageView.frame = bounds.insetBy(dx: 7, dy: 7)
   }
+
+  func apply(_ rider: CarPlayRiderAnnotation) {
+    frame = CGRect(x: 0, y: 0, width: 38, height: 38)
+    layer.cornerRadius = 19
+    backgroundColor = identityColor(named: rider.riderColor)
+    layer.borderColor = CarPlayPalette.casing.cgColor
+    label.text = nil
+    label.attributedText = nil
+    imageView.image = nil
+
+    if rider.riderSymbol == "initials" {
+      let initials = riderInitials(rider.title ?? "")
+      label.attributedText = NSAttributedString(
+        string: initials,
+        attributes: [.kern: -0.8]
+      )
+      label.font = .systemFont(ofSize: 30, weight: .black)
+    } else if rider.riderSymbol.hasPrefix("emoji:") {
+      label.text = String(rider.riderSymbol.dropFirst("emoji:".count))
+      label.font = .systemFont(ofSize: 21)
+    } else {
+      imageView.image = motorcycleImage(for: rider.motorcycleStyle)
+    }
+    setNeedsLayout()
+  }
+
+  private func riderInitials(_ name: String) -> String {
+    let words = name.split(whereSeparator: { $0.isWhitespace })
+    guard let first = words.first else { return "?" }
+    if words.count == 1 { return String(first.prefix(2)).uppercased() }
+    return "\(first.prefix(1))\(words.last!.prefix(1))".uppercased()
+  }
+
+  private func identityColor(named name: String) -> UIColor {
+    switch name {
+    case "orange": return UIColor(red: 0xFF / 255, green: 0x9F / 255, blue: 0x5A / 255, alpha: 1)
+    case "yellow": return UIColor(red: 0xE8 / 255, green: 0xD2 / 255, blue: 0x4C / 255, alpha: 1)
+    case "teal": return UIColor(red: 0x4F / 255, green: 0xC7 / 255, blue: 0xC7 / 255, alpha: 1)
+    case "pink": return UIColor(red: 0xE8 / 255, green: 0x7F / 255, blue: 0xC0 / 255, alpha: 1)
+    case "cyan": return UIColor(red: 0x5A / 255, green: 0xC8 / 255, blue: 0xFA / 255, alpha: 1)
+    case "amber": return UIColor(red: 0xD9 / 255, green: 0xA4 / 255, blue: 0x41 / 255, alpha: 1)
+    case "crimson": return UIColor(red: 0xD9 / 255, green: 0x60 / 255, blue: 0x7A / 255, alpha: 1)
+    default: return CarPlayPalette.rider
+    }
+  }
+
+  private func motorcycleImage(for style: String) -> UIImage? {
+    let fileName = Self.motorcycleFiles[style] ?? "00_adventure_tourer"
+    let asset = "assets/icons/motorcycles/\(fileName).png"
+    let key = FlutterDartProject.lookupKey(forAsset: asset)
+    guard let path = Bundle.main.path(forResource: key, ofType: nil) else {
+      return UIImage(systemName: "motorcycle.fill")?.withRenderingMode(.alwaysTemplate)
+    }
+    return UIImage(contentsOfFile: path)?.withRenderingMode(.alwaysTemplate)
+  }
+
+  private static let motorcycleFiles = [
+    "adventureTourer": "00_adventure_tourer",
+    "roadster": "01_roadster",
+    "dualSport": "02_dual_sport",
+    "sportNaked": "03_sport_naked",
+    "cruiserClassic": "04_cruiser_classic",
+    "standardTwin": "05_standard_twin",
+    "cafeRacer": "06_cafe_racer",
+    "dirtBike": "07_dirt_bike",
+    "fullTourer": "08_full_tourer",
+    "cruiserBagger": "09_cruiser_bagger",
+    "scrambler": "10_scrambler",
+    "sportTouring": "11_sport_touring",
+    "scooter": "12_scooter",
+    "sidecarRig": "13_sidecar_rig",
+    "streetFighter": "14_street_fighter",
+  ]
 }
 
 /// The persistent back-marker readout on the CarPlay map canvas.

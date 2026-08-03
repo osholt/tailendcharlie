@@ -162,6 +162,7 @@ class RideMapFeature extends StatefulWidget {
     this.onRouteCommitted,
     this.onNavigationGuidanceChanged,
     this.onNavigationViewportChanged,
+    this.onMapStyleResolved,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
@@ -221,6 +222,7 @@ class RideMapFeature extends StatefulWidget {
     ValueChanged<ImportedRoute?>? onRouteCommitted,
     ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged,
     ValueChanged<NavigationCameraViewport>? onNavigationViewportChanged,
+    ValueChanged<String>? onMapStyleResolved,
     Object? changeRouteRequestToken,
     VoidCallback? onChangeRouteRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
@@ -273,6 +275,7 @@ class RideMapFeature extends StatefulWidget {
     onRouteCommitted: onRouteCommitted,
     onNavigationGuidanceChanged: onNavigationGuidanceChanged,
     onNavigationViewportChanged: onNavigationViewportChanged,
+    onMapStyleResolved: onMapStyleResolved,
     changeRouteRequestToken: changeRouteRequestToken,
     onChangeRouteRequestHandled: onChangeRouteRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
@@ -352,6 +355,7 @@ class RideMapFeature extends StatefulWidget {
   final ValueChanged<ImportedRoute?>? onRouteCommitted;
   final ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged;
   final ValueChanged<NavigationCameraViewport>? onNavigationViewportChanged;
+  final ValueChanged<String>? onMapStyleResolved;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
@@ -410,6 +414,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
     if (suppliedStore != null &&
         suppliedCache != null &&
         suppliedStyle != null) {
+      widget.onMapStyleResolved?.call(suppliedStyle);
       return _MapDependencies(
         store: suppliedStore,
         cache: suppliedCache,
@@ -429,6 +434,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
       final resolution = suppliedStyle == null
           ? await styleRepository.resolve()
           : MapStyleResolution(suppliedStyle, MapStyleOutcome.live);
+      widget.onMapStyleResolved?.call(resolution.style);
       return _MapDependencies(
         store: suppliedStore ?? await JsonFileRouteStore.openDefault(),
         cache:
@@ -3621,6 +3627,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         bearing: _cameraBearingDegrees,
         sourceViewportHeightPixels: _mapViewportHeightPixels,
         mapStyleUrl: _basemap.styleUrl,
+        mapStyleJson: widget.mapStyleString,
       ),
     );
     try {

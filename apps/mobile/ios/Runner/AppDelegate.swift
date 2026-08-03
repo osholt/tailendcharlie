@@ -21,6 +21,7 @@ import UserNotifications
   private var carPlayChannel: FlutterMethodChannel?
   private var latestCarPlaySnapshot: [String: Any]?
   private var latestCarPlayViewport: [String: Any]?
+  private var latestCarPlayMapStyle: [String: Any]?
   private var pushChannel: FlutterMethodChannel?
   private var apnsToken: String?
   private var pendingPushTokenResult: FlutterResult?
@@ -180,6 +181,14 @@ import UserNotifications
         }
         self?.latestCarPlayViewport = value
         self?.carPlaySceneDelegate?.apply(viewport: value)
+        result(nil)
+      case "updateMapStyle":
+        guard let value = call.arguments as? [String: Any] else {
+          result(FlutterError(code: "invalid_arguments", message: "Map style must be a map", details: nil))
+          return
+        }
+        self?.latestCarPlayMapStyle = value
+        self?.carPlaySceneDelegate?.apply(mapStyle: value)
         result(nil)
       default:
         result(FlutterMethodNotImplemented)
@@ -348,12 +357,19 @@ import UserNotifications
   /// scene can connect well after the ride screen's first publish.
   func carPlayDidConnect(_ sceneDelegate: CarPlaySceneDelegate) {
     carPlaySceneDelegate = sceneDelegate
+    if let mapStyle = latestCarPlayMapStyle {
+      sceneDelegate.apply(mapStyle: mapStyle)
+    }
     if let snapshot = latestCarPlaySnapshot {
       sceneDelegate.apply(snapshot: snapshot)
     }
     if let viewport = latestCarPlayViewport {
       sceneDelegate.apply(viewport: viewport)
     }
+    // A projected scene can open after a quiet/restored ride. Ask Dart for a
+    // current self-contained snapshot instead of relying on whichever native
+    // cache entry happened to be published first during app restoration.
+    carPlayChannel?.invokeMethod("requestState", arguments: nil)
   }
 
   func carPlayDidDisconnect(_ sceneDelegate: CarPlaySceneDelegate) {

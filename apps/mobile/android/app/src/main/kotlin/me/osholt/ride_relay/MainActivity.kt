@@ -167,7 +167,7 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             PROJECTED_RIDE_METHOD_CHANNEL,
         ).setMethodCallHandler { call, result ->
-            if (call.method == "updateViewport") {
+            if (call.method == "updateViewport" || call.method == "updateMapStyle") {
                 // Android Auto does not render an app-owned map canvas yet.
                 // Accept the shared bridge update so the phone map can publish
                 // at its normal cadence without logging a platform error.

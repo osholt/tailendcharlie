@@ -37,6 +37,7 @@ class CarPlayBridge {
   CarPlayBridge({
     this.onEmergencyTriggered,
     this.onTecRoleAnswered,
+    this.onStateRequested,
     @visibleForTesting MethodChannel? channel,
     @visibleForTesting DateTime Function()? clock,
     @visibleForTesting
@@ -56,6 +57,14 @@ class CarPlayBridge {
   /// head unit (#128).
   final Future<void> Function(String requestId, bool accepted)?
   onTecRoleAnswered;
+
+  /// Rebuilds the current projection when the CarPlay scene opens.
+  ///
+  /// The scene can connect after a quiet or restored ride, when no new
+  /// position event is due to refresh the native cache. Treating the connection
+  /// as an explicit read request prevents CarPlay opening with an earlier empty
+  /// roster or world-sized camera.
+  final Future<void> Function()? onStateRequested;
   DateTime? _lastPublishedAt;
 
   /// The request the head unit was last told about, so a new one can jump the
@@ -85,6 +94,16 @@ class CarPlayBridge {
           return;
         }
         await onTecRoleAnswered?.call(requestId, accepted);
+      case 'requestState':
+        _lastPublishedAt = null;
+        await onStateRequested?.call();
+        final viewport = _latestViewport;
+        if (viewport != null) {
+          // Re-send the style as well as the camera. The native side has just
+          // created a new scene even though this Dart bridge is long-lived.
+          _publishedMapStyleJson = null;
+          await publishViewport(viewport);
+        }
     }
   }
 
@@ -104,10 +123,14 @@ class CarPlayBridge {
     DistanceUnit? distanceUnit,
     String? groupStatus,
     String? markerStatus,
+    CarPlayMarkerStatus? marker,
     CarPlayTecStatus tec = CarPlayTecStatus.absent,
     Set<String> effectiveTecRiderIds = const {},
     CarPlayTecRequest? tecRequest,
     BasemapConfiguration? basemap,
+    String? mapStyleJson,
+    GeoPoint? localPosition,
+    double? localHeadingDegrees,
     RouteProgressGeometry? routeProgress,
   }) async {
     final now = _clock();
@@ -153,6 +176,7 @@ class CarPlayBridge {
       'distanceUnit': distanceUnit?.name,
       'groupStatus': groupStatus,
       'markerStatus': markerStatus,
+      'marker': marker?.toSnapshot(),
       'tec': tec.toSnapshot(),
       'tecRequest': tecRequest?.toSnapshot(),
       // The head unit draws with the same MapLibre styles as the phone, and
@@ -167,15 +191,44 @@ class CarPlayBridge {
                   ? basemap.styleUrl
                   : basemap.darkStyleUrl,
               'selectedStyleUrl': basemap.styleUrl,
+              if (mapStyleJson != null && mapStyleJson.isNotEmpty)
+                'styleJson': mapStyleJson,
             },
+      if (localPosition != null)
+        'localPosition': {
+          'latitude': localPosition.latitude,
+          'longitude': localPosition.longitude,
+          'headingDegrees': localHeadingDegrees,
+        },
+      if (session != null && localPosition != null)
+        'localRider': {
+          'riderId': session.localRiderId,
+          'label': session.displayName,
+          'isLocal': true,
+          'role': session.role.label,
+          'riderSymbol': session.riderSymbol.storageValue,
+          'motorcycleStyle': session.motorcycleStyle.name,
+          'riderColor': session.riderColor.name,
+          'latitude': localPosition.latitude,
+          'longitude': localPosition.longitude,
+          'headingDegrees': localHeadingDegrees,
+        },
       'updatedAtMillis': now.millisecondsSinceEpoch,
       'riders': [
         for (final location in riderLocations)
           {
+            'riderId': location.riderId,
             'label': location.displayName,
             'isLocal':
                 session != null && location.riderId == session.localRiderId,
             'role': _roleLabel(location, effectiveTecRiderIds),
+            // Project the same identity the rider chose on the phone. CarPlay
+            // used to replace the local rider with a blue "You" pill and every
+            // peer with a role-coloured initial, so the two screens described
+            // the same group with different people.
+            'riderSymbol': location.riderSymbol.storageValue,
+            'motorcycleStyle': location.motorcycleStyle.name,
+            'riderColor': location.riderColor.name,
             // Issue #128: two riders can hold the role at once, and the group
             // needs one answer. The phone map resolves that before it draws a
             // marker; the head unit now resolves it the same way rather than
@@ -211,7 +264,12 @@ class CarPlayBridge {
   /// heavier route/rider snapshot. The phone already throttles camera commands
   /// to 400 ms, so adding another timer here would only reintroduce visible lag.
   Future<void> publishViewport(NavigationCameraViewport viewport) async {
+    _latestViewport = viewport;
     try {
+      await publishMapStyle(
+        styleJson: viewport.mapStyleJson,
+        fallbackStyleUrl: viewport.mapStyleUrl,
+      );
       await _channel.invokeMethod('updateViewport', {
         'latitude': viewport.latitude,
         'longitude': viewport.longitude,
@@ -225,6 +283,30 @@ class CarPlayBridge {
       if (kDebugMode) debugPrint('Could not publish CarPlay viewport: $error');
     }
   }
+
+  /// Publishes the resolved phone style as soon as map dependencies open.
+  ///
+  /// Navigation viewports do not exist before a ride starts or after the
+  /// final turn. Keeping style delivery independent means CarPlay still
+  /// matches the phone in both of those stationary states.
+  Future<void> publishMapStyle({
+    required String styleJson,
+    required String fallbackStyleUrl,
+  }) async {
+    if (styleJson.isEmpty || styleJson == _publishedMapStyleJson) return;
+    try {
+      await _channel.invokeMethod('updateMapStyle', {
+        'styleJson': styleJson,
+        'fallbackStyleUrl': fallbackStyleUrl,
+      });
+      _publishedMapStyleJson = styleJson;
+    } on Object catch (error) {
+      if (kDebugMode) debugPrint('Could not publish CarPlay map style: $error');
+    }
+  }
+
+  String? _publishedMapStyleJson;
+  NavigationCameraViewport? _latestViewport;
 
   List<Map<String, double>> _projectProgressPath(List<List<GeoPoint>>? paths) {
     if (paths == null || paths.isEmpty) return const [];
@@ -357,4 +439,37 @@ class CarPlayBridge {
       'severity': alert.assessment.alertLevel.name,
     };
   }
+}
+
+/// The phone's second-bike drop-off card, projected into CarPlay's turn card.
+///
+/// The free-form [instruction] remains in `markerStatus` for the status list
+/// and Android Auto. This structured form lets CarPlay preserve the phone's
+/// short headline and glanceable progress instead of treating marker mode as
+/// ordinary route navigation.
+class CarPlayMarkerStatus {
+  const CarPlayMarkerStatus({
+    required this.stage,
+    required this.title,
+    required this.detail,
+    required this.ridersPassed,
+    required this.ridersExpected,
+    this.tecDistanceMeters,
+  });
+
+  final String stage;
+  final String title;
+  final String detail;
+  final int ridersPassed;
+  final int ridersExpected;
+  final double? tecDistanceMeters;
+
+  Map<String, Object?> toSnapshot() => {
+    'stage': stage,
+    'title': title,
+    'detail': detail,
+    'ridersPassed': ridersPassed,
+    'ridersExpected': ridersExpected,
+    'tecDistanceMeters': tecDistanceMeters,
+  };
 }

@@ -3254,6 +3254,7 @@ void main() {
     expect(projectedViewport!.tilt, 0);
     expect(projectedViewport!.sourceViewportHeightPixels, size.height);
     expect(projectedViewport!.mapStyleUrl, isEmpty);
+    expect(projectedViewport!.mapStyleJson, MapStyleRepository.fallbackStyle);
     // Each round of decluttering has to buy the camera real look-ahead, so both
     // previous bands are held against this one: 431 pixels before #125, 342
     // after it, 296 now that the group overview has left the band (#133).

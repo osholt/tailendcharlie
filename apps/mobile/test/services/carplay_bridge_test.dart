@@ -3,8 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/ride_role.dart';
+import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/geo_point.dart' as presence;
 import 'package:ride_relay/domain/rider_location.dart';
+import 'package:ride_relay/domain/rider_color.dart';
+import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/carplay_bridge.dart';
 import 'package:ride_relay/services/carplay_tec_status.dart';
@@ -72,6 +75,7 @@ void main() {
       'distanceUnit': null,
       'groupStatus': '5 riders visible',
       'markerStatus': 'Marker at the next junction',
+      'marker': null,
       'tec': {
         'state': 'none',
         'riderId': null,
@@ -123,9 +127,9 @@ void main() {
   test(
     'projects the longest route path for the native navigation map',
     () async {
-      MethodCall? received;
+      final calls = <MethodCall>[];
       messenger.setMockMethodCallHandler(channel, (call) async {
-        received = call;
+        calls.add(call);
         return null;
       });
       final bridge = CarPlayBridge(channel: channel);
@@ -169,7 +173,9 @@ void main() {
         distanceUnit: DistanceUnit.miles,
       );
 
-      final arguments = Map<String, Object?>.from(received!.arguments as Map);
+      final arguments = Map<String, Object?>.from(
+        calls.single.arguments as Map,
+      );
       expect(arguments['routeId'], 'route-42');
       expect(arguments['followRider'], isTrue);
       expect(arguments['guidanceRoadName'], 'A420');
@@ -231,9 +237,9 @@ void main() {
   test(
     'publishes the phone navigation viewport without snapshot lag',
     () async {
-      MethodCall? received;
+      final calls = <MethodCall>[];
       messenger.setMockMethodCallHandler(channel, (call) async {
-        received = call;
+        calls.add(call);
         return null;
       });
       final bridge = CarPlayBridge(channel: channel);
@@ -248,11 +254,17 @@ void main() {
           bearing: 123,
           sourceViewportHeightPixels: 760,
           mapStyleUrl: 'https://tiles.example.com/day',
+          mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
         ),
       );
 
-      expect(received?.method, 'updateViewport');
-      expect(received?.arguments, {
+      expect(calls.first.method, 'updateMapStyle');
+      expect(calls.first.arguments, {
+        'styleJson': '{"version":8,"sources":{},"layers":[]}',
+        'fallbackStyleUrl': 'https://tiles.example.com/day',
+      });
+      expect(calls.last.method, 'updateViewport');
+      expect(calls.last.arguments, {
         'latitude': 51.46,
         'longitude': -2.57,
         'zoom': 15.25,
@@ -263,6 +275,186 @@ void main() {
       });
     },
   );
+
+  test('publishes the phone rider symbol and identity colour', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+    final now = DateTime.utc(2026, 8, 3, 12);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: [
+        RiderLocation(
+          riderId: 'oliver',
+          displayName: 'Oliver Holt',
+          role: RideRole.rider,
+          sample: LocationSample(
+            position: const presence.GeoPoint(
+              latitude: 51.45,
+              longitude: -2.58,
+            ),
+            recordedAt: now,
+            accuracyMeters: 6,
+          ),
+          receivedAt: now,
+          motorcycleStyle: MotorcycleIconStyle.cafeRacer,
+          riderSymbol: const RiderSymbol.initials(),
+          riderColor: RiderColor.orange,
+        ),
+      ],
+      routeAlerts: const [],
+      activeHazards: const [],
+    );
+
+    final rider =
+        ((received!.arguments as Map)['riders'] as List).single as Map;
+    expect(rider['riderSymbol'], 'initials');
+    expect(rider['motorcycleStyle'], 'cafeRacer');
+    expect(rider['riderColor'], 'orange');
+  });
+
+  test('publishes structured junction marker mode for the turn card', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+      markerStatus: 'Wait for Tail End Charlie.',
+      marker: const CarPlayMarkerStatus(
+        stage: 'tecApproaching',
+        title: 'TEC approaching',
+        detail: '4/4 riders passed · TEC 0.2 mi away',
+        ridersPassed: 4,
+        ridersExpected: 4,
+        tecDistanceMeters: 322,
+      ),
+    );
+
+    expect((received!.arguments as Map)['marker'], {
+      'stage': 'tecApproaching',
+      'title': 'TEC approaching',
+      'detail': '4/4 riders passed · TEC 0.2 mi away',
+      'ridersPassed': 4,
+      'ridersExpected': 4,
+      'tecDistanceMeters': 322.0,
+    });
+  });
+
+  test(
+    'projects a self-contained local rider and resolved map style',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
+      final bridge = CarPlayBridge(channel: channel);
+      addTearDown(bridge.dispose);
+      final joinedAt = DateTime.utc(2026, 8, 3, 12);
+
+      await bridge.publish(
+        session: RideSession(
+          rideId: 'ride-1',
+          rideCode: '123456',
+          inviteSecret: 'secret',
+          joinToken: 'token',
+          localRiderId: 'oliver',
+          displayName: 'Oliver Holt',
+          role: RideRole.lead,
+          joinedAt: joinedAt,
+          riderSymbol: const RiderSymbol.initials(),
+          riderColor: RiderColor.orange,
+        ),
+        riderLocations: const [],
+        routeAlerts: const [],
+        activeHazards: const [],
+        basemap: const BasemapConfiguration(
+          styleUrl: 'https://tiles.example.com/day',
+        ),
+        mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
+        localPosition: const GeoPoint(latitude: 51.45, longitude: -2.58),
+        localHeadingDegrees: 123,
+      );
+
+      final snapshot = received!.arguments as Map;
+      expect(
+        (snapshot['basemap'] as Map)['styleJson'],
+        contains('"version":8'),
+      );
+      expect(snapshot['localPosition'], {
+        'latitude': 51.45,
+        'longitude': -2.58,
+        'headingDegrees': 123.0,
+      });
+      expect(snapshot['localRider'], {
+        'riderId': 'oliver',
+        'label': 'Oliver Holt',
+        'isLocal': true,
+        'role': 'Lead',
+        'riderSymbol': 'initials',
+        'motorcycleStyle': 'adventureTourer',
+        'riderColor': 'orange',
+        'latitude': 51.45,
+        'longitude': -2.58,
+        'headingDegrees': 123.0,
+      });
+    },
+  );
+
+  test('replays the latest style and viewport when CarPlay connects', () async {
+    final calls = <MethodCall>[];
+    var refreshes = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onStateRequested: () async {
+        refreshes += 1;
+      },
+    );
+    addTearDown(bridge.dispose);
+
+    await bridge.publishViewport(
+      const NavigationCameraViewport(
+        latitude: 51.45,
+        longitude: -2.58,
+        zoom: 15,
+        tilt: 30,
+        bearing: 90,
+        sourceViewportHeightPixels: 760,
+        mapStyleUrl: 'https://tiles.example.com/day',
+        mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
+      ),
+    );
+    calls.clear();
+
+    await messenger.handlePlatformMessage(
+      channel.name,
+      channel.codec.encodeMethodCall(const MethodCall('requestState')),
+      (_) {},
+    );
+
+    expect(refreshes, 1);
+    expect(calls.map((call) => call.method), [
+      'updateMapStyle',
+      'updateViewport',
+    ]);
+  });
 
   // Issue #128: one rider self-selects the role, the leader asks another, and
   // both carry RideRole.tailEndCharlie in the journal. The phone map already

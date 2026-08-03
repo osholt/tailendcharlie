@@ -85,6 +85,7 @@ class NavigationCameraViewport {
     required this.bearing,
     required this.sourceViewportHeightPixels,
     required this.mapStyleUrl,
+    required this.mapStyleJson,
   });
 
   final double latitude;
@@ -96,6 +97,14 @@ class NavigationCameraViewport {
 
   /// The exact day/night style selected for the phone map.
   final String mapStyleUrl;
+
+  /// The resolved style document the phone is actually rendering.
+  ///
+  /// This can differ from [mapStyleUrl]: the phone normalises relative tile,
+  /// glyph and sprite URLs, can serve a cached copy, and repaints a single
+  /// configured style for legible dark mode. Projected displays must use this
+  /// resolved document if their tiles are to match the phone exactly.
+  final String mapStyleJson;
 }
 
 /// A camera framing for one ride update.
