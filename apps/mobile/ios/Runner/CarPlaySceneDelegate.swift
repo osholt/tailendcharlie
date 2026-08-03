@@ -312,7 +312,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     let button = CPMapButton { [weak self] _ in
       self?.mapViewController?.recenter()
     }
-    button.image = UIImage(systemName: "location.fill")
+    button.image = mapButtonImage(
+      named: "location.north.fill",
+      color: CarPlayPalette.actionInk,
+      accessibilityLabel: "Follow my location"
+    )
     return button
   }
 
@@ -320,7 +324,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     let button = CPMapButton { _ in
       mapTemplate.showPanningInterface(animated: true)
     }
-    button.image = UIImage(systemName: "move.3d")
+    button.image = mapButtonImage(
+      named: "arrow.up.and.down.and.arrow.left.and.right",
+      color: CarPlayPalette.actionInk,
+      accessibilityLabel: "Pan map"
+    )
     return button
   }
 
@@ -328,9 +336,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     let button = CPMapButton { [weak self] _ in
       self?.presentReportActions()
     }
-    let image = UIImage(systemName: "exclamationmark.bubble.fill")
-    image?.accessibilityLabel = "Report alert"
-    button.image = image
+    button.image = mapButtonImage(
+      named: "bell.badge.fill",
+      color: CarPlayPalette.reportAccent,
+      accessibilityLabel: "Report alert"
+    )
     return button
   }
 
@@ -338,10 +348,28 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     let button = CPMapButton { [weak self] _ in
       self?.presentEmergencyConfirmation()
     }
-    let image = UIImage(systemName: "sos.circle.fill")
-    image?.accessibilityLabel = "SOS"
-    button.image = image
+    button.image = mapButtonImage(
+      named: "sos.circle.fill",
+      color: CarPlayPalette.emergencyFill,
+      accessibilityLabel: "SOS"
+    )
     return button
+  }
+
+  /// Uses the same glyph colour language as the phone's landscape action row.
+  /// `CPMapButton` supplies CarPlay's system-sized target; preserving the
+  /// symbol's original colour keeps REPORT yellow and SOS red instead of
+  /// flattening every action into the same blue control.
+  private func mapButtonImage(
+    named systemName: String,
+    color: UIColor,
+    accessibilityLabel: String
+  ) -> UIImage? {
+    let configuration = UIImage.SymbolConfiguration(pointSize: 22, weight: .bold)
+    let image = UIImage(systemName: systemName, withConfiguration: configuration)?
+      .withTintColor(color, renderingMode: .alwaysOriginal)
+    image?.accessibilityLabel = accessibilityLabel
+    return image
   }
 
   private func statusButton(
@@ -479,6 +507,9 @@ private enum CarPlayPalette {
   static let cardFill = UIColor(red: 0x25 / 255, green: 0x2E / 255, blue: 0x39 / 255, alpha: 0.90)
   static let cardLabel = UIColor(red: 0xB7 / 255, green: 0xC2 / 255, blue: 0xCF / 255, alpha: 1)
   static let cardTitle = UIColor.white
+  static let actionInk = UIColor(red: 0xE4 / 255, green: 0xE9 / 255, blue: 0xEF / 255, alpha: 1)
+  static let reportAccent = UIColor(red: 0xFF / 255, green: 0xD2 / 255, blue: 0x4A / 255, alpha: 1)
+  static let emergencyFill = UIColor(red: 0xD9 / 255, green: 0x30 / 255, blue: 0x4F / 255, alpha: 1)
 
   /// `RouteLineStyle.routeAhead`: 6pt line on a 10pt casing.
   static let routeWidth: CGFloat = 6
@@ -503,6 +534,7 @@ private final class CarPlayNavigationViewController: UIViewController,
 {
   private var mapView: MLNMapView?
   private let tecBadge = CarPlayTecBadge()
+  private let speedBadge = CarPlaySpeedLimitBadge()
   private let groupMiniMap = CarPlayGroupMiniMapView()
   private var routeSource: MLNShapeSource?
   private var travelledRouteAnnotation: MLNPolyline?
@@ -570,6 +602,8 @@ private final class CarPlayNavigationViewController: UIViewController,
     // keeps this clear of both.
     tecBadge.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(tecBadge)
+    speedBadge.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(speedBadge)
     groupMiniMap.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(groupMiniMap)
     NSLayoutConstraint.activate([
@@ -581,11 +615,19 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 12
       ),
+      speedBadge.trailingAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+        constant: -52
+      ),
+      speedBadge.topAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.topAnchor,
+        constant: 10
+      ),
       groupMiniMap.widthAnchor.constraint(equalToConstant: 110),
       groupMiniMap.heightAnchor.constraint(equalToConstant: 70),
       groupMiniMap.trailingAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-        constant: -82
+        constant: -12
       ),
       groupMiniMap.bottomAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.bottomAnchor,
@@ -628,6 +670,7 @@ private final class CarPlayNavigationViewController: UIViewController,
       styleJSON: phoneStyleJSON
     )
     tecBadge.apply(snapshot["tec"] as? [String: Any])
+    speedBadge.apply(snapshot["speed"] as? [String: Any])
     let requestedRiderFollow =
       (snapshot["followRider"] as? NSNumber)?.boolValue ?? false
     let cameraModeChanged = requestedRiderFollow != snapshotWantsRiderFollow
@@ -1631,6 +1674,133 @@ private final class CarPlayGroupMiniMapView: UIView {
     case "crimson": return UIColor(red: 0xD9 / 255, green: 0x60 / 255, blue: 0x7A / 255, alpha: 1)
     default: return CarPlayPalette.rider
     }
+  }
+}
+
+/// The phone's landscape speed-limit sign and current-speed readout, scaled for
+/// CarPlay's shorter map canvas. The upper number is always the mapped UK mph
+/// limit and the number below is always GPS speed in mph, just as on the phone.
+private final class CarPlaySpeedLimitBadge: UIView {
+  private let sign = UIView()
+  private let limitLabel = UILabel()
+  private let spinner = UIActivityIndicatorView(style: .medium)
+  private let speedLabel = UILabel()
+
+  init() {
+    super.init(frame: .zero)
+    isHidden = true
+    isUserInteractionEnabled = false
+
+    sign.translatesAutoresizingMaskIntoConstraints = false
+    sign.backgroundColor = .white
+    sign.layer.cornerRadius = 17
+    sign.layer.borderWidth = 4
+    sign.layer.shadowColor = UIColor.black.cgColor
+    sign.layer.shadowOpacity = 0.4
+    sign.layer.shadowRadius = 4
+    sign.layer.shadowOffset = CGSize(width: 0, height: 2)
+    addSubview(sign)
+
+    limitLabel.translatesAutoresizingMaskIntoConstraints = false
+    limitLabel.font = .systemFont(ofSize: 18, weight: .black)
+    limitLabel.textColor = UIColor(
+      red: 0x11 / 255,
+      green: 0x11 / 255,
+      blue: 0x11 / 255,
+      alpha: 1
+    )
+    limitLabel.textAlignment = .center
+    limitLabel.adjustsFontSizeToFitWidth = true
+    limitLabel.minimumScaleFactor = 0.7
+    sign.addSubview(limitLabel)
+
+    spinner.translatesAutoresizingMaskIntoConstraints = false
+    spinner.color = UIColor(
+      red: 0x30 / 255,
+      green: 0x34 / 255,
+      blue: 0x3B / 255,
+      alpha: 1
+    )
+    sign.addSubview(spinner)
+
+    speedLabel.translatesAutoresizingMaskIntoConstraints = false
+    speedLabel.textAlignment = .center
+    speedLabel.adjustsFontSizeToFitWidth = true
+    speedLabel.minimumScaleFactor = 0.7
+    addSubview(speedLabel)
+
+    NSLayoutConstraint.activate([
+      widthAnchor.constraint(equalToConstant: 44),
+      heightAnchor.constraint(equalToConstant: 58),
+      sign.widthAnchor.constraint(equalToConstant: 34),
+      sign.heightAnchor.constraint(equalToConstant: 34),
+      sign.topAnchor.constraint(equalTo: topAnchor),
+      sign.centerXAnchor.constraint(equalTo: centerXAnchor),
+      limitLabel.leadingAnchor.constraint(equalTo: sign.leadingAnchor, constant: 4),
+      limitLabel.trailingAnchor.constraint(equalTo: sign.trailingAnchor, constant: -4),
+      limitLabel.centerYAnchor.constraint(equalTo: sign.centerYAnchor),
+      spinner.centerXAnchor.constraint(equalTo: sign.centerXAnchor),
+      spinner.centerYAnchor.constraint(equalTo: sign.centerYAnchor),
+      speedLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+      speedLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+      speedLabel.topAnchor.constraint(equalTo: sign.bottomAnchor, constant: 2),
+      speedLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  func apply(_ speed: [String: Any]?) {
+    guard let speed else {
+      isHidden = true
+      spinner.stopAnimating()
+      return
+    }
+    isHidden = false
+
+    let status = speed["limitStatus"] as? String
+    let limit = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    let unlimited = (speed["limitUnlimited"] as? NSNumber)?.boolValue ?? false
+    let known = status == "known" && (limit != nil || unlimited)
+    let checking = status == "checking"
+    limitLabel.isHidden = checking
+    if checking {
+      spinner.startAnimating()
+    } else {
+      spinner.stopAnimating()
+      limitLabel.text = known ? (unlimited ? "∞" : "\(limit!)") : "–"
+    }
+    sign.layer.borderColor = (
+      known
+        ? UIColor(red: 0xD7 / 255, green: 0x19 / 255, blue: 0x20 / 255, alpha: 1)
+        : UIColor(red: 0x89 / 255, green: 0x93 / 255, blue: 0xA0 / 255, alpha: 1)
+    ).cgColor
+
+    let metresPerSecond = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
+    let milesPerHour = metresPerSecond.flatMap { value in
+      value.isFinite && value >= 0 ? Int((value * 2.236_936).rounded()) : nil
+    }
+    let currentSpeed = milesPerHour.map(String.init) ?? "–"
+    speedLabel.attributedText = NSAttributedString(
+      string: currentSpeed,
+      attributes: [
+        .font: UIFont.systemFont(ofSize: 18, weight: .black),
+        .foregroundColor: UIColor.white,
+        .strokeColor: UIColor.black.withAlphaComponent(0.9),
+        .strokeWidth: -3,
+      ]
+    )
+    let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
+    speedLabel.alpha = ageing ? 0.55 : 1
+
+    let limitDescription = known
+      ? (unlimited ? "unrestricted" : "\(limit!) miles per hour")
+      : "unavailable"
+    let speedDescription = milesPerHour.map { "\($0) miles per hour" }
+      ?? "unavailable"
+    accessibilityLabel = "Mapped speed limit \(limitDescription). "
+      + "Your GPS speed is \(speedDescription)."
   }
 }
 

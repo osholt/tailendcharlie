@@ -147,6 +147,12 @@ class CarPlayBridge {
     String? mapStyleJson,
     GeoPoint? localPosition,
     double? localHeadingDegrees,
+    double? localSpeedMetersPerSecond,
+    bool speedLimitEnabled = false,
+    String? speedLimitStatus,
+    int? speedLimitMilesPerHour,
+    bool speedLimitUnlimited = false,
+    bool localSpeedIsAgeing = false,
     RouteProgressGeometry? routeProgress,
   }) async {
     final now = _clock();
@@ -195,6 +201,15 @@ class CarPlayBridge {
       'marker': marker?.toSnapshot(),
       'tec': tec.toSnapshot(),
       'tecRequest': tecRequest?.toSnapshot(),
+      'speed': !speedLimitEnabled
+          ? null
+          : {
+              'metresPerSecond': localSpeedMetersPerSecond,
+              'isAgeing': localSpeedIsAgeing,
+              'limitStatus': speedLimitStatus,
+              'limitMilesPerHour': speedLimitMilesPerHour,
+              'limitUnlimited': speedLimitUnlimited,
+            },
       // The head unit draws with the same MapLibre styles as the phone, and
       // shares its tile cache, so it keeps a basemap through a signal drop
       // instead of going grey (#321). The selected URL makes the car match the

@@ -2391,6 +2391,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           ),
         );
     final markerOverlay = _junctionMarkerOverlay.value;
+    final navigationPosition = _mapNavigationPosition.value;
+    final localSpeedIsAgeing =
+        navigationPosition != null &&
+        DateTime.now().difference(navigationPosition.recordedAt) >=
+            const Duration(seconds: 3);
     final marker = markerOverlay == null
         ? null
         : CarPlayMarkerStatus(
@@ -2436,7 +2441,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         basemap: selectedBasemap,
         mapStyleJson: _carPlayMapStyleJson,
         localPosition: _mapPosition.value,
-        localHeadingDegrees: _mapNavigationPosition.value?.headingDegrees,
+        localHeadingDegrees: navigationPosition?.headingDegrees,
+        localSpeedMetersPerSecond: navigationPosition?.speedMetersPerSecond,
+        localSpeedIsAgeing: localSpeedIsAgeing,
+        speedLimitEnabled:
+            widget.rideController.rideStarted &&
+            !widget.rideController.rideEnded &&
+            widget.speedLimitDisplay.enabled,
+        speedLimitStatus: widget.speedLimitDisplay.status.name,
+        speedLimitMilesPerHour: widget.speedLimitDisplay.limit?.milesPerHour,
+        speedLimitUnlimited: widget.speedLimitDisplay.limit?.unlimited ?? false,
         routeProgress: routeProgress,
         tecRequest: pendingTecRequest == null
             ? null

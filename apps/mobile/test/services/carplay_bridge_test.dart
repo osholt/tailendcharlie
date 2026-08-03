@@ -90,10 +90,41 @@ void main() {
         'trendLabel': null,
       },
       'tecRequest': null,
+      'speed': null,
       'basemap': null,
       'updatedAtMillis': DateTime.utc(2026, 7, 23, 12).millisecondsSinceEpoch,
       'riders': <Object?>[],
       'alert': null,
+    });
+  });
+
+  test('publishes the phone speed and mapped limit presentation', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+      localSpeedMetersPerSecond: 10,
+      localSpeedIsAgeing: true,
+      speedLimitEnabled: true,
+      speedLimitStatus: 'known',
+      speedLimitMilesPerHour: 30,
+    );
+
+    expect((received!.arguments as Map)['speed'], {
+      'metresPerSecond': 10.0,
+      'isAgeing': true,
+      'limitStatus': 'known',
+      'limitMilesPerHour': 30,
+      'limitUnlimited': false,
     });
   });
 
