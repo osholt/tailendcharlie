@@ -336,13 +336,33 @@ private final class CarPlayNavigationViewController: UIViewController,
   /// afterwards or the map comes back empty (#295 by a different route).
   private var latestSnapshot: [String: Any]?
 
+  /// Used only until Dart's first snapshot names a style, which it does on the
+  /// first ride-state change. Without it a rider who plugs in before starting a
+  /// ride gets a black rectangle — #295 all over again, since the projected
+  /// snapshot is published from the ride shell and there is nothing to publish
+  /// before a ride. Kept in step with `BasemapConfiguration`'s own defaults;
+  /// Dart's value always wins the moment it arrives.
+  private static let fallbackStyleURLs = (
+    light: URL(string: "https://tiles.openfreemap.org/styles/liberty"),
+    dark: URL(string: "https://tiles.openfreemap.org/styles/dark")
+  )
+
   override func loadView() {
-    // A plain view until Dart supplies a style. MLNMapView with no style URL
-    // renders nothing useful and cannot be restyled cleanly afterwards, so the
-    // map is built once the first snapshot names one.
+    // A plain view first: MLNMapView with no style URL renders nothing useful
+    // and does not restyle cleanly afterwards, so the map is installed once a
+    // style is known — from Dart if it has published one, otherwise the
+    // fallback, so the canvas is never blank.
     let container = UIView(frame: .zero)
     container.backgroundColor = .black
     view = container
+  }
+
+  override func viewWillAppear(_ animated: Bool) {
+    super.viewWillAppear(animated)
+    guard lightStyleURL == nil, darkStyleURL == nil else { return }
+    lightStyleURL = Self.fallbackStyleURLs.light
+    darkStyleURL = Self.fallbackStyleURLs.dark
+    applyPreferredStyle()
   }
 
   override func viewDidLoad() {

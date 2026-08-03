@@ -206,7 +206,25 @@ Crash reports are in `~/Library/Logs/DiagnosticReports/CarPlayTemplateUIHost-*.i
 Check there **before** concluding anything about the app: an app that opens and
 vanishes looks identical to one that never opened.
 
-**Tap the head unit by hand.** Synthetic clicks into the CarPlay window
+**To tap the head unit from a script, click the Simulator's Dock icon first.**
+The Simulator's windows sit on whichever macOS Space they were opened on, and a
+synthetic click at their coordinates otherwise lands on whatever is at that
+point on the *active* Space — silently, so it reads as the app ignoring the tap.
+Activating the app programmatically is not enough: macOS will not leave a
+full-screen Space for a programmatic activation. Clicking its Dock icon will,
+because the Dock is on every Space.
+
+```applescript
+tell application "System Events" to tell process "Dock" to ¬
+  click (first UI element of list 1 whose name is "Simulator")
+```
+
+Then wait for the CarPlay window to report `kCGWindowIsOnscreen` before posting
+the click. Note also that window AX enumeration fails while the windows are
+off-Space (`count of windows` returns 0) even though the *menu bar* is fully
+scriptable — which is why the display can be attached but not tapped.
+
+**Tapping by hand always works.** Synthetic clicks into the CarPlay window
 (`CGEventPost`, AppleScript, `cliclick`) work for a while and then silently
 stop: the display keeps rendering — its clock still advances — but stops
 accepting pointer events, and re-attaching the display does not restore them.
