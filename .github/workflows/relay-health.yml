@@ -72,7 +72,10 @@ jobs:
             --json number,title \
             --jq ".[] | select(.title == \"$ALERT_TITLE\") | .number" \
             | head -1)"
-          body="The scheduled relay probe failed at $(date -u +%FT%TZ).\n\nRun: $RUN_URL\n\nThe check verifies HTTPS liveness, the compatibility document and exact deployed-main commit parity. No response body is copied into this issue."
+          body="$(printf \
+            'The scheduled relay probe failed at %s.\n\nRun: %s\n\nThe check verifies HTTPS liveness, the compatibility document and exact deployed-main commit parity. No response body is copied into this issue.' \
+            "$(date -u +%FT%TZ)" \
+            "$RUN_URL")"
           if test -n "$issue_number"; then
             gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
           else
