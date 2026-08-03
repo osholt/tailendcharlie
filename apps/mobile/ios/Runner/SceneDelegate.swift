@@ -14,7 +14,7 @@ class SceneDelegate: FlutterSceneDelegate {
     if let activity = connectionOptions.userActivities.first(
       where: { $0.activityType == NSUserActivityTypeBrowsingWeb }
     ), let url = activity.webpageURL {
-      handlePlannerLink(url)
+      handleAppLink(url)
     }
     if let response = connectionOptions.notificationResponse {
       (UIApplication.shared.delegate as? AppDelegate)?.handlePushNotification(
@@ -34,18 +34,18 @@ class SceneDelegate: FlutterSceneDelegate {
       userActivity.activityType == NSUserActivityTypeBrowsingWeb,
       let url = userActivity.webpageURL
     else { return }
-    handlePlannerLink(url)
+    handleAppLink(url)
   }
 
   private func handleOpenedURL(_ url: URL) {
     if url.isFileURL {
       (UIApplication.shared.delegate as? AppDelegate)?.handleIncomingGpx(url: url)
     } else {
-      handlePlannerLink(url)
+      handleAppLink(url)
     }
   }
 
-  private func handlePlannerLink(_ url: URL) {
-    (UIApplication.shared.delegate as? AppDelegate)?.handleIncomingPlannerLink(url: url)
+  private func handleAppLink(_ url: URL) {
+    (UIApplication.shared.delegate as? AppDelegate)?.handleIncomingAppLink(url: url)
   }
 }

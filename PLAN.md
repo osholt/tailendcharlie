@@ -89,15 +89,14 @@ being enumerated, so sharing the private invite remains better practice - but th
 earlier claim here, that a typed code cannot start authenticated nearby or internet
 relay, was wrong.
 
-**Every join path needs connectivity once.** Both code and invite go through the
-relay's join-code directory, so there is no way to join a ride offline at all
-today - which is a real gap for a group standing in a car park with no signal, and
-the strongest argument for the QR work in #276. OS deep-link registration is done
-for planner route codes — the associated-domains entitlement, the published
-`apple-app-site-association` and an Android `autoVerify` filter all cover
-`/planner.html` — but a ride invitation is shared as pasteable text and has no
-registered link, so it cannot be tapped to join (#275). An in-app QR scanner does
-not exist; both `qr_code` icons in the app are decorative (#276).
+Typed codes, pasted private invitations and tapped invitation links need the
+join-code directory once. The private link puts its resolve token only in the URL
+fragment, is registered as `/join.html` alongside the existing `/planner.html`
+Universal/App Link, and keeps the old paste fallback. It therefore gets the
+relay's inactive/revoked answer without exposing capability material to the web
+server (#275). The QR invitation is the deliberately different offline path: it
+carries the full credentials directly and the in-app scanner joins without a
+directory lookup (#276/#279).
 
 ### Test hardware reality (31 July 2026)
 

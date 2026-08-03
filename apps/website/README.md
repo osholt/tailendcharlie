@@ -28,11 +28,13 @@ the rider's own mail client and does not send email from the website. Route
 coordinates and other place queries go only to the documented providers.
 
 The two association files are in `.well-known/`. The Apple entry is the
-production team/bundle identifier. The Android entry currently contains only
-the local debug signing certificate so physical development builds can be
-verified; add the Play App Signing SHA-256 fingerprint from Play Console before
-enabling the feature for closed testers. The upload-key fingerprint is not a
-substitute because Play-distributed APKs are signed with the app-signing key.
+production team/bundle identifier. The Android entry contains both the local
+debug certificate and the Play App Signing SHA-256 fingerprint. The upload-key
+fingerprint is not a substitute because Play-distributed APKs are signed with
+the app-signing key. `/planner.html` opens a shared route, while `/join.html`
+opens a private ride invitation whose resolve token remains in the URL fragment.
+The latter falls back to a static, no-script install/help page when the app is
+not installed.
 
 Three default-off motorcycle discovery layers use the bounded Wales
 proof-of-concept catalogue in `data/discovery-catalogue.geojson`. The planner
