@@ -17,6 +17,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var activeRouteID: String?
   private var activeManeuverKey: String?
   private var activeManeuver: CPManeuver?
+  private var rideStartPrompt: [String: Any]?
+  private var isShowingPanningInterface = false
   private weak var interfaceController: CPInterfaceController?
 
   /// The request the presented alert is asking about, so the same question is
@@ -76,6 +78,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
     updateNavigationSession(snapshot: snapshot)
     updateTecRoleRequest(snapshot["tecRequest"] as? [String: Any])
+    updateRideStart(snapshot["rideStart"] as? [String: Any])
   }
 
   func apply(viewport: [String: Any]) {
@@ -139,6 +142,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   func mapTemplateDidShowPanningInterface(_ mapTemplate: CPMapTemplate) {
+    isShowingPanningInterface = true
     mapTemplate.leadingNavigationBarButtons = [
       CPBarButton(title: "Done") { _ in
         mapTemplate.dismissPanningInterface(animated: true)
@@ -147,7 +151,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   func mapTemplateDidDismissPanningInterface(_ mapTemplate: CPMapTemplate) {
-    mapTemplate.leadingNavigationBarButtons = []
+    isShowingPanningInterface = false
+    updateLeadingNavigationButtons()
   }
 
   func mapTemplate(
@@ -379,6 +384,56 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     CPBarButton(title: "Ride") { _ in
       interfaceController.pushTemplate(template, animated: true, completion: nil)
     }
+  }
+
+  /// Projects only the last pre-departure decision. Creation, joining, route
+  /// selection and first-time permissions stay on the phone; Dart does not send
+  /// this block unless the local rider owns a prepared, unstarted session.
+  private func updateRideStart(_ prompt: [String: Any]?) {
+    rideStartPrompt = prompt
+    updateLeadingNavigationButtons()
+  }
+
+  private func updateLeadingNavigationButtons() {
+    guard let mapTemplate, !isShowingPanningInterface else { return }
+    let enabled = (rideStartPrompt?["enabled"] as? NSNumber)?.boolValue ?? false
+    mapTemplate.leadingNavigationBarButtons = enabled ? [startRideButton()] : []
+  }
+
+  private func startRideButton() -> CPBarButton {
+    CPBarButton(title: "Start") { [weak self] _ in
+      self?.presentStartRideConfirmation()
+    }
+  }
+
+  private func presentStartRideConfirmation() {
+    guard
+      let interfaceController,
+      let prompt = rideStartPrompt,
+      (prompt["enabled"] as? NSNumber)?.boolValue == true
+    else { return }
+
+    let detail = nonEmptyString(prompt["detail"])
+    let warning = nonEmptyString(prompt["warning"])
+    let message = [detail, warning].compactMap { $0 }.joined(separator: "\n\n")
+    let sheet = CPActionSheetTemplate(
+      title: "Start prepared ride?",
+      message: message.isEmpty ? nil : message,
+      actions: [
+        CPAlertAction(title: "Start ride", style: .default) { [weak self] _ in
+          interfaceController.dismissTemplate(animated: true, completion: nil)
+          // Hide the action immediately. Dart will either publish the active
+          // ride or re-offer it if revalidation rejects the stale snapshot.
+          self?.rideStartPrompt = nil
+          self?.updateLeadingNavigationButtons()
+          (UIApplication.shared.delegate as? AppDelegate)?.startPreparedRideFromCarPlay()
+        },
+        CPAlertAction(title: "Cancel", style: .cancel) { _ in
+          interfaceController.dismissTemplate(animated: true, completion: nil)
+        },
+      ]
+    )
+    interfaceController.presentTemplate(sheet, animated: true, completion: nil)
   }
 
   private func presentReportActions() {

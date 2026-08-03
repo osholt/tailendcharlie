@@ -44,24 +44,29 @@ preselect a third-party recipient.
 
 Apple approved Tail End Charlie's CarPlay Navigation entitlement under
 Case-ID 21286533. The CarPlay scene therefore uses the navigation-only
-window-bearing scene callback and a `CPMapTemplate` root. The app-owned MapKit
-canvas draws the active route and current rider positions behind CarPlay's
-controls; the local rider is followed until the map is panned, and the
-recenter control restores that view.
+window-bearing scene callback and a `CPMapTemplate` root. An app-owned MapLibre
+canvas lets the head unit use the phone's resolved
+day/night style and process-level tile cache. It draws the active route and
+current rider positions behind CarPlay's controls; the local rider is followed
+until the map is panned, and the recenter control restores that view.
 
 The phone's current guidance is published as a `CPManeuver` with live distance
 estimates through a `CPNavigationSession`, so CarPlay owns the turn card and
 navigation chrome. A **Ride** button opens the existing `CPListTemplate` with
 ride state, group/marker status, alerts and a bounded rider list. SOS remains
 wired to the same emergency alert as the phone map. Route setup and detailed
-settings stay on the phone.
+settings stay on the phone. A leader whose ride is already configured can use
+the map's **Start** action after confirming the route/no-route state and the
+existing no-TEC warning. Creating or joining a ride, selecting a route and
+granting first-time location permission remain phone setup.
 
 Debug and Release signing request both
 `com.apple.developer.carplay-driving-task` and
 `com.apple.developer.carplay-maps`. The App ID and every provisioning profile
 used for those builds must contain both restricted entitlements. Projected
-state is refreshed at most once every ten seconds; route geometry is reduced
-to at most 600 points before it crosses the platform channel.
+state is refreshed at most once per second; the smaller camera viewport follows
+the phone's 400 ms camera cadence independently. Route geometry is reduced to at
+most 600 points before it crosses the platform channel.
 
 Android Auto uses Android for Cars App Library 1.7.0 and declares the
 navigation category. It renders the same bounded snapshot as a read-only
@@ -77,10 +82,11 @@ renderer permission instead of trusting arbitrary callers.
 
 ### Driver-distraction and validation status
 
-- Both projected surfaces are read-only during normal operation; route editing,
-  ride setup, roster management, and detailed settings remain on the phone.
-- Data is reduced to short template rows and refreshed no more frequently than
-  every ten seconds.
+- Both projected surfaces keep route editing, ride creation/joining, roster
+  management, and detailed settings on the phone. CarPlay additionally permits
+  the leader to start an already-prepared ride and to confirm safety actions.
+- Full projected state is refreshed no more frequently than once per second;
+  the smaller camera viewport follows the phone's 400 ms cadence.
 - Android Auto uses host-rendered templates rather than custom touch targets or
   a mirrored phone UI.
 - Unit tests cover bounded snapshot parsing and in-process reconnect updates.

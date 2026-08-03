@@ -382,6 +382,13 @@ import UserNotifications
     carPlayChannel?.invokeMethod("triggerEmergency", arguments: nil)
   }
 
+  /// Requests the final lifecycle transition for a ride already configured on
+  /// the phone. Dart revalidates leadership, location readiness and lifecycle
+  /// state because the native snapshot may have become stale before the tap.
+  func startPreparedRideFromCarPlay() {
+    carPlayChannel?.invokeMethod("startPreparedRide", arguments: nil)
+  }
+
   /// Reports one of the same first-hand hazards available on the phone map.
   /// Dart validates the value against its rider-reportable allow-list before
   /// adding the rider's location and publishing it to the group.

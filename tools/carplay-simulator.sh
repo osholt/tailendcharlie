@@ -32,8 +32,8 @@
 #      script owns its own device rather than using whichever one is booted.
 #
 # Note for anyone screenshotting the result: `screencapture -l <window-id>` of
-# the CarPlay window returns solid black. Capture the whole screen instead -
-# --shot does.
+# the CarPlay window returns solid black. `--shot` reads CoreSimulator's
+# external display pixels instead.
 set -euo pipefail
 
 DEVICE_NAME="${CARPLAY_SIM_NAME:-Tail End Charlie CarPlay}"
@@ -53,6 +53,24 @@ while [ $# -gt 0 ]; do
 done
 
 log() { printf '==> %s\n' "$*"; }
+
+# Quartz is provided by PyObjC, and the first `python3` on PATH is not
+# necessarily the one that has it. Find a working interpreter once instead of
+# emitting the same ModuleNotFoundError throughout the window-detection loops.
+QUARTZ_PYTHON="${CARPLAY_QUARTZ_PYTHON:-}"
+if [ -z "$QUARTZ_PYTHON" ]; then
+  while IFS= read -r candidate; do
+    if "$candidate" -c 'import Quartz' >/dev/null 2>&1; then
+      QUARTZ_PYTHON="$candidate"
+      break
+    fi
+  done < <(which -a python3 2>/dev/null | awk '!seen[$0]++')
+fi
+[ -n "$QUARTZ_PYTHON" ] || {
+  echo "No Python interpreter with the PyObjC Quartz module was found." >&2
+  echo "Set CARPLAY_QUARTZ_PYTHON to one that can run: import Quartz" >&2
+  exit 1
+}
 
 # Deliberately NOT the newest runtime. On iOS 26.x, opening any CarPlay app whose
 # root is a CPMapTemplate aborts CarPlayTemplateUIHost:
@@ -141,7 +159,7 @@ open -a Simulator
 # Simulator.app needs a moment to adopt the booted device before its window
 # exists to be raised.
 for _ in $(seq 1 30); do
-  if python3 - "$DEVICE_NAME" <<'PY'
+  if "$QUARTZ_PYTHON" - "$DEVICE_NAME" <<'PY'
 import sys, Quartz
 name = sys.argv[1]
 wl = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
@@ -152,11 +170,23 @@ PY
   sleep 1
 done
 
+# Install before attaching the external display. CarPlay's app catalogue is
+# built when the session starts; replacing an app afterwards can remove its old
+# entry without adding the new scene until the next attach.
+if [ -n "$APP_PATH" ]; then
+  [ -d "$APP_PATH" ] || { echo "No app bundle at $APP_PATH" >&2; exit 1; }
+  BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
+  log "Installing $BUNDLE_ID"
+  xcrun simctl install "$UDID" "$APP_PATH"
+  log "Launching $BUNDLE_ID"
+  xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
+fi
+
 # 3. The CarPlay display. Disabled first, so the display is rebuilt even when
 # the menu already claims CarPlay is selected - a stale checkmark with no
 # window is exactly the state a wedged service leaves behind.
 carplay_window() {
-  python3 - "$DEVICE_NAME" <<'PY'
+  "$QUARTZ_PYTHON" - "$DEVICE_NAME" <<'PY'
 import sys, Quartz
 name = sys.argv[1]
 wl = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
@@ -185,12 +215,18 @@ on run argv
     delay 1
     my raiseDevice(deviceName)
     set carPlayMenu to menu 1 of menu item "External Displays" of menu 1 of menu bar item "I/O" of menu bar 1
+    set menuChoice to choice
+    if choice is "CarPlay" and not (exists menu item "CarPlay" of carPlayMenu) then
+      if exists menu item "CarPlay…" of carPlayMenu then
+        set menuChoice to "CarPlay…"
+      end if
+    end if
     -- Enablement is recomputed when the menu is opened, and lags the window
     -- becoming key by a beat. Give it one, rather than reading "disabled" off a
     -- Simulator that is simply still settling.
     set ready to false
     repeat 10 times
-      if enabled of menu item choice of carPlayMenu then
+      if enabled of menu item menuChoice of carPlayMenu then
         set ready to true
         exit repeat
       end if
@@ -200,7 +236,11 @@ on run argv
     if not ready then
       error "The External Displays menu is disabled - Simulator.app has no key device window."
     end if
-    click menu item choice of carPlayMenu
+    click menu item menuChoice of carPlayMenu
+    if menuChoice is "CarPlay…" then
+      delay 1
+      click button "Run" of window "TV Out Extended Setup"
+    end if
   end tell
   delay 4
 end run
@@ -245,19 +285,10 @@ done
 [ -n "$CARPLAY_WINDOW" ] || { echo "The CarPlay display did not open." >&2; exit 1; }
 log "CarPlay display is up (window $CARPLAY_WINDOW)"
 
-if [ -n "$APP_PATH" ]; then
-  [ -d "$APP_PATH" ] || { echo "No app bundle at $APP_PATH" >&2; exit 1; }
-  BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
-  log "Installing $BUNDLE_ID"
-  xcrun simctl install "$UDID" "$APP_PATH"
-  log "Launching $BUNDLE_ID"
-  xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
-fi
-
 if [ -n "$SHOT_PATH" ]; then
-  osascript -e 'tell application "System Events" to set frontmost of process "Simulator" to true' >/dev/null 2>&1 || true
-  sleep 2
-  screencapture -x "$SHOT_PATH"
+  # Window capture returns black and a whole-screen capture can land on another
+  # macOS Space. CoreSimulator owns the external display pixels directly.
+  xcrun simctl io "$UDID" screenshot --display external "$SHOT_PATH" >/dev/null
   log "Screenshot written to $SHOT_PATH"
 fi
 

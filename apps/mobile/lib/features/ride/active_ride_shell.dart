@@ -1116,6 +1116,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onEmergencyTriggered: _sendEmergencyMapAlert,
       onHazardReported: _reportHazardFromMap,
       onTecRoleAnswered: _answerTecRoleRequestFromCarPlay,
+      onRideStartRequested: _startPreparedRideFromCarPlay,
       onStateRequested: () async {
         if (!mounted) return;
         _updateMapOverlays(updateDerivedState: false);
@@ -2438,6 +2439,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         marker: marker,
         tec: tec,
         effectiveTecRiderIds: effectiveTecRiderIds,
+        rideStart: _carPlayRideStart,
         basemap: selectedBasemap,
         mapStyleJson: _carPlayMapStyleJson,
         localPosition: _mapPosition.value,
@@ -3646,6 +3648,76 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (widget.rideController.ridePaused) return 'Ride paused';
     if (widget.rideController.rideStarted) return 'Ride in progress';
     return 'Waiting for the ride leader to start';
+  }
+
+  /// Offers only the final pre-departure decision on CarPlay. Ride creation,
+  /// joining and route selection remain phone setup; this projection exists
+  /// only after that work is complete and only for the local leader.
+  CarPlayRideStart? get _carPlayRideStart {
+    final controller = widget.rideController;
+    final locationReady =
+        _isSimulation ||
+        !widget.enableNativeServices ||
+        (_locationController?.status.canSample ?? false);
+    return CarPlayRideStart.project(
+      hasSession: controller.session != null,
+      isLeader: controller.isLocalRideLeader,
+      rideStarted: controller.rideStarted,
+      rideEnded: controller.rideEnded,
+      busy: controller.busy,
+      locationReady: locationReady,
+      isGroup: controller.coordinationMode.isGroup,
+      hasTec: _effectiveTecRiderIds.isNotEmpty,
+      routeName: _activeRoute?.name,
+    );
+  }
+
+  /// Handles the confirmed native action. The snapshot that drew the button
+  /// may be stale, so leader, lifecycle, busy and location state are checked
+  /// again before the durable start event is recorded.
+  Future<void> _startPreparedRideFromCarPlay() async {
+    if (!mounted) return;
+    final controller = widget.rideController;
+    if (controller.session == null ||
+        !controller.isLocalRideLeader ||
+        controller.rideStarted ||
+        controller.rideEnded ||
+        controller.busy) {
+      _updateMapOverlays(updateDerivedState: false);
+      return;
+    }
+    final locationController = _locationController;
+    if (!_isSimulation &&
+        widget.enableNativeServices &&
+        (locationController == null || !locationController.status.canSample)) {
+      final added = _warnings.add(
+        'Open Tail End Charlie on the iPhone and allow location access before '
+        'starting the ride from CarPlay.',
+      );
+      _updateMapOverlays(updateDerivedState: false);
+      if (added && mounted) setState(() {});
+      return;
+    }
+
+    _localRideStartInProgress = true;
+    try {
+      await controller.startRide();
+      await _resumeLocationForActiveRide();
+    } on Object catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint(
+          'Could not start the prepared ride from CarPlay: $error\n$stackTrace',
+        );
+      }
+      final added = _warnings.add(
+        'CarPlay could not start the ride. Open Tail End Charlie on the iPhone '
+        'and try again.',
+      );
+      if (added && mounted) setState(() {});
+    } finally {
+      _localRideStartInProgress = false;
+      if (mounted) _updateMapOverlays(updateDerivedState: false);
+    }
   }
 
   /// Next instruction for the projected car surfaces.

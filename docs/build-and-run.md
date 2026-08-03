@@ -149,6 +149,13 @@ Brings up the head-unit window with the app installed on it, having first built
 it with `cd apps/mobile && flutter build ios --simulator --debug`. Tap the app
 on the CarPlay home screen to open its map template.
 
+Recent Simulator versions expose this as **CarPlay…** and open a custom-display
+dialog rather than offering a direct CarPlay menu item. The helper accepts both
+forms, preserves the configured size/touch controls and presses **Run** for the
+custom form. It also installs the app before attaching the display, because the
+CarPlay app catalogue is fixed when the session starts, and `--shot` captures
+CoreSimulator's external display directly.
+
 This works, and it stopped working three separate times for three reasons that
 all look like "the app is broken" and are not:
 

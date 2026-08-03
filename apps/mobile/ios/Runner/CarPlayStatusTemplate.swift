@@ -24,6 +24,18 @@ enum CarPlayStatusTemplate {
       )
     )
 
+    if let rideStart = snapshot["rideStart"] as? [String: Any] {
+      let enabled = (rideStart["enabled"] as? NSNumber)?.boolValue ?? false
+      items.append(
+        CPListItem(
+          text: enabled ? "Ready to start" : "Finish setup on iPhone",
+          detailText: enabled
+            ? "Use Start on the map"
+            : rideStart["unavailableReason"] as? String
+        )
+      )
+    }
+
     if let guidance = snapshot["guidanceTitle"] as? String {
       items.append(
         CPListItem(

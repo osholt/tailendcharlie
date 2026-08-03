@@ -65,18 +65,26 @@ navigation viewport. It has rider identity badges, route progress, recenter and
 pan controls, persistent TEC status, a low-frequency group overview mini-map,
 Report and confirmed SOS map buttons, and a `CPNavigationSession` whose turn and
 marker cards carry leading symbols. CarPlay reports are validated in Dart and
-use the same current-location hazard path as the phone.
+use the same current-location hazard path as the phone. Issue #328 also adds a
+leader-only **Start prepared ride** action: CarPlay confirms the route/no-route
+state and no-TEC warning, while creation, joining, route selection and first-time
+location permission stay on the phone. Dart revalidates leadership, lifecycle
+and location readiness when the native action arrives.
 
-Flutter analysis, all 1,479 tests, an Android debug APK and an unsigned iOS
+Flutter analysis, all 1,484 tests, an Android debug APK and an unsigned iOS
 simulator build pass. A signed Profile build also passed earlier with the
 replacement development profile and both CarPlay entitlements stamped into
 `Runner.app`. The CarPlay Simulator has opened the navigation scene and the
 main map/style/viewport were compared with the phone. The latest mini-map and
-button layout still need a fresh visual pass: after Simulator was restarted,
-the macOS accessibility controller stopped accepting coordinate taps in the
-CarPlay window even though the app, phone simulation and external display were
-still running. A physical CarPlay/head-unit field test remains required before
-claiming production support.
+button layout were subsequently compared with the phone. The simulator helper
+now handles Xcode's `CarPlay…` custom-display dialog, finds a Python interpreter
+with Quartz instead of assuming the first one on PATH, installs before attaching
+so the CarPlay catalogue is current, and captures the external display directly.
+The only installed simulator runtime is iOS 26.5, which filters the unsigned app
+from the CarPlay catalogue; an ad-hoc entitlement signature is installable but
+cannot launch, exactly as documented. Native compilation therefore covers #328,
+but its final button/confirmation visual and a physical CarPlay/head-unit field
+test remain required before claiming production support.
 
 The original checkout had unrelated signing edits and untracked entitlement
 submission material, so this work lives in the clean worktree

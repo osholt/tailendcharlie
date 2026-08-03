@@ -90,6 +90,7 @@ void main() {
         'trendLabel': null,
       },
       'tecRequest': null,
+      'rideStart': null,
       'speed': null,
       'basemap': null,
       'updatedAtMillis': DateTime.utc(2026, 7, 23, 12).millisecondsSinceEpoch,
@@ -127,6 +128,115 @@ void main() {
       'limitUnlimited': false,
     });
   });
+
+  test('publishes a bounded prepared-ride start action', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+      rideStart: const CarPlayRideStart(
+        enabled: true,
+        detail: 'Friday route. Recording, sharing and navigation will start.',
+        warning: 'No Tail End Charlie is assigned.',
+      ),
+    );
+
+    expect((received!.arguments as Map)['rideStart'], {
+      'enabled': true,
+      'detail': 'Friday route. Recording, sharing and navigation will start.',
+      'warning': 'No Tail End Charlie is assigned.',
+      'unavailableReason': null,
+    });
+  });
+
+  test('offers prepared-ride start only to an eligible leader', () {
+    CarPlayRideStart? project({
+      bool hasSession = true,
+      bool isLeader = true,
+      bool rideStarted = false,
+      bool rideEnded = false,
+      bool busy = false,
+      bool locationReady = true,
+      bool isGroup = false,
+      bool hasTec = false,
+    }) => CarPlayRideStart.project(
+      hasSession: hasSession,
+      isLeader: isLeader,
+      rideStarted: rideStarted,
+      rideEnded: rideEnded,
+      busy: busy,
+      locationReady: locationReady,
+      isGroup: isGroup,
+      hasTec: hasTec,
+    );
+
+    expect(project(hasSession: false), isNull);
+    expect(project(isLeader: false), isNull);
+    expect(project(rideStarted: true), isNull);
+    expect(project(rideEnded: true), isNull);
+
+    final needsPermission = project(locationReady: false)!;
+    expect(needsPermission.enabled, isFalse);
+    expect(needsPermission.unavailableReason, contains('iPhone'));
+
+    final saving = project(busy: true)!;
+    expect(saving.enabled, isFalse);
+    expect(saving.unavailableReason, contains('still being saved'));
+
+    final solo = project()!;
+    expect(solo.enabled, isTrue);
+    expect(solo.warning, isNull);
+
+    final groupWithoutTec = project(isGroup: true)!;
+    expect(groupWithoutTec.warning, contains('No Tail End Charlie'));
+    expect(project(isGroup: true, hasTec: true)!.warning, isNull);
+  });
+
+  test(
+    'a prepared-ride action appearing and disappearing jumps the throttle',
+    () async {
+      final calls = <MethodCall>[];
+      var now = DateTime.utc(2026, 8, 3, 12);
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+      final bridge = CarPlayBridge(channel: channel, clock: () => now);
+      addTearDown(bridge.dispose);
+
+      Future<void> publish({CarPlayRideStart? rideStart}) => bridge.publish(
+        session: null,
+        riderLocations: const [],
+        routeAlerts: const [],
+        activeHazards: const [],
+        rideStart: rideStart,
+      );
+
+      await publish();
+      now = now.add(const Duration(milliseconds: 100));
+      await publish(
+        rideStart: const CarPlayRideStart(
+          enabled: true,
+          detail: 'No route selected. Recording and sharing will start.',
+        ),
+      );
+      now = now.add(const Duration(milliseconds: 100));
+      await publish();
+
+      expect(calls, hasLength(3));
+      expect((calls[1].arguments as Map)['rideStart'], isNotNull);
+      expect((calls[2].arguments as Map)['rideStart'], isNull);
+    },
+  );
 
   test('retries immediately after a native snapshot failure', () async {
     var calls = 0;
@@ -781,5 +891,24 @@ void main() {
       HazardType.policeActivity,
       HazardType.other,
     ]);
+  });
+
+  test('relays a confirmed prepared-ride start request', () async {
+    var starts = 0;
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onRideStartRequested: () async {
+        starts += 1;
+      },
+    );
+    addTearDown(bridge.dispose);
+
+    await messenger.handlePlatformMessage(
+      channel.name,
+      channel.codec.encodeMethodCall(const MethodCall('startPreparedRide')),
+      (_) {},
+    );
+
+    expect(starts, 1);
   });
 }

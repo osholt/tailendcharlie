@@ -38,6 +38,7 @@ class CarPlayBridge {
     this.onEmergencyTriggered,
     this.onHazardReported,
     this.onTecRoleAnswered,
+    this.onRideStartRequested,
     this.onStateRequested,
     @visibleForTesting MethodChannel? channel,
     @visibleForTesting DateTime Function()? clock,
@@ -64,6 +65,11 @@ class CarPlayBridge {
   final Future<void> Function(String requestId, bool accepted)?
   onTecRoleAnswered;
 
+  /// Starts a ride that was already configured on the phone. Native only
+  /// offers the action when the projected state says it is safe, but Dart
+  /// revalidates the leader and lifecycle state before recording anything.
+  final Future<void> Function()? onRideStartRequested;
+
   /// Rebuilds the current projection when the CarPlay scene opens.
   ///
   /// The scene can connect after a quiet or restored ride, when no new
@@ -76,6 +82,7 @@ class CarPlayBridge {
   /// The request the head unit was last told about, so a new one can jump the
   /// throttle and an answered one can take its alert down.
   String? _publishedTecRequestId;
+  String? _publishedRideStartKey;
   int _publishAttempt = 0;
 
   /// The status list is glanceable, but the same snapshot also drives the live
@@ -110,6 +117,8 @@ class CarPlayBridge {
           return;
         }
         await onTecRoleAnswered?.call(requestId, accepted);
+      case 'startPreparedRide':
+        await onRideStartRequested?.call();
       case 'requestState':
         _lastPublishedAt = null;
         await onStateRequested?.call();
@@ -143,6 +152,7 @@ class CarPlayBridge {
     CarPlayTecStatus tec = CarPlayTecStatus.absent,
     Set<String> effectiveTecRiderIds = const {},
     CarPlayTecRequest? tecRequest,
+    CarPlayRideStart? rideStart,
     BasemapConfiguration? basemap,
     String? mapStyleJson,
     GeoPoint? localPosition,
@@ -162,16 +172,21 @@ class CarPlayBridge {
     // after the request is answered, expired or superseded is asking a rider to
     // agree to something that is no longer on offer.
     final requestChanged = tecRequest?.requestId != _publishedTecRequestId;
+    final rideStartKey = rideStart?.projectionKey;
+    final rideStartChanged = rideStartKey != _publishedRideStartKey;
     if (!requestChanged &&
+        !rideStartChanged &&
         _lastPublishedAt != null &&
         now.difference(_lastPublishedAt!) < _minimumPublishInterval) {
       return;
     }
     final previousPublishedAt = _lastPublishedAt;
     final previousTecRequestId = _publishedTecRequestId;
+    final previousRideStartKey = _publishedRideStartKey;
     final attempt = ++_publishAttempt;
     _lastPublishedAt = now;
     _publishedTecRequestId = tecRequest?.requestId;
+    _publishedRideStartKey = rideStartKey;
     final alertsByRider = {
       for (final alert in routeAlerts) alert.riderId: alert,
     };
@@ -201,6 +216,7 @@ class CarPlayBridge {
       'marker': marker?.toSnapshot(),
       'tec': tec.toSnapshot(),
       'tecRequest': tecRequest?.toSnapshot(),
+      'rideStart': rideStart?.toSnapshot(),
       'speed': !speedLimitEnabled
           ? null
           : {
@@ -282,6 +298,7 @@ class CarPlayBridge {
       if (_publishAttempt == attempt) {
         _lastPublishedAt = previousPublishedAt;
         _publishedTecRequestId = previousTecRequestId;
+        _publishedRideStartKey = previousRideStartKey;
       }
       if (kDebugMode) debugPrint('Could not publish CarPlay snapshot: $error');
     }
@@ -470,6 +487,59 @@ class CarPlayBridge {
       'severity': alert.assessment.alertLevel.name,
     };
   }
+}
+
+/// A leader-owned ride that has already been configured on the phone and can
+/// therefore be started without moving route or group setup onto CarPlay.
+class CarPlayRideStart {
+  const CarPlayRideStart({
+    required this.enabled,
+    required this.detail,
+    this.warning,
+    this.unavailableReason,
+  });
+
+  final bool enabled;
+  final String detail;
+  final String? warning;
+  final String? unavailableReason;
+
+  static CarPlayRideStart? project({
+    required bool hasSession,
+    required bool isLeader,
+    required bool rideStarted,
+    required bool rideEnded,
+    required bool busy,
+    required bool locationReady,
+    required bool isGroup,
+    required bool hasTec,
+    String? routeName,
+  }) {
+    if (!hasSession || !isLeader || rideStarted || rideEnded) return null;
+    return CarPlayRideStart(
+      enabled: !busy && locationReady,
+      detail: routeName == null
+          ? 'No route selected. Recording and group location sharing will start.'
+          : '$routeName. Recording, sharing and navigation will start.',
+      warning: isGroup && !hasTec
+          ? 'No Tail End Charlie is assigned. The group can still start, but '
+                'nobody is explicitly covering the back.'
+          : null,
+      unavailableReason: locationReady
+          ? (busy ? 'Ride setup is still being saved.' : null)
+          : 'Allow location access on the iPhone before starting from CarPlay.',
+    );
+  }
+
+  String get projectionKey =>
+      '$enabled|$detail|${warning ?? ''}|${unavailableReason ?? ''}';
+
+  Map<String, Object?> toSnapshot() => {
+    'enabled': enabled,
+    'detail': detail,
+    'warning': warning,
+    'unavailableReason': unavailableReason,
+  };
 }
 
 /// The phone's second-bike drop-off card, projected into CarPlay's turn card.
