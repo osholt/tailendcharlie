@@ -1,6 +1,6 @@
 # Licensed live-traffic provider decision
 
-Decision date: 3 August 2026  
+Decision date: 3 August 2026
 Decision: **none for now**
 
 The app does not enable a licensed live-traffic feed in closed-test or public
