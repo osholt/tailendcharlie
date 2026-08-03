@@ -92,6 +92,7 @@ class CarPlayBridge {
     ImportedRoute? route,
     String? routeName,
     String? rideState,
+    bool followRider = false,
     String? guidanceTitle,
     String? guidanceDetail,
     String? guidanceRoadName,
@@ -128,6 +129,11 @@ class CarPlayBridge {
       'routeName': routeName,
       'routePoints': _projectRoute(route),
       'rideState': rideState,
+      // Before the leader starts, the phone frames the complete route so the
+      // group can review it. Once underway it changes to the forward-looking
+      // rider camera. CarPlay needs that state explicitly; the presence of a
+      // local fix alone cannot distinguish those two map views.
+      'followRider': followRider,
       'guidanceTitle': guidanceTitle,
       'guidanceDetail': guidanceDetail,
       'guidanceRoadName': guidanceRoadName,

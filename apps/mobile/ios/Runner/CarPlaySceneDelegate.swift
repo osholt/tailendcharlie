@@ -355,11 +355,13 @@ private final class CarPlayNavigationViewController: UIViewController,
   private let tecBadge = CarPlayTecBadge()
   private var routeAnnotation: MLNPolyline?
   private var routeCasingAnnotation: MLNPolyline?
+  private var routeCoordinates: [CLLocationCoordinate2D] = []
   private var routeID: String?
   private var riderAnnotations: [CarPlayRiderAnnotation] = []
   private var localCoordinate: CLLocationCoordinate2D?
   private var localHeading: CLLocationDirection?
   private var followsLocalRider = true
+  private var snapshotWantsRiderFollow = false
   private var panGestureStartCoordinate: CLLocationCoordinate2D?
   private var hasFramedFirstFix = false
 
@@ -443,14 +445,25 @@ private final class CarPlayNavigationViewController: UIViewController,
     }
     updateRiders(snapshot["riders"])
     tecBadge.apply(snapshot["tec"] as? [String: Any])
+    let requestedRiderFollow =
+      (snapshot["followRider"] as? NSNumber)?.boolValue ?? false
+    let cameraModeChanged = requestedRiderFollow != snapshotWantsRiderFollow
+    snapshotWantsRiderFollow = requestedRiderFollow
+    if cameraModeChanged {
+      // A ride starting is the one automatic transition back into follow mode.
+      // Subsequent snapshots preserve a deliberate pan until the rider taps
+      // recenter, while waiting-to-start remains a route overview like the
+      // phone map.
+      followsLocalRider = requestedRiderFollow
+    }
     // The ride's own marker for this rider carries their name and role and is
     // the one the group is drawn against. MapLibre's location dot is the
     // stand-in for it before a ride starts (#295), so exactly one of the two is
     // ever on the map.
     mapView.showsUserLocation = localCoordinate == nil
-    if localCoordinate != nil, followsLocalRider {
+    if requestedRiderFollow, localCoordinate != nil, followsLocalRider {
       recenter()
-    } else if routeChanged {
+    } else if routeChanged || cameraModeChanged {
       showCompleteRoute()
     }
   }
@@ -592,10 +605,12 @@ private final class CarPlayNavigationViewController: UIViewController,
     }
     var points = (raw as? [[String: Any]] ?? []).compactMap(coordinate(from:))
     guard points.count >= 2 else {
+      routeCoordinates = []
       routeAnnotation = nil
       routeCasingAnnotation = nil
       return
     }
+    routeCoordinates = points
     // Casing first: MapLibre draws shape annotations in the order they are
     // added, so the route has to go on second to sit on top of its own casing.
     let casing = MLNPolyline(coordinates: &points, count: UInt(points.count))
@@ -644,16 +659,21 @@ private final class CarPlayNavigationViewController: UIViewController,
   /// left with no way back.
   private func showCompleteRoute() {
     guard let mapView else { return }
-    guard let routeAnnotation else {
+    guard routeCoordinates.count >= 2 else {
       mapView.userTrackingMode = .follow
       return
     }
     mapView.userTrackingMode = .none
-    mapView.setVisibleCoordinateBounds(
-      routeAnnotation.overlayBounds,
+    // Fit the route's actual coordinates. `MLNPolyline.overlayBounds` can
+    // still report the style's default world-sized bounds while an annotation
+    // is being installed during the CarPlay scene's first layout; using it is
+    // what reduced a 17.5 km demo route to a tiny mark on a UK-wide map.
+    var coordinates = routeCoordinates
+    mapView.setVisibleCoordinates(
+      &coordinates,
+      count: UInt(coordinates.count),
       edgePadding: UIEdgeInsets(top: 60, left: 60, bottom: 60, right: 60),
-      animated: true,
-      completionHandler: nil
+      animated: true
     )
   }
 

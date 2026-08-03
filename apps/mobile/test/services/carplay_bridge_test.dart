@@ -59,6 +59,7 @@ void main() {
         'routeName': 'Friday to the Ferry',
         'routePoints': <Object?>[],
         'rideState': 'Ride in progress',
+        'followRider': false,
         'guidanceTitle': 'turn right',
         'guidanceDetail': '400 m · A27',
         'guidanceRoadName': null,
@@ -156,6 +157,7 @@ void main() {
         activeHazards: const [],
         route: route,
         routeName: route.name,
+        followRider: true,
         guidanceTitle: 'Turn left',
         guidanceRoadName: 'A420',
         guidanceDistanceMeters: 275,
@@ -163,6 +165,7 @@ void main() {
 
       final arguments = Map<String, Object?>.from(received!.arguments as Map);
       expect(arguments['routeId'], 'route-42');
+      expect(arguments['followRider'], isTrue);
       expect(arguments['guidanceRoadName'], 'A420');
       expect(arguments['guidanceDistanceMeters'], 275);
       expect(arguments['routePoints'], [

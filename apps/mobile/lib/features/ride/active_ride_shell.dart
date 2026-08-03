@@ -2383,6 +2383,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         route: _activeRoute,
         routeName: _activeRoute?.name,
         rideState: _projectedRideState,
+        followRider:
+            widget.rideController.rideStarted &&
+            !widget.rideController.rideEnded,
         guidanceTitle: _projectedGuidanceTitle,
         guidanceDetail: _projectedGuidanceDetail,
         guidanceRoadName: _latestNavigationGuidance?.roadLabel,
