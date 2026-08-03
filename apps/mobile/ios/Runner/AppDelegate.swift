@@ -382,6 +382,16 @@ import UserNotifications
     carPlayChannel?.invokeMethod("triggerEmergency", arguments: nil)
   }
 
+  /// Reports one of the same first-hand hazards available on the phone map.
+  /// Dart validates the value against its rider-reportable allow-list before
+  /// adding the rider's location and publishing it to the group.
+  func reportCarPlayHazard(type: String) {
+    carPlayChannel?.invokeMethod(
+      "reportHazard",
+      arguments: ["type": type]
+    )
+  }
+
   /// Relays the rider's answer to a leader's Tail End Charlie request (#128).
   /// Dart owns whether the answer is admissible - the reducer accepts one only
   /// from the rider the request named, and rejects an expired or superseded

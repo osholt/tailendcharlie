@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/geo_point.dart' as presence;
@@ -721,5 +722,33 @@ void main() {
     await answer('req-4');
 
     expect(answers, [('req-1', true), ('req-2', false)]);
+  });
+
+  test('relays only rider-reportable CarPlay hazards', () async {
+    final reports = <HazardType>[];
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onHazardReported: (type) async => reports.add(type),
+    );
+    addTearDown(bridge.dispose);
+
+    Future<void> report(Object? arguments) => messenger.handlePlatformMessage(
+      channel.name,
+      channel.codec.encodeMethodCall(MethodCall('reportHazard', arguments)),
+      (_) {},
+    );
+
+    await report({'type': 'speedCamera'});
+    await report({'type': 'policeActivity'});
+    await report({'type': 'other'});
+    await report({'type': 'notARealHazard'});
+    await report({'type': 42});
+    await report('pothole');
+
+    expect(reports, [
+      HazardType.speedCamera,
+      HazardType.policeActivity,
+      HazardType.other,
+    ]);
   });
 }

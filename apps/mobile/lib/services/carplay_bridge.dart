@@ -36,6 +36,7 @@ import 'route_progress.dart';
 class CarPlayBridge {
   CarPlayBridge({
     this.onEmergencyTriggered,
+    this.onHazardReported,
     this.onTecRoleAnswered,
     this.onStateRequested,
     @visibleForTesting MethodChannel? channel,
@@ -52,6 +53,11 @@ class CarPlayBridge {
   final DateTime Function() _clock;
   final Duration _minimumPublishInterval;
   final Future<void> Function()? onEmergencyTriggered;
+
+  /// A first-hand road alert raised from the CarPlay report control. The
+  /// native side sends only the type; the phone remains responsible for
+  /// validating it, attaching the current fix and publishing the event.
+  final Future<void> Function(HazardType type)? onHazardReported;
 
   /// The rider's answer to a leader's Tail End Charlie request, given on the
   /// head unit (#128).
@@ -82,6 +88,16 @@ class CarPlayBridge {
     switch (call.method) {
       case 'triggerEmergency':
         await onEmergencyTriggered?.call();
+      case 'reportHazard':
+        final arguments = call.arguments;
+        if (arguments is! Map) return;
+        final rawType = arguments['type'];
+        if (rawType is! String) return;
+        final type = HazardType.values
+            .where((candidate) => candidate.name == rawType)
+            .firstOrNull;
+        if (type == null || !type.isRiderReportable) return;
+        await onHazardReported?.call(type);
       case 'answerTecRoleRequest':
         final arguments = call.arguments;
         if (arguments is! Map) return;
