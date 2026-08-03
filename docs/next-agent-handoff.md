@@ -34,7 +34,7 @@ branch:
   and outside the roster. Relay migration `0009` and the updated web assets
   must deploy before the mobile build.
 
-`dart format`, `flutter analyze`, all 1,306 mobile tests (with two intentional
+`dart format`, `flutter analyze`, all 1,479 mobile tests (with two intentional
 build-stamp skips), 141 server tests, all 61 website tests, an Android debug APK
 build and an unsigned iOS simulator build pass. The App Store Connect tab is
 waiting for the user to complete login; do not close or replace that browser
@@ -42,8 +42,8 @@ group.
 
 ## Current work: CarPlay Navigation
 
-Active work is on `codex/carplay-navigation`, based on `origin/main` at
-`c3d983e`. Apple approved the navigation entitlement under Case-ID 21286533.
+Active work is on `claude/carplay-tec-integration-03dfe6` in PR #319. Apple
+approved the navigation entitlement under Case-ID 21286533.
 On 29 July the `CarPlay Navigation App` capability was enabled for
 `app.tailendcharlie`; the previous profiles became invalid and were replaced
 without deleting their historical records:
@@ -59,22 +59,36 @@ contains both local development certificates and both test phones. The App
 Store profile uses the same certificate as the previously working CI profile;
 `APPLE_APPSTORE_PROFILE_BASE64` has been replaced.
 
-The branch replaces the status-only CarPlay root with a `CPMapTemplate`,
-app-owned MapKit route/rider canvas, recenter and pan controls, a
-`CPNavigationSession` with turn-card distance updates, and access to the
-existing ride-status/SOS surface. The projected Dart snapshot now includes
-bounded route geometry, rider coordinates/headings and numeric guidance.
-Flutter analysis, all 1,287 tests and an unsigned iOS simulator build pass.
-A signed Profile build also passes with the replacement development profile
-and both CarPlay entitlements stamped into `Runner.app`; the Android debug APK
-still builds. Apple's CarPlay Simulator opens, but does not offer the app in
-its launcher because restricted-entitlement simulator builds are rejected. The
-remaining evidence is PR CI and a physical CarPlay/head-unit field test before
-claiming production support.
+The branch replaces the status-only CarPlay root with a `CPMapTemplate` and an
+app-owned MapLibre route/rider canvas using the phone's resolved style and
+navigation viewport. It has rider identity badges, route progress, recenter and
+pan controls, persistent TEC status, a low-frequency group overview mini-map,
+Report and confirmed SOS map buttons, and a `CPNavigationSession` whose turn and
+marker cards carry leading symbols. CarPlay reports are validated in Dart and
+use the same current-location hazard path as the phone. Issue #328 also adds a
+leader-only **Start prepared ride** action: CarPlay confirms the route/no-route
+state and no-TEC warning, while creation, joining, route selection and first-time
+location permission stay on the phone. Dart revalidates leadership, lifecycle
+and location readiness when the native action arrives.
+
+Flutter analysis, all 1,484 tests, an Android debug APK and an unsigned iOS
+simulator build pass. A signed Profile build also passed earlier with the
+replacement development profile and both CarPlay entitlements stamped into
+`Runner.app`. The CarPlay Simulator has opened the navigation scene and the
+main map/style/viewport were compared with the phone. The latest mini-map and
+button layout were subsequently compared with the phone. The simulator helper
+now handles Xcode's `CarPlay…` custom-display dialog, finds a Python interpreter
+with Quartz instead of assuming the first one on PATH, installs before attaching
+so the CarPlay catalogue is current, and captures the external display directly.
+The only installed simulator runtime is iOS 26.5, which filters the unsigned app
+from the CarPlay catalogue; an ad-hoc entitlement signature is installable but
+cannot launch, exactly as documented. Native compilation therefore covers #328,
+but its final button/confirmation visual and a physical CarPlay/head-unit field
+test remain required before claiming production support.
 
 The original checkout had unrelated signing edits and untracked entitlement
 submission material, so this work lives in the clean worktree
-`/Users/osholt/Projects/Personal/tailendcharlie-carplay-navigation`.
+`/Users/osholt/Projects/Personal/tailendcharlie/.claude/worktrees/chatgpt-agent-continuation-08041e`.
 
 ## Read this first: #132, a device only received when it sent
 

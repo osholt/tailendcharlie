@@ -20,6 +20,8 @@ import UserNotifications
   private var pendingPlannerLink: String?
   private var carPlayChannel: FlutterMethodChannel?
   private var latestCarPlaySnapshot: [String: Any]?
+  private var latestCarPlayViewport: [String: Any]?
+  private var latestCarPlayMapStyle: [String: Any]?
   private var pushChannel: FlutterMethodChannel?
   private var apnsToken: String?
   private var pendingPushTokenResult: FlutterResult?
@@ -163,17 +165,34 @@ import UserNotifications
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     carPlayChannel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "updateSnapshot" else {
+      switch call.method {
+      case "updateSnapshot":
+        guard let value = call.arguments as? [String: Any] else {
+          result(FlutterError(code: "invalid_arguments", message: "Snapshot must be a map", details: nil))
+          return
+        }
+        self?.latestCarPlaySnapshot = value
+        self?.carPlaySceneDelegate?.apply(snapshot: value)
+        result(nil)
+      case "updateViewport":
+        guard let value = call.arguments as? [String: Any] else {
+          result(FlutterError(code: "invalid_arguments", message: "Viewport must be a map", details: nil))
+          return
+        }
+        self?.latestCarPlayViewport = value
+        self?.carPlaySceneDelegate?.apply(viewport: value)
+        result(nil)
+      case "updateMapStyle":
+        guard let value = call.arguments as? [String: Any] else {
+          result(FlutterError(code: "invalid_arguments", message: "Map style must be a map", details: nil))
+          return
+        }
+        self?.latestCarPlayMapStyle = value
+        self?.carPlaySceneDelegate?.apply(mapStyle: value)
+        result(nil)
+      default:
         result(FlutterMethodNotImplemented)
-        return
       }
-      guard let snapshot = call.arguments as? [String: Any] else {
-        result(FlutterError(code: "invalid_arguments", message: "Snapshot must be a map", details: nil))
-        return
-      }
-      self?.latestCarPlaySnapshot = snapshot
-      self?.carPlaySceneDelegate?.apply(snapshot: snapshot)
-      result(nil)
     }
     self.carPlayChannel = carPlayChannel
   }
@@ -338,9 +357,19 @@ import UserNotifications
   /// scene can connect well after the ride screen's first publish.
   func carPlayDidConnect(_ sceneDelegate: CarPlaySceneDelegate) {
     carPlaySceneDelegate = sceneDelegate
+    if let mapStyle = latestCarPlayMapStyle {
+      sceneDelegate.apply(mapStyle: mapStyle)
+    }
     if let snapshot = latestCarPlaySnapshot {
       sceneDelegate.apply(snapshot: snapshot)
     }
+    if let viewport = latestCarPlayViewport {
+      sceneDelegate.apply(viewport: viewport)
+    }
+    // A projected scene can open after a quiet/restored ride. Ask Dart for a
+    // current self-contained snapshot instead of relying on whichever native
+    // cache entry happened to be published first during app restoration.
+    carPlayChannel?.invokeMethod("requestState", arguments: nil)
   }
 
   func carPlayDidDisconnect(_ sceneDelegate: CarPlaySceneDelegate) {
@@ -351,6 +380,34 @@ import UserNotifications
 
   func triggerCarPlayEmergency() {
     carPlayChannel?.invokeMethod("triggerEmergency", arguments: nil)
+  }
+
+  /// Requests the final lifecycle transition for a ride already configured on
+  /// the phone. Dart revalidates leadership, location readiness and lifecycle
+  /// state because the native snapshot may have become stale before the tap.
+  func startPreparedRideFromCarPlay() {
+    carPlayChannel?.invokeMethod("startPreparedRide", arguments: nil)
+  }
+
+  /// Reports one of the same first-hand hazards available on the phone map.
+  /// Dart validates the value against its rider-reportable allow-list before
+  /// adding the rider's location and publishing it to the group.
+  func reportCarPlayHazard(type: String) {
+    carPlayChannel?.invokeMethod(
+      "reportHazard",
+      arguments: ["type": type]
+    )
+  }
+
+  /// Relays the rider's answer to a leader's Tail End Charlie request (#128).
+  /// Dart owns whether the answer is admissible - the reducer accepts one only
+  /// from the rider the request named, and rejects an expired or superseded
+  /// request - so this passes the id through untouched rather than deciding.
+  func answerCarPlayTecRoleRequest(requestID: String, accepted: Bool) {
+    carPlayChannel?.invokeMethod(
+      "answerTecRoleRequest",
+      arguments: ["requestId": requestID, "accepted": accepted]
+    )
   }
 
   /// Called from SceneDelegate when the OS hands this app a file URL (Open

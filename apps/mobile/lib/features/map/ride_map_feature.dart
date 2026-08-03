@@ -161,6 +161,8 @@ class RideMapFeature extends StatefulWidget {
     this.onRouteChanged,
     this.onRouteCommitted,
     this.onNavigationGuidanceChanged,
+    this.onNavigationViewportChanged,
+    this.onMapStyleResolved,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
@@ -219,6 +221,8 @@ class RideMapFeature extends StatefulWidget {
     ValueChanged<ImportedRoute?>? onRouteChanged,
     ValueChanged<ImportedRoute?>? onRouteCommitted,
     ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged,
+    ValueChanged<NavigationCameraViewport>? onNavigationViewportChanged,
+    ValueChanged<String>? onMapStyleResolved,
     Object? changeRouteRequestToken,
     VoidCallback? onChangeRouteRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
@@ -270,6 +274,8 @@ class RideMapFeature extends StatefulWidget {
     onRouteChanged: onRouteChanged,
     onRouteCommitted: onRouteCommitted,
     onNavigationGuidanceChanged: onNavigationGuidanceChanged,
+    onNavigationViewportChanged: onNavigationViewportChanged,
+    onMapStyleResolved: onMapStyleResolved,
     changeRouteRequestToken: changeRouteRequestToken,
     onChangeRouteRequestHandled: onChangeRouteRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
@@ -348,6 +354,8 @@ class RideMapFeature extends StatefulWidget {
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final ValueChanged<ImportedRoute?>? onRouteCommitted;
   final ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged;
+  final ValueChanged<NavigationCameraViewport>? onNavigationViewportChanged;
+  final ValueChanged<String>? onMapStyleResolved;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
@@ -406,6 +414,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
     if (suppliedStore != null &&
         suppliedCache != null &&
         suppliedStyle != null) {
+      widget.onMapStyleResolved?.call(suppliedStyle);
       return _MapDependencies(
         store: suppliedStore,
         cache: suppliedCache,
@@ -425,6 +434,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
       final resolution = suppliedStyle == null
           ? await styleRepository.resolve()
           : MapStyleResolution(suppliedStyle, MapStyleOutcome.live);
+      widget.onMapStyleResolved?.call(resolution.style);
       return _MapDependencies(
         store: suppliedStore ?? await JsonFileRouteStore.openDefault(),
         cache:
@@ -506,6 +516,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onRouteChanged: widget.onRouteChanged,
         onRouteCommitted: widget.onRouteCommitted,
         onNavigationGuidanceChanged: widget.onNavigationGuidanceChanged,
+        onNavigationViewportChanged: widget.onNavigationViewportChanged,
         changeRouteRequestToken: widget.changeRouteRequestToken,
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
         pendingSharedGpxFile: widget.pendingSharedGpxFile,
@@ -590,6 +601,7 @@ class RideMapScreen extends StatefulWidget {
     this.onRouteChanged,
     this.onRouteCommitted,
     this.onNavigationGuidanceChanged,
+    this.onNavigationViewportChanged,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
     this.pendingSharedGpxFile,
@@ -680,6 +692,7 @@ class RideMapScreen extends StatefulWidget {
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final ValueChanged<ImportedRoute?>? onRouteCommitted;
   final ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged;
+  final ValueChanged<NavigationCameraViewport>? onNavigationViewportChanged;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
@@ -3605,6 +3618,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // against what this app actually asked for rather than against a framing
     // planned afresh from whatever the state happens to be (#141).
     _commandedViewport = (target: framing.target, zoom: cameraPlan.zoom);
+    widget.onNavigationViewportChanged?.call(
+      NavigationCameraViewport(
+        latitude: framing.target.latitude,
+        longitude: framing.target.longitude,
+        zoom: cameraPlan.zoom,
+        tilt: _basemap.usesMapLibre ? cameraPlan.tilt : 0,
+        bearing: _cameraBearingDegrees,
+        sourceViewportHeightPixels: _mapViewportHeightPixels,
+        mapStyleUrl: _basemap.styleUrl,
+        mapStyleJson: widget.mapStyleString,
+      ),
+    );
     try {
       if (_basemap.usesMapLibre) {
         final controller = _mapLibreController;

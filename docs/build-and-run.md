@@ -139,6 +139,123 @@ Boots against the first already-booted simulator, points the relay at
 `https://relay.tailendcharlie.app/api`, and spoofs GPS to the demo route's start
 near Bristol. Override either:
 
+### Apple's CarPlay simulator
+
+```bash
+tools/carplay-simulator.sh --install apps/mobile/build/ios/iphonesimulator/Runner.app
+```
+
+Brings up the head-unit window with the app installed on it, having first built
+it with `cd apps/mobile && flutter build ios --simulator --debug`. Tap the app
+on the CarPlay home screen to open its map template.
+
+Recent Simulator versions expose this as **CarPlay…** and open a custom-display
+dialog rather than offering a direct CarPlay menu item. The helper accepts both
+forms, preserves the configured size/touch controls and presses **Run** for the
+custom form. It also installs the app before attaching the display, because the
+CarPlay app catalogue is fixed when the session starts, and `--shot` captures
+CoreSimulator's external display directly.
+
+This works, and it stopped working three separate times for three reasons that
+all look like "the app is broken" and are not:
+
+- **`I/O → External Displays → CarPlay` acts on Simulator.app's key device
+  window.** With no key window every item in that menu is disabled, and a
+  scripted click on it is accepted and does nothing. The menu can even show a
+  checkmark against CarPlay with no CarPlay window in existence.
+- **CoreSimulatorService wedges.** Once it has, `simctl boot` fails with
+  `launchd_sim may have crashed or quit responding`, plain `simctl` commands
+  hang, and no display can be attached. `killall -9
+  com.apple.CoreSimulator.CoreSimulatorService` is the fix, and it has to
+  happen before anything else is diagnosed.
+- **A device that has been through a wedged service stays broken.** `carkitd`
+  receives a session with a null identity and a 0x0 screen, discards it as
+  partial, and the CarPlay window stays black for ever. A device created after
+  the restart works. The script therefore owns its own device.
+
+Two things that are **not** causes, both of which have been chased:
+
+- The simulator build carries no entitlements at all — `codesign -d
+  --entitlements -` on it prints an empty dict — and CarPlay works anyway. The
+  `CPTemplateApplicationSceneSessionRoleApplication` scene declaration in
+  `Info.plist` is what makes the app eligible there. Do not try to fix a
+  CarPlay simulator problem by re-signing the simulator build: `codesign
+  --force --sign -` over it produces `EBADEXEC` and SpringBoard then refuses to
+  launch the app at all, with or without the CarPlay entitlements.
+- The app icon. It renders correctly on the CarPlay launcher from the existing
+  `AppIcon` set.
+
+**Do not use an iOS 26.x runtime.** The script picks the newest runtime below
+26.0 for a reason: on iOS 26.x, opening any CarPlay app whose root template is a
+`CPMapTemplate` aborts `CarPlayTemplateUIHost`, and the head unit bounces
+straight back to its home screen. It reads exactly like "our app crashes on
+CarPlay" and it is not:
+
+```
+-[CPSTemplateInstance vehicleSupportsDestinationSharing]: unrecognized selector
+  -[CPSMapTemplateViewController _updateShareButtonVisibility]
+  -[CPSMapTemplateViewController _configureNavigationBarShareButton]
+  -[CPSMapTemplateViewController _viewDidLoad]
+```
+
+Apple's map-template controller asks the template instance whether *the vehicle*
+supports destination sharing while its view loads. On the simulator there is no
+vehicle to ask — `carkitd` logs the session as `session: (null), name: (null),
+modelName: (null), manufacturer: (null), serialNumber: (null)` — and it aborts.
+The path runs unconditionally for a map template, which a CarPlay navigation app
+must have at its root, and no app-side property reaches it:
+`mapTemplateShouldProvideNavigationMetadata` returning `false` gives a
+byte-identical stack. Destination sharing is iOS 26.1+ API
+(`CPTrip.hasShareableDestination`), so the crashing code does not exist on
+earlier runtimes, and the app's deployment target is 16.0.
+
+Crash reports are in `~/Library/Logs/DiagnosticReports/CarPlayTemplateUIHost-*.ips`.
+Check there **before** concluding anything about the app: an app that opens and
+vanishes looks identical to one that never opened.
+
+**To tap the head unit from a script, click the Simulator's Dock icon first.**
+The Simulator's windows sit on whichever macOS Space they were opened on, and a
+synthetic click at their coordinates otherwise lands on whatever is at that
+point on the *active* Space — silently, so it reads as the app ignoring the tap.
+Activating the app programmatically is not enough: macOS will not leave a
+full-screen Space for a programmatic activation. Clicking its Dock icon will,
+because the Dock is on every Space.
+
+```applescript
+tell application "System Events" to tell process "Dock" to ¬
+  click (first UI element of list 1 whose name is "Simulator")
+```
+
+Then wait for the CarPlay window to report `kCGWindowIsOnscreen` before posting
+the click — and check its origin is not negative. The Simulator persists window
+geometry per device in `com.apple.iphonesimulator`'s `DevicePreferences`, and a
+stale entry parks the CarPlay window off the left of the display at an `X` of
+around `-1150`. It still reports as on-screen, so the click is accepted and
+lands nowhere. `Window > Center` does not recover it; quitting the Simulator and
+running `defaults delete com.apple.iphonesimulator DevicePreferences` does. Note also that window AX enumeration fails while the windows are
+off-Space (`count of windows` returns 0) even though the *menu bar* is fully
+scriptable — which is why the display can be attached but not tapped.
+
+**Tapping by hand always works.** Synthetic clicks into the CarPlay window
+(`CGEventPost`, AppleScript, `cliclick`) work for a while and then silently
+stop: the display keeps rendering — its clock still advances — but stops
+accepting pointer events, and re-attaching the display does not restore them.
+Every remaining symptom then looks like an app fault. If a scripted tap
+produces nothing, tap a built-in app such as Settings to prove the input path
+before diagnosing anything else, and note the window can also drift off-screen
+(a negative `X` in the CoreGraphics window list), which sends every click
+somewhere else entirely.
+
+Screenshot the head unit with `simctl`, not `screencapture`:
+
+```bash
+xcrun simctl io booted screenshot --display external head-unit.png
+```
+
+`screencapture -l <window-id>` of the CarPlay window returns solid black, and a
+full-screen capture only works while Simulator.app is frontmost on the current
+Space.
+
 ```bash
 make ios-simulator IOS_SIMULATOR_LOCATION=51.5074,-0.1278
 make ios-simulator RIDE_RELAY_API_BASE_URL=https://relay.example.com/api
