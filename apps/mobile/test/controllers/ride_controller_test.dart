@@ -833,6 +833,27 @@ void main() {
     );
   });
 
+  test('joining cannot replace a ride which has not ended', () async {
+    await controller.createRide('Oliver', rideName: 'Current ride');
+    final current = controller.session!;
+
+    await controller.joinRideFromInvitation(
+      const RideJoinPayload(
+        rideId: 'another-ride',
+        rideCode: '654321',
+        inviteSecret: 'another-ride-secret-0123456789',
+        joinToken: 'another-join-token-0123456789',
+      ),
+      'Oliver',
+    );
+
+    expect(controller.session?.rideId, current.rideId);
+    expect(
+      controller.errorMessage,
+      'Finish or leave your current ride before joining another.',
+    );
+  });
+
   test('a set-aside ride cannot outlive the ride it refers to', () async {
     await controller.createRide('Oliver');
     await controller.endRide();

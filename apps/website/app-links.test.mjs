@@ -14,6 +14,13 @@ const appleAssociation = JSON.parse(
     "utf8",
   ),
 );
+const androidManifest = await readFile(
+  new URL(
+    "../mobile/android/app/src/main/AndroidManifest.xml",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 test("Android app links trust Play and local debug signatures", () => {
   const target = assetLinks[0]?.target;
@@ -25,10 +32,40 @@ test("Android app links trust Play and local debug signatures", () => {
   ]);
 });
 
-test("iOS universal links target the production planner route", () => {
+test("iOS universal links target planner and private ride invitations", () => {
   const detail = appleAssociation.applinks?.details?.[0];
 
   assert.deepEqual(detail?.appIDs, ["UY4624PH6X.app.tailendcharlie"]);
   assert.deepEqual(detail?.components?.[0]?.["/"], "/planner.html");
   assert.deepEqual(detail?.components?.[0]?.["?"]?.code, "?*");
+  assert.deepEqual(detail?.components?.[1]?.["/"], "/join.html");
+  assert.equal(detail?.components?.[1]?.["?"], undefined);
+});
+
+test("the invitation fallback page cannot transmit its URL fragment", async () => {
+  const page = await readFile(new URL("./join.html", import.meta.url), "utf8");
+  const headers = await readFile(new URL("./_headers", import.meta.url), "utf8");
+
+  assert.match(page, /name="referrer" content="no-referrer"/);
+  assert.doesNotMatch(page, /<script\b/i);
+  assert.match(page, /not sent to this website/i);
+  assert.match(headers, /\/join\.html[\s\S]*Referrer-Policy: no-referrer/);
+  assert.match(headers, /\/join\.html[\s\S]*connect-src 'none'/);
+});
+
+test("Android registers invitation and planner App Links side by side", () => {
+  const verifiedFilters = [
+    ...androidManifest.matchAll(
+      /<intent-filter android:autoVerify="true">([\s\S]*?)<\/intent-filter>/g,
+    ),
+  ].map((match) => match[1]);
+
+  assert.equal(
+    verifiedFilters.some((filter) => filter.includes('android:path="/planner.html"')),
+    true,
+  );
+  assert.equal(
+    verifiedFilters.some((filter) => filter.includes('android:path="/join.html"')),
+    true,
+  );
 });
