@@ -89,6 +89,7 @@ import '../settings/notification_preferences_sheet.dart';
 import 'ice_share_inbox_sheet.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
+import 'end_ride_confirmation.dart';
 import 'ended_ride_screen.dart';
 import 'observer_access_sheet.dart';
 import 'ride_dashboard.dart';
@@ -3908,7 +3909,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   Future<void> _confirmLeaveRideFromMap() async {
-    final isLeader = widget.rideController.session?.role == RideRole.lead;
+    final isLeader = canEndRideForEveryone(widget.rideController);
     final decision = await showRideExitDialog(context, isLeader: isLeader);
     switch (decision) {
       case RideExitDecision.leave:
@@ -3924,32 +3925,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   Future<void> _confirmEndRide() async {
-    if (widget.rideController.session?.role != RideRole.lead) return;
-    final relayCanCarryReopen = _relayCanCarryReopen;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('End this ride?'),
-        content: Text(
-          'This ends the group ride for everyone. Location sharing stops, '
-          'but relay recovery remains available for final queued events.\n\n'
-          '${relayCanCarryReopen ? 'The leader can resume it within 24 hours without changing the ride code.' : 'This relay cannot resume an ended ride on the other phones. This action cannot be undone for the group.'}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('End ride'),
-          ),
-        ],
-      ),
+    // One shared dialog, so the words a leader reads do not depend on whether
+    // they came from the ride menu or the dashboard header (#306).
+    await confirmEndRide(
+      context,
+      controller: widget.rideController,
+      relayCanCarryReopen: _relayCanCarryReopen,
     );
-    if (confirmed ?? false) {
-      await widget.rideController.endRide();
-    }
   }
 
   Future<void> _openRideMenu() async {
@@ -3994,7 +3976,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             widget.rideController.rideStarted &&
             widget.rideController.session?.role == RideRole.lead,
         onToggleRidePause: _toggleRidePause,
-        canEndRide: widget.rideController.isLocalRideLeader,
+        canEndRide: canEndRideForEveryone(widget.rideController),
         onEndRide: _confirmEndRide,
       ),
     );
@@ -4344,6 +4326,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Widget _buildDetails() => RideDashboard(
     controller: widget.rideController,
+    relayCanCarryReopen: _relayCanCarryReopen,
     distanceUnits: widget.distanceUnits,
     mapStyleMode: widget.mapStyleMode,
     speedLimitDisplay: widget.speedLimitDisplay,
