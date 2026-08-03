@@ -302,8 +302,10 @@ derived bearer token. Subsequent requests must use that credential. The server:
 
 This is group-scoped authentication, not individual rider identity or
 application-layer payload encryption. Receiving phones provide the final event
-HMAC check. Per-device keys, member revocation, and a formal security/privacy
-review remain release gates.
+HMAC check. The protocol-2 decisions for per-device identity, member revocation,
+payload encryption and migration are in
+[security-threat-model.md](security-threat-model.md); implementation remains a
+public-release gate.
 
 ## Run locally
 
