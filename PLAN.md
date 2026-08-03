@@ -73,7 +73,11 @@ What remains of #274 is an **operator-owned tile archive**. The style is ours,
 but the tiles come from an upstream service, so the observer map still depends on
 someone else being up, and there is no offline region download.
 
-A licensed traffic provider (#277) is deferred by decision; see that issue.
+A licensed traffic provider is **not being selected now**. TomTom and HERE both
+cover UK incidents, but neither self-service licence grants the app's combination
+of group redistribution, navigation and CarPlay use without written permission.
+The comparison and reconsideration gate are in
+[docs/traffic-provider-decision.md](docs/traffic-provider-decision.md) (#277).
 
 Waze is unavailable as a hazard-read source: its partner data programme is
 limited to government agencies and road operators, and this project applied and
@@ -573,7 +577,9 @@ Non-blocking:
 - Final name and visual identity.
 - Subscription model, including whether the parked camera and roadworks layers
   become paid-tier features.
-- Which licensed hazard provider, if any, is used after v1.
+- Licensed live traffic: none for now. Reconsider only with a funded owner and
+  written navigation, CarPlay, basemap-overlay, caching and group-redistribution
+  rights; see [docs/traffic-provider-decision.md](docs/traffic-provider-decision.md).
 
 ## 14. First implementation backlog
 
