@@ -605,7 +605,10 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
         BasemapConfiguration.fromEnvironment().forBrightness(dark: true);
     final repository = await MapStyleRepository.openDefault(configuration);
     try {
-      return await repository.resolve();
+      // As in `resolved_route_map_preview.dart`: a history thumbnail has
+      // nowhere to report a basemap failure, so the outcome is dropped on
+      // purpose rather than overlooked (#281).
+      return (await repository.resolve()).style;
     } finally {
       repository.dispose();
     }
