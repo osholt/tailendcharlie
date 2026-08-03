@@ -86,6 +86,34 @@ void main() {
     },
   );
 
+  test('retries immediately after a native snapshot failure', () async {
+    var calls = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls += 1;
+      if (calls == 1) {
+        throw PlatformException(code: 'carplay_unavailable');
+      }
+      return null;
+    });
+    final bridge = CarPlayBridge(
+      channel: channel,
+      clock: () => DateTime.utc(2026, 8, 3, 12),
+    );
+    addTearDown(bridge.dispose);
+
+    Future<void> publish() => bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+    );
+
+    await publish();
+    await publish();
+
+    expect(calls, 2);
+  });
+
   test(
     'projects the longest route path for the native navigation map',
     () async {

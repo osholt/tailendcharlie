@@ -58,6 +58,7 @@ class CarPlayBridge {
   /// The request the head unit was last told about, so a new one can jump the
   /// throttle and an answered one can take its alert down.
   String? _publishedTecRequestId;
+  int _publishAttempt = 0;
 
   /// Driving Task templates are deliberately low-frequency, glanceable
   /// surfaces. Active rides supply regular location updates, so dropping
@@ -114,6 +115,9 @@ class CarPlayBridge {
         now.difference(_lastPublishedAt!) < _minimumPublishInterval) {
       return;
     }
+    final previousPublishedAt = _lastPublishedAt;
+    final previousTecRequestId = _publishedTecRequestId;
+    final attempt = ++_publishAttempt;
     _lastPublishedAt = now;
     _publishedTecRequestId = tecRequest?.requestId;
     final alertsByRider = {
@@ -169,7 +173,12 @@ class CarPlayBridge {
       await _channel.invokeMethod('updateSnapshot', snapshot);
     } on Object catch (error) {
       // CarPlay may not be connected, or the plugin unavailable in tests;
-      // the next ride-state change retries.
+      // restore the throttle state so the next ride-state change retries. A
+      // newer publish owns the state if one completed while this call waited.
+      if (_publishAttempt == attempt) {
+        _lastPublishedAt = previousPublishedAt;
+        _publishedTecRequestId = previousTecRequestId;
+      }
       if (kDebugMode) debugPrint('Could not publish CarPlay snapshot: $error');
     }
   }
