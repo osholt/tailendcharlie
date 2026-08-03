@@ -581,8 +581,8 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 12
       ),
-      groupMiniMap.widthAnchor.constraint(equalToConstant: 196),
-      groupMiniMap.heightAnchor.constraint(equalToConstant: 122),
+      groupMiniMap.widthAnchor.constraint(equalToConstant: 110),
+      groupMiniMap.heightAnchor.constraint(equalToConstant: 70),
       groupMiniMap.trailingAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.trailingAnchor,
         constant: -82
@@ -1368,9 +1368,9 @@ private final class CarPlayGroupMiniMapView: UIView {
     isHidden = true
     isUserInteractionEnabled = false
     backgroundColor = CarPlayPalette.cardFill
-    layer.cornerRadius = 12
+    layer.cornerRadius = 10
     layer.cornerCurve = .continuous
-    layer.borderWidth = 2
+    layer.borderWidth = 1.5
     layer.borderColor = CarPlayPalette.casing.cgColor
     clipsToBounds = true
 
@@ -1379,10 +1379,10 @@ private final class CarPlayGroupMiniMapView: UIView {
     addSubview(imageView)
 
     caption.translatesAutoresizingMaskIntoConstraints = false
-    caption.font = .systemFont(ofSize: 14, weight: .bold)
+    caption.font = .systemFont(ofSize: 11, weight: .bold)
     caption.textColor = CarPlayPalette.cardTitle
     caption.backgroundColor = CarPlayPalette.cardFill
-    caption.layer.cornerRadius = 7
+    caption.layer.cornerRadius = 6
     caption.layer.cornerCurve = .continuous
     caption.clipsToBounds = true
     caption.textAlignment = .center
@@ -1393,10 +1393,10 @@ private final class CarPlayGroupMiniMapView: UIView {
       imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
       imageView.topAnchor.constraint(equalTo: topAnchor),
       imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
-      caption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-      caption.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
-      caption.heightAnchor.constraint(equalToConstant: 25),
-      caption.widthAnchor.constraint(greaterThanOrEqualToConstant: 86),
+      caption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+      caption.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+      caption.heightAnchor.constraint(equalToConstant: 19),
+      caption.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
     ])
   }
 
@@ -1456,7 +1456,7 @@ private final class CarPlayGroupMiniMapView: UIView {
     let options = MLNMapSnapshotOptions(
       styleURL: resolvedStyleURL,
       camera: camera,
-      size: CGSize(width: 196, height: 122)
+      size: CGSize(width: 110, height: 70)
     )
     options.coordinateBounds = bounds
     options.showsLogo = false
@@ -1560,7 +1560,7 @@ private final class CarPlayGroupMiniMapView: UIView {
     let context = overlay.context
     context.saveGState()
     defer { context.restoreGState() }
-    context.clip(to: CGRect(x: 0, y: 0, width: 196, height: 122))
+    context.clip(to: CGRect(x: 0, y: 0, width: 110, height: 70))
 
     if route.count >= 2 {
       let points = route.map(overlay.point(for:))
