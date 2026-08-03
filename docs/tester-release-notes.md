@@ -36,7 +36,7 @@ permissions by design.
 - ...
 ```
 
-## iOS build 41 / Android build 40 — unreleased — 3 August 2026
+## iOS build 41 / Android build 40 — 3 August 2026
 
 The newest section is always first, so this is the one to read. Everything in
 the iOS build 40 section below is also in this build — and so is the 30 July
