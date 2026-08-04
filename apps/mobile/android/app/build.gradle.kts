@@ -115,7 +115,7 @@ flutter {
 }
 
 dependencies {
-    implementation("org.bouncycastle:bcprov-jdk18on:1.83")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.84")
     implementation("androidx.car.app:app:1.7.0")
     implementation("androidx.car.app:app-projected:1.7.0")
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
