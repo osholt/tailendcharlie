@@ -18,10 +18,21 @@ final embeddedMapGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
 };
 
 class RoutePreviewPin {
-  const RoutePreviewPin({required this.point, required this.kind});
+  const RoutePreviewPin({
+    required this.point,
+    required this.kind,
+    this.id,
+    this.label,
+    this.interactive = false,
+    this.includeInFraming = true,
+  });
 
   final GeoPoint point;
   final String kind;
+  final String? id;
+  final String? label;
+  final bool interactive;
+  final bool includeInFraming;
 }
 
 class RoutePreviewReshapeStart {
@@ -48,6 +59,7 @@ class ResolvedRouteMapPreview extends StatefulWidget {
     this.mapStyleString,
     this.lineColor = '#3478F6',
     this.onPointTap,
+    this.onPinTap,
     this.onControllerReady,
     this.onStyleReady,
     this.reshapeEnabled = false,
@@ -63,6 +75,7 @@ class ResolvedRouteMapPreview extends StatefulWidget {
   final String? mapStyleString;
   final String lineColor;
   final ValueChanged<int>? onPointTap;
+  final ValueChanged<RoutePreviewPin>? onPinTap;
   final bool reshapeEnabled;
   final ValueChanged<RoutePreviewReshapeStart>? onReshapeStart;
   final ValueChanged<GeoPoint>? onReshapeUpdate;
@@ -161,7 +174,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                   widget.onControllerReady?.call(controller);
                 },
                 onStyleLoadedCallback: () => unawaited(_prepareStyle()),
-                onMapClick: widget.onPointTap == null
+                onMapClick: widget.onPointTap == null && widget.onPinTap == null
                     ? null
                     : (point, _) => unawaited(_handlePointTap(point)),
                 featureTapsTriggersMapClick: true,
@@ -197,6 +210,9 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                   onPanUpdate: _updateReshape,
                   onPanEnd: (_) => _endReshape(),
                   onPanCancel: _endReshape,
+                  onTapUp: (details) => unawaited(
+                    _handlePointTap(_platformPoint(details.localPosition)),
+                  ),
                 ),
               ),
             Positioned(
@@ -325,6 +341,12 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
             [
               '==',
               ['get', 'kind'],
+              'poi',
+            ],
+            7,
+            [
+              '==',
+              ['get', 'kind'],
               'safety',
             ],
             8,
@@ -362,6 +384,12 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
               'shape',
             ],
             '#B37CFF',
+            [
+              '==',
+              ['get', 'kind'],
+              'poi',
+            ],
+            '#F97316',
             '#FFC857',
           ],
           circleStrokeColor: '#10151C',
@@ -438,10 +466,37 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
   }
 
   Future<void> _handlePointTap(math.Point<double> tap) async {
-    final callback = widget.onPointTap;
     final controller = _controller;
+    if (controller == null) return;
+
+    final pinCallback = widget.onPinTap;
+    final interactivePins = widget.pins
+        .where((pin) => pin.interactive)
+        .toList(growable: false);
+    if (pinCallback != null && interactivePins.isNotEmpty) {
+      final screens = await controller.toScreenLocationBatch(
+        interactivePins.map(
+          (pin) => ml.LatLng(pin.point.latitude, pin.point.longitude),
+        ),
+      );
+      var closest = -1;
+      var closestDistance = double.infinity;
+      for (var index = 0; index < screens.length; index += 1) {
+        final distance = _screenDistance(tap, screens[index]);
+        if (distance < closestDistance) {
+          closest = index;
+          closestDistance = distance;
+        }
+      }
+      if (closest >= 0 && closestDistance <= 36 * _platformPixelScale) {
+        pinCallback(interactivePins[closest]);
+        return;
+      }
+    }
+
+    final callback = widget.onPointTap;
     final points = _points;
-    if (callback == null || controller == null || points.length <= 2) return;
+    if (callback == null || points.length <= 2) return;
     final screenPoints = await controller.toScreenLocationBatch(
       points.map((point) => ml.LatLng(point.latitude, point.longitude)),
     );
@@ -613,7 +668,11 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
         for (final pin in pins)
           {
             'type': 'Feature',
-            'properties': {'kind': pin.kind},
+            'properties': {
+              'kind': pin.kind,
+              if (pin.id != null) 'id': pin.id,
+              if (pin.label != null) 'label': pin.label,
+            },
             'geometry': {
               'type': 'Point',
               'coordinates': [pin.point.longitude, pin.point.latitude],
@@ -726,6 +785,10 @@ bool _samePreviewPins(
   if (first.length != second.length) return false;
   for (var index = 0; index < first.length; index += 1) {
     if (first[index].kind != second[index].kind ||
+        first[index].id != second[index].id ||
+        first[index].label != second[index].label ||
+        first[index].interactive != second[index].interactive ||
+        first[index].includeInFraming != second[index].includeInFraming ||
         !_samePoint(first[index].point, second[index].point)) {
       return false;
     }
@@ -742,7 +805,7 @@ List<GeoPoint> routePreviewFramingPoints(
   List<RoutePreviewPin> pins,
 ) => List.unmodifiable([
   ...paths.expand((path) => path),
-  ...pins.map((pin) => pin.point),
+  ...pins.where((pin) => pin.includeInFraming).map((pin) => pin.point),
 ]);
 
 @visibleForTesting

@@ -3,6 +3,8 @@
 // Checked: 2026-07-22. Exported points are retained only while also present on
 // the current Bike + Brew map; withdrawn or stale points are excluded.
 
+export const BIKE_AND_BREW_CHECKED_AT = "2026-07-22";
+
 export const BIKE_AND_BREW_PLACES = Object.freeze([
   {
     "sourceId": 22012,

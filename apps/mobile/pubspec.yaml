@@ -86,6 +86,7 @@ flutter:
   assets:
     - assets/demo_route.gpx
     - assets/demo_route_maneuvers.json
+    - assets/biker_places.json
     - assets/discovery_catalogue.geojson
     - assets/icons/motorcycles/
 

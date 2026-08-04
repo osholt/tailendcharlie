@@ -69,7 +69,11 @@ Refresh and revalidate the authorised catalogue with:
 
 ```bash
 node scripts/refresh-bike-and-brew.mjs
+node scripts/export-mobile-biker-places.mjs
 ```
+
+The second command packages the web planner's combined, curated biker-place
+catalogue as the mobile app's offline point-of-interest asset.
 
 Run the planner unit tests with:
 
