@@ -224,7 +224,7 @@ Future<void> _pumpMap(
   RecordedRouteStore? recorded,
   CompletedRideStore? rides,
   ValueChanged<ImportedRoute?>? onRouteCommitted,
-  // The ride menu's "Change route" asks the map to open its route-change sheet.
+  // The Ride page's "Change route" asks the map to open its route-change sheet.
   // Left off, the empty-route card is what a rider sees, and its own controls
   // are the ones under test.
   bool openChangeRouteSheet = false,

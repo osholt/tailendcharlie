@@ -1188,7 +1188,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
 
 /// Shown immediately after creating a ride - the moment a leader most needs
 /// the code, with riders waiting nearby, rather than requiring a trip
-/// through the ride menu to "Ride details" to find it.
+/// through the active Ride page to find it.
 class _ShareCodeStep extends StatelessWidget {
   const _ShareCodeStep({required this.controller, required this.onContinue});
 

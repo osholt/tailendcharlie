@@ -377,27 +377,28 @@ void main() {
     expect(find.text('Navigation'), findsOneWidget);
     expect(find.text('Navigation map'), findsOneWidget);
     expect(find.byIcon(Icons.map), findsOneWidget);
-    expect(find.byIcon(Icons.tune_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.health_and_safety_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.two_wheeler_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.warning_amber_outlined), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.tune_outlined));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
 
     expect(find.text('Oliver'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('MARKING STATS'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Marker mode'), findsOneWidget);
-    expect(find.byKey(const Key('open-ride-actions')), findsOneWidget);
+    expect(find.byKey(const Key('open-ride-actions')), findsNothing);
     expect(find.text('MARKING STATS'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('open-ride-actions')));
-    await tester.pumpAndSettle();
-    expect(find.text('Ride actions'), findsWidgets);
+    expect(find.text('Ride actions'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Share ride summary'), findsOneWidget);
     expect(find.text('Ride roster'), findsWidgets);
     expect(find.text('Navigation map'), findsNothing);
     expect(find.text('End ride'), findsNothing);
-    await tester.tapAt(const Offset(10, 10));
-    await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(
       find.text('QUICK MESSAGES'),
@@ -406,11 +407,13 @@ void main() {
     );
     expect(find.text('QUICK MESSAGES'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.health_and_safety_outlined));
+    await tester.tap(find.byIcon(Icons.warning_amber_outlined));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ride awareness'), findsOneWidget);
-    expect(find.text('ACTIVE HAZARDS'), findsOneWidget);
+    expect(find.text('Alerts'), findsWidgets);
+    expect(find.text('ROAD ALERTS'), findsOneWidget);
+    expect(find.text('EXTERNAL SOURCES'), findsNothing);
+    expect(find.text('RIDER STATUS'), findsNothing);
 
     controller.dispose();
   });
@@ -526,7 +529,7 @@ void main() {
 
     final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
     expect(bar.labelBehavior, NavigationDestinationLabelBehavior.alwaysShow);
-    for (final label in ['Map', 'Details', 'Safety']) {
+    for (final label in ['Map', 'Ride', 'Alerts']) {
       expect(find.text(label), findsWidgets, reason: label);
     }
 
@@ -559,7 +562,7 @@ void main() {
       // paid at a standstill.
       expect(rail.minWidth, 72);
       expect(rail.labelType, NavigationRailLabelType.all);
-      for (final label in ['Map', 'Details', 'Safety']) {
+      for (final label in ['Map', 'Ride', 'Alerts']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
 
@@ -573,9 +576,7 @@ void main() {
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.tune_outlined));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('open-ride-actions')));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
     final leaveOrEnd = find.byKey(const Key('ride-actions-leave-or-end'));
     await tester.ensureVisible(leaveOrEnd);
@@ -610,9 +611,7 @@ void main() {
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.tune_outlined));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('open-ride-actions')));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
     final leaveOrEnd = find.byKey(const Key('ride-actions-leave-or-end'));
     await tester.ensureVisible(leaveOrEnd);
@@ -641,9 +640,7 @@ void main() {
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.tune_outlined));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('open-ride-actions')));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
     final leaveOrEnd = find.byKey(const Key('ride-actions-leave-or-end'));
     await tester.ensureVisible(leaveOrEnd);
