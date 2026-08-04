@@ -937,6 +937,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// to that widget's lifecycle. Both are monotonic and fed the same fixes, so
   /// they agree.
   final _completionProgressTracker = RouteProgressTracker();
+  late final ManagedRouteRejoinPlanner _managedRejoinPlanner;
   late final RouteRejoinPlanner _rejoinPlanner;
   Future<void> _rejoinChain = Future.value();
   String? _rejoinGuidance;
@@ -1053,13 +1054,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // Issue #102: advisory off-route rejoin routing. Uses the same documented
     // OSRM configuration as the rest of the app; when it is unreachable the
     // planner degrades to the plain "you are off route by X" message.
-    _rejoinPlanner = RouteRejoinPlanner(
-      routingService: OsrmRoadRoutingService(
-        client: http.Client(),
-        baseUrl: RoutingConfiguration.fromEnvironment().routingBaseUrl,
-      ),
+    _managedRejoinPlanner = ManagedRouteRejoinPlanner.osrm(
+      routingBaseUrl: RoutingConfiguration.fromEnvironment().routingBaseUrl,
       distanceUnit: widget.distanceUnits.value,
     );
+    _rejoinPlanner = _managedRejoinPlanner.planner;
     widget.rideController.addListener(_onRideControllerChanged);
     widget.sharedRoutes.addListener(_onSharedRoutesChanged);
     _capturePlannerLinkError();
@@ -4709,6 +4708,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
     _rejoinNavigationRoute.dispose();
+    _managedRejoinPlanner.dispose();
     _mapOverlays.dispose();
     _riderTrails.dispose();
     _quickMessageAlerts.dispose();

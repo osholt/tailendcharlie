@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../domain/distance_unit.dart';
 import '../domain/geo_point.dart';
@@ -10,7 +11,47 @@ import '../domain/route_alert.dart';
 import 'geo_calculations.dart';
 import 'leader_ride_status.dart' show TecAvailability;
 import 'measurement_formatter.dart';
-import 'road_routing.dart' show RoadRouteManeuver, RoadRoutingService;
+import 'road_routing.dart'
+    show OsrmRoadRoutingService, RoadRouteManeuver, RoadRoutingService;
+
+/// Owns the HTTP client used by the active ride's OSRM rejoin planner.
+///
+/// A directly constructed [RouteRejoinPlanner] never owns its injected routing
+/// service. This handle is the production convenience path: the client returned
+/// by [clientFactory] belongs to the handle and is closed exactly once by
+/// [dispose]. Keeping that distinction explicit avoids both leaking the active
+/// ride client and double-closing clients supplied by tests or other features.
+class ManagedRouteRejoinPlanner {
+  factory ManagedRouteRejoinPlanner.osrm({
+    required Uri routingBaseUrl,
+    required DistanceUnit distanceUnit,
+    http.Client Function()? clientFactory,
+  }) {
+    final client = clientFactory?.call() ?? http.Client();
+    return ManagedRouteRejoinPlanner._(
+      planner: RouteRejoinPlanner(
+        routingService: OsrmRoadRoutingService(
+          client: client,
+          baseUrl: routingBaseUrl,
+        ),
+        distanceUnit: distanceUnit,
+      ),
+      client: client,
+    );
+  }
+
+  ManagedRouteRejoinPlanner._({required this.planner, required this._client});
+
+  final RouteRejoinPlanner planner;
+  final http.Client _client;
+  bool _disposed = false;
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _client.close();
+  }
+}
 
 /// The routing service speaks the route domain's point type; everything else
 /// here speaks the situational-awareness one. Converting at this single
