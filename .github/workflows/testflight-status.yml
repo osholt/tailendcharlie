@@ -1,0 +1,58 @@
+# Reports whether a processed build is assigned to the configured external
+# tester group and what Apple currently reports for its beta review state.
+name: TestFlight status
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: iOS build number to inspect
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-status
+  cancel-in-progress: false
+
+jobs:
+  status:
+    name: Report TestFlight status
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Query App Store Connect
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          EXTERNAL_TESTER_GROUP: ${{ vars.RIDE_RELAY_IOS_EXTERNAL_TESTER_GROUP }}
+          REVIEW_API_KEY_ID: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_KEY_ID }}
+          REVIEW_API_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_ISSUER_ID }}
+          REVIEW_API_PRIVATE_KEY_BASE64: ${{ secrets.APPSTORE_CONNECT_REVIEW_API_PRIVATE_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$BUILD_NUMBER"
+          test -n "$EXTERNAL_TESTER_GROUP" || {
+            echo "::error::Set RIDE_RELAY_IOS_EXTERNAL_TESTER_GROUP to the exact App Store Connect external tester group name." >&2
+            exit 1
+          }
+          test -n "$REVIEW_API_KEY_ID"
+          test -n "$REVIEW_API_ISSUER_ID"
+          test -n "$REVIEW_API_PRIVATE_KEY_BASE64"
+
+          review_key_path="$RUNNER_TEMP/AuthKey_$REVIEW_API_KEY_ID.p8"
+          printf '%s' "$REVIEW_API_PRIVATE_KEY_BASE64" | base64 --decode > "$review_key_path"
+          chmod 600 "$review_key_path"
+
+          review_venv="$RUNNER_TEMP/testflight-status-venv"
+          python3 -m venv "$review_venv"
+          "$review_venv/bin/python" -m pip install --quiet "PyJWT[crypto]==2.10.1"
+          "$review_venv/bin/python" tools/testflight/submit_external.py \
+            --bundle-id app.tailendcharlie \
+            --build-number "$BUILD_NUMBER" \
+            --group "$EXTERNAL_TESTER_GROUP" \
+            --issuer-id "$REVIEW_API_ISSUER_ID" \
+            --key-id "$REVIEW_API_KEY_ID" \
+            --private-key "$review_key_path" \
+            --dry-run
