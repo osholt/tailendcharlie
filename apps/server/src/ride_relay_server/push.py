@@ -13,13 +13,14 @@ import httpx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import Settings
 from .crypto import DataCipher, base64url, sha256, token_hash
-from .models import PushDelivery, PushRegistration, Ride, StoredEvent
+from .membership import MembershipEvent, project_membership_events
+from .models import PushDelivery, PushRegistration, Ride, RideMember, StoredEvent
 from .schemas import PushRegistrationRequest
 from .service import RelayServiceError
 
@@ -319,46 +320,20 @@ class PushDispatcher:
         ride_id: str,
         now: datetime,
     ) -> dict[str, _Membership]:
-        result: dict[str, _Membership] = {}
-        rows = session.scalars(
-            select(StoredEvent).where(StoredEvent.ride_id == ride_id).order_by(StoredEvent.sequence)
-        ).all()
-        for row in rows:
-            try:
-                event = self._cipher.decrypt_json(
-                    row.body_ciphertext,
-                    associated_data=f"event:{ride_id}:{row.event_id}".encode(),
-                )
-            except (TypeError, ValueError):
-                event = None
-            if not isinstance(event, dict):
-                continue
-            membership = result.get(row.device_id)
-            if membership is None:
-                membership = _Membership(
-                    rider_id=row.device_id,
-                    role="rider",
-                    state="joined",
-                    last_seen_at=_as_utc(row.created_at),
-                )
-                result[row.device_id] = membership
-            membership.last_seen_at = max(
-                membership.last_seen_at,
-                _as_utc(row.created_at),
+        ride = session.scalar(select(Ride).where(Ride.id == ride_id).with_for_update())
+        if ride is None:
+            return {}
+        if not ride.membership_projection_ready:
+            self._rebuild_membership_projection(session, ride)
+        result = {
+            row.device_id: _Membership(
+                rider_id=row.device_id,
+                role=row.role,
+                state=row.state,
+                last_seen_at=_as_utc(row.last_seen_at),
             )
-            payload = event.get("payload")
-            payload = payload if isinstance(payload, dict) else {}
-            if row.event_type == "riderJoined":
-                membership.role = _safe_role(payload.get("role"))
-                membership.state = "joined"
-            elif row.event_type == "roleChanged":
-                membership.role = _safe_role(payload.get("role"))
-            elif row.event_type == "markerStarted":
-                membership.role = "marker"
-            elif row.event_type == "markerEnded":
-                membership.role = _safe_role(payload.get("previousRole"))
-            elif row.event_type == "riderLeft":
-                membership.state = "left"
+            for row in session.scalars(select(RideMember).where(RideMember.ride_id == ride_id))
+        }
         for membership in result.values():
             if membership.state == "left":
                 continue
@@ -370,6 +345,37 @@ class PushDispatcher:
             else:
                 membership.state = "active"
         return result
+
+    def _rebuild_membership_projection(self, session: Session, ride: Ride) -> None:
+        """Upgrade an in-flight pre-projection ride once, under its row lock."""
+
+        session.execute(delete(RideMember).where(RideMember.ride_id == ride.id))
+        events: list[MembershipEvent] = []
+        rows = session.scalars(
+            select(StoredEvent).where(StoredEvent.ride_id == ride.id).order_by(StoredEvent.sequence)
+        ).all()
+        for row in rows:
+            try:
+                event = self._cipher.decrypt_json(
+                    row.body_ciphertext,
+                    associated_data=f"event:{ride.id}:{row.event_id}".encode(),
+                )
+            except (TypeError, ValueError):
+                event = None
+            if not isinstance(event, dict):
+                continue
+            payload = event.get("payload")
+            events.append(
+                MembershipEvent(
+                    device_id=row.device_id,
+                    event_type=row.event_type,
+                    created_at=_as_utc(row.created_at),
+                    payload=payload if isinstance(payload, dict) else {},
+                )
+            )
+        project_membership_events(session, ride_id=ride.id, events=events)
+        ride.membership_projection_ready = True
+        session.flush()
 
     @staticmethod
     def _targets(message: PushMessage, membership: _Membership) -> bool:
@@ -746,12 +752,6 @@ def _recipient_ids(payload: dict[str, Any]) -> frozenset[str]:
     if not isinstance(values, list):
         return frozenset()
     return frozenset(value for value in values if isinstance(value, str) and 0 < len(value) <= 128)
-
-
-def _safe_role(value: object) -> str:
-    if value in {"lead", "rider", "tailEndCharlie", "marker"}:
-        return str(value)
-    return "rider"
 
 
 def _token_aad(ride_id: str, installation_id: str, provider: str) -> bytes:

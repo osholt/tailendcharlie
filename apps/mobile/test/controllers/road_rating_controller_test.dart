@@ -1,8 +1,10 @@
 // Asking, storing and releasing anonymous road ratings (#159).
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:ride_relay/controllers/road_rating_controller.dart';
 import 'package:ride_relay/domain/imported_route.dart' show GeoPoint;
 import 'package:ride_relay/internet/internet_relay_client.dart';
@@ -60,6 +62,7 @@ class _FakeCompatibility implements RelayCompatibilityApi {
 
   final Set<String> capabilities;
   var checks = 0;
+  var closed = false;
 
   @override
   Future<RelayCompatibilityResult> checkCompatibility() async {
@@ -73,6 +76,38 @@ class _FakeCompatibility implements RelayCompatibilityApi {
       validUntil: _now.add(const Duration(minutes: 5)),
     );
   }
+
+  @override
+  void close() => closed = true;
+}
+
+class _CloseTrackingHttpClient extends http.BaseClient {
+  var closeCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    throw StateError('No request expected in this lifecycle test.');
+  }
+
+  @override
+  void close() {
+    closeCount += 1;
+    super.close();
+  }
+}
+
+class _DelayedCompatibility implements RelayCompatibilityApi {
+  final started = Completer<void>();
+  final result = Completer<RelayCompatibilityResult>();
+
+  @override
+  Future<RelayCompatibilityResult> checkCompatibility() {
+    if (!started.isCompleted) started.complete();
+    return result.future;
+  }
+
+  @override
+  void close() {}
 }
 
 Future<RoadRatingController> _controller({
@@ -437,5 +472,67 @@ void main() {
     // The launch-time drain must cost nothing when there is nothing to send.
     expect(compatibility.checks, 0);
     expect(controller.limitation, RoadRatingLimitation.none);
+  });
+
+  test('injected relay clients remain caller-owned by default', () async {
+    final client = _RecordingRatingApi();
+    final compatibility = _FakeCompatibility();
+    final controller = await _controller(
+      client: client,
+      compatibility: compatibility,
+    );
+
+    controller.dispose();
+
+    expect(client.closed, isFalse);
+    expect(compatibility.closed, isFalse);
+  });
+
+  test('the production controller closes both owned HTTP clients', () async {
+    final clients = [_CloseTrackingHttpClient(), _CloseTrackingHttpClient()];
+    var clientIndex = 0;
+    final controller = await RoadRatingController.openDefault(
+      configuration: RoadRatingConfiguration(
+        Uri.parse('https://ratings.example.test'),
+      ),
+      clientFactory: () => clients[clientIndex++],
+    );
+
+    controller!.dispose();
+
+    expect(clients.map((client) => client.closeCount), everyElement(1));
+  });
+
+  test('an in-flight flush is ignored after controller disposal', () async {
+    final client = _RecordingRatingApi();
+    final compatibility = _DelayedCompatibility();
+    final controller = await _controller(
+      client: client,
+      compatibility: compatibility,
+      minimumReleaseDelay: Duration.zero,
+      maximumReleaseDelay: Duration.zero,
+    );
+    await controller.prepare(riddenTrack: _line());
+    await controller.answer(RoadRatingVerdict.worthIncluding);
+    var notifications = 0;
+    controller.addListener(() => notifications += 1);
+
+    final flush = controller.flushPending();
+    await compatibility.started.future;
+    controller.dispose();
+    compatibility.result.complete(
+      RelayCompatibilityResult(
+        disposition: RelayCompatibilityDisposition.compatible,
+        serverProtocol: 1,
+        minimumClientProtocol: 1,
+        capabilities: RelayProtocolCapabilities.current,
+        checkedAt: _now,
+        validUntil: _now.add(const Duration(minutes: 5)),
+      ),
+    );
+    await flush;
+
+    expect(notifications, 0);
+    expect(client.submitted, isEmpty);
   });
 }

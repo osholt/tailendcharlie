@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -31,6 +32,13 @@ class Ride(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     delete_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stored_event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stored_event_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    membership_projection_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
 
     events: Mapped[list[StoredEvent]] = relationship(
         back_populates="ride",
@@ -49,6 +57,10 @@ class Ride(Base):
         cascade="all, delete-orphan",
     )
     pre_start_positions: Mapped[list[PreStartPosition]] = relationship(
+        back_populates="ride",
+        cascade="all, delete-orphan",
+    )
+    members: Mapped[list[RideMember]] = relationship(
         back_populates="ride",
         cascade="all, delete-orphan",
     )
@@ -109,6 +121,24 @@ class StoredEvent(Base):
     body_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
     ride: Mapped[Ride] = relationship(back_populates="events")
+
+
+class RideMember(Base):
+    """Current push-recipient state projected from the encrypted event journal."""
+
+    __tablename__ = "ride_members"
+
+    ride_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("rides.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    device_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    ride: Mapped[Ride] = relationship(back_populates="members")
 
 
 class PreStartPosition(Base):

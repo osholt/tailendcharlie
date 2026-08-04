@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from .config import Settings
 from .crypto import CursorCodec, DataCipher, base64url, sha256, token_hash
 from .gpx import GpxValidationError, validate_gpx
+from .membership import MembershipEvent, project_membership_events
 from .models import (
     IdempotencyReplay,
     ObserverGrant,
@@ -147,13 +148,13 @@ class RelayService:
             raise RelayServiceError(400, "A batch cannot repeat an event ID")
 
         with session.begin():
-            self._purge_expired_for_ride(session, ride_id, now)
             ride = self._get_or_claim_ride(session, ride_id, bearer_token, now)
             ride = session.scalar(select(Ride).where(Ride.id == ride_id).with_for_update())
             if ride is None:
                 raise RelayServiceError(500, "Claimed ride is unavailable")
             if not hmac.compare_digest(ride.token_hash, token_hash(bearer_token)):
                 raise RelayServiceError(403, "Ride credential rejected")
+            self._purge_expired_for_ride(session, ride, now)
 
             # Idempotency covers the upload only. Upload and download share one
             # request, and a device with nothing to send repeats a byte-identical
@@ -198,8 +199,14 @@ class RelayService:
                     ride.delete_after = now + timedelta(hours=self._settings.ride_retention_hours)
                 return response
 
-            self._validate_event_conflicts(session, ride_id, events)
-            accepted_ids = self._store_events(session, ride, events, now)
+            existing_event_ids = self._validate_event_conflicts(session, ride_id, events)
+            accepted_ids = self._store_events(
+                session,
+                ride,
+                events,
+                existing_event_ids,
+                now,
+            )
             # Only a finished ride discards live positions. Discarding them at
             # `rideStarted` is what previously severed presence mid-ride and
             # left a rider who joined afterwards with no live channel at all.
@@ -718,6 +725,9 @@ class RelayService:
             created_at=now,
             last_seen_at=now,
             delete_after=now + timedelta(hours=self._settings.ride_retention_hours),
+            stored_event_count=0,
+            stored_event_bytes=0,
+            membership_projection_ready=True,
         )
         try:
             with session.begin_nested():
@@ -735,9 +745,9 @@ class RelayService:
         session: Session,
         ride_id: str,
         events: list[ValidatedEvent],
-    ) -> None:
+    ) -> set[str]:
         if not events:
-            return
+            return set()
         existing = {
             row.event_id: row.body_hash
             for row in session.scalars(
@@ -753,38 +763,21 @@ class RelayService:
                 previous_hash, event.body_hash
             ):
                 raise RelayServiceError(409, f"Event identity conflict: {event.event_id}")
+        return set(existing)
 
     def _store_events(
         self,
         session: Session,
         ride: Ride,
         events: list[ValidatedEvent],
+        existing_event_ids: set[str],
         now: datetime,
     ) -> list[str]:
         accepted_ids: list[str] = []
-        stored_count = (
-            session.scalar(
-                select(func.count(StoredEvent.sequence)).where(StoredEvent.ride_id == ride.id)
-            )
-            or 0
-        )
-        stored_bytes = (
-            session.scalar(
-                select(func.coalesce(func.sum(func.length(StoredEvent.body_ciphertext)), 0)).where(
-                    StoredEvent.ride_id == ride.id
-                )
-            )
-            or 0
-        )
+        membership_events: list[MembershipEvent] = []
         for event in events:
             accepted_ids.append(event.event_id)
-            existing = session.scalar(
-                select(StoredEvent.sequence).where(
-                    StoredEvent.ride_id == ride.id,
-                    StoredEvent.event_id == event.event_id,
-                )
-            )
-            if existing is not None:
+            if event.event_id in existing_event_ids:
                 continue
             retention_expiry = now + self._maximum_event_retention(event.event_type)
             expires_at = retention_expiry
@@ -793,9 +786,13 @@ class RelayService:
             expires_at = min(expires_at, self._as_utc(ride.delete_after))
             if expires_at <= now:
                 continue
-            projected_bytes = stored_bytes + len(event.encoded) + 28
+            body_ciphertext = self._cipher.encrypt_json(
+                event.body,
+                associated_data=self._event_aad(ride.id, event.event_id),
+            )
+            projected_bytes = ride.stored_event_bytes + len(body_ciphertext)
             if (
-                stored_count + 1 > self._settings.maximum_events_per_ride
+                ride.stored_event_count + 1 > self._settings.maximum_events_per_ride
                 or projected_bytes > self._settings.maximum_stored_bytes_per_ride
             ):
                 raise RelayServiceError(413, "Ride storage quota exceeded")
@@ -808,14 +805,19 @@ class RelayService:
                     created_at=event.created_at,
                     expires_at=expires_at,
                     body_hash=event.body_hash,
-                    body_ciphertext=self._cipher.encrypt_json(
-                        event.body,
-                        associated_data=self._event_aad(ride.id, event.event_id),
-                    ),
+                    body_ciphertext=body_ciphertext,
                 )
             )
-            stored_count += 1
-            stored_bytes = projected_bytes
+            ride.stored_event_count += 1
+            ride.stored_event_bytes = projected_bytes
+            membership_events.append(
+                MembershipEvent(
+                    device_id=event.device_id,
+                    event_type=event.event_type,
+                    created_at=event.created_at,
+                    payload=event.body["payload"],
+                )
+            )
             if event.event_type == "rideEnded" and ride.ended_at is None:
                 ride.ended_at = now
                 ride.delete_after = min(
@@ -831,6 +833,7 @@ class RelayService:
                     self._as_utc(ride.delete_after),
                     now + timedelta(hours=self._settings.ride_retention_hours),
                 )
+        project_membership_events(session, ride_id=ride.id, events=membership_events)
         session.flush()
         return accepted_ids
 
@@ -1008,16 +1011,27 @@ class RelayService:
         return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
     @staticmethod
-    def _purge_expired_for_ride(session: Session, ride_id: str, now: datetime) -> None:
+    def _purge_expired_for_ride(session: Session, ride: Ride, now: datetime) -> None:
+        expired_count, expired_bytes = session.execute(
+            select(
+                func.count(StoredEvent.sequence),
+                func.coalesce(func.sum(func.length(StoredEvent.body_ciphertext)), 0),
+            ).where(
+                StoredEvent.ride_id == ride.id,
+                StoredEvent.expires_at <= now,
+            )
+        ).one()
         session.execute(
             delete(StoredEvent).where(
-                StoredEvent.ride_id == ride_id,
+                StoredEvent.ride_id == ride.id,
                 StoredEvent.expires_at <= now,
             )
         )
+        ride.stored_event_count = max(0, ride.stored_event_count - int(expired_count or 0))
+        ride.stored_event_bytes = max(0, ride.stored_event_bytes - int(expired_bytes or 0))
         session.execute(
             delete(IdempotencyReplay).where(
-                IdempotencyReplay.ride_id == ride_id,
+                IdempotencyReplay.ride_id == ride.id,
                 IdempotencyReplay.expires_at <= now,
             )
         )
@@ -1037,11 +1051,42 @@ def purge_expired(
 ) -> tuple[int, int, int, int, int, int, int]:
     now = now or datetime.now(UTC)
     with session.begin():
+        expired_usage = session.execute(
+            select(
+                StoredEvent.ride_id,
+                func.count(StoredEvent.sequence),
+                func.coalesce(func.sum(func.length(StoredEvent.body_ciphertext)), 0),
+            )
+            .where(StoredEvent.expires_at <= now)
+            .group_by(StoredEvent.ride_id)
+        ).all()
+        if expired_usage:
+            ride_ids = [ride_id for ride_id, _, _ in expired_usage]
+            rides_by_id = {
+                ride.id: ride
+                for ride in session.scalars(
+                    select(Ride).where(Ride.id.in_(ride_ids)).with_for_update()
+                )
+            }
+            for ride_id, expired_count, expired_bytes in expired_usage:
+                if ride := rides_by_id.get(ride_id):
+                    ride.stored_event_count = max(
+                        0,
+                        ride.stored_event_count - int(expired_count or 0),
+                    )
+                    ride.stored_event_bytes = max(
+                        0,
+                        ride.stored_event_bytes - int(expired_bytes or 0),
+                    )
         events = session.execute(delete(StoredEvent).where(StoredEvent.expires_at <= now))
         replays = session.execute(
             delete(IdempotencyReplay).where(IdempotencyReplay.expires_at <= now)
         )
-        rides = session.execute(delete(Ride).where(Ride.delete_after <= now))
+        rides = session.execute(
+            delete(Ride)
+            .where(Ride.delete_after <= now)
+            .execution_options(synchronize_session=False)
+        )
         join_codes = session.execute(delete(RideJoinCode).where(RideJoinCode.expires_at <= now))
         plans = session.execute(delete(RidePlan).where(RidePlan.expires_at <= now))
         observers = session.execute(delete(ObserverGrant).where(ObserverGrant.expires_at <= now))
