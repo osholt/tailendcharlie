@@ -200,9 +200,17 @@ void main() {
 
     await tester.pumpWidget(harness.app);
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.tune_outlined));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('riders'));
+    final roster = find.byKey(const Key('ride-menu-open-roster'));
+    await tester.scrollUntilVisible(
+      roster,
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(roster);
+    await tester.pumpAndSettle();
+    await tester.tap(roster);
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('ride-roster-list')), findsOneWidget);

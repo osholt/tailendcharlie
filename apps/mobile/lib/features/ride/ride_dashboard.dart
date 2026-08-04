@@ -23,7 +23,7 @@ class RideDashboard extends StatelessWidget {
     super.key,
     required this.controller,
     required this.distanceUnits,
-    required this.onOpenRideActions,
+    required this.rideActions,
     required this.onOpenRoster,
     this.relayController,
     this.markerAssistanceController,
@@ -36,7 +36,7 @@ class RideDashboard extends StatelessWidget {
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
-  final Future<void> Function() onOpenRideActions;
+  final Widget rideActions;
   final VoidCallback onOpenRoster;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
@@ -60,15 +60,6 @@ class RideDashboard extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Tail End Charlie'),
         backgroundColor: Colors.transparent,
-        actions: [
-          TextButton.icon(
-            key: const Key('open-ride-actions'),
-            onPressed: onOpenRideActions,
-            icon: const Icon(Icons.menu),
-            label: const Text('Ride actions'),
-          ),
-          const SizedBox(width: 8),
-        ],
       ),
       body: AnimatedBuilder(
         animation: Listenable.merge([controller, ?markerAssistanceController]),
@@ -85,6 +76,7 @@ class RideDashboard extends StatelessWidget {
                   coordinationMode: mode,
                   onRoleChanged: controller.setRole,
                 ),
+                rideActions,
                 if (!isSolo) ...[
                   const SizedBox(height: 14),
                   _ConnectionCard(

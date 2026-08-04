@@ -79,16 +79,18 @@ void main() {
     expect(find.text(HazardType.debris.label), findsOneWidget);
   });
 
-  testWidgets('shows coordinator off-route alert and Waze unavailable state', (
+  testWidgets('shows only actionable rider alerts, not provider diagnostics', (
     tester,
   ) async {
     await controller.recordLocalLocation(_sample(51.002));
     await tester.pumpWidget(_app(controller));
 
-    expect(find.text('1 coordinator alert'), findsOneWidget);
+    expect(find.text('1 route alert'), findsOneWidget);
     expect(find.text('Acknowledge'), findsOneWidget);
-    expect(find.text('Waze reports'), findsOneWidget);
-    expect(find.textContaining('not eligible'), findsOneWidget);
+    expect(find.text('Waze reports'), findsNothing);
+    expect(find.text('EXTERNAL SOURCES'), findsNothing);
+    expect(find.text('RIDER STATUS'), findsNothing);
+    expect(find.text('RIDERS NEEDING ATTENTION'), findsOneWidget);
 
     await tester.tap(find.text('Acknowledge'));
     await tester.pump();

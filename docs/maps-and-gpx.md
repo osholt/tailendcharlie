@@ -135,22 +135,22 @@ shortest angular path, so crossing north rotates the short way.
 ### Overlay placement
 
 No persistent *status* surface is anchored to the top of the map: the upper band
-is where a rider on a mounted phone reads the road ahead. What that rule leaves
-free is the corners, and **three small things live in them**:
+is where a rider on a mounted phone reads the road ahead. The old ride-actions
+hamburger has also been removed; setup actions now live on the labelled Ride
+destination. Only **two small glances live in the map corners**:
 
 | corner | portrait | landscape |
 | --- | --- | --- |
-| top leading | ride menu | ride menu |
+| top leading | — | — |
 | top trailing | group overview | speed sign |
 | bottom trailing | — | group overview |
 
-Each is hard against a screen edge, none is wider than 45% or taller than 40% of
-the viewport, and the centre and upper-middle stay empty — the layout test
-asserts all of that per corner rather than trusting the placement. The ride menu
-is a control a rider reaches for by feel; the other two are *glances*, never
-targets, which is why the corner furthest from the road ahead is the cheapest
-place on the screen for them. Moving the group overview out of the bottom band
-also stops the camera's forward bias paying for a surface nobody acts on.
+Each is hard against a screen edge, neither is wider than 45% or taller than 40%
+of the viewport, and the centre and upper-middle stay empty. They are *glances*,
+never targets, which is why the corner furthest from the road ahead is the
+cheapest place on the screen for them. Moving the group overview out of the
+bottom band also stops the camera's forward bias paying for a surface nobody
+acts on.
 
 Everything else is bottom-anchored. Portrait is one band: urgent alerts, the TEC
 gap, then the turn banner, then the targets. Landscape splits into a left rail
@@ -650,9 +650,10 @@ the usable lane on the wrong side of the road.
 An **All turns** screen lists every instruction for the current route in riding
 order with distance from the start, distance from the rider, direction, exit
 number, road name or reference and a lane summary. It is reachable from route
-review before a ride, from the map menu, and from the ride menu while the map is
-in navigation mode. It is built from the persisted route by the same planner that
-drives the banner, so the two sequences match and no routing call is made.
+review before a ride, from the map menu, and directly on the labelled Ride page
+while the map is in navigation mode. It is built from the persisted route by
+the same planner that drives the banner, so the two sequences match and no
+routing call is made.
 
 This guidance complements the existing Google Maps, Waze, and GPX handoffs; it
 does not change or remove them. Spoken prompts are deferred until audio focus,

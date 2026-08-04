@@ -36,6 +36,25 @@ permissions by design.
 - ...
 ```
 
+## iOS build 42 / Android build 42 — 4 August 2026
+
+### What to test
+
+1. Start or join a ride and use the bottom **Ride** tab. The common ride
+   actions should be visible there without opening a separate hamburger menu.
+2. Open the **Alerts** tab. It should focus on road alerts, rerouting and riders
+   who actually need attention; routine location status and technical provider
+   details should no longer crowd this screen.
+3. Check that the less common contact and sharing actions are still available
+   by expanding **Contact and sharing** on the Ride page.
+
+### Fixed
+
+- Removed the remaining Ride actions hamburger menu from the live map and
+  dashboard.
+- Consolidated ride controls into the Ride page and simplified the former
+  Safety menu into an actionable Alerts screen.
+
 ## iOS build 41 / Android build 40 — 3 August 2026
 
 The newest section is always first, so this is the one to read. Everything in
