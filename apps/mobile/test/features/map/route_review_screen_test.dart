@@ -5,6 +5,7 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/route_review_screen.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
+import 'package:ride_relay/services/biker_place_catalogue.dart';
 import 'package:ride_relay/services/route_reshape_planner.dart';
 
 void main() {
@@ -133,6 +134,67 @@ void main() {
       );
     },
   );
+
+  testWidgets('a mapped point of interest becomes a live route waypoint', (
+    tester,
+  ) async {
+    ImportedRoute? recalculated;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RouteReviewScreen(
+          route: _route(0.02),
+          distanceUnit: DistanceUnit.miles,
+          basemapConfiguration: const BasemapConfiguration(),
+          canEditStops: true,
+          pointOfInterestLoader: () async => const BikerPlaceCatalogue(
+            places: [
+              BikerPlace(
+                id: 'cafe-1',
+                name: 'Rider Cafe',
+                address: 'High Street',
+                point: GeoPoint(latitude: 51.001, longitude: -1.99),
+                source: 'Bike + Brew 2026',
+              ),
+            ],
+          ),
+          onReshapeRoute: (candidate, shapingPoints) async {
+            recalculated = candidate;
+            return RouteReshapeResult(
+              route: candidate.withShapingPoints(shapingPoints),
+              distanceMeters: 1800,
+              duration: const Duration(minutes: 6),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Finish drawing'), findsOneWidget);
+    expect(
+      find.byKey(const Key('toggle-route-points-of-interest')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('route-point-of-interest-cafe-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add as waypoint'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('add-point-of-interest-cafe-1')));
+    await tester.pumpAndSettle();
+
+    expect(recalculated, isNotNull);
+    expect(recalculated!.waypoints.map((point) => point.name), [
+      'Start',
+      'Rider Cafe',
+      'Destination',
+    ]);
+    await tester.scrollUntilVisible(
+      find.text('Route points (3)'),
+      160,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('Route points (3)'), findsOneWidget);
+  });
 
   testWidgets('keeps disconnected imported paths visually separate', (
     tester,
