@@ -115,6 +115,8 @@ flutter {
 }
 
 dependencies {
+    implementation("org.bouncycastle:bcprov-jdk18on:1.83")
+
     // Guava arrives transitively through androidx.car.app, at 31.1-android, which
     // carries GHSA-7g45-4rm6-3mm3 and GHSA-5mg8-w23w-74h3 — both about
     // Files.createTempDir creating a world-readable directory. Both are fixed in

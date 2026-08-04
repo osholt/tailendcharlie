@@ -51,6 +51,9 @@ class MainActivity : FlutterActivity() {
     private var pendingGpxImport: Pair<ByteArray, String>? = null
     private var pendingPlannerLink: String? = null
     private var pendingRideInvitationLink: String? = null
+    private val installationIdentityBridge: InstallationIdentityBridge by lazy {
+        InstallationIdentityBridge(this)
+    }
 
     private val connectionsClient: ConnectionsClient by lazy {
         Nearby.getConnectionsClient(this)
@@ -228,6 +231,10 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            InstallationIdentityBridge.CHANNEL_NAME,
+        ).setMethodCallHandler(installationIdentityBridge::handle)
     }
 
     // Dart pulls this on its own schedule via consumePendingGpxImport rather
