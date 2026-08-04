@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from datetime import UTC, datetime, timedelta
 
-from ride_relay_server.models import PushDelivery, PushRegistration
+from sqlalchemy import delete, func, select
+
+from ride_relay_server.crypto import sha256
+from ride_relay_server.models import PushDelivery, PushRegistration, Ride, RideMember, StoredEvent
 from ride_relay_server.push import PushMessage, PushProviderResult
 
 from .conftest import ride_token
@@ -32,6 +35,17 @@ class _RecordingProvider:
 
     def close(self) -> None:
         pass
+
+
+class _EventDecryptCounter:
+    def __init__(self, delegate) -> None:
+        self._delegate = delegate
+        self.event_decryptions = 0
+
+    def decrypt_json(self, value: bytes, *, associated_data: bytes):
+        if associated_data.startswith(b"event:"):
+            self.event_decryptions += 1
+        return self._delegate.decrypt_json(value, associated_data=associated_data)
 
 
 def _headers(ride_id: str, installation_id: str) -> dict[str, str]:
@@ -156,6 +170,151 @@ def test_urgent_alert_targets_current_coordinators_once(
         assert session.scalar(select(func.count(PushDelivery.id))) == 2
     metrics = client.get("/metrics")
     assert 'ride_relay_push_deliveries_total{outcome="delivered"} 2.0' in metrics.text
+
+
+def test_push_membership_projection_does_not_decrypt_large_event_history(
+    client,
+    synchronize,
+    make_event,
+) -> None:
+    ride_id = "ride-push-projection"
+    joined = [
+        make_event(
+            ride_id,
+            "joined-lead",
+            device_id="lead",
+            event_type="riderJoined",
+            payload={"displayName": "Lead", "role": "lead"},
+        ),
+        make_event(
+            ride_id,
+            "joined-sender",
+            device_id="sender",
+            event_type="riderJoined",
+            payload={"displayName": "Sender", "role": "rider"},
+        ),
+    ]
+    assert synchronize(client, ride_id=ride_id, secret=SECRET, events=joined).status_code == 200
+    assert _register(client, ride_id, "lead", role="lead").status_code == 200
+
+    now = datetime.now(UTC)
+    cipher = client.app.state.service._cipher
+    with client.app.state.session_factory() as session, session.begin():
+        ride = session.get(Ride, ride_id)
+        assert ride is not None
+        rows = []
+        total_bytes = 0
+        for index in range(2_000):
+            event_id = f"position-{index:04d}"
+            body = make_event(
+                ride_id,
+                event_id,
+                device_id="sender",
+                event_type="riderLocationUpdated",
+                created_at=now,
+            )
+            body_ciphertext = cipher.encrypt_json(
+                body,
+                associated_data=f"event:{ride_id}:{event_id}".encode(),
+            )
+            total_bytes += len(body_ciphertext)
+            rows.append(
+                StoredEvent(
+                    ride_id=ride_id,
+                    event_id=event_id,
+                    device_id="sender",
+                    event_type="riderLocationUpdated",
+                    created_at=now,
+                    expires_at=now + timedelta(minutes=20),
+                    body_hash=sha256(b"position" + index.to_bytes(4, "big")),
+                    body_ciphertext=body_ciphertext,
+                )
+            )
+        session.add_all(rows)
+        ride.stored_event_count += len(rows)
+        ride.stored_event_bytes += total_bytes
+
+    provider = _RecordingProvider()
+    counter = _EventDecryptCounter(client.app.state.push_dispatcher._cipher)
+    client.app.state.push_dispatcher._providers["fcm"] = provider
+    client.app.state.push_dispatcher._cipher = counter
+    alert = make_event(
+        ride_id,
+        "projection-alert",
+        device_id="sender",
+        event_type="statusMessage",
+        payload={"message": "emergencyStop", "label": "Emergency stop"},
+    )
+
+    assert synchronize(client, ride_id=ride_id, secret=SECRET, events=[alert]).status_code == 200
+
+    assert counter.event_decryptions == 0
+    assert provider.tokens == ["fcm-token-lead-123456789"]
+
+
+def test_existing_ride_backfills_membership_projection_only_once(
+    client,
+    synchronize,
+    make_event,
+) -> None:
+    ride_id = "ride-push-projection-upgrade"
+    joined = [
+        make_event(
+            ride_id,
+            "joined-lead",
+            device_id="lead",
+            event_type="riderJoined",
+            payload={"displayName": "Lead", "role": "lead"},
+        ),
+        make_event(
+            ride_id,
+            "joined-sender",
+            device_id="sender",
+            event_type="riderJoined",
+            payload={"displayName": "Sender", "role": "rider"},
+        ),
+    ]
+    assert synchronize(client, ride_id=ride_id, secret=SECRET, events=joined).status_code == 200
+    assert _register(client, ride_id, "lead", role="lead").status_code == 200
+    with client.app.state.session_factory() as session, session.begin():
+        ride = session.get(Ride, ride_id)
+        assert ride is not None
+        ride.membership_projection_ready = False
+        session.execute(delete(RideMember).where(RideMember.ride_id == ride_id))
+
+    provider = _RecordingProvider()
+    counter = _EventDecryptCounter(client.app.state.push_dispatcher._cipher)
+    client.app.state.push_dispatcher._providers["fcm"] = provider
+    client.app.state.push_dispatcher._cipher = counter
+    first = make_event(
+        ride_id,
+        "upgrade-alert-1",
+        device_id="sender",
+        event_type="statusMessage",
+        payload={"message": "emergencyStop"},
+    )
+    second = make_event(
+        ride_id,
+        "upgrade-alert-2",
+        device_id="sender",
+        event_type="statusMessage",
+        payload={"message": "emergencyStop"},
+    )
+
+    assert synchronize(client, ride_id=ride_id, secret=SECRET, events=[first]).status_code == 200
+    after_backfill = counter.event_decryptions
+    assert after_backfill == 3
+    assert synchronize(client, ride_id=ride_id, secret=SECRET, events=[second]).status_code == 200
+    assert counter.event_decryptions == after_backfill
+    with client.app.state.session_factory() as session:
+        ride = session.get(Ride, ride_id)
+        assert ride is not None and ride.membership_projection_ready
+        assert (
+            session.scalar(
+                select(func.count(RideMember.device_id)).where(RideMember.ride_id == ride_id)
+            )
+            == 2
+        )
 
 
 def test_nested_off_course_alert_targets_coordinators_and_affected_rider(
