@@ -3563,9 +3563,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (_basemap.usesMapLibre) {
       final controller = _mapLibreController;
       if (controller == null) return;
+      final markerBounds = _mapLibreBounds(cameraPoints);
+      if (!_boundsAreUsable(markerBounds)) return;
       await controller.animateCamera(
         ml.CameraUpdate.newLatLngBounds(
-          _mapLibreBounds(cameraPoints),
+          markerBounds,
           left: 36,
           top: 36,
           right: rightPadding,
@@ -5183,6 +5185,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         return;
       }
       final bounds = _mapLibreBounds(routePoints);
+      if (!_boundsAreUsable(bounds)) return;
       unawaited(
         controller.animateCamera(
           ml.CameraUpdate.newLatLngBounds(
@@ -6250,6 +6253,21 @@ GeoPoint _pointAhead(GeoPoint from, double bearingDegrees, double meters) {
     longitude: ((targetLongitude * 180 / math.pi + 540) % 360) - 180,
   );
 }
+
+/// Whether MapLibre can be asked to frame this box.
+///
+/// `animateCamera` with bounds reaches the same throw the follow camera does -
+/// `mbgl::LatLng` out of `constrainCameraAndZoomToBounds` - by way of
+/// `Transform::flyTo` rather than `easeTo`. A device log from 28 July 2026
+/// carries exactly that, so guarding the follow target alone left this half
+/// open (#359).
+bool _boundsAreUsable(ml.LatLngBounds bounds) =>
+    MapCameraCommand.boundsAreUsable(
+      south: bounds.southwest.latitude,
+      west: bounds.southwest.longitude,
+      north: bounds.northeast.latitude,
+      east: bounds.northeast.longitude,
+    );
 
 ml.LatLngBounds _mapLibreBounds(List<GeoPoint> points) {
   var south = points.first.latitude;

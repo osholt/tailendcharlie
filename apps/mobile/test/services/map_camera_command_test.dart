@@ -78,4 +78,67 @@ void main() {
       isFalse,
     );
   });
+
+  // The same throw reaches MapLibre two ways. Device logs from the reporter's
+  // phone carry one of each: 28 July 2026 through `Transform::flyTo` from an
+  // `animateCamera` with bounds, and 4 August twice through `Transform::easeTo`
+  // from the follow camera. Guarding only the target left the bounds open.
+  group('bounds', () {
+    test('an ordinary box is usable', () {
+      expect(
+        MapCameraCommand.boundsAreUsable(
+          south: 51.44,
+          west: -2.47,
+          north: 51.47,
+          east: -2.44,
+        ),
+        isTrue,
+      );
+    });
+
+    test('a corner that is not a number is refused', () {
+      expect(
+        MapCameraCommand.boundsAreUsable(
+          south: double.nan,
+          west: -2.47,
+          north: 51.47,
+          east: -2.44,
+        ),
+        isFalse,
+      );
+      expect(
+        MapCameraCommand.boundsAreUsable(
+          south: 51.44,
+          west: -2.47,
+          north: double.infinity,
+          east: -2.44,
+        ),
+        isFalse,
+      );
+    });
+
+    // What a route reduced to one repeated coordinate produces. It is not a
+    // frame, and asking the renderer to fit the camera to it is how the zoom
+    // goes to infinity and the unprojected latitude leaves the world.
+    test('a collapsed or inverted box is refused', () {
+      expect(
+        MapCameraCommand.boundsAreUsable(
+          south: 51.45,
+          west: -2.46,
+          north: 51.45,
+          east: -2.46,
+        ),
+        isFalse,
+      );
+      expect(
+        MapCameraCommand.boundsAreUsable(
+          south: 51.47,
+          west: -2.44,
+          north: 51.44,
+          east: -2.47,
+        ),
+        isFalse,
+      );
+    });
+  });
 }

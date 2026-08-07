@@ -47,5 +47,28 @@ class MapCameraCommand {
     return true;
   }
 
+  /// True when a pair of corners is a box the renderer can frame.
+  ///
+  /// The same throw reaches MapLibre by two routes: `easeCamera` with a target,
+  /// and `animateCamera` with **bounds**. Device logs from 28 July and 4 August
+  /// 2026 carry one of each — `Transform::flyTo` for the bounds and
+  /// `Transform::easeTo` for the follow camera — both ending in
+  /// `mbgl::LatLng::LatLng` throwing out of `constrainCameraAndZoomToBounds`.
+  /// Guarding only the target left the other half open.
+  ///
+  /// A collapsed box - one point, or a corner pair the wrong way round - is
+  /// refused too. It is not a frame, and it is what a route reduced to a single
+  /// repeated coordinate produces.
+  static bool boundsAreUsable({
+    required double south,
+    required double west,
+    required double north,
+    required double east,
+  }) {
+    if (!isUsable(latitude: south, longitude: west)) return false;
+    if (!isUsable(latitude: north, longitude: east)) return false;
+    return north > south && east > west;
+  }
+
   static bool _finite(double value) => !value.isNaN && !value.isInfinite;
 }
