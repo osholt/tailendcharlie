@@ -747,6 +747,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _overlaySource = 'ride-relay-overlays';
   static const _markerPlanSource = 'ride-relay-marker-plan';
   static const _trailDirectionArrowImage = 'ride-relay-trail-direction-arrow';
+
+  /// How many of the direction arrows the planned route may claim before the
+  /// live cues take the rest. Half the budget: enough to read the route's
+  /// direction along its whole length, while leaving the rejoin instruction and
+  /// the group's trails the same room they had.
+  static const _plannedRouteArrowReserve = 120;
   static const _trailDirectionArrowSampler = TrailDirectionArrowSampler();
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
   static const _discoveryLineSource = 'ride-relay-discovery-lines';
@@ -4296,52 +4302,65 @@ class _RideMapScreenState extends State<RideMapScreen> {
             ))
           .map((trace) => _routePolyline(trace.points, trace.style));
 
+  /// Which lines carry direction arrows, in priority order.
+  ///
+  /// The planned route comes first and against its own reserve. It is the base
+  /// line of the map and the one a rider reads *before* setting off, when there
+  /// is no ridden path and no trail — which is how it came to have no arrows at
+  /// all (#363): every source of them was something that only exists once the
+  /// ride is already moving.
+  ///
+  /// The selection itself lives in `selectTrailDirectionArrows` so it can be
+  /// asserted. Nothing here decides how many arrows anything gets.
   List<_StyledTrailDirectionArrow> _trailDirectionArrows() {
-    const maximumVisibleArrows = 240;
-    final items = <_StyledTrailDirectionArrow>[];
-
-    void addArrows({
-      required Iterable<List<GeoPoint>> paths,
-      required Color color,
-      required String idPrefix,
-      required String semanticLabel,
-    }) {
-      for (final arrow in _trailDirectionArrowSampler.sample(paths)) {
-        if (items.length >= maximumVisibleArrows) return;
-        items.add(
-          _StyledTrailDirectionArrow(
-            id: '$idPrefix-${items.length}',
-            arrow: arrow,
-            color: color,
-            semanticLabel: semanticLabel,
-          ),
-        );
-      }
-    }
-
-    addArrows(
-      paths: _progressGeometry.riddenPaths,
-      color: RouteTrailStyle.travelled.color,
-      idPrefix: 'ridden',
-      semanticLabel: 'Travel direction',
-    );
     // Whole-group rides can hold more trail than the arrow budget allows, so
-    // the cues a rider needs to interpret someone else's path come first.
+    // the cues a rider needs to interpret someone else's path come before the
+    // ordinary ones.
     final byImportance = _visibleRiderTrails.toList()
       ..sort(
         (first, second) =>
             _arrowPriority(first.kind).compareTo(_arrowPriority(second.kind)),
       );
-    for (final trace in byImportance) {
-      addArrows(
-        paths: [trace.points],
-        color: trace.style.color,
-        idPrefix: trace.id,
-        semanticLabel: '${trace.label} direction',
-      );
-      if (items.length >= maximumVisibleArrows) break;
-    }
-    return items;
+    final selected = selectTrailDirectionArrows<_TrailArrowStyle>(
+      sampler: _trailDirectionArrowSampler,
+      sources: [
+        TrailDirectionArrowSource(
+          paths: _progressGeometry.remainingPaths,
+          reserve: _plannedRouteArrowReserve,
+          style: _TrailArrowStyle(
+            color: RouteTrailStyle.routeAhead.color,
+            idPrefix: 'route-ahead',
+            semanticLabel: 'Route direction',
+          ),
+        ),
+        TrailDirectionArrowSource(
+          paths: _progressGeometry.riddenPaths,
+          style: _TrailArrowStyle(
+            color: RouteTrailStyle.travelled.color,
+            idPrefix: 'ridden',
+            semanticLabel: 'Travel direction',
+          ),
+        ),
+        for (final trace in byImportance)
+          TrailDirectionArrowSource(
+            paths: [trace.points],
+            style: _TrailArrowStyle(
+              color: trace.style.color,
+              idPrefix: trace.id,
+              semanticLabel: '${trace.label} direction',
+            ),
+          ),
+      ],
+    );
+    return [
+      for (final (index, item) in selected.indexed)
+        _StyledTrailDirectionArrow(
+          id: '${item.style.idPrefix}-$index',
+          arrow: item.arrow,
+          color: item.style.color,
+          semanticLabel: item.style.semanticLabel,
+        ),
+    ];
   }
 
   static int _arrowPriority(RiderTrailKind kind) => switch (kind) {
@@ -6084,6 +6103,19 @@ class MapOverlayTrace {
   final RiderTrailKind kind;
 
   RouteLineStyle get style => RouteTrailStyle.forTrail(kind);
+}
+
+/// How one source's arrows are drawn. Carried through the selection untouched.
+class _TrailArrowStyle {
+  const _TrailArrowStyle({
+    required this.color,
+    required this.idPrefix,
+    required this.semanticLabel,
+  });
+
+  final Color color;
+  final String idPrefix;
+  final String semanticLabel;
 }
 
 class _StyledTrailDirectionArrow {
