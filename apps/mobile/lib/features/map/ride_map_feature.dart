@@ -2254,7 +2254,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   if (followMe != null)
                     Align(alignment: Alignment.centerLeft, child: followMe),
                   ?actionCluster,
-                  ?junctionCard,
+                  // Not while the arrival prompt is up. The band has about
+                  // 23 px of headroom at the maximum overlay count, so the
+                  // prompt has to displace something, and the junction ahead is
+                  // the surface that matters least once the group is standing
+                  // at the destination.
+                  if (completion == null) ?junctionCard,
                 ],
               ),
             ),
@@ -9790,60 +9795,61 @@ class _RideCompletionSuggestion extends StatelessWidget {
   final VoidCallback? onDismiss;
 
   @override
-  Widget build(BuildContext context) => ConstrainedBox(
-    // No Align around this. An Align with no width or height factor expands to
-    // fill whatever it is given, and in the chrome rail that is the whole band:
-    // it made a two-line card 418 px tall and pushed the measured chrome past
-    // the 60% cap to 157%.
-    constraints: const BoxConstraints(maxWidth: 420),
-    child: Card(
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerLeft,
+    child: Material(
       key: const Key('ride-completion-suggestion'),
-      margin: EdgeInsets.zero,
       color: const Color(0xF2252E39),
+      borderRadius: BorderRadius.circular(10),
       child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 10 : 12,
-          vertical: 8,
-        ),
+        padding: const EdgeInsets.fromLTRB(10, 2, 4, 2),
         child: Row(
+          // Sized to its content, so it reads as a control rather than a
+          // banner. Note what that costs: a Flexible child of a Row with
+          // MainAxisSize.min gets no space at all, so the label is bounded
+          // explicitly instead. Getting that wrong made an earlier draft of
+          // this 418 px tall, wrapping a 22-character title one character to
+          // a line.
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(
               Icons.flag_circle_outlined,
-              size: 22,
+              size: 18,
               color: Color(0xFF6ED89A),
             ),
-            const SizedBox(width: 10),
-            Flexible(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Has everyone finished?',
-                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-                  ),
-                  Text(
-                    '${assessment.arrivedRiderCount} of '
-                    '${assessment.riderCount} at the destination',
-                    style: const TextStyle(
-                      color: Color(0xFFB7C2CF),
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
+            const SizedBox(width: 7),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 150),
+              child: Text(
+                'Finished? ${assessment.arrivedRiderCount}/'
+                '${assessment.riderCount} here',
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                ),
               ),
             ),
-            const SizedBox(width: 6),
             TextButton(
               key: const Key('continue-completed-ride'),
               onPressed: onDismiss,
-              child: const Text('Not yet'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              child: const Text('Not yet', style: TextStyle(fontSize: 13)),
             ),
-            FilledButton(
+            TextButton(
               key: const Key('confirm-completed-ride'),
               onPressed: onEnd,
-              child: const Text('End ride'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                foregroundColor: const Color(0xFF6ED89A),
+              ),
+              child: const Text('End ride', style: TextStyle(fontSize: 13)),
             ),
           ],
         ),
