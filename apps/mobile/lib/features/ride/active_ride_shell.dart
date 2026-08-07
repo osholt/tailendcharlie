@@ -57,6 +57,8 @@ import '../../services/basemap_configuration.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/device_location_source.dart';
 import '../../services/external_hazard_provider.dart';
+import '../../services/fixed_speed_camera_catalogue.dart';
+import '../../services/fixed_speed_camera_provider.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/leader_ride_status.dart';
 import '../../services/measurement_formatter.dart';
@@ -1008,6 +1010,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   late final RideScreenAwakeCoordinator _screenAwakeCoordinator;
 
   SituationalAwarenessController? _awarenessController;
+
+  /// The bundled fixed-camera layer, read once and kept for the life of the
+  /// shell. A missing or unreadable asset leaves this an empty catalogue rather
+  /// than failing the ride: no camera warnings is a degraded ride, no ride is
+  /// not.
+  FixedSpeedCameraCatalogue? _fixedSpeedCameras;
   CarPlayBridge? _carPlayBridge;
   String? _carPlayMapStyleJson;
   ForegroundLocationController? _locationController;
@@ -1702,6 +1710,23 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         RelayTrafficHazardProvider(
           configuration: InternetRelayConfiguration.fromEnvironment(),
         ),
+      // Lead-gated for the same reason the relay feed is: a provider hazard
+      // becomes a ride event that reaches the whole group, and every rider
+      // deriving the same cameras from the same bundled asset would write the
+      // same event once each. The ids are derived from the OpenStreetMap node
+      // so they merge into one hazard either way, but there is no reason to
+      // pay for it six times over.
+      // Fixed cameras come from a bundled OpenStreetMap extract, so unlike the
+      // relay feed they cost nothing to consult and work with no signal.
+      //
+      // Lead-gated for the same reason the relay feed is: a provider hazard
+      // becomes a ride event that reaches the whole group, and every rider
+      // deriving the same cameras from the same bundled asset would write the
+      // same event once each. The ids are derived from the OpenStreetMap node
+      // so they merge into one hazard either way, but there is no reason to pay
+      // for it six times over.
+      if (session.role == RideRole.lead)
+        FixedSpeedCameraProvider(readCatalogue: _loadFixedSpeedCameras),
     ];
     final controller = SituationalAwarenessController(
       awarenessEventStore,
@@ -2362,6 +2387,23 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// not blur them into a missing row. [_leaderStatus] then adds the gap and
   /// the trend, and is null for everyone who is not the leader — that means
   /// this device has no gap to show, never that there is no TEC.
+  /// Reads the bundled fixed-camera layer.
+  ///
+  /// Never throws at the caller. A build with the asset stripped, or a file
+  /// that fails to parse, yields an empty catalogue: the provider then reports
+  /// itself unavailable and the ride carries on with rider sightings alone.
+  Future<FixedSpeedCameraCatalogue> _loadFixedSpeedCameras() async {
+    final cached = _fixedSpeedCameras;
+    if (cached != null) return cached;
+    try {
+      return _fixedSpeedCameras = await FixedSpeedCameraCatalogue.load();
+    } on Object catch (error, stackTrace) {
+      debugPrint('Fixed camera catalogue unavailable: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      return _fixedSpeedCameras = FixedSpeedCameraCatalogue.empty;
+    }
+  }
+
   void _publishCarPlaySnapshot({
     required SituationalAwarenessController awareness,
     required List<RiderLocation> visibleRiderLocations,
