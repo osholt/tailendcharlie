@@ -184,7 +184,7 @@ void main() {
     }
   });
 
-  test('the painter draws arcs and one filled arrowhead, never a full circle', () {
+  test('the painter draws arcs and its arrowheads, never a full circle', () {
     for (final symbol in _everySymbol()) {
       final canvas = _RecordingCanvas();
       const size = Size(38, 38);
@@ -209,11 +209,21 @@ void main() {
         states ? lessThan(2 * math.pi) : closeTo(2 * math.pi, 1e-9),
         reason: why,
       );
-      // One filled path: the single arrowhead. The road in and the exit are the
-      // only lines, so no second arrowhead can be hiding among them.
+      // The filled paths are the arrowheads, and there are at most two: the one
+      // on the exit saying where the rider leaves, and - on an arc long enough
+      // to be read backwards - one on the ring saying which way round they go.
+      // The road in and the exit are the only lines, so nothing else can be
+      // hiding among them.
+      //
+      // This used to assert exactly one, from a deliberate decision that the
+      // symbol should carry a single arrowhead. The field overturned it: a
+      // three-quarter arc with nothing on it was being read as circulating the
+      // wrong way, which is the one thing a roundabout symbol must not say.
+      final expectedHeads =
+          (states ? 1 : 0) + (geometry.ringDirection == null ? 0 : 1);
       expect(
         canvas.filledPaths,
-        states ? 1 : 0,
+        expectedHeads,
         reason: '$why drew ${canvas.filledPaths} filled paths',
       );
       expect(canvas.drawnLines, states ? 2 : 1, reason: why);
