@@ -723,7 +723,15 @@ class ManeuverLaneStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!maneuverLanesAreShowable(lanes)) return const SizedBox.shrink();
-    final extent = compact ? 25.0 : 29.0;
+    // Sized to be understood without reading, like the turn banner above it
+    // (#361). At 25/29 the arrow - the part meant to be grasped at a glance -
+    // was smaller than the text beside it, which is backwards.
+    //
+    // The bottom band is capped: the layout test holds worst-case chrome under
+    // 60% of the viewport and #361 already came within 0.07 of it. These sizes
+    // are what fits under that cap alongside the banner, so a further increase
+    // is a decision about what comes off the band rather than a free change.
+    final extent = compact ? 32.0 : 37.0;
     return Semantics(
       key: const Key('lane-guidance'),
       label: maneuverLaneSummary(lanes),
@@ -754,7 +762,7 @@ class ManeuverLaneStrip extends StatelessWidget {
                     child: Center(
                       child: Icon(
                         _laneIcon(lane.indications),
-                        size: compact ? 15 : 18,
+                        size: compact ? 21 : 24,
                         color: lane.valid
                             ? const Color(0xFFE8FFF2)
                             : const Color(0xFF818C99),
@@ -762,8 +770,12 @@ class ManeuverLaneStrip extends StatelessWidget {
                     ),
                   ),
                   Container(
-                    height: 3,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    // Grows with the tile: the underline is what keeps a usable
+                    // lane distinct in bright sun and for a rider who cannot
+                    // separate the two fills by colour, so it must not stay a
+                    // hairline while the tile doubles.
+                    height: 4,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
                     color: lane.valid
                         ? const Color(0xFF6ED89A)
                         : Colors.transparent,
@@ -771,7 +783,7 @@ class ManeuverLaneStrip extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 5),
           ],
         ],
       ),
