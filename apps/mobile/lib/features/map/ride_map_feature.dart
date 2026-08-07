@@ -748,6 +748,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _overlaySource = 'ride-relay-overlays';
   static const _markerPlanSource = 'ride-relay-marker-plan';
   static const _trailDirectionArrowImage = 'ride-relay-trail-direction-arrow';
+
+  /// How many of the direction arrows the planned route may claim before the
+  /// live cues take the rest. Half the budget: enough to read the route's
+  /// direction along its whole length, while leaving the rejoin instruction and
+  /// the group's trails the same room they had.
+  static const _plannedRouteArrowReserve = 120;
   static const _trailDirectionArrowSampler = TrailDirectionArrowSampler();
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
   static const _discoveryLineSource = 'ride-relay-discovery-lines';
@@ -4312,52 +4318,65 @@ class _RideMapScreenState extends State<RideMapScreen> {
             ))
           .map((trace) => _routePolyline(trace.points, trace.style));
 
+  /// Which lines carry direction arrows, in priority order.
+  ///
+  /// The planned route comes first and against its own reserve. It is the base
+  /// line of the map and the one a rider reads *before* setting off, when there
+  /// is no ridden path and no trail — which is how it came to have no arrows at
+  /// all (#363): every source of them was something that only exists once the
+  /// ride is already moving.
+  ///
+  /// The selection itself lives in `selectTrailDirectionArrows` so it can be
+  /// asserted. Nothing here decides how many arrows anything gets.
   List<_StyledTrailDirectionArrow> _trailDirectionArrows() {
-    const maximumVisibleArrows = 240;
-    final items = <_StyledTrailDirectionArrow>[];
-
-    void addArrows({
-      required Iterable<List<GeoPoint>> paths,
-      required Color color,
-      required String idPrefix,
-      required String semanticLabel,
-    }) {
-      for (final arrow in _trailDirectionArrowSampler.sample(paths)) {
-        if (items.length >= maximumVisibleArrows) return;
-        items.add(
-          _StyledTrailDirectionArrow(
-            id: '$idPrefix-${items.length}',
-            arrow: arrow,
-            color: color,
-            semanticLabel: semanticLabel,
-          ),
-        );
-      }
-    }
-
-    addArrows(
-      paths: _progressGeometry.riddenPaths,
-      color: RouteTrailStyle.travelled.color,
-      idPrefix: 'ridden',
-      semanticLabel: 'Travel direction',
-    );
     // Whole-group rides can hold more trail than the arrow budget allows, so
-    // the cues a rider needs to interpret someone else's path come first.
+    // the cues a rider needs to interpret someone else's path come before the
+    // ordinary ones.
     final byImportance = _visibleRiderTrails.toList()
       ..sort(
         (first, second) =>
             _arrowPriority(first.kind).compareTo(_arrowPriority(second.kind)),
       );
-    for (final trace in byImportance) {
-      addArrows(
-        paths: [trace.points],
-        color: trace.style.color,
-        idPrefix: trace.id,
-        semanticLabel: '${trace.label} direction',
-      );
-      if (items.length >= maximumVisibleArrows) break;
-    }
-    return items;
+    final selected = selectTrailDirectionArrows<_TrailArrowStyle>(
+      sampler: _trailDirectionArrowSampler,
+      sources: [
+        TrailDirectionArrowSource(
+          paths: _progressGeometry.remainingPaths,
+          reserve: _plannedRouteArrowReserve,
+          style: _TrailArrowStyle(
+            color: RouteTrailStyle.routeAhead.color,
+            idPrefix: 'route-ahead',
+            semanticLabel: 'Route direction',
+          ),
+        ),
+        TrailDirectionArrowSource(
+          paths: _progressGeometry.riddenPaths,
+          style: _TrailArrowStyle(
+            color: RouteTrailStyle.travelled.color,
+            idPrefix: 'ridden',
+            semanticLabel: 'Travel direction',
+          ),
+        ),
+        for (final trace in byImportance)
+          TrailDirectionArrowSource(
+            paths: [trace.points],
+            style: _TrailArrowStyle(
+              color: trace.style.color,
+              idPrefix: trace.id,
+              semanticLabel: '${trace.label} direction',
+            ),
+          ),
+      ],
+    );
+    return [
+      for (final (index, item) in selected.indexed)
+        _StyledTrailDirectionArrow(
+          id: '${item.style.idPrefix}-$index',
+          arrow: item.arrow,
+          color: item.style.color,
+          semanticLabel: item.style.semanticLabel,
+        ),
+    ];
   }
 
   static int _arrowPriority(RiderTrailKind kind) => switch (kind) {
@@ -6105,6 +6124,19 @@ class MapOverlayTrace {
   final RiderTrailKind kind;
 
   RouteLineStyle get style => RouteTrailStyle.forTrail(kind);
+}
+
+/// How one source's arrows are drawn. Carried through the selection untouched.
+class _TrailArrowStyle {
+  const _TrailArrowStyle({
+    required this.color,
+    required this.idPrefix,
+    required this.semanticLabel,
+  });
+
+  final Color color;
+  final String idPrefix;
+  final String semanticLabel;
 }
 
 class _StyledTrailDirectionArrow {
@@ -8701,7 +8733,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
               children: [
                 ManeuverSymbolView(
                   instruction: instruction,
-                  size: compact ? 30 : 38,
+                  size: compact ? 40 : 50,
                   color: const Color(0xFF68A9FF),
                 ),
                 const SizedBox(width: 10),
@@ -8710,13 +8742,36 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Distance on its own line and dominant, the way Google
+                      // Maps and Waze set it, because it is the one value a
+                      // rider glances at rather than reads: how long they have.
+                      // It used to share a 16pt line with the instruction, so
+                      // the whole banner had to be read to get either (#361).
+                      //
+                      // This costs height, and the portrait band the #105 camera
+                      // measures pays for it in forward bias. That is the right
+                      // way round: a banner too small to glance at is not worth
+                      // any framing.
                       Text(
-                        '$distance · ${instruction.text}',
+                        distance,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: compact ? 26 : 30,
+                          fontWeight: FontWeight.w900,
+                          // Tight leading: the number is one line and every
+                          // point of height here is paid for out of the band
+                          // the camera's forward bias has to clear.
+                          height: 1.0,
+                        ),
+                      ),
+                      Text(
+                        instruction.text,
                         maxLines: 2,
                         softWrap: true,
                         style: TextStyle(
-                          fontSize: compact ? 14 : 16,
-                          fontWeight: FontWeight.w900,
+                          fontSize: compact ? 16 : 18,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
                         ),
                       ),
                       if (showLanes) ...[
@@ -8733,7 +8788,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                           children: [
                             ManeuverSymbolView(
                               instruction: following,
-                              size: compact ? 17 : 19,
+                              size: compact ? 20 : 22,
                               color: const Color(0xFFFFC857),
                             ),
                             const SizedBox(width: 6),
@@ -8745,7 +8800,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                                 maxLines: 2,
                                 softWrap: true,
                                 style: TextStyle(
-                                  fontSize: compact ? 12 : 13,
+                                  fontSize: compact ? 14 : 15,
                                   fontWeight: FontWeight.w800,
                                   color: const Color(0xFFFFD77D),
                                 ),
@@ -8758,7 +8813,10 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                         guidance.roadLabel,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Color(0xFFB7C2CF)),
+                        style: TextStyle(
+                          fontSize: compact ? 13 : 14,
+                          color: const Color(0xFFB7C2CF),
+                        ),
                       ),
                     ],
                   ),

@@ -165,7 +165,9 @@ class RoundaboutRingArc {
   double get endDegrees => startDegrees + sweepDegrees;
 }
 
-/// The one arrowhead a roundabout symbol carries, at the end of the exit road.
+/// An arrowhead. The symbol carries two: one at the end of the exit road,
+/// saying where the rider leaves, and one on the ring, saying which way round
+/// they travel to get there.
 @immutable
 class RoundaboutArrowHead {
   const RoundaboutArrowHead({
@@ -222,7 +224,7 @@ class RoundaboutExitRoad {
 ///
 /// The shape is separated from the painting so it can be asserted rather than
 /// only eyeballed: that the ring is broken where each road meets it, and that
-/// the symbol carries exactly one arrowhead, on the exit.
+/// the way round the ring is drawn rather than left to be inferred.
 @immutable
 class RoundaboutSymbolGeometry {
   const RoundaboutSymbolGeometry._({
@@ -234,6 +236,7 @@ class RoundaboutSymbolGeometry {
     required this.entryRoadStart,
     required this.entryRoadEnd,
     required this.ringArcs,
+    required this.ringDirection,
     required this.exit,
     required this.exitNumber,
   });
@@ -257,6 +260,11 @@ class RoundaboutSymbolGeometry {
     // two unrelated sticks rather than as going back the way you came.
     final parallelRoads = _turnsBack(exitDegrees);
     final entryDirection = parallelRoads ? _down : entryUnit;
+    final ringArcs = _ringArcs(
+      entryDegrees: entryDegrees,
+      exitDegrees: exitDegrees,
+      leftHandTraffic: symbol.leftHandTraffic,
+    );
     return RoundaboutSymbolGeometry._(
       centre: centre,
       radius: radius,
@@ -270,10 +278,12 @@ class RoundaboutSymbolGeometry {
       entryRoadStart:
           centre + entryUnit * radius + entryDirection * (reach - radius),
       entryRoadEnd: centre + entryUnit * radius,
-      ringArcs: _ringArcs(
-        entryDegrees: entryDegrees,
-        exitDegrees: exitDegrees,
-        leftHandTraffic: symbol.leftHandTraffic,
+      ringArcs: ringArcs,
+      ringDirection: _ringDirection(
+        centre: centre,
+        extent: extent,
+        radius: radius,
+        ringArcs: ringArcs,
       ),
       exitNumber: symbol.exitNumber,
       exit: exitDegrees == null
@@ -316,6 +326,54 @@ class RoundaboutSymbolGeometry {
     );
   }
 
+  /// Which way round the ring the rider travels, drawn on the ring itself.
+  ///
+  /// Reported from the field as "the symbol shows going anticlockwise round a
+  /// roundabout to turn right". The arc was correct — keeping left, a right turn
+  /// is three quarters of the way round, and on a clock face that runs
+  /// 6 → 9 → 12 → 3, so the drawn path leaves the bottom towards the *left* of
+  /// the box before coming back to the right-hand exit. It reads as
+  /// anticlockwise because the only thing saying otherwise was the shape of the
+  /// arc, and a rider glancing at a long arc reads it in whichever direction
+  /// their eye travels.
+  ///
+  /// Flipping the sweep was the obvious fix and would have drawn the illegal
+  /// manoeuvre. Saying which way round instead costs one arrowhead.
+  ///
+  /// Placed early on the arc, not at its middle: on a near-full circle the
+  /// middle is diametrically opposite the roads and reads as belonging to
+  /// neither, while a mark just after the rider joins is unambiguously about the
+  /// direction they set off in.
+  static RoundaboutArrowHead? _ringDirection({
+    required Offset centre,
+    required double extent,
+    required double radius,
+    required List<RoundaboutRingArc> ringArcs,
+  }) {
+    final arc = ringArcs.isEmpty ? null : ringArcs.first;
+    // A short arc is all corner: the entry road, the arrowhead and the exit
+    // road would collide, and the direction is not in doubt over 45 degrees
+    // anyway.
+    if (arc == null ||
+        arc.sweepDegrees.abs() < _minimumArcForDirectionDegrees) {
+      return null;
+    }
+    final flow = arc.sweepDegrees.isNegative ? -1.0 : 1.0;
+    final atDegrees = arc.startDegrees + arc.sweepDegrees * _directionAlongArc;
+    final radians = atDegrees * math.pi / 180;
+    // The tangent to _unitAt at this angle, pointing the way the arc sweeps.
+    final along = Offset(math.cos(radians) * flow, math.sin(radians) * flow);
+    return RoundaboutArrowHead(
+      tip:
+          centre +
+          _unitAt(atDegrees) * radius +
+          along * (extent * _arrowHeadLengthFraction / 2),
+      direction: along,
+      length: extent * _arrowHeadLengthFraction,
+      halfWidth: extent * _arrowHeadHalfWidthFraction,
+    );
+  }
+
   /// Straight down the box, the way the rider came from.
   static const _down = Offset(0, 1);
 
@@ -349,6 +407,16 @@ class RoundaboutSymbolGeometry {
   /// on a road. Two road widths across is enough to be unmistakable.
   static const _arrowHeadLengthFraction = 0.12;
   static const _arrowHeadHalfWidthFraction = 0.070;
+
+  /// Below this the arc is a short hop to a near exit and reads only one way,
+  /// so the mark would be clutter crowding the entry road. Keeping left that
+  /// leaves a left turn (a quarter of the ring) unmarked, and marks straight on
+  /// (a half) and a right turn (three quarters) - which are exactly the two a
+  /// rider can read backwards.
+  static const _minimumArcForDirectionDegrees = 135.0;
+
+  /// How far along the ridden arc the direction arrowhead sits.
+  static const _directionAlongArc = 0.25;
   static const _roadIntoHeadFraction = 0.6;
 
   final Offset centre;
@@ -369,6 +437,10 @@ class RoundaboutSymbolGeometry {
   final Offset entryRoadStart;
   final Offset entryRoadEnd;
   final List<RoundaboutRingArc> ringArcs;
+
+  /// Which way round the ring the rider goes. Null where the arc is too short
+  /// to carry the mark, which is also where the direction is not in doubt.
+  final RoundaboutArrowHead? ringDirection;
 
   /// The exit, or `null` where the engine reported no direction to draw.
   final RoundaboutExitRoad? exit;
@@ -535,6 +607,10 @@ class RoundaboutSymbolPainter extends CustomPainter {
         false,
         ringPaint,
       );
+    }
+
+    if (geometry.ringDirection case final direction?) {
+      canvas.drawPath(direction.toPath(), Paint()..color = color);
     }
 
     _paintExitNumber(canvas, geometry, size);

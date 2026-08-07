@@ -40,6 +40,69 @@ void main() {
   const junction = GeoPoint(latitude: 51.4676, longitude: -2.5015);
 
   group('the readout says what the router said and what we made of it', () {
+    // #360: a roundabout reads its direction from the approach bearing compared
+    // with the heading on the road *taken*, across two merged steps. The readout
+    // was showing the entry manoeuvre's own bearingAfter instead - the pair
+    // every other manoeuvre uses - so a captured roundabout could not explain
+    // the instruction the rider saw, which is exactly what the Tennis Court Road
+    // and Syston Common reports need it to do.
+    test('a roundabout reports the bearings its direction was read from', () {
+      final planner = const NavigationGuidancePlanner();
+      final instruction = planner
+          .instructions(
+            ImportedRoute(
+              id: 'r',
+              name: 'Route',
+              importedAt: DateTime.utc(2026, 8, 2),
+              sourceFileName: 'r.gpx',
+              waypoints: const [],
+              paths: const [
+                RoutePath(
+                  kind: RoutePathKind.track,
+                  points: [
+                    GeoPoint(latitude: 51.4670, longitude: -2.5020),
+                    GeoPoint(latitude: 51.4676, longitude: -2.5015),
+                    GeoPoint(latitude: 51.4676, longitude: -2.4990),
+                  ],
+                ),
+              ],
+              maneuvers: [
+                RouteManeuver(
+                  position: junction,
+                  type: 'roundabout',
+                  name: 'New Cheltenham Road',
+                  drivingSide: 'left',
+                  exitNumber: 3,
+                  bearingBeforeDegrees: 98,
+                  // Deliberately different from the ring exit below, so a
+                  // readout using the wrong one is visible.
+                  bearingAfterDegrees: 150,
+                ),
+                RouteManeuver(
+                  position: junction,
+                  type: 'exit roundabout',
+                  name: 'Tenniscourt Road',
+                  drivingSide: 'left',
+                  bearingAfterDegrees: 8,
+                ),
+              ],
+            ),
+          )
+          .single
+          .instruction;
+
+      final report = maneuverDiagnosticsReport(instruction);
+
+      // The heading on the road taken, not the entry step's own bearingAfter.
+      expect(report, contains('Bearing off ring: 8.0°'));
+      expect(report, isNot(contains('150.0°')));
+      // 98 -> 8 is 90 degrees anticlockwise: a left turn, however it is bucketed.
+      expect(report, contains('-90.0° (anticlockwise, to the left)'));
+      // The threshold is stated, because a turn that came out straight when it
+      // was not is either the number above or this.
+      expect(report, contains('Straight band:'));
+      expect(report, contains('Exit number:      3'));
+    });
     test('a stated modifier is shown, and shown to have been understood', () {
       final report = maneuverDiagnosticsReport(
         instructionFor(
