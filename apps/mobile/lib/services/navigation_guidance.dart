@@ -68,6 +68,7 @@ class ManeuverInstruction {
     this.lanes = const [],
     this.leftHandTraffic,
     this.stepCount = 1,
+    this.departureBearingDegrees,
   }) : standaloneText = standaloneText ?? text;
 
   /// The engine step the rider acts on. Retained so route progress, positions
@@ -97,6 +98,17 @@ class ManeuverInstruction {
   final String? roadName;
   final String? roadRef;
   final List<RouteLane> lanes;
+
+  /// The heading on the road taken, where the direction was read from the
+  /// junction's geometry rather than from a modifier.
+  ///
+  /// Only a roundabout sets it, and only a roundabout needs it: its direction
+  /// comes from the approach bearing compared with *this*, across two merged
+  /// steps, so the entry manoeuvre's own `bearingAfter` - the pair every other
+  /// manoeuvre uses - is not the number the app reasoned from. Keeping it is
+  /// what lets a captured turn detail explain the instruction a rider saw
+  /// instead of showing a heading change that was never used (#360).
+  final double? departureBearingDegrees;
 
   /// `true` where the engine reported left-hand traffic at this manoeuvre.
   ///
@@ -478,6 +490,11 @@ ManeuverInstruction _roundaboutInstruction({
   final entry = group.first;
   final last = group.last;
   final exit = _isRingExit(last.type) ? last : null;
+  final departure = _ringDepartureBearing(
+    entry: entry,
+    exit: exit,
+    follower: follower,
+  );
   final direction = _ringExitDirection(
     entry: entry,
     exit: exit,
@@ -514,7 +531,28 @@ ManeuverInstruction _roundaboutInstruction({
     lanes: entry.lanes,
     leftHandTraffic: _leftHandTraffic(entry.drivingSide),
     stepCount: group.length,
+    departureBearingDegrees: departure,
   );
+}
+
+/// The heading on the road taken as the rider leaves the ring.
+///
+/// Split out of [_ringExitDirection] so the number and the direction read from
+/// it cannot come from different places, and so a captured turn detail can show
+/// the pair the direction was actually derived from.
+double? _ringDepartureBearing({
+  required RouteManeuver entry,
+  required RouteManeuver? exit,
+  required RouteManeuver? follower,
+}) {
+  final departure = exit?.bearingAfterDegrees;
+  if (departure != null) return departure;
+  if (exit == null &&
+      follower != null &&
+      _distance(entry.position, follower.position) <= _exitBearingReachMeters) {
+    return follower.bearingBeforeDegrees;
+  }
+  return null;
 }
 
 /// Direction the rider leaves a roundabout, from the manoeuvre's own geometry.
@@ -688,6 +726,12 @@ double? maneuverHeadingChangeDegrees(RouteManeuver maneuver) {
   if (before == null || after == null) return null;
   return _signedBearingDelta(before, after);
 }
+
+/// The signed heading change between two bearings, for callers that hold the
+/// pair themselves - a roundabout reads its direction across two merged steps
+/// rather than from one manoeuvre's own bearings.
+double maneuverHeadingChangeBetween(double before, double after) =>
+    _signedBearingDelta(before, after);
 
 /// Buckets a signed heading change into a direction. See
 /// [_directionFromTurnDegrees].
