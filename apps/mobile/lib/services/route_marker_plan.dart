@@ -220,7 +220,21 @@ class RouteMarkerPlanAnalyzer {
 
       final straight = modifier.isEmpty || modifier == 'straight';
       final decisionType = const {'turn', 'fork', 'end of road'}.contains(type);
-      if (!decisionType || (straight && !rules.markStraightTurns)) continue;
+      // A fork is a branch choice whichever way the route goes through it: the
+      // carriageway splits and a following rider has to pick a side. That is
+      // the definition of a junction where straight on is not clear, and it was
+      // being dropped here before the fork exemption below could ever apply -
+      // so the one shape of junction most worth marking when the route
+      // continues ahead was the one shape never suggested (#366).
+      //
+      // [MarkerPlanningRules.markStraightTurns] is about ordinary junctions the
+      // group rides straight through - a side road, a farm track - which is a
+      // different question and keeps its answer.
+      final branchesRegardless = type == 'fork';
+      if (!decisionType ||
+          (straight && !branchesRegardless && !rules.markStraightTurns)) {
+        continue;
+      }
 
       // Gate 2. Either the ridden line deviates, or the engine reports that the
       // route itself had a branch to choose between.
