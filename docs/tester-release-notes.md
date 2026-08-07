@@ -36,6 +36,71 @@ permissions by design.
 - ...
 ```
 
+## iOS build 45 / Android build 45 — 7 August 2026
+
+Nine fixes from the 6 August ride report. Most of them need a real ride to
+confirm — several are things the app was silently not doing rather than doing
+wrongly, so the only way to know they are fixed is to go and look.
+
+### What to test
+
+1. **Spoken turn prompts.** Turn them on in settings and ride a route with
+   guidance. They did nothing at all before: the setting saved, was read, and
+   had nothing behind it. Prompts should now duck your music rather than stop
+   it.
+2. **The turn banner.** The distance is now on its own line at roughly twice
+   its old size, the way Google Maps and Waze set it. Tell us if it is still
+   not readable at a glance at speed — there is a hard limit on how much of
+   the screen the chrome may take, and the next move is deciding what comes
+   off the band rather than growing it further.
+3. **Direction arrows on a planned route.** Load a route and look at it before
+   starting. Arrows along the line should show which way round it goes. They
+   have never been there before a ride started, only on the part already
+   ridden.
+4. **A solo ride.** Start one and open the roster and the leave/end action.
+   Nothing should mention a group, other riders, or ending the ride "for
+   everyone" — there is nobody else.
+5. **Roundabouts.** The symbol now carries an arrowhead on the ring showing
+   which way round you go. **If a roundabout instruction is wrong, please open
+   the turn detail and copy the readout** — it now includes the exit number,
+   both bearings and the straight band, which is what says whether the exit
+   count, the measured turn or the threshold is at fault.
+6. **Sharing a ride recap image.** It could previously wait for ever for a map
+   that never arrived. It now gives up after 12 seconds and sends the route
+   outline with the reason on screen.
+7. **Markers at forks.** A fork the route rides straight through now earns a
+   suggested marker. That is the junction where a following rider is most
+   likely to take the wrong branch.
+
+### Fixed
+
+- Spoken guidance was never connected to anything; turning it on now speaks.
+- The turn banner distance was too small to glance at.
+- The planned route carried no direction-of-travel arrows.
+- Solo rides warned about the Tail End Charlie and about ending the ride for
+  everyone.
+- A roundabout symbol did not say which way round the ring you travel, so a
+  right turn read as anticlockwise. The arc was always correct.
+- A roundabout turn detail reported bearings the app had not used, so a
+  captured report could not explain the instruction it gave.
+- A recap export could block indefinitely on a basemap that never loaded.
+- A fork ridden straight through was never suggested as a marker position.
+- An invalid camera position could crash the app through MapLibre. This is one
+  of two distinct CarPlay-era crashes; the other is not fixed.
+
+### Known limitations
+
+- **CarPlay still has an open crash.** Two separate faults are identified. This
+  build stops one of them being fatal. If the app dies with CarPlay connected,
+  please plug the phone into a Mac afterwards so the crash log syncs, or send
+  the entry from **Settings → Privacy & Security → Analytics & Improvements →
+  Analytics Data**.
+- Roundabout exit numbering is still wrong at the Tenniscourt Road roundabout
+  and at the Syston Common double mini-roundabout. Captures from those two
+  junctions are what will fix them.
+- No light basemap, no marker editor on the map, and no Siri or music control
+  yet. All are open and none is started.
+
 ## iOS build 42 / Android build 42 — 4 August 2026
 
 ### What to test
