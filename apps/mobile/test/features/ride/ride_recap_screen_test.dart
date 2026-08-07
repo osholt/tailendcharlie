@@ -215,7 +215,45 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('recap-route-sketch')), findsOneWidget);
-    expect(find.textContaining('will use the route outline'), findsOneWidget);
+    expect(find.textContaining('shows the route outline only'), findsOneWidget);
+    expect(find.text('Map data'), findsNothing);
+  });
+
+  // #364: a style that loads but whose tiles never arrive called neither
+  // onReady nor onFailure, so the screen sat in "still loading" for ever.
+  // Share refused every time with no end to it, which is the reported "the
+  // export takes a really long time and then has no map".
+  testWidgets('a basemap that never resolves stops blocking the export', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideRecapScreen(
+          summary: summary,
+          routePoints: route,
+          basemapConfiguration: const BasemapConfiguration(
+            styleUrl: 'https://example.com/style.json',
+            attribution: 'Map data',
+          ),
+          // Reports neither ready nor failed, for as long as anyone waits.
+          mapBuilder: (key, paths, configuration, onReady, onFailure) =>
+              const SizedBox.shrink(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Still waiting: the export is held back rather than shipping a blank map.
+    expect(find.byKey(const Key('recap-route-sketch')), findsNothing);
+
+    await tester.pump(const Duration(seconds: 13));
+    await tester.pump();
+
+    expect(find.byKey(const Key('recap-route-sketch')), findsOneWidget);
+    expect(
+      find.textContaining('did not finish loading in time'),
+      findsOneWidget,
+    );
     expect(find.text('Map data'), findsNothing);
   });
 }

@@ -47,9 +47,11 @@ class RecapBasemapSnapshot {
     RecapBasemapOutcome.timedOut =>
       'The map did not finish loading in time, so the recap shows the route '
           'outline only. Try again in a moment.',
+    // "Load" rather than "capture": the same outcome now describes both the
+    // snapshot path and the live recap map, and a rider does not care which
+    // half of it failed.
     RecapBasemapOutcome.failed =>
-      'The map could not be captured, so the recap shows the route outline '
-          'only.',
+      'The map could not load, so the recap shows the route outline only.',
   };
 }
 
