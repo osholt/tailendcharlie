@@ -131,3 +131,65 @@ class _TrailSegment {
   final GeoPoint end;
   final double lengthMeters;
 }
+
+/// One line that wants direction arrows, and what it may claim of the budget.
+///
+/// [reserve] is a ceiling for this source alone, not a guarantee. It exists so
+/// the planned route cannot be starved by a large group's trails on exactly the
+/// long, doubled-back routes where knowing which way the line runs matters most.
+class TrailDirectionArrowSource<T> {
+  const TrailDirectionArrowSource({
+    required this.paths,
+    required this.style,
+    this.reserve,
+  });
+
+  final Iterable<List<GeoPoint>> paths;
+
+  /// Whatever the caller needs to draw this source's arrows - a colour, a
+  /// label, an id prefix. Carried through untouched so the selection rule can
+  /// be tested without knowing anything about rendering.
+  final T style;
+
+  final int? reserve;
+}
+
+/// One selected arrow, and the style of the source it came from.
+class SelectedTrailDirectionArrow<T> {
+  const SelectedTrailDirectionArrow({required this.arrow, required this.style});
+
+  final TrailDirectionArrow arrow;
+  final T style;
+}
+
+/// Chooses which arrows are drawn, in order, within one budget.
+///
+/// Separated from the map so the choice can be asserted rather than only
+/// eyeballed. It was previously inline in the ride map, where nothing could
+/// reach it — and the planned route was simply missing from the sources, so a
+/// route that had not been ridden yet carried no direction arrows at all
+/// (#363). Every source of them was something that only exists once the ride
+/// is moving.
+///
+/// Sources are offered in priority order and take what is left of [budget],
+/// bounded by their own [TrailDirectionArrowSource.reserve].
+List<SelectedTrailDirectionArrow<T>> selectTrailDirectionArrows<T>({
+  required Iterable<TrailDirectionArrowSource<T>> sources,
+  required TrailDirectionArrowSampler sampler,
+  int budget = 240,
+}) {
+  final selected = <SelectedTrailDirectionArrow<T>>[];
+  for (final source in sources) {
+    if (selected.length >= budget) break;
+    final ceiling = source.reserve == null
+        ? budget
+        : math.min(budget, selected.length + source.reserve!);
+    for (final arrow in sampler.sample(source.paths)) {
+      if (selected.length >= ceiling) break;
+      selected.add(
+        SelectedTrailDirectionArrow(arrow: arrow, style: source.style),
+      );
+    }
+  }
+  return selected;
+}
