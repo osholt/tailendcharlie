@@ -39,6 +39,7 @@ import '../../services/tec_gap_trend.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
+import '../../services/map_camera_command.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/motorcycle_discovery.dart';
@@ -3649,6 +3650,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
         mapStyleJson: widget.mapStyleString,
       ),
     );
+    // MapLibre throws out of a C++ constructor on a coordinate that is not
+    // finite, and the throw takes the app with it (#359). The follow target is
+    // a ground point projected from the tilt, zoom and measured viewport
+    // height, so a viewport that has not been laid out - zero height - divides
+    // through that geometry and produces one. Dropping the command costs
+    // nothing visible: the next position fix issues another.
+    if (!MapCameraCommand.isUsable(
+      latitude: framing.target.latitude,
+      longitude: framing.target.longitude,
+      zoom: cameraPlan.zoom,
+      tilt: cameraPlan.tilt,
+      bearing: _cameraBearingDegrees,
+    )) {
+      return;
+    }
     try {
       if (_basemap.usesMapLibre) {
         final controller = _mapLibreController;
@@ -5148,13 +5164,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
       if (controller == null || routePoints.isEmpty) return;
       _initialCameraPositioned = true;
       if (routePoints.length == 1) {
+        final only = routePoints.single;
+        if (!MapCameraCommand.isUsable(
+          latitude: only.latitude,
+          longitude: only.longitude,
+          zoom: 14,
+        )) {
+          return;
+        }
         unawaited(
           controller.animateCamera(
             ml.CameraUpdate.newLatLngZoom(
-              ml.LatLng(
-                routePoints.single.latitude,
-                routePoints.single.longitude,
-              ),
+              ml.LatLng(only.latitude, only.longitude),
               14,
             ),
           ),
