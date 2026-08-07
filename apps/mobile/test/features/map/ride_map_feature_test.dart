@@ -22,6 +22,7 @@ import 'package:ride_relay/features/map/hazard_map_symbol.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/enforcement_alert_detector.dart';
+import 'package:ride_relay/services/ride_completion_detector.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/imported_track_matcher.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
@@ -3348,6 +3349,250 @@ void main() {
 
     await verifyLayout(landscape: false);
     await verifyLayout(landscape: true);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  Future<void> pumpArrival(
+    WidgetTester tester, {
+    required ValueNotifier<RideCompletionAssessment?> suggestion,
+    bool ridePaused = false,
+    VoidCallback? onEnd,
+    VoidCallback? onDismiss,
+  }) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-arrival');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final route = ImportedRoute(
+      id: 'arrival-behaviour',
+      name: 'Arrival',
+      importedAt: DateTime.utc(2026, 8, 7),
+      sourceFileName: 'arrival.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          groupRiderCount: 3,
+          ridePaused: ridePaused,
+          distanceUnit: DistanceUnit.miles,
+          rideCompletionSuggestion: suggestion,
+          onEndRideForEveryone: onEnd,
+          onDismissRideCompletion: onDismiss,
+          onOpenRideMenu: () async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+  }
+
+  const arrived = RideCompletionAssessment(
+    routeProgressFraction: 1,
+    minimumRouteProgressFraction: 0.9,
+    destinationRadiusMeters: 120,
+    riderCount: 3,
+    freshRiderCount: 3,
+    arrivedRiderCount: 3,
+  );
+
+  testWidgets('the arrival question no longer covers the map', (tester) async {
+    // The reported fault: the prompt arrived as a `showDialog`, which puts a
+    // barrier across the whole surface at the one moment a rider still needs
+    // to see where they are going.
+    final suggestion = ValueNotifier<RideCompletionAssessment?>(arrived);
+    addTearDown(suggestion.dispose);
+
+    await pumpArrival(tester, suggestion: suggestion);
+
+    expect(find.byKey(const Key('ride-completion-suggestion')), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    // Nothing is intercepting taps across the map.
+    expect(
+      find.byType(ModalBarrier).evaluate().where((element) {
+        final barrier = element.widget as ModalBarrier;
+        return barrier.dismissible || barrier.color != null;
+      }),
+      isEmpty,
+    );
+    // And the rider keeps the controls they were using.
+    expect(find.byKey(const Key('emergency-alert-button')), findsOneWidget);
+  });
+
+  testWidgets('a paused ride never shows the arrival question', (tester) async {
+    // `_maybeAutomaticallyEndRide` returns early on a paused ride, so this can
+    // never happen through the shell. Guarded here too, because this is the
+    // layer whose band height is measured against the cap.
+    final suggestion = ValueNotifier<RideCompletionAssessment?>(arrived);
+    addTearDown(suggestion.dispose);
+
+    await pumpArrival(tester, suggestion: suggestion, ridePaused: true);
+
+    expect(find.byKey(const Key('ride-completion-suggestion')), findsNothing);
+  });
+
+  testWidgets('the rider can wave the arrival question away', (tester) async {
+    final suggestion = ValueNotifier<RideCompletionAssessment?>(arrived);
+    addTearDown(suggestion.dispose);
+    var dismissed = 0;
+
+    await pumpArrival(
+      tester,
+      suggestion: suggestion,
+      onDismiss: () {
+        dismissed += 1;
+        suggestion.value = null;
+      },
+    );
+    await tester.tap(find.byKey(const Key('continue-completed-ride')));
+    await tester.pumpAndSettle();
+
+    expect(dismissed, 1);
+    expect(find.byKey(const Key('ride-completion-suggestion')), findsNothing);
+  });
+
+  testWidgets('ending for everyone still asks first', (tester) async {
+    // #380 was about the suggestion not blocking. Ending for everyone is
+    // irreversible for the group, so it still has to go through the
+    // confirmation that carries `endRideConsequence` - the map only asks.
+    final suggestion = ValueNotifier<RideCompletionAssessment?>(arrived);
+    addTearDown(suggestion.dispose);
+    var ended = 0;
+
+    await pumpArrival(tester, suggestion: suggestion, onEnd: () => ended += 1);
+    await tester.tap(find.byKey(const Key('confirm-completed-ride')));
+    await tester.pumpAndSettle();
+
+    expect(ended, 1);
+    // The map did not end anything itself; it handed the decision on.
+    expect(find.byKey(const Key('ride-completion-suggestion')), findsOneWidget);
+  });
+
+  testWidgets('the arrival band stays inside the cap with the suggestion up', (
+    tester,
+  ) async {
+    // #380 moved the arrival question out of a modal and into the band, and the
+    // ticket required that be measured rather than assumed. This is the worst
+    // case the suggestion can actually appear in: everything that can be live
+    // at arrival, minus the two surfaces the shell guarantees it never shares
+    // the band with. `_maybeAutomaticallyEndRide` returns early on a paused
+    // ride and on an active marker, so the paused banner and the junction card
+    // cannot be up at the same time as this.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync('map-arrival-band');
+    addTearDown(() => directory.deleteSync(recursive: true));
+
+    final route = ImportedRoute(
+      id: 'arrival',
+      name: 'Arrival route',
+      importedAt: DateTime.utc(2026, 8, 7),
+      sourceFileName: 'arrival.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1.01),
+            GeoPoint(latitude: 53, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 53, longitude: -1.005),
+          type: 'roundabout',
+          modifier: 'right',
+          name: 'Station Road',
+          exitNumber: 3,
+          drivingSide: 'left',
+          lanes: [
+            RouteLane(indications: ['left'], valid: false),
+            RouteLane(indications: ['straight', 'right'], valid: true),
+          ],
+        ),
+      ],
+    );
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: ValueNotifier(
+            MapNavigationPosition(
+              point: const GeoPoint(latitude: 53, longitude: -1.005),
+              recordedAt: DateTime.utc(2026, 8, 7, 12),
+              speedMetersPerSecond: 8,
+              headingDegrees: 90,
+            ),
+          ),
+          groupRiderCount: 3,
+          distanceUnit: DistanceUnit.miles,
+          rideCompletionSuggestion: ValueNotifier(
+            const RideCompletionAssessment(
+              routeProgressFraction: 1,
+              minimumRouteProgressFraction: 0.9,
+              destinationRadiusMeters: 120,
+              riderCount: 3,
+              freshRiderCount: 3,
+              arrivedRiderCount: 3,
+            ),
+          ),
+          onEndRideForEveryone: () {},
+          onDismissRideCompletion: () {},
+          onOpenRideMenu: () async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
+          onReportHazard: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('ride-completion-suggestion')), findsOneWidget);
+    final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+    // 0.438 measured, against the 0.60 cap. The modal it replaces covered the
+    // whole viewport, so this is the number that matters: the arrival question
+    // now costs a rider less than half the screen instead of all of it.
+    expect(_bottomChromeFraction(tester, size), lessThan(0.60));
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

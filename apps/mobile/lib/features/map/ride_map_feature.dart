@@ -31,6 +31,7 @@ import '../../services/basemap_status.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
+import '../../services/ride_completion_detector.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/group_pip_bridge.dart';
 import '../../services/imported_track_matcher.dart';
@@ -141,6 +142,9 @@ class RideMapFeature extends StatefulWidget {
     this.onOpenRoster,
     this.junctionMarkerOverlay,
     this.enforcementAlert,
+    this.rideCompletionSuggestion,
+    this.onEndRideForEveryone,
+    this.onDismissRideCompletion,
     this.quickMessageAlerts,
     this.onAcknowledgeQuickMessage,
     this.dismissedQuickMessageInterruptIds = const {},
@@ -200,6 +204,9 @@ class RideMapFeature extends StatefulWidget {
     VoidCallback? onOpenRoster,
     ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
     ValueListenable<EnforcementAlert?>? enforcementAlert,
+    ValueListenable<RideCompletionAssessment?>? rideCompletionSuggestion,
+    VoidCallback? onEndRideForEveryone,
+    VoidCallback? onDismissRideCompletion,
     ValueListenable<List<RideQuickMessageAlert>>? quickMessageAlerts,
     Future<void> Function(ReceivedQuickMessage message)?
     onAcknowledgeQuickMessage,
@@ -254,6 +261,9 @@ class RideMapFeature extends StatefulWidget {
     onOpenRoster: onOpenRoster,
     junctionMarkerOverlay: junctionMarkerOverlay,
     enforcementAlert: enforcementAlert,
+    rideCompletionSuggestion: rideCompletionSuggestion,
+    onEndRideForEveryone: onEndRideForEveryone,
+    onDismissRideCompletion: onDismissRideCompletion,
     quickMessageAlerts: quickMessageAlerts,
     onAcknowledgeQuickMessage: onAcknowledgeQuickMessage,
     dismissedQuickMessageInterruptIds: dismissedQuickMessageInterruptIds,
@@ -312,6 +322,18 @@ class RideMapFeature extends StatefulWidget {
   final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final ValueListenable<EnforcementAlert?>? enforcementAlert;
+
+  /// The arrival the group has reached, offered rather than imposed (#380).
+  ///
+  /// Null whenever there is nothing to suggest, which includes a suggestion the
+  /// rider has already waved away.
+  final ValueListenable<RideCompletionAssessment?>? rideCompletionSuggestion;
+
+  /// Ending for everyone is irreversible for the group, so this raises the
+  /// confirmation carrying `endRideConsequence` rather than ending outright.
+  final VoidCallback? onEndRideForEveryone;
+
+  final VoidCallback? onDismissRideCompletion;
 
   /// Quick messages other riders have raised, most urgent first, together with
   /// where each sender is (#151). Null when the embedder has no ride behind it.
@@ -494,6 +516,9 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onOpenRoster: widget.onOpenRoster,
         junctionMarkerOverlay: widget.junctionMarkerOverlay,
         enforcementAlert: widget.enforcementAlert,
+        rideCompletionSuggestion: widget.rideCompletionSuggestion,
+        onEndRideForEveryone: widget.onEndRideForEveryone,
+        onDismissRideCompletion: widget.onDismissRideCompletion,
         quickMessageAlerts: widget.quickMessageAlerts,
         onAcknowledgeQuickMessage: widget.onAcknowledgeQuickMessage,
         dismissedQuickMessageInterruptIds:
@@ -577,6 +602,9 @@ class RideMapScreen extends StatefulWidget {
     this.onOpenRoster,
     this.junctionMarkerOverlay,
     this.enforcementAlert,
+    this.rideCompletionSuggestion,
+    this.onEndRideForEveryone,
+    this.onDismissRideCompletion,
     this.quickMessageAlerts,
     this.onAcknowledgeQuickMessage,
     this.dismissedQuickMessageInterruptIds = const {},
@@ -660,6 +688,18 @@ class RideMapScreen extends StatefulWidget {
   final VoidCallback? onOpenRoster;
   final ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay;
   final ValueListenable<EnforcementAlert?>? enforcementAlert;
+
+  /// The arrival the group has reached, offered rather than imposed (#380).
+  ///
+  /// Null whenever there is nothing to suggest, which includes a suggestion the
+  /// rider has already waved away.
+  final ValueListenable<RideCompletionAssessment?>? rideCompletionSuggestion;
+
+  /// Ending for everyone is irreversible for the group, so this raises the
+  /// confirmation carrying `endRideConsequence` rather than ending outright.
+  final VoidCallback? onEndRideForEveryone;
+
+  final VoidCallback? onDismissRideCompletion;
 
   /// Quick messages other riders have raised, most urgent first, together with
   /// where each sender is (#151). Null when the embedder has no ride behind it.
@@ -1813,6 +1853,30 @@ class _RideMapScreenState extends State<RideMapScreen> {
               height: groupMiniMapHeight,
             )
           : null;
+      // Arriving and approaching a junction are mutually exclusive: the
+      // suggestion only appears once the whole group is inside the destination
+      // radius with the route run, so there is no next junction to draw. Taking
+      // that slot rather than adding a row is what keeps the measured band
+      // under its cap, which #380 required be measured rather than assumed.
+      // A paused ride never reaches arrival - `_maybeAutomaticallyEndRide`
+      // returns early on it, as it does on an active marker - so the suggestion
+      // cannot share the band with the paused banner or the junction card. The
+      // guard is repeated here because this is the layer whose height is
+      // measured, and a caller that passed both would silently blow the cap.
+      final completionSuggestion =
+          widget.rideCompletionSuggestion == null || widget.ridePaused
+          ? null
+          : ValueListenableBuilder<RideCompletionAssessment?>(
+              valueListenable: widget.rideCompletionSuggestion!,
+              builder: (context, assessment, _) => assessment == null
+                  ? const SizedBox.shrink()
+                  : _RideCompletionSuggestion(
+                      assessment: assessment,
+                      compact: compactStatus,
+                      onEndForEveryone: widget.onEndRideForEveryone,
+                      onDismiss: widget.onDismissRideCompletion,
+                    ),
+            );
       final junctionCard = markerOverviewActive
           ? ValueListenableBuilder<MapJunctionMarkerOverlay?>(
               key: const Key('junction-marker-overlay-position'),
@@ -2208,6 +2272,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   if (followMe != null)
                     Align(alignment: Alignment.centerLeft, child: followMe),
                   ?actionCluster,
+                  ?completionSuggestion,
                   ?junctionCard,
                 ],
               ),
@@ -9767,4 +9832,89 @@ class _ErrorState extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// The arrival question, offered in the chrome instead of over the map (#380).
+///
+/// It used to be a `showDialog`, which put a barrier across the whole surface
+/// at the one moment a rider still needed to see where they were going. A
+/// tester reported exactly that. This asks the same question in the band the
+/// rider already reads, leaves the map alone, and can be waved away.
+///
+/// Ending for everyone stays behind its confirmation: this is about the
+/// suggestion not blocking, not about removing the consequence.
+class _RideCompletionSuggestion extends StatelessWidget {
+  const _RideCompletionSuggestion({
+    required this.assessment,
+    required this.compact,
+    this.onEndForEveryone,
+    this.onDismiss,
+  });
+
+  final RideCompletionAssessment assessment;
+  final bool compact;
+  final VoidCallback? onEndForEveryone;
+  final VoidCallback? onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      key: const Key('ride-completion-suggestion'),
+      margin: EdgeInsets.zero,
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: compact ? 2 : 4,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.flag_circle_outlined,
+              size: compact ? 18 : 20,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                // The counts the dialog spelled out are the leader's evidence,
+                // not the rider's question, and at a glance on a bike the
+                // question is the only part that can be read. The detail stays
+                // one tap away in the confirmation.
+                'All ${assessment.riderCount} riders have finished.',
+                style: (compact
+                    ? theme.textTheme.bodyMedium
+                    : theme.textTheme.bodyLarge),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Dense on purpose. This sits in a band that is already close to
+            // its cap, and the whole point of #380 was to cost the rider less
+            // screen than the modal did, not more.
+            TextButton(
+              key: const Key('continue-completed-ride'),
+              onPressed: onDismiss,
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: const Text('Not yet'),
+            ),
+            FilledButton(
+              key: const Key('confirm-completed-ride'),
+              onPressed: onEndForEveryone,
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
+              child: const Text('End ride'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

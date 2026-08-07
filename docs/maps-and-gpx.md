@@ -166,6 +166,24 @@ sit between them; now everything above the banner is map, so a rider's eye leave
 the road for the banner and comes straight back. The test asserts that nothing
 else occupies the space between the banner and the first target.
 
+**The arrival question is offered in the band, never over the map.** It used to
+arrive as a `showDialog` on reaching the destination — a barrier across the whole
+surface at the one moment a rider still needed the navigation, which a tester
+reported as a fault (#380). It is now a compact, dismissible control in the band
+alongside the other surfaces.
+
+Two things make that affordable. It cannot share the band with the paused banner
+or the junction marker card: `_maybeAutomaticallyEndRide` returns early on a
+paused ride and on an active marker, and the map repeats the paused guard because
+that is the layer whose height is measured. And it is dense by design, because the
+band is already close to its cap. Measured, not assumed: the worst band the
+suggestion can appear in is **0.438** of the viewport against the 0.60 cap, where
+the modal it replaces covered all of it.
+
+Ending the ride for everyone still goes through the confirmation carrying
+`endRideConsequence`. #380 was about the suggestion not blocking, not about
+removing an irreversible action's consequence.
+
 **SOS sits above LEAVE, with REPORT alongside the pair and the speed sign
 opposite.** Stacking them costs no height — the two-high column and the 62-pixel
 REPORT square both fit inside the height the speed sign already needed, so a run
