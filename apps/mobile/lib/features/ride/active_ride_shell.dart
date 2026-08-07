@@ -925,6 +925,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _junctionMarkerOverlay = ValueNotifier<MapJunctionMarkerOverlay?>(null);
   final _enforcementAlert = ValueNotifier<EnforcementAlert?>(null);
 
+  /// The arrival being offered to the rider, or null when there is nothing to
+  /// offer. Replaces the modal that used to cover the map at the one moment a
+  /// rider still needed it (#380).
+  final _rideCompletionSuggestion = ValueNotifier<RideCompletionAssessment?>(
+    null,
+  );
+
   /// Quick messages the ride map should be presenting, most urgent first (#151).
   ///
   /// Already filtered to what this rider still has to act on: another rider's
@@ -2649,31 +2656,63 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     );
     if (!assessment.ready) {
       _completionPromptedForArrival = false;
+      _rideCompletionSuggestion.value = null;
       return;
     }
     // A dismissed suggestion stays dismissed while the group remains inside
     // the destination radius. Leaving and returning arms a fresh suggestion.
     if (_completionPromptedForArrival) return;
     _completionPromptedForArrival = true;
+    // Offered, not imposed: the rider keeps the map and the guidance, and acts
+    // on this when they are ready. Nothing is awaited here, so arrival no
+    // longer holds the ride open behind a barrier.
+    _rideCompletionSuggestion.value = assessment;
+  }
+
+  /// The rider waved the suggestion away.
+  ///
+  /// It stays away while the group remains inside the destination radius, which
+  /// `_completionPromptedForArrival` already tracks; leaving and returning arms
+  /// a fresh one, exactly as the modal behaved.
+  void _dismissRideCompletionSuggestion() =>
+      _rideCompletionSuggestion.value = null;
+
+  /// The rider chose to end it for the group.
+  ///
+  /// Ending for everyone is irreversible for the group, so the confirmation
+  /// carrying `endRideConsequence` stays. #380 was about the suggestion not
+  /// blocking, not about removing the consequence.
+  Future<void> _endRideFromCompletionSuggestion() async {
+    if (_autoEndingRide) return;
     _autoEndingRide = true;
     try {
       if (!mounted) return;
       final decision = await showRideCompletionDialog(
         context,
-        assessment: assessment,
+        assessment: _rideCompletionSuggestion.value ?? _emptyAssessment,
         relayCanCarryReopen: _relayCanCarryReopen,
       );
       if (decision == RideCompletionDecision.endForEveryone) {
+        _rideCompletionSuggestion.value = null;
         await widget.rideController.endRide();
       }
     } catch (error, stackTrace) {
       if (kDebugMode) {
-        debugPrint('Could not offer ride completion: $error\n$stackTrace');
+        debugPrint('Could not end the completed ride: $error\n$stackTrace');
       }
     } finally {
       _autoEndingRide = false;
     }
   }
+
+  static const _emptyAssessment = RideCompletionAssessment(
+    routeProgressFraction: 0,
+    minimumRouteProgressFraction: 0,
+    destinationRadiusMeters: 0,
+    riderCount: 0,
+    freshRiderCount: 0,
+    arrivedRiderCount: 0,
+  );
 
   static route_domain.GeoPoint? _routeDestination(
     route_domain.ImportedRoute? route,
@@ -3585,6 +3624,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onOpenRoster: _openRoster,
       junctionMarkerOverlay: _junctionMarkerOverlay,
       enforcementAlert: _enforcementAlert,
+      rideCompletionSuggestion: _rideCompletionSuggestion,
+      onEndRideForEveryone: _endRideFromCompletionSuggestion,
+      onDismissRideCompletion: _dismissRideCompletionSuggestion,
       quickMessageAlerts: _quickMessageAlerts,
       onAcknowledgeQuickMessage: _acknowledgeQuickMessage,
       dismissedQuickMessageInterruptIds: _dismissedQuickMessageInterruptIds,
@@ -4803,6 +4845,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _tecGapTrend.dispose();
     _junctionMarkerOverlay.dispose();
     _enforcementAlert.dispose();
+    _rideCompletionSuggestion.dispose();
     unawaited(_carPlayBridge?.dispose());
     super.dispose();
   }
