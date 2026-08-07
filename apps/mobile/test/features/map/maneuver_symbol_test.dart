@@ -294,6 +294,48 @@ void main() {
       isNull,
     );
   });
+
+  // #381: "the lane indication arrows are quite a good idea but far far too
+  // small". The arrow is the part meant to be grasped without reading, so it
+  // must not be smaller than the text beside it - the turn banner's distance is
+  // 26 compact / 30. Asserted against the rendered tile rather than the
+  // constant, so a change that shrinks it back has to fail here.
+  testWidgets('a lane tile is big enough to read at a glance', (tester) async {
+    for (final compact in [true, false]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: ManeuverLaneStrip(
+                lanes: const [
+                  RouteLane(indications: ['left'], valid: true),
+                  RouteLane(indications: ['straight'], valid: false),
+                ],
+                compact: compact,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final tile = tester.getSize(
+        find
+            .descendant(
+              of: find.byKey(const Key('lane-guidance')),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      expect(
+        tile.height,
+        greaterThanOrEqualTo(compact ? 30 : 35),
+        reason: 'compact=$compact lane tile is $tile',
+      );
+      // And still inside what the bottom band can carry: #361 came within 0.07
+      // of the 60% chrome cap, so this is not free height.
+      expect(tile.height, lessThanOrEqualTo(compact ? 34 : 40));
+    }
+  });
 }
 
 void _expectAgreement(ManeuverInstruction instruction) {
