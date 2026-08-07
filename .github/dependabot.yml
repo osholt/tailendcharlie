@@ -4,6 +4,10 @@ updates:
     directory: /apps/mobile
     schedule:
       interval: weekly
+  - package-ecosystem: gradle
+    directory: /apps/mobile/android
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:
