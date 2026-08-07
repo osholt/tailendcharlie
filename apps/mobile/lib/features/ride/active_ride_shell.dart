@@ -447,6 +447,7 @@ class _RideActionsPanel extends StatelessWidget {
     required this.canToggleRidePause,
     required this.onToggleRidePause,
     required this.onLeaveOrEndRide,
+    required this.coordinationMode,
   });
 
   final bool canChangeRoute;
@@ -477,6 +478,11 @@ class _RideActionsPanel extends StatelessWidget {
   final bool canToggleRidePause;
   final VoidCallback onToggleRidePause;
   final VoidCallback onLeaveOrEndRide;
+
+  /// Whether this ride has anyone else in it. A solo ride is still led by the
+  /// rider, so every surface that branches on "am I the leader" says group
+  /// things to somebody riding alone unless it is told otherwise (#362).
+  final RideCoordinationMode coordinationMode;
 
   @override
   Widget build(BuildContext context) {
@@ -629,17 +635,23 @@ class _RideActionsPanel extends StatelessWidget {
               key: const Key('ride-menu-toggle-pause'),
               leading: Icon(ridePaused ? Icons.play_arrow : Icons.pause),
               title: Text(ridePaused ? 'Resume ride' : 'Pause ride'),
-              subtitle: const Text(
-                'Pauses tracking and progress for the whole group',
+              subtitle: Text(
+                coordinationMode.isGroup
+                    ? 'Pauses tracking and progress for the whole group'
+                    : 'Pauses tracking and progress',
               ),
               onTap: onToggleRidePause,
             ),
           ListTile(
             key: const Key('ride-actions-leave-or-end'),
             leading: const Icon(Icons.logout),
-            title: const Text('Leave or end ride'),
-            subtitle: const Text(
-              'Leaders can end it for everyone; other riders leave alone',
+            title: Text(
+              coordinationMode.isGroup ? 'Leave or end ride' : 'End ride',
+            ),
+            subtitle: Text(
+              coordinationMode.isGroup
+                  ? 'Leaders can end it for everyone; other riders leave alone'
+                  : 'Ends your ride and stops recording',
             ),
             onTap: onLeaveOrEndRide,
           ),
@@ -807,15 +819,29 @@ enum RideExitDecision { cancel, leave, endForEveryone }
 enum RideCompletionDecision { continueRide, endForEveryone }
 
 @visibleForTesting
+/// [isSolo] collapses the choice rather than rewording it. A rider alone has no
+/// group to leave and nobody to end anything *for*: "leave only this phone" and
+/// "end for everyone" are the same act, and offering both asked them to choose
+/// between two descriptions of it while telling them they were about to affect
+/// people who were not there (#362).
 Future<RideExitDecision?> showRideExitDialog(
   BuildContext context, {
   required bool isLeader,
+  bool isSolo = false,
 }) => showDialog<RideExitDecision>(
   context: context,
   builder: (dialogContext) => AlertDialog(
-    title: Text(isLeader ? 'Leave or end this ride?' : 'Leave this ride?'),
+    title: Text(
+      isSolo
+          ? 'End this ride?'
+          : isLeader
+          ? 'Leave or end this ride?'
+          : 'Leave this ride?',
+    ),
     content: Text(
-      isLeader
+      isSolo
+          ? 'Your ride ends and location sharing stops on this phone.'
+          : isLeader
           ? 'Leave only this phone, or end the group ride for everyone.'
           : 'Your location sharing will stop on this phone. The group ride '
                 'will continue for everyone else.',
@@ -825,17 +851,18 @@ Future<RideExitDecision?> showRideExitDialog(
         onPressed: () => Navigator.pop(dialogContext, RideExitDecision.cancel),
         child: const Text('Cancel'),
       ),
-      TextButton(
-        key: const Key('leave-only-this-phone'),
-        onPressed: () => Navigator.pop(dialogContext, RideExitDecision.leave),
-        child: Text(isLeader ? 'Leave only' : 'Leave ride'),
-      ),
+      if (!isSolo)
+        TextButton(
+          key: const Key('leave-only-this-phone'),
+          onPressed: () => Navigator.pop(dialogContext, RideExitDecision.leave),
+          child: Text(isLeader ? 'Leave only' : 'Leave ride'),
+        ),
       if (isLeader)
         FilledButton(
           key: const Key('end-ride-for-everyone'),
           onPressed: () =>
               Navigator.pop(dialogContext, RideExitDecision.endForEveryone),
-          child: const Text('End for everyone'),
+          child: Text(isSolo ? 'End ride' : 'End for everyone'),
         ),
     ],
   ),
@@ -916,9 +943,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   String? _dismissedEnforcementAlertId;
   route_domain.ImportedRoute? _routeStartConnector;
 
-  /// Built only in a surface that offers spoken guidance. The engine itself is
-  /// not touched until something is actually spoken, so a rider who leaves the
-  /// option off never has a speech engine initialised behind their back.
+  /// The voice for turn prompts.
+  ///
+  /// This was declared and never assigned, so it was null for the whole life of
+  /// every ride and `_speakGuidance` returned at its first guard: a rider who
+  /// turned spoken guidance on got silence, with the setting saved and read and
+  /// nothing behind it (#361).
+  ///
+  /// Built eagerly now, and safely: `SpokenGuidanceSpeaker` does not touch the
+  /// engine until something is actually spoken, and it checks `enabled` first,
+  /// so a rider who leaves the option off still never has a speech engine
+  /// initialised behind their back.
   SpokenGuidanceSpeaker? _spokenGuidance;
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
@@ -1042,6 +1077,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Headless and test surfaces have no audio to speak through, and must not
+    // construct a platform speech engine.
+    if (widget.enableNativeServices && widget.spokenGuidance != null) {
+      _spokenGuidance = SpokenGuidanceSpeaker(widget.spokenGuidance!.engine());
+    }
     _observedRideStarted =
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
     _screenAwakeCoordinator = RideScreenAwakeCoordinator(
@@ -4113,7 +4153,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<void> _confirmLeaveRideFromMap() async {
     final isLeader = canEndRideForEveryone(widget.rideController);
-    final decision = await showRideExitDialog(context, isLeader: isLeader);
+    final decision = await showRideExitDialog(
+      context,
+      isLeader: isLeader,
+      isSolo: !widget.rideController.coordinationMode.isGroup,
+    );
     switch (decision) {
       case RideExitDecision.leave:
         await _leaveRide();
@@ -4139,6 +4183,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   Widget _buildRideActions() => _RideActionsPanel(
+    coordinationMode: widget.rideController.coordinationMode,
     canChangeRoute: _isSimulation || widget.rideController.isLocalRideLeader,
     onSettings: _openUnitSettings,
     onShareSummary: _shareCurrentRideSummary,
