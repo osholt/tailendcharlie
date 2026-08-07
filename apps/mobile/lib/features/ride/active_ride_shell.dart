@@ -916,9 +916,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   String? _dismissedEnforcementAlertId;
   route_domain.ImportedRoute? _routeStartConnector;
 
-  /// Built only in a surface that offers spoken guidance. The engine itself is
-  /// not touched until something is actually spoken, so a rider who leaves the
-  /// option off never has a speech engine initialised behind their back.
+  /// The voice for turn prompts.
+  ///
+  /// This was declared and never assigned, so it was null for the whole life of
+  /// every ride and `_speakGuidance` returned at its first guard: a rider who
+  /// turned spoken guidance on got silence, with the setting saved and read and
+  /// nothing behind it (#361).
+  ///
+  /// Built eagerly now, and safely: `SpokenGuidanceSpeaker` does not touch the
+  /// engine until something is actually spoken, and it checks `enabled` first,
+  /// so a rider who leaves the option off still never has a speech engine
+  /// initialised behind their back.
   SpokenGuidanceSpeaker? _spokenGuidance;
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
@@ -1042,6 +1050,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Headless and test surfaces have no audio to speak through, and must not
+    // construct a platform speech engine.
+    if (widget.enableNativeServices && widget.spokenGuidance != null) {
+      _spokenGuidance = SpokenGuidanceSpeaker(widget.spokenGuidance!.engine());
+    }
     _observedRideStarted =
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
     _screenAwakeCoordinator = RideScreenAwakeCoordinator(
