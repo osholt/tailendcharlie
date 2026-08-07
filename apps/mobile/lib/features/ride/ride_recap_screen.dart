@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
+import '../../services/recap_basemap_snapshot.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/trail_display_simplifier.dart';
@@ -83,7 +85,32 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
   }
 
   bool _mapReady = false;
-  bool _mapFailed = false;
+
+  /// Why the recap has no basemap, once that is settled. Null while it is still
+  /// loading and after a successful load.
+  ///
+  /// The outcome rather than a bare "failed" flag, so this screen and
+  /// [RecapBasemapSnapshot] say the same words about the same situations
+  /// instead of keeping two vocabularies for one fact.
+  RecapBasemapOutcome? _mapOutcome;
+
+  /// Bounds the wait. Without one, a style that loads but whose tiles never
+  /// arrive left the screen in "still loading" for ever: Share refused every
+  /// time, with no end and nothing said, which is the reported "the export
+  /// takes a really long time and then has no map" (#364).
+  Timer? _basemapDeadline;
+
+  /// Long enough for a cold vector-tile load on mobile data, short enough that
+  /// a rider stops waiting and gets an outline they can actually send.
+  static const _basemapTimeout = Duration(seconds: 12);
+
+  bool get _mapFailed => _mapOutcome != null;
+
+  @override
+  void dispose() {
+    _basemapDeadline?.cancel();
+    super.dispose();
+  }
 
   /// Light or dark, for this image only. Seeded from the app's theme so the
   /// first Share does what a rider expects, and stored nowhere.
@@ -144,19 +171,30 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
     final configuration = widget.basemapConfiguration.forBrightness(
       dark: _dark,
     );
-    void ready() {
-      if (mounted) setState(() => _mapReady = true);
-    }
-
-    void failed(Object _) {
+    void settle(RecapBasemapOutcome outcome) {
       if (!mounted) return;
+      _basemapDeadline?.cancel();
+      _basemapDeadline = null;
       setState(() {
-        _mapFailed = true;
+        _mapOutcome = outcome;
         _mapReady = false;
-        _error =
-            'The map could not load, so this recap will use the route outline.';
+        _error = RecapBasemapSnapshot.unavailable(outcome).degradedMessage;
       });
     }
+
+    void ready() {
+      if (!mounted) return;
+      _basemapDeadline?.cancel();
+      _basemapDeadline = null;
+      setState(() => _mapReady = true);
+    }
+
+    void failed(Object _) => settle(RecapBasemapOutcome.failed);
+
+    _basemapDeadline ??= Timer(_basemapTimeout, () {
+      if (_mapReady || _mapOutcome != null) return;
+      settle(RecapBasemapOutcome.timedOut);
+    });
 
     return widget.mapBuilder?.call(
           key,
@@ -226,8 +264,10 @@ class _RideRecapScreenState extends State<RideRecapScreen> {
               onSelectionChanged: (selection) => setState(() {
                 _darkOverride = selection.first;
                 _mapReady = false;
-                _mapFailed = false;
+                _mapOutcome = null;
                 _error = null;
+                _basemapDeadline?.cancel();
+                _basemapDeadline = null;
               }),
             ),
             const SizedBox(height: 16),
