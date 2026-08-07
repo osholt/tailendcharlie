@@ -8712,7 +8712,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
               children: [
                 ManeuverSymbolView(
                   instruction: instruction,
-                  size: compact ? 30 : 38,
+                  size: compact ? 40 : 50,
                   color: const Color(0xFF68A9FF),
                 ),
                 const SizedBox(width: 10),
@@ -8721,13 +8721,36 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Distance on its own line and dominant, the way Google
+                      // Maps and Waze set it, because it is the one value a
+                      // rider glances at rather than reads: how long they have.
+                      // It used to share a 16pt line with the instruction, so
+                      // the whole banner had to be read to get either (#361).
+                      //
+                      // This costs height, and the portrait band the #105 camera
+                      // measures pays for it in forward bias. That is the right
+                      // way round: a banner too small to glance at is not worth
+                      // any framing.
                       Text(
-                        '$distance · ${instruction.text}',
+                        distance,
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: compact ? 26 : 30,
+                          fontWeight: FontWeight.w900,
+                          // Tight leading: the number is one line and every
+                          // point of height here is paid for out of the band
+                          // the camera's forward bias has to clear.
+                          height: 1.0,
+                        ),
+                      ),
+                      Text(
+                        instruction.text,
                         maxLines: 2,
                         softWrap: true,
                         style: TextStyle(
-                          fontSize: compact ? 14 : 16,
-                          fontWeight: FontWeight.w900,
+                          fontSize: compact ? 16 : 18,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
                         ),
                       ),
                       if (showLanes) ...[
@@ -8744,7 +8767,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                           children: [
                             ManeuverSymbolView(
                               instruction: following,
-                              size: compact ? 17 : 19,
+                              size: compact ? 20 : 22,
                               color: const Color(0xFFFFC857),
                             ),
                             const SizedBox(width: 6),
@@ -8756,7 +8779,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                                 maxLines: 2,
                                 softWrap: true,
                                 style: TextStyle(
-                                  fontSize: compact ? 12 : 13,
+                                  fontSize: compact ? 14 : 15,
                                   fontWeight: FontWeight.w800,
                                   color: const Color(0xFFFFD77D),
                                 ),
@@ -8769,7 +8792,10 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                         guidance.roadLabel,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Color(0xFFB7C2CF)),
+                        style: TextStyle(
+                          fontSize: compact ? 13 : 14,
+                          color: const Color(0xFFB7C2CF),
+                        ),
                       ),
                     ],
                   ),
