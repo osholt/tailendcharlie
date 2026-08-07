@@ -16,6 +16,7 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/route_store.dart';
+import 'package:ride_relay/services/ride_completion_detector.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/hazard_map_symbol.dart';
@@ -3325,6 +3326,21 @@ void main() {
       }
     }
 
+    // #380 moved the arrival prompt out of a modal and into this band, so it is
+    // part of the maximum overlay set: a surface added here has to be measured
+    // against the cap, not assumed to fit.
+    final completion = ValueNotifier<RideCompletionAssessment?>(
+      const RideCompletionAssessment(
+        routeProgressFraction: 0.94,
+        minimumRouteProgressFraction: 0.9,
+        destinationRadiusMeters: 90,
+        riderCount: 3,
+        freshRiderCount: 3,
+        arrivedRiderCount: 3,
+      ),
+    );
+    addTearDown(completion.dispose);
+
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
@@ -3335,6 +3351,7 @@ void main() {
           navigationPosition: navigation,
           leaderStatus: leaderStatus,
           overlayMarkers: riders,
+          completionSuggestion: completion,
           groupRiderCount: 3,
           ridePaused: true,
           distanceUnit: DistanceUnit.miles,
