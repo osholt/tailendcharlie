@@ -27,15 +27,27 @@ String maneuverDiagnosticsReport(
   final maneuver = instruction.maneuver;
   final modifier = maneuver.modifier;
   final fromModifier = directionFromModifier(modifier);
-  final headingChange = maneuverHeadingChangeDegrees(maneuver);
+  final isRoundabout = instruction.kind == ManeuverKind.roundabout;
+  final band = isRoundabout
+      ? maneuverRoundaboutStraightBandDegrees
+      : maneuverStraightBandDegrees;
+  // A roundabout's direction is read from the approach bearing compared with
+  // the heading on the road *taken*, across two merged steps - so the entry
+  // manoeuvre's own bearingAfter, which every other manoeuvre uses, is not the
+  // number the app reasoned from. Reporting that one made a roundabout capture
+  // unable to explain the instruction the rider saw (#360).
+  final departure = isRoundabout
+      ? instruction.departureBearingDegrees
+      : maneuver.bearingAfterDegrees;
+  final approach = maneuver.bearingBeforeDegrees;
+  final headingChange = isRoundabout
+      ? (approach == null || departure == null
+            ? null
+            : maneuverHeadingChangeBetween(approach, departure))
+      : maneuverHeadingChangeDegrees(maneuver);
   final fromGeometry = headingChange == null
       ? null
-      : directionFromHeadingChange(
-          headingChange,
-          straightBandDegrees: instruction.kind == ManeuverKind.roundabout
-              ? maneuverRoundaboutStraightBandDegrees
-              : maneuverStraightBandDegrees,
-        );
+      : directionFromHeadingChange(headingChange, straightBandDegrees: band);
 
   String label(ManeuverDirection direction) =>
       direction.isStated ? direction.label : 'unstated';
@@ -48,9 +60,16 @@ String maneuverDiagnosticsReport(
     'Engine modifier:  ${modifier ?? '—'}'
         '${modifier != null && !fromModifier.isStated ? '  (NOT RECOGNISED)' : ''}',
     'Modifier reads as: ${label(fromModifier)}',
-    'Bearing before:   ${_degrees(maneuver.bearingBeforeDegrees)}',
-    'Bearing after:    ${_degrees(maneuver.bearingAfterDegrees)}',
+    'Bearing before:   ${_degrees(approach)}',
+    if (isRoundabout)
+      'Bearing off ring: ${_degrees(departure)}'
+    else
+      'Bearing after:    ${_degrees(maneuver.bearingAfterDegrees)}',
     'Heading change:   ${_signed(headingChange)}',
+    // The band decides which side of "straight on" the heading change lands,
+    // so a turn that came out straight when it was not is either the number
+    // above or this threshold, and the two have different fixes.
+    'Straight band:    ±${band.toStringAsFixed(0)}°',
     'Geometry reads as: ${fromGeometry == null ? '—' : label(fromGeometry)}',
     'Exit number:      ${instruction.exitNumber ?? '—'}',
     'Driving side:     ${maneuver.drivingSide ?? '—'}',
