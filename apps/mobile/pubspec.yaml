@@ -88,6 +88,7 @@ flutter:
     - assets/demo_route_maneuvers.json
     - assets/biker_places.json
     - assets/discovery_catalogue.geojson
+    - assets/fixed_speed_cameras.geojson
     - assets/icons/motorcycles/
 
   # To add assets to your application, add an assets section, like this:

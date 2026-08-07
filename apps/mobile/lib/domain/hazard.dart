@@ -65,6 +65,28 @@ extension HazardSeverityLabel on HazardSeverity {
 
 enum HazardSource { rider, externalProvider }
 
+/// The bundled OpenStreetMap fixed-camera layer.
+///
+/// Named here rather than in the provider so the domain can say what kind of
+/// claim it makes without depending on the service that produces it.
+const osmFixedCameraProviderId = 'osm-fixed-cameras';
+
+/// Providers whose hazards are standing records rather than sightings.
+///
+/// Everything else in this model is something somebody saw at a moment: it has
+/// an age, it decays, and it eventually expires. A permanent roadside camera
+/// has none of those. Reporting one as seen "just now" would tell a rider a
+/// patrol is out when all the app knows is what the map has always said.
+const standingRecordProviderIds = <String>{osmFixedCameraProviderId};
+
+extension HazardReportProvenance on HazardReport {
+  /// True when this hazard is a permanent record, so its age says nothing and
+  /// must not be shown or allowed to fade it.
+  bool get isStandingRecord =>
+      source == HazardSource.externalProvider &&
+      standingRecordProviderIds.contains(providerId);
+}
+
 class HazardReport {
   const HazardReport({
     required this.id,

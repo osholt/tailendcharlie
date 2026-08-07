@@ -184,6 +184,10 @@ abstract final class HazardMapSymbols {
   }
 
   static HazardMapFreshness freshnessFor(HazardReport report, DateTime now) {
+    // A permanent camera has no life to run down. Without this it would draw
+    // full size on the day it was read and shrink into a dashed, dulled badge
+    // weeks later, telling a rider a fixed camera was about to stop existing.
+    if (report.isStandingRecord) return HazardMapFreshness.fresh;
     final fraction = lifeFraction(report, now);
     if (fraction < 0.5) return HazardMapFreshness.fresh;
     if (fraction < 0.8) return HazardMapFreshness.ageing;
@@ -246,6 +250,11 @@ abstract final class HazardMapSymbols {
     final reporter = report.source == HazardSource.rider
         ? (report.reporterName ?? 'a rider')
         : (report.reporterName ?? report.providerId ?? 'a feed');
+    // "just now" on a standing record would read as a live sighting. What a
+    // rider needs to know instead is that it is fixed, and who says so.
+    if (report.isStandingRecord) {
+      return '${report.type.label} · fixed · $reporter';
+    }
     final age = _relativeAge(now.difference(report.updatedAt));
     final confirmations = report.confirmations > 1
         ? ' · ${report.confirmations} riders'
