@@ -129,7 +129,12 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                   if (context.mounted) Navigator.pop(context);
                 },
               ),
-            if (isLeader && !hasTec) const _MissingTecNotice(),
+            // Not in a solo ride: there is no back of a one-rider group to
+            // cover, and nobody to ask (#362).
+            if (isLeader &&
+                !hasTec &&
+                widget.controller.coordinationMode.isGroup)
+              const _MissingTecNotice(),
             if (isLeader && assignment != null)
               _TecRequestStatus(assignment: assignment),
             // The record exists; say so where it is not being shown. A rider who
