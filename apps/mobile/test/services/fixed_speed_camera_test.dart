@@ -165,7 +165,10 @@ void main() {
       );
 
       expect(catalogue.cameras.first.description, 'Fixed speed camera');
-      expect(catalogue.cameras.last.description, 'Average speed camera · 50 mph limit');
+      expect(
+        catalogue.cameras.last.description,
+        'Average speed camera · 50 mph limit',
+      );
     });
 
     test('survives a malformed feature rather than losing the layer', () {
@@ -199,11 +202,8 @@ void main() {
       ),
     );
 
-    ExternalHazardQuery query(DateTime at) => ExternalHazardQuery(
-      rideId: 'ride-1',
-      route: _route,
-      requestedAt: at,
-    );
+    ExternalHazardQuery query(DateTime at) =>
+        ExternalHazardQuery(rideId: 'ride-1', route: _route, requestedAt: at);
 
     test('credits the extract, never a rider', () async {
       final result = await provider().fetch(query(DateTime.utc(2026, 8, 7)));
@@ -225,7 +225,10 @@ void main() {
         result.hazards.single.expiresAt.difference(now),
         greaterThan(const Duration(days: 1)),
       );
-      expect(result.hazards.single.isActiveAt(now.add(const Duration(hours: 8))), isTrue);
+      expect(
+        result.hazards.single.isActiveAt(now.add(const Duration(hours: 8))),
+        isTrue,
+      );
     });
 
     test('gives the same camera the same id for every rider', () async {
@@ -259,7 +262,10 @@ void main() {
 
       expect(provider.status.state, ExternalHazardProviderState.unavailable);
       expect(provider.status.canFetch, isFalse);
-      expect(provider.status.message.toLowerCase(), isNot(contains('no cameras here')));
+      expect(
+        provider.status.message.toLowerCase(),
+        isNot(contains('no cameras here')),
+      );
     });
 
     test('never reads as something a rider just saw', () async {
@@ -312,7 +318,10 @@ void main() {
         HazardMapFreshness.fading,
       );
       expect(
-        HazardMapSymbols.describe(sighting, now: reported.add(const Duration(minutes: 5))),
+        HazardMapSymbols.describe(
+          sighting,
+          now: reported.add(const Duration(minutes: 5)),
+        ),
         contains('5 min ago'),
       );
     });

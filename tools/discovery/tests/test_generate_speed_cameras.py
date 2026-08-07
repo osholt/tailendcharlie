@@ -49,9 +49,7 @@ def test_output_is_stable_across_fetch_order() -> None:
     # So regenerating from the same extract produces an identical file and the
     # diff shows real change rather than the order Overpass answered in.
     forward = build_features([_document(_node(9, 51.5, -2.4), _node(2, 51.6, -2.3))])
-    reversed_order = build_features(
-        [_document(_node(2, 51.6, -2.3), _node(9, 51.5, -2.4))]
-    )
+    reversed_order = build_features([_document(_node(2, 51.6, -2.3), _node(9, 51.5, -2.4))])
 
     assert forward == reversed_order
 
@@ -116,9 +114,7 @@ def test_does_not_put_a_vendor_model_name_in_front_of_a_rider() -> None:
 
 
 def test_matches_a_role_whatever_case_the_extract_used() -> None:
-    features = build_features(
-        [_document(_node(1, 51.5, -2.45, enforcement="Average_Speed"))]
-    )
+    features = build_features([_document(_node(1, 51.5, -2.45, enforcement="Average_Speed"))])
 
     assert features[0]["properties"]["role"] == "average"
 
