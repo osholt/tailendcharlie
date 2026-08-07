@@ -240,6 +240,8 @@ class RelayCompatibilityResult {
 
 abstract interface class RelayCompatibilityApi {
   Future<RelayCompatibilityResult> checkCompatibility();
+
+  void close();
 }
 
 class InternetSyncResult {

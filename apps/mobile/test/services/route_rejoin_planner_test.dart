@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/imported_route.dart' as route_domain;
@@ -11,7 +12,38 @@ import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_rejoin_planner.dart';
 
+class _CloseTrackingClient extends http.BaseClient {
+  var closeCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    throw StateError('No request expected in this lifecycle test.');
+  }
+
+  @override
+  void close() {
+    closeCount += 1;
+    super.close();
+  }
+}
+
 void main() {
+  test('managed OSRM planner closes its owned HTTP client exactly once', () {
+    final client = _CloseTrackingClient();
+    final managed = ManagedRouteRejoinPlanner.osrm(
+      routingBaseUrl: Uri.parse('https://routing.example.test'),
+      distanceUnit: DistanceUnit.miles,
+      clientFactory: () => client,
+    );
+
+    expect(managed.planner.routingService, isA<OsrmRoadRoutingService>());
+
+    managed.dispose();
+    managed.dispose();
+
+    expect(client.closeCount, 1);
+  });
+
   // A straight run east along latitude 51 in 0.01 degree steps. One step is
   // roughly 700 m at this latitude, so the route is about 14 km long.
   final route = [

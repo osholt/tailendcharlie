@@ -53,7 +53,7 @@ void main() {
     // The rider is told plainly what they are about to ride.
     expect(find.textContaining('Tidied: a recording'), findsOneWidget);
     await tester.tap(find.byKey(const Key('use-stored-route')));
-    await tester.pumpAndSettle();
+    await _followOriginalTrack(tester);
 
     expect(find.text('Review route'), findsOneWidget);
     expect(find.textContaining('tidied recording'), findsOneWidget);
@@ -100,7 +100,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('use-stored-route')));
-    await tester.pumpAndSettle();
+    await _followOriginalTrack(tester);
 
     await _confirmReview(tester);
 
@@ -137,7 +137,7 @@ void main() {
       findsOneWidget,
     );
     await tester.tap(find.byKey(const Key('use-stored-route')));
-    await tester.pumpAndSettle();
+    await _followOriginalTrack(tester);
 
     expect(find.text('Review route'), findsOneWidget);
     expect(find.textContaining('Reversed'), findsWidgets);
@@ -195,7 +195,7 @@ void main() {
     expect(find.textContaining('Raw track: every fix'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('use-stored-route')));
-    await tester.pumpAndSettle();
+    await _followOriginalTrack(tester);
 
     expect(find.textContaining('raw recorded track'), findsOneWidget);
     await _confirmReview(tester);
@@ -224,7 +224,7 @@ Future<void> _pumpMap(
   RecordedRouteStore? recorded,
   CompletedRideStore? rides,
   ValueChanged<ImportedRoute?>? onRouteCommitted,
-  // The ride menu's "Change route" asks the map to open its route-change sheet.
+  // The Ride page's "Change route" asks the map to open its route-change sheet.
   // Left off, the empty-route card is what a rider sees, and its own controls
   // are the ones under test.
   bool openChangeRouteSheet = false,
@@ -236,6 +236,7 @@ Future<void> _pumpMap(
     configuration: const BasemapConfiguration(),
     httpClient: MockClient((_) async => http.Response('', 404)),
   );
+  final recordedStore = recorded ?? InMemoryRecordedRouteStore();
   addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
 
   await tester.pumpWidget(
@@ -248,8 +249,9 @@ Future<void> _pumpMap(
         routeStore: store,
         routeImporter: RouteImporter(source: const _NoFileSource()),
         offlineTileCache: cache,
+        recordedRouteStore: recordedStore,
         storedRouteLibrary: StoredRouteLibrary(
-          recordedRoutes: recorded ?? InMemoryRecordedRouteStore(),
+          recordedRoutes: recordedStore,
           completedRides: rides ?? InMemoryCompletedRideStore(),
           idFactory: () => 'stored-route-id',
           clock: () => DateTime.utc(2026, 7, 28),
@@ -269,6 +271,17 @@ Future<void> _confirmReview(WidgetTester tester) async {
     scrollable: find.byType(Scrollable).last,
   );
   await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _followOriginalTrack(WidgetTester tester) async {
+  // While the decision is open the underlying import button intentionally
+  // keeps spinning, so pump only through the dialog transition before making
+  // the explicit offline choice. `pumpAndSettle` would wait on that spinner.
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+  expect(find.text('Add turn directions?'), findsOneWidget);
+  await tester.tap(find.byKey(const Key('follow-original-track')));
   await tester.pumpAndSettle();
 }
 

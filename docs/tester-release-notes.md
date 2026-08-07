@@ -36,7 +36,26 @@ permissions by design.
 - ...
 ```
 
-## Next Android and iOS tester build — unreleased — 3 August 2026
+## iOS build 42 / Android build 42 — 4 August 2026
+
+### What to test
+
+1. Start or join a ride and use the bottom **Ride** tab. The common ride
+   actions should be visible there without opening a separate hamburger menu.
+2. Open the **Alerts** tab. It should focus on road alerts, rerouting and riders
+   who actually need attention; routine location status and technical provider
+   details should no longer crowd this screen.
+3. Check that the less common contact and sharing actions are still available
+   by expanding **Contact and sharing** on the Ride page.
+
+### Fixed
+
+- Removed the remaining Ride actions hamburger menu from the live map and
+  dashboard.
+- Consolidated ride controls into the Ride page and simplified the former
+  Safety menu into an actionable Alerts screen.
+
+## iOS build 41 / Android build 40 — 3 August 2026
 
 The newest section is always first, so this is the one to read. Everything in
 the iOS build 40 section below is also in this build — and so is the 30 July
@@ -87,6 +106,28 @@ the reports we had, so the app now captures the missing data itself.
    invitation code** action under the ride-code field. The camera icon in the
    field still works; the label is there because the icon alone was invisible
    enough that this feature was reported missing.
+9. **Import a GPX track with no turn instructions.** Choose **Generate
+   navigable route** while online. The original should appear as a grey dashed
+   line behind the proposed blue road route, with confidence and deviation
+   figures to review before confirming. Cancel and check that the current route
+   did not change; import it again and choose **Follow original line** to prove
+   the offline option still works. The original should be in **Saved routes**
+   after either choice (#325).
+10. **Tap a private ride invitation from WhatsApp and email.** It should open
+    Tail End Charlie, show the six-digit ride code and ask before joining. Try
+    once from a cold launch and once while the app is already open. If another
+    ride is active, it must keep that ride rather than silently replacing it.
+    Uninstalling the app should make the same link open a help/install page;
+    copying the whole link into **Paste** must still join (#275).
+11. **Prepare a ride on the phone, then connect to CarPlay.** The CarPlay map
+    should use the same style, route, riders and forward-looking framing as the
+    phone, with a smaller group overview, turn/marker symbols, speed and mapped
+    speed limit. As leader, use **Start prepared ride** and confirm both the
+    route summary and any no-TEC warning. Create/join and first-time permission
+    prompts deliberately remain on the phone (#295, #328).
+12. **From the CarPlay map, report a hazard and open SOS.** Report should use
+    the current location and SOS must require confirmation. Check the launcher
+    and map controls on a right-hand-drive display if one is available (#295).
 
 ### Fixed and new
 
@@ -115,6 +156,20 @@ the reports we had, so the app now captures the missing data itself.
 - The mini-map frames riders it cannot place yet (#172).
 - A route with no turn prompts says that, rather than claiming the route failed
   (#303).
+- An imported track with no turn prompts can now be road-matched into a
+  navigable candidate. The original is preserved, uncertain matches are
+  rejected, and the candidate is compared against it before confirmation
+  (#325).
+- Ride invitations are now tappable Universal/App Links. The private resolve
+  token stays in the URL fragment, the established paste invitation still
+  works, and the app refuses to replace an active ride silently (#275).
+- The riding surface now has labelled Map, Details and Safety navigation plus
+  one shared **Ride actions** sheet; leaders can end for everyone from the same
+  leave/end action (#306).
+- CarPlay now uses the ride map style and route framing, rider symbols, group
+  mini-map, navigation symbols, speed/speed limit, report/SOS actions and a
+  leader-only **Start prepared ride** action. Ride creation, joining, route
+  choice and first permissions remain phone setup (#295, #328).
 
 ### Known limitations
 
@@ -127,11 +182,9 @@ the reports we had, so the app now captures the missing data itself.
 - **The second half of the lost-ride report (#299) is unexplained.** The saved
   track is proven complete by test, and the archive now says so when it fails.
   If a ride still goes missing, that is new information.
-- An imported GPX track still cannot be turned into a navigable route — there is
-  no snap-to-roads feature (#325). The app says so rather than offering it.
-- CarPlay opens on an unzoomed map of the whole UK with nothing on it (#295).
-- The app still has more menus than it should. Two of the worst unlabelled icons
-  are fixed; the consolidation itself is not done (#306).
+- CarPlay still needs a signed physical iPhone/head-unit run before it can be
+  called release-validated. The installed iOS 26.5 simulator filters unsigned
+  restricted-entitlement builds from its CarPlay catalogue (#295, #328).
 
 ## iOS build 40 — 1.0.1 — 2 August 2026
 

@@ -377,17 +377,28 @@ void main() {
     expect(find.text('Navigation'), findsOneWidget);
     expect(find.text('Navigation map'), findsOneWidget);
     expect(find.byIcon(Icons.map), findsOneWidget);
-    expect(find.byIcon(Icons.tune_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.health_and_safety_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.two_wheeler_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.warning_amber_outlined), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.tune_outlined));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
 
     expect(find.text('Oliver'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('MARKING STATS'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Marker mode'), findsOneWidget);
-    expect(find.byTooltip('Leave or switch ride'), findsOneWidget);
-    expect(find.byTooltip('Share ride summary'), findsOneWidget);
+    expect(find.byKey(const Key('open-ride-actions')), findsNothing);
     expect(find.text('MARKING STATS'), findsOneWidget);
+
+    expect(find.text('Ride actions'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Share ride summary'), findsOneWidget);
+    expect(find.text('Ride roster'), findsWidgets);
+    expect(find.text('Navigation map'), findsNothing);
+    expect(find.text('End ride'), findsNothing);
 
     await tester.scrollUntilVisible(
       find.text('QUICK MESSAGES'),
@@ -396,11 +407,13 @@ void main() {
     );
     expect(find.text('QUICK MESSAGES'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.health_and_safety_outlined));
+    await tester.tap(find.byIcon(Icons.warning_amber_outlined));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ride awareness'), findsOneWidget);
-    expect(find.text('ACTIVE HAZARDS'), findsOneWidget);
+    expect(find.text('Alerts'), findsWidgets);
+    expect(find.text('ROAD ALERTS'), findsOneWidget);
+    expect(find.text('EXTERNAL SOURCES'), findsNothing);
+    expect(find.text('RIDER STATUS'), findsNothing);
 
     controller.dispose();
   });
@@ -516,7 +529,7 @@ void main() {
 
     final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
     expect(bar.labelBehavior, NavigationDestinationLabelBehavior.alwaysShow);
-    for (final label in ['Map', 'Details', 'Safety']) {
+    for (final label in ['Map', 'Ride', 'Alerts']) {
       expect(find.text(label), findsWidgets, reason: label);
     }
 
@@ -549,7 +562,7 @@ void main() {
       // paid at a standstill.
       expect(rail.minWidth, 72);
       expect(rail.labelType, NavigationRailLabelType.all);
-      for (final label in ['Map', 'Details', 'Safety']) {
+      for (final label in ['Map', 'Ride', 'Alerts']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
 
@@ -563,13 +576,16 @@ void main() {
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.tune_outlined));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Leave or switch ride'));
+    final leaveOrEnd = find.byKey(const Key('ride-actions-leave-or-end'));
+    await tester.ensureVisible(leaveOrEnd);
     await tester.pumpAndSettle();
-    expect(find.text('Leave this ride?'), findsOneWidget);
+    await tester.tap(leaveOrEnd);
+    await tester.pumpAndSettle();
+    expect(find.text('Leave or end this ride?'), findsOneWidget);
 
-    await tester.tap(find.text('Leave and choose another'));
+    await tester.tap(find.text('Leave only'));
     await tester.pumpAndSettle();
 
     expect(find.text('Create a ride'), findsOneWidget);
@@ -595,16 +611,20 @@ void main() {
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.tune_outlined));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('End ride'));
+    final leaveOrEnd = find.byKey(const Key('ride-actions-leave-or-end'));
+    await tester.ensureVisible(leaveOrEnd);
+    await tester.pumpAndSettle();
+    await tester.tap(leaveOrEnd);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('end-ride-for-everyone')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('end-ride-marking-summary')), findsOneWidget);
     expect(find.textContaining('1 session'), findsOneWidget);
-    // Both entry points now share one dialog, so the consequence a leader reads
-    // no longer depends on which button they pressed (#306). This is the half
-    // the dashboard's own dialog never had.
+    // The consolidated Leave-or-end decision reaches the one full
+    // confirmation, including the consequence the old dashboard dialog missed.
     expect(find.textContaining('ends the group ride for everyone'), findsOne);
 
     await tester.tap(find.text('Cancel'));
@@ -620,9 +640,14 @@ void main() {
     await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.tune_outlined));
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('End ride'));
+    final leaveOrEnd = find.byKey(const Key('ride-actions-leave-or-end'));
+    await tester.ensureVisible(leaveOrEnd);
+    await tester.pumpAndSettle();
+    await tester.tap(leaveOrEnd);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('end-ride-for-everyone')));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'End ride'));
     await tester.pumpAndSettle();

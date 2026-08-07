@@ -69,6 +69,7 @@ import '../../services/ride_completion_detector.dart';
 import '../../services/route_progress.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
+import '../../services/ride_summary_exporter.dart';
 import '../../services/enforcement_alert_detector.dart';
 import '../../services/hazard_map_relevance.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
@@ -87,6 +88,7 @@ import '../map/ride_map.dart';
 import '../map/route_review_screen.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/notification_preferences_sheet.dart';
+import '../settings/unit_settings_sheet.dart';
 import 'ice_share_inbox_sheet.dart';
 import '../situational_awareness/situational_awareness_screen.dart';
 import '../simulation/ride_simulation_screen.dart';
@@ -414,13 +416,16 @@ Set<String> registeredTecRiderIds({
       .toSet();
 }
 
-/// Compact, always-available navigation for the full-screen map canvas.
-class _RideNavigationMenu extends StatelessWidget {
-  const _RideNavigationMenu({
-    required this.simulation,
-    required this.selectedIndex,
-    required this.onSelected,
+/// The labelled action surface embedded directly in the Ride destination.
+///
+/// These actions used to sit behind a hamburger on both the map and dashboard.
+/// Keeping them on the page means there is no second navigation system to
+/// discover, while the moving map keeps only its large riding-time controls.
+class _RideActionsPanel extends StatelessWidget {
+  const _RideActionsPanel({
     required this.canChangeRoute,
+    required this.onSettings,
+    required this.onShareSummary,
     required this.onOpenRoster,
     required this.onShareRoster,
     required this.onChangeRoute,
@@ -441,14 +446,12 @@ class _RideNavigationMenu extends StatelessWidget {
     required this.ridePaused,
     required this.canToggleRidePause,
     required this.onToggleRidePause,
-    required this.canEndRide,
-    required this.onEndRide,
+    required this.onLeaveOrEndRide,
   });
 
-  final bool simulation;
-  final int selectedIndex;
-  final ValueChanged<int> onSelected;
   final bool canChangeRoute;
+  final VoidCallback onSettings;
+  final VoidCallback onShareSummary;
   final VoidCallback onOpenRoster;
   final VoidCallback onShareRoster;
   final VoidCallback onChangeRoute;
@@ -473,206 +476,174 @@ class _RideNavigationMenu extends StatelessWidget {
   final bool ridePaused;
   final bool canToggleRidePause;
   final VoidCallback onToggleRidePause;
-  final bool canEndRide;
-  final VoidCallback onEndRide;
+  final VoidCallback onLeaveOrEndRide;
 
   @override
   Widget build(BuildContext context) {
-    final destinations = <({int index, IconData icon, String label})>[
-      (index: 0, icon: Icons.map_outlined, label: 'Navigation map'),
-      if (simulation)
-        (index: 1, icon: Icons.science_outlined, label: 'Ride Lab'),
-      (
-        index: simulation ? 2 : 1,
-        icon: Icons.tune_outlined,
-        label: 'Ride details',
-      ),
-      (
-        index: simulation ? 3 : 2,
-        icon: Icons.health_and_safety_outlined,
-        label: 'Safety',
-      ),
-    ];
-    return SafeArea(
-      top: false,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Ride menu', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 8),
-            for (final destination in destinations)
-              ListTile(
-                key: Key('ride-menu-${destination.index}'),
-                leading: Icon(destination.icon),
-                title: Text(destination.label),
-                trailing: selectedIndex == destination.index
-                    ? const Icon(Icons.check, color: Color(0xFFFFC857))
-                    : null,
-                onTap: () => onSelected(destination.index),
-              ),
-            const Divider(height: 20),
-            if (maneuverCount > 0)
-              ListTile(
-                key: const Key('ride-menu-maneuvers'),
-                leading: const Icon(Icons.list_alt),
-                title: const Text('All turns'),
-                subtitle: Text(
-                  '$maneuverCount instruction${maneuverCount == 1 ? '' : 's'} '
-                  'for this route',
-                ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  onShowManeuvers();
-                },
-              ),
-            ListTile(
-              key: const Key('ride-menu-open-roster'),
-              leading: const Icon(Icons.groups_2_outlined),
-              title: const Text('Ride roster'),
-              subtitle: const Text('Presence, freshness and relay evidence'),
-              onTap: () {
-                Navigator.of(context).pop();
-                onOpenRoster();
-              },
+    return Padding(
+      padding: const EdgeInsets.only(top: 22),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Ride actions',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Route, group, sharing and ride controls are all on this page.',
+            style: TextStyle(color: Color(0xFF98A3B1)),
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            key: const Key('ride-actions-settings'),
+            leading: const Icon(Icons.settings_outlined),
+            title: const Text('Settings'),
+            subtitle: const Text(
+              'Units, map style, rider symbol and ride preferences',
             ),
-            if (canChangeRoute)
-              ListTile(
-                key: const Key('ride-menu-change-route'),
-                leading: const Icon(Icons.edit_road_outlined),
-                title: const Text('Change route'),
-                subtitle: const Text(
-                  'Plan a destination, import a GPX file, or load the demo route',
-                ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  onChangeRoute();
-                },
-              ),
+            onTap: onSettings,
+          ),
+          ListTile(
+            key: const Key('ride-actions-share-summary'),
+            leading: const Icon(Icons.summarize_outlined),
+            title: const Text('Share ride summary'),
+            subtitle: const Text('Current ride details and recorded route'),
+            onTap: onShareSummary,
+          ),
+          const Divider(height: 20),
+          if (maneuverCount > 0)
             ListTile(
-              key: const Key('ride-menu-share-roster'),
-              leading: const Icon(Icons.groups_outlined),
-              title: const Text('Share rider list'),
-              subtitle: const Text(
-                'Names and roles, to paste into a group chat you create',
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                onShareRoster();
-              },
-            ),
-            ListTile(
-              key: const Key('ride-menu-emergency-info'),
-              leading: const Icon(Icons.medical_information_outlined),
-              title: const Text('Emergency info'),
-              subtitle: const Text('Edit your details and sharing settings'),
-              onTap: () {
-                Navigator.of(context).pop();
-                onEmergencyInfo();
-              },
-            ),
-            ListTile(
-              key: const Key('ride-menu-notifications'),
-              leading: const Icon(Icons.notifications_outlined),
-              title: const Text('Ride notifications'),
-              subtitle: const Text(
-                'Background alert permission and preferences',
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                onNotifications();
-              },
-            ),
-            if (canManageObserverAccess)
-              ListTile(
-                key: const Key('ride-menu-observer-access'),
-                leading: const Icon(Icons.visibility_outlined),
-                title: const Text('Share watcher link'),
-                subtitle: const Text(
-                  'Private, read-only web view for a trusted contact',
-                ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  onObserverAccess();
-                },
-              ),
-            if (canShareIceInfo)
-              ListTile(
-                key: const Key('ride-menu-share-ice-info'),
-                leading: const Icon(Icons.contact_emergency_outlined),
-                title: const Text('Share my emergency contact'),
-                subtitle: const Text('Shares it with the whole group, now'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  onShareIceInfo();
-                },
-              ),
-            ListTile(
-              key: const Key('ride-menu-share-own-number'),
-              leading: const Icon(Icons.phone_forwarded_outlined),
-              title: Text(
-                ownPhoneNumberShared
-                    ? 'Your number is shared'
-                    : 'Share my phone number',
-              ),
+              key: const Key('ride-menu-maneuvers'),
+              leading: const Icon(Icons.list_alt),
+              title: const Text('All turns'),
               subtitle: Text(
-                !hasOwnPhoneNumber
-                    ? 'Optional. Add your number first, so they can ring you '
-                          'if you stop'
-                    : ownPhoneNumberShared
-                    ? 'Sent to $ownPhoneNumberRecipientLabel for this ride. '
-                          'Cleared when the ride ends'
-                    : 'Gives it to $ownPhoneNumberRecipientLabel for this ride '
-                          'only',
+                '$maneuverCount instruction${maneuverCount == 1 ? '' : 's'} '
+                'for this route',
               ),
-              onTap: () {
-                Navigator.of(context).pop();
-                onShareOwnPhoneNumber();
-              },
+              onTap: onShowManeuvers,
             ),
+          ListTile(
+            key: const Key('ride-menu-open-roster'),
+            leading: const Icon(Icons.groups_2_outlined),
+            title: const Text('Ride roster'),
+            subtitle: const Text('Presence, freshness and relay evidence'),
+            onTap: onOpenRoster,
+          ),
+          if (canChangeRoute)
             ListTile(
-              key: const Key('ride-menu-view-ice-shares'),
-              leading: Badge(
-                isLabelVisible: receivedIceShareCount > 0,
-                label: Text('$receivedIceShareCount'),
-                child: const Icon(Icons.contacts_outlined),
+              key: const Key('ride-menu-change-route'),
+              leading: const Icon(Icons.edit_road_outlined),
+              title: const Text('Change route'),
+              subtitle: const Text(
+                'Plan a destination, import a GPX file, or load the demo route',
               ),
-              title: const Text('Shared emergency contacts'),
-              subtitle: const Text('From other riders, for this ride only'),
-              onTap: () {
-                Navigator.of(context).pop();
-                onViewIceShares();
-              },
+              onTap: onChangeRoute,
             ),
-            if (canToggleRidePause || canEndRide) const Divider(height: 20),
-            if (canToggleRidePause)
+          if (canManageObserverAccess)
+            ListTile(
+              key: const Key('ride-menu-observer-access'),
+              leading: const Icon(Icons.visibility_outlined),
+              title: const Text('Share watcher link'),
+              subtitle: const Text(
+                'Private, read-only web view for a trusted contact',
+              ),
+              onTap: onObserverAccess,
+            ),
+          ExpansionTile(
+            key: const Key('ride-more-options'),
+            leading: const Icon(Icons.more_horiz),
+            title: const Text('Contacts and other sharing'),
+            subtitle: const Text('Less common ride setup'),
+            children: [
               ListTile(
-                key: const Key('ride-menu-toggle-pause'),
-                leading: Icon(ridePaused ? Icons.play_arrow : Icons.pause),
-                title: Text(ridePaused ? 'Resume ride' : 'Pause ride'),
+                key: const Key('ride-menu-share-roster'),
+                leading: const Icon(Icons.groups_outlined),
+                title: const Text('Share rider list'),
                 subtitle: const Text(
-                  'Pauses tracking and progress for the whole group',
+                  'Names and roles, to paste into a group chat you create',
                 ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  onToggleRidePause();
-                },
+                onTap: onShareRoster,
               ),
-            if (canEndRide)
               ListTile(
-                key: const Key('ride-menu-end-ride'),
-                leading: const Icon(Icons.stop_circle_outlined),
-                title: const Text('End ride'),
-                subtitle: const Text('Ends the group ride for everyone'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  onEndRide();
-                },
+                key: const Key('ride-menu-emergency-info'),
+                leading: const Icon(Icons.medical_information_outlined),
+                title: const Text('Emergency info'),
+                subtitle: const Text('Edit your details and sharing settings'),
+                onTap: onEmergencyInfo,
               ),
-          ],
-        ),
+              ListTile(
+                key: const Key('ride-menu-notifications'),
+                leading: const Icon(Icons.notifications_outlined),
+                title: const Text('Ride notifications'),
+                subtitle: const Text(
+                  'Background alert permission and preferences',
+                ),
+                onTap: onNotifications,
+              ),
+              if (canShareIceInfo)
+                ListTile(
+                  key: const Key('ride-menu-share-ice-info'),
+                  leading: const Icon(Icons.contact_emergency_outlined),
+                  title: const Text('Share my emergency contact'),
+                  subtitle: const Text('Shares it with the whole group, now'),
+                  onTap: onShareIceInfo,
+                ),
+              ListTile(
+                key: const Key('ride-menu-share-own-number'),
+                leading: const Icon(Icons.phone_forwarded_outlined),
+                title: Text(
+                  ownPhoneNumberShared
+                      ? 'Your number is shared'
+                      : 'Share my phone number',
+                ),
+                subtitle: Text(
+                  !hasOwnPhoneNumber
+                      ? 'Optional. Add your number first, so they can ring you '
+                            'if you stop'
+                      : ownPhoneNumberShared
+                      ? 'Sent to $ownPhoneNumberRecipientLabel for this ride. '
+                            'Cleared when the ride ends'
+                      : 'Gives it to $ownPhoneNumberRecipientLabel for this '
+                            'ride only',
+                ),
+                onTap: onShareOwnPhoneNumber,
+              ),
+              ListTile(
+                key: const Key('ride-menu-view-ice-shares'),
+                leading: Badge(
+                  isLabelVisible: receivedIceShareCount > 0,
+                  label: Text('$receivedIceShareCount'),
+                  child: const Icon(Icons.contacts_outlined),
+                ),
+                title: const Text('Shared emergency contacts'),
+                subtitle: const Text('From other riders, for this ride only'),
+                onTap: onViewIceShares,
+              ),
+            ],
+          ),
+          if (canToggleRidePause) const Divider(height: 20),
+          if (canToggleRidePause)
+            ListTile(
+              key: const Key('ride-menu-toggle-pause'),
+              leading: Icon(ridePaused ? Icons.play_arrow : Icons.pause),
+              title: Text(ridePaused ? 'Resume ride' : 'Pause ride'),
+              subtitle: const Text(
+                'Pauses tracking and progress for the whole group',
+              ),
+              onTap: onToggleRidePause,
+            ),
+          ListTile(
+            key: const Key('ride-actions-leave-or-end'),
+            leading: const Icon(Icons.logout),
+            title: const Text('Leave or end ride'),
+            subtitle: const Text(
+              'Leaders can end it for everyone; other riders leave alone',
+            ),
+            onTap: onLeaveOrEndRide,
+          ),
+        ],
       ),
     );
   }
@@ -966,6 +937,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// to that widget's lifecycle. Both are monotonic and fed the same fixes, so
   /// they agree.
   final _completionProgressTracker = RouteProgressTracker();
+  late final ManagedRouteRejoinPlanner _managedRejoinPlanner;
   late final RouteRejoinPlanner _rejoinPlanner;
   Future<void> _rejoinChain = Future.value();
   String? _rejoinGuidance;
@@ -1082,13 +1054,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // Issue #102: advisory off-route rejoin routing. Uses the same documented
     // OSRM configuration as the rest of the app; when it is unreachable the
     // planner degrades to the plain "you are off route by X" message.
-    _rejoinPlanner = RouteRejoinPlanner(
-      routingService: OsrmRoadRoutingService(
-        client: http.Client(),
-        baseUrl: RoutingConfiguration.fromEnvironment().routingBaseUrl,
-      ),
+    _managedRejoinPlanner = ManagedRouteRejoinPlanner.osrm(
+      routingBaseUrl: RoutingConfiguration.fromEnvironment().routingBaseUrl,
       distanceUnit: widget.distanceUnits.value,
     );
+    _rejoinPlanner = _managedRejoinPlanner.planner;
     widget.rideController.addListener(_onRideControllerChanged);
     widget.sharedRoutes.addListener(_onSharedRoutesChanged);
     _capturePlannerLinkError();
@@ -1126,7 +1096,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   /// A GPX file can arrive (via the platform's "Open in..." delivery) while
   /// this ride is already on screen - e.g. resuming from background. Reuses
-  /// the same request path as the ride menu's "Change route", just with the
+  /// the same request path as the Ride page's "Change route", just with the
   /// file already in hand instead of asking the map to show its picker.
   void _onSharedRoutesChanged() {
     if (!mounted) return;
@@ -3427,14 +3397,14 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               label: 'Ride Lab',
             ),
           const NavigationDestination(
-            icon: Icon(Icons.tune_outlined),
-            selectedIcon: Icon(Icons.tune),
-            label: 'Details',
+            icon: Icon(Icons.two_wheeler_outlined),
+            selectedIcon: Icon(Icons.two_wheeler),
+            label: 'Ride',
           ),
           const NavigationDestination(
-            icon: Icon(Icons.health_and_safety_outlined),
-            selectedIcon: Icon(Icons.health_and_safety),
-            label: 'Safety',
+            icon: Icon(Icons.warning_amber_outlined),
+            selectedIcon: Icon(Icons.warning_amber),
+            label: 'Alerts',
           ),
         ];
         if (landscape && !hideWhileMoving) {
@@ -3557,7 +3527,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       markerFeaturesEnabled:
           widget.rideController.coordinationMode.usesSecondBikeDropOff,
       onLeaveRide: _confirmLeaveRideFromMap,
-      onOpenRideMenu: _openRideMenu,
       onRouteCommitted: _onRouteChanged,
       onNavigationGuidanceChanged: _onNavigationGuidanceChanged,
       onNavigationViewportChanged: (viewport) {
@@ -4160,60 +4129,86 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<void> _confirmEndRide() async {
     // One shared dialog, so the words a leader reads do not depend on whether
-    // they came from the ride menu or the dashboard header (#306).
+    // they came from the Ride page or the map's Leave control (#306).
     await confirmEndRide(
       context,
       controller: widget.rideController,
       relayCanCarryReopen: _relayCanCarryReopen,
+      onShareSummary: _shareCurrentRideSummary,
     );
   }
 
-  Future<void> _openRideMenu() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => _RideNavigationMenu(
-        simulation: _isSimulation,
-        selectedIndex: _selectedIndex,
-        canChangeRoute:
-            _isSimulation || widget.rideController.isLocalRideLeader,
-        onSelected: (index) {
-          Navigator.of(context).pop();
-          if (mounted) setState(() => _selectedIndex = index);
-        },
-        onOpenRoster: _openRoster,
-        onShareRoster: _shareRoster,
-        onChangeRoute: _requestRouteChange,
-        maneuverCount: const NavigationGuidancePlanner()
-            .instructions(_activeRoute)
-            .length,
-        onShowManeuvers: _openManeuverList,
-        onEmergencyInfo: () =>
-            EmergencyInfoSheet.show(context, widget.riderProfile),
-        onNotifications: _openNotificationPreferences,
-        canManageObserverAccess: _observerAccessController != null,
-        onObserverAccess: _openObserverAccess,
-        canShareIceInfo: widget.riderProfile.hasEmergencyInfo,
-        onShareIceInfo: _shareIceInfoWithGroup,
-        receivedIceShareCount: widget.rideController.receivedIceShares.length,
-        onViewIceShares: _openIceShareInbox,
-        hasOwnPhoneNumber: widget.riderProfile.hasOwnPhoneNumber,
-        ownPhoneNumberShared: widget.rideController.hasSharedOwnContactNumber,
-        ownPhoneNumberRecipientLabel: _ownContactRecipients.toRideGroup
-            ? 'this ride'
-            : 'the leader and Tail End Charlie',
-        onShareOwnPhoneNumber: () => unawaited(_shareOwnPhoneNumber()),
-        ridePaused: widget.rideController.ridePaused,
-        canToggleRidePause:
-            !_isSimulation &&
-            widget.rideController.rideStarted &&
-            widget.rideController.session?.role == RideRole.lead,
-        onToggleRidePause: _toggleRidePause,
-        canEndRide: canEndRideForEveryone(widget.rideController),
-        onEndRide: _confirmEndRide,
+  Widget _buildRideActions() => _RideActionsPanel(
+    canChangeRoute: _isSimulation || widget.rideController.isLocalRideLeader,
+    onSettings: _openUnitSettings,
+    onShareSummary: _shareCurrentRideSummary,
+    onOpenRoster: _openRoster,
+    onShareRoster: _shareRoster,
+    onChangeRoute: _requestRouteChange,
+    maneuverCount: const NavigationGuidancePlanner()
+        .instructions(_activeRoute)
+        .length,
+    onShowManeuvers: _openManeuverList,
+    onEmergencyInfo: () =>
+        EmergencyInfoSheet.show(context, widget.riderProfile),
+    onNotifications: _openNotificationPreferences,
+    canManageObserverAccess: _observerAccessController != null,
+    onObserverAccess: _openObserverAccess,
+    canShareIceInfo: widget.riderProfile.hasEmergencyInfo,
+    onShareIceInfo: _shareIceInfoWithGroup,
+    receivedIceShareCount: widget.rideController.receivedIceShares.length,
+    onViewIceShares: _openIceShareInbox,
+    hasOwnPhoneNumber: widget.riderProfile.hasOwnPhoneNumber,
+    ownPhoneNumberShared: widget.rideController.hasSharedOwnContactNumber,
+    ownPhoneNumberRecipientLabel: _ownContactRecipients.toRideGroup
+        ? 'this ride'
+        : 'the leader and Tail End Charlie',
+    onShareOwnPhoneNumber: () => unawaited(_shareOwnPhoneNumber()),
+    ridePaused: widget.rideController.ridePaused,
+    canToggleRidePause:
+        !_isSimulation &&
+        widget.rideController.rideStarted &&
+        widget.rideController.session?.role == RideRole.lead,
+    onToggleRidePause: _toggleRidePause,
+    onLeaveOrEndRide: _confirmLeaveRideFromMap,
+  );
+
+  void _openUnitSettings() {
+    unawaited(
+      UnitSettingsSheet.show(
+        context,
+        widget.distanceUnits,
+        widget.mapStyleMode,
+        widget.riderProfile,
+        speedLimitDisplay: widget.speedLimitDisplay,
+        currentRideActive: true,
+        lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
+        testControl: widget.testControl,
+        spokenGuidance: widget.spokenGuidance,
       ),
     );
+  }
+
+  Future<void> _shareCurrentRideSummary() async {
+    final session = widget.rideController.session;
+    if (session == null) return;
+    try {
+      final renderObject = context.findRenderObject();
+      final origin = renderObject is RenderBox && renderObject.hasSize
+          ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+          : null;
+      await const SystemRideSummarySharer().share(
+        session,
+        widget.rideController.events,
+        distanceUnit: widget.distanceUnits.value,
+        sharePositionOrigin: origin,
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not share ride summary: $error')),
+      );
+    }
   }
 
   bool get _relayCanCarryReopen =>
@@ -4560,14 +4555,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Widget _buildDetails() => RideDashboard(
     controller: widget.rideController,
-    relayCanCarryReopen: _relayCanCarryReopen,
     distanceUnits: widget.distanceUnits,
-    mapStyleMode: widget.mapStyleMode,
-    speedLimitDisplay: widget.speedLimitDisplay,
-    riderProfile: widget.riderProfile,
-    testControl: widget.testControl,
-    spokenGuidance: widget.spokenGuidance,
-    onLeaveRide: _leaveRide,
+    rideActions: _buildRideActions(),
     onOpenRoster: _openRoster,
     relayController: _relayController,
     markerAssistanceController: _markerAssistanceController,
@@ -4719,6 +4708,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _mapPosition.dispose();
     _mapNavigationPosition.dispose();
     _rejoinNavigationRoute.dispose();
+    _managedRejoinPlanner.dispose();
     _mapOverlays.dispose();
     _riderTrails.dispose();
     _quickMessageAlerts.dispose();

@@ -7,11 +7,13 @@ import 'package:latlong2/latlong.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/biker_place_catalogue.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_reshape_planner.dart';
 import '../../services/route_twistiness.dart';
+import '../../services/route_waypoint_editor.dart';
 import 'maneuver_list_screen.dart';
 import 'resolved_route_map_preview.dart';
 
@@ -34,11 +36,13 @@ class RouteReviewScreen extends StatefulWidget {
     this.twistinessScore,
     this.warnings = const [],
     this.previousRoute,
+    this.comparisonRoute,
     this.canEditStops = false,
     this.showMarkerPlan = true,
     this.onMarkerReviewChanged,
     this.onReshapeRoute,
     this.onRouteChanged,
+    this.pointOfInterestLoader,
   });
 
   final ImportedRoute route;
@@ -53,6 +57,11 @@ class RouteReviewScreen extends StatefulWidget {
   final double? twistinessScore;
   final List<String> warnings;
   final ImportedRoute? previousRoute;
+
+  /// A route drawn underneath [route] for an explicit before/after review.
+  /// This is separate from [previousRoute], which also drives the material
+  /// length-change warning and is used by ordinary route editing flows.
+  final ImportedRoute? comparisonRoute;
   final bool canEditStops;
   final bool showMarkerPlan;
 
@@ -62,6 +71,7 @@ class RouteReviewScreen extends StatefulWidget {
   final ValueChanged<MarkerPlanReview>? onMarkerReviewChanged;
   final RouteReshapeCallback? onReshapeRoute;
   final ValueChanged<ImportedRoute>? onRouteChanged;
+  final Future<BikerPlaceCatalogue> Function()? pointOfInterestLoader;
 
   static Future<RouteReviewAction> show(
     BuildContext context, {
@@ -73,11 +83,13 @@ class RouteReviewScreen extends StatefulWidget {
     double? twistinessScore,
     List<String> warnings = const [],
     ImportedRoute? previousRoute,
+    ImportedRoute? comparisonRoute,
     bool canEditStops = false,
     bool showMarkerPlan = true,
     ValueChanged<MarkerPlanReview>? onMarkerReviewChanged,
     RouteReshapeCallback? onReshapeRoute,
     ValueChanged<ImportedRoute>? onRouteChanged,
+    Future<BikerPlaceCatalogue> Function()? pointOfInterestLoader,
   }) async =>
       await Navigator.of(context).push<RouteReviewAction>(
         MaterialPageRoute(
@@ -91,11 +103,13 @@ class RouteReviewScreen extends StatefulWidget {
             twistinessScore: twistinessScore,
             warnings: warnings,
             previousRoute: previousRoute,
+            comparisonRoute: comparisonRoute,
             canEditStops: canEditStops,
             showMarkerPlan: showMarkerPlan,
             onMarkerReviewChanged: onMarkerReviewChanged,
             onReshapeRoute: onReshapeRoute,
             onRouteChanged: onRouteChanged,
+            pointOfInterestLoader: pointOfInterestLoader,
           ),
         ),
       ) ??
@@ -120,10 +134,15 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   int _reshapeGeneration = 0;
   String? _activeShapingPointId;
   String? _reshapeError;
-  bool _reshapeEnabled = false;
+  late bool _reshapeEnabled;
   bool _reshapeQueued = false;
   bool _reshaping = false;
   int _shapeSequence = 0;
+  BikerPlaceCatalogue _pointOfInterests = BikerPlaceCatalogue.empty;
+  List<BikerPlace> _nearbyPointsOfInterest = const [];
+  bool _showPointsOfInterest = true;
+  bool _loadingPointsOfInterest = false;
+  String? _pointOfInterestError;
 
   DistanceUnit get distanceUnit => widget.distanceUnit;
   BasemapConfiguration get basemapConfiguration => widget.basemapConfiguration;
@@ -132,12 +151,49 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   double? get twistinessScore => _twistinessScore;
   List<String> get warnings => widget.warnings;
   ImportedRoute? get previousRoute => widget.previousRoute;
+  ImportedRoute? get comparisonRoute => widget.comparisonRoute;
   bool get canEditStops => widget.canEditStops;
 
   /// The route as reviewed so far. Everything downstream - the plan, the pins,
   /// the counts - reads this, so the map and the list can never disagree about
   /// which positions are still suggested.
   ImportedRoute get route => _route.withMarkerReview(_markerReview);
+
+  @override
+  void initState() {
+    super.initState();
+    // A destination plan opens ready to manipulate, matching the web planner.
+    // Imported/recorded routes retain the quieter review-only default.
+    _reshapeEnabled = canEditStops && widget.onReshapeRoute != null;
+    if (canEditStops && widget.onReshapeRoute != null) {
+      unawaited(_loadPointsOfInterest());
+    }
+  }
+
+  Future<void> _loadPointsOfInterest() async {
+    setState(() {
+      _loadingPointsOfInterest = true;
+      _pointOfInterestError = null;
+    });
+    try {
+      final catalogue =
+          await (widget.pointOfInterestLoader?.call() ??
+              BikerPlaceCatalogue.loadAsset());
+      if (!mounted) return;
+      setState(() {
+        _pointOfInterests = catalogue;
+        _nearbyPointsOfInterest = catalogue.nearRoute(route.allPoints);
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _pointOfInterestError =
+            'Points of interest could not be loaded. Route drawing still works. $error';
+      });
+    } finally {
+      if (mounted) setState(() => _loadingPointsOfInterest = false);
+    }
+  }
 
   void _applyReview(MarkerPlanReview review) {
     setState(() => _markerReview = review);
@@ -244,6 +300,9 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
           setState(() {
             _route = result.route.withMarkerReview(_markerReview);
             _lastSuccessfulRoute = _route;
+            _nearbyPointsOfInterest = _pointOfInterests.nearRoute(
+              _route.allPoints,
+            );
             _distanceMeters = result.distanceMeters;
             _duration = result.duration;
             _twistinessScore = result.twistinessScore;
@@ -264,6 +323,148 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
         }
       },
     );
+  }
+
+  Future<void> _showPointOfInterest(BikerPlace place) async {
+    if (_reshaping || _reshapeQueued || widget.onReshapeRoute == null) return;
+    final alreadyAdded = route.waypoints.any(
+      (waypoint) => _sameMapPoint(waypoint.point, place.point),
+    );
+    final add = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 3, right: 12),
+                    child: Icon(Icons.local_cafe, color: Color(0xFFF97316)),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          place.name,
+                          style: Theme.of(sheetContext).textTheme.titleLarge,
+                        ),
+                        if (place.address.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(place.address),
+                        ],
+                        const SizedBox(height: 4),
+                        Text(
+                          place.source,
+                          style: const TextStyle(
+                            color: Color(0xFF98A3B1),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                key: Key('add-point-of-interest-${place.id}'),
+                onPressed: alreadyAdded
+                    ? null
+                    : () => Navigator.of(sheetContext).pop(true),
+                icon: Icon(
+                  alreadyAdded ? Icons.check : Icons.add_location_alt_outlined,
+                ),
+                label: Text(
+                  alreadyAdded ? 'Already on this route' : 'Add as waypoint',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (add != true || !mounted) return;
+    final candidate = insertRouteWaypoint(
+      route,
+      RouteWaypoint(
+        point: place.point,
+        name: place.name,
+        description: [
+          if (place.address.isNotEmpty) place.address,
+          place.source,
+        ].join(' · '),
+        symbol: 'Restaurant',
+      ),
+    );
+    await _recalculateEditedRoute(
+      candidate,
+      failurePrefix: 'Could not route via ${place.name}.',
+    );
+  }
+
+  Future<void> _removeWaypoint(int index) async {
+    if (_reshaping || _reshapeQueued || widget.onReshapeRoute == null) return;
+    final waypoint = route.waypoints[index];
+    final candidate = removeRouteWaypoint(route, index);
+    await _recalculateEditedRoute(
+      candidate,
+      failurePrefix: 'Could not remove ${waypoint.name ?? 'that waypoint'}.',
+    );
+  }
+
+  Future<void> _recalculateEditedRoute(
+    ImportedRoute candidate, {
+    required String failurePrefix,
+  }) async {
+    final callback = widget.onReshapeRoute;
+    if (callback == null) return;
+    _reshapeTimer?.cancel();
+    _reshapeGeneration += 1;
+    final previous = route;
+    setState(() {
+      _activeShapingPointId = null;
+      _route = candidate;
+      _reshaping = true;
+      _reshapeQueued = false;
+      _reshapeError = null;
+    });
+    try {
+      final result = await callback(candidate, candidate.shapingPoints);
+      if (!mounted) return;
+      setState(() {
+        _route = result.route.withMarkerReview(_markerReview);
+        _lastSuccessfulRoute = _route;
+        _nearbyPointsOfInterest = _pointOfInterests.nearRoute(_route.allPoints);
+        _distanceMeters = result.distanceMeters;
+        _duration = result.duration;
+        _twistinessScore = result.twistinessScore;
+      });
+      widget.onRouteChanged?.call(_route);
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _route = previous;
+        _reshapeError =
+            '$failurePrefix The previous route is unchanged. $error';
+      });
+    } finally {
+      if (mounted) setState(() => _reshaping = false);
+    }
+  }
+
+  BikerPlace? _pointOfInterestForPin(RoutePreviewPin pin) {
+    final id = pin.id;
+    if (id == null) return null;
+    return _pointOfInterests.places
+        .where((place) => 'poi-${place.id}' == id)
+        .firstOrNull;
   }
 
   void _reject(MarkerPlanPoint point) =>
@@ -331,11 +532,35 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
         .map((path) => path.points.map(_latLng).toList(growable: false))
         .where((points) => points.isNotEmpty)
         .toList(growable: false);
+    final comparisonPreviewPaths = comparisonRoute?.paths
+        .map((path) => path.points)
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
+    final comparisonSegments = comparisonRoute?.paths
+        .map((path) => path.points.map(_latLng).toList(growable: false))
+        .where((points) => points.isNotEmpty)
+        .toList(growable: false);
     final reviewWaypoints = _reviewWaypoints(route);
     final markerPlan = widget.showMarkerPlan
         ? _analyzer.analyze(route)
         : const RouteMarkerPlan(points: []);
+    final visiblePointsOfInterest = canEditStops && _showPointsOfInterest
+        ? _nearbyPointsOfInterest
+        : const <BikerPlace>[];
+    final pointOfInterestPins = visiblePointsOfInterest
+        .map(
+          (place) => RoutePreviewPin(
+            id: 'poi-${place.id}',
+            label: place.name,
+            point: place.point,
+            kind: 'poi',
+            interactive: true,
+            includeInFraming: false,
+          ),
+        )
+        .toList(growable: false);
     final allPoints = [
+      ...?comparisonSegments?.expand((points) => points),
       ...routeSegments.expand((points) => points),
       ...reviewWaypoints.map((waypoint) => _latLng(waypoint.point)),
     ];
@@ -396,6 +621,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                     ? ResolvedRouteMapPreview(
                         key: const Key('route-review-map'),
                         paths: previewPaths,
+                        referencePaths: comparisonPreviewPaths ?? const [],
                         pins: reviewWaypoints.indexed
                             .map(
                               (entry) => RoutePreviewPin(
@@ -425,9 +651,16 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                                 ),
                               ),
                             )
+                            .followedBy(pointOfInterestPins)
                             .toList(growable: false),
                         basemapConfiguration: basemapConfiguration,
                         reshapeEnabled: _reshapeEnabled,
+                        onPinTap: (pin) {
+                          final place = _pointOfInterestForPin(pin);
+                          if (place != null) {
+                            unawaited(_showPointOfInterest(place));
+                          }
+                        },
                         onReshapeStart: _beginRouteReshape,
                         onReshapeUpdate: _updateRouteReshape,
                         onReshapeEnd: _endRouteReshape,
@@ -454,6 +687,25 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                               userAgentPackageName: 'me.osholt.ride_relay',
                               maxNativeZoom:
                                   basemapConfiguration.maximumNativeZoom,
+                            ),
+                          if (comparisonSegments?.any(
+                                (points) => points.length >= 2,
+                              ) ??
+                              false)
+                            PolylineLayer(
+                              key: const Key('route-review-original-line'),
+                              polylines: [
+                                for (final points in comparisonSegments!)
+                                  if (points.length >= 2)
+                                    Polyline(
+                                      points: points,
+                                      color: const Color(0xFFB8C0CC),
+                                      strokeWidth: 5,
+                                      pattern: StrokePattern.dashed(
+                                        segments: const [10, 8],
+                                      ),
+                                    ),
+                              ],
                             ),
                           if (routeSegments.any((points) => points.length >= 2))
                             PolylineLayer(
@@ -503,6 +755,46 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                                               ),
                                             ),
                                           ],
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                            ),
+                          if (visiblePointsOfInterest.isNotEmpty)
+                            MarkerLayer(
+                              key: const Key('route-review-points-of-interest'),
+                              markers: visiblePointsOfInterest
+                                  .map(
+                                    (place) => Marker(
+                                      point: _latLng(place.point),
+                                      width: 40,
+                                      height: 40,
+                                      child: Semantics(
+                                        button: true,
+                                        label:
+                                            'Add ${place.name} as a waypoint',
+                                        child: GestureDetector(
+                                          key: Key(
+                                            'route-point-of-interest-${place.id}',
+                                          ),
+                                          onTap: () => unawaited(
+                                            _showPointOfInterest(place),
+                                          ),
+                                          child: Tooltip(
+                                            message: place.name,
+                                            child: const Icon(
+                                              Icons.local_cafe,
+                                              color: Color(0xFFF97316),
+                                              size: 30,
+                                              shadows: [
+                                                Shadow(
+                                                  color: Color(0xFF10151C),
+                                                  blurRadius: 4,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -640,6 +932,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                     const SizedBox(height: 8),
                     _WarningCard(warning: error),
                   ],
+                  if (_pointOfInterestError case final error?) ...[
+                    const SizedBox(height: 8),
+                    _WarningCard(warning: error),
+                  ],
                   if (_reshaping || _reshapeQueued) ...[
                     const SizedBox(height: 10),
                     const LinearProgressIndicator(
@@ -663,8 +959,8 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                           avatar: const Icon(Icons.gesture, size: 18),
                           label: Text(
                             _reshapeEnabled
-                                ? 'Finish reshaping'
-                                : 'Reshape route',
+                                ? 'Finish drawing'
+                                : 'Draw route around',
                           ),
                           onSelected: (selected) =>
                               setState(() => _reshapeEnabled = selected),
@@ -676,8 +972,38 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                             label: const Text('Undo adjustment'),
                             onPressed: _undoReshape,
                           ),
+                        if (canEditStops)
+                          FilterChip(
+                            key: const Key('toggle-route-points-of-interest'),
+                            selected: _showPointsOfInterest,
+                            avatar: _loadingPointsOfInterest
+                                ? const Icon(Icons.hourglass_top, size: 18)
+                                : const Icon(Icons.local_cafe, size: 18),
+                            label: Text(
+                              _pointOfInterests.places.isEmpty
+                                  ? 'Points of interest'
+                                  : 'Nearby places (${visiblePointsOfInterest.length})',
+                            ),
+                            onSelected: (selected) => setState(
+                              () => _showPointsOfInterest = selected,
+                            ),
+                          ),
                       ],
                     ),
+                    if (canEditStops &&
+                        _showPointsOfInterest &&
+                        _pointOfInterests.places.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Drag the blue route to shape it. Tap an orange café or '
+                        'biker place to add it as an ordered waypoint; the live '
+                        'preview recalculates before you confirm.',
+                        style: TextStyle(
+                          color: Color(0xFF98A3B1),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                     if (route.shapingPoints.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Wrap(
@@ -844,6 +1170,23 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                             subtitle: entry.$2.description == null
                                 ? null
                                 : Text(entry.$2.description!),
+                            trailing:
+                                canEditStops &&
+                                    entry.$1 > 0 &&
+                                    entry.$1 < reviewWaypoints.length - 1
+                                ? IconButton(
+                                    key: Key(
+                                      'remove-reviewed-waypoint-${entry.$1}',
+                                    ),
+                                    tooltip: 'Remove this waypoint',
+                                    onPressed: _reshaping || _reshapeQueued
+                                        ? null
+                                        : () => unawaited(
+                                            _removeWaypoint(entry.$1),
+                                          ),
+                                    icon: const Icon(Icons.delete_outline),
+                                  )
+                                : null,
                           ),
                     ],
                   ),
@@ -891,6 +1234,12 @@ Color _markerPlanColor(MarkerPlanPointKind kind) => switch (kind) {
   MarkerPlanPointKind.safetyReview => const Color(0xFFFF8A4C),
   MarkerPlanPointKind.musterPoint => const Color(0xFF68A9FF),
 };
+
+bool _sameMapPoint(GeoPoint first, GeoPoint second) {
+  final latitude = first.latitude - second.latitude;
+  final longitude = first.longitude - second.longitude;
+  return latitude * latitude + longitude * longitude < 1e-10;
+}
 
 /// How far the rider will actually travel: the length of the path that will be
 /// ridden and tracked, not the sum of every path in the file.

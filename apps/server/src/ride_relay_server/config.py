@@ -73,6 +73,10 @@ class Settings(BaseSettings):
         ge=1024 * 1024,
         le=1024 * 1024 * 1024,
     )
+    build_commit: str = Field(
+        default="unknown",
+        pattern=r"^(unknown|[0-9a-f]{7,40})$",
+    )
     protocol_version: int = Field(default=1, ge=1, le=1000)
     minimum_client_protocol: int = Field(default=1, ge=1, le=1000)
     supported_capabilities: list[str] = Field(

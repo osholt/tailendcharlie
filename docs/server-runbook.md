@@ -89,6 +89,7 @@ ssh oracle-relay '
   git fetch --quiet origin
   git checkout --quiet --detach origin/main
   git log --oneline -1
+  export RIDE_RELAY_BUILD_COMMIT="$(git rev-parse --verify HEAD)"
   docker compose --env-file deploy/.env -f deploy/compose.yaml config >/dev/null
   docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
   # Only if this deploy changed deploy/Caddyfile - see below for why.
@@ -97,6 +98,8 @@ ssh oracle-relay '
 
 # 4. Verify from outside, not from the box.
 curl --fail --max-time 15 https://relay.example.com/health/live
+curl --fail --max-time 15 https://relay.example.com/api/v1/compatibility \
+  | jq -r .serverBuildCommit
 ssh oracle-relay 'cd /opt/tailendcharlie && docker compose --env-file deploy/.env -f deploy/compose.yaml ps'
 ```
 
@@ -105,6 +108,10 @@ Things worth knowing before you run it:
 - **The checkout is a detached HEAD at a pinned commit**, not a branch. That is
   deliberate: `git log --oneline -1` on the box then answers "what is deployed"
   exactly, with no chance of a stale local branch pointer lying about it.
+- **The image is stamped from that pinned commit.** The exported
+  `RIDE_RELAY_BUILD_COMMIT` becomes the public `serverBuildCommit` field on
+  `/api/v1/compatibility`. `unknown` means the image was built outside the
+  documented deploy command and must not be accepted as release-parity evidence.
 - **Migrations run themselves.** The server image's entrypoint is
   `alembic upgrade head && exec ride-relay-server` (`apps/server/Dockerfile`), so
   a schema change is applied when the container starts. There is no separate
@@ -242,6 +249,12 @@ topology before internet exposure.
 
 ## Operations
 
+- `.github/workflows/relay-health.yml` checks the public relay every 15 minutes.
+  It verifies HTTPS liveness, compatibility metadata and exact parity with the
+  current `main` commit, opens one repository issue on failure, and closes it
+  after recovery. Repository issue notifications are the maintainer-facing
+  alert, so keep them enabled. Every merge to `main` therefore needs a prompt
+  relay deploy, even when the server code itself did not change.
 - Alert if readiness fails, 5xx rises, sync latency grows, PostgreSQL storage
   grows unexpectedly, or cleanup stops logging hourly completion.
 - Back up with `pg_dump -Fc` to encrypted off-host storage and test restore.

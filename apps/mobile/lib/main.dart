@@ -9,6 +9,7 @@ import 'controllers/completed_rides_controller.dart';
 import 'controllers/map_style_mode_controller.dart';
 import 'controllers/ride_code_preference_controller.dart';
 import 'controllers/ride_controller.dart';
+import 'controllers/ride_invitation_link_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/road_rating_controller.dart';
 import 'controllers/shared_route_controller.dart';
@@ -60,6 +61,7 @@ Future<void> main() async {
     // must not become a tenth serial await - see the #209 note above.
     testControl,
     spokenGuidance,
+    rideInvitationLinks,
   ) = await (
     (
       RiderProfileController.load(),
@@ -76,6 +78,7 @@ Future<void> main() async {
     ).wait,
     TestControlController.load(),
     SpokenGuidanceController.load(),
+    RideInvitationLinkController.load(),
   ).wait;
 
   final completedRides = await CompletedRidesController.load(
@@ -115,6 +118,7 @@ Future<void> main() async {
       speedLimitDisplay: speedLimitDisplay,
       recordedRoutes: recordedRoutes,
       completedRides: completedRides,
+      rideInvitationLinks: rideInvitationLinks,
       roadRatings: roadRatings,
       testControl: testControl,
       testControlRegistry: testControlRegistry,

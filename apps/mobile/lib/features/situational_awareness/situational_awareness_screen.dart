@@ -42,7 +42,7 @@ class SituationalAwarenessScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: showAppBar ? AppBar(title: const Text('Ride awareness')) : null,
+    appBar: showAppBar ? AppBar(title: const Text('Alerts')) : null,
     body: AnimatedBuilder(
       animation: controller,
       builder: (context, _) => Center(
@@ -58,12 +58,15 @@ class SituationalAwarenessScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
               ],
-              _RouteStatusCard(
-                controller: controller,
-                rejoinGuidance: rejoinGuidance,
-              ),
-              if (!rideStarted) ...[
+              if (controller.routeAlerts.isNotEmpty ||
+                  rejoinGuidance != null) ...[
+                _RouteStatusCard(
+                  controller: controller,
+                  rejoinGuidance: rejoinGuidance,
+                ),
                 const SizedBox(height: 12),
+              ],
+              if (!rideStarted) ...[
                 const _PreStartLocationCard(),
                 if (locationController case final locationController?) ...[
                   const SizedBox(height: 12),
@@ -73,16 +76,10 @@ class SituationalAwarenessScreen extends StatelessWidget {
                     onStopped: onLocationStopped,
                   ),
                 ],
-              ] else if (locationController case final locationController?) ...[
-                const SizedBox(height: 12),
-                ForegroundLocationCard(
-                  controller: locationController,
-                  onStopped: onLocationStopped,
-                ),
               ],
               const SizedBox(height: 20),
               _SectionHeader(
-                title: 'ACTIVE HAZARDS',
+                title: 'ROAD ALERTS',
                 action: FilledButton.icon(
                   key: const Key('report-hazard-button'),
                   onPressed: controller.busy
@@ -96,8 +93,8 @@ class SituationalAwarenessScreen extends StatelessWidget {
               if (controller.activeHazards.isEmpty)
                 const _EmptyCard(
                   icon: Icons.check_circle_outline,
-                  title: 'No active rider reports',
-                  detail: 'Reports expire automatically unless reconfirmed.',
+                  title: 'No active road alerts',
+                  detail: 'Report something the riders behind need to know.',
                 )
               else
                 ...controller.activeHazards.map(
@@ -121,47 +118,23 @@ class SituationalAwarenessScreen extends StatelessWidget {
                   onDismiss: onDismissTrafficAlternative!,
                 ),
               ],
-              const SizedBox(height: 20),
-              const _SectionHeader(title: 'RIDER STATUS'),
-              const SizedBox(height: 10),
-              if (controller.riderLocations.isEmpty)
-                const _EmptyCard(
-                  icon: Icons.location_searching,
-                  title: 'Waiting for rider positions',
-                  detail:
-                      'Stale or inaccurate GPS will not create a false '
-                      'off-course alert.',
-                )
-              else
-                ...controller.riderLocations.map((location) {
-                  final alert = controller.alertFor(location.riderId);
+              if (controller.routeAlerts.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                const _SectionHeader(title: 'RIDERS NEEDING ATTENTION'),
+                const SizedBox(height: 10),
+                ...controller.routeAlerts.map((alert) {
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 9),
                     child: RiderStatusCard(
-                      displayName: location.displayName,
+                      displayName: alert.displayName,
                       alert: alert,
-                      onAcknowledge: alert == null || alert.acknowledged
+                      onAcknowledge: alert.acknowledged
                           ? null
-                          : () => controller.acknowledgeAlert(location.riderId),
+                          : () => controller.acknowledgeAlert(alert.riderId),
                     ),
                   );
                 }),
-              const SizedBox(height: 20),
-              const _SectionHeader(title: 'EXTERNAL SOURCES'),
-              const SizedBox(height: 10),
-              if (controller.externalProviders.isEmpty)
-                const _EmptyCard(
-                  icon: Icons.cloud_off_outlined,
-                  title: 'No provider configured',
-                  detail: 'Rider reports still work offline.',
-                )
-              else
-                ...controller.externalProviders.map(
-                  (provider) => Padding(
-                    padding: const EdgeInsets.only(bottom: 9),
-                    child: ProviderStatusCard(provider: provider),
-                  ),
-                ),
+              ],
             ],
           ),
         ),
@@ -575,6 +548,7 @@ class _RouteStatusCard extends StatelessWidget {
     final urgent = alerts.where(
       (alert) => alert.assessment.coordinatorActionRequired,
     );
+    final returningToRoute = rejoinGuidance != null;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -600,19 +574,20 @@ class _RouteStatusCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  urgent.isEmpty
-                      ? 'No confirmed route alerts'
-                      : '${urgent.length} coordinator alert'
-                            '${urgent.length == 1 ? '' : 's'}',
+                  returningToRoute
+                      ? 'Return to the route'
+                      : '${alerts.length} route alert'
+                            '${alerts.length == 1 ? '' : 's'}',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 3),
-                Text(
-                  controller.route.length < 2
-                      ? 'Load a route to enable deviation detection.'
-                      : 'Hysteresis filters short GPS jumps and poor accuracy.',
-                  style: const TextStyle(color: Color(0xFF9CA7B5)),
-                ),
+                if (!returningToRoute)
+                  Text(
+                    urgent.isEmpty
+                        ? 'Check the rider shown below.'
+                        : 'The ride coordinator may need to respond.',
+                    style: const TextStyle(color: Color(0xFF9CA7B5)),
+                  ),
                 if (rejoinGuidance case final guidance?) ...[
                   const SizedBox(height: 8),
                   Text(

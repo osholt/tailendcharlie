@@ -5,10 +5,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
-import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_controller.dart';
-import '../../controllers/rider_profile_controller.dart';
-import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/marker_assistance_controller.dart';
 import '../../domain/quick_message.dart';
@@ -16,14 +13,9 @@ import '../../domain/ride_coordination_mode.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
 import '../../services/ride_connectivity_summary.dart';
-import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
-import '../../controllers/spoken_guidance_controller.dart';
-import '../../controllers/test_control_controller.dart';
 import 'ride_invitation_qr_sheet.dart';
-import '../settings/unit_settings_sheet.dart';
-import 'end_ride_confirmation.dart';
 import 'marker_assistance_widgets.dart';
 
 class RideDashboard extends StatelessWidget {
@@ -31,55 +23,31 @@ class RideDashboard extends StatelessWidget {
     super.key,
     required this.controller,
     required this.distanceUnits,
-    required this.mapStyleMode,
-    required this.onLeaveRide,
+    required this.rideActions,
     required this.onOpenRoster,
-    required this.riderProfile,
-    required this.speedLimitDisplay,
     this.relayController,
     this.markerAssistanceController,
     this.internetRelayController,
     this.onSendQuickMessage,
     this.localObserverAssistanceActive = false,
-    this.relayCanCarryReopen = true,
     this.serviceWarning,
     this.connectivity,
-    this.summarySharer,
-    this.testControl,
-    this.spokenGuidance,
   });
 
   final RideController controller;
   final DistanceUnitController distanceUnits;
-  final MapStyleModeController mapStyleMode;
-  final Future<void> Function() onLeaveRide;
+  final Widget rideActions;
   final VoidCallback onOpenRoster;
-  final RiderProfileController riderProfile;
-  final SpeedLimitDisplayController speedLimitDisplay;
   final NearbyRelayController? relayController;
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
   final Future<void> Function(QuickMessage)? onSendQuickMessage;
 
-  /// Whether the relay can carry a reopen, which decides whether ending the
-  /// ride is reversible for the group. Passed through to the shared
-  /// confirmation so this entry point states the same consequence as the ride
-  /// menu's (#306).
-  final bool relayCanCarryReopen;
   final bool localObserverAssistanceActive;
   final String? serviceWarning;
 
   /// The reconciled answer to "is the group seeing where I am".
   final RideConnectivitySummary? connectivity;
-  final RideSummarySharer? summarySharer;
-
-  /// Null unless this build carries the test-control define; forwarded to the
-  /// settings sheet so a running test can be switched off without leaving the
-  /// ride.
-  final TestControlController? testControl;
-
-  /// Whether turn instructions are spoken (#286).
-  final SpokenGuidanceController? spokenGuidance;
 
   @override
   Widget build(BuildContext context) {
@@ -92,40 +60,6 @@ class RideDashboard extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Tail End Charlie'),
         backgroundColor: Colors.transparent,
-        actions: [
-          IconButton(
-            tooltip: 'Settings',
-            onPressed: () => UnitSettingsSheet.show(
-              context,
-              distanceUnits,
-              mapStyleMode,
-              riderProfile,
-              speedLimitDisplay: speedLimitDisplay,
-              currentRideActive: true,
-              lastRelaySync: internetRelayController?.status.lastSuccessfulSync,
-              testControl: testControl,
-              spokenGuidance: spokenGuidance,
-            ),
-            icon: const Icon(Icons.settings_outlined),
-          ),
-          IconButton(
-            tooltip: 'Leave or switch ride',
-            onPressed: () => _confirmLeaveRide(context),
-            icon: const Icon(Icons.swap_horiz),
-          ),
-          IconButton(
-            tooltip: 'Share ride summary',
-            onPressed: () => _shareRideSummary(context),
-            icon: const Icon(Icons.summarize_outlined),
-          ),
-          if (controller.isLocalRideLeader)
-            IconButton(
-              tooltip: 'End ride',
-              onPressed: () => _confirmEndRide(context),
-              icon: const Icon(Icons.logout),
-            ),
-          const SizedBox(width: 8),
-        ],
       ),
       body: AnimatedBuilder(
         animation: Listenable.merge([controller, ?markerAssistanceController]),
@@ -142,6 +76,7 @@ class RideDashboard extends StatelessWidget {
                   coordinationMode: mode,
                   onRoleChanged: controller.setRole,
                 ),
+                rideActions,
                 if (!isSolo) ...[
                   const SizedBox(height: 14),
                   _ConnectionCard(
@@ -212,63 +147,6 @@ class RideDashboard extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  Future<void> _confirmLeaveRide(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Leave this ride?'),
-        content: const Text(
-          'This removes the ride and its locally queued events from this phone. '
-          'The ride continues for everyone else, and you can then create or join another ride.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Leave and choose another'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed ?? false) {
-      await onLeaveRide();
-    }
-  }
-
-  Future<void> _confirmEndRide(BuildContext context) async {
-    // The shared dialog, so this and the ride menu cannot say different things
-    // about whether ending the ride can be undone (#306).
-    await confirmEndRide(
-      context,
-      controller: controller,
-      relayCanCarryReopen: relayCanCarryReopen,
-      onShareSummary: () => _shareRideSummary(context),
-    );
-  }
-
-  Future<void> _shareRideSummary(BuildContext context) async {
-    try {
-      final renderObject = context.findRenderObject();
-      final origin = renderObject is RenderBox && renderObject.hasSize
-          ? renderObject.localToGlobal(Offset.zero) & renderObject.size
-          : null;
-      await (summarySharer ?? const SystemRideSummarySharer()).share(
-        controller.session!,
-        controller.events,
-        distanceUnit: distanceUnits.value,
-        sharePositionOrigin: origin,
-      );
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not share ride summary: $error')),
-      );
-    }
   }
 }
 

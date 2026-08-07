@@ -14,6 +14,7 @@ import 'package:ride_relay/domain/geo_point.dart' as awareness_geo;
 import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/quick_message.dart';
+import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
@@ -22,6 +23,7 @@ import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/enforcement_alert_detector.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
+import 'package:ride_relay/services/imported_track_matcher.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/map_style_repository.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
@@ -1791,11 +1793,222 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets(
+    'an imported track can generate and review a navigable candidate',
+    (tester) async {
+      final directory = Directory.systemTemp.createTempSync(
+        'map-track-matching-test',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final original = _testRoute(id: 'source-track', name: 'Sunday route');
+      final candidate = ImportedRoute(
+        id: 'matched-track',
+        name: 'Sunday route (navigable)',
+        importedAt: DateTime.utc(2026, 8, 3),
+        sourceFileName: 'matched-source-track.gpx',
+        paths: original.paths,
+        waypoints: original.waypoints,
+        maneuvers: const [
+          RouteManeuver(
+            position: GeoPoint(latitude: 51.455, longitude: -2.585),
+            type: 'turn',
+            modifier: 'left',
+          ),
+        ],
+      );
+      final matcher = _StubImportedTrackMatcher(
+        ImportedTrackMatch(
+          route: candidate,
+          confidence: 0.93,
+          traceCoverage: 1,
+          meanDeviationMeters: 4,
+          maximumDeviationMeters: 11,
+        ),
+      );
+      final savedRoutes = InMemoryRecordedRouteStore();
+      final routeStore = _RecordingRouteStore();
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: routeStore,
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            demoRouteLoader: () async => original,
+            importedTrackMatcher: matcher,
+            recordedRouteStore: savedRoutes,
+            rideStarted: false,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.ensureVisible(find.text('Use demo route'));
+      await tester.tap(find.text('Use demo route'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Add turn directions?'), findsOneWidget);
+      expect(find.textContaining('kept in Saved routes'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('generate-navigable-route')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(matcher.originals, [same(original)]);
+      expect(find.text('Review route'), findsOneWidget);
+      expect(find.text('Sunday route (navigable)'), findsOneWidget);
+      expect(
+        find.byKey(const Key('route-review-original-line')),
+        findsOneWidget,
+      );
+      expect(await savedRoutes.list(), [same(original)]);
+
+      await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(routeStore.route?.id, 'matched-track');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets('an imported track can stay as the original offline line', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-original-track-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final original = _testRoute(id: 'source-track', name: 'Sunday route');
+    final matcher = _StubImportedTrackMatcher(
+      ImportedTrackMatch(
+        route: original,
+        confidence: 1,
+        traceCoverage: 1,
+        meanDeviationMeters: 0,
+        maximumDeviationMeters: 0,
+      ),
+    );
+    final savedRoutes = InMemoryRecordedRouteStore();
+    final routeStore = _RecordingRouteStore();
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: routeStore,
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          demoRouteLoader: () async => original,
+          importedTrackMatcher: matcher,
+          recordedRouteStore: savedRoutes,
+          rideStarted: false,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.ensureVisible(find.text('Use demo route'));
+    await tester.tap(find.text('Use demo route'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('follow-original-track')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Review route'), findsOneWidget);
+    expect(matcher.originals, isEmpty);
+    expect(await savedRoutes.list(), [same(original)]);
+
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(routeStore.route?.id, original.id);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('a failed track match keeps the active route unchanged', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-track-match-failure-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final original = _testRoute(id: 'source-track', name: 'Sunday route');
+    final matcher = _StubImportedTrackMatcher.failure(
+      const FormatException(
+        'The road match was not confident enough. '
+        'The original line is unchanged.',
+      ),
+    );
+    final savedRoutes = InMemoryRecordedRouteStore();
+    final routeStore = _RecordingRouteStore();
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: routeStore,
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          demoRouteLoader: () async => original,
+          importedTrackMatcher: matcher,
+          recordedRouteStore: savedRoutes,
+          rideStarted: false,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.ensureVisible(find.text('Use demo route'));
+    await tester.tap(find.text('Use demo route'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('generate-navigable-route')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(routeStore.route, isNull);
+    expect(routeStore.savedRoutes, isEmpty);
+    expect(await savedRoutes.list(), [same(original)]);
+    expect(find.textContaining('not confident enough'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('cancel keeps the authoritative route unchanged', (tester) async {
     final directory = Directory.systemTemp.createTempSync('map-cancel-test');
     addTearDown(() => directory.deleteSync(recursive: true));
     final original = _testRoute(id: 'original', name: 'Original route');
-    final candidate = _testRoute(id: 'candidate', name: 'Candidate route');
+    final candidate = _testRoute(
+      id: 'candidate',
+      name: 'Candidate route',
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51.455, longitude: -2.585),
+          type: 'turn',
+        ),
+      ],
+    );
     final store = _RecordingRouteStore(original);
     final published = <ImportedRoute?>[];
     final cache = OfflineTileCache(
@@ -4542,6 +4755,23 @@ class _RecordingRouteStore implements RouteStore {
   }
 }
 
+class _StubImportedTrackMatcher implements ImportedTrackMatcher {
+  _StubImportedTrackMatcher(this.result) : error = null;
+
+  _StubImportedTrackMatcher.failure(this.error) : result = null;
+
+  final ImportedTrackMatch? result;
+  final Object? error;
+  final originals = <ImportedRoute>[];
+
+  @override
+  Future<ImportedTrackMatch> match(ImportedRoute original) async {
+    originals.add(original);
+    if (error case final failure?) throw failure;
+    return result!;
+  }
+}
+
 class _RecordingDestinationSearch implements DestinationSearchService {
   final queries = <String>[];
 
@@ -4629,20 +4859,24 @@ class _WidgetSpeedLimitProvider implements SpeedLimitProvider {
   void close() {}
 }
 
-ImportedRoute _testRoute({required String id, required String name}) =>
-    ImportedRoute(
-      id: id,
-      name: name,
-      importedAt: DateTime.utc(2026, 7, 23),
-      sourceFileName: '$id.gpx',
-      paths: const [
-        RoutePath(
-          kind: RoutePathKind.track,
-          points: [
-            GeoPoint(latitude: 51.45, longitude: -2.59),
-            GeoPoint(latitude: 51.46, longitude: -2.58),
-          ],
-        ),
+ImportedRoute _testRoute({
+  required String id,
+  required String name,
+  List<RouteManeuver> maneuvers = const [],
+}) => ImportedRoute(
+  id: id,
+  name: name,
+  importedAt: DateTime.utc(2026, 7, 23),
+  sourceFileName: '$id.gpx',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 51.45, longitude: -2.59),
+        GeoPoint(latitude: 51.46, longitude: -2.58),
       ],
-      waypoints: const [],
-    );
+    ),
+  ],
+  waypoints: const [],
+  maneuvers: maneuvers,
+);

@@ -28,6 +28,7 @@ def test_compatibility_document_advertises_protocol_and_capabilities(client) -> 
 
     assert response.status_code == 200
     assert response.json() == {
+        "serverBuildCommit": "unknown",
         "serverProtocol": 1,
         "minimumClientProtocol": 1,
         "maximumClientProtocol": 1,
@@ -40,6 +41,15 @@ def test_compatibility_document_advertises_protocol_and_capabilities(client) -> 
             "android": "https://tailendcharlie.app",
         },
     }
+
+
+def test_compatibility_document_reports_deployed_commit(settings) -> None:
+    settings.build_commit = "a2b4537595869ccd1530c77c3f2e72fe63389f41"
+    with TestClient(create_app(settings)) as client:
+        response = client.get("/api/v1/compatibility")
+
+    assert response.status_code == 200
+    assert response.json()["serverBuildCommit"] == settings.build_commit
 
 
 def test_sync_rejects_client_below_minimum_protocol(client, settings, synchronize) -> None:

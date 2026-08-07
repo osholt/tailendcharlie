@@ -37,11 +37,12 @@ The repository now contains an integrated development alpha:
 - CI definitions for mobile/server analysis and tests, container builds,
   PostgreSQL migrations, Android debug APKs, and unsigned iOS apps.
 
-The remaining P0 gates require physical evidence, deployment ownership, or
-external data rather than more UI claims, and each is now tracked: Android/iPhone
-radio and background testing (#268), battery testing (#269), foreground-route
-alert calibration (#270), field-tested marker/pass detection (#271), and
-per-device identity/application-layer encryption review (#272).
+The remaining P0 gates require physical evidence or foundational security work,
+rather than more UI claims, and each is now tracked: Android/iPhone radio and
+background testing (#268), battery testing (#269), foreground-route alert
+calibration (#270), field-tested marker/pass detection (#271), and protocol-2
+per-device identity/application-layer encryption implementation. The review is in
+[docs/security-threat-model.md](docs/security-threat-model.md) (#272).
 
 **The relay is deployed.** `relay.tailendcharlie.app` answers `/health/live` with
 `{"status":"ok"}` and advertises a capability set identical to this tree's
@@ -73,7 +74,11 @@ What remains of #274 is an **operator-owned tile archive**. The style is ours,
 but the tiles come from an upstream service, so the observer map still depends on
 someone else being up, and there is no offline region download.
 
-A licensed traffic provider (#277) is deferred by decision; see that issue.
+A licensed traffic provider is **not being selected now**. TomTom and HERE both
+cover UK incidents, but neither self-service licence grants the app's combination
+of group redistribution, navigation and CarPlay use without written permission.
+The comparison and reconsideration gate are in
+[docs/traffic-provider-decision.md](docs/traffic-provider-decision.md) (#277).
 
 Waze is unavailable as a hazard-read source: its partner data programme is
 limited to government agencies and road operators, and this project applied and
@@ -88,15 +93,14 @@ being enumerated, so sharing the private invite remains better practice - but th
 earlier claim here, that a typed code cannot start authenticated nearby or internet
 relay, was wrong.
 
-**Every join path needs connectivity once.** Both code and invite go through the
-relay's join-code directory, so there is no way to join a ride offline at all
-today - which is a real gap for a group standing in a car park with no signal, and
-the strongest argument for the QR work in #276. OS deep-link registration is done
-for planner route codes — the associated-domains entitlement, the published
-`apple-app-site-association` and an Android `autoVerify` filter all cover
-`/planner.html` — but a ride invitation is shared as pasteable text and has no
-registered link, so it cannot be tapped to join (#275). An in-app QR scanner does
-not exist; both `qr_code` icons in the app are decorative (#276).
+Typed codes, pasted private invitations and tapped invitation links need the
+join-code directory once. The private link puts its resolve token only in the URL
+fragment, is registered as `/join.html` alongside the existing `/planner.html`
+Universal/App Link, and keeps the old paste fallback. It therefore gets the
+relay's inactive/revoked answer without exposing capability material to the web
+server (#275). The QR invitation is the deliberately different offline path: it
+carries the full credentials directly and the in-app scanner joins without a
+directory lookup (#276/#279).
 
 ### Test hardware reality (31 July 2026)
 
@@ -573,7 +577,9 @@ Non-blocking:
 - Final name and visual identity.
 - Subscription model, including whether the parked camera and roadworks layers
   become paid-tier features.
-- Which licensed hazard provider, if any, is used after v1.
+- Licensed live traffic: none for now. Reconsider only with a funded owner and
+  written navigation, CarPlay, basemap-overlay, caching and group-redistribution
+  rights; see [docs/traffic-provider-decision.md](docs/traffic-provider-decision.md).
 
 ## 14. First implementation backlog
 

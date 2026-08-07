@@ -12,11 +12,24 @@ not bulk-download from the public OpenStreetMap tile servers.
 - Stores a versioned parsed route in application support storage.
 - Accepts UTF-8 files up to 10 MB and 200,000 points.
 - Rejects invalid coordinates, document type declarations, and empty geometry.
-- Treats recorded `<trk>` geometry as authoritative and never reroutes it.
+- Treats recorded `<trk>` geometry as authoritative and never silently
+  reroutes it.
 - Recognises web-planner tracks carrying the Tail End Charlie
   `<tec:road-route>` extension as calculated road routes. During review the app
   can refresh those through the road router to recover manoeuvre instructions;
   an ordinary recorded track remains untouched.
+- Offers an imported track with no manoeuvres as either **Follow original
+  line** (fully offline) or **Generate navigable route** (online). The latter
+  sends at most 90 bounded samples per continuous segment to OSRM's Match
+  service, keeps the original in Saved routes, and creates a separately
+  identified candidate with the returned road geometry and manoeuvres.
+- Rejects a road-matched candidate before route review if the provider splits
+  it into separate matches, reports under 70% confidence, matches under 90% of
+  sampled points, moves the samples by more than 35 m on average, or moves any
+  sample by more than 150 m. A successful review shows the original as a grey
+  dashed line underneath the blue navigable candidate and states the measured
+  confidence, coverage and deviation. Only **Confirm** makes the candidate the
+  active route; cancellation and every failure leave the active route alone.
 - Attempts to match sparse `<rte>` geometry, or waypoint-only GPX files, to the
   road network after an explicit import. If routing is unavailable, the original
   GPX remains usable and is stored unchanged.
@@ -45,6 +58,24 @@ Highlights are descriptive planning aids, not safety endorsements. Riders must
 check signs, closures, restrictions, weather, surface and current conditions.
 
 ## Riding display
+
+### Navigation surfaces
+
+The app has two primary contexts, split by when the rider uses them:
+
+- **Kerbside:** the labelled `Map`, `Details` and `Safety` navigation bar (or
+  rail in landscape). Setup, roster, settings, history and sharing use words,
+  and nothing in this context is reachable only through an unexplained icon.
+- **Riding:** the map and its glanceable controls. Icon-only controls are
+  allowed here because they must remain large enough for a gloved hand and the
+  labelled navigation chrome is hidden while moving.
+
+**Ride actions** is the one secondary surface shared by both contexts. The
+labelled button on Details and the map's riding-time menu icon open the same
+sheet. It contains settings, route setup, roster and sharing actions; it does
+not duplicate Map/Details/Safety navigation. Leaving and ending a ride use one
+combined **Leave or end ride** decision, so leaders see the option to end for
+everyone without hunting for a separate End action.
 
 While an active-ride screen is foregrounded, the app requests the platform
 screen wake lock for the whole ride surface, not only while GPS says the bike
@@ -104,22 +135,22 @@ shortest angular path, so crossing north rotates the short way.
 ### Overlay placement
 
 No persistent *status* surface is anchored to the top of the map: the upper band
-is where a rider on a mounted phone reads the road ahead. What that rule leaves
-free is the corners, and **three small things live in them**:
+is where a rider on a mounted phone reads the road ahead. The old ride-actions
+hamburger has also been removed; setup actions now live on the labelled Ride
+destination. Only **two small glances live in the map corners**:
 
 | corner | portrait | landscape |
 | --- | --- | --- |
-| top leading | ride menu | ride menu |
+| top leading | — | — |
 | top trailing | group overview | speed sign |
 | bottom trailing | — | group overview |
 
-Each is hard against a screen edge, none is wider than 45% or taller than 40% of
-the viewport, and the centre and upper-middle stay empty — the layout test
-asserts all of that per corner rather than trusting the placement. The ride menu
-is a control a rider reaches for by feel; the other two are *glances*, never
-targets, which is why the corner furthest from the road ahead is the cheapest
-place on the screen for them. Moving the group overview out of the bottom band
-also stops the camera's forward bias paying for a surface nobody acts on.
+Each is hard against a screen edge, neither is wider than 45% or taller than 40%
+of the viewport, and the centre and upper-middle stay empty. They are *glances*,
+never targets, which is why the corner furthest from the road ahead is the
+cheapest place on the screen for them. Moving the group overview out of the
+bottom band also stops the camera's forward bias paying for a surface nobody
+acts on.
 
 Everything else is bottom-anchored. Portrait is one band: urgent alerts, the TEC
 gap, then the turn banner, then the targets. Landscape splits into a left rail
@@ -619,9 +650,10 @@ the usable lane on the wrong side of the road.
 An **All turns** screen lists every instruction for the current route in riding
 order with distance from the start, distance from the rider, direction, exit
 number, road name or reference and a lane summary. It is reachable from route
-review before a ride, from the map menu, and from the ride menu while the map is
-in navigation mode. It is built from the persisted route by the same planner that
-drives the banner, so the two sequences match and no routing call is made.
+review before a ride, from the map menu, and directly on the labelled Ride page
+while the map is in navigation mode. It is built from the persisted route by
+the same planner that drives the banner, so the two sequences match and no
+routing call is made.
 
 This guidance complements the existing Google Maps, Waze, and GPX handoffs; it
 does not change or remove them. Spoken prompts are deferred until audio focus,

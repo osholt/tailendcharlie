@@ -45,6 +45,8 @@ class RoadRatingController extends ChangeNotifier {
     Random? random,
     Duration minimumReleaseDelay = defaultMinimumReleaseDelay,
     Duration maximumReleaseDelay = defaultMaximumReleaseDelay,
+    bool ownsClient = false,
+    bool ownsCompatibility = false,
   }) => RoadRatingController._(
     store,
     loadCatalogue,
@@ -55,6 +57,8 @@ class RoadRatingController extends ChangeNotifier {
     random ?? Random.secure(),
     minimumReleaseDelay,
     maximumReleaseDelay,
+    ownsClient,
+    ownsCompatibility,
   );
 
   RoadRatingController._(
@@ -67,6 +71,8 @@ class RoadRatingController extends ChangeNotifier {
     this._random,
     this.minimumReleaseDelay,
     this.maximumReleaseDelay,
+    this._ownsClient,
+    this._ownsCompatibility,
   );
 
   /// Builds the production controller. Returns null when this build has no
@@ -74,20 +80,24 @@ class RoadRatingController extends ChangeNotifier {
   /// deliver an answer.
   static Future<RoadRatingController?> openDefault({
     RoadRatingConfiguration? configuration,
+    @visibleForTesting http.Client Function()? clientFactory,
   }) async {
     final resolved = configuration ?? RoadRatingConfiguration.fromEnvironment();
     if (!resolved.isConfigured) return null;
+    final createClient = clientFactory ?? http.Client.new;
     final controller = RoadRatingController(
       store: await RoadRatingStore.openDefault(),
       loadCatalogue: MotorcycleDiscoveryCatalogue.loadAsset,
       client: HttpRoadRatingClient(
         configuration: resolved,
-        client: http.Client(),
+        client: createClient(),
       ),
       compatibility: HttpInternetRelayClient(
         configuration: resolved.compatibilityConfiguration,
-        client: http.Client(),
+        client: createClient(),
       ),
+      ownsClient: true,
+      ownsCompatibility: true,
     );
     // Every app launch drains whatever is due. Otherwise the only trigger would
     // be the end of the next ride, and a rating given after somebody's last ride
@@ -115,6 +125,8 @@ class RoadRatingController extends ChangeNotifier {
   final Future<MotorcycleDiscoveryCatalogue> Function() _loadCatalogue;
   final RoadRatingApi? _client;
   final RelayCompatibilityApi? _compatibility;
+  final bool _ownsClient;
+  final bool _ownsCompatibility;
   final RiddenRoadMatcher _matcher;
   final DateTime Function() _clock;
   final Random _random;
@@ -127,6 +139,7 @@ class RoadRatingController extends ChangeNotifier {
   bool _dismissed = false;
   String _catalogueVersion = MotorcycleDiscoveryCatalogue.unknownVersion;
   RoadRatingLimitation _limitation = RoadRatingLimitation.none;
+  bool _disposed = false;
 
   /// The roads to ask about, at most three, best first.
   List<RiddenRoad> get questions => _questions;
@@ -156,7 +169,7 @@ class RoadRatingController extends ChangeNotifier {
   /// Idempotent: the ended-ride screen rebuilds freely, and a second call is a
   /// no-op rather than a second set of questions.
   Future<void> prepare({required List<GeoPoint> riddenTrack}) async {
-    if (_prepared) return;
+    if (_disposed || _prepared) return;
     _prepared = true;
     try {
       final catalogue = await _loadCatalogue();
@@ -172,12 +185,14 @@ class RoadRatingController extends ChangeNotifier {
       debugPrint('Could not prepare road ratings: $error');
       _questions = const [];
     }
+    if (_disposed) return;
     notifyListeners();
     await flushPending();
   }
 
   /// Records the rider's verdict for [current] and moves on.
   Future<void> answer(RoadRatingVerdict verdict) async {
+    if (_disposed) return;
     final question = current;
     if (question == null) return;
     final now = _clock();
@@ -192,6 +207,7 @@ class RoadRatingController extends ChangeNotifier {
       ),
       now: now,
     );
+    if (_disposed) return;
     _index += 1;
     notifyListeners();
   }
@@ -199,16 +215,18 @@ class RoadRatingController extends ChangeNotifier {
   /// Skips [current] without sending anything, and does not ask again. Declining
   /// is an answer to the app even though it is not one to the catalogue.
   Future<void> skip() async {
+    if (_disposed) return;
     final question = current;
     if (question == null) return;
     await _store.markAsked(question.feature.id, now: _clock());
+    if (_disposed) return;
     _index += 1;
     notifyListeners();
   }
 
   /// Puts the whole card away for this ride without marking anything.
   void dismiss() {
-    if (_dismissed) return;
+    if (_disposed || _dismissed) return;
     _dismissed = true;
     notifyListeners();
   }
@@ -220,6 +238,7 @@ class RoadRatingController extends ChangeNotifier {
   /// sitting, which - against a ride whose positions the relay also carried - is
   /// most of the way back to identifying the rider.
   Future<void> flushPending() async {
+    if (_disposed) return;
     final client = _client;
     if (client == null) {
       _setLimitation(RoadRatingLimitation.serviceNotConfigured);
@@ -233,6 +252,7 @@ class RoadRatingController extends ChangeNotifier {
     if (compatibility != null) {
       try {
         final result = await compatibility.checkCompatibility();
+        if (_disposed) return;
         if (!result.canSynchronize ||
             !result.supports(RelayProtocolCapabilities.roadRatings)) {
           _setLimitation(RoadRatingLimitation.serviceCapabilityMissing);
@@ -256,6 +276,7 @@ class RoadRatingController extends ChangeNotifier {
     for (final rating in due) {
       try {
         await client.submit(rating);
+        if (_disposed) return;
         await _store.remove(rating);
       } on InternetRelayException catch (error) {
         if (error.statusCode == 404) {
@@ -287,14 +308,16 @@ class RoadRatingController extends ChangeNotifier {
   }
 
   void _setLimitation(RoadRatingLimitation value) {
-    if (_limitation == value) return;
+    if (_disposed || _limitation == value) return;
     _limitation = value;
     notifyListeners();
   }
 
   @override
   void dispose() {
-    _client?.close();
+    _disposed = true;
+    if (_ownsClient) _client?.close();
+    if (_ownsCompatibility) _compatibility?.close();
     super.dispose();
   }
 }

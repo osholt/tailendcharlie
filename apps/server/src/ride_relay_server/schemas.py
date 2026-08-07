@@ -181,6 +181,7 @@ class JoinCodeResponse(BaseModel):
 class CompatibilityResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    serverBuildCommit: str
     serverProtocol: int
     minimumClientProtocol: int
     maximumClientProtocol: int

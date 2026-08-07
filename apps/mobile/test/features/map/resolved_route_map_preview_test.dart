@@ -61,4 +61,26 @@ void main() {
       1,
     );
   });
+
+  test('POI pins do not expand the fitted route viewport', () {
+    final points = routePreviewFramingPoints(
+      const [
+        [
+          GeoPoint(latitude: 51.46, longitude: -2.5),
+          GeoPoint(latitude: 51.5, longitude: -2.2),
+        ],
+      ],
+      const [
+        RoutePreviewPin(
+          point: GeoPoint(latitude: 57, longitude: -4),
+          kind: 'poi',
+          includeInFraming: false,
+        ),
+      ],
+    );
+
+    final bounds = routePreviewBounds(points);
+    expect(bounds.northeast.latitude, 51.5);
+    expect(bounds.southwest.longitude, -2.5);
+  });
 }
