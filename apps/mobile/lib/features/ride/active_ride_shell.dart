@@ -816,9 +816,6 @@ enum _MissingTecDecision { cancel, assignTec, startAnyway }
 enum RideExitDecision { cancel, leave, endForEveryone }
 
 @visibleForTesting
-enum RideCompletionDecision { continueRide, endForEveryone }
-
-@visibleForTesting
 /// [isSolo] collapses the choice rather than rewording it. A rider alone has no
 /// group to leave and nobody to end anything *for*: "leave only this phone" and
 /// "end for everyone" are the same act, and offering both asked them to choose
@@ -868,43 +865,6 @@ Future<RideExitDecision?> showRideExitDialog(
   ),
 );
 
-@visibleForTesting
-Future<RideCompletionDecision?> showRideCompletionDialog(
-  BuildContext context, {
-  required RideCompletionAssessment assessment,
-  required bool relayCanCarryReopen,
-}) => showDialog<RideCompletionDecision>(
-  context: context,
-  barrierDismissible: false,
-  builder: (dialogContext) => AlertDialog(
-    key: const Key('ride-completion-suggestion'),
-    icon: const Icon(Icons.flag_circle_outlined),
-    title: const Text('Has everyone finished?'),
-    content: Text(
-      '${assessment.arrivedRiderCount} of ${assessment.riderCount} riders have '
-      'fresh positions within ${assessment.destinationRadiusMeters.round()} m '
-      'of the destination, and '
-      '${(assessment.routeProgressFraction * 100).clamp(0, 100).round()}% of '
-      'the route has been completed.\n\n'
-      '${relayCanCarryReopen ? 'If this is wrong, the leader can resume this ride within 24 hours without changing its code.' : 'This relay cannot resume an ended ride on the other phones. Only end when the whole group is definitely finished.'}',
-    ),
-    actions: [
-      TextButton(
-        key: const Key('continue-completed-ride'),
-        onPressed: () =>
-            Navigator.pop(dialogContext, RideCompletionDecision.continueRide),
-        child: const Text('Continue ride'),
-      ),
-      FilledButton(
-        key: const Key('confirm-completed-ride'),
-        onPressed: () =>
-            Navigator.pop(dialogContext, RideCompletionDecision.endForEveryone),
-        child: const Text('End for everyone'),
-      ),
-    ],
-  ),
-);
-
 class _ActiveRideShellState extends State<ActiveRideShell>
     with WidgetsBindingObserver {
   final _mapPosition = ValueNotifier<route_domain.GeoPoint?>(null);
@@ -913,6 +873,14 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _carPlayRouteProgressTracker = RouteProgressTracker();
   final _trailSimplifier = const TrailDisplaySimplifier();
+
+  /// The arrival suggestion the map offers, or null while there is nothing to
+  /// suggest.
+  ///
+  /// A [ValueNotifier] rather than a `showDialog` because this fires *on
+  /// arrival* — the moment a rider still needs the last of the navigation — and
+  /// a modal barrier covered the map to ask a question that can wait (#380).
+  final _completionSuggestion = ValueNotifier<RideCompletionAssessment?>(null);
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
 
   /// Which way the gap to the TEC is going (#181). Owned here because a trend
@@ -2607,31 +2575,39 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     );
     if (!assessment.ready) {
       _completionPromptedForArrival = false;
+      _completionSuggestion.value = null;
       return;
     }
     // A dismissed suggestion stays dismissed while the group remains inside
     // the destination radius. Leaving and returning arms a fresh suggestion.
     if (_completionPromptedForArrival) return;
     _completionPromptedForArrival = true;
+    // Offered, not imposed. The map draws it in the bottom band with everything
+    // else; the rider can act on it, ignore it, or dismiss it, and the
+    // navigation stays visible either way.
+    _completionSuggestion.value = assessment;
+  }
+
+  /// The rider chose to end the ride from the arrival suggestion.
+  ///
+  /// Still goes through [confirmEndRide]: ending for everyone is irreversible
+  /// for the group, and #380 was about the *suggestion* blocking the map, not
+  /// about removing the confirmation that says so.
+  Future<void> _endRideFromCompletionSuggestion() async {
+    _completionSuggestion.value = null;
     _autoEndingRide = true;
     try {
-      if (!mounted) return;
-      final decision = await showRideCompletionDialog(
-        context,
-        assessment: assessment,
-        relayCanCarryReopen: _relayCanCarryReopen,
-      );
-      if (decision == RideCompletionDecision.endForEveryone) {
-        await widget.rideController.endRide();
-      }
-    } catch (error, stackTrace) {
-      if (kDebugMode) {
-        debugPrint('Could not offer ride completion: $error\n$stackTrace');
-      }
+      await _confirmEndRide();
     } finally {
       _autoEndingRide = false;
     }
   }
+
+  /// Dismissed. It stays dismissed while the group remains inside the
+  /// destination radius, exactly as the modal did — `_completionPromptedForArrival`
+  /// is only cleared by the assessment ceasing to be ready, which is leaving and
+  /// coming back.
+  void _dismissCompletionSuggestion() => _completionSuggestion.value = null;
 
   static route_domain.GeoPoint? _routeDestination(
     route_domain.ImportedRoute? route,
@@ -3537,6 +3513,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       overlayMarkers: _mapOverlays,
       riderTrails: _riderTrails,
       rejoinNavigationRoute: _rejoinNavigationRoute,
+      completionSuggestion: _completionSuggestion,
+      onEndCompletedRide: () => unawaited(_endRideFromCompletionSuggestion()),
+      onDismissCompletionSuggestion: _dismissCompletionSuggestion,
       leaderStatus: _leaderStatus,
       tecGapTrend: _tecGapTrend,
       groupRiderCount: widget.rideController.liveParticipants.length,
@@ -4757,6 +4736,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _mapOverlays.dispose();
     _riderTrails.dispose();
     _quickMessageAlerts.dispose();
+    _completionSuggestion.dispose();
     _leaderStatus.dispose();
     _tecGapTrend.dispose();
     _junctionMarkerOverlay.dispose();

@@ -40,6 +40,7 @@ import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
 import '../../services/map_camera_command.dart';
+import '../../services/ride_completion_detector.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/motorcycle_discovery.dart';
@@ -142,6 +143,9 @@ class RideMapFeature extends StatefulWidget {
     this.junctionMarkerOverlay,
     this.enforcementAlert,
     this.quickMessageAlerts,
+    this.completionSuggestion,
+    this.onEndCompletedRide,
+    this.onDismissCompletionSuggestion,
     this.onAcknowledgeQuickMessage,
     this.dismissedQuickMessageInterruptIds = const {},
     this.dismissedQuickMessageReceiptIds = const {},
@@ -201,6 +205,9 @@ class RideMapFeature extends StatefulWidget {
     ValueListenable<MapJunctionMarkerOverlay?>? junctionMarkerOverlay,
     ValueListenable<EnforcementAlert?>? enforcementAlert,
     ValueListenable<List<RideQuickMessageAlert>>? quickMessageAlerts,
+    ValueListenable<RideCompletionAssessment?>? completionSuggestion,
+    VoidCallback? onEndCompletedRide,
+    VoidCallback? onDismissCompletionSuggestion,
     Future<void> Function(ReceivedQuickMessage message)?
     onAcknowledgeQuickMessage,
     Set<String> dismissedQuickMessageInterruptIds = const {},
@@ -255,6 +262,9 @@ class RideMapFeature extends StatefulWidget {
     junctionMarkerOverlay: junctionMarkerOverlay,
     enforcementAlert: enforcementAlert,
     quickMessageAlerts: quickMessageAlerts,
+    completionSuggestion: completionSuggestion,
+    onEndCompletedRide: onEndCompletedRide,
+    onDismissCompletionSuggestion: onDismissCompletionSuggestion,
     onAcknowledgeQuickMessage: onAcknowledgeQuickMessage,
     dismissedQuickMessageInterruptIds: dismissedQuickMessageInterruptIds,
     dismissedQuickMessageReceiptIds: dismissedQuickMessageReceiptIds,
@@ -316,6 +326,13 @@ class RideMapFeature extends StatefulWidget {
   /// Quick messages other riders have raised, most urgent first, together with
   /// where each sender is (#151). Null when the embedder has no ride behind it.
   final ValueListenable<List<RideQuickMessageAlert>>? quickMessageAlerts;
+
+  /// The arrival suggestion, drawn in the bottom band rather than over the map.
+  /// It fires as the rider arrives, which is when the last of the navigation
+  /// still matters, so it must not cover it (#380).
+  final ValueListenable<RideCompletionAssessment?>? completionSuggestion;
+  final VoidCallback? onEndCompletedRide;
+  final VoidCallback? onDismissCompletionSuggestion;
 
   /// Records that this rider has seen a quick message, so its sender is told.
   final Future<void> Function(ReceivedQuickMessage message)?
@@ -495,6 +512,9 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         junctionMarkerOverlay: widget.junctionMarkerOverlay,
         enforcementAlert: widget.enforcementAlert,
         quickMessageAlerts: widget.quickMessageAlerts,
+        completionSuggestion: widget.completionSuggestion,
+        onEndCompletedRide: widget.onEndCompletedRide,
+        onDismissCompletionSuggestion: widget.onDismissCompletionSuggestion,
         onAcknowledgeQuickMessage: widget.onAcknowledgeQuickMessage,
         dismissedQuickMessageInterruptIds:
             widget.dismissedQuickMessageInterruptIds,
@@ -578,6 +598,9 @@ class RideMapScreen extends StatefulWidget {
     this.junctionMarkerOverlay,
     this.enforcementAlert,
     this.quickMessageAlerts,
+    this.completionSuggestion,
+    this.onEndCompletedRide,
+    this.onDismissCompletionSuggestion,
     this.onAcknowledgeQuickMessage,
     this.dismissedQuickMessageInterruptIds = const {},
     this.dismissedQuickMessageReceiptIds = const {},
@@ -664,6 +687,10 @@ class RideMapScreen extends StatefulWidget {
   /// Quick messages other riders have raised, most urgent first, together with
   /// where each sender is (#151). Null when the embedder has no ride behind it.
   final ValueListenable<List<RideQuickMessageAlert>>? quickMessageAlerts;
+
+  final ValueListenable<RideCompletionAssessment?>? completionSuggestion;
+  final VoidCallback? onEndCompletedRide;
+  final VoidCallback? onDismissCompletionSuggestion;
 
   /// Records that this rider has seen a quick message, so its sender is told.
   final Future<void> Function(ReceivedQuickMessage message)?
@@ -1133,6 +1160,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.riderTrails?.addListener(_onOverlayDataChanged);
     widget.rejoinNavigationRoute?.addListener(_onRejoinNavigationRouteChanged);
     widget.leaderStatus?.addListener(_onGroupPipDataChanged);
+    widget.completionSuggestion?.addListener(_onCompletionSuggestionChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
     _rejoinProgressGeometry = _rejoinProgressTracker.update(
       _rejoinRoute,
@@ -1182,6 +1210,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
       oldWidget.leaderStatus?.removeListener(_onGroupPipDataChanged);
       widget.leaderStatus?.addListener(_onGroupPipDataChanged);
       _onGroupPipDataChanged();
+    }
+    if (oldWidget.completionSuggestion != widget.completionSuggestion) {
+      oldWidget.completionSuggestion?.removeListener(
+        _onCompletionSuggestionChanged,
+      );
+      widget.completionSuggestion?.addListener(_onCompletionSuggestionChanged);
     }
     if (oldWidget.junctionMarkerOverlay != widget.junctionMarkerOverlay) {
       oldWidget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
@@ -1236,6 +1270,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _onRejoinNavigationRouteChanged,
     );
     widget.leaderStatus?.removeListener(_onGroupPipDataChanged);
+    widget.completionSuggestion?.removeListener(_onCompletionSuggestionChanged);
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapLibreController?.removeListener(_scheduleCameraFramingRefresh);
@@ -1729,9 +1764,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // is behind it, and acknowledging it reveals the next. The band therefore
       // grows by one row at its worst, not by one row per rider.
       final quickMessage = _presentedQuickMessage(quickMessages);
+      final completion = widget.completionSuggestion?.value;
       final urgent = <Widget>[
         // A paused ride is a ride-lifecycle state, not a route state (#124).
         if (widget.ridePaused) const _RidePausedBanner(),
+        // First in the run, and deliberately not a modal. It fires on arrival,
+        // which is the moment the last of the navigation still matters, and it
+        // used to cover the whole map to ask a question that can wait (#380).
+        if (completion != null)
+          _RideCompletionSuggestion(
+            assessment: completion,
+            compact: compactStatus,
+            onEnd: widget.onEndCompletedRide,
+            onDismiss: widget.onDismissCompletionSuggestion,
+          ),
         if (widget.rideHasNoLeader) const _NoLeaderBanner(),
         if (leaderStatus != null && leaderStatus.offCourseAlerts.isNotEmpty)
           _OffCourseBanner(
@@ -3173,6 +3219,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!_basemap.usesMapLibre) setState(() {});
     _scheduleMapLibreSync(overlays: true);
     unawaited(_publishGroupPipSnapshot());
+  }
+
+  /// The suggestion is read straight out of the listenable while the chrome is
+  /// built, so the band has to be rebuilt when it changes.
+  void _onCompletionSuggestionChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onGroupPipDataChanged() {
@@ -9692,6 +9744,88 @@ class _NoLeaderBanner extends StatelessWidget {
               'NO RIDE LEADER',
               key: Key('no-leader-banner'),
               style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 0.7),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// The arrival question, offered in the band instead of over the map.
+///
+/// A suggestion, not an instruction: the detector is inferring from positions
+/// and route progress that the group looks finished, and it can be wrong. So it
+/// is dismissible, it never blocks, and the destructive half still goes through
+/// the end-ride confirmation that says the group cannot get the ride back.
+class _RideCompletionSuggestion extends StatelessWidget {
+  const _RideCompletionSuggestion({
+    required this.assessment,
+    required this.compact,
+    this.onEnd,
+    this.onDismiss,
+  });
+
+  final RideCompletionAssessment assessment;
+  final bool compact;
+  final VoidCallback? onEnd;
+  final VoidCallback? onDismiss;
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+    // No Align around this. An Align with no width or height factor expands to
+    // fill whatever it is given, and in the chrome rail that is the whole band:
+    // it made a two-line card 418 px tall and pushed the measured chrome past
+    // the 60% cap to 157%.
+    constraints: const BoxConstraints(maxWidth: 420),
+    child: Card(
+      key: const Key('ride-completion-suggestion'),
+      margin: EdgeInsets.zero,
+      color: const Color(0xF2252E39),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 12,
+          vertical: 8,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.flag_circle_outlined,
+              size: 22,
+              color: Color(0xFF6ED89A),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Has everyone finished?',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                  ),
+                  Text(
+                    '${assessment.arrivedRiderCount} of '
+                    '${assessment.riderCount} at the destination',
+                    style: const TextStyle(
+                      color: Color(0xFFB7C2CF),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            TextButton(
+              key: const Key('continue-completed-ride'),
+              onPressed: onDismiss,
+              child: const Text('Not yet'),
+            ),
+            FilledButton(
+              key: const Key('confirm-completed-ride'),
+              onPressed: onEnd,
+              child: const Text('End ride'),
             ),
           ],
         ),
