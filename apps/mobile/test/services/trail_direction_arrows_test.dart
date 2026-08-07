@@ -82,4 +82,72 @@ void main() {
 
     expect(arrows, hasLength(5));
   });
+
+  _selectionTests();
+}
+
+void _selectionTests() {
+  // A straight line long enough to earn several arrows at any spacing used here.
+  List<GeoPoint> line(double startLat, {int points = 40}) => [
+    for (var index = 0; index < points; index += 1)
+      GeoPoint(latitude: startLat + index * 0.002, longitude: -2.5),
+  ];
+
+  const sampler = TrailDirectionArrowSampler(spacingMeters: 100);
+
+  // The defect behind #363: every arrow source was something that only exists
+  // once the ride is moving, so a planned route that had not been ridden yet
+  // carried no direction arrows at all - on exactly the screen where a rider is
+  // working out which way round the route goes.
+  test('a planned route that has not been ridden still gets arrows', () {
+    final selected = selectTrailDirectionArrows<String>(
+      sampler: sampler,
+      sources: [
+        TrailDirectionArrowSource(paths: [line(51.4)], style: 'route-ahead'),
+        // No ridden path and no trails: the ride has not started.
+        const TrailDirectionArrowSource(paths: [], style: 'ridden'),
+      ],
+    );
+
+    expect(selected, isNotEmpty);
+    expect(selected.map((item) => item.style).toSet(), {'route-ahead'});
+  });
+
+  // The route is offered first, so without a reserve a long enough route would
+  // take the whole budget and leave the live rejoin instruction with none.
+  test('a reserve stops one source consuming the whole budget', () {
+    final selected = selectTrailDirectionArrows<String>(
+      sampler: sampler,
+      budget: 12,
+      sources: [
+        TrailDirectionArrowSource(
+          paths: [line(51.4, points: 400)],
+          reserve: 6,
+          style: 'route-ahead',
+        ),
+        TrailDirectionArrowSource(paths: [line(52.4)], style: 'rejoin'),
+      ],
+    );
+
+    expect(selected.where((item) => item.style == 'route-ahead'), hasLength(6));
+    expect(selected.where((item) => item.style == 'rejoin'), isNotEmpty);
+    expect(selected, hasLength(lessThanOrEqualTo(12)));
+  });
+
+  test('the budget is never exceeded, whatever the sources ask for', () {
+    final selected = selectTrailDirectionArrows<String>(
+      sampler: sampler,
+      budget: 5,
+      sources: [
+        TrailDirectionArrowSource(
+          paths: [line(51.4, points: 400)],
+          reserve: 100,
+          style: 'route-ahead',
+        ),
+        TrailDirectionArrowSource(paths: [line(52.4)], style: 'ridden'),
+      ],
+    );
+
+    expect(selected, hasLength(5));
+  });
 }
