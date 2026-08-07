@@ -229,6 +229,71 @@ void main() {
       'No recommended lane supplied',
     );
   });
+
+  // Reported from the field as "the symbol shows going anticlockwise round a
+  // roundabout to turn right". The arc was already correct - keeping left, a
+  // right turn is three quarters of the way round, which on a clock face runs
+  // 6 -> 9 -> 12 -> 3 and so leaves the bottom towards the *left* of the box.
+  // Nothing said which way along it the rider travels, so the eye supplied an
+  // answer and supplied the wrong one. Flipping the sweep would have drawn the
+  // illegal manoeuvre; this asserts the direction is stated instead.
+  //
+  // The cross product of the radius with the arrowhead's heading is +1 for a
+  // clockwise sweep on screen and -1 for an anticlockwise one, so it reads the
+  // way round directly rather than through the sign of an angle.
+  double? sweepSign(RoundaboutSymbol symbol) {
+    final geometry = RoundaboutSymbolGeometry.of(symbol, const Size(200, 200));
+    final head = geometry.ringDirection;
+    if (head == null) return null;
+    final radius = head.tip - geometry.centre;
+    return (radius.dx * head.direction.dy - radius.dy * head.direction.dx).sign;
+  }
+
+  test('a right turn keeping left is marked as going round clockwise', () {
+    for (final drivingSide in [null, true]) {
+      expect(
+        sweepSign(
+          RoundaboutSymbol(
+            direction: ManeuverDirection.right,
+            leftHandTraffic: drivingSide,
+            exitNumber: 3,
+          ),
+        ),
+        1.0,
+        reason: 'driving side $drivingSide should circulate clockwise',
+      );
+    }
+  });
+
+  // The mirror image: keeping right, traffic circulates anticlockwise, so it is
+  // the *left* turn that goes three quarters of the way round and needs saying.
+  test('a left turn keeping right is marked as going round anticlockwise', () {
+    expect(
+      sweepSign(
+        const RoundaboutSymbol(
+          direction: ManeuverDirection.left,
+          leftHandTraffic: false,
+          exitNumber: 3,
+        ),
+      ),
+      -1.0,
+    );
+  });
+
+  // A quarter of the ring reads only one way, and the mark would crowd the
+  // entry road it sits beside.
+  test('a short arc carries no direction mark', () {
+    expect(
+      sweepSign(
+        const RoundaboutSymbol(
+          direction: ManeuverDirection.left,
+          leftHandTraffic: true,
+          exitNumber: 1,
+        ),
+      ),
+      isNull,
+    );
+  });
 }
 
 void _expectAgreement(ManeuverInstruction instruction) {
