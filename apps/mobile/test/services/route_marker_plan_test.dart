@@ -144,6 +144,53 @@ void main() {
     expect(plan.points, isEmpty);
   });
 
+  // #366: "markers should be dropped at ... any complicated junction where
+  // straight on is not clear". A fork is that junction by definition - the
+  // carriageway splits and a following rider has to pick a side - but a fork
+  // the route rode straight through was dropped by the straight-turn rule
+  // before the fork exemption could apply. The one shape of junction most worth
+  // marking when the route continues ahead was the one never suggested.
+  test('a fork the route rides straight through is still suggested', () {
+    final plan = analyzer.analyze(
+      _straightRoute(
+        maneuvers: const [
+          RouteManeuver(
+            position: GeoPoint(latitude: 51.501, longitude: -2.5),
+            type: 'fork',
+            modifier: 'straight',
+            bearingBeforeDegrees: 0,
+            bearingAfterDegrees: 1,
+          ),
+        ],
+      ),
+    );
+
+    expect(plan.likelyMarkers, hasLength(1));
+  });
+
+  // The neighbouring rule keeps its answer: an ordinary junction ridden
+  // straight through is a side road, and nobody can miss one.
+  test(
+    'an ordinary junction ridden straight through is still not suggested',
+    () {
+      final plan = analyzer.analyze(
+        _straightRoute(
+          maneuvers: const [
+            RouteManeuver(
+              position: GeoPoint(latitude: 51.501, longitude: -2.5),
+              type: 'turn',
+              modifier: 'straight',
+              bearingBeforeDegrees: 0,
+              bearingAfterDegrees: 1,
+            ),
+          ],
+        ),
+      );
+
+      expect(plan.points, isEmpty);
+    },
+  );
+
   test('a shallow fork is still suggested despite the small bend', () {
     final plan = analyzer.analyze(
       _straightRoute(
