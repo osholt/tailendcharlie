@@ -50,7 +50,12 @@ Future<bool> confirmEndRide(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(endRideConsequence(relayCanCarryReopen: relayCanCarryReopen)),
+          Text(
+            endRideConsequence(
+              relayCanCarryReopen: relayCanCarryReopen,
+              isSolo: !controller.coordinationMode.isGroup,
+            ),
+          ),
           const SizedBox(height: 14),
           EndRideMarkingSummary(summary: summary),
         ],
@@ -86,8 +91,21 @@ Future<bool> confirmEndRide(
 ///
 /// The irreversibility sentence is the half that was missing from the dashboard
 /// dialog, and it is the half a leader needs most.
-String endRideConsequence({required bool relayCanCarryReopen}) =>
-    'This ends the group ride for everyone. Location sharing stops on this '
-    'phone, and relay recovery stays available for final queued events until '
-    'you file the ended ride.\n\n'
-    '${relayCanCarryReopen ? 'You can resume it within 24 hours without changing the ride code.' : 'This relay cannot resume an ended ride on the other phones. This action cannot be undone for the group.'}';
+String endRideConsequence({
+  required bool relayCanCarryReopen,
+  bool isSolo = false,
+}) {
+  // A solo ride has no group to end it for and no other phones to fail to
+  // resume it on. Saying so anyway told a rider alone on a road that they were
+  // about to affect people who were not there (#362).
+  if (isSolo) {
+    return 'This ends your ride. Location sharing stops on this phone, and '
+        'relay recovery stays available for final queued events until you '
+        'file the ended ride.\n\n'
+        '${relayCanCarryReopen ? 'You can resume it within 24 hours without changing the ride code.' : 'This relay cannot resume an ended ride. This action cannot be undone.'}';
+  }
+  return 'This ends the group ride for everyone. Location sharing stops on '
+      'this phone, and relay recovery stays available for final queued events '
+      'until you file the ended ride.\n\n'
+      '${relayCanCarryReopen ? 'You can resume it within 24 hours without changing the ride code.' : 'This relay cannot resume an ended ride on the other phones. This action cannot be undone for the group.'}';
+}

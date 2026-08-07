@@ -123,6 +123,30 @@ void main() {
       }
     });
   });
+
+  // #362: the consequence text named a group, and other phones, that a solo
+  // ride does not have.
+  test('a solo ride is not ended for everyone', () {
+    final solo = endRideConsequence(relayCanCarryReopen: true, isSolo: true);
+
+    expect(solo, contains('This ends your ride.'));
+    expect(solo, isNot(contains('everyone')));
+    expect(solo, isNot(contains('group')));
+    expect(solo, contains('resume it within 24 hours'));
+
+    final soloWithoutReopen = endRideConsequence(
+      relayCanCarryReopen: false,
+      isSolo: true,
+    );
+    expect(soloWithoutReopen, isNot(contains('other phones')));
+    expect(soloWithoutReopen, contains('cannot be undone'));
+
+    // The group wording is untouched.
+    expect(
+      endRideConsequence(relayCanCarryReopen: true),
+      contains('for everyone'),
+    );
+  });
 }
 
 class _FakeNearbyBridge extends NearbyBridge {
