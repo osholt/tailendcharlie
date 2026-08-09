@@ -5,6 +5,7 @@ import 'package:ride_relay/services/navigation_guidance.dart';
 import 'osrm_maneuver_fixtures.dart';
 
 void main() {
+  _turnDirectionTests();
   const planner = NavigationGuidancePlanner();
 
   test('selects the next useful maneuver by monotonic route progress', () {
@@ -817,3 +818,119 @@ ImportedRoute _route() => ImportedRoute(
     ),
   ],
 );
+
+/// One ordinary turn, described both ways: what the engine called it, and the
+/// bearings the same step carried.
+ManeuverDirection _directionFor({
+  required String? modifier,
+  double? bearingBefore,
+  double? bearingAfter,
+}) {
+  final route = ImportedRoute(
+    id: 'turn',
+    name: 'Turn',
+    importedAt: DateTime.utc(2026, 8, 8),
+    sourceFileName: 'turn.gpx',
+    waypoints: const [],
+    paths: const [
+      RoutePath(
+        kind: RoutePathKind.track,
+        points: [
+          GeoPoint(latitude: 51.45, longitude: -2.60),
+          GeoPoint(latitude: 51.45, longitude: -2.58),
+          GeoPoint(latitude: 51.46, longitude: -2.57),
+        ],
+      ),
+    ],
+    maneuvers: [
+      RouteManeuver(
+        position: const GeoPoint(latitude: 51.45, longitude: -2.58),
+        type: 'turn',
+        modifier: modifier,
+        name: 'Woodhouse Lane',
+        drivingSide: 'left',
+        bearingBeforeDegrees: bearingBefore,
+        bearingAfterDegrees: bearingAfter,
+      ),
+    ],
+  );
+  return const NavigationGuidancePlanner()
+      .instructions(route)
+      .first
+      .instruction
+      .direction;
+}
+
+void _turnDirectionTests() {
+  group('when the engine contradicts its own bearings', () {
+    // Every case here is a real step from a sweep of 359 OSRM steps across
+    // twelve UK areas, not an invented one.
+
+    test('an ordinary turn is not announced as a sharp one (#302)', () {
+      // Woodhouse Lane, Leeds: the engine called a 21 degree deviation a sharp
+      // right. A rider braking for a sharp right that is barely a deviation
+      // stops trusting the guidance, which is what was reported.
+      expect(
+        _directionFor(
+          modifier: 'sharp right',
+          bearingBefore: 100,
+          bearingAfter: 121,
+        ),
+        ManeuverDirection.slightRight,
+      );
+    });
+
+    test('a 90 degree turn is not announced as a U-turn', () {
+      expect(
+        _directionFor(modifier: 'uturn', bearingBefore: 10, bearingAfter: 103),
+        ManeuverDirection.right,
+      );
+    });
+
+    test('a real turn is not announced as straight on', () {
+      // The dangerous direction of the same fault: a rider told to carry on
+      // through an 82 degree left rides past the turn.
+      expect(
+        _directionFor(modifier: 'straight', bearingBefore: 90, bearingAfter: 8),
+        ManeuverDirection.left,
+      );
+    });
+
+    test('one bucket apart is a judgement call the engine keeps', () {
+      // 45 degrees sits inside this code's slight band and outside the
+      // engine's. Neither reading misleads a rider, so the engine's stands and
+      // the app does not churn its wording against the router's.
+      expect(
+        _directionFor(modifier: 'left', bearingBefore: 90, bearingAfter: 45),
+        ManeuverDirection.left,
+      );
+    });
+
+    test('a U-turn is judged by how hard over it is, not by which way', () {
+      // Mirrored geometry has to be treated the same. A sharp turn and a
+      // U-turn are neighbours on either side.
+      expect(
+        _directionFor(modifier: 'uturn', bearingBefore: 0, bearingAfter: 210),
+        ManeuverDirection.uTurn,
+      );
+      expect(
+        _directionFor(modifier: 'uturn', bearingBefore: 0, bearingAfter: 150),
+        ManeuverDirection.uTurn,
+      );
+    });
+
+    test('the engine is still trusted when it is all there is', () {
+      expect(
+        _directionFor(modifier: 'sharp right'),
+        ManeuverDirection.sharpRight,
+      );
+    });
+
+    test('the bearings are still used when there is no modifier', () {
+      expect(
+        _directionFor(modifier: null, bearingBefore: 100, bearingAfter: 190),
+        ManeuverDirection.right,
+      );
+    });
+  });
+}
