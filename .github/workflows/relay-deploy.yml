@@ -1,0 +1,156 @@
+name: Relay deploy
+
+# The relay must be on the same commit as any app build installed against it
+# (Rule 0 in docs/build-and-run.md). Left to a human that held for a while and
+# then drifted 22 commits and five days, with a security fix undeployed (#393).
+#
+# Only a change under apps/server or deploy can alter what the relay serves, so
+# only those pushes deploy. docs/server-runbook.md is the prose version of
+# everything below; deploy/relay-deploy.sh is what actually runs, on the box.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/server/**'
+      - 'deploy/**'
+      - '.github/workflows/relay-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a deploy in flight. A half-applied deploy is worse than a slow
+# one, and merges to main are sequential anyway.
+concurrency:
+  group: relay-deploy
+  cancel-in-progress: false
+
+env:
+  SERVER_DIR: apps/server
+  RELAY_BASE_URL: https://relay.tailendcharlie.app
+
+jobs:
+  test:
+    name: Server test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          working-directory: apps/server
+          python-version: '3.12'
+          enable-cache: true
+      - run: uv sync --frozen --extra dev
+      - run: uv run pytest
+
+  deploy:
+    name: Deploy pre-production, then production
+    needs: test
+    runs-on: ubuntu-latest
+    # A cold `docker build` on the relay's two shared cores is the slow part.
+    timeout-minutes: 45
+    steps:
+      - name: Configure the deploy key
+        env:
+          DEPLOY_KEY: ${{ secrets.RELAY_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.RELAY_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.RELAY_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.RELAY_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          missing=""
+          test -n "$DEPLOY_KEY" || missing="$missing RELAY_DEPLOY_SSH_KEY"
+          test -n "$KNOWN_HOSTS" || missing="$missing RELAY_DEPLOY_KNOWN_HOSTS"
+          test -n "$DEPLOY_HOST" || missing="$missing RELAY_DEPLOY_HOST"
+          test -n "$DEPLOY_USER" || missing="$missing RELAY_DEPLOY_USER"
+          if test -n "$missing"; then
+            echo "::error::unset repository secrets:$missing." \
+              "See docs/server-runbook.md § Automatic deployment on merge."
+            exit 1
+          fi
+          # The repository is public, so the address, user and key live only in
+          # secrets. An ~/.ssh/config alias keeps them out of every command
+          # line and its logs, exactly as the runbook's manual procedure does.
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/relay-deploy
+          chmod 600 ~/.ssh/relay-deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          {
+            echo "Host oracle-relay"
+            echo "  HostName $DEPLOY_HOST"
+            echo "  User $DEPLOY_USER"
+            echo "  IdentityFile ~/.ssh/relay-deploy"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  BatchMode yes"
+            echo "  RequestTTY no"
+            echo "  ConnectTimeout 20"
+            echo "  ServerAliveInterval 30"
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      # The key is restricted with command=, so these two words are the entire
+      # vocabulary it has. It cannot open a shell, read a file or forward a
+      # port, and relay-deploy.sh refuses any commit that is not already on
+      # main. See deploy/relay-deploy-command.
+      - name: Deploy pre-production and smoke test it
+        run: ssh oracle-relay "staging ${{ github.sha }}"
+
+      - name: Promote to production
+        run: ssh oracle-relay "production ${{ github.sha }}"
+
+      # From outside the box, over the public name a rider's phone uses. The
+      # box reporting its own success is what silently served a stale Caddy
+      # config on 2 August.
+      - name: Verify production from outside
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          live="$RUNNER_TEMP/live.json"
+          compatibility="$RUNNER_TEMP/compatibility.json"
+          # Caddy may be a second or two behind a recreate. Retry reachability,
+          # but never retry the parity check below: a relay answering with the
+          # wrong commit is a failed deploy, not a slow one.
+          reached=""
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error --max-time 15 \
+                 "$RELAY_BASE_URL/health/live" > "$live" \
+               && curl --fail --silent --show-error --max-time 15 \
+                 "$RELAY_BASE_URL/api/v1/compatibility" > "$compatibility"; then
+              reached=yes
+              break
+            fi
+            echo "attempt $attempt could not reach the relay; retrying"
+            sleep 10
+          done
+          test -n "$reached" || {
+            echo "::error::the relay did not answer $RELAY_BASE_URL after five attempts"
+            exit 1
+          }
+          python3 - "$live" "$compatibility" "$EXPECTED_COMMIT" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          live = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          compatibility = json.loads(pathlib.Path(sys.argv[2]).read_text())
+          expected_commit = sys.argv[3]
+          if live != {"status": "ok"}:
+              raise SystemExit(f"unexpected liveness document: {live!r}")
+          deployed = compatibility.get("serverBuildCommit")
+          if deployed != expected_commit:
+              raise SystemExit(
+                  f"relay deploy mismatch: expected {expected_commit}, received {deployed!r}"
+              )
+          protocol = compatibility.get("serverProtocol")
+          if not isinstance(protocol, int) or protocol < 1:
+              raise SystemExit(f"invalid server protocol: {protocol!r}")
+          print(f"relay serving {deployed}, protocol {protocol}")
+          PY

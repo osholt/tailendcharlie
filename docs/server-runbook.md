@@ -52,6 +52,28 @@ Put two different generated values and a long random PostgreSQL password in
 Set `RIDE_RELAY_MAXIMUM_ACTIVE_RIDES` from the encrypted-volume capacity and
 expected field-test population; the default is 100. The event and replay byte
 quotas in the same file should also be kept within the available volume.
+**Give the host swap before it ever runs `docker build`.** The relay VM has
+954 MB of RAM and around 270 MB of it free at rest, and a deploy builds the
+server image on the box. A 2 GB swapfile went on on 9 August 2026 and the very
+next build used 166 MB of it, so without swap that build was competing for the
+free memory the running relay was using. Disk is not the constraint — the root
+filesystem is 45 GB and about a quarter used:
+
+```bash
+sudo install -m 600 /dev/null /swapfile
+sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+printf 'vm.swappiness = 10\nvm.vfs_cache_pressure = 50\n' \
+  | sudo tee /etc/sysctl.d/99-relay-swap.conf
+sudo sysctl --load /etc/sysctl.d/99-relay-swap.conf
+```
+
+`swappiness = 10` keeps the kernel using swap as headroom for build peaks rather
+than as somewhere to page the live relay out to. Check the fstab line works
+before trusting it to survive a reboot: `sudo swapoff -a && sudo swapon --all`
+is what systemd does at boot, and `swapon --show` should still list it.
+
 If push delivery is enabled, add the APNs/FCM credentials described in
 [push-notifications.md](./push-notifications.md). A partially configured
 provider intentionally prevents startup.
@@ -138,6 +160,86 @@ Things worth knowing before you run it:
   against a relay whose `/health/live` is not answering 200.
 
 Rollback is below, and is the same procedure with an older commit.
+
+## Automatic deployment on merge
+
+`.github/workflows/relay-deploy.yml` runs everything in the section above, on
+every push to `main` that touches `apps/server/**` or `deploy/**`. Nothing else
+can change what the relay serves, so nothing else deploys — see the parity note
+under [Operations](#operations) for how the health probe agrees with that.
+
+The shape is: run the `apps/server` test suite, deploy pre-production, smoke it,
+promote the *same* commit to production, then verify from outside the box. Any
+step failing stops the next one, so a pre-production smoke failure is what
+stands between a bad merge and the riders.
+
+**CI pushes; it does not poll.** GitHub reaches the host over SSH with a
+dedicated key that is restricted with `command=`:
+
+```
+command="/usr/local/bin/relay-deploy",restrict ssh-ed25519 AAAA... relay-deploy-ci
+```
+
+That key cannot open a shell, read a file, or forward a port — `restrict`
+refuses pty, agent, port and X11 forwarding, and `command=` discards whatever
+the client asked for. The forced command (`deploy/relay-deploy-command`)
+accepts exactly `staging` or `production`, optionally followed by a 40-character
+commit, and nothing else. `deploy/relay-deploy.sh` then refuses any commit that
+is not already an ancestor of `origin/main`, so the key cannot ship unreviewed
+code either.
+
+Four repository secrets carry the host details that must not be in this public
+repository: `RELAY_DEPLOY_SSH_KEY`, `RELAY_DEPLOY_HOST`, `RELAY_DEPLOY_USER`
+and `RELAY_DEPLOY_KNOWN_HOSTS`. The workflow writes them into an `~/.ssh/config`
+alias so no command line ever carries an address.
+
+Three things live on the host and are not deployed by git, because a deploy must
+not be able to rewrite the thing that authorises it:
+
+- `/usr/local/bin/relay-deploy` — a root-owned copy of
+  `deploy/relay-deploy-command`.
+- `/var/lib/relay-deploy/` — writable by the deploy user. Holds the last
+  successfully deployed commit per target, which is how the script knows whether
+  the Caddyfile changed. It is written only after the smoke test passes.
+- `/etc/relay-deploy.conf` — optional. Set
+  `RELAY_DEPLOY_PRODUCTION_OVERRIDES="compose.preproduction-proxy.yaml"` there
+  once the pre-production route is enabled in the public proxy (#398), and the
+  script will both include the override and watch `Caddyfile.preproduction`
+  instead of `Caddyfile` — the file Caddy would then actually mount.
+
+The script can also be run by hand on the box, which is the fastest way to
+redeploy without waiting for CI:
+
+```bash
+ssh oracle-relay '/opt/tailendcharlie/deploy/relay-deploy.sh production'
+```
+
+Things worth knowing before trusting it:
+
+- **The deploy script re-executes itself from the commit being deployed.** It
+  checks out the pinned commit first, then hands over to that commit's copy of
+  `relay-deploy.sh`. Without this, a change to the deploy logic would only take
+  effect on the deploy *after* the one that merged it, and CI would report green
+  for logic that never ran. The cost is that a merge which breaks the script
+  breaks deploys; the manual procedure above still works in that case.
+- **The pre-production smoke test runs over the host's internal Docker
+  network**, not the public URL, and sends the pre-production hostname as an
+  explicit `Host` header because the API rejects an untrusted one with a 400.
+  Going through the public proxy would test the proxy — which is exactly what
+  #398 says is broken — instead of the deploy.
+- **The smoke test is a real round trip**, not a health check: it creates a plan
+  and reads the GPX back, so the API, the encryption key and PostgreSQL all have
+  to agree. It only writes on pre-production; production's database is riders'
+  data, not a test fixture.
+- **Both stacks share the one checkout**, so a staging deploy moves
+  `/opt/tailendcharlie` before production is promoted. That is harmless —
+  production keeps running its existing image — but it means `git log` on the
+  box can disagree with production for the length of a deploy.
+  `serverBuildCommit` remains the only trustworthy answer.
+- **Caddy is recreated only when the Caddyfile actually changed** between the
+  previously recorded commit and this one. On the very first automated deploy
+  there is nothing to compare against, so it says so and leaves Caddy alone
+  rather than recreating the one service whose failure takes riders offline.
 
 ## First deployment
 
@@ -340,11 +442,19 @@ red.
 ## Operations
 
 - `.github/workflows/relay-health.yml` checks the public relay every 15 minutes.
-  It verifies HTTPS liveness, compatibility metadata and exact parity with the
-  current `main` commit, opens one repository issue on failure, and closes it
-  after recovery. Repository issue notifications are the maintainer-facing
-  alert, so keep them enabled. Every merge to `main` therefore needs a prompt
-  relay deploy, even when the server code itself did not change.
+  It verifies HTTPS liveness, compatibility metadata, and that no commit on
+  `main` touching `apps/server` or `deploy` is newer than the commit the running
+  image reports. It opens one repository issue on failure and closes it after
+  recovery. Repository issue notifications are the maintainer-facing alert, so
+  keep them enabled.
+
+  The parity question is deliberately *not* "is the relay on the tip of `main`".
+  Only `apps/server` and `deploy` change what the relay serves, and
+  `relay-deploy.yml` only deploys pushes that touch them, so a docs merge
+  legitimately leaves the relay a few commits behind and must not raise an
+  alert. What must never be true is that a commit which *does* affect the relay
+  is sitting undeployed — that is the five-day, 22-commit gap in #393, with the
+  h2 advisory fix in it, stated exactly.
 - Alert if readiness fails, 5xx rises, sync latency grows, PostgreSQL storage
   grows unexpectedly, or cleanup stops logging hourly completion.
 - Back up with `pg_dump -Fc` to encrypted off-host storage and test restore.

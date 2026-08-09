@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# Forced command for the CI deploy key. Installed on the relay host as
+# /usr/local/bin/relay-deploy, owned by root and not writable by the deploy
+# user, and named in ~/.ssh/authorized_keys as:
+#
+#   command="/usr/local/bin/relay-deploy",restrict ssh-ed25519 AAAA... relay-deploy-ci
+#
+# `restrict` refuses pty, agent, port and X11 forwarding and ~/.ssh/rc, and
+# `command=` means the key cannot run a shell at all: whatever the client asks
+# for arrives here as SSH_ORIGINAL_COMMAND and is discarded unless it is one of
+# the two words below.
+#
+# What the key can therefore do, in full: deploy a commit that is already on
+# main to pre-production or to production. It cannot read a file, open a shell,
+# tunnel, or deploy anything that has not been merged — relay-deploy.sh refuses
+# a commit that is not an ancestor of origin/main.
+#
+# This file stays small on purpose. It is installed once, outside the git
+# checkout, so it is not rewritten by a deploy; the deploy logic it calls is
+# versioned in the repository where it can be reviewed.
+
+set -euo pipefail
+
+deploy_script="${RELAY_DEPLOY_REPO:-/opt/tailendcharlie}/deploy/relay-deploy.sh"
+request="${SSH_ORIGINAL_COMMAND:-}"
+
+if ! [[ "$request" =~ ^(staging|production)([[:space:]]+[0-9a-f]{40})?$ ]]; then
+  echo "relay-deploy: refused. This key may only run:" >&2
+  echo "  staging|production [40-character commit sha]" >&2
+  exit 1
+fi
+
+# Word splitting is the point: the pattern above has already established that
+# the request is one or two safe tokens.
+# shellcheck disable=SC2086
+exec "$deploy_script" $request
