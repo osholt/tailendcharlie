@@ -11,6 +11,8 @@ import 'package:ride_relay/services/route_geometry_enricher.dart';
 import 'osrm_maneuver_fixtures.dart';
 
 void main() {
+  // The mini-roundabout layer is a bundled asset.
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('OSRM client requests and parses full road geometry', () async {
     final client = MockClient((request) async {
       expect(request.url.path, contains('/route/v1/driving/'));
@@ -121,16 +123,19 @@ void main() {
   });
 
   test(
-    'the exact BS15 1UJ route restores both omitted mini-roundabouts',
+    'a junction the engine omits is restored from the bundled layer',
     () async {
+      // The captured response is a real OSRM answer that genuinely omits two
+      // mapped mini-roundabouts (#163). It used to be fixed by a hand-reviewed
+      // catalogue holding those two junctions and their hand-measured arms;
+      // this asserts the general OpenStreetMap layer covers them instead.
+      final catalogue = await MappedMiniRoundaboutCatalogue.load();
       final response = newCheltenhamRoadOmittedRoundaboutsResponse();
-      final rawSteps =
+      final rawLocations =
           (((response['routes'] as List).single as Map)['legs'] as List)
               .expand((leg) => ((leg as Map)['steps'] as List).whereType<Map>())
+              .map((step) => (step['maneuver'] as Map)['location'])
               .toList(growable: false);
-      final rawLocations = rawSteps
-          .map((step) => (step['maneuver'] as Map)['location'])
-          .toList(growable: false);
       expect(
         rawLocations,
         isNot(contains(equals([-2.5010632, 51.4672133]))),
@@ -142,65 +147,90 @@ void main() {
         reason: 'the captured engine response genuinely omits the east node',
       );
 
-      final route = await routeFromOsrmResponse(response, id: 'issue-163');
+      final route = await routeFromOsrmResponse(
+        response,
+        id: 'issue-163',
+        readMiniRoundabouts: () async => catalogue,
+      );
       final restored = route.maneuvers
           .where(
             (maneuver) =>
                 maneuver.type == 'roundabout' &&
-                maneuver.name == 'New Cheltenham Road',
+                (maneuver.position.longitude - -2.5010632).abs() < 0.0005,
           )
           .toList(growable: false);
 
-      expect(restored, hasLength(2));
-      expect(
-        restored.map((maneuver) => maneuver.position.longitude),
-        orderedEquals([-2.5010632, -2.5005026]),
-      );
-      expect(restored.map((maneuver) => maneuver.exitNumber), [2, 2]);
-      expect(
-        restored.map((maneuver) => maneuver.drivingSide),
-        everyElement('left'),
-      );
+      expect(restored, hasLength(1));
+      // No exit number is claimed. Counting exits needs every arm's bearing,
+      // which this layer does not carry - the catalogue it replaced carried
+      // them for two junctions by hand and for nowhere else.
+      expect(restored.single.exitNumber, isNull);
+      // Stated because OpenStreetMap states it for this node, not assumed.
+      expect(restored.single.drivingSide, 'left');
+      expect(restored.single.bearingBeforeDegrees, isNotNull);
     },
   );
 
   test(
-    'mapped mini-roundabouts are bounded and never duplicate an engine step',
-    () {
-      const catalogue = MappedMiniRoundaboutCatalogue.fieldRegressions;
-      const awayFromNewCheltenhamRoad = [
-        GeoPoint(latitude: 51.4700, longitude: -2.5060),
-        GeoPoint(latitude: 51.4700, longitude: -2.4960),
-      ];
-      expect(
-        catalogue.enrich(route: awayFromNewCheltenhamRoad, maneuvers: const []),
-        isEmpty,
-        reason: 'ordinary route geometry is not inferred to be a roundabout',
-      );
+    'the bundled layer is general, not a list of reported junctions',
+    () async {
+      final catalogue = await MappedMiniRoundaboutCatalogue.load();
 
-      const throughWestNode = [
-        GeoPoint(latitude: 51.4673, longitude: -2.5020),
-        GeoPoint(latitude: 51.4672133, longitude: -2.5010632),
-        GeoPoint(latitude: 51.46715, longitude: -2.5009),
-      ];
-      const engineManeuvers = [
-        RoadRouteManeuver(
-          position: GeoPoint(latitude: 51.4672133, longitude: -2.5010632),
-          type: 'roundabout',
-          exitNumber: 2,
-        ),
-        RoadRouteManeuver(
-          position: GeoPoint(latitude: 51.4672133, longitude: -2.5010632),
-          type: 'exit roundabout',
-        ),
-      ];
+      // The point of the change: coverage is whatever OpenStreetMap maps, so a
+      // junction nobody has reported is served exactly as well as one that has.
+      expect(catalogue.roundabouts.length, greaterThan(10000));
       expect(
-        catalogue.enrich(route: throughWestNode, maneuvers: engineManeuvers),
-        same(engineManeuvers),
-        reason: 'a future provider fix must not create duplicate instructions',
+        catalogue.roundabouts.where(
+          (roundabout) =>
+              roundabout.rotation == MiniRoundaboutRotation.clockwise,
+        ),
+        isNotEmpty,
       );
     },
   );
+
+  test('restoration is bounded and never duplicates an engine step', () {
+    // Arbitrary coordinates: the rule is what is under test, not a place.
+    const node = GeoPoint(latitude: 53.1000, longitude: -1.5000);
+    const catalogue = MappedMiniRoundaboutCatalogue([
+      MappedMiniRoundabout(
+        position: node,
+        rotation: MiniRoundaboutRotation.clockwise,
+      ),
+    ]);
+
+    const wellAway = [
+      GeoPoint(latitude: 53.2000, longitude: -1.6000),
+      GeoPoint(latitude: 53.2000, longitude: -1.5000),
+    ];
+    expect(
+      catalogue.enrich(route: wellAway, maneuvers: const []),
+      isEmpty,
+      reason: 'ordinary route geometry is not inferred to be a roundabout',
+    );
+
+    const throughNode = [
+      GeoPoint(latitude: 53.1010, longitude: -1.5010),
+      node,
+      GeoPoint(latitude: 53.0990, longitude: -1.4990),
+    ];
+    const engineManeuvers = [
+      RoadRouteManeuver(position: node, type: 'roundabout', exitNumber: 2),
+      RoadRouteManeuver(position: node, type: 'exit roundabout'),
+    ];
+    expect(
+      catalogue.enrich(route: throughNode, maneuvers: engineManeuvers),
+      same(engineManeuvers),
+      reason: 'a future provider fix must not create duplicate instructions',
+    );
+
+    final restored = catalogue.enrich(route: throughNode, maneuvers: const []);
+    expect(restored.map((maneuver) => maneuver.type), [
+      'roundabout',
+      'exit roundabout',
+    ]);
+    expect(restored.first.exitNumber, isNull);
+  });
 
   test('a small roundabout reported as a turn still needs a marker', () {
     expect(
