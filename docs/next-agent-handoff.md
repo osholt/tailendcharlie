@@ -1,6 +1,100 @@
 # Next-agent handoff
 
-Updated: 2026-08-03
+Updated: 2026-08-09
+
+## Current state: build 46 shipped, deploy automation next
+
+**The relay is healthy and current.** It hung on the evening of 9 August — the
+instance stayed `RUNNING` with its IP attached while the guest OS wedged in an
+early boot sequence. A `SOFTRESET` recovered it and it was redeployed to
+`4a8451c`. `serverBuildCommit` matches `main` and the health probe passes. The
+h2 CVE fix reached production after five days undeployed. See #349 and the new
+runbook section, *When the host stops answering*.
+
+**Build 46 is with testers.** iOS 46 is in TestFlight external review; Android 46
+is on the alpha track. Notes are in `tester-release-notes.md`. Nothing in it has
+been ridden, so eight tickets sit at ready-for-validation and need a ride rather
+than more code: #301, #302, #303, #359, #360, #361, #362, #363, #364, #380, #382.
+
+### Next task, already agreed with the owner
+
+Automatic deploy on merge, gated by the existing pre-production stack. Two
+decisions are made and should not be reopened:
+
+- **CI pushes over SSH.** Not a poller. This means a deploy credential in GitHub
+  Actions secrets; use a *dedicated* key restricted with `command=` so it can
+  only run the deploy script, never an arbitrary shell.
+- **The gate is the server test suite plus a live smoke test** against the
+  deployed pre-production stack.
+
+Intended shape: push to `main` touching `apps/server/**` or `deploy/**` → deploy
+pre-production → run tests and smoke → promote to production → verify from
+outside the box.
+
+**Do the swapfile first.** The host has 954 MB with **no swap** and about 269 MB
+free. A `docker build` in that headroom is what will cause the next outage, and
+2 GB of swap against 35 GB of free disk is the cheapest risk reduction available.
+
+**Smoke pre-production over the host's internal network, not its public URL.**
+#398: the pre-production route is missing from the *running* Caddy config, so its
+hostname fails TLS. Fixing that means recreating Caddy, which is the one service
+whose failure takes riders offline — not a good prerequisite for a pipeline.
+Curling the container directly still proves migrations ran, env vars are present
+and the app answers.
+
+**Two risks the owner has been told about and accepted:**
+
+- A migration that passes against pre-production's data and fails against
+  production's is exactly what this pipeline will not catch. The entrypoint runs
+  `alembic upgrade head`, so such a migration stops the container coming up.
+- Deploy-on-merge puts a bad merge in front of riders within minutes. The health
+  probe is the backstop and rollback is the redeploy procedure with an older
+  commit.
+
+### Traps worth knowing before you start
+
+- **The Android version code defaults to the workflow run number and collides**
+  with codes already used. Build 46 failed first time on *"Version code 40 has
+  already been used"*. Pass `build_number` explicitly and higher than every
+  shipped code.
+- **`tools/discovery` tests run under `unittest discover`, not pytest.** A
+  pytest-style module is collected as zero tests and passes silently.
+- **A mutation run that reports OK may never have applied.** One did in this
+  session: the shell's working directory had an unavailable pyenv version, so the
+  mutation script died and an unmutated suite passed. Assert the mutation landed
+  before trusting the result.
+- **Recreating Caddy without `compose.preproduction-proxy.yaml` silently drops
+  the pre-production route.** That is how #398 happened.
+- **The checkout on the box is not what is deployed.** After the reboot it was at
+  `c1ecb1c` while the running image reported `fa13532`. `serverBuildCommit` is
+  the only trustworthy answer.
+
+### Working agreements
+
+- Mutation-test every fix, and say which mutations were caught.
+- Never close a ticket that has not been field-validated; label it
+  `status: ready for validation` instead.
+- One pull request per issue.
+- Ask before any release.
+- **No location-specific special cases.** A catalogue of two hand-reviewed
+  junctions was replaced this session by a generated layer covering every mapped
+  mini-roundabout (#390). Prefer a general rule, then a generated layer from
+  OpenStreetMap through `tools/discovery`, then saying the fault is unfixable —
+  in that order. Claiming less is acceptable: the layer dropped exit numbers it
+  could not support.
+
+### Access
+
+- `ssh oracle-relay` — alias in the operator's `~/.ssh/config`. **The repository
+  is public; host details must stay in secrets and out of committed files.**
+- Oracle CLI auth is a browser-issued session token that expires. Re-authenticate
+  with `oci session authenticate --profile-name DEFAULT --region uk-london-1`,
+  which needs a human at a browser, then pass
+  `--auth security_token --profile DEFAULT` to every command.
+- ICMP is not permitted by the security list, so `ping` proves nothing. Judge
+  reachability on TCP 22 and 443.
+
+
 
 ## Current state: tester feedback 7
 
