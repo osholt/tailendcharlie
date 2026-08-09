@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
@@ -278,6 +279,85 @@ void main() {
       ),
       -1.0,
     );
+  });
+
+  // #301's second acceptance criterion: the swept arc and the exit must not be
+  // able to drift apart. They are computed separately - the arc from the flow
+  // direction, the exit road from the manoeuvre direction - so a future
+  // mirroring change could leave the sweep right and put the arrow on the wrong
+  // exit, or the reverse. Nothing caught that before this.
+  //
+  // The invariant is simply that riding the drawn arc lands you on the drawn
+  // exit: the arc's end angle is the exit's angle.
+  double angleOf(Offset point, Offset centre) {
+    final delta = point - centre;
+    // Screen y grows downward, and these degrees run clockwise from straight up.
+    final degrees = math.atan2(delta.dx, -delta.dy) * 180 / math.pi;
+    return (degrees % 360 + 360) % 360;
+  }
+
+  test('the drawn arc always ends on the drawn exit', () {
+    const directions = [
+      ManeuverDirection.sharpLeft,
+      ManeuverDirection.left,
+      ManeuverDirection.slightLeft,
+      ManeuverDirection.straight,
+      ManeuverDirection.slightRight,
+      ManeuverDirection.right,
+      ManeuverDirection.sharpRight,
+      ManeuverDirection.uTurn,
+    ];
+    for (final drivingSide in [true, false, null]) {
+      for (final direction in directions) {
+        final geometry = RoundaboutSymbolGeometry.of(
+          RoundaboutSymbol(
+            direction: direction,
+            leftHandTraffic: drivingSide,
+            exitNumber: 3,
+          ),
+          const Size(200, 200),
+        );
+        final exit = geometry.exit;
+        final arc = geometry.ringArcs.single;
+        expect(exit, isNotNull, reason: '$direction should draw an exit');
+
+        final arcEnd = (arc.endDegrees % 360 + 360) % 360;
+        expect(
+          arcEnd,
+          closeTo(angleOf(exit!.start, geometry.centre), 0.5),
+          reason:
+              'riding the arc for $direction keeping '
+              '${drivingSide == false ? 'right' : 'left'} must end at the exit',
+        );
+      }
+    }
+  });
+
+  test('the arc sweeps the way traffic flows on that side of the road', () {
+    // Keeping left the whole ridden arc runs clockwise, keeping right it runs
+    // anticlockwise, whatever the exit. Sign, not size: the size is the exit.
+    for (final direction in [
+      ManeuverDirection.left,
+      ManeuverDirection.right,
+      ManeuverDirection.uTurn,
+    ]) {
+      expect(
+        RoundaboutSymbolGeometry.of(
+          RoundaboutSymbol(direction: direction, leftHandTraffic: true),
+          const Size(200, 200),
+        ).ringArcs.single.sweepDegrees,
+        greaterThan(0),
+        reason: 'keeping left, $direction must circulate clockwise',
+      );
+      expect(
+        RoundaboutSymbolGeometry.of(
+          RoundaboutSymbol(direction: direction, leftHandTraffic: false),
+          const Size(200, 200),
+        ).ringArcs.single.sweepDegrees,
+        lessThan(0),
+        reason: 'keeping right, $direction must circulate anticlockwise',
+      );
+    }
   });
 
   // A quarter of the ring reads only one way, and the mark would crowd the
