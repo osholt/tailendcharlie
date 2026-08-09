@@ -23,8 +23,12 @@ typedef Coordinates = List<List<double>>;
 Future<ImportedRoute> routeFromOsrmResponse(
   Map<String, Object?> response, {
   String id = 'fixture',
+  Future<MappedMiniRoundaboutCatalogue> Function()? readMiniRoundabouts,
 }) async {
   final service = OsrmRoadRoutingService(
+    readMiniRoundabouts:
+        readMiniRoundabouts ??
+        (() async => MappedMiniRoundaboutCatalogue.empty),
     client: MockClient(
       (_) async => http.Response(
         jsonEncode(response),

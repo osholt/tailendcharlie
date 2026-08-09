@@ -55,7 +55,7 @@ class OsrmImportedTrackMatcher implements ImportedTrackMatcher {
     this.maximumMeanDeviationMeters = 35,
     this.maximumPointDeviationMeters = 150,
     this.uuid = const Uuid(),
-    this.miniRoundabouts = MappedMiniRoundaboutCatalogue.fieldRegressions,
+    this.readMiniRoundabouts = bundledMiniRoundabouts,
   }) : assert(maximumTracePoints >= 2 && maximumTracePoints <= 100),
        assert(minimumConfidence >= 0 && minimumConfidence <= 1),
        assert(minimumTraceCoverage >= 0 && minimumTraceCoverage <= 1);
@@ -70,7 +70,9 @@ class OsrmImportedTrackMatcher implements ImportedTrackMatcher {
   final double maximumMeanDeviationMeters;
   final double maximumPointDeviationMeters;
   final Uuid uuid;
-  final MappedMiniRoundaboutCatalogue miniRoundabouts;
+
+  /// Reads the bundled mini-roundabout layer; see [bundledMiniRoundabouts].
+  final Future<MappedMiniRoundaboutCatalogue> Function() readMiniRoundabouts;
 
   @override
   Future<ImportedTrackMatch> match(ImportedRoute original) async {
@@ -87,6 +89,7 @@ class OsrmImportedTrackMatcher implements ImportedTrackMatcher {
       throw const FormatException('Road matching requires an HTTPS service.');
     }
 
+    final miniRoundabouts = await readMiniRoundabouts();
     final matchedPaths = <RoutePath>[];
     final maneuvers = <RouteManeuver>[];
     final samples = <GeoPoint>[];

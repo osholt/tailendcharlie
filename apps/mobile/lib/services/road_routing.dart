@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
@@ -133,67 +134,136 @@ class RoadRouteManeuver extends RouteManeuver {
   }
 }
 
-enum MiniRoundaboutDirection { clockwise, counterClockwise }
+/// Which way traffic goes round, where OpenStreetMap says so.
+enum MiniRoundaboutRotation { clockwise, anticlockwise }
 
-/// One reviewed OpenStreetMap mini-roundabout omitted by the routing engines.
+/// One `highway=mini_roundabout` node from OpenStreetMap.
+///
+/// Position and, where the map states it, rotation. Nothing else: this used to
+/// be a hand-reviewed catalogue carrying hand-measured arm bearings for two
+/// named junctions, which only ever helped those two and could not be checked
+/// against anything.
 class MappedMiniRoundabout {
   const MappedMiniRoundabout({
-    required this.nodeId,
     required this.position,
-    required this.armBearingsDegrees,
-    required this.direction,
-    required this.roadName,
+    this.osmId,
+    this.rotation,
   });
 
-  final int nodeId;
   final GeoPoint position;
+  final String? osmId;
 
-  /// Bearings from the node out along every mapped arm, clockwise from north.
-  ///
-  /// They are sorted ascending. Comparing the route approach/departure with
-  /// these arms lets the app count the exit without treating an ordinary
-  /// three-way intersection as a roundabout.
-  final List<double> armBearingsDegrees;
-  final MiniRoundaboutDirection direction;
-  final String roadName;
+  /// Null where the map does not say. The app's own default then applies,
+  /// rather than this layer asserting a rotation the extract did not carry.
+  final MiniRoundaboutRotation? rotation;
 }
 
-/// A deliberately bounded, reviewed catalogue for field-proven omissions.
+/// The bundled mini-roundabout layer, generated from OpenStreetMap.
 ///
 /// OSRM and Valhalla both route through `highway=mini_roundabout` nodes without
-/// necessarily emitting a manoeuvre. Their route geometry still passes through
-/// the mapped node, so this catalogue can restore only junctions whose OSM
-/// identity and arms have been reviewed. It is not presented as general UK
-/// coverage.
+/// necessarily emitting a manoeuvre, so a rider gets no instruction at a
+/// junction they have to give way at. This restores one.
+///
+/// It states the direction through the junction and **does not claim an exit
+/// number**. Counting exits needs the bearing of every arm, which this layer
+/// does not carry; the catalogue this replaced carried them for two junctions
+/// by hand. Saying "mini roundabout, turn right" from data that supports it
+/// beats saying "third exit" from data that does not.
 class MappedMiniRoundaboutCatalogue {
   const MappedMiniRoundaboutCatalogue(this.roundabouts);
 
-  static const fieldRegressions = MappedMiniRoundaboutCatalogue([
-    // New Cheltenham Road, Kingswood. OSM node records and connected arms were
-    // reviewed against the live OSM API and the exact BS15 1UJ -> Chippenham
-    // OSRM response on 2026-07-28 (#163).
-    MappedMiniRoundabout(
-      nodeId: 30983542,
-      position: GeoPoint(latitude: 51.4672133, longitude: -2.5010632),
-      armBearingsDegrees: [0, 135, 270],
-      direction: MiniRoundaboutDirection.clockwise,
-      roadName: 'New Cheltenham Road',
-    ),
-    MappedMiniRoundabout(
-      nodeId: 30983544,
-      position: GeoPoint(latitude: 51.4670501, longitude: -2.5005026),
-      armBearingsDegrees: [30, 150, 285],
-      direction: MiniRoundaboutDirection.clockwise,
-      roadName: 'New Cheltenham Road',
-    ),
-  ]);
+  static const assetKey = 'assets/mini_roundabouts.geojson';
+
+  static const empty = MappedMiniRoundaboutCatalogue([]);
 
   static const routeMatchToleranceMeters = 12.0;
   static const duplicateManeuverToleranceMeters = 20.0;
-  static const bearingMatchToleranceDegrees = 35.0;
   static const bearingSampleDistanceMeters = 12.0;
 
   final List<MappedMiniRoundabout> roundabouts;
+
+  static Future<MappedMiniRoundaboutCatalogue> load({
+    AssetBundle? bundle,
+  }) async => parse(await (bundle ?? rootBundle).loadString(assetKey));
+
+  static MappedMiniRoundaboutCatalogue parse(String source) {
+    final decoded = jsonDecode(source);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Mini-roundabout layer is not a GeoJSON object.',
+      );
+    }
+    final features = decoded['features'];
+    final roundabouts = <MappedMiniRoundabout>[];
+    if (features is List) {
+      for (final feature in features) {
+        final roundabout = _roundabout(feature);
+        if (roundabout != null) roundabouts.add(roundabout);
+      }
+    }
+    return MappedMiniRoundaboutCatalogue(List.unmodifiable(roundabouts));
+  }
+
+  static MappedMiniRoundabout? _roundabout(Object? feature) {
+    if (feature is! Map<String, dynamic>) return null;
+    final geometry = feature['geometry'];
+    if (geometry is! Map<String, dynamic>) return null;
+    if (geometry['type'] != 'Point') return null;
+    final coordinates = geometry['coordinates'];
+    if (coordinates is! List || coordinates.length < 2) return null;
+    final longitude = (coordinates[0] as num?)?.toDouble();
+    final latitude = (coordinates[1] as num?)?.toDouble();
+    if (longitude == null || latitude == null) return null;
+    final properties = feature['properties'];
+    final tags = properties is Map<String, dynamic>
+        ? properties
+        : const <String, dynamic>{};
+    return MappedMiniRoundabout(
+      position: GeoPoint(latitude: latitude, longitude: longitude),
+      osmId: tags['osmId'] as String?,
+      rotation: switch (tags['rotation']) {
+        'clockwise' => MiniRoundaboutRotation.clockwise,
+        'anticlockwise' => MiniRoundaboutRotation.anticlockwise,
+        _ => null,
+      },
+    );
+  }
+
+  /// Nodes near enough to the route to be worth projecting onto it.
+  ///
+  /// A whole-country layer is tens of thousands of nodes and projecting every
+  /// one onto every route would be felt on the way into a ride. The bounding
+  /// box is a cheap comparison that discards almost all of them.
+  List<MappedMiniRoundabout> _candidates(List<GeoPoint> route) {
+    var minLatitude = route.first.latitude;
+    var maxLatitude = route.first.latitude;
+    var minLongitude = route.first.longitude;
+    var maxLongitude = route.first.longitude;
+    for (final point in route) {
+      if (point.latitude < minLatitude) minLatitude = point.latitude;
+      if (point.latitude > maxLatitude) maxLatitude = point.latitude;
+      if (point.longitude < minLongitude) minLongitude = point.longitude;
+      if (point.longitude > maxLongitude) maxLongitude = point.longitude;
+    }
+    const metersPerDegreeLatitude = 111320.0;
+    final latitudePad = routeMatchToleranceMeters / metersPerDegreeLatitude;
+    final widest = maxLatitude.abs() > minLatitude.abs()
+        ? maxLatitude
+        : minLatitude;
+    final longitudeScale =
+        metersPerDegreeLatitude * math.cos(widest * math.pi / 180);
+    final longitudePad = longitudeScale <= 1
+        ? 180.0
+        : routeMatchToleranceMeters / longitudeScale;
+    return [
+      for (final roundabout in roundabouts)
+        if (roundabout.position.latitude >= minLatitude - latitudePad &&
+            roundabout.position.latitude <= maxLatitude + latitudePad &&
+            roundabout.position.longitude >= minLongitude - longitudePad &&
+            roundabout.position.longitude <= maxLongitude + longitudePad)
+          roundabout,
+    ];
+  }
 
   List<RoadRouteManeuver> enrich({
     required List<GeoPoint> route,
@@ -202,7 +272,7 @@ class MappedMiniRoundaboutCatalogue {
     if (route.length < 2 || roundabouts.isEmpty) return maneuvers;
     final additions =
         <({double progressMeters, List<RoadRouteManeuver> maneuvers})>[];
-    for (final roundabout in roundabouts) {
+    for (final roundabout in _candidates(route)) {
       final projection = _projectOntoRoute(roundabout.position, route);
       if (projection.distanceMeters > routeMatchToleranceMeters ||
           maneuvers.any(
@@ -223,45 +293,26 @@ class MappedMiniRoundaboutCatalogue {
       );
       final approachBearing = _bearingDegrees(before, projection.point);
       final departureBearing = _bearingDegrees(projection.point, after);
-      final incomingArm = _nearestBearingIndex(
-        roundabout.armBearingsDegrees,
-        (approachBearing + 180) % 360,
-      );
-      final outgoingArm = _nearestBearingIndex(
-        roundabout.armBearingsDegrees,
-        departureBearing,
-      );
-      if (incomingArm == null ||
-          outgoingArm == null ||
-          incomingArm == outgoingArm) {
-        continue;
-      }
-      final exitNumber = _exitNumber(
-        incomingArm: incomingArm,
-        outgoingArm: outgoingArm,
-        armCount: roundabout.armBearingsDegrees.length,
-        direction: roundabout.direction,
-      );
-      if (exitNumber == null) continue;
-      final drivingSide =
-          roundabout.direction == MiniRoundaboutDirection.clockwise
-          ? 'left'
-          : 'right';
+      // Stated only where the map states it. Left null otherwise, so the
+      // renderer's own default decides rather than this layer asserting a
+      // rotation the extract did not carry.
+      final drivingSide = switch (roundabout.rotation) {
+        MiniRoundaboutRotation.clockwise => 'left',
+        MiniRoundaboutRotation.anticlockwise => 'right',
+        null => null,
+      };
       additions.add((
         progressMeters: projection.progressMeters,
         maneuvers: [
           RoadRouteManeuver(
             position: roundabout.position,
             type: 'roundabout',
-            name: roundabout.roadName,
-            exitNumber: exitNumber,
             drivingSide: drivingSide,
             bearingBeforeDegrees: approachBearing,
           ),
           RoadRouteManeuver(
             position: roundabout.position,
             type: 'exit roundabout',
-            name: roundabout.roadName,
             drivingSide: drivingSide,
             bearingAfterDegrees: departureBearing,
           ),
@@ -286,43 +337,20 @@ class MappedMiniRoundaboutCatalogue {
     }
     return List.unmodifiable(enriched);
   }
-
-  static int? _nearestBearingIndex(List<double> bearings, double target) {
-    int? selected;
-    var selectedDifference = double.infinity;
-    for (var index = 0; index < bearings.length; index += 1) {
-      final difference = _headingDifference(bearings[index], target);
-      if (difference < selectedDifference) {
-        selected = index;
-        selectedDifference = difference;
-      }
-    }
-    return selectedDifference <= bearingMatchToleranceDegrees ? selected : null;
-  }
-
-  static int? _exitNumber({
-    required int incomingArm,
-    required int outgoingArm,
-    required int armCount,
-    required MiniRoundaboutDirection direction,
-  }) {
-    if (armCount < 3 ||
-        incomingArm < 0 ||
-        incomingArm >= armCount ||
-        outgoingArm < 0 ||
-        outgoingArm >= armCount) {
-      return null;
-    }
-    var current = incomingArm;
-    for (var exit = 1; exit < armCount; exit += 1) {
-      current = direction == MiniRoundaboutDirection.clockwise
-          ? (current + 1) % armCount
-          : (current - 1 + armCount) % armCount;
-      if (current == outgoingArm) return exit;
-    }
-    return null;
-  }
 }
+
+/// The bundled layer, read once per process.
+///
+/// Memoised because every route and every road match wants the same 16,000-odd
+/// nodes, and because a failed read must not retry on every route: an
+/// unreadable asset degrades guidance at mini-roundabouts, which is not a
+/// reason to fail the ride.
+Future<MappedMiniRoundaboutCatalogue>? _bundledMiniRoundabouts;
+
+Future<MappedMiniRoundaboutCatalogue> bundledMiniRoundabouts() =>
+    _bundledMiniRoundabouts ??= MappedMiniRoundaboutCatalogue.load().catchError(
+      (Object error) => MappedMiniRoundaboutCatalogue.empty,
+    );
 
 abstract interface class RoadRoutingService {
   /// Routes through [waypoints].
@@ -343,7 +371,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     required this.baseUrl,
     this.timeout = const Duration(seconds: 15),
     this.maximumResponseBytes = 5 * 1024 * 1024,
-    this.miniRoundabouts = MappedMiniRoundaboutCatalogue.fieldRegressions,
+    this.readMiniRoundabouts = bundledMiniRoundabouts,
   });
 
   /// Alternatives asked of OSRM when a bendier style has to choose between
@@ -354,7 +382,12 @@ class OsrmRoadRoutingService implements RoadRoutingService {
   final Uri baseUrl;
   final Duration timeout;
   final int maximumResponseBytes;
-  final MappedMiniRoundaboutCatalogue miniRoundabouts;
+
+  /// Reads the bundled mini-roundabout layer.
+  ///
+  /// A function rather than the catalogue itself so the asset is read lazily,
+  /// off the path that builds a route, and only once per process.
+  final Future<MappedMiniRoundaboutCatalogue> Function() readMiniRoundabouts;
 
   @override
   Future<RoadRouteResult> routeThrough(
@@ -422,6 +455,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
           twistiness: (candidate) => candidate.twistinessScore ?? 0,
         ) ??
         parsed.first;
+    final miniRoundabouts = await readMiniRoundabouts();
     return RoadRouteResult(
       points: chosen.points,
       distanceMeters: chosen.distanceMeters,
@@ -578,14 +612,19 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
     required this.routeUrl,
     this.timeout = const Duration(seconds: 20),
     this.maximumResponseBytes = 5 * 1024 * 1024,
-    this.miniRoundabouts = MappedMiniRoundaboutCatalogue.fieldRegressions,
+    this.readMiniRoundabouts = bundledMiniRoundabouts,
   });
 
   final http.Client client;
   final Uri routeUrl;
   final Duration timeout;
   final int maximumResponseBytes;
-  final MappedMiniRoundaboutCatalogue miniRoundabouts;
+
+  /// Reads the bundled mini-roundabout layer.
+  ///
+  /// A function rather than the catalogue itself so the asset is read lazily,
+  /// off the path that builds a route, and only once per process.
+  final Future<MappedMiniRoundaboutCatalogue> Function() readMiniRoundabouts;
 
   @override
   Future<RoadRouteResult> routeThrough(
@@ -676,6 +715,7 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
       throw const FormatException('Motorcycle routing summary is invalid.');
     }
     final distanceMeters = lengthKm.toDouble() * 1000;
+    final miniRoundabouts = await readMiniRoundabouts();
     return RoadRouteResult(
       points: List.unmodifiable(points),
       distanceMeters: distanceMeters,
@@ -1299,11 +1339,6 @@ double _bearingDegrees(GeoPoint first, GeoPoint second) {
           math.cos(secondLatitude) *
           math.cos(deltaLongitude);
   return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
-}
-
-double _headingDifference(double first, double second) {
-  final difference = (first - second).abs() % 360;
-  return math.min(difference, 360 - difference);
 }
 
 bool _isRoundaboutManeuver(String type) => const {

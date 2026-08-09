@@ -1,10 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/navigation_guidance.dart';
+import 'package:ride_relay/services/road_routing.dart';
 
 import 'osrm_maneuver_fixtures.dart';
 
 void main() {
+  // The mini-roundabout layer is a bundled asset.
+  TestWidgetsFlutterBinding.ensureInitialized();
   _turnDirectionTests();
   const planner = NavigationGuidancePlanner();
 
@@ -655,30 +658,43 @@ void main() {
     const secondExit = GeoPoint(latitude: 51.46695, longitude: -2.50020);
 
     test(
-      'the captured BS15 1UJ route announces both and advances to the second',
+      'a captured route restores both junctions and advances between them',
       () async {
+        // #163's defect: two mapped mini-roundabouts 42 m apart, omitted by the
+        // engine, announced as one junction. What restores them is now the
+        // general OpenStreetMap layer rather than a catalogue naming these two.
+        final catalogue = await MappedMiniRoundaboutCatalogue.load();
         final route = await routeFromOsrmResponse(
           newCheltenhamRoadOmittedRoundaboutsResponse(),
           id: 'issue-163-live-route',
+          readMiniRoundabouts: () async => catalogue,
         );
-        final newCheltenham = planner
+        final restored = planner
             .instructions(route)
             .where(
               (step) =>
                   step.instruction.isRoundabout &&
-                  step.instruction.roadName == 'New Cheltenham Road',
+                  (step.instruction.maneuver.position.longitude - -2.5008)
+                          .abs() <
+                      0.0006,
             )
             .toList(growable: false);
 
-        expect(newCheltenham, hasLength(2));
-        expect(newCheltenham.map((step) => step.instruction.text), [
-          '2nd exit, straight on',
-          '2nd exit, straight on',
-        ]);
         expect(
-          newCheltenham.last.distanceFromStartMeters -
-              newCheltenham.first.distanceFromStartMeters,
+          restored,
+          hasLength(2),
+          reason: 'a rider meets two junctions and needs telling about both',
+        );
+        expect(
+          restored.last.distanceFromStartMeters -
+              restored.first.distanceFromStartMeters,
           closeTo(42, 5),
+          reason: 'they must not be merged into one instruction',
+        );
+        // No exit number is claimed from a layer that carries no arm bearings.
+        expect(
+          restored.map((step) => step.instruction.exitNumber),
+          everyElement(isNull),
         );
 
         final approaching = planner.plan(
@@ -695,9 +711,8 @@ void main() {
           closeTo(-2.5005026, 1e-7),
         );
 
-        final secondPosition = route.paths.first.points.firstWhere(
-          (point) => point.longitude == -2.5005026,
-        );
+        // At the second ring, which must by then be the current instruction.
+        const secondPosition = secondRing;
         final afterFirst = planner.plan(
           route: route,
           position: secondPosition,

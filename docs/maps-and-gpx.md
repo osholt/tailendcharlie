@@ -526,29 +526,42 @@ engine emits no separate exit step, the heading before the next manoeuvre is
 used if it is within 250 m. `rotary` and `roundabout turn` are presented as
 roundabouts, and adjacent ring steps within 25 m are treated as one gyratory.
 
-Mini-roundabouts need one additional bounded path. From the reported start at
-BS15 1UJ toward Chippenham, the live OSRM response puts OSM nodes 30983542 and
-30983544 inside one 1,136 m `new name` step, with no manoeuvre at either node.
-The live Valhalla motorcycle response likewise runs 1.219 km before its next
-manoeuvre. Both current OSM node records explicitly say
-`highway=mini_roundabout`, `direction=clockwise`.
+Mini-roundabouts need one additional path. From the reported start at BS15 1UJ
+toward Chippenham, the live OSRM response puts OSM nodes 30983542 and 30983544
+inside one 1,136 m `new name` step, with no manoeuvre at either node. The live
+Valhalla motorcycle response likewise runs 1.219 km before its next manoeuvre.
+Both node records explicitly say `highway=mini_roundabout`.
 
-The app therefore carries those two field-reviewed nodes and their mapped arms
-in a small offline regression catalogue. A planned route is enriched only when
-its geometry passes within 12 m of a catalogued node and its approach and
-departure each agree with a mapped arm within 35 degrees. The route direction
-through the clockwise arms gives the exit ordinal; for the reported eastbound
-route both are second exits and read *"2nd exit, straight on"*, 42 m apart. The
+The app therefore carries a **generated layer of every `highway=mini_roundabout`
+node OpenStreetMap maps** — 16,678 across Great Britain and Ireland, built by
+[`tools/discovery/generate_mini_roundabouts.py`](../tools/discovery/generate_mini_roundabouts.py)
+into `assets/mini_roundabouts.geojson`, ODbL with the extract date. A planned
+route is enriched wherever its geometry passes within 12 m of a mapped node. The
 inserted entry/exit pair is persisted with the route, so the manoeuvre list and
 live guidance work after restart and offline. An engine-supplied roundabout
 within 20 m always wins, preventing a future provider fix from producing a
 duplicate.
 
-This is deliberately not claimed as general mini-roundabout coverage. An
-ordinary three-way intersection is never promoted from its shape, and a mapped
-node outside the reviewed catalogue remains subject to the routing engine. A
-broader catalogue needs a versioned OSM extract pipeline and its own regional
-coverage statement.
+This replaced a catalogue of two hand-reviewed junctions carrying hand-measured
+arm bearings. A catalogue only ever covers the junctions somebody reported, its
+bearings could not be checked against anything, and its tests exercised the
+catalogue rather than the rule.
+
+**The layer claims less than the catalogue did, on purpose.** Counting exits
+needs the bearing of every arm, which a node alone does not carry, so no exit
+number is claimed at a restored mini-roundabout: the instruction states the
+direction through the junction and stops there. Saying *"mini roundabout, turn
+right"* from data that supports it beats saying *"2nd exit"* from data that does
+not. Rotation is stated only where the map states it — 11,482 of the nodes carry
+`direction=clockwise` — and left unstated otherwise, so the renderer's own
+default applies rather than the layer asserting a rotation. The `direction` tag
+is also used on a handful of nodes for a compass bearing (`195`, `340`); the
+generator refuses anything but `clockwise` and `anticlockwise`, because reading
+one of those as a rotation would send a rider the wrong way round a junction.
+
+An ordinary three-way intersection is still never promoted from its shape: only
+a node OpenStreetMap marks as a mini-roundabout is restored. OpenStreetMap does
+not mark every one, so this is coverage rather than completeness.
 
 - The wording beside the symbol does not name the junction: the symbol is a
   drawn roundabout, and repeating the word spends a rider's glance on something
@@ -561,10 +574,10 @@ coverage statement.
   *"Roundabout, 3rd exit, right"*. Every other manoeuvre reads the same either
   way. Wording and symbol can still never contradict each other — the agreement
   test covers both strings.
-- The exit number is either the engine's own `exit` count for a circular
-  junction or, for a reviewed mini-roundabout, the ordinal counted through its
-  mapped arms in the recorded direction of flow. It is dropped where two merged
-  rings each counted their own exits. With no count the instruction says
+- The exit number is the engine's own `exit` count for a circular junction. It
+  is dropped where two merged rings each counted their own exits, and it is
+  never claimed at a mini-roundabout restored from the bundled layer, which
+  carries no arm bearings to count with. With no count the instruction says
   *"Take the exit straight on"*.
 - With no bearings — a route saved before they were stored — no direction is
   claimed: the instruction says *"Take the 2nd exit"* rather than repeating the
