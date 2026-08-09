@@ -194,6 +194,14 @@ enum NavigationGuidanceState {
   noRoute,
   waitingForLocation,
   noManeuvers,
+
+  /// The route was meant to be routed and is not.
+  ///
+  /// Distinct from [noManeuvers] because the two need different things from a
+  /// rider: an imported track without prompts is working as intended and can be
+  /// followed, while this one lost its directions to a failure and can be made
+  /// to work again (#303).
+  routingUnfinished,
   offRoute,
   active,
   complete,
@@ -311,6 +319,22 @@ class NavigationGuidancePlanner {
   static const noRouteLineMessage =
       'This route has no path to follow. Choose or import it again.';
 
+  /// Shown when routing was meant to happen for this route and did not.
+  ///
+  /// `RouteGeometryEnricher` converts a `RoutePathKind.route` path into a
+  /// `track` when the routing engine answers, and leaves it a `route` when the
+  /// request fails. A surviving `route` path with no manoeuvres is therefore a
+  /// routing failure that outlived the import it happened during: the enricher
+  /// returns a warning, but nothing carried it onto the route, so by riding
+  /// time the rider saw the same words as an imported track (#303).
+  ///
+  /// They are not the same. One is working as intended and can be followed; the
+  /// other can be made to work again, and only this wording tells a rider which
+  /// they have.
+  static const routingUnfinishedMessage =
+      'Directions could not be built for this route — the line is the raw '
+      'import. Re-import it to try again.';
+
   NavigationGuidance? plan({
     required ImportedRoute? route,
     required GeoPoint? position,
@@ -342,9 +366,18 @@ class NavigationGuidancePlanner {
       );
     }
     if (route.maneuvers.isEmpty) {
-      return const NavigationGuidanceAssessment(
-        state: NavigationGuidanceState.noManeuvers,
-        message: noTurnInstructionsMessage,
+      // A path still marked `route` was never turned into road geometry, which
+      // only happens when the routing request for it failed.
+      final unrouted = route.paths.any(
+        (path) => path.kind == RoutePathKind.route && path.points.length >= 2,
+      );
+      return NavigationGuidanceAssessment(
+        state: unrouted
+            ? NavigationGuidanceState.routingUnfinished
+            : NavigationGuidanceState.noManeuvers,
+        message: unrouted
+            ? routingUnfinishedMessage
+            : noTurnInstructionsMessage,
       );
     }
     final path = _primaryPath(route.paths);

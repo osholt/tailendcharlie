@@ -6,6 +6,7 @@ import 'package:ride_relay/services/road_routing.dart';
 import 'osrm_maneuver_fixtures.dart';
 
 void main() {
+  _guidanceStateTests();
   // The mini-roundabout layer is a bundled asset.
   TestWidgetsFlutterBinding.ensureInitialized();
   _turnDirectionTests();
@@ -946,6 +947,105 @@ void _turnDirectionTests() {
         _directionFor(modifier: null, bearingBefore: 100, bearingAfter: 190),
         ManeuverDirection.right,
       );
+    });
+  });
+}
+
+ImportedRoute _routeWith({
+  required List<RoutePath> paths,
+  List<RouteManeuver> maneuvers = const [],
+}) => ImportedRoute(
+  id: 'state',
+  name: 'State route',
+  importedAt: DateTime.utc(2026, 8, 9),
+  sourceFileName: 'state.gpx',
+  paths: paths,
+  waypoints: const [],
+  maneuvers: maneuvers,
+);
+
+const _line = [
+  GeoPoint(latitude: 51.45, longitude: -2.60),
+  GeoPoint(latitude: 51.45, longitude: -2.58),
+];
+
+void _guidanceStateTests() {
+  group('why a route has no turn prompts', () {
+    // #303: "Turn guidance is unavailable for this route" persisted through an
+    // active ride with a good line drawn on the map. One message covered three
+    // different situations, so a rider could not tell a route working as
+    // intended from one that had lost its directions.
+    const planner = NavigationGuidancePlanner();
+    const onRoute = GeoPoint(latitude: 51.45, longitude: -2.59);
+
+    NavigationGuidanceAssessment assess(ImportedRoute route) =>
+        planner.assess(route: route, position: onRoute, progressMeters: 0);
+
+    test('a routed route is navigated', () {
+      final assessment = assess(
+        _routeWith(
+          paths: const [RoutePath(kind: RoutePathKind.track, points: _line)],
+          maneuvers: const [
+            RouteManeuver(
+              position: GeoPoint(latitude: 51.45, longitude: -2.59),
+              type: 'turn',
+              modifier: 'left',
+              name: 'Side Road',
+              bearingBeforeDegrees: 90,
+              bearingAfterDegrees: 0,
+            ),
+          ],
+        ),
+      );
+
+      expect(assessment.state, NavigationGuidanceState.active);
+    });
+
+    test('an imported track says the line is followable', () {
+      // A GPX track is a line without instructions. Nothing failed, and the
+      // rider can ride it.
+      final assessment = assess(
+        _routeWith(
+          paths: const [RoutePath(kind: RoutePathKind.track, points: _line)],
+        ),
+      );
+
+      expect(assessment.state, NavigationGuidanceState.noManeuvers);
+      expect(assessment.message, contains('follow the line'));
+    });
+
+    test('a route whose routing failed says so instead', () {
+      // `RouteGeometryEnricher` turns a `route` path into a `track` when the
+      // engine answers and leaves it a `route` when the request fails. The
+      // warning it returns is gone by riding time; this is what survives.
+      final assessment = assess(
+        _routeWith(
+          paths: const [RoutePath(kind: RoutePathKind.route, points: _line)],
+        ),
+      );
+
+      expect(assessment.state, NavigationGuidanceState.routingUnfinished);
+      expect(assessment.message, contains('could not be built'));
+      // Never the imported-track wording, which would tell a rider nothing is
+      // wrong when something is.
+      expect(assessment.message, isNot(contains('follow the line')));
+    });
+
+    test('the three states never share a message', () {
+      final messages = {
+        NavigationGuidancePlanner.noTurnInstructionsMessage,
+        NavigationGuidancePlanner.noRouteLineMessage,
+        NavigationGuidancePlanner.routingUnfinishedMessage,
+      };
+
+      expect(messages, hasLength(3));
+    });
+
+    test('a route with no line at all is a third thing again', () {
+      final assessment = assess(_routeWith(paths: const []));
+
+      expect(assessment.state, NavigationGuidanceState.noManeuvers);
+      expect(assessment.message, contains('no path to follow'));
     });
   });
 }
