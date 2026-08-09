@@ -62,6 +62,7 @@ import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'discovery_road_sheet.dart';
 import 'hazard_map_symbol.dart';
+import 'map_camera_guard.dart';
 import 'maneuver_list_screen.dart';
 import 'maneuver_symbol.dart';
 import 'group_mini_map_framing.dart';
@@ -7385,11 +7386,13 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     }
     final controller = _controller;
     if (controller == null) return;
+    final centre = ml.LatLng(framing.centre.latitude, framing.centre.longitude);
+    // The mini-map frames the whole group, so one rider reporting a bad
+    // position takes the camera - and with it the process - down for everyone
+    // watching (#359).
+    if (!mapLibreCameraIsUsable(centre, zoom: framing.zoom)) return;
     await controller.animateCamera(
-      ml.CameraUpdate.newLatLngZoom(
-        ml.LatLng(framing.centre.latitude, framing.centre.longitude),
-        framing.zoom,
-      ),
+      ml.CameraUpdate.newLatLngZoom(centre, framing.zoom),
       duration: const Duration(milliseconds: 500),
     );
   }

@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
+import '../map/map_camera_guard.dart';
+
 import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../domain/completed_ride.dart';
@@ -660,17 +662,19 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
     final points = _points;
     if (controller == null || points.isEmpty) return;
     if (points.length == 1) {
-      await controller.animateCamera(
-        ml.CameraUpdate.newLatLngZoom(
-          ml.LatLng(points.single.latitude, points.single.longitude),
-          14,
-        ),
-      );
+      final only = ml.LatLng(points.single.latitude, points.single.longitude);
+      // An archived ride is replayed from stored coordinates, so a bad one
+      // outlives the ride that produced it and crashes the screen every time it
+      // is opened (#359).
+      if (!mapLibreCameraIsUsable(only, zoom: 14)) return;
+      await controller.animateCamera(ml.CameraUpdate.newLatLngZoom(only, 14));
       return;
     }
+    final bounds = archivedRideBounds(points);
+    if (!bounds.isUsableCamera) return;
     await controller.animateCamera(
       ml.CameraUpdate.newLatLngBounds(
-        archivedRideBounds(points),
+        bounds,
         left: 28,
         top: 28,
         right: 28,

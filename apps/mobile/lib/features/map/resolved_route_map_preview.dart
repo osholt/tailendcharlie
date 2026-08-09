@@ -6,6 +6,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
+import 'map_camera_guard.dart';
+
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/map_style_repository.dart';
@@ -445,17 +447,16 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     final points = _points;
     if (controller == null || points.isEmpty) return;
     if (points.length == 1) {
-      await controller.animateCamera(
-        ml.CameraUpdate.newLatLngZoom(
-          ml.LatLng(points.single.latitude, points.single.longitude),
-          15,
-        ),
-      );
+      final only = ml.LatLng(points.single.latitude, points.single.longitude);
+      if (!mapLibreCameraIsUsable(only, zoom: 15)) return;
+      await controller.animateCamera(ml.CameraUpdate.newLatLngZoom(only, 15));
       return;
     }
+    final bounds = routePreviewBounds(points);
+    if (!bounds.isUsableCamera) return;
     await controller.animateCamera(
       ml.CameraUpdate.newLatLngBounds(
-        routePreviewBounds(points),
+        bounds,
         left: 34,
         top: 34,
         right: 34,
