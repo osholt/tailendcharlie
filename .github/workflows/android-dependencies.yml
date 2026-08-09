@@ -1,0 +1,84 @@
+name: Android dependency advisories
+
+# `server.yml` runs pip-audit for Python; nothing scanned Gradle or Maven
+# coordinates, so a vulnerable Android dependency reached `main` unremarked
+# (#395). #352's Bouncy Castle advisory was found by a hand-written OSV query.
+#
+# GitHub's dependency graph does not resolve Gradle build files by itself, so
+# enabling the graph alone would cover nothing here. This submits the *resolved*
+# graph — which is the only way the transitive coordinates that carried #352's
+# advisory are visible at all — and then reviews the difference a pull request
+# makes to it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/android/**'
+      - 'apps/mobile/pubspec.yaml'
+      - 'apps/mobile/pubspec.lock'
+      - '.github/workflows/android-dependencies.yml'
+  pull_request:
+    paths:
+      - 'apps/mobile/android/**'
+      - 'apps/mobile/pubspec.yaml'
+      - 'apps/mobile/pubspec.lock'
+      - '.github/workflows/android-dependencies.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-dependencies-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MOBILE_DIR: apps/mobile
+  FLUTTER_VERSION: 3.44.6
+
+jobs:
+  submit:
+    name: Submit the resolved dependency graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      # Submitting a dependency snapshot is a write to the repository's
+      # dependency graph. A pull request from a fork gets a read-only token, so
+      # this step cannot run there; see the review job for what that costs.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      # The Android project cannot resolve until the Flutter plugins are
+      # generated: `settings.gradle.kts` reads .flutter-plugins-dependencies,
+      # and most of the coordinates that carry advisories arrive through them
+      # rather than through the six lines in app/build.gradle.kts.
+      - run: flutter pub get
+        working-directory: ${{ env.MOBILE_DIR }}
+      - uses: gradle/actions/dependency-submission@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          build-root-directory: ${{ env.MOBILE_DIR }}/android
+
+  review:
+    name: Review dependency changes
+    needs: submit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # The gate #395 asks for: a pull request that introduces a coordinate
+          # with a known advisory fails, rather than a human remembering to
+          # query OSV.
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure
