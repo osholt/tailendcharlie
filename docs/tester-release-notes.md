@@ -36,6 +36,67 @@ permissions by design.
 - ...
 ```
 
+## iOS build 46 / Android build 46 — 9 August 2026
+
+Everything in this build came from the 2 and 7 August rides. Nothing here has
+been ridden yet — that is what this build is for, and the list below is roughly
+in the order it is worth checking.
+
+### What to test
+
+1. **Fixed speed cameras now appear.** They never existed before; the app only
+   ever knew about cameras a rider reported. 3,480 permanent cameras from
+   OpenStreetMap now draw on the map and raise the same warning about a mile
+   out. Check one you know: does the warning come early enough, and does it
+   clear once passed? **A camera on a parallel road you are not riding should
+   not warn you** — that one matters most.
+2. **Roundabout symbols.** The ring should sweep clockwise, and the exit arrow
+   should be on the road you actually take.
+3. **Mini-roundabouts.** These are now restored from OpenStreetMap wherever the
+   map marks one, rather than at two junctions somebody had reviewed by hand. A
+   mini-roundabout now says which way to go and **no longer says which exit** —
+   see the limitation below.
+4. **Ordinary turns should not be announced as sharp.** A 90-degree right is a
+   right.
+5. **The "have all riders finished?" prompt** is now a small bar in the bottom
+   chrome instead of a full-screen dialog. The map and the turn banner stay
+   visible. *Not yet* should dismiss it and it should stay dismissed while you
+   are still at the destination. *End ride* still asks before ending for
+   everyone.
+6. **Turn guidance messages.** If a route has no prompts, the wording should now
+   tell you *why* — an imported track you can simply follow, versus a route
+   whose directions could not be built.
+7. **CarPlay stability.** Three more places that could crash the app were
+   guarded. Ride history and route preview are the ones to poke at.
+
+### Fixed
+
+- Fixed speed cameras appear on the map and warn, from OpenStreetMap (#382)
+- The ride-completion prompt no longer covers the map during the final approach (#380)
+- Three further crash routes closed, including one that would crash **every time**
+  a saved ride with a single repeated GPS fix was opened (#359)
+- An ordinary turn is no longer announced as a sharp one (#302)
+- Mini-roundabouts restored wherever OpenStreetMap marks one (#163)
+- The roundabout sweep and its exit can no longer disagree (#301)
+- A route whose routing failed now says so, instead of reading as if nothing
+  were wrong (#303)
+
+### Known limitations
+
+- **A mini-roundabout no longer tells you which exit.** This is deliberate.
+  Counting exits needs the bearing of every arm, which the map data does not
+  carry; the old wording was only ever right at two hand-measured junctions and
+  guessed everywhere else. It now says the direction and stops. Saying less
+  truthfully beats saying more wrongly — but say if you miss the count.
+- **Camera coverage is not complete.** OpenStreetMap does not list every camera.
+  A road with none shown has not been confirmed clear.
+- **Average-speed and mobile cameras are patchy.** 210 average-speed camera
+  systems are included; mobile sites are largely absent and still depend on
+  rider reports.
+- The relay was down on the evening of 9 August and has been restored and
+  brought up to date. If you rode during that window, group presence and alerts
+  would not have worked — that was the server, not this build.
+
 ## iOS build 45 / Android build 45 — 7 August 2026
 
 Nine fixes from the 6 August ride report. Most of them need a real ride to
