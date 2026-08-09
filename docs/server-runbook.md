@@ -247,6 +247,96 @@ determine which tailnet members can reach the HTTPS address. Readiness and
 metrics are tailnet-visible in this temporary topology, so use the public Caddy
 topology before internet exposure.
 
+## When the host stops answering
+
+Every procedure above begins with `ssh oracle-relay`. On 9 August 2026 that
+stopped working: the relay served nothing from 19:18 UTC, and neither the health
+probe nor the operator's machine could reach port 22 or 443. This is what that
+looks like and what actually fixed it.
+
+**`ping` proves nothing here.** The security list permits TCP 22, 80 and 443 and
+**no ICMP at all**, so a host that is perfectly healthy has never answered a
+ping. Judge reachability on 22 and 443, which are open to `0.0.0.0/0`.
+
+Everything below needs the OCI CLI. The stored session is a browser-issued token
+that expires, so the first command is usually re-authentication, and that opens a
+browser for a human to log in:
+
+```bash
+oci session authenticate --profile-name DEFAULT --region <region>
+# then every command takes:  --auth security_token --profile DEFAULT
+```
+
+Work down this list. Each step rules something out, and the cheap ones come
+first because the expensive answer is usually wrong.
+
+```bash
+# 1. Is the instance even running, and does it still have its address?
+oci compute instance list --compartment-id <tenancy>   --query 'data[].{name:"display-name",state:"lifecycle-state"}' --output table
+oci compute instance list-vnics --instance-id <instance>   --query 'data[].{public:"public-ip",state:"lifecycle-state"}' --output table
+```
+
+`RUNNING` with the public IP still `AVAILABLE` means the platform is fine and
+the problem is inside the guest or in the network rules. A different address
+means DNS is pointing at a machine that no longer exists, and nothing else in
+this section applies.
+
+```bash
+# 2. Did the network rules change under you?
+oci network subnet get --subnet-id <subnet> --query 'data."security-list-ids"[]'
+oci network security-list get --security-list-id <list>
+```
+
+Expect ingress TCP 22, 80 and 443 from `0.0.0.0/0`. A missing rule explains the
+symptom completely and needs no reboot.
+
+```bash
+# 3. Ask the guest what happened, before touching it.
+history=$(oci compute console-history capture --instance-id <instance>   --query 'data.id' --raw-output)
+oci compute console-history get-content --instance-console-history-id "$history"   --length 60000 --file /tmp/console.txt
+grep -aiE 'out of memory|oom-kill|no space left|read-only file system|kernel panic' /tmp/console.txt
+```
+
+This is the step worth not skipping. It distinguishes a wedged kernel from a
+full disk from the OOM killer, and those have different fixes. On 9 August it
+showed the machine stuck in an early boot sequence with no OOM, no filesystem
+error and no panic — a hung guest, nothing more.
+
+```bash
+# 4. Reset. SOFTRESET first.
+oci compute instance action --instance-id <instance> --action SOFTRESET
+```
+
+`SOFTRESET` is a graceful ACPI shutdown and power-on. Prefer it: Postgres holds
+a volume and a hard power cycle risks the database, not just the uptime. Only
+use `RESET` if the guest is too far gone to honour ACPI — the state going
+`RUNNING` → `STOPPING` tells you the kernel was alive enough to hear it.
+
+It came back in about twenty seconds, with 566 MB of 954 MB free and the root
+filesystem 20% used, so neither memory nor disk was the cause.
+
+```bash
+# 5. Docker starts itself; check it did, then restore parity.
+ssh oracle-relay 'systemctl is-active docker; docker ps --format "{{.Names}}	{{.Status}}"'
+ssh oracle-relay 'cd /opt/tailendcharlie && git log --oneline -1'
+```
+
+**The checkout on disk is not what is deployed.** After the 9 August reboot the
+checkout was at `c1ecb1c` while `/api/v1/compatibility` reported an image built
+from `fa13532` — the image had been built from a different commit than the one
+checked out. `serverBuildCommit` is the only trustworthy answer to "what is
+running", and a redeploy is what makes the two agree again.
+
+Then run the ordinary redeploy above and verify from outside the box.
+
+**What riders see during an outage.** The relay carries group coordination:
+presence, hazards, quick messages and TEC status. Navigation and the map are
+local and keep working, so a rider alone notices little and a group notices
+everything. A build tested during an outage will produce presence and alert
+failures that are the relay, not the app — which is Rule 0's lesson from 26 July
+arriving by a different route. Do not ship a tester build while the probe is
+red.
+
 ## Operations
 
 - `.github/workflows/relay-health.yml` checks the public relay every 15 minutes.
