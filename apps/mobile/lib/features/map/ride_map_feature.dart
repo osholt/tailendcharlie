@@ -8944,6 +8944,12 @@ class _NavigationGuidanceStatusBanner extends StatelessWidget {
         Icons.directions_off_rounded,
         const Color(0xFFFFC857),
       ),
+      // Read as a fault rather than a mode: this route was meant to have
+      // directions and does not, which is something the rider can act on.
+      NavigationGuidanceState.routingUnfinished => (
+        Icons.wrong_location_rounded,
+        const Color(0xFFFF8A65),
+      ),
       NavigationGuidanceState.noRoute || NavigationGuidanceState.active => (
         Icons.navigation_rounded,
         const Color(0xFF68A9FF),
