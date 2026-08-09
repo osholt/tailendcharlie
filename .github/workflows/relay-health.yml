@@ -23,11 +23,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The parity question is "is anything undeployed", which needs the
+          # history between the deployed commit and the tip of main.
+          fetch-depth: 0
+
       - name: Check liveness and deployed commit
         id: probe
         continue-on-error: true
-        env:
-          EXPECTED_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           live_file="$RUNNER_TEMP/live.json"
@@ -36,27 +40,49 @@ jobs:
             "$RELAY_BASE_URL/health/live" > "$live_file"
           curl --fail --silent --show-error --max-time 15 \
             "$RELAY_BASE_URL/api/v1/compatibility" > "$compatibility_file"
-          python3 - "$live_file" "$compatibility_file" "$EXPECTED_COMMIT" <<'PY'
+
+          python3 - "$live_file" "$compatibility_file" <<'PY' > "$RUNNER_TEMP/deployed"
           import json
           import pathlib
           import sys
 
           live = json.loads(pathlib.Path(sys.argv[1]).read_text())
           compatibility = json.loads(pathlib.Path(sys.argv[2]).read_text())
-          expected_commit = sys.argv[3]
           if live != {"status": "ok"}:
               raise SystemExit(f"unexpected liveness document: {live!r}")
-          deployed_commit = compatibility.get("serverBuildCommit")
-          if deployed_commit != expected_commit:
-              raise SystemExit(
-                  "relay deploy mismatch: "
-                  f"expected {expected_commit}, received {deployed_commit!r}"
-              )
           protocol = compatibility.get("serverProtocol")
           if not isinstance(protocol, int) or protocol < 1:
               raise SystemExit(f"invalid server protocol: {protocol!r}")
-          print(f"relay healthy at commit {deployed_commit}, protocol {protocol}")
+          deployed = compatibility.get("serverBuildCommit")
+          if not isinstance(deployed, str) or len(deployed) != 40:
+              # `unknown` means the image was built outside the documented
+              # deploy command, so nothing can vouch for what it contains.
+              raise SystemExit(f"relay reports no usable build commit: {deployed!r}")
+          print(deployed)
           PY
+          deployed="$(cat "$RUNNER_TEMP/deployed")"
+
+          # Parity is not "the relay is on the tip of main". Only apps/server
+          # and deploy change what the relay serves, and relay-deploy.yml only
+          # deploys pushes that touch them — so a docs merge legitimately
+          # leaves the relay behind the tip. What must never be true is that a
+          # commit which *does* touch them is newer than what is deployed.
+          # That is the five-day gap in #393, stated exactly.
+          git cat-file -e "$deployed^{commit}" 2>/dev/null || {
+            echo "the relay reports $deployed, which is not a commit on this repository"
+            exit 1
+          }
+          # HEAD, not origin/main: on a schedule the checkout is already the
+          # default branch tip, and HEAD is the one ref that is always present.
+          undeployed="$(git rev-list "$deployed..HEAD" -- apps/server deploy)"
+          if test -n "$undeployed"; then
+            count="$(printf '%s\n' "$undeployed" | wc -l | tr -d ' ')"
+            echo "relay deploy mismatch: $count relay-affecting commit(s) are not deployed."
+            echo "deployed: $deployed"
+            printf 'undeployed: %s\n' $undeployed
+            exit 1
+          fi
+          echo "relay healthy at commit $deployed, nothing relay-affecting undeployed"
 
       - name: Open or update an alert issue
         if: ${{ steps.probe.outcome == 'failure' }}
@@ -73,7 +99,7 @@ jobs:
             --jq ".[] | select(.title == \"$ALERT_TITLE\") | .number" \
             | head -1)"
           body="$(printf \
-            'The scheduled relay probe failed at %s.\n\nRun: %s\n\nThe check verifies HTTPS liveness, the compatibility document and exact deployed-main commit parity. No response body is copied into this issue.' \
+            'The scheduled relay probe failed at %s.\n\nRun: %s\n\nThe check verifies HTTPS liveness, the compatibility document, and that no commit touching `apps/server` or `deploy` on `main` is newer than the commit the running image reports. No response body is copied into this issue.' \
             "$(date -u +%FT%TZ)" \
             "$RUN_URL")"
           if test -n "$issue_number"; then
