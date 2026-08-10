@@ -33,3 +33,22 @@ The pull-request gate that *fails* a change introducing a vulnerable coordinate
 is still outstanding under #395. It compares the base and head dependency
 graphs, so it only became possible once `main` carried a Gradle snapshot to
 compare against.
+
+### What the Android alerts cover, and what they deliberately do not
+
+The submitted Gradle graph is restricted to the **runtime classpaths**, so a
+Dependabot alert on this repository means "an advisory in code we ship".
+
+It was not always so. A Gradle build resolves the app's own dependencies and the
+Android Gradle Plugin's, and the submitted snapshot cannot distinguish them —
+`gradle/actions` documents that scope assignment "does not yet exist". The first
+submission therefore raised 47 alerts of which **44 were AGP's own build-time
+transitives**, including the single critical and all 18 highs, while the only
+coordinate that reaches a phone sat among them as two moderates. An alert list
+that is 94% unactionable is one nobody reads, which is the same failure #393 was
+about in a different guise.
+
+**Build-tool exposure is therefore managed by keeping the Android Gradle Plugin
+current, not by per-coordinate alerts.** That is a deliberate trade with a real
+cost: a compromised build dependency would not raise an alert here. It is
+recorded so the next person meets a decision rather than a gap.
