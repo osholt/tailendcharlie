@@ -140,7 +140,8 @@ jobs:
             --dart-define=RIDE_RELAY_FIREBASE_API_KEY="$RIDE_RELAY_FIREBASE_API_KEY" \
             --dart-define=RIDE_RELAY_FIREBASE_PROJECT_ID="$RIDE_RELAY_FIREBASE_PROJECT_ID" \
             --dart-define=RIDE_RELAY_FIREBASE_MESSAGING_SENDER_ID="$RIDE_RELAY_FIREBASE_MESSAGING_SENDER_ID" \
-            --dart-define=RIDE_RELAY_FIREBASE_ANDROID_APP_ID="$RIDE_RELAY_FIREBASE_ANDROID_APP_ID"
+            --dart-define=RIDE_RELAY_FIREBASE_ANDROID_APP_ID="$RIDE_RELAY_FIREBASE_ANDROID_APP_ID" \
+            --dart-define=RIDE_RELAY_RIDE_DIAGNOSTICS=true
       - name: Validate Play service account secret
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}

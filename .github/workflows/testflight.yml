@@ -101,7 +101,8 @@ jobs:
             --dart-define=RIDE_RELAY_TESTER_UPDATE_URL="$TESTFLIGHT_INVITE_URL" \
             --dart-define=RIDE_RELAY_API_BASE_URL="$RIDE_RELAY_API_BASE_URL" \
             --dart-define=RIDE_RELAY_PUSH_ENABLED="$push_enabled" \
-            --dart-define=RIDE_RELAY_FIREBASE_IOS_APP_ID="$RIDE_RELAY_FIREBASE_IOS_APP_ID"
+            --dart-define=RIDE_RELAY_FIREBASE_IOS_APP_ID="$RIDE_RELAY_FIREBASE_IOS_APP_ID" \
+            --dart-define=RIDE_RELAY_RIDE_DIAGNOSTICS=true
           xcodebuild \
             -workspace ios/Runner.xcworkspace \
             -scheme Runner \
