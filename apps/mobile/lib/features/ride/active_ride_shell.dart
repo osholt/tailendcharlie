@@ -71,6 +71,8 @@ import '../../services/ride_completion_detector.dart';
 import '../../services/route_progress.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
+import '../../controllers/ride_diagnostics_controller.dart';
+import '../../services/ride_diagnostics_recorder.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/enforcement_alert_detector.dart';
 import '../../services/hazard_map_relevance.dart';
@@ -84,6 +86,7 @@ import '../../services/tec_gap_trend.dart';
 import '../../services/route_rejoin_planner.dart';
 import '../../services/trail_display_simplifier.dart';
 import '../map/hazard_map_symbol.dart';
+import '../map/maneuver_diagnostics.dart';
 import '../map/maneuver_list_screen.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/ride_map.dart';
@@ -260,6 +263,7 @@ class ActiveRideShell extends StatefulWidget {
     this.testControl,
     this.testControlRegistry,
     this.spokenGuidance,
+    this.rideDiagnostics,
   });
 
   final RideController rideController;
@@ -274,6 +278,10 @@ class ActiveRideShell extends StatefulWidget {
   /// Whether turn instructions are spoken. Null in surfaces that do not offer it,
   /// which is treated as off (#286).
   final SpokenGuidanceController? spokenGuidance;
+
+  /// Records what the app said beside what the bike did (#419). Null, or off,
+  /// in every ordinary build.
+  final RideDiagnosticsController? rideDiagnostics;
 
   final DistanceUnitController distanceUnits;
   final MapStyleModeController mapStyleMode;
@@ -1008,6 +1016,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// so a rider who leaves the option off still never has a speech engine
   /// initialised behind their back.
   SpokenGuidanceSpeaker? _spokenGuidance;
+
+  /// Null unless an instrumented build has recording switched on (#419).
+  ///
+  /// Held rather than consulted through the controller on every fix so the
+  /// hot paths below are one null check, not a preference read: the recorder
+  /// must not change the timing it exists to measure.
+  RideDiagnosticsRecorder? _diagnostics;
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -1138,6 +1153,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     WidgetsBinding.instance.addObserver(this);
     // Headless and test surfaces have no audio to speak through, and must not
     // construct a platform speech engine.
+    if (widget.rideDiagnostics?.isOn ?? false) {
+      _diagnostics = RideDiagnosticsRecorder();
+      _diagnostics!.recordNote('recording started');
+    }
     if (widget.enableNativeServices && widget.spokenGuidance != null) {
       _spokenGuidance = SpokenGuidanceSpeaker(widget.spokenGuidance!.engine());
     }
@@ -2244,6 +2263,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         ? localMapSample?.recordedAt
         : DateTime.now();
     if (updateNavigationPosition) {
+      // #419's pairing compares the app's bearings against the rider's own
+      // track, so it needs this phone's fixes — and only this phone's. Other
+      // riders' positions are someone else's data and are never recorded.
+      if (mapPoint != null) {
+        _diagnostics?.observePosition(
+          point: awareness_geo.GeoPoint(
+            latitude: mapPoint.latitude,
+            longitude: mapPoint.longitude,
+          ),
+          headingDegrees:
+              simulatedLocal?.headingDegrees ?? localMapSample?.headingDegrees,
+        );
+      }
       _mapNavigationPosition.value = mapPoint == null
           ? null
           : MapNavigationPosition(
@@ -2382,12 +2414,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           }),
     ];
     _mapOverlays.value = List.unmodifiable(overlays);
+    final previousEnforcementAlert = _enforcementAlert.value;
     _enforcementAlert.value = const EnforcementAlertDetector().detect(
       position: localLocation?.sample.position,
       headingDegrees: localLocation?.sample.headingDegrees,
       route: awareness.route,
       hazards: awareness.activeHazards,
       now: now,
+    );
+    // #418 asks whether the warning clears itself on passing. That is a
+    // transition, not a state, so both edges are recorded.
+    _recordEnforcementTransition(
+      previous: previousEnforcementAlert,
+      current: _enforcementAlert.value,
     );
     if (updateDerivedState && widget.rideController.rideStarted) {
       final session = widget.rideController.session;
@@ -2990,6 +3029,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final navigationRoute = rejoinNavigationRoute(plan);
     if (_rejoinNavigationRoute.value?.id != navigationRoute?.id) {
       _rejoinNavigationRoute.value = navigationRoute;
+      // Only on a change, so a rider circling off route does not fill the log
+      // with the same line (#414). The bound in #128's relay gate exists for the
+      // same reason.
+      _diagnostics?.recordReroute(
+        reason: 'rejoin plan changed',
+        succeeded: navigationRoute != null,
+      );
     }
     if (guidance != _rejoinGuidance) {
       setState(() => _rejoinGuidance = guidance);
@@ -3762,8 +3808,67 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   void _onNavigationGuidanceChanged(NavigationGuidance? guidance) {
     _latestNavigationGuidance = guidance;
+    _recordManoeuvreDiagnostics(guidance);
     _speakGuidance(guidance);
     _updateMapOverlays(updateDerivedState: false);
+  }
+
+  /// Writes the turn detail down as the rider rides towards it (#419).
+  ///
+  /// The report is the one `maneuverDiagnosticsReport` renders for the #302
+  /// sheet, not a second derivation: a roundabout's heading change is read
+  /// across two merged steps rather than from the entry manoeuvre's own
+  /// `bearingAfter` (#360), and an instrument that disagrees with the app it
+  /// measures is worse than none.
+  /// Records an enforcement warning appearing or going away (#418).
+  ///
+  /// The report the ride was filed against says the warning "requires touching
+  /// the screen to cancel", so what has to be distinguishable in the log is a
+  /// warning the rider dismissed from one that cleared itself on passing. The
+  /// clearing edge does not know which happened, so it says only that it
+  /// cleared and leaves the distinction to the timing beside it.
+  void _recordEnforcementTransition({
+    required EnforcementAlert? previous,
+    required EnforcementAlert? current,
+  }) {
+    final diagnostics = _diagnostics;
+    if (diagnostics == null) return;
+    if (previous?.hazard.id == current?.hazard.id) return;
+    if (previous != null) {
+      diagnostics.recordEnforcementWarning(
+        hazardType: previous.hazard.type.name,
+        distanceMeters: previous.distanceMeters,
+        armed: false,
+        clearedBy: _dismissedEnforcementAlertId == previous.hazard.id
+            ? 'rider tap'
+            : 'no longer detected',
+      );
+    }
+    if (current != null) {
+      diagnostics.recordEnforcementWarning(
+        hazardType: current.hazard.type.name,
+        distanceMeters: current.distanceMeters,
+        armed: true,
+        clearedBy: null,
+      );
+    }
+  }
+
+  void _recordManoeuvreDiagnostics(NavigationGuidance? guidance) {
+    final diagnostics = _diagnostics;
+    if (diagnostics == null || guidance == null) return;
+    final instruction = guidance.instruction;
+    diagnostics.recordManoeuvre(
+      // The manoeuvre's identity, matching the key `_speakGuidance` uses, so
+      // re-deriving the same turn on every fix does not write it down again.
+      key: '\${instruction.maneuver.hashCode}',
+      position: awareness_geo.GeoPoint(
+        latitude: instruction.maneuver.position.latitude,
+        longitude: instruction.maneuver.position.longitude,
+      ),
+      shownAs: instruction.direction.label,
+      diagnostics: maneuverDiagnosticsReport(instruction),
+    );
   }
 
   /// Speaks the instruction the phone banner and the car rows are already showing
@@ -3783,6 +3888,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (speaker == null) return;
     if (guidance == null) return;
     final controller = widget.rideController;
+    // #409 is about *when* this is said, so the distance to the junction at the
+    // moment it left the speaker is the measurement. Recorded before the await
+    // so a prompt that never completes still shows that it was attempted.
+    _diagnostics?.recordSpokenPrompt(
+      phrase: guidance.instruction.standaloneText,
+      distanceToManoeuvreMeters: guidance.distanceMeters,
+    );
     unawaited(
       speaker.speakManoeuvre(
         // The manoeuvre's identity, not its wording, so re-deriving the same turn
@@ -4376,6 +4488,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
         testControl: widget.testControl,
         spokenGuidance: widget.spokenGuidance,
+        rideDiagnostics: widget.rideDiagnostics,
       ),
     );
   }
@@ -4388,11 +4501,24 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       final origin = renderObject is RenderBox && renderObject.hasSize
           ? renderObject.localToGlobal(Offset.zero) & renderObject.size
           : null;
+      final diagnostics = _diagnostics;
       await const SystemRideSummarySharer().share(
         session,
         widget.rideController.events,
         distanceUnit: widget.distanceUnits.value,
         sharePositionOrigin: origin,
+        // Attached only when an instrumented build was recording, and only ever
+        // to a recipient the rider picks in the share sheet (#419).
+        diagnostics: diagnostics == null || diagnostics.isEmpty
+            ? null
+            : diagnostics.render(
+                rideCode: session.rideCode,
+                // The same identity the relay receives, so a report can be tied
+                // to the build that produced it.
+                appBuild:
+                    '${RelayClientDescriptor.current().appVersion}'
+                    '+${RelayClientDescriptor.current().appBuild}',
+              ),
       );
     } on Object catch (error) {
       if (!mounted) return;

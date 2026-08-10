@@ -7,6 +7,7 @@ import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/distance_unit.dart';
@@ -16,6 +17,7 @@ import '../../services/basemap_configuration.dart';
 import '../../services/build_identity.dart';
 import 'about_build_sheet.dart';
 import 'rider_profile_sheet.dart';
+import 'ride_diagnostics_section.dart';
 import 'test_control_section.dart';
 
 class UnitSettingsSheet extends StatelessWidget {
@@ -30,6 +32,7 @@ class UnitSettingsSheet extends StatelessWidget {
     this.buildIdentity,
     this.testControl,
     this.spokenGuidance,
+    this.rideDiagnostics,
   });
 
   final DistanceUnitController controller;
@@ -42,6 +45,9 @@ class UnitSettingsSheet extends StatelessWidget {
   /// have an intercom carrying music or another app's prompts, and a second
   /// uninvited voice is worse than silence (#286).
   final SpokenGuidanceController? spokenGuidance;
+
+  /// Off, and absent from an ordinary build (#419).
+  final RideDiagnosticsController? rideDiagnostics;
 
   /// Present only in a build carrying the test-control define. Null everywhere
   /// else, and [TestControlSection] renders nothing when the define is absent,
@@ -67,6 +73,7 @@ class UnitSettingsSheet extends StatelessWidget {
     BuildIdentity? buildIdentity,
     TestControlController? testControl,
     SpokenGuidanceController? spokenGuidance,
+    RideDiagnosticsController? rideDiagnostics,
   }) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -81,6 +88,7 @@ class UnitSettingsSheet extends StatelessWidget {
       buildIdentity: buildIdentity,
       testControl: testControl,
       spokenGuidance: spokenGuidance,
+      rideDiagnostics: rideDiagnostics,
     ),
   );
 
@@ -264,6 +272,8 @@ class UnitSettingsSheet extends StatelessWidget {
           const SizedBox(height: 4),
           if (testControl case final testControl?)
             TestControlSection(controller: testControl),
+          if (rideDiagnostics case final diagnostics?)
+            RideDiagnosticsSection(controller: diagnostics),
           _AboutBuildTile(
             identity: buildIdentity ?? BuildIdentity.fromEnvironment(),
             lastRelaySync: lastRelaySync,
