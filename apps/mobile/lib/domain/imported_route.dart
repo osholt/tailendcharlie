@@ -212,6 +212,26 @@ class RouteManeuver {
   final double? bearingAfterDegrees;
   final List<RouteLane> lanes;
 
+  /// Stable identity for de-duplicating work about the same junction.
+  ///
+  /// Deliberately **not** `hashCode`. This class defines no value equality, so
+  /// `hashCode` is per object, and a route is re-derived constantly — a revision
+  /// arriving, a reload from JSON, a recompute after a fix. Every one of those
+  /// mints new objects for the same junctions, so anything keyed on `hashCode`
+  /// treats a junction it has already handled as new.
+  ///
+  /// That is why "Arrive at the destination" was announced repeatedly (#428):
+  /// spoken guidance de-duplicates on the key it is given, and the key changed
+  /// every time the route was rebuilt.
+  ///
+  /// Five decimal places is about a metre, which is finer than any two distinct
+  /// junctions on a route and coarser than the last bits of a double that a
+  /// re-fetch can legitimately move.
+  String get identity =>
+      '$type|${position.latitude.toStringAsFixed(5)},'
+      '${position.longitude.toStringAsFixed(5)}'
+      '|${modifier ?? ''}|${exitNumber ?? ''}';
+
   Map<String, Object?> toJson() => {
     'latitude': position.latitude,
     'longitude': position.longitude,
