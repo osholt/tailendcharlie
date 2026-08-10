@@ -20,6 +20,7 @@ import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_coordination_mode.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
+import 'package:ride_relay/features/home/home_map_backdrop.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
@@ -44,6 +45,22 @@ void main() {
     _completedRides = await CompletedRidesController.load(
       InMemoryCompletedRideStore(),
     );
+  });
+
+  testWidgets('the app opens on the map, with the ride actions on it (#405)', (
+    tester,
+  ) async {
+    // It used to open on this form alone, so the one surface that is useful
+    // before any decision has been taken sat behind the decision. The actions
+    // did not move; they stand on the map now.
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+
+    expect(find.byType(HomeMapBackdrop), findsOneWidget);
+    expect(find.text('Create a ride'), findsOneWidget);
+    expect(find.text('Join a ride'), findsOneWidget);
   });
 
   testWidgets('home screen exposes the two ride entry points', (tester) async {

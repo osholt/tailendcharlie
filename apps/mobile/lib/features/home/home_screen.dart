@@ -14,6 +14,7 @@ import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
+import 'home_map_backdrop.dart';
 import 'scan_invitation_screen.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
@@ -50,6 +51,7 @@ class HomeScreen extends StatefulWidget {
     this.restoringRideCode,
     this.restorationError,
     this.onRetryRestoration,
+    this.enableNativeServices = true,
   });
 
   final RideController controller;
@@ -74,6 +76,10 @@ class HomeScreen extends StatefulWidget {
   final String? restoringRideCode;
   final Object? restorationError;
   final VoidCallback? onRetryRestoration;
+
+  /// False in widget tests and plugin-less builds; the map backdrop stands
+  /// down rather than waiting on a platform map that will never load.
+  final bool enableNativeServices;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -101,181 +107,221 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Stack(
-          children: [
-            Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 560),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const _BrandMark(),
-                      const SizedBox(height: 24),
-                      TesterUpdateBanner(identity: _buildIdentity),
-                      const SizedBox(height: 32),
-                      if (widget.onRetryRestoration != null) ...[
-                        _RideRestorationBanner(
-                          rideCode: widget.restoringRideCode,
-                          error: widget.restorationError,
-                          onRetry: widget.onRetryRestoration!,
-                        ),
-                        const SizedBox(height: 20),
-                      ],
-                      if (widget.controller.endedRideSetAside)
-                        _SetAsideRideBanner(
-                          rideCode: widget.controller.session!.rideCode,
-                          onReopen: widget.controller.reopenEndedRide,
-                        ),
-                      if (widget.sharedRoutes.pending case final file?) ...[
-                        _PendingSharedRouteBanner(
-                          fileName: file.name,
-                          onDismiss: widget.sharedRoutes.clearPending,
-                        ),
-                        const SizedBox(height: 20),
-                      ],
-                      if (widget.sharedRoutes.plannerLinkStatus !=
-                          PlannerLinkStatus.idle) ...[
-                        _PlannerLinkStatusBanner(
-                          status: widget.sharedRoutes.plannerLinkStatus,
-                          message:
-                              widget.sharedRoutes.plannerLinkMessage ??
-                              'Loading shared route…',
-                          canRetry: widget.sharedRoutes.canRetryPlannerLink,
-                          onRetry: () =>
-                              unawaited(widget.sharedRoutes.retryPlannerLink()),
-                          onDismiss: widget.sharedRoutes.clearPlannerLinkNotice,
-                        ),
-                        const SizedBox(height: 20),
-                      ],
-                      Text(
-                        'Ready to ride?',
-                        style: Theme.of(context).textTheme.displaySmall,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Ride solo, create a group, or join with a six-digit ride '
-                        'code. You will go straight to the navigation map.',
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: const Color(0xFFB7C0CC),
-                          height: 1.5,
-                        ),
-                      ),
-                      const SizedBox(height: 40),
-                      FilledButton.icon(
-                        onPressed:
-                            widget.controller.busy ||
-                                widget.onRetryRestoration != null
-                            ? null
-                            : () => _showRideSheet(context, creating: true),
-                        icon: const Icon(Icons.add_road),
-                        label: const Text('Create a ride'),
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed:
-                            widget.controller.busy ||
-                                widget.onRetryRestoration != null
-                            ? null
-                            : () => _showRideSheet(context, creating: false),
-                        icon: const Icon(Icons.group_add_outlined),
-                        label: const Text('Join a ride'),
-                      ),
-                      const SizedBox(height: 12),
-                      TextButton.icon(
-                        key: const Key('start-ride-simulator'),
-                        onPressed:
-                            widget.controller.busy ||
-                                widget.onRetryRestoration != null
-                            ? null
-                            : widget.controller.createSimulationRide,
-                        icon: const Icon(Icons.science_outlined),
-                        label: const Text('Try a simulated ride'),
-                      ),
-                      TextButton.icon(
-                        key: const Key('record-a-route-button'),
-                        onPressed: () => RouteRecorderScreen.show(
-                          context,
-                          widget.recordedRoutes,
-                        ),
-                        icon: const Icon(Icons.fiber_manual_record_outlined),
-                        label: const Text('Record a route'),
-                      ),
-                      TextButton.icon(
-                        key: const Key('previous-rides-button'),
-                        onPressed: () => _openPreviousRides(context),
-                        icon: const Icon(Icons.history),
-                        label: Text(
-                          widget.completedRides.rides.isEmpty
-                              ? 'Previous rides'
-                              : 'Previous rides (${widget.completedRides.rides.length})',
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      const Text(
-                        'No account required · the simulator never shares location',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color(0xFF7F8A98),
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Center(
-                        child: TextButton(
-                          key: const Key('home-build-identity'),
-                          onPressed: () => unawaited(
-                            AboutBuildSheet.show(
+      // #405: the app opens on the map. It used to open on this form, so the
+      // one surface that is useful before any decision has been taken — where
+      // am I, what is this road — sat behind the decision. The actions did not
+      // move or change; they now stand on the map instead of on nothing.
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          HomeMapBackdrop(
+            mapStyleMode: widget.mapStyleMode,
+            speedLimitDisplay: widget.speedLimitDisplay,
+            distanceUnit: widget.distanceUnits.value,
+            enableNativeServices: widget.enableNativeServices,
+          ),
+          // Keeps the words legible over a moving map without hiding it. The
+          // panel itself is opaque where the text is; the gradient is only the
+          // transition.
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xE60E141B),
+                  Color(0x990E141B),
+                  Color(0xE60E141B),
+                ],
+              ),
+            ),
+            child: SizedBox.expand(),
+          ),
+          SafeArea(
+            child: Stack(
+              children: [
+                Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 560),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const _BrandMark(),
+                          const SizedBox(height: 24),
+                          TesterUpdateBanner(identity: _buildIdentity),
+                          const SizedBox(height: 32),
+                          if (widget.onRetryRestoration != null) ...[
+                            _RideRestorationBanner(
+                              rideCode: widget.restoringRideCode,
+                              error: widget.restorationError,
+                              onRetry: widget.onRetryRestoration!,
+                            ),
+                            const SizedBox(height: 20),
+                          ],
+                          if (widget.controller.endedRideSetAside)
+                            _SetAsideRideBanner(
+                              rideCode: widget.controller.session!.rideCode,
+                              onReopen: widget.controller.reopenEndedRide,
+                            ),
+                          if (widget.sharedRoutes.pending case final file?) ...[
+                            _PendingSharedRouteBanner(
+                              fileName: file.name,
+                              onDismiss: widget.sharedRoutes.clearPending,
+                            ),
+                            const SizedBox(height: 20),
+                          ],
+                          if (widget.sharedRoutes.plannerLinkStatus !=
+                              PlannerLinkStatus.idle) ...[
+                            _PlannerLinkStatusBanner(
+                              status: widget.sharedRoutes.plannerLinkStatus,
+                              message:
+                                  widget.sharedRoutes.plannerLinkMessage ??
+                                  'Loading shared route…',
+                              canRetry: widget.sharedRoutes.canRetryPlannerLink,
+                              onRetry: () => unawaited(
+                                widget.sharedRoutes.retryPlannerLink(),
+                              ),
+                              onDismiss:
+                                  widget.sharedRoutes.clearPlannerLinkNotice,
+                            ),
+                            const SizedBox(height: 20),
+                          ],
+                          Text(
+                            'Ready to ride?',
+                            style: Theme.of(context).textTheme.displaySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Ride solo, create a group, or join with a six-digit ride '
+                            'code. You will go straight to the navigation map.',
+                            style: Theme.of(context).textTheme.bodyLarge
+                                ?.copyWith(
+                                  color: const Color(0xFFB7C0CC),
+                                  height: 1.5,
+                                ),
+                          ),
+                          const SizedBox(height: 40),
+                          FilledButton.icon(
+                            onPressed:
+                                widget.controller.busy ||
+                                    widget.onRetryRestoration != null
+                                ? null
+                                : () => _showRideSheet(context, creating: true),
+                            icon: const Icon(Icons.add_road),
+                            label: const Text('Create a ride'),
+                          ),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed:
+                                widget.controller.busy ||
+                                    widget.onRetryRestoration != null
+                                ? null
+                                : () =>
+                                      _showRideSheet(context, creating: false),
+                            icon: const Icon(Icons.group_add_outlined),
+                            label: const Text('Join a ride'),
+                          ),
+                          const SizedBox(height: 12),
+                          TextButton.icon(
+                            key: const Key('start-ride-simulator'),
+                            onPressed:
+                                widget.controller.busy ||
+                                    widget.onRetryRestoration != null
+                                ? null
+                                : widget.controller.createSimulationRide,
+                            icon: const Icon(Icons.science_outlined),
+                            label: const Text('Try a simulated ride'),
+                          ),
+                          TextButton.icon(
+                            key: const Key('record-a-route-button'),
+                            onPressed: () => RouteRecorderScreen.show(
                               context,
-                              identity: _buildIdentity,
+                              widget.recordedRoutes,
+                            ),
+                            icon: const Icon(
+                              Icons.fiber_manual_record_outlined,
+                            ),
+                            label: const Text('Record a route'),
+                          ),
+                          TextButton.icon(
+                            key: const Key('previous-rides-button'),
+                            onPressed: () => _openPreviousRides(context),
+                            icon: const Icon(Icons.history),
+                            label: Text(
+                              widget.completedRides.rides.isEmpty
+                                  ? 'Previous rides'
+                                  : 'Previous rides (${widget.completedRides.rides.length})',
                             ),
                           ),
-                          child: Text(
-                            '${_buildIdentity.versionLabel} · '
-                            '${_buildIdentity.track.label}',
-                            style: const TextStyle(
+                          const SizedBox(height: 20),
+                          const Text(
+                            'No account required · the simulator never shares location',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
                               color: Color(0xFF7F8A98),
                               fontSize: 12,
                             ),
                           ),
+                          const SizedBox(height: 6),
+                          Center(
+                            child: TextButton(
+                              key: const Key('home-build-identity'),
+                              onPressed: () => unawaited(
+                                AboutBuildSheet.show(
+                                  context,
+                                  identity: _buildIdentity,
+                                ),
+                              ),
+                              child: Text(
+                                '${_buildIdentity.versionLabel} · '
+                                '${_buildIdentity.track.label}',
+                                style: const TextStyle(
+                                  color: Color(0xFF7F8A98),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 4,
+                  right: 8,
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Emergency info',
+                        onPressed: () => EmergencyInfoSheet.show(
+                          context,
+                          widget.riderProfile,
                         ),
+                        icon: const Icon(Icons.medical_information_outlined),
+                      ),
+                      IconButton(
+                        tooltip: 'Settings',
+                        onPressed: () => UnitSettingsSheet.show(
+                          context,
+                          widget.distanceUnits,
+                          widget.mapStyleMode,
+                          widget.riderProfile,
+                          speedLimitDisplay: widget.speedLimitDisplay,
+                          testControl: widget.testControl,
+                          spokenGuidance: widget.spokenGuidance,
+                        ),
+                        icon: const Icon(Icons.settings_outlined),
                       ),
                     ],
                   ),
                 ),
-              ),
+              ],
             ),
-            Positioned(
-              top: 4,
-              right: 8,
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: 'Emergency info',
-                    onPressed: () =>
-                        EmergencyInfoSheet.show(context, widget.riderProfile),
-                    icon: const Icon(Icons.medical_information_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'Settings',
-                    onPressed: () => UnitSettingsSheet.show(
-                      context,
-                      widget.distanceUnits,
-                      widget.mapStyleMode,
-                      widget.riderProfile,
-                      speedLimitDisplay: widget.speedLimitDisplay,
-                      testControl: widget.testControl,
-                      spokenGuidance: widget.spokenGuidance,
-                    ),
-                    icon: const Icon(Icons.settings_outlined),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

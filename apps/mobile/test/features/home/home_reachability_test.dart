@@ -93,6 +93,10 @@ void main() {
           speedLimitDisplay: speedLimitDisplay,
           recordedRoutes: InMemoryRecordedRouteStore(),
           completedRides: completedRides,
+          // The home map backdrop is live in production. Without this it would
+          // wait forever here on a platform map and a location plugin that
+          // never answer, and pumpAndSettle would time out.
+          enableNativeServices: false,
         ),
       ),
     );
