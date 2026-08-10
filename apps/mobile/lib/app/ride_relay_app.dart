@@ -125,6 +125,7 @@ class RideRelayApp extends StatelessWidget {
             restoringRideCode: controller.session?.rideCode,
             restorationError: restorationError,
             onRetryRestoration: retryRestoration,
+            enableNativeServices: enableNativeServices,
           );
         }
         // An ended ride the rider has stepped away from stays on the phone and
@@ -162,6 +163,7 @@ class RideRelayApp extends StatelessWidget {
           planDirectory: planDirectory,
           testControl: testControl,
           spokenGuidance: spokenGuidance,
+          enableNativeServices: enableNativeServices,
         );
       },
     );
