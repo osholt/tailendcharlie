@@ -11,10 +11,11 @@ void main() {
     test('an ordinary ride is Map, Ride, Alerts', () {
       final destinations = rideDestinations(simulation: false);
 
-      expect(
-        destinations.map((destination) => destination.label),
-        ['Map', 'Ride', 'Alerts'],
-      );
+      expect(destinations.map((destination) => destination.label), [
+        'Map',
+        'Ride',
+        'Alerts',
+      ]);
       expect(destinations.map((destination) => destination.index), [0, 1, 2]);
     });
 
@@ -25,11 +26,18 @@ void main() {
       // agreeing with the bar.
       final destinations = rideDestinations(simulation: true);
 
-      expect(
-        destinations.map((destination) => destination.label),
-        ['Map', 'Ride Lab', 'Ride', 'Alerts'],
-      );
-      expect(destinations.map((destination) => destination.index), [0, 1, 2, 3]);
+      expect(destinations.map((destination) => destination.label), [
+        'Map',
+        'Ride Lab',
+        'Ride',
+        'Alerts',
+      ]);
+      expect(destinations.map((destination) => destination.index), [
+        0,
+        1,
+        2,
+        3,
+      ]);
       expect(
         destinations.firstWhere((d) => d.label == 'Ride').index,
         2,
