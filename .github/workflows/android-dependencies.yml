@@ -25,6 +25,11 @@ on:
       - 'apps/mobile/pubspec.yaml'
       - 'apps/mobile/pubspec.lock'
       - '.github/workflows/android-dependencies.yml'
+  # Answering "who pulls this in, and does it ship" needs the resolved tree, which
+  # needs a Gradle run, which needs JDK 21. #421 stalled on exactly that: the
+  # advisory triage could establish that junit 4 is bundled in the APK but not
+  # what puts it there. Dispatchable so the question can be asked without a merge.
+  workflow_dispatch:
   pull_request:
     paths:
       - 'apps/mobile/android/**'
@@ -101,3 +106,74 @@ jobs:
             --dart-define=RIDE_RELAY_APP_BUILD="$RIDE_RELAY_APP_BUILD" \
             --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK="$RIDE_RELAY_DISTRIBUTION_TRACK" \
             --dart-define=RIDE_RELAY_BUILD_TIMESTAMP="$RIDE_RELAY_BUILD_TIMESTAMP"
+
+  report:
+    name: Resolved dependency tree
+    # Dispatch only. It answers a question rather than gating anything, and the
+    # tree is large enough that producing it on every push would be noise.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: ${{ env.MOBILE_DIR }}
+      # The build is what writes android/local.properties naming the Flutter SDK,
+      # without which settings.gradle.kts cannot even configure, and what
+      # generates the plugin projects most coordinates arrive through.
+      - name: Build once so the Android project can be resolved
+        working-directory: ${{ env.MOBILE_DIR }}
+        run: flutter build apk --debug
+
+      - name: Resolve the runtime classpaths
+        working-directory: ${{ env.MOBILE_DIR }}/android
+        run: |
+          set -euo pipefail
+          # The pinned version, read from the tracked wrapper properties rather
+          # than repeated here, so a Flutter upgrade that moves it is followed.
+          version="$(sed -n 's|.*/gradle-\(.*\)-all\.zip|\1|p' \
+            gradle/wrapper/gradle-wrapper.properties)"
+          test -n "$version" || { echo "::error::could not read the pinned Gradle version"; exit 1; }
+          echo "pinned Gradle version: $version"
+          if test -x ./gradlew; then
+            gradle="./gradlew"
+          else
+            # android/gradlew is gitignored by Flutter's own .gitignore, so it may
+            # not be here even after a build.
+            curl --fail --silent --show-error --location \
+              --output "$RUNNER_TEMP/gradle.zip" \
+              "https://services.gradle.org/distributions/gradle-$version-bin.zip"
+            unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+            gradle="$RUNNER_TEMP/gradle-$version/bin/gradle"
+          fi
+          # Release as well as debug: the advisory triage in #421 measured a debug
+          # APK, and a debug build legitimately carries more than a shipped one.
+          for configuration in releaseRuntimeClasspath debugRuntimeClasspath; do
+            echo "== $configuration =="
+            "$gradle" --console=plain --no-daemon \
+              :app:dependencies --configuration "$configuration" \
+              > "$RUNNER_TEMP/$configuration.txt" || {
+                echo "::warning::could not resolve $configuration"
+                continue
+              }
+            # Named on purpose: these are the questions #421 is stuck on.
+            for coordinate in junit: com.google.guava org.bouncycastle io.netty; do
+              printf '  %-22s ' "$coordinate"
+              grep -c -- "$coordinate" "$RUNNER_TEMP/$configuration.txt" || true
+            done
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-dependency-tree
+          path: ${{ runner.temp }}/*RuntimeClasspath.txt
+          if-no-files-found: error
