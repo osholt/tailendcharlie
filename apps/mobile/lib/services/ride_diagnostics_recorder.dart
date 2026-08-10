@@ -68,42 +68,25 @@ class RideDiagnosticsRecorder {
 
   /// The app has decided this is the manoeuvre the rider is riding towards.
   ///
-  /// Everything here is what the app reasoned *from*, not just its conclusion:
-  /// #412's two candidate causes are told apart by whether `bearingBefore`
-  /// matches the road the rider approached on, and that is only answerable if the
-  /// number the app used is written down beside the rider's own track.
+  /// [diagnostics] is the report `maneuverDiagnosticsReport` already produces for
+  /// the #302 turn-detail sheet, passed in rather than re-derived. That matters
+  /// more than it looks: a roundabout's heading change is read across two merged
+  /// steps and *not* from the entry manoeuvre's own `bearingAfter` (#360), so a
+  /// second derivation here would be subtly different from the one the rider can
+  /// see on screen — and an instrument that disagrees with the app it is
+  /// measuring is worse than none.
   void recordManoeuvre({
     required String key,
     required GeoPoint position,
-    required String engineType,
-    required String? engineModifier,
     required String shownAs,
-    required String instructionText,
-    required double? bearingBeforeDegrees,
-    required double? bearingAfterDegrees,
-    required double? headingChangeDegrees,
-    required double straightBandDegrees,
-    required int? exitNumber,
-    required String? drivingSide,
-    required int stepCount,
-    required String? roadLabel,
+    required String diagnostics,
   }) {
     if (_pending.containsKey(key)) return;
-    _add(
-      'MANOEUVRE  $instructionText\n'
-      '           shown as        $shownAs\n'
-      '           engine          $engineType'
-      '${engineModifier == null ? '' : ' / $engineModifier'}\n'
-      '           bearing before  ${_degrees(bearingBeforeDegrees)}\n'
-      '           bearing after   ${_degrees(bearingAfterDegrees)}\n'
-      '           heading change  ${_signed(headingChangeDegrees)}\n'
-      '           straight band   ±${straightBandDegrees.toStringAsFixed(0)}°\n'
-      '           exit number     ${exitNumber ?? '—'}\n'
-      '           driving side    ${drivingSide ?? '—'}\n'
-      '           steps merged    $stepCount\n'
-      '           road            ${roadLabel ?? '—'}\n'
-      '           at              ${_coordinate(position)}',
-    );
+    final indented = diagnostics
+        .split('\n')
+        .map((line) => '           $line')
+        .join('\n');
+    _add('MANOEUVRE  at ${_coordinate(position)}\n$indented');
     _pending[key] = _PendingManoeuvre(
       key: key,
       position: position,

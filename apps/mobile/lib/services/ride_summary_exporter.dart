@@ -425,6 +425,7 @@ abstract interface class RideSummarySharer {
     Iterable<RideEvent> events, {
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     Rect? sharePositionOrigin,
+    String? diagnostics,
   });
 }
 
@@ -439,6 +440,10 @@ class SystemRideSummarySharer implements RideSummarySharer {
     Iterable<RideEvent> events, {
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     Rect? sharePositionOrigin,
+    // Present only when an instrumented build was recording (#419). One more
+    // attachment on the share a rider already does, rather than a second flow
+    // and a second decision at the end of a ride.
+    String? diagnostics,
   }) async {
     final generatedAt = DateTime.now();
     final summary = exporter.summarize(
@@ -453,6 +458,9 @@ class SystemRideSummarySharer implements RideSummarySharer {
     );
     final csvFileName = exporter.fileName(summary);
     final gpxFileName = exporter.trailFileName(summary);
+    final diagnosticsFileName =
+        'tail-end-charlie-diagnostics-'
+        '${summary.rideCode}.txt';
     await SharePlus.instance.share(
       ShareParams(
         title: 'Ride summary ${summary.rideCode}',
@@ -472,8 +480,18 @@ class SystemRideSummarySharer implements RideSummarySharer {
               mimeType: 'application/gpx+xml',
               name: gpxFileName,
             ),
+          if (diagnostics != null)
+            XFile.fromData(
+              Uint8List.fromList(utf8.encode(diagnostics)),
+              mimeType: 'text/plain',
+              name: diagnosticsFileName,
+            ),
         ],
-        fileNameOverrides: [csvFileName, if (route != null) gpxFileName],
+        fileNameOverrides: [
+          csvFileName,
+          if (route != null) gpxFileName,
+          if (diagnostics != null) diagnosticsFileName,
+        ],
         sharePositionOrigin: sharePositionOrigin,
       ),
     );

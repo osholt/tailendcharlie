@@ -8,6 +8,7 @@ import 'controllers/distance_unit_controller.dart';
 import 'controllers/completed_rides_controller.dart';
 import 'controllers/map_style_mode_controller.dart';
 import 'controllers/ride_code_preference_controller.dart';
+import 'controllers/ride_diagnostics_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/ride_invitation_link_controller.dart';
 import 'controllers/rider_profile_controller.dart';
@@ -84,6 +85,11 @@ Future<void> main() async {
   final completedRides = await CompletedRidesController.load(
     completedRideStore,
   );
+  // Loaded after the parallel batch rather than inside it, for the same reason
+  // the #209 note gives for test control: the batch is already at its limit, and
+  // this returns without touching storage in a build with no diagnostics define,
+  // so it costs an ordinary build nothing.
+  final rideDiagnostics = await RideDiagnosticsController.load();
   final controller = RideController(
     SqliteEventStore(),
     SharedPreferencesSessionStore(),
@@ -123,6 +129,7 @@ Future<void> main() async {
       testControl: testControl,
       testControlRegistry: testControlRegistry,
       spokenGuidance: spokenGuidance,
+      rideDiagnostics: rideDiagnostics,
       initializeController: controller.initialize,
     ),
   );

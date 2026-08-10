@@ -59,28 +59,39 @@ void main() {
     }
   }
 
+  /// Stands in for what `maneuverDiagnosticsReport` produces. Passing the real
+  /// report through is the point of the API — the recorder must not re-derive
+  /// what the #302 sheet already derives (#360) — so the test supplies one.
+  String diagnosticsReport({
+    String shownAs = 'right',
+    double? bearingBefore = 10,
+    double? bearingAfter = 100,
+    String headingChange = '+90.0° (clockwise, to the right)',
+  }) => [
+    'Tail End Charlie · turn detail',
+    'Instruction:      Take the 2nd exit',
+    'Shown as:         $shownAs (roundabout)',
+    'Engine type:      roundabout',
+    'Engine modifier:  right',
+    'Bearing before:   ${bearingBefore?.toStringAsFixed(1) ?? '—'}°',
+    'Bearing off ring: ${bearingAfter?.toStringAsFixed(1) ?? '—'}°',
+    'Heading change:   $headingChange',
+    'Straight band:    ±38°',
+    'Exit number:      2',
+    'Driving side:     left',
+    'Steps merged:     2',
+  ].join('\n');
+
   void recordJunction(
     RideDiagnosticsRecorder recorder, {
     required GeoPoint junction,
     required String shownAs,
-    double? bearingBefore,
-    double? bearingAfter,
-    double? headingChange,
+    String? diagnostics,
   }) => recorder.recordManoeuvre(
     key: 'junction-1',
     position: junction,
-    engineType: 'roundabout',
-    engineModifier: 'right',
     shownAs: shownAs,
-    instructionText: 'Take the 2nd exit',
-    bearingBeforeDegrees: bearingBefore,
-    bearingAfterDegrees: bearingAfter,
-    headingChangeDegrees: headingChange,
-    straightBandDegrees: 38,
-    exitNumber: 2,
-    drivingSide: 'left',
-    stepCount: 2,
-    roadLabel: 'A46',
+    diagnostics: diagnostics ?? diagnosticsReport(shownAs: shownAs),
   );
 
   final junction = const GeoPoint(latitude: 51.4545, longitude: -2.5879);
@@ -91,31 +102,25 @@ void main() {
         clock: () => DateTime.utc(2026, 8, 10),
       );
 
-      recordJunction(
-        recorder,
-        junction: junction,
-        shownAs: 'right',
-        bearingBefore: 10,
-        bearingAfter: 100,
-        headingChange: 90,
-      );
+      recordJunction(recorder, junction: junction, shownAs: 'right');
 
       final report = recorder.render(rideCode: '123456');
       // The reference question: does the bearing the app used match the road?
-      expect(report, contains('bearing before  10.0°'));
-      expect(report, contains('bearing after   100.0°'));
+      expect(report, contains('Bearing before:   10.0°'));
+      expect(report, contains('Bearing off ring: 100.0°'));
       // The bucketing question: was the change inside the band?
       expect(
         report,
-        contains('heading change  +90.0° (clockwise, to the right)'),
+        contains('Heading change:   +90.0° (clockwise, to the right)'),
       );
-      expect(report, contains('straight band   ±38°'));
-      // And the rest of what the #302 sheet shows, so a captured turn explains
-      // the instruction rather than only naming it.
-      expect(report, contains('engine          roundabout / right'));
-      expect(report, contains('exit number     2'));
-      expect(report, contains('driving side    left'));
-      expect(report, contains('steps merged    2'));
+      expect(report, contains('Straight band:    ±38°'));
+      // The rest of the #302 sheet, carried through rather than re-derived.
+      expect(report, contains('Engine type:      roundabout'));
+      expect(report, contains('Exit number:      2'));
+      expect(report, contains('Driving side:     left'));
+      expect(report, contains('Steps merged:     2'));
+      // Where it happened, which the sheet does not have to say and a log does.
+      expect(report, contains('MANOEUVRE  at 51.454500, -2.587900'));
     });
 
     test('a manoeuvre re-derived on every fix is written down once', () {
@@ -147,14 +152,7 @@ void main() {
           headingDegrees: 0,
         );
       }
-      recordJunction(
-        recorder,
-        junction: junction,
-        shownAs: 'right',
-        bearingBefore: 0,
-        bearingAfter: 90,
-        headingChange: 90,
-      );
+      recordJunction(recorder, junction: junction, shownAs: 'right');
       rideThrough(
         recorder,
         junction: junction,

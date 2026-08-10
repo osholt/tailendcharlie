@@ -11,6 +11,7 @@ import '../controllers/ride_invitation_link_controller.dart';
 import '../controllers/rider_profile_controller.dart';
 import '../controllers/road_rating_controller.dart';
 import '../controllers/shared_route_controller.dart';
+import '../controllers/ride_diagnostics_controller.dart';
 import '../controllers/speed_limit_display_controller.dart';
 import '../controllers/spoken_guidance_controller.dart';
 import '../controllers/test_control_controller.dart';
@@ -40,6 +41,7 @@ class RideRelayApp extends StatelessWidget {
     this.testControl,
     this.testControlRegistry,
     this.spokenGuidance,
+    this.rideDiagnostics,
     this.enableNativeServices = true,
     this.initializeController,
     this.startupFallbackAfter = const Duration(seconds: 2),
@@ -67,6 +69,10 @@ class RideRelayApp extends StatelessWidget {
 
   /// Whether turn instructions are spoken (#286). Off by default.
   final SpokenGuidanceController? spokenGuidance;
+
+  /// Records what the app said beside what the bike did, when an instrumented
+  /// build has it switched on (#419). Null in an ordinary build.
+  final RideDiagnosticsController? rideDiagnostics;
 
   final bool enableNativeServices;
 
@@ -145,6 +151,7 @@ class RideRelayApp extends StatelessWidget {
             testControl: testControl,
             testControlRegistry: testControlRegistry,
             spokenGuidance: spokenGuidance,
+            rideDiagnostics: rideDiagnostics,
           );
         }
         if (riderProfile.needsOnboarding) {
