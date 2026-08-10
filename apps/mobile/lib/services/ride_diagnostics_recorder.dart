@@ -81,6 +81,12 @@ class RideDiagnosticsRecorder {
     required String shownAs,
     required String diagnostics,
   }) {
+    // The key must be the manoeuvre's identity, not the source text that would
+    // have produced it. Shipped once as a `\$`-escaped interpolation, which made
+    // every manoeuvre share one key: the first was recorded and every later one
+    // was silently treated as a repeat, so a whole ride produced one entry. The
+    // analyzer cannot see that — it is a valid string — so the check is here.
+    assert(!key.contains(r'$'), 'the manoeuvre key was not interpolated: $key');
     if (_pending.containsKey(key)) return;
     final indented = diagnostics
         .split('\n')

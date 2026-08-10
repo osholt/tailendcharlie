@@ -123,6 +123,51 @@ void main() {
       expect(report, contains('MANOEUVRE  at 51.454500, -2.587900'));
     });
 
+    test('two different junctions are two entries', () {
+      // The dedupe below is keyed, so a broken key does not merely dedupe a
+      // repeat — it collapses the whole ride into its first manoeuvre.
+      final recorder = RideDiagnosticsRecorder(
+        clock: () => DateTime.utc(2026, 8, 10),
+      );
+
+      recorder.recordManoeuvre(
+        key: 'junction-1',
+        position: junction,
+        shownAs: 'right',
+        diagnostics: diagnosticsReport(),
+      );
+      recorder.recordManoeuvre(
+        key: 'junction-2',
+        position: junction,
+        shownAs: 'left',
+        diagnostics: diagnosticsReport(shownAs: 'left'),
+      );
+
+      expect(
+        recorder.entries.where((entry) => entry.contains('MANOEUVRE')).length,
+        2,
+      );
+    });
+
+    test('a key that was never interpolated is refused', () {
+      // Exactly the defect that shipped in build 47: the call site wrote
+      // '\${instruction.maneuver.hashCode}', which Dart reads as literal text,
+      // so every manoeuvre shared one key. The analyzer cannot see it; this can.
+      final recorder = RideDiagnosticsRecorder(
+        clock: () => DateTime.utc(2026, 8, 10),
+      );
+
+      expect(
+        () => recorder.recordManoeuvre(
+          key: r'${instruction.maneuver.hashCode}',
+          position: junction,
+          shownAs: 'right',
+          diagnostics: diagnosticsReport(),
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
     test('a manoeuvre re-derived on every fix is written down once', () {
       final recorder = RideDiagnosticsRecorder(
         clock: () => DateTime.utc(2026, 8, 10),
