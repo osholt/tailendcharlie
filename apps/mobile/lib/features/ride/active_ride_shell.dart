@@ -3861,7 +3861,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     diagnostics.recordManoeuvre(
       // The manoeuvre's identity, matching the key `_speakGuidance` uses, so
       // re-deriving the same turn on every fix does not write it down again.
-      key: '\${instruction.maneuver.hashCode}',
+      key: '${instruction.maneuver.hashCode}',
       position: awareness_geo.GeoPoint(
         latitude: instruction.maneuver.position.latitude,
         longitude: instruction.maneuver.position.longitude,
