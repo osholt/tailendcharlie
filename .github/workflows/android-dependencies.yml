@@ -6,9 +6,16 @@ name: Android dependency advisories
 #
 # GitHub's dependency graph does not resolve Gradle build files by itself, so
 # enabling the graph alone would cover nothing here. This submits the *resolved*
-# graph — which is the only way the transitive coordinates that carried #352's
-# advisory are visible at all — and then reviews the difference a pull request
-# makes to it.
+# graph — the only way the transitive coordinates that carried #352's advisory
+# are visible at all — which puts the Android dependencies under Dependabot
+# alerts.
+#
+# The pull-request gate that fails a *newly introduced* vulnerable coordinate is
+# deliberately not here yet. `dependency-review-action` compares the base and
+# head snapshots, and until `main` carries a Gradle snapshot there is nothing to
+# compare against: every existing coordinate reads as introduced by whichever
+# pull request happens to be open. Merging this establishes that baseline; the
+# gate follows in #395 once it exists.
 
 on:
   push:
@@ -94,19 +101,3 @@ jobs:
             --dart-define=RIDE_RELAY_APP_BUILD="$RIDE_RELAY_APP_BUILD" \
             --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK="$RIDE_RELAY_DISTRIBUTION_TRACK" \
             --dart-define=RIDE_RELAY_BUILD_TIMESTAMP="$RIDE_RELAY_BUILD_TIMESTAMP"
-
-  review:
-    name: Review dependency changes
-    needs: submit
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          # The gate #395 asks for: a pull request that introduces a coordinate
-          # with a known advisory fails, rather than a human remembering to
-          # query OSV.
-          fail-on-severity: moderate
-          comment-summary-in-pr: on-failure

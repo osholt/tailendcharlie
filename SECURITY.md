@@ -22,11 +22,14 @@ Every pull request is scanned for dependencies with known advisories:
   locked environment.
 - **Android/Gradle** — `.github/workflows/android-dependencies.yml` submits the
   *resolved* Gradle dependency graph, including the transitive coordinates that
-  arrive through Flutter plugins, and fails a pull request that introduces a
-  coordinate with a moderate or higher advisory.
+  arrive through Flutter plugins, which puts them under Dependabot alerts.
 
 The Android scanning depends on the repository's dependency graph and Dependabot
 alerts being enabled under Settings -> Code security. Both are free on a public
-repository. With them off, the submission has nowhere to go and the review
-degrades to reporting nothing rather than to failing loudly — so if that job is
-ever green while Dependabot is disabled, it is not evidence of anything.
+repository. With them off, the submission has nowhere to go — so a green job is
+not on its own evidence that anything was scanned.
+
+The pull-request gate that *fails* a change introducing a vulnerable coordinate
+is still outstanding under #395. It compares the base and head dependency
+graphs, so it only became possible once `main` carried a Gradle snapshot to
+compare against.
