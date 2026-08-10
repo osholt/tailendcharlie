@@ -810,6 +810,50 @@ class _PreStartRidePanel extends StatelessWidget {
   );
 }
 
+/// One destination of the active ride, named once.
+///
+/// The navigation bar, the landscape rail and the ride menu all read this list,
+/// so they cannot disagree about what exists or what it is called. That matters
+/// because the ride menu is the *only* way to reach these while the rider is
+/// moving (#404): a copy that drifted would strand the rider at exactly the
+/// moment the bar is gone.
+class RideDestination {
+  const RideDestination({
+    required this.index,
+    required this.label,
+    required this.icon,
+    required this.selectedIcon,
+  });
+
+  /// Position in the shell's `switch`, which differs between an ordinary ride
+  /// and a simulation because Ride Lab is inserted at 1.
+  final int index;
+  final String label;
+  final IconData icon;
+  final IconData selectedIcon;
+}
+
+/// The destinations of an active ride, in bar order.
+///
+/// [simulation] inserts Ride Lab, which shifts everything after it — which is
+/// why the index is carried rather than inferred by a caller counting.
+List<RideDestination> rideDestinations({required bool simulation}) {
+  var index = 0;
+  RideDestination next(String label, IconData icon, IconData selectedIcon) =>
+      RideDestination(
+        index: index++,
+        label: label,
+        icon: icon,
+        selectedIcon: selectedIcon,
+      );
+  return [
+    next('Map', Icons.map_outlined, Icons.map),
+    if (simulation) next('Ride Lab', Icons.science_outlined, Icons.science),
+    next('Ride', Icons.two_wheeler_outlined, Icons.two_wheeler),
+    next('Alerts', Icons.warning_amber_outlined, Icons.warning_amber),
+  ];
+}
+
 enum _StartRideDecision { cancel, chooseRoute, start }
 
 enum _MissingTecDecision { cancel, assignTec, startAnyway }
@@ -3505,29 +3549,43 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             (navigationPosition != null ||
                 _junctionMarkerOverlay.value != null ||
                 _holdingNavigationChromeForMarkerExit);
-        final destinations = <NavigationDestination>[
-          const NavigationDestination(
-            icon: Icon(Icons.map_outlined),
-            selectedIcon: Icon(Icons.map),
-            label: 'Map',
-          ),
-          if (_isSimulation)
-            const NavigationDestination(
-              icon: Icon(Icons.science_outlined),
-              selectedIcon: Icon(Icons.science),
-              label: 'Ride Lab',
+        final destinations = [
+          for (final destination in _rideDestinations)
+            NavigationDestination(
+              icon: Icon(destination.icon),
+              selectedIcon: Icon(destination.selectedIcon),
+              label: destination.label,
             ),
-          const NavigationDestination(
-            icon: Icon(Icons.two_wheeler_outlined),
-            selectedIcon: Icon(Icons.two_wheeler),
-            label: 'Ride',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.warning_amber_outlined),
-            selectedIcon: Icon(Icons.warning_amber),
-            label: 'Alerts',
-          ),
         ];
+        // Whatever hides the navigation also has to offer the way back, and it
+        // has to be this shell that does: the map cannot be relied on for it.
+        // It renders a spinner until its style loads, and a rider whose bar is
+        // already gone would have nothing at all until that finished — which is
+        // exactly the state a widget test lands in, and the state a slow phone
+        // lands in on a cold start.
+        final ridingBody = hideWhileMoving
+            ? Stack(
+                children: [
+                  Positioned.fill(child: body),
+                  // The one thing #133 puts in the upper leading corner, in the
+                  // same place, so a rider reaches for it where the ride menu
+                  // has always been.
+                  Positioned(
+                    left: 12,
+                    top: MediaQuery.paddingOf(context).top + 12,
+                    child: FloatingActionButton.small(
+                      key: const Key('ride-menu-button'),
+                      heroTag: 'ride-relay-shell-menu',
+                      tooltip: 'Ride actions',
+                      onPressed: _openRideMenu,
+                      backgroundColor: const Color(0xE6252E39),
+                      foregroundColor: Colors.white,
+                      child: const Icon(Icons.menu),
+                    ),
+                  ),
+                ],
+              )
+            : body;
         if (landscape && !hideWhileMoving) {
           return Scaffold(
             body: Row(
@@ -3564,7 +3622,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           );
         }
         return Scaffold(
-          body: body,
+          // Both orientations arrive here when the chrome is hidden: the
+          // landscape rail above is only taken while it is showing.
+          body: ridingBody,
           bottomNavigationBar: hideWhileMoving
               ? null
               : NavigationBar(
@@ -3622,6 +3682,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       tecGapTrend: _tecGapTrend,
       groupRiderCount: widget.rideController.liveParticipants.length,
       onOpenRoster: _openRoster,
+      // Deliberately not `onOpenRideMenu`. The control that reaches the other
+      // tabs is rendered by this shell instead — see _openRideMenu and #404.
       junctionMarkerOverlay: _junctionMarkerOverlay,
       enforcementAlert: _enforcementAlert,
       rideCompletionSuggestion: _rideCompletionSuggestion,
@@ -4345,6 +4407,55 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         RelayProtocolCapabilities.rideReopen,
       ) ??
       true;
+
+  List<RideDestination> get _rideDestinations =>
+      rideDestinations(simulation: _isSimulation);
+
+  /// The way off the map while the navigation bar is hidden.
+  ///
+  /// #404: once a ride is under way on the map tab, with a route and a
+  /// navigation fix, `hideWhileMoving` removes the whole bar — and the
+  /// condition includes `_selectedIndex == 0`, so hiding the only control that
+  /// can change the index kept it hidden for the rest of the ride. The Ride and
+  /// Alerts tabs became unreachable, and the map's own corner menu could not
+  /// help because [RideMapFeature.onOpenRideMenu] was never supplied here: the
+  /// button #133 added rendered in widget tests and never in the app.
+  ///
+  /// A sheet rather than restoring the bar, because the bar is hidden for a
+  /// real reason — it flashed the native map as it was inserted and removed
+  /// while GPS speed dipped at lights. This appears only when the rider asks
+  /// for it.
+  Future<void> _openRideMenu() async {
+    final destinations = _rideDestinations;
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final destination in destinations)
+              ListTile(
+                key: Key('ride-menu-destination-${destination.index}'),
+                leading: Icon(
+                  destination.index == _selectedIndex
+                      ? destination.selectedIcon
+                      : destination.icon,
+                ),
+                // Words, not a bare icon (#306), and the same words the bar
+                // uses so a rider is not learning a second vocabulary.
+                title: Text(destination.label),
+                selected: destination.index == _selectedIndex,
+                onTap: () => Navigator.of(context).pop(destination.index),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null && mounted) {
+      setState(() => _selectedIndex = selected);
+    }
+  }
 
   void _openRoster() {
     unawaited(
