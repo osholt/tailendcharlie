@@ -31,6 +31,7 @@ import '../../services/basemap_status.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
+import '../../services/fixed_speed_camera_catalogue.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/group_pip_bridge.dart';
@@ -1638,7 +1639,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 // Last in the stack: an approaching camera or police report
                 // takes the screen over everything else on it.
                 if (widget.enforcementAlert != null)
-                  Positioned.fill(
+                  // Not Positioned.fill any more (#418). Armed a mile out, a
+                  // full-screen warning took the map away for the whole approach
+                  // — and the only way to get it back was to take a hand off the
+                  // bars. The panel is bounded and the map stays behind it.
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
                     child: ValueListenableBuilder<EnforcementAlert?>(
                       valueListenable: widget.enforcementAlert!,
                       builder: (context, alert, _) {
@@ -8353,6 +8361,7 @@ class _EnforcementAlertOverlay extends StatelessWidget {
       distanceUnit,
     ).distance(alert.distanceMeters);
     final details = alert.hazard.details;
+    final enforcedLimit = enforcementLimitLabel(details);
     return Semantics(
       key: const Key('enforcement-alert-overlay'),
       container: true,
@@ -8363,10 +8372,22 @@ class _EnforcementAlertOverlay extends StatelessWidget {
       child: GestureDetector(
         onTap: onDismiss,
         behavior: HitTestBehavior.opaque,
-        child: ColoredBox(
-          // Fully opaque: anything showing through competes with the warning
-          // at exactly the moment the rider has least attention to spare.
-          color: camera ? const Color(0xFF6E1015) : const Color(0xFF0F3560),
+        child: DecoratedBox(
+          // Still opaque where it sits — anything showing *through* the words
+          // competes with them at exactly the moment the rider has least
+          // attention to spare — but it no longer sits over everything. The
+          // border is what carries the alarm the full screen used to (#418).
+          decoration: BoxDecoration(
+            color: camera ? const Color(0xFF6E1015) : const Color(0xFF0F3560),
+            border: Border(
+              bottom: BorderSide(
+                color: camera
+                    ? const Color(0xFFFF3B30)
+                    : const Color(0xFF4C9AFF),
+                width: 6,
+              ),
+            ),
+          ),
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
@@ -8405,6 +8426,21 @@ class _EnforcementAlertOverlay extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
+                  if (enforcedLimit != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2, bottom: 2),
+                      child: Text(
+                        key: const Key('enforcement-alert-limit'),
+                        enforcedLimit,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          height: 1.1,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ),
                   const Text(
                     'AHEAD',
                     style: TextStyle(
