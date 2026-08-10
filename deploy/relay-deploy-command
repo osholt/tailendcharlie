@@ -31,6 +31,38 @@ if ! [[ "$request" =~ ^(staging|production)([[:space:]]+[0-9a-f]{40})?$ ]]; then
   exit 1
 fi
 
+# Bootstrap. The deploy script lives in the checkout, and the checkout only
+# moves once the deploy script runs — so the very first deploy after the script
+# merges has nothing to exec, and so does any deploy that follows a rollback to
+# a commit predating it. Move the checkout far enough for the script to exist,
+# then let the script do the real, guarded checkout itself.
+#
+# This is the one piece of deploy logic that cannot live in the repository,
+# because it is what reaches the repository. It is kept to the smallest thing
+# that works, and it carries the same ancestor guard the script does: this key
+# must not be able to check out something that is not on main.
+if ! test -x "$deploy_script"; then
+  repo="${RELAY_DEPLOY_REPO:-/opt/tailendcharlie}"
+  echo "relay-deploy: $deploy_script is missing; bootstrapping the checkout" >&2
+  cd "$repo"
+  git fetch --quiet origin
+  read -r _target bootstrap_commit <<<"$request"
+  bootstrap_commit="${bootstrap_commit:-$(git rev-parse --verify origin/main)}"
+  git cat-file -e "$bootstrap_commit^{commit}" 2>/dev/null || {
+    echo "relay-deploy: unknown commit $bootstrap_commit" >&2
+    exit 1
+  }
+  git merge-base --is-ancestor "$bootstrap_commit" origin/main || {
+    echo "relay-deploy: $bootstrap_commit is not an ancestor of origin/main" >&2
+    exit 1
+  }
+  git checkout --quiet --detach "$bootstrap_commit"
+  test -x "$deploy_script" || {
+    echo "relay-deploy: $deploy_script still missing at $bootstrap_commit" >&2
+    exit 1
+  }
+fi
+
 # Word splitting is the point: the pattern above has already established that
 # the request is one or two safe tokens.
 # shellcheck disable=SC2086

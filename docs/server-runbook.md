@@ -216,6 +216,15 @@ ssh oracle-relay '/opt/tailendcharlie/deploy/relay-deploy.sh production'
 
 Things worth knowing before trusting it:
 
+- **The forced command bootstraps the checkout when the script is missing.**
+  The deploy script lives in the checkout, and the checkout only moves once the
+  script runs, so the first deploy after the script merged had nothing to
+  `exec` — that is exactly how the first real run failed, on 9 August 2026. The
+  same hole reopens after any rollback to a commit predating the script. The
+  forced command now fetches and checks out far enough for the script to exist,
+  under the same ancestor guard, and then hands over. It is the only deploy
+  logic that cannot live in the repository, because it is what reaches the
+  repository, and it is kept to the smallest thing that works.
 - **The deploy script re-executes itself from the commit being deployed.** It
   checks out the pinned commit first, then hands over to that commit's copy of
   `relay-deploy.sh`. Without this, a change to the deploy logic would only take
