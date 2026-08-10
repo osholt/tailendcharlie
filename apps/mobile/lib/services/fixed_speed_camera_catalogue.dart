@@ -198,3 +198,38 @@ class FixedSpeedCameraCatalogue {
     return List.unmodifiable(matches);
   }
 }
+
+/// The limit a camera enforces, as a rider should read it, or null where the
+/// extract does not say (#418).
+///
+/// Read out of the hazard's own description rather than threaded separately: a
+/// rider-reported sighting and a catalogue camera reach the warning through the
+/// same `details` string, and only the catalogue tags a limit.
+///
+/// The bundled extract is messier than it looks, which is why this is a function
+/// with tests rather than a `toString`. Across 3,480 cameras it carries
+/// `30 mph`, `50mph` with no space, bare `80`, `Variable`, and — for 1,685 of
+/// them, nearly half — nothing at all.
+///
+/// - **Nothing is the common case**, so silence is the default. A guessed number
+///   beside a camera is worse than no number, because a rider would act on it.
+/// - **`Variable` is said as such.** Eight cameras carry it, and a variable limit
+///   is exactly the case where a fixed number would mislead.
+/// - **A bare number is not shown.** `80` and `130` appear, and the extract
+///   includes Irish cameras (`Garda Síochána` is among the operators), where the
+///   limit is in km/h. Without a unit there is no way to tell 80 km/h from
+///   80 mph, and the two are a long way apart.
+String? enforcementLimitLabel(String? details) {
+  if (details == null || details.isEmpty) return null;
+  final match = RegExp(
+    r'(\d+)\s*(mph|km/h|kph)\s+limit',
+    caseSensitive: false,
+  ).firstMatch(details);
+  if (match != null) {
+    return '${match.group(1)} ${match.group(2)!.toLowerCase()} limit';
+  }
+  if (RegExp(r'\bvariable\b', caseSensitive: false).hasMatch(details)) {
+    return 'VARIABLE LIMIT';
+  }
+  return null;
+}

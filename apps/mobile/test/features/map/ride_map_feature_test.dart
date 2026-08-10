@@ -1635,7 +1635,9 @@ void main() {
     expect(find.byKey(const Key('report-sighting-button')), findsNothing);
   });
 
-  testWidgets('an approaching speed camera takes over the map', (tester) async {
+  testWidgets('an approaching speed camera warns without taking the map', (
+    tester,
+  ) async {
     final directory = Directory.systemTemp.createTempSync('map-enforcement');
     addTearDown(() => directory.deleteSync(recursive: true));
     final cache = OfflineTileCache(
@@ -1693,6 +1695,22 @@ void main() {
       '0.7 mi',
     );
 
+    // #418: the warning arms a mile out, so a full-screen one took the map away
+    // for the whole approach — and the only way back was a hand off the bars.
+    // It is bounded now, and the map is behind it.
+    final overlay = tester.getRect(
+      find.byKey(const Key('enforcement-alert-overlay')),
+    );
+    final screen = tester.getRect(find.byType(RideMapScreen));
+    expect(
+      overlay.height,
+      lessThan(screen.height * 0.75),
+      reason: 'the warning must not be the only thing on screen',
+    );
+
+    // A dismiss tap still works; it is no longer the only way out. The detector
+    // already returns null once the hazard is behind the rider
+    // (`enforcement_alert_detector.dart`), so passing the camera clears it.
     await tester.tap(find.byKey(const Key('enforcement-alert-overlay')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('enforcement-alert-overlay')), findsNothing);
