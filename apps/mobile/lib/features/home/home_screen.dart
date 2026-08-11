@@ -13,6 +13,7 @@ import '../../controllers/ride_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import 'home_map_backdrop.dart';
 import 'scan_invitation_screen.dart';
@@ -48,6 +49,7 @@ class HomeScreen extends StatefulWidget {
     this.planDirectory,
     this.testControl,
     this.spokenGuidance,
+    this.rideDiagnostics,
     this.restoringRideCode,
     this.restorationError,
     this.onRetryRestoration,
@@ -72,6 +74,11 @@ class HomeScreen extends StatefulWidget {
   /// Whether turn instructions are spoken (#286). Forwarded to the settings
   /// sheet, which is where a rider opts in.
   final SpokenGuidanceController? spokenGuidance;
+
+  /// Null in an ordinary build. Threaded so the Settings sheet opened from
+  /// *here* offers the recorder too — wiring only the ride shell's sheet is
+  /// what hid it from a tester who had never started a ride (#419).
+  final RideDiagnosticsController? rideDiagnostics;
 
   final String? restoringRideCode;
   final Object? restorationError;
@@ -312,6 +319,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           speedLimitDisplay: widget.speedLimitDisplay,
                           testControl: widget.testControl,
                           spokenGuidance: widget.spokenGuidance,
+                          rideDiagnostics: widget.rideDiagnostics,
                         ),
                         icon: const Icon(Icons.settings_outlined),
                       ),
