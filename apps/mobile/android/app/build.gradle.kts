@@ -115,6 +115,28 @@ flutter {
 }
 
 dependencies {
+    // Guava arrives transitively through androidx.car.app, at 31.1-android, which
+    // carries GHSA-7g45-4rm6-3mm3 and GHSA-5mg8-w23w-74h3 — both about
+    // Files.createTempDir creating a world-readable directory. Both are fixed in
+    // 32.0.0-android.
+    //
+    // A constraint rather than a dependency: this app does not use Guava and
+    // should not start declaring it. A constraint raises the version wherever it
+    // is already resolved and adds nothing where it is not.
+    //
+    // Pinned to the lowest version that fixes both rather than the newest
+    // available. androidx.car.app is the Android Auto surface, its behaviour is
+    // not covered by automated tests here, and the smallest bump is the one least
+    // likely to change it. Dependabot will say if a later advisory applies.
+    constraints {
+        implementation("com.google.guava:guava:32.0.0-android") {
+            because(
+                "GHSA-7g45-4rm6-3mm3 and GHSA-5mg8-w23w-74h3: insecure " +
+                    "temporary directory, fixed in 32.0.0-android (#421)",
+            )
+        }
+    }
+
     implementation("androidx.car.app:app:1.7.0")
     implementation("androidx.car.app:app-projected:1.7.0")
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
