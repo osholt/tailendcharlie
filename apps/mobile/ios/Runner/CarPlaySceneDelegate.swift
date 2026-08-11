@@ -299,7 +299,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       // where a framework's Swift spelling actually lives.
       navigationSession.updateEstimates(
         CPTravelEstimates(distanceRemaining: remaining, timeRemaining: 0),
-        forManeuver: maneuver
+        for: maneuver
       )
     }
     if #available(iOS 17.4, *) {
