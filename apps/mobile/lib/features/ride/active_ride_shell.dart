@@ -51,8 +51,9 @@ import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
 import '../../services/carplay_tec_status.dart';
-import '../../services/spoken_guidance_schedule.dart';
 import '../../services/geo_calculations.dart';
+import '../../services/spoken_audio_mode.dart';
+import '../../services/spoken_guidance_schedule.dart';
 import '../../services/spoken_guidance.dart';
 import '../../services/test_control_registry.dart';
 import '../../services/basemap_configuration.dart';
@@ -2443,6 +2444,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       previous: previousEnforcementAlert,
       current: _enforcementAlert.value,
     );
+    _speakEnforcementWarning(previousEnforcementAlert, _enforcementAlert.value);
     if (updateDerivedState && widget.rideController.rideStarted) {
       final session = widget.rideController.session;
       _leaderStatus.value = session == null
@@ -3868,6 +3870,60 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       );
     }
   }
+
+  /// Says a camera or police warning out loud (#430).
+  ///
+  /// It was never wired: `_speakGuidance` was the only path to the speech engine
+  /// and it speaks turns. A rider looking at the road ahead — which is the point
+  /// of the warning — got nothing.
+  ///
+  /// Spoken as `SpokenAudioClass.safety`, so #415's alerts-only mode keeps it when
+  /// turn-by-turn goes quiet. Once, on the arming edge: the warning holds from a
+  /// mile out and repeating it for a mile would be worse than silence.
+  void _speakEnforcementWarning(
+    EnforcementAlert? previous,
+    EnforcementAlert? current,
+  ) {
+    final speaker = _spokenGuidance;
+    if (speaker == null || current == null) return;
+    if (previous?.hazard.id == current.hazard.id) return;
+    final controller = widget.rideController;
+    final camera = current.hazard.type == HazardType.speedCamera;
+    final distance = MeasurementFormatter(
+      widget.distanceUnits.value,
+    ).distance(current.distanceMeters);
+    // The enforced limit where the catalogue tags one, in the same words the
+    // panel shows (#418) — a rider should not hear one number and read another.
+    final limit = enforcementLimitLabel(current.hazard.details);
+    unawaited(
+      speaker.speakAlert(
+        key: 'enforcement:${current.hazard.id}',
+        phrase: [
+          camera ? 'Speed camera' : 'Police',
+          'in $distance',
+          ?limit,
+        ].join(', '),
+        enabled:
+            (widget.spokenGuidance?.enabled ?? false) &&
+            spokenAudioAllows(_spokenAudioMode, SpokenAudioClass.safety),
+        rideActive:
+            controller.rideStarted &&
+            !controller.rideEnded &&
+            !controller.ridePaused,
+      ),
+    );
+  }
+
+  /// The audio mode in force.
+  ///
+  /// #415's control is not built yet, so this is derived from the one switch that
+  /// exists. It is here rather than inlined so the control has one place to feed
+  /// when it arrives, and so the safety/navigation distinction is already being
+  /// consulted rather than bolted on later.
+  SpokenAudioMode get _spokenAudioMode =>
+      (widget.spokenGuidance?.enabled ?? false)
+      ? SpokenAudioMode.everything
+      : SpokenAudioMode.silent;
 
   void _recordManoeuvreDiagnostics(NavigationGuidance? guidance) {
     final diagnostics = _diagnostics;

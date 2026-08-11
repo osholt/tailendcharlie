@@ -75,6 +75,7 @@ class SpokenGuidanceSpeaker {
   final SpokenGuidanceEngine _engine;
 
   String? _lastSpokenKey;
+  final _spokenAlertKeys = <String>{};
   bool _configured = false;
 
   /// The instruction most recently spoken, for tests and for the caller to check
@@ -114,11 +115,47 @@ class SpokenGuidanceSpeaker {
     return true;
   }
 
+  /// Speaks a warning about the road, which is a different class of thing from a
+  /// turn (#430).
+  ///
+  /// Kept apart from [speakManoeuvre] on purpose. A turn is guidance and a camera
+  /// is safety, and #415's alerts-only mode exists precisely so a rider can
+  /// silence one without silencing the other. Sharing one method would have made
+  /// that distinction a boolean somebody forgets to pass.
+  ///
+  /// [key] is the hazard's identity, so a warning armed a mile out and held all
+  /// the way in is said once rather than on every fix.
+  Future<bool> speakAlert({
+    required String key,
+    required String phrase,
+    required bool enabled,
+    required bool rideActive,
+  }) async {
+    if (!enabled) return false;
+    if (!rideActive) return false;
+    if (phrase.trim().isEmpty) return false;
+    if (_spokenAlertKeys.contains(key)) return false;
+
+    if (!_configured) {
+      await _engine.configure();
+      _configured = true;
+    }
+    // Alerts keep their own memory rather than sharing `_lastSpokenKey`: a turn
+    // spoken between two sightings of the same camera would otherwise let the
+    // camera be announced twice.
+    _spokenAlertKeys.add(key);
+    await _engine.speak(phrase);
+    return true;
+  }
+
   /// Forgets what was last spoken, so the next ride starts clean.
   ///
   /// Without this a new ride whose first manoeuvre happened to carry the same
   /// identity as the last ride's final one would be silent for it.
-  void reset() => _lastSpokenKey = null;
+  void reset() {
+    _lastSpokenKey = null;
+    _spokenAlertKeys.clear();
+  }
 
   Future<void> stop() => _engine.stop();
 }
