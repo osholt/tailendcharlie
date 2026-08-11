@@ -128,6 +128,7 @@ class RideRelayApp extends StatelessWidget {
             planDirectory: planDirectory,
             testControl: testControl,
             spokenGuidance: spokenGuidance,
+            rideDiagnostics: rideDiagnostics,
             restoringRideCode: controller.session?.rideCode,
             restorationError: restorationError,
             onRetryRestoration: retryRestoration,
@@ -170,6 +171,7 @@ class RideRelayApp extends StatelessWidget {
           planDirectory: planDirectory,
           testControl: testControl,
           spokenGuidance: spokenGuidance,
+          rideDiagnostics: rideDiagnostics,
           enableNativeServices: enableNativeServices,
         );
       },
