@@ -119,10 +119,14 @@ void main() {
           .leftHandTraffic,
       isTrue,
     );
+    // And an engine claiming right-hand traffic no longer decides it at all.
+    // It said exactly that for two UK roundabouts on the 10 August ride, and
+    // the ring mirrored itself to match while the exit number and the direction
+    // word stayed correct — see #427 and _leftHandTraffic's own note.
     expect(
       (maneuverSymbolFor(straightOn('right')) as RoundaboutSymbol)
           .leftHandTraffic,
-      isFalse,
+      isNull,
     );
     expect(
       (maneuverSymbolFor(straightOn(null)) as RoundaboutSymbol).leftHandTraffic,

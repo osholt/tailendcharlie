@@ -8377,6 +8377,15 @@ class _EnforcementAlertOverlay extends StatelessWidget {
           // competes with them at exactly the moment the rider has least
           // attention to spare — but it no longer sits over everything. The
           // border is what carries the alarm the full screen used to (#418).
+          //
+          // The panel's height is its content's, so the content is what keeps it
+          // small. #418 unpinned it from the screen and left a 76px icon, a 44px
+          // title and a 68px distance stacked up, which on iOS still came to
+          // over 80% of the screen: the symptom shrank, the defect did not. A
+          // MediaQuery ceiling was tried and removed — this widget is built and
+          // torn down by a ValueListenableBuilder as the alert comes and goes,
+          // and reading the screen size there throws on a deactivated ancestor.
+          // The layout test holds the bound instead.
           decoration: BoxDecoration(
             color: camera ? const Color(0xFF6E1015) : const Color(0xFF0F3560),
             border: Border(
@@ -8390,13 +8399,13 @@ class _EnforcementAlertOverlay extends StatelessWidget {
           ),
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
                     camera ? Icons.speed_rounded : Icons.local_police_rounded,
-                    size: 76,
+                    size: 40,
                     color: Colors.white,
                   ),
                   const SizedBox(height: 12),
@@ -8405,7 +8414,7 @@ class _EnforcementAlertOverlay extends StatelessWidget {
                       title,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 44,
+                        fontSize: 26,
                         height: 1,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 1.5,
@@ -8419,7 +8428,7 @@ class _EnforcementAlertOverlay extends StatelessWidget {
                       distance,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 68,
+                        fontSize: 40,
                         height: 1,
                         fontWeight: FontWeight.w900,
                       ),
@@ -8465,16 +8474,12 @@ class _EnforcementAlertOverlay extends StatelessWidget {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 18),
-                  const Text(
-                    'TAP TO DISMISS',
-                    style: TextStyle(
-                      color: Color(0x99FFFFFF),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 2,
-                    ),
-                  ),
+                  // "TAP TO DISMISS" was here and is gone. The detector already
+                  // returns null once the hazard is behind the rider, so the
+                  // warning clears itself on passing — the hint told a rider
+                  // they had to take a hand off the bars when they did not, and
+                  // it cost a line on a panel whose size is the defect (#418).
+                  // The tap still works, and the Semantics hint still names it.
                 ],
               ),
             ),
