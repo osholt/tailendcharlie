@@ -735,10 +735,30 @@ bool _isRingExit(String type) {
   return normalized == 'exit roundabout' || normalized == 'exit rotary';
 }
 
+/// Whether the ring should be drawn for left-hand traffic, from what the engine
+/// said — and deliberately **not** believing it when it says right.
+///
+/// Two screenshots from the 10 August ride settle why. A "3rd exit, right" was
+/// drawn as a short quarter-turn arc. Keeping left, that exit is three quarters
+/// of the way round and draws 270 degrees; a quarter is what keeping *right*
+/// draws. So the engine reported `right` for a UK roundabout and the symbol
+/// mirrored itself to match, while the exit number and the direction word stayed
+/// correct — which is exactly why it read as a drawing fault rather than a data
+/// one (#427).
+///
+/// `right` is therefore treated as unstated, and an unstated driving side draws
+/// clockwise. The reviewed mini-roundabout catalogue still states a rotation
+/// where it has one, and says clockwise for 11,482 of the 11,487 it covers.
+///
+/// **This is a bet on where the app is used**, and it is the wrong bet on a
+/// European tour: a genuine right-hand-traffic roundabout will now be drawn
+/// left-hand. The right answer is to resolve the driving side from where the
+/// route *is* rather than from a per-step claim, which is #408's original
+/// proposal and is not built. Recorded so the next person meets a decision
+/// rather than a puzzle.
 bool? _leftHandTraffic(String? drivingSide) =>
     switch (drivingSide?.trim().toLowerCase()) {
       'left' => true,
-      'right' => false,
       _ => null,
     };
 

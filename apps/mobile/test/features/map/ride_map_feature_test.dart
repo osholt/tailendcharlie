@@ -1702,10 +1702,13 @@ void main() {
       find.byKey(const Key('enforcement-alert-overlay')),
     );
     final screen = tester.getRect(find.byType(RideMapScreen));
+    // 0.75 was too generous and the first fix passed it while still covering
+    // over 80% of an iPhone screen in the field — the bound has to be one a
+    // rider would recognise as "part of the screen".
     expect(
       overlay.height,
-      lessThan(screen.height * 0.75),
-      reason: 'the warning must not be the only thing on screen',
+      lessThan(screen.height * 0.4),
+      reason: 'the warning must leave the map usable, not merely visible',
     );
 
     // A dismiss tap still works; it is no longer the only way out. The detector
