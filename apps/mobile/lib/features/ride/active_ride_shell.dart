@@ -3861,7 +3861,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     diagnostics.recordManoeuvre(
       // The manoeuvre's identity, matching the key `_speakGuidance` uses, so
       // re-deriving the same turn on every fix does not write it down again.
-      key: '${instruction.maneuver.hashCode}',
+      key: instruction.maneuver.identity,
       position: awareness_geo.GeoPoint(
         latitude: instruction.maneuver.position.latitude,
         longitude: instruction.maneuver.position.longitude,
@@ -3898,8 +3898,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(
       speaker.speakManoeuvre(
         // The manoeuvre's identity, not its wording, so re-deriving the same turn
-        // on every position fix does not speak it again.
-        key: '${guidance.instruction.maneuver.hashCode}',
+        // on every position fix does not speak it again — and not `hashCode`,
+        // which is per object and changes every time the route is rebuilt (#428).
+        key: guidance.instruction.maneuver.identity,
         phrase: guidance.instruction.standaloneText,
         enabled: widget.spokenGuidance?.enabled ?? false,
         rideActive:
