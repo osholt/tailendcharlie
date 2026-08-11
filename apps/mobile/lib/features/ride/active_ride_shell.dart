@@ -3903,9 +3903,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           'in $distance',
           ?limit,
         ].join(', '),
-        enabled:
-            (widget.spokenGuidance?.enabled ?? false) &&
-            spokenAudioAllows(_spokenAudioMode, SpokenAudioClass.safety),
+        enabled: spokenAudioAllows(_spokenAudioMode, SpokenAudioClass.safety),
         rideActive:
             controller.rideStarted &&
             !controller.rideEnded &&
@@ -3914,16 +3912,15 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     );
   }
 
-  /// The audio mode in force.
+  /// The audio mode in force: what the rider chose, quietened while off route.
   ///
-  /// #415's control is not built yet, so this is derived from the one switch that
-  /// exists. It is here rather than inlined so the control has one place to feed
-  /// when it arrives, and so the safety/navigation distinction is already being
-  /// consulted rather than bolted on later.
-  SpokenAudioMode get _spokenAudioMode =>
-      (widget.spokenGuidance?.enabled ?? false)
-      ? SpokenAudioMode.everything
-      : SpokenAudioMode.silent;
+  /// Off route, turn-by-turn names junctions that are not coming, so it drops to
+  /// alerts only — but a rider who chose silence stays silent, because an
+  /// explicit choice outranks an automatic one (#415).
+  SpokenAudioMode get _spokenAudioMode {
+    final chosen = widget.spokenGuidance?.mode ?? SpokenAudioMode.silent;
+    return _rejoinGuidance == null ? chosen : spokenAudioModeOffRoute(chosen);
+  }
 
   void _recordManoeuvreDiagnostics(NavigationGuidance? guidance) {
     final diagnostics = _diagnostics;
@@ -4017,7 +4014,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         // prompt would suppress the two after it.
         key: announcement.key,
         phrase: announcement.phrase,
-        enabled: widget.spokenGuidance?.enabled ?? false,
+        // Navigation, so alerts-only silences this and keeps the warnings.
+        enabled: spokenAudioAllows(
+          _spokenAudioMode,
+          SpokenAudioClass.navigation,
+        ),
         rideActive:
             controller.rideStarted &&
             !controller.rideEnded &&
@@ -4676,6 +4677,31 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // #415's control, and the reason it lives here rather than in the
+            // action cluster: SOS, LEAVE and REPORT are a measured arrangement
+            // (#133, #142) sized to a 280 px landscape rail, and a fourth target
+            // in it would reflow the row a rider learns by feel. This is one
+            // press of a fixed-corner control away, and it says in words what it
+            // will do — which is what "I didn't spot the controls to mute" asked
+            // for.
+            if (widget.spokenGuidance case final guidance?)
+              AnimatedBuilder(
+                animation: guidance,
+                builder: (context, _) => ListTile(
+                  key: const Key('ride-menu-voice'),
+                  leading: Icon(switch (guidance.mode) {
+                    SpokenAudioMode.everything => Icons.volume_up,
+                    SpokenAudioMode.alertsOnly => Icons.notifications_active,
+                    SpokenAudioMode.silent => Icons.volume_off,
+                  }),
+                  title: Text(spokenAudioModeLabel(guidance.mode)),
+                  subtitle: Text(
+                    'Tap for ${spokenAudioModeLabel(guidance.nextMode).toLowerCase()}',
+                  ),
+                  onTap: () => unawaited(guidance.cycleMode()),
+                ),
+              ),
+            const Divider(height: 1),
             for (final destination in destinations)
               ListTile(
                 key: Key('ride-menu-destination-${destination.index}'),
