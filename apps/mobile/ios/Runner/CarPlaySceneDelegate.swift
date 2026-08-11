@@ -288,9 +288,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       let remaining = usesMiles
         ? Measurement(value: distance / 1_609.344, unit: UnitLength.miles)
         : Measurement(value: distance, unit: UnitLength.meters)
-      navigationSession.updateTravelEstimates(
+      // `updateEstimates(_:for:)`, not `updateTravelEstimates(...)`. The header
+      // declares the selector `updateTravelEstimates:forManeuver:`, but
+      // CarPlay.apinotes renames it for Swift:
+      //
+      //   Selector:  'updateTravelEstimates:forManeuver:'
+      //   SwiftName: 'updateEstimates(_:for:)'
+      //
+      // Reading the header alone got this wrong twice. The apinotes file is
+      // where a framework's Swift spelling actually lives.
+      navigationSession.updateEstimates(
         CPTravelEstimates(distanceRemaining: remaining, timeRemaining: 0),
-        forManeuver: maneuver
+        for: maneuver
       )
     }
     if #available(iOS 17.4, *) {
