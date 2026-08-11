@@ -290,7 +290,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         : Measurement(value: distance, unit: UnitLength.meters)
       navigationSession.updateTravelEstimates(
         CPTravelEstimates(distanceRemaining: remaining, timeRemaining: 0),
-        for: maneuver
+        forManeuver: maneuver
       )
     }
     if #available(iOS 17.4, *) {
