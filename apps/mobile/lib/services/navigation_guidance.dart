@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import '../domain/imported_route.dart';
+import 'roundabout_exit_bucket.dart';
 
 /// Which way a manoeuvre goes, as a symbol family.
 ///
@@ -893,14 +894,21 @@ String _instructionText({
       final ordinal = exitNumber == null || exitNumber <= 0
           ? null
           : _ordinal(exitNumber);
+      // Four words, not eight (#427). A UK direction sign names each exit by
+      // where it points and does not distinguish a slight right from a right,
+      // because a rider approaching does not either. It also absorbs most of
+      // #412's "one off" error before it reaches the rider: slight and straight
+      // now say the same thing.
+      final bucket = roundaboutExitBucket(direction);
+      final roundaboutLabel = bucket?.label ?? label;
       // Beside the banner and the all-turns list is a drawn roundabout, so the
       // wording there leaves the junction to the symbol and states only what a
       // rider still needs: which exit, and which way it goes. Where no symbol
       // is shown - a screen reader, CarPlay, Android Auto - it is named.
-      if (ordinal != null && direction.isStated) {
+      if (ordinal != null && bucket != null) {
         return namesJunction
-            ? 'Roundabout, $ordinal exit, $label'
-            : '$ordinal exit, $label';
+            ? 'Roundabout, $ordinal exit, $roundaboutLabel'
+            : '$ordinal exit, $roundaboutLabel';
       }
       if (ordinal != null) {
         return namesJunction
