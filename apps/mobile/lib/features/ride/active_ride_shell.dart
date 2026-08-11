@@ -51,6 +51,8 @@ import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
 import '../../services/carplay_tec_status.dart';
+import '../../services/spoken_guidance_schedule.dart';
+import '../../services/geo_calculations.dart';
 import '../../services/spoken_guidance.dart';
 import '../../services/test_control_registry.dart';
 import '../../services/basemap_configuration.dart';
@@ -1016,6 +1018,19 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// so a rider who leaves the option off still never has a speech engine
   /// initialised behind their back.
   SpokenGuidanceSpeaker? _spokenGuidance;
+
+  /// Every staged prompt already spoken, so a stage is not repeated on each fix
+  /// and the early one does not suppress the ones after it (#410).
+  final _spokenGuidanceKeys = <String>{};
+
+  /// The manoeuvre the rider was last being guided towards, and where it was.
+  ///
+  /// Kept so "am I clear of the junction I just went through" can be answered
+  /// without new progress plumbing: it is the straight-line distance from here to
+  /// there, which is what #429's clearance rule needs.
+  String? _guidanceManeuverIdentity;
+  route_domain.GeoPoint? _passedManeuverPosition;
+  route_domain.GeoPoint? _lastGuidanceManeuverPosition;
 
   /// Null unless an instrumented build has recording switched on (#419).
   ///
@@ -3888,20 +3903,64 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (speaker == null) return;
     if (guidance == null) return;
     final controller = widget.rideController;
+    final identity = guidance.instruction.maneuver.identity;
+
+    // The instruction has moved on, so the one before it is now behind the rider
+    // and its position is what the clearance rule measures against (#429).
+    if (identity != _guidanceManeuverIdentity) {
+      if (_guidanceManeuverIdentity != null) {
+        _passedManeuverPosition = _lastGuidanceManeuverPosition;
+      }
+      _guidanceManeuverIdentity = identity;
+    }
+    _lastGuidanceManeuverPosition = guidance.instruction.maneuver.position;
+
+    final navigation = _mapNavigationPosition.value;
+    final passed = _passedManeuverPosition;
+    final rider = navigation?.point;
+    final metersSincePrevious = passed == null || rider == null
+        ? null
+        : GeoCalculations.distanceMeters(
+            awareness_geo.GeoPoint(
+              latitude: rider.latitude,
+              longitude: rider.longitude,
+            ),
+            awareness_geo.GeoPoint(
+              latitude: passed.latitude,
+              longitude: passed.longitude,
+            ),
+          );
+
+    // What to say and when, decided apart from the saying so the timing can be
+    // driven by a synthetic approach in a test (#409, #410, #429).
+    final announcement = nextGuidanceAnnouncement(
+      maneuverIdentity: identity,
+      instructionText: guidance.instruction.standaloneText,
+      distanceToManeuverMeters: guidance.distanceMeters,
+      speedMetersPerSecond: navigation?.speedMetersPerSecond,
+      alreadySpokenKeys: _spokenGuidanceKeys,
+      metersSincePreviousManeuver: metersSincePrevious,
+      distanceFormatter: MeasurementFormatter(
+        widget.distanceUnits.value,
+      ).distance,
+    );
+    if (announcement == null) return;
+
+    // Marked spoken before the await, so a slow speech engine cannot let the
+    // same stage fire again on the next fix.
+    _spokenGuidanceKeys.add(announcement.key);
     // #409 is about *when* this is said, so the distance to the junction at the
-    // moment it left the speaker is the measurement. Recorded before the await
-    // so a prompt that never completes still shows that it was attempted.
+    // moment it left the speaker is the measurement.
     _diagnostics?.recordSpokenPrompt(
-      phrase: guidance.instruction.standaloneText,
+      phrase: announcement.phrase,
       distanceToManoeuvreMeters: guidance.distanceMeters,
     );
     unawaited(
       speaker.speakManoeuvre(
-        // The manoeuvre's identity, not its wording, so re-deriving the same turn
-        // on every position fix does not speak it again — and not `hashCode`,
-        // which is per object and changes every time the route is rebuilt (#428).
-        key: guidance.instruction.maneuver.identity,
-        phrase: guidance.instruction.standaloneText,
+        // Per stage, not per manoeuvre: keyed on the manoeuvre alone, the early
+        // prompt would suppress the two after it.
+        key: announcement.key,
+        phrase: announcement.phrase,
         enabled: widget.spokenGuidance?.enabled ?? false,
         rideActive:
             controller.rideStarted &&
