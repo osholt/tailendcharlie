@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/imported_route.dart';
 import '../../services/navigation_guidance.dart';
+import '../../services/roundabout_exit_bucket.dart';
 
 /// A manoeuvre symbol described before it is drawn.
 ///
@@ -459,7 +460,27 @@ class RoundaboutSymbolGeometry {
 
   /// Exit angle in degrees clockwise from straight ahead, or `null` when the
   /// engine reported no direction to draw.
-  static double? _exitDegrees(
+  /// Where the exit road leaves the ring.
+  ///
+  /// Four fixed angles, from the same bucket the wording uses (#427), so the arrow
+  /// and the words cannot disagree. An arrow at 45 degrees invited a rider to read
+  /// a precision the data does not have, and #412 reports that precision as wrong
+  /// about as often as it is right.
+  static double? _exitDegrees(RoundaboutSymbol symbol) {
+    final bucket = roundaboutExitBucket(symbol.direction);
+    if (bucket == null) return _legacyExitDegrees(symbol);
+    // Turning back is the one bucket whose *side* depends on the driving side.
+    // Keeping left, traffic circulates clockwise, so the exit beside the one the
+    // rider came in by is the one they reach last — just before the road in
+    // rather than just after it. Getting this backwards drew a U-turn as a short
+    // arc: take the first exit, the opposite instruction. That is what
+    // `_legacyExitDegrees` already handles, so it keeps handling it.
+    if (bucket == RoundaboutExitBucket.back) return _legacyExitDegrees(symbol);
+    return roundaboutExitBucketDegrees(bucket);
+  }
+
+  /// Retained only for [ManeuverDirection.unstated], which has no bucket.
+  static double? _legacyExitDegrees(
     RoundaboutSymbol symbol,
   ) => switch (symbol.direction) {
     ManeuverDirection.sharpLeft => -135,

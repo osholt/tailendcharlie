@@ -254,17 +254,20 @@ void main() {
       return arc.sweepDegrees.abs();
     }
 
-    // Keeping left, a slight right is reached nearly the whole way round the
-    // ring, and a slight left almost at once. Keeping right, the other way.
+    // Keeping left, a right exit is reached nearly the whole way round the ring,
+    // and a left almost at once. Keeping right, the other way.
+    //
+    // Asserted with `right` and `left` rather than the slight variants, which is
+    // a change of example rather than of property: #427 collapses slight into
+    // straight on, and straight on is half the ring whichever side you drive on,
+    // so the slight variants can no longer show an asymmetry.
     expect(
-      ridden(ManeuverDirection.slightRight, leftHandTraffic: true),
-      greaterThan(
-        ridden(ManeuverDirection.slightRight, leftHandTraffic: false),
-      ),
+      ridden(ManeuverDirection.right, leftHandTraffic: true),
+      greaterThan(ridden(ManeuverDirection.right, leftHandTraffic: false)),
     );
     expect(
-      ridden(ManeuverDirection.slightLeft, leftHandTraffic: true),
-      lessThan(ridden(ManeuverDirection.slightLeft, leftHandTraffic: false)),
+      ridden(ManeuverDirection.left, leftHandTraffic: true),
+      lessThan(ridden(ManeuverDirection.left, leftHandTraffic: false)),
     );
 
     // Turning back is the exit reached last, not first: nearly the whole way
