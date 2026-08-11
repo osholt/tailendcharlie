@@ -44,6 +44,7 @@ import '../../services/maplibre_offline_manager.dart';
 import '../../services/map_camera_command.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
+import '../../services/stopped_speed_reading.dart';
 import '../../services/motorcycle_discovery.dart';
 import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
@@ -951,6 +952,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// proof that none arrived inside the window.
   Timer? _riderSpeedStalenessTimer;
 
+  /// Separate from the staleness timer: that one retires the number, this one
+  /// decides whether the silence means the bike stopped (#445).
+  Timer? _riderStoppedTimer;
+
+  /// The last speed the platform actually reported, kept after the readout has
+  /// been retired — it is what tells a stop apart from a lost signal.
+  double? _lastObservedRiderSpeed;
+
   /// How long the readout survives **without a fix of any kind**, and how long a
   /// speed reads as current.
   ///
@@ -1285,6 +1294,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _navigationGuidance.dispose();
     _riderSpeedStalenessTimer?.cancel();
     _riderSpeedStalenessTimer = null;
+    _riderStoppedTimer?.cancel();
+    _riderStoppedTimer = null;
     _basemapViewLoadWatchdog?.cancel();
     _basemapViewLoadWatchdog = null;
     _riderSpeed.dispose();
@@ -2790,6 +2801,27 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _markRiderTrackingObserved() {
     _riderSpeedStalenessTimer?.cancel();
     _riderSpeedStalenessTimer = Timer(_riderSpeedFreshness, _clearRiderSpeed);
+    // A second, longer timer that decides what silence *means* (#445).
+    //
+    // The window above retires the number; this one asks whether the rider
+    // stopped. It cannot be the same timer because they answer different
+    // questions and a stopped rider must be able to read zero rather than a
+    // blank where their speed used to be.
+    _riderStoppedTimer?.cancel();
+    _riderStoppedTimer = Timer(stoppedSpeedSilence, _resolveSilentSpeed);
+  }
+
+  /// Decides whether continued silence means the bike stopped, or that tracking
+  /// was lost (#445).
+  void _resolveSilentSpeed() {
+    if (!mounted) return;
+    final reading = stoppedSpeedReading(
+      lastObservedSpeedMetersPerSecond: _lastObservedRiderSpeed,
+      silence: stoppedSpeedSilence,
+    );
+    if (reading != StoppedSpeedReading.stopped) return;
+    // Not `ageing`: this is a current, believed reading rather than a held one.
+    _riderSpeed.value = (value: 0, ageing: false);
   }
 
   /// Marks a held value as no longer current once it is older than the freshness
@@ -3082,6 +3114,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
             ? boundedSpeed
             : previousSpeed * 0.72 + boundedSpeed * 0.28;
         _riderSpeedObservedAt = at;
+        // Kept past the readout being retired: it is what tells a stop apart
+        // from a lost signal when the fixes go quiet (#445).
+        _lastObservedRiderSpeed = _smoothedNavigationSpeedMetersPerSecond;
         _riderSpeed.value = (
           value: _smoothedNavigationSpeedMetersPerSecond!,
           ageing: false,
