@@ -243,17 +243,28 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     let roadName = markerDetail ?? nonEmptyString(snapshot["guidanceRoadName"])
     let isMarkerMode = marker != nil
     let distance = max(0, (snapshot["guidanceDistanceMeters"] as? NSNumber)?.doubleValue ?? 0)
-    let displayTitle = isMarkerMode || distance <= 0
-      ? title
-      : "\(formattedDistance(distance, unit: snapshot["distanceUnit"] as? String)) · \(title)"
     let markerStage = nonEmptyString(marker?["stage"])
-    let maneuverKey = "\(isMarkerMode)|\(markerStage ?? "")|\(displayTitle)|\(roadName ?? "")"
+    // The key deliberately excludes the distance (#443).
+    //
+    // It used to include `displayTitle`, which carries the formatted distance —
+    // so every position fix produced a new key, a new CPManeuver, and CarPlay
+    // animated the card again. The rider saw the banner wiping constantly rather
+    // than on each new direction.
+    //
+    // The distance now travels as a travel estimate instead, which is the API
+    // CarPlay expects to change continuously, and is also what the instrument
+    // cluster reads — it showed "— km" because nothing ever set it (#447).
+    let maneuverKey = "\(isMarkerMode)|\(markerStage ?? "")|\(title)|\(roadName ?? "")"
     let maneuver: CPManeuver
     if activeManeuverKey == maneuverKey, let existing = activeManeuver {
       maneuver = existing
     } else {
       maneuver = CPManeuver()
-      maneuver.instructionVariants = [displayTitle, title]
+      // The instruction alone. The distance used to be prefixed here, which
+      // was fine only because the manoeuvre was rebuilt on every fix — now that
+      // it is built once, a baked-in distance would freeze at its first value.
+      // CarPlay renders the distance from the travel estimate below.
+      maneuver.instructionVariants = [title]
       let symbol = isMarkerMode
         ? markerSymbol(for: markerStage)
         : maneuverSymbol(for: title)
@@ -269,21 +280,22 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       activeManeuverKey = maneuverKey
       activeManeuver = maneuver
     }
+    // Every update, not only a new manoeuvre: this is the number the card and the
+    // instrument cluster count down, and it is in the rider's own units so the
+    // car agrees with the phone (#447).
+    if distance > 0, !isMarkerMode {
+      let usesMiles = (snapshot["distanceUnit"] as? String) == "miles"
+      let remaining = usesMiles
+        ? Measurement(value: distance / 1_609.344, unit: UnitLength.miles)
+        : Measurement(value: distance, unit: UnitLength.meters)
+      navigationSession.updateTravelEstimates(
+        CPTravelEstimates(distanceRemaining: remaining, timeRemaining: 0),
+        for: maneuver
+      )
+    }
     if #available(iOS 17.4, *) {
       navigationSession.currentRoadNameVariants = roadName.map { [$0] } ?? []
     }
-  }
-
-  private func formattedDistance(_ metres: Double, unit: String?) -> String {
-    if unit == "miles" {
-      let miles = metres / 1_609.344
-      return miles < 0.1
-        ? "\(Int((metres * 1.093_613).rounded())) yd"
-        : String(format: "%.1f mi", miles)
-    }
-    return metres < 1_000
-      ? "\(Int(metres.rounded())) m"
-      : String(format: "%.1f km", metres / 1_000)
   }
 
   private func markerSymbol(for stage: String?) -> UIImage? {
@@ -304,9 +316,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     if lowercased.contains("destination") || lowercased.contains("arrive") {
       return .arriveAtDestination
     }
+    // Roundabout before left/right (#447). "Roundabout, 2nd exit, right" matched
+    // `right` first and was handed to the cluster as a plain right turn, so the
+    // car drew a different junction from the phone.
+    if lowercased.contains("roundabout") { return .enterRoundabout }
     if lowercased.contains("left") { return .leftTurn }
     if lowercased.contains("right") { return .rightTurn }
-    if lowercased.contains("roundabout") { return .enterRoundabout }
     if lowercased.contains("u-turn") || lowercased.contains("uturn") {
       return .uTurn
     }
