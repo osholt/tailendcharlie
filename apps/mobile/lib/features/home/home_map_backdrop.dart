@@ -29,6 +29,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.enableNativeServices = true,
     this.locationController,
     this.bottomInset = 0,
+    this.position,
   });
 
   /// Height kept clear at the bottom for whatever stands on the map.
@@ -36,6 +37,13 @@ class HomeMapBackdrop extends StatefulWidget {
   /// The home actions are a bar there now (#426), and the map's own location
   /// control has to sit above it rather than behind it.
   final double bottomInset;
+
+  /// Where the rider is, published for the screen above to use.
+  ///
+  /// Supplied by [HomeScreen] so a searched destination can be routed from *here*
+  /// without this widget owning a position nothing else can reach (#431). When
+  /// absent it keeps its own, as it did before there was anything to tell.
+  final ValueNotifier<route_domain.GeoPoint?>? position;
 
   final MapStyleModeController mapStyleMode;
   final SpeedLimitDisplayController speedLimitDisplay;
@@ -53,7 +61,10 @@ class HomeMapBackdrop extends StatefulWidget {
 }
 
 class _HomeMapBackdropState extends State<HomeMapBackdrop> {
-  final _position = ValueNotifier<route_domain.GeoPoint?>(null);
+  /// The caller's notifier when it supplied one, otherwise this widget's own.
+  late final ValueNotifier<route_domain.GeoPoint?> _position =
+      widget.position ?? ValueNotifier<route_domain.GeoPoint?>(null);
+  late final bool _ownsPosition = widget.position == null;
   ForegroundLocationController? _location;
   bool _ownsLocationController = false;
   bool _requesting = false;
@@ -101,7 +112,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
   void dispose() {
     _location?.removeListener(_handleLocationChanged);
     if (_ownsLocationController) _location?.dispose();
-    _position.dispose();
+    // Not ours to dispose when the screen above owns it.
+    if (_ownsPosition) _position.dispose();
     super.dispose();
   }
 

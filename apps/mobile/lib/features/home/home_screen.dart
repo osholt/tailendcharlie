@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -15,6 +16,9 @@ import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
+import '../../domain/imported_route.dart' show GeoPoint;
+import '../../services/road_routing.dart';
+import 'home_destination_search.dart';
 import 'home_map_backdrop.dart';
 import 'home_ride_actions.dart';
 import 'scan_invitation_screen.dart';
@@ -112,6 +116,43 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Where the rider is, shared with the map below so a searched destination can
+  /// be routed from here (#431).
+  final _position = ValueNotifier<GeoPoint?>(null);
+
+  @override
+  void dispose() {
+    // This screen had nothing to dispose until #431 gave it a notifier it shares
+    // with the map and a client it lends to the geocoder.
+    _position.dispose();
+    _routingClient.close();
+    super.dispose();
+  }
+
+  /// True while a route is being planned, which disables the actions so a rider
+  /// cannot start a second ride on top of the one being arranged.
+  bool _planningDestination = false;
+
+  /// Built once, and deliberately one instance: `NominatimDestinationSearchService`
+  /// caches by query, so planning a route to a result the rider just searched for
+  /// is a cache hit rather than a second call to a public geocoder that asks for
+  /// no more than one a second.
+  final _routingClient = http.Client();
+
+  late final DestinationRoutePlanner _destinationPlanner = () {
+    final configuration = RoutingConfiguration.fromEnvironment();
+    return DestinationRoutePlanner(
+      searchService: NominatimDestinationSearchService(
+        client: _routingClient,
+        baseUrl: configuration.geocodingBaseUrl,
+      ),
+      routingService: OsrmRoadRoutingService(
+        client: _routingClient,
+        baseUrl: configuration.routingBaseUrl,
+      ),
+    );
+  }();
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -136,6 +177,7 @@ class _HomeScreenState extends State<HomeScreen> {
             // So the map's own "Show my location" control sits above the action
             // bar rather than under it.
             bottomInset: HomeRideActions.reservedHeight,
+            position: _position,
           ),
           SafeArea(
             child: Stack(
@@ -144,8 +186,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 // to sit in the scrolling column of a full-screen panel, which
                 // is why the panel existed at all; they are now cards on the map
                 // that appear and go.
+                // The way in that #431 asked for: a magnifying glass and a
+                // field, on the map, before any decision about the ride.
                 Positioned(
-                  top: 52,
+                  top: 6,
+                  left: 12,
+                  right: 104,
+                  child: HomeSearchBar(
+                    onTap: () => unawaited(_searchDestination()),
+                  ),
+                ),
+                Positioned(
+                  top: 60,
                   left: 12,
                   right: 12,
                   child: _HomeNotices(children: _notices(context)),
@@ -189,7 +241,9 @@ class _HomeScreenState extends State<HomeScreen> {
             bottom: 0,
             child: HomeRideActions(
               enabled:
-                  !widget.controller.busy && widget.onRetryRestoration == null,
+                  !widget.controller.busy &&
+                  !_planningDestination &&
+                  widget.onRetryRestoration == null,
               onCreate: () => _showRideSheet(context, creating: true),
               onJoin: () => _showRideSheet(context, creating: false),
               onMore: () => unawaited(_showMoreActions(context)),
@@ -304,6 +358,89 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  /// Search for somewhere to ride to, then arrange the ride around it (#431).
+  ///
+  /// The order is the point. The app used to ask for ride scope, coordination
+  /// mode, display name and an optional route code *before* a rider got near a
+  /// map; this asks where they are going and infers the rest.
+  /// Takes no context: it uses the State's own, so the `mounted` check after
+  /// each await is guarding the thing actually being used.
+  Future<void> _searchDestination() async {
+    final outcome = await HomeDestinationSearchSheet.show(
+      context,
+      searchService: _destinationPlanner.searchService,
+      hasPosition: _position.value != null,
+    );
+    if (outcome == null || !mounted) return;
+    switch (outcome) {
+      case HomeSearchDestination(:final choice, :final start):
+        await _startRideTo(choice, start);
+      case HomeSearchHandoff(:final kind):
+        switch (kind) {
+          // Both of these are the existing form, which already knows how to take
+          // a six-digit ride code and a planner route code. #431 is about the way
+          // in, not about replacing what works once you are there.
+          case HomeSearchHandoffKind.joinWithCode:
+            await _showRideSheet(context, creating: false);
+          case HomeSearchHandoffKind.plannedRouteCode:
+            await _showRideSheet(context, creating: true);
+          case HomeSearchHandoffKind.storedRoute:
+            await _openPreviousRides(context);
+        }
+    }
+  }
+
+  /// Plans the route, then creates the ride with it staged.
+  ///
+  /// Planned **before** the ride is created, so a routing failure leaves the rider
+  /// on the map with a message rather than inside a ride with no route. That order
+  /// costs a spinner and saves the one state that is genuinely awkward to get out
+  /// of.
+  Future<void> _startRideTo(
+    DestinationChoice choice,
+    RideStartChoice start,
+  ) async {
+    final origin = _position.value;
+    if (origin == null) return;
+    setState(() => _planningDestination = true);
+    try {
+      final plan = await _destinationPlanner.planForReview(
+        origin: origin,
+        // The label the rider picked, not its coordinates: the service caches by
+        // query so this is the same lookup again, and it keeps the route named
+        // after the place rather than a pair of numbers.
+        query: choice.label,
+        distanceUnit: widget.distanceUnits.value,
+      );
+      if (!mounted) return;
+      widget.sharedRoutes.stagePendingInAppRoute(
+        plan.route,
+        reviewNotes: plan.warnings,
+      );
+      await widget.controller.createRide(
+        // Already known from onboarding. Asking for it again on every ride is
+        // exactly what #431 was raised about.
+        widget.riderProfile.displayName,
+        coordinationMode: start.coordinationMode,
+        rideName: choice.label,
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error is FormatException
+                ? error.message
+                : 'Could not plan a route there. Try again, or pick a different '
+                      'place.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _planningDestination = false);
+    }
   }
 
   Future<void> _showRideSheet(

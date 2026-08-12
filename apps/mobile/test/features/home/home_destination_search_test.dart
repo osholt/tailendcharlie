@@ -1,0 +1,235 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/domain/imported_route.dart' show GeoPoint;
+import 'package:ride_relay/domain/ride_coordination_mode.dart';
+import 'package:ride_relay/features/home/home_destination_search.dart';
+import 'package:ride_relay/services/road_routing.dart';
+
+void main() {
+  group('search for a destination, then arrange the ride (#431)', () {
+    testWidgets('a search finds places and picking one offers solo or group', (
+      tester,
+    ) async {
+      final search = _FakeSearch({
+        'bath': [
+          DestinationMatch(
+            label: 'Bath, Somerset',
+            point: GeoPoint(latitude: 51.38, longitude: -2.36),
+          ),
+          DestinationMatch(
+            label: 'Bath Road, Bristol',
+            point: GeoPoint(latitude: 51.44, longitude: -2.58),
+          ),
+        ],
+      });
+      HomeSearchOutcome? outcome;
+
+      await _pumpSheet(tester, search, (value) => outcome = value);
+
+      // Nothing is searched until it is submitted. Nominatim's usage policy
+      // forbids autocomplete against the public API, so a result appearing on
+      // keystroke would be a licence problem, not a feature.
+      await tester.enterText(
+        find.byKey(const Key('home-search-field')),
+        'bath',
+      );
+      await tester.pump();
+      expect(find.text('Bath, Somerset'), findsNothing);
+      expect(search.calls, isEmpty);
+
+      await tester.tap(find.byKey(const Key('home-search-submit')));
+      await tester.pumpAndSettle();
+
+      expect(search.calls, ['bath']);
+      expect(find.text('Bath, Somerset'), findsOneWidget);
+      expect(find.text('Bath Road, Bristol'), findsOneWidget);
+
+      await tester.tap(find.text('Bath, Somerset'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ride solo'), findsOneWidget);
+      expect(find.text('Ride as a group'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('ride-start-group')));
+      await tester.pumpAndSettle();
+
+      final destination = outcome as HomeSearchDestination;
+      expect(destination.choice.label, 'Bath, Somerset');
+      expect(destination.start, RideStartChoice.group);
+    });
+
+    testWidgets('solo and group mean different coordination modes', (
+      tester,
+    ) async {
+      // The whole point of the two buttons: they are not cosmetic.
+      expect(RideStartChoice.solo.coordinationMode, RideCoordinationMode.solo);
+      expect(
+        RideStartChoice.group.coordinationMode,
+        RideCoordinationMode.secondBikeDropOff,
+      );
+    });
+
+    testWidgets('nothing found is said, not shown as an empty list', (
+      tester,
+    ) async {
+      final search = _FakeSearch({'nowhere': const []});
+
+      await _pumpSheet(tester, search, (_) {});
+      await tester.enterText(
+        find.byKey(const Key('home-search-field')),
+        'nowhere',
+      );
+      await tester.tap(find.byKey(const Key('home-search-submit')));
+      await tester.pumpAndSettle();
+
+      // "Nothing found" and "not searched yet" look identical otherwise.
+      expect(find.byKey(const Key('home-search-error')), findsOneWidget);
+      expect(find.textContaining('Nothing found'), findsOneWidget);
+    });
+
+    testWidgets('a failed search says something a rider can act on', (
+      tester,
+    ) async {
+      final search = _FailingSearch();
+
+      await _pumpSheet(tester, search, (_) {});
+      await tester.enterText(
+        find.byKey(const Key('home-search-field')),
+        'bath',
+      );
+      await tester.tap(find.byKey(const Key('home-search-submit')));
+      await tester.pumpAndSettle();
+
+      final message = tester
+          .widget<Text>(find.byKey(const Key('home-search-error')))
+          .data!;
+      expect(message, isNot(contains('FormatException')));
+      expect(message, contains('connection'));
+    });
+  });
+
+  group('a route has to start somewhere', () {
+    testWidgets('with no position, the sheet says so before any choice', (
+      tester,
+    ) async {
+      final search = _FakeSearch({
+        'bath': [
+          DestinationMatch(
+            label: 'Bath, Somerset',
+            point: GeoPoint(latitude: 51.38, longitude: -2.36),
+          ),
+        ],
+      });
+
+      await _pumpSheet(tester, search, (_) {}, hasPosition: false);
+
+      // Said up front rather than discovered as a failure after choosing solo or
+      // group, which is the point at which it would be annoying.
+      expect(
+        find.byKey(const Key('home-search-needs-position')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.byKey(const Key('home-search-field')),
+        'bath',
+      );
+      await tester.tap(find.byKey(const Key('home-search-submit')));
+      await tester.pumpAndSettle();
+
+      final row = tester.widget<ListTile>(
+        find.byKey(const Key('home-search-result-Bath, Somerset')),
+      );
+      expect(row.enabled, isFalse);
+    });
+  });
+
+  group('the other ways in are on the same surface', () {
+    testWidgets('a planned-route code, a ride code and a stored route', (
+      tester,
+    ) async {
+      // #431 named these specifically: "entering a code to recall a planned ride
+      // etc." They sit beside the search rather than behind it.
+      final outcomes = <HomeSearchOutcome?>[];
+      for (final key in [
+        'home-search-planned-code',
+        'home-search-join-code',
+        'home-search-stored-route',
+      ]) {
+        await _pumpSheet(tester, _FakeSearch(const {}), outcomes.add);
+        expect(find.byKey(Key(key)), findsOneWidget);
+        await tester.tap(find.byKey(Key(key)));
+        await tester.pumpAndSettle();
+      }
+
+      expect(outcomes.map((outcome) => (outcome as HomeSearchHandoff).kind), [
+        HomeSearchHandoffKind.plannedRouteCode,
+        HomeSearchHandoffKind.joinWithCode,
+        HomeSearchHandoffKind.storedRoute,
+      ]);
+    });
+  });
+
+  group('the search control is readable, not just an icon', () {
+    testWidgets('the bar says where to', (tester) async {
+      // #306: a bare magnifying glass is the failure that issue was raised over.
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: Scaffold(body: HomeSearchBar(onTap: () {})),
+        ),
+      );
+
+      expect(find.byIcon(Icons.search), findsOneWidget);
+      expect(find.text('Where to?'), findsOneWidget);
+    });
+  });
+}
+
+Future<void> _pumpSheet(
+  WidgetTester tester,
+  DestinationSearchService search,
+  void Function(HomeSearchOutcome?) onResult, {
+  bool hasPosition = true,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: ThemeData.dark(useMaterial3: true),
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async => onResult(
+              await HomeDestinationSearchSheet.show(
+                context,
+                searchService: search,
+                hasPosition: hasPosition,
+              ),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('open'));
+  await tester.pumpAndSettle();
+}
+
+class _FakeSearch implements DestinationSearchService {
+  _FakeSearch(this.results);
+
+  final Map<String, List<DestinationMatch>> results;
+  final List<String> calls = [];
+
+  @override
+  Future<List<DestinationMatch>> search(String query) async {
+    calls.add(query);
+    return results[query.toLowerCase()] ?? const [];
+  }
+}
+
+class _FailingSearch implements DestinationSearchService {
+  @override
+  Future<List<DestinationMatch>> search(String query) async =>
+      throw Exception('no route to host');
+}
