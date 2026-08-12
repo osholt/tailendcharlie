@@ -1,6 +1,128 @@
 # Next-agent handoff
 
-Updated: 2026-08-03
+Updated: 2026-08-12
+
+## Current state: build 52 with testers, waiting on a ride
+
+**The relay deploys itself and it has been proved.** A merge to `main` touching
+`apps/server/**` or `deploy/**` deploys pre-production, runs the server suite and
+a live smoke test, promotes to production, then verifies from outside the box.
+Production has auto-deployed and been verified this way. The 2 GB swapfile is in
+place. `serverBuildCommit` remains the only trustworthy answer to what is running;
+the checkout on the box is not it.
+
+**Build 52 is with testers** — iOS TestFlight (internal, no external review) and
+the Android alpha track, version 1.0.1. It carries seven merges from the ride of
+12 August 2026:
+
+| Ticket | What it fixes |
+| --- | --- |
+| #456 | The recorded diagnostics log survives the ride and is shareable from Settings and every share door |
+| #457 | The diagnostics switch works mid-ride instead of being sampled once in `initState` |
+| #460 | A close pair of junctions is named in one spoken prompt |
+| #446 | The camera alert is a bubble for ten seconds, then a red border alone |
+| #426 | No start screen — the map is the surface |
+| #431 | Search a destination from the map, then pick solo or group |
+| #452 | CarPlay gets a real time to the turn instead of a zero |
+
+### The next task is a ride, not code
+
+Three tickets are **blocked on field evidence and must not be guessed at**:
+
+- **#461** — the second roundabout of a close pair is described as two separate
+  turns, and the wording came out as "at the end of the road". Two candidate
+  causes with different fixes: the engine never calling it a roundabout, or the
+  app failing to merge its two steps.
+- **#450** — no audio at all on a CarPlay ride. The log distinguishes "decided to
+  say nothing" from "said it and nothing came out".
+- **#451** — the mapped speed limit reads a dash on roads with a posted limit.
+
+Build 52 is the first build where the instrument for these actually works:
+**Settings → Record ride diagnostics**, reachable from the home screen or the ride
+menu, effective when switched on mid-ride, written to disk as it records, and
+shareable afterwards from **Settings → Recorded rides**. #408 is the standing
+reminder of what guessing at roundabout geometry costs here — the "obvious fix"
+would have drawn an illegal manoeuvre.
+
+### Open and not blocked
+
+#440 stuck on the summary screen · #441 starting a ride from the phone with
+CarPlay attached · #442 CarPlay layout · #444 reroute slow, silent, and ignoring
+heading · #448 position lag of about 22 yards · #449 smoother distance countdown ·
+#452 the clock half, still open · #412 exit direction one off · #413–#417 · #408
+legibility · #398 the pre-production Caddy route · #352 Bouncy Castle · #395.
+
+#431 stays open for the shorter ride-ending flow it also asks for, which overlaps
+#440.
+
+### Decisions recorded rather than re-argued
+
+- `docs/geocoder-decision.md` — destination search stays on the public Nominatim
+  instance and submits rather than autocompletes, because the usage policy lists
+  client-side autocomplete as an unacceptable use. As-you-type needs a geocoder we
+  host, and the relay has 954 MB of RAM.
+- `docs/traffic-provider-decision.md` — no licensed live-traffic feed.
+- The dependency graph submitted to Dependabot is scoped to runtime classpaths,
+  which took alerts from 47 to 3. #350 adds `bcprov-jdk18on` as an
+  `implementation` dependency, so Bouncy Castle now ships in the Android APK and
+  will appear in that graph. That is expected and is how it gets tracked.
+
+
+### Traps worth knowing before you start
+
+- **The Android version code defaults to the workflow run number and collides**
+  with codes already used. Build 46 failed first time on *"Version code 40 has
+  already been used"*. Pass `build_number` explicitly and higher than every
+  shipped code.
+- **`tools/discovery` tests run under `unittest discover`, not pytest.** A
+  pytest-style module is collected as zero tests and passes silently.
+- **A mutation run that reports OK may never have applied.** One did in this
+  session: the shell's working directory had an unavailable pyenv version, so the
+  mutation script died and an unmutated suite passed. Assert the mutation landed
+  before trusting the result.
+- **Recreating Caddy without `compose.preproduction-proxy.yaml` silently drops
+  the pre-production route.** That is how #398 happened.
+- **`flutter analyze` prints warnings flush-left, not indented.** A grep for
+  `^\s+(error|warning)` misses every one of them. An `unused_element` warning
+  passed locally that way and failed CI, which treats warnings as errors. Read the
+  "N issues found" line instead of grepping.
+- **A mutation whose target has been reflowed by `dart format` silently does not
+  apply**, and an unapplied mutation reads exactly like a passing test. Assert the
+  marker changed, and prefer line-anchored edits over exact multi-line matches.
+- **Merging a stacked PR with `--delete-branch` auto-closes its children**, and a
+  PR whose base branch is gone cannot be reopened or retargeted. Retarget children
+  to `main` *before* merging the parent. This cost #459, which had to be recreated
+  as #463.
+- **The checkout on the box is not what is deployed.** After the reboot it was at
+  `c1ecb1c` while the running image reported `fa13532`. `serverBuildCommit` is
+  the only trustworthy answer.
+
+### Working agreements
+
+- Mutation-test every fix, and say which mutations were caught.
+- Never close a ticket that has not been field-validated; label it
+  `status: ready for validation` instead.
+- One pull request per issue.
+- Ask before any release.
+- **No location-specific special cases.** A catalogue of two hand-reviewed
+  junctions was replaced this session by a generated layer covering every mapped
+  mini-roundabout (#390). Prefer a general rule, then a generated layer from
+  OpenStreetMap through `tools/discovery`, then saying the fault is unfixable —
+  in that order. Claiming less is acceptable: the layer dropped exit numbers it
+  could not support.
+
+### Access
+
+- `ssh oracle-relay` — alias in the operator's `~/.ssh/config`. **The repository
+  is public; host details must stay in secrets and out of committed files.**
+- Oracle CLI auth is a browser-issued session token that expires. Re-authenticate
+  with `oci session authenticate --profile-name DEFAULT --region uk-london-1`,
+  which needs a human at a browser, then pass
+  `--auth security_token --profile DEFAULT` to every command.
+- ICMP is not permitted by the security list, so `ping` proves nothing. Judge
+  reachability on TCP 22 and 443.
+
+
 
 ## Current state: tester feedback 7
 
