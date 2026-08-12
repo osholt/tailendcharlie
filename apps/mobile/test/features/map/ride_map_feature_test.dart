@@ -1092,6 +1092,61 @@ void main() {
     expect(find.byKey(const Key('leader-tec-gap')), findsNothing);
   });
 
+  testWidgets('initial speed-limit lookup starts after the first map frame', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-speed-limit-first-frame-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final provider = _DeferredWidgetSpeedLimitProvider();
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: provider,
+    );
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.46, longitude: -2.59),
+        recordedAt: DateTime.utc(2026, 8, 12, 17, 28),
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(speedLimitDisplay.dispose);
+    addTearDown(navigation.dispose);
+
+    await tester.pumpWidget(
+      AnimatedBuilder(
+        animation: speedLimitDisplay,
+        builder: (context, _) => MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            navigationPosition: navigation,
+            speedLimitDisplay: speedLimitDisplay,
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(
+      provider.calls,
+      1,
+      reason: 'the lookup still starts on the first frame',
+    );
+    expect(speedLimitDisplay.status, SpeedLimitDisplayStatus.checking);
+
+    provider.complete();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('a rider who turned limits off can turn them back on', (
     tester,
   ) async {
@@ -5312,6 +5367,34 @@ class _WidgetSpeedLimitProvider implements SpeedLimitProvider {
             checkedAt: current.recordedAt,
             matchDistanceMeters: 2,
           ),
+  );
+
+  @override
+  void close() {}
+}
+
+class _DeferredWidgetSpeedLimitProvider implements SpeedLimitProvider {
+  final _result = Completer<SpeedLimitLookupResult>();
+  int calls = 0;
+
+  @override
+  Future<SpeedLimitLookupResult> lookup({
+    required SpeedLimitLocation current,
+    SpeedLimitLocation? previous,
+  }) {
+    calls += 1;
+    return _result.future;
+  }
+
+  void complete() => _result.complete(
+    SpeedLimitLookupResult.known(
+      PostedSpeedLimit(
+        milesPerHour: 30,
+        source: 'Test',
+        checkedAt: DateTime.utc(2026, 8, 12, 17, 28),
+        matchDistanceMeters: 2,
+      ),
+    ),
   );
 
   @override
