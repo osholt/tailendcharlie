@@ -77,6 +77,7 @@ import '../../services/ride_screen_awake.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../services/ride_diagnostics_log_writer.dart';
 import '../../services/ride_diagnostics_recorder.dart';
+import '../../services/ride_diagnostics_transition.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/enforcement_alert_detector.dart';
 import '../../services/hazard_map_relevance.dart';
@@ -1177,13 +1178,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // Headless and test surfaces have no audio to speak through, and must not
     // construct a platform speech engine.
     if (widget.rideDiagnostics?.isOn ?? false) {
-      _diagnostics = RideDiagnosticsRecorder(
-        // Each entry keeps the stored log in step, so a force-quit costs nothing
-        // (#456). Coalesced inside the writer, not written once per entry.
-        onEntry: _markDiagnosticsDirty,
-      );
-      _diagnostics!.recordNote('recording started');
+      _startDiagnostics(rideDiagnosticsStartedNote);
     }
+    // Read on every change, not once here: the switch used to be sampled in
+    // `initState` alone, so turning recording on mid-ride — through the ride
+    // menu, the door closest to hand while riding — showed it on and recorded
+    // nothing (#457).
+    widget.rideDiagnostics?.addListener(_onRideDiagnosticsChanged);
     if (widget.enableNativeServices && widget.spokenGuidance != null) {
       _spokenGuidance = SpokenGuidanceSpeaker(widget.spokenGuidance!.engine());
     }
@@ -4676,6 +4677,37 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     );
   }
 
+  void _startDiagnostics(String note) {
+    _diagnostics = RideDiagnosticsRecorder(
+      // Each entry keeps the stored log in step, so a force-quit costs nothing
+      // (#456). Coalesced inside the writer, not written once per entry.
+      onEntry: _markDiagnosticsDirty,
+    );
+    _diagnostics!.recordNote(note);
+  }
+
+  /// The switch moved. Recording follows it, whenever it happens (#457).
+  void _onRideDiagnosticsChanged() {
+    final recorder = _diagnostics;
+    switch (rideDiagnosticsTransition(
+      switchedOn: widget.rideDiagnostics?.isOn ?? false,
+      hasRecorder: recorder != null,
+      isRecording: recorder?.isRecording ?? false,
+    )) {
+      case RideDiagnosticsTransition.start:
+        _startDiagnostics(rideDiagnosticsStartedMidRideNote);
+      case RideDiagnosticsTransition.resume:
+        recorder!.resumeRecording();
+      case RideDiagnosticsTransition.stop:
+        recorder!.stopRecording();
+        // Written out now: a rider who switches off has usually just captured the
+        // thing they were after, and the next thing they do may be to quit.
+        unawaited(_diagnosticsWriter?.flush());
+      case RideDiagnosticsTransition.nothing:
+        break;
+    }
+  }
+
   /// Keeps the stored log in step, building the writer the first time there is
   /// both something to write and a ride to key it on.
   void _markDiagnosticsDirty() {
@@ -5256,6 +5288,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // Setting an ended ride aside tears this shell down, and with it the only
     // copy of the log that was ever in memory (#456).
     unawaited(_diagnosticsWriter?.flush());
+    widget.rideDiagnostics?.removeListener(_onRideDiagnosticsChanged);
     unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);
