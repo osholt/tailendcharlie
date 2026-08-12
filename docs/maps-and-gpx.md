@@ -363,6 +363,22 @@ vanish into the road it is drawn on. The closest remaining pairs by luminance
 alone are route ahead against rejoin (1.16) and route ahead against the leader
 trail (1.03); hue separates the first and width and pattern separate both.
 
+### The light basemap
+
+The default OpenFreeMap Liberty document is now treated as the daylight partner
+to the dark map rather than being rendered with its busy provider palette. The
+app keeps Liberty's `openmaptiles` source, sprite, glyphs and shared
+`openfreemap` cache namespace, then repaints only the default provider style.
+Custom production styles are not changed.
+
+Ground is warm off-white, vegetation and water are muted, and motorway through
+service-road classes use seven distinct but restrained fills. Road shields,
+one-way arrows, road names and place names remain; the four generic POI tiers
+and airport symbol layer are removed. Route geometry remains dominant through
+its near-black casing, which measures above 8:1 against every declared light
+surface. The palette and hierarchy live in
+`MapStyleRepository.lightBasemapPalette` and are held by repository tests.
+
 ### The dark basemap
 
 The overlay palette was never the dark-mode complaint. The tester's words for
@@ -474,10 +490,9 @@ casing — the halo is what the ink is measured against as well.
 #### What was rendered, and what was not checked
 
 The frames below are real OpenFreeMap vector tiles through the real style JSON in
-MapLibre, with only the paint table differing between before and after. The light
-style is included unchanged: `MapStyleRepository` only repaints when the resolved
-style URL is the configured dark one, so day is untouched by construction as well
-as by measurement.
+MapLibre, with only the dark paint table differing between before and after. The
+light style shown in these older comparison frames predates the restrained light
+repaint described above.
 
 ![Ride camera, before and after](images/dark-basemap-ride-zoom-before-after.png)
 
@@ -951,8 +966,9 @@ is a licence condition, not decoration.
 
 Development-alpha builds default to OpenFreeMap's public Liberty style for an
 online, no-key basemap. Its public service has no availability guarantee, so it
-is an alpha convenience rather than the production dependency. Persistent
-offline caching stays disabled. Override the provider for production or a
+is an alpha convenience rather than the production dependency. The project owner
+approved persistent caching for the default provider, so it is enabled unless a
+build deliberately switches it off. Override the provider for production or a
 self-hosted deployment with the settings below.
 
 Supply an HTTPS MapLibre style whose tile, sprite, and glyph licences permit

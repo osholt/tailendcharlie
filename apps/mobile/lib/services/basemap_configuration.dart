@@ -1,4 +1,9 @@
 class BasemapConfiguration {
+  static const defaultLightStyleUrl =
+      'https://tiles.openfreemap.org/styles/liberty';
+  static const defaultDarkStyleUrl =
+      'https://tiles.openfreemap.org/styles/dark';
+
   const BasemapConfiguration({
     this.styleUrl = '',
     this.darkStyleUrl = '',
@@ -12,11 +17,11 @@ class BasemapConfiguration {
   factory BasemapConfiguration.fromEnvironment() => BasemapConfiguration(
     styleUrl: const String.fromEnvironment(
       'RIDE_RELAY_MAP_STYLE_URL',
-      defaultValue: 'https://tiles.openfreemap.org/styles/liberty',
+      defaultValue: defaultLightStyleUrl,
     ),
     darkStyleUrl: const String.fromEnvironment(
       'RIDE_RELAY_MAP_STYLE_URL_DARK',
-      defaultValue: 'https://tiles.openfreemap.org/styles/dark',
+      defaultValue: defaultDarkStyleUrl,
     ),
     urlTemplate: const String.fromEnvironment('RIDE_RELAY_TILE_URL'),
     attribution: const String.fromEnvironment(

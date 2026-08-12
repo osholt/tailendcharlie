@@ -72,7 +72,7 @@ class RouteLineStyle {
 ///
 /// "dark worst" is against the lightest surface of the dark basemap (the
 /// motorway fill), "dark typical" against its background. The casing measures
-/// 16.74:1 against the light basemap's background and 18.32:1 against its white
+/// 16.35:1 against the light basemap's background and 18.00:1 against its pale
 /// road fills, which is what keeps the same bright colours legible in daylight.
 ///
 /// The travelled orange is unchanged: the same field report called it "quite
@@ -256,18 +256,17 @@ class RouteTrailStyle {
     'motorway': Color(0xFF565656),
   };
 
-  /// Surfaces of the light basemap (OpenFreeMap Liberty). Its road fills are
-  /// white or near-white, so a bright line cannot contrast with them at all -
-  /// the casing is what defines the line here.
+  /// Surfaces of the restrained Liberty repaint. Its road fills remain light,
+  /// so the casing is what defines a bright route line here.
   static const lightBasemapSurfaces = <String, Color>{
-    'background': Color(0xFFF8F4F0),
-    'minor road': Color(0xFFFFFFFF),
-    'trunk': Color(0xFFFFEEAA),
-    'motorway': Color(0xFFFFCC88),
-    'water': Color(0xFF9EBDFF),
-    'park': Color(0xFFD8E8C8),
-    'building': Color(0xFFDCD9D4),
-    'major casing': Color(0xFFE9AC77),
+    'background': Color(0xFFF3F2ED),
+    'minor road': Color(0xFFFEFDF9),
+    'trunk': Color(0xFFF1E2C2),
+    'motorway': Color(0xFFEEDBB6),
+    'water': Color(0xFFD8E5EA),
+    'park': Color(0xFFE5EADF),
+    'building': Color(0xFFDEDCD6),
+    'major casing': Color(0xFFC4C5C1),
   };
 }
 

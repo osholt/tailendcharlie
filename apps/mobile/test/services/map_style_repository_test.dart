@@ -224,6 +224,90 @@ void main() {
     expect((background['paint'] as Map)['background-color'], 'rgb(12,12,12)');
   });
 
+  group('restrained default light basemap (#365)', () {
+    test('repaints Liberty without changing its tile sources', () async {
+      final repository = MapStyleRepository(
+        directory: directory,
+        configuration: _lightConfiguration,
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode(_lightStyleFixture),
+            200,
+            headers: {'content-type': 'application/json'},
+          ),
+        ),
+      );
+
+      final style = jsonDecode((await repository.resolve()).style) as Map;
+      final layers = (style['layers'] as List).cast<Map>();
+      Map paintOf(String id) =>
+          layers.singleWhere((layer) => layer['id'] == id)['paint'] as Map;
+
+      expect(
+        paintOf('background')['background-color'],
+        MapStyleRepository.lightBasemapPalette['background'],
+      );
+      expect(
+        paintOf('road_service_track')['line-color'],
+        MapStyleRepository.lightBasemapPalette['service/track'],
+      );
+      final secondaryTertiary =
+          paintOf('road_secondary_tertiary')['line-color'] as List;
+      expect(secondaryTertiary.first, 'match');
+      expect(
+        secondaryTertiary,
+        contains(MapStyleRepository.lightBasemapPalette['secondary']),
+      );
+      expect(
+        secondaryTertiary.last,
+        MapStyleRepository.lightBasemapPalette['tertiary'],
+      );
+      expect(
+        ((style['sources'] as Map)['openmaptiles'] as Map)['url'],
+        'https://tiles.openfreemap.org/planet',
+        reason: 'light and dark keep sharing the provider tile cache',
+      );
+    });
+
+    test('removes POI tiers but retains navigation labels', () async {
+      final resolution = await MapStyleRepository(
+        directory: directory,
+        configuration: _lightConfiguration,
+        client: MockClient(
+          (_) async => http.Response(jsonEncode(_lightStyleFixture), 200),
+        ),
+      ).resolve();
+
+      final style = jsonDecode(resolution.style) as Map;
+      final ids = (style['layers'] as List)
+          .cast<Map>()
+          .map((layer) => layer['id'])
+          .toSet();
+
+      expect(ids, isNot(contains('poi_r20')));
+      expect(ids, isNot(contains('poi_transit')));
+      expect(ids, isNot(contains('airport')));
+      expect(ids, contains('highway-name-major'));
+      expect(ids, contains('label_town'));
+    });
+
+    test('declares a distinct road colour for every hierarchy step', () {
+      final colours = MapStyleRepository.lightBasemapRoadRamp
+          .map((name) => MapStyleRepository.lightBasemapPalette[name])
+          .toList();
+
+      expect(colours, everyElement(isNotNull));
+      expect(colours.toSet(), hasLength(colours.length));
+      for (final surface in RouteTrailStyle.lightBasemapSurfaces.values) {
+        expect(
+          contrastRatio(RouteTrailStyle.casing, surface),
+          greaterThan(8),
+          reason: 'the route casing must stay dominant on every light surface',
+        );
+      }
+    });
+  });
+
   group('the resolution says where the style came from (#281)', () {
     // Every one of these used to be a bare `String`, so the ride map could not
     // tell a provider that answered from one that did not, and drew the empty
@@ -549,7 +633,7 @@ void main() {
       ]);
       final light = worst(RouteTrailStyle.lightBasemapSurfaces.values);
 
-      expect(light, closeTo(1.04, 0.01));
+      expect(light, closeTo(1.00, 0.01));
       expect(dark, closeTo(1.50, 0.01));
       expect(
         dark,
@@ -651,6 +735,51 @@ const _darkStyleFixture = <String, Object?>{
   ],
 };
 
+const _lightStyleFixture = <String, Object?>{
+  'version': 8,
+  'sources': {
+    'openmaptiles': {
+      'type': 'vector',
+      'url': 'https://tiles.openfreemap.org/planet',
+    },
+  },
+  'layers': [
+    {
+      'id': 'background',
+      'type': 'background',
+      'paint': {'background-color': '#F8F4F0'},
+    },
+    {
+      'id': 'landcover_wood',
+      'type': 'fill',
+      'paint': {'fill-color': '#D8E8C8', 'fill-pattern': 'wood-pattern'},
+    },
+    {
+      'id': 'road_service_track',
+      'type': 'line',
+      'paint': {'line-color': '#FFFFFF'},
+    },
+    {
+      'id': 'road_secondary_tertiary',
+      'type': 'line',
+      'paint': {'line-color': '#FFEEAA'},
+    },
+    {'id': 'poi_r20', 'type': 'symbol', 'paint': <String, Object?>{}},
+    {'id': 'poi_transit', 'type': 'symbol', 'paint': <String, Object?>{}},
+    {'id': 'airport', 'type': 'symbol', 'paint': <String, Object?>{}},
+    {
+      'id': 'highway-name-major',
+      'type': 'symbol',
+      'paint': {'text-color': '#333333'},
+    },
+    {
+      'id': 'label_town',
+      'type': 'symbol',
+      'paint': {'text-color': '#222222'},
+    },
+  ],
+};
+
 /// The smallest document that satisfies the repository's validation, for the
 /// tests that care where a style came from rather than what is in it.
 final _minimalStyle = jsonEncode({
@@ -676,5 +805,13 @@ const _darkConfiguration = BasemapConfiguration(
   darkStyleUrl: 'https://maps.example.test/styles/dark.json',
   attribution: '© OpenStreetMap contributors',
   cacheNamespace: 'open-map-v1-dark',
+  persistentCachingAllowed: true,
+);
+
+const _lightConfiguration = BasemapConfiguration(
+  styleUrl: BasemapConfiguration.defaultLightStyleUrl,
+  darkStyleUrl: BasemapConfiguration.defaultDarkStyleUrl,
+  attribution: '© OpenStreetMap contributors',
+  cacheNamespace: BasemapConfiguration.defaultCacheNamespace,
   persistentCachingAllowed: true,
 );
