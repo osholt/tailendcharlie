@@ -74,6 +74,7 @@ import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 import 'route_review_screen.dart';
 import 'route_trail_style.dart';
+import 'smooth_countdown.dart';
 import 'stored_route_picker.dart';
 
 @visibleForTesting
@@ -9082,16 +9083,28 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                       // measures pays for it in forward bias. That is the right
                       // way round: a banner too small to glance at is not worth
                       // any framing.
-                      Text(
-                        distance,
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontSize: compact ? 26 : 30,
-                          fontWeight: FontWeight.w900,
-                          // Tight leading: the number is one line and every
-                          // point of height here is paid for out of the band
-                          // the camera's forward bias has to clear.
-                          height: 1.0,
+                      // Counted down rather than stepped (#449). Only the drawn
+                      // number is interpolated: `guidance.distanceMeters` — the
+                      // value the schedule, the camera detector and the spoken
+                      // prompts all use — is untouched, so a smooth display
+                      // cannot become a smoothly wrong decision.
+                      //
+                      // Keyed on the manoeuvre so a new junction starts its own
+                      // count instead of gliding down from the last one's.
+                      SmoothCountdown(
+                        key: ValueKey(instruction.maneuver.identity),
+                        meters: guidance.distanceMeters,
+                        builder: (context, meters) => Text(
+                          formatter.distance(meters),
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: compact ? 26 : 30,
+                            fontWeight: FontWeight.w900,
+                            // Tight leading: the number is one line and every
+                            // point of height here is paid for out of the band
+                            // the camera's forward bias has to clear.
+                            height: 1.0,
+                          ),
                         ),
                       ),
                       Text(
