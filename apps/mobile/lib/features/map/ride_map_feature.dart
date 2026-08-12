@@ -31,6 +31,7 @@ import '../../services/basemap_status.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
+import '../../services/enforcement_alert_presentation.dart';
 import '../../services/fixed_speed_camera_catalogue.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/gpx_import_source.dart';
@@ -1647,17 +1648,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             onDismiss: _continueWithoutRoute,
                           ),
                   ),
-                // Last in the stack: an approaching camera or police report
-                // takes the screen over everything else on it.
+                // An approaching camera or police report, in two parts: a bubble
+                // that announces it and a border that holds for the rest of the
+                // approach (#446). Neither is allowed over the navigation area —
+                // which is what every previous version of this was, at 100%, then
+                // 80%, then a third of a landscape screen.
                 if (widget.enforcementAlert != null)
-                  // Not Positioned.fill any more (#418). Armed a mile out, a
-                  // full-screen warning took the map away for the whole approach
-                  // — and the only way to get it back was to take a hand off the
-                  // bars. The panel is bounded and the map stays behind it.
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: 0,
+                  Positioned.fill(
                     child: ValueListenableBuilder<EnforcementAlert?>(
                       valueListenable: widget.enforcementAlert!,
                       builder: (context, alert, _) {
@@ -1665,9 +1662,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
                             alert.hazard.id == _dismissedEnforcementAlertId) {
                           return const SizedBox.shrink();
                         }
-                        return _EnforcementAlertOverlay(
+                        return _EnforcementAlertLayer(
+                          // A new hazard gets a new State, so its ten seconds
+                          // start again rather than inheriting the last one's.
+                          key: ValueKey(alert.hazard.id),
                           alert: alert,
                           distanceUnit: widget.distanceUnit,
+                          bottomInset: _safetyBandReservedHeight(landscape),
                           onDismiss: () {
                             setState(
                               () => _dismissedEnforcementAlertId =
@@ -2119,12 +2120,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     ? ValueListenableBuilder<({double value, bool ageing})?>(
                         valueListenable: _riderSpeed,
                         builder: (context, riderSpeed, _) =>
-                            _PostedSpeedLimitBadge(
-                              status: _speedLimitDisplay.status,
-                              outcome: _speedLimitDisplay.lastOutcome,
-                              limit: _speedLimitDisplay.limit,
-                              riderSpeedMetersPerSecond: riderSpeed?.value,
-                              riderSpeedIsAgeing: riderSpeed?.ageing ?? false,
+                            _EnforcementEmphasis(
+                              alert: widget.enforcementAlert,
+                              dismissedHazardId: _dismissedEnforcementAlertId,
+                              builder: (emphasised) => _PostedSpeedLimitBadge(
+                                status: _speedLimitDisplay.status,
+                                outcome: _speedLimitDisplay.lastOutcome,
+                                limit: _speedLimitDisplay.limit,
+                                riderSpeedMetersPerSecond: riderSpeed?.value,
+                                riderSpeedIsAgeing: riderSpeed?.ageing ?? false,
+                                emphasised: emphasised,
+                              ),
                             ),
                       )
                     : _SpeedLimitOptInChip(
@@ -8377,8 +8383,116 @@ class _ReportSightingOption extends StatelessWidget {
   );
 }
 
-class _EnforcementAlertOverlay extends StatelessWidget {
-  const _EnforcementAlertOverlay({
+/// The two-part enforcement warning: a bubble, then a border (#446).
+///
+/// See `enforcement_alert_presentation.dart` for why it is two parts and not one
+/// panel. In short: announcing a camera is an event and being on the approach is a
+/// state, and the panel was doing both badly because a surface loud enough to
+/// announce is too big to hold for a mile.
+class _EnforcementAlertLayer extends StatefulWidget {
+  const _EnforcementAlertLayer({
+    super.key,
+    required this.alert,
+    required this.distanceUnit,
+    required this.bottomInset,
+    required this.onDismiss,
+  });
+
+  final EnforcementAlert alert;
+  final DistanceUnit distanceUnit;
+
+  /// Height already reserved at the bottom of the map, so the bubble sits above
+  /// the safety band rather than on it.
+  final double bottomInset;
+
+  final VoidCallback onDismiss;
+
+  @override
+  State<_EnforcementAlertLayer> createState() => _EnforcementAlertLayerState();
+}
+
+class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
+  Timer? _bubbleTimer;
+  bool _announced = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Fixed, and not restarted when the distance changes. The distance updates
+    // several times a second on an approach, and a life tied to it would never
+    // end — which is how the panel came to own the screen for a whole mile.
+    _bubbleTimer = Timer(enforcementBubbleLife, () {
+      if (mounted) setState(() => _announced = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _bubbleTimer?.cancel();
+    super.dispose();
+  }
+
+  EnforcementAlertStage get _stage => enforcementAlertStage(
+    armed: true,
+    dismissed: false,
+    // The widget is rebuilt from scratch for a new hazard, so elapsed time is
+    // carried by the timer rather than measured against a stored clock.
+    sinceArmed: _announced ? enforcementBubbleLife : Duration.zero,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final camera = widget.alert.hazard.type == HazardType.speedCamera;
+    final stage = _stage;
+    return Stack(
+      children: [
+        // The border holds for the whole approach and is the entire warning once
+        // the bubble has gone. IgnorePointer because it covers the map: a warning
+        // that swallowed a pan would be the full-screen problem again in a
+        // thinner disguise.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: DecoratedBox(
+              key: const Key('enforcement-alert-border'),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: camera
+                      ? const Color(0xFFFF3B30)
+                      : const Color(0xFF4C9AFF),
+                  width: enforcementBorderWidth,
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (stage == EnforcementAlertStage.announcing)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: widget.bottomInset + 12,
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: _EnforcementAlertBubble(
+                alert: widget.alert,
+                distanceUnit: widget.distanceUnit,
+                onDismiss: widget.onDismiss,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The announcement itself: compact, loud, and nowhere near the top of the screen.
+///
+/// Bottom-centre rather than top, because the top is the navigation area — the
+/// directions, the speed and the no-TEC row (#442) — and the report was explicit
+/// that the warning must not block it. Bounded by
+/// [enforcementBubbleMaxWidth] so a landscape phone gets a notification rather
+/// than a band across the screen.
+class _EnforcementAlertBubble extends StatelessWidget {
+  const _EnforcementAlertBubble({
     required this.alert,
     required this.distanceUnit,
     required this.onDismiss,
@@ -8395,8 +8509,7 @@ class _EnforcementAlertOverlay extends StatelessWidget {
     final distance = MeasurementFormatter(
       distanceUnit,
     ).distance(alert.distanceMeters);
-    final details = alert.hazard.details;
-    final enforcedLimit = enforcementLimitLabel(details);
+    final enforcedLimit = enforcementLimitLabel(alert.hazard.details);
     return Semantics(
       key: const Key('enforcement-alert-overlay'),
       container: true,
@@ -8407,117 +8520,104 @@ class _EnforcementAlertOverlay extends StatelessWidget {
       child: GestureDetector(
         onTap: onDismiss,
         behavior: HitTestBehavior.opaque,
-        child: DecoratedBox(
-          // Still opaque where it sits — anything showing *through* the words
-          // competes with them at exactly the moment the rider has least
-          // attention to spare — but it no longer sits over everything. The
-          // border is what carries the alarm the full screen used to (#418).
-          //
-          // The panel's height is its content's, so the content is what keeps it
-          // small. #418 unpinned it from the screen and left a 76px icon, a 44px
-          // title and a 68px distance stacked up, which on iOS still came to
-          // over 80% of the screen: the symptom shrank, the defect did not. A
-          // MediaQuery ceiling was tried and removed — this widget is built and
-          // torn down by a ValueListenableBuilder as the alert comes and goes,
-          // and reading the screen size there throws on a deactivated ancestor.
-          // The layout test holds the bound instead.
-          decoration: BoxDecoration(
-            color: camera ? const Color(0xFF6E1015) : const Color(0xFF0F3560),
-            border: Border(
-              bottom: BorderSide(
-                color: camera
-                    ? const Color(0xFFFF3B30)
-                    : const Color(0xFF4C9AFF),
-                width: 6,
-              ),
-            ),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          constraints: const BoxConstraints(
+            maxWidth: enforcementBubbleMaxWidth,
           ),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    camera ? Icons.speed_rounded : Icons.local_police_rounded,
-                    size: 40,
-                    color: Colors.white,
-                  ),
-                  const SizedBox(height: 12),
-                  FittedBox(
-                    child: Text(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            // Opaque: anything showing through the words competes with them at
+            // the moment the rider has least attention to spare (#107).
+            color: camera ? const Color(0xFF6E1015) : const Color(0xFF0F3560),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: camera ? const Color(0xFFFF3B30) : const Color(0xFF4C9AFF),
+              width: 3,
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x99000000),
+                blurRadius: 12,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
+          // A row, not a column. The stacked column is what made every previous
+          // version tall, and height is the only dimension that competes with the
+          // map.
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                camera ? Icons.speed_rounded : Icons.local_police_rounded,
+                size: 30,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
                       title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 26,
-                        height: 1,
+                        fontSize: 17,
+                        height: 1.1,
                         fontWeight: FontWeight.w900,
-                        letterSpacing: 1.5,
+                        letterSpacing: 1.2,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  FittedBox(
-                    child: Text(
+                    Text(
                       key: const Key('enforcement-alert-distance'),
                       distance,
+                      maxLines: 1,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 40,
-                        height: 1,
+                        fontSize: 24,
+                        height: 1.15,
                         fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  if (enforcedLimit != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2, bottom: 2),
-                      child: Text(
-                        key: const Key('enforcement-alert-limit'),
-                        enforcedLimit,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          height: 1.1,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                    ),
-                  const Text(
-                    'AHEAD',
-                    style: TextStyle(
-                      color: Color(0xCCFFFFFF),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 3,
-                    ),
-                  ),
-                  if (details != null && details.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      details,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Color(0xE6FFFFFF),
-                        fontSize: 14,
-                        height: 1.3,
-                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
-                  // "TAP TO DISMISS" was here and is gone. The detector already
-                  // returns null once the hazard is behind the rider, so the
-                  // warning clears itself on passing — the hint told a rider
-                  // they had to take a hand off the bars when they did not, and
-                  // it cost a line on a panel whose size is the defect (#418).
-                  // The tap still works, and the Semantics hint still names it.
-                ],
+                ),
               ),
-            ),
+              if (enforcedLimit != null) ...[
+                const SizedBox(width: 12),
+                // The limit is the one number that matters at a camera, so it
+                // gets the sign shape rather than a line of text. `VARIABLE` and
+                // the rest of the wording come from #418's own label.
+                Container(
+                  key: const Key('enforcement-alert-limit'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: const Color(0xFFD71920),
+                      width: 4,
+                    ),
+                  ),
+                  child: Text(
+                    enforcedLimit,
+                    maxLines: 1,
+                    style: const TextStyle(
+                      color: Color(0xFF111111),
+                      fontSize: 18,
+                      height: 1,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
@@ -8568,6 +8668,40 @@ class _MapOverlayLabel extends StatelessWidget {
   );
 }
 
+/// Tells its child whether an enforcement warning is live (#446).
+///
+/// A wrapper rather than a flag threaded down, because the alert is a listenable
+/// the badge has no business subscribing to itself, and the badge is rebuilt often
+/// enough already.
+class _EnforcementEmphasis extends StatelessWidget {
+  const _EnforcementEmphasis({
+    required this.alert,
+    required this.dismissedHazardId,
+    required this.builder,
+  });
+
+  final ValueListenable<EnforcementAlert?>? alert;
+  final String? dismissedHazardId;
+  final Widget Function(bool emphasised) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    final listenable = alert;
+    // No detector configured at all — most tests, and any build without the
+    // provider. Emphasis is then never applied rather than defaulted on.
+    if (listenable == null) return builder(false);
+    return ValueListenableBuilder<EnforcementAlert?>(
+      valueListenable: listenable,
+      builder: (context, value, _) => builder(
+        enforcementEmphasisApplies(
+          armed: value != null,
+          dismissed: value != null && value.hazard.id == dismissedHazardId,
+        ),
+      ),
+    );
+  }
+}
+
 class _PostedSpeedLimitBadge extends StatelessWidget {
   const _PostedSpeedLimitBadge({
     required this.status,
@@ -8575,7 +8709,18 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
     required this.limit,
     required this.riderSpeedMetersPerSecond,
     this.riderSpeedIsAgeing = false,
+    this.emphasised = false,
   });
+
+  /// Enlarged for the approach to a speed camera (#446).
+  ///
+  /// This is the one thing allowed to change the surface's width, and it is worth
+  /// naming why: #142 fixed the *content* moving the width — a three-digit speed
+  /// widening the sign and shoving its left edge across the map — by making the
+  /// number give way inside a fixed 58px. That contract still holds. This is a
+  /// deliberate, bounded, whole-surface change with a reason a rider can see, not
+  /// a length of text leaking into a layout.
+  final bool emphasised;
 
   final SpeedLimitDisplayStatus status;
   final SpeedLimitLookupOutcome? outcome;
@@ -8589,6 +8734,10 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Half again on a camera approach, and exactly 1 otherwise, so an ordinary
+    // ride gets byte-identical geometry to before (#446, #142).
+    final scale = emphasised ? enforcementEmphasisScale : 1.0;
+    final signDiameter = 58 * scale;
     final reading = limit;
     final known = status == SpeedLimitDisplayStatus.known && reading != null;
     final value = known
@@ -8662,13 +8811,13 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
         // width instead, which is the contract every other variable-length
         // surface in this band keeps.
         child: SizedBox(
-          width: 58,
+          width: signDiameter,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 58,
-                height: 58,
+                width: signDiameter,
+                height: signDiameter,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -8677,7 +8826,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                     color: known
                         ? const Color(0xFFD71920)
                         : const Color(0xFF8993A0),
-                    width: 6,
+                    width: 6 * scale,
                   ),
                   boxShadow: const [
                     BoxShadow(
@@ -8697,9 +8846,9 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                       )
                     : Text(
                         value,
-                        style: const TextStyle(
-                          color: Color(0xFF111111),
-                          fontSize: 26,
+                        style: TextStyle(
+                          color: const Color(0xFF111111),
+                          fontSize: 26 * scale,
                           height: 1,
                           fontWeight: FontWeight.w900,
                         ),
@@ -8718,7 +8867,11 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                   color: riderSpeedIsAgeing
                       ? const Color(0xFFFFFFFF).withValues(alpha: 0.55)
                       : const Color(0xFFFFFFFF),
-                  fontSize: 26,
+                  // The rider's own speed grows with the sign: the pair is what
+                  // the report asked to be readable on the approach, and a
+                  // large limit beside a small speed invites reading one for
+                  // the other.
+                  fontSize: 26 * scale,
                   height: 1,
                   fontWeight: FontWeight.w900,
                   shadows: _mapOverlayTextShadows,
