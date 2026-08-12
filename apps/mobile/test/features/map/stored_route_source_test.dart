@@ -13,6 +13,7 @@ import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
+import 'package:ride_relay/services/imported_track_matcher.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/route_importer.dart';
 import 'package:ride_relay/services/stored_route_library.dart';
@@ -150,6 +151,60 @@ void main() {
     expect(points.last.latitude, closeTo(51.45, 1e-9));
   });
 
+  testWidgets(
+    'a reversed previous ride ignores a one-fix fragment when adding directions',
+    (tester) async {
+      final rides = InMemoryCompletedRideStore();
+      await rides.save(
+        _completedRide(
+          rideId: 'ride-392725',
+          rideCode: '392725',
+          traveledRoute: _recordingWithTrailingFix(),
+        ),
+      );
+      final store = _RecordingRouteStore();
+      final matcher = _RecordingTrackMatcher();
+
+      await _pumpMap(
+        tester,
+        store: store,
+        rides: rides,
+        importedTrackMatcher: matcher,
+      );
+
+      await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('stored-route-candidate-ride:ride-392725:track')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('stored-route-reverse')));
+      await tester.tap(find.byKey(const Key('use-stored-route')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Add turn directions?'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('generate-navigable-route')));
+      await tester.pumpAndSettle();
+
+      expect(matcher.originals, hasLength(1));
+      final reversed = matcher.originals.single;
+      expect(reversed.paths.first.points, hasLength(1));
+      expect(reversed.paths[1].points.length, greaterThanOrEqualTo(2));
+      expect(reversed.paths[1].points.first.latitude, closeTo(51.47, 1e-9));
+      expect(reversed.paths[1].points.last.latitude, closeTo(51.45, 1e-9));
+      expect(find.text('Review route'), findsOneWidget);
+      expect(
+        find.byKey(const Key('route-review-original-line')),
+        findsOneWidget,
+      );
+
+      await _confirmReview(tester);
+      expect(store.savedRoutes.single.maneuvers, isNotEmpty);
+      expect(store.savedRoutes.single.paths, hasLength(1));
+    },
+  );
+
   testWidgets('a ride whose data has been removed is not offered', (
     tester,
   ) async {
@@ -224,6 +279,7 @@ Future<void> _pumpMap(
   RecordedRouteStore? recorded,
   CompletedRideStore? rides,
   ValueChanged<ImportedRoute?>? onRouteCommitted,
+  ImportedTrackMatcher? importedTrackMatcher,
   // The Ride page's "Change route" asks the map to open its route-change sheet.
   // Left off, the empty-route card is what a rider sees, and its own controls
   // are the ones under test.
@@ -258,6 +314,7 @@ Future<void> _pumpMap(
         ),
         changeRouteRequestToken: openChangeRouteSheet ? Object() : null,
         onRouteCommitted: onRouteCommitted,
+        importedTrackMatcher: importedTrackMatcher,
       ),
     ),
   );
@@ -311,6 +368,24 @@ ImportedRoute _recording({required String id, required String name}) {
   );
 }
 
+ImportedRoute _recordingWithTrailingFix() {
+  final main = _recording(id: 'trail', name: 'Trail');
+  return ImportedRoute(
+    id: main.id,
+    name: main.name,
+    importedAt: main.importedAt,
+    sourceFileName: main.sourceFileName,
+    paths: [
+      ...main.paths,
+      const RoutePath(
+        kind: RoutePathKind.track,
+        points: [GeoPoint(latitude: 51.4701, longitude: -2.5901)],
+      ),
+    ],
+    waypoints: const [],
+  );
+}
+
 CompletedRide _completedRide({
   required String rideId,
   required String rideCode,
@@ -354,4 +429,37 @@ class _NoFileSource implements GpxImportSource {
 
   @override
   Future<PickedGpxFile?> pickGpxFile() async => null;
+}
+
+class _RecordingTrackMatcher implements ImportedTrackMatcher {
+  final originals = <ImportedRoute>[];
+
+  @override
+  Future<ImportedTrackMatch> match(ImportedRoute original) async {
+    originals.add(original);
+    final drawable = original.paths
+        .where((path) => path.points.length >= 2)
+        .toList(growable: false);
+    return ImportedTrackMatch(
+      route: ImportedRoute(
+        id: 'matched-reversed-track',
+        name: '${original.name} (navigable)',
+        importedAt: DateTime.utc(2026, 8, 12),
+        sourceFileName: 'matched-${original.sourceFileName}',
+        paths: drawable,
+        waypoints: original.waypoints,
+        maneuvers: [
+          RouteManeuver(
+            position: drawable.single.points[1],
+            type: 'turn',
+            modifier: 'right',
+          ),
+        ],
+      ),
+      confidence: 0.95,
+      traceCoverage: 1,
+      meanDeviationMeters: 2,
+      maximumDeviationMeters: 5,
+    );
+  }
 }
