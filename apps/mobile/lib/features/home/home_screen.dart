@@ -428,44 +428,6 @@ class _RideRestorationBanner extends StatelessWidget {
   }
 }
 
-class _BrandMark extends StatelessWidget {
-  const _BrandMark();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primary,
-            borderRadius: BorderRadius.circular(13),
-          ),
-          child: const Icon(Icons.flag_outlined, color: Colors.black),
-        ),
-        const SizedBox(width: 13),
-        const Expanded(
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'TAIL END CHARLIE',
-              maxLines: 1,
-              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// The way back into an ended ride the rider stepped away from (#207).
-///
-/// Without this the exit from the ride-ended screen would be a one-way door, and
-/// the summary, the recap image and any late relayed events would be unreachable
-/// until the recovery window expired.
 class _SetAsideRideBanner extends StatelessWidget {
   const _SetAsideRideBanner({required this.rideCode, required this.onReopen});
 
