@@ -920,8 +920,8 @@ String _instructionText({
       }
       if (direction.isStated) {
         return namesJunction
-            ? 'Roundabout, take the exit $label'
-            : 'Take the exit $label';
+            ? 'Roundabout, take the exit $roundaboutLabel'
+            : 'Take the exit $roundaboutLabel';
       }
       // Neither an exit number nor a direction was reported, so nothing is
       // claimed about either. The symbol says which junction it is.

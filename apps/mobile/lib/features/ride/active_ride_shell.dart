@@ -108,6 +108,28 @@ import 'observer_access_sheet.dart';
 import 'ride_dashboard.dart';
 import 'ride_roster_sheet.dart';
 
+/// Whether a newly calculated route should wait before replacing the current
+/// junction instruction.
+///
+/// Ride 392725 produced a reroute 47 m before a roundabout. Applying it changed
+/// the exit while the rider was already committed, then announced a second
+/// instruction at 0 m. A route can be calculated there, but it must not take
+/// over until the rider is clear.
+@visibleForTesting
+bool shouldDeferRejoinNavigation({
+  required bool hasRoutedPlan,
+  required double? distanceToCurrentManeuverMeters,
+  required double? metersSincePreviousManeuver,
+}) {
+  if (!hasRoutedPlan) return false;
+  final current = distanceToCurrentManeuverMeters;
+  if (current != null && current <= guidanceJunctionClearanceMeters) {
+    return true;
+  }
+  final since = metersSincePreviousManeuver;
+  return since != null && since < guidanceJunctionClearanceMeters;
+}
+
 /// The only thing an observer link publishes.
 ///
 /// Its argument list is the privacy boundary: an observer is a separate
@@ -1068,6 +1090,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   late final RouteRejoinPlanner _rejoinPlanner;
   Future<void> _rejoinChain = Future.value();
   String? _rejoinGuidance;
+  bool _rejoinRecalculationAnnounced = false;
   final _rejoinNavigationRoute = ValueNotifier<route_domain.ImportedRoute?>(
     null,
   );
@@ -2446,6 +2469,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _enforcementAlert.value = const EnforcementAlertDetector().detect(
       position: localLocation?.sample.position,
       headingDegrees: localLocation?.sample.headingDegrees,
+      speedMetersPerSecond: localLocation?.sample.speedMetersPerSecond,
+      activeHazardId: previousEnforcementAlert?.hazard.id,
       route: awareness.route,
       hazards: awareness.activeHazards,
       now: now,
@@ -2940,6 +2965,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         now: DateTime.now(),
       );
       final leader = _newestLocationFor(awareness, RideRole.lead);
+      _speakRejoinRecalculation(alert.assessment);
       final plan = await _rejoinPlanner.update(
         riderId: session.localRiderId,
         sample: local.sample,
@@ -2953,12 +2979,37 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         tecPosition: tec.navigableLocation?.sample.position,
       );
       if (!mounted) return;
-      _setRejoinPlan(
-        plan.severity == RouteRejoinSeverity.onRoute ? null : plan,
-      );
+      final presentedPlan = plan.severity == RouteRejoinSeverity.onRoute
+          ? null
+          : plan;
+      if (!_shouldDeferRejoinNavigation(presentedPlan, local.sample.position)) {
+        _setRejoinPlan(presentedPlan);
+      }
       await _relayRejoinPlanToLeader(plan, session);
     });
     return _rejoinChain;
+  }
+
+  bool _shouldDeferRejoinNavigation(
+    RouteRejoinPlan? plan,
+    awareness_geo.GeoPoint riderPosition,
+  ) {
+    final passed = _passedManeuverPosition;
+    final metersSincePrevious = passed == null
+        ? null
+        : GeoCalculations.distanceMeters(
+            riderPosition,
+            awareness_geo.GeoPoint(
+              latitude: passed.latitude,
+              longitude: passed.longitude,
+            ),
+          );
+    return shouldDeferRejoinNavigation(
+      hasRoutedPlan: plan?.hasBreadcrumb ?? false,
+      distanceToCurrentManeuverMeters:
+          _latestNavigationGuidance?.distanceMeters,
+      metersSincePreviousManeuver: metersSincePrevious,
+    );
   }
 
   /// Feeds the current gap into the trend tracker.
@@ -3042,6 +3093,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   void _setRejoinPlan(RouteRejoinPlan? plan) {
+    if (plan == null) _rejoinRecalculationAnnounced = false;
     final guidance = plan?.guidance;
     final trace = plan?.hasBreadcrumb ?? false
         ? MapOverlayTrace(
@@ -3069,6 +3121,40 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (guidance != _rejoinGuidance) {
       setState(() => _rejoinGuidance = guidance);
     }
+  }
+
+  /// Announces the state transition once, before the network route returns.
+  ///
+  /// A moving rider otherwise hears silence while the original turn prompts are
+  /// suppressed, which made the first eventual reroute instruction feel both
+  /// late and unexplained (#444).
+  void _speakRejoinRecalculation(RouteDeviationAssessment assessment) {
+    if (_rejoinRecalculationAnnounced ||
+        assessment.state != RouteTrackingState.offRoute) {
+      return;
+    }
+    _rejoinRecalculationAnnounced = true;
+    final speaker = _spokenGuidance;
+    final controller = widget.rideController;
+    if (speaker == null) return;
+    final episode =
+        assessment.offRouteSince?.microsecondsSinceEpoch ??
+        assessment.evaluatedAt.microsecondsSinceEpoch;
+    unawaited(
+      speaker.speakAlert(
+        key:
+            'rejoin-recalculating:${controller.session?.localRiderId}:$episode',
+        phrase: 'Off route. Recalculating directions.',
+        enabled: spokenAudioAllows(
+          widget.spokenGuidance?.mode ?? SpokenAudioMode.silent,
+          SpokenAudioClass.navigation,
+        ),
+        rideActive:
+            controller.rideStarted &&
+            !controller.rideEnded &&
+            !controller.ridePaused,
+      ),
+    );
   }
 
   static RiderLocation? _newestLocationFor(
@@ -3973,8 +4059,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// exactly what audio is. A roundabout says so out loud, where the banner can
   /// leave it to the drawn glyph.
   void _speakGuidance(NavigationGuidance? guidance) {
-    final speaker = _spokenGuidance;
-    if (speaker == null) return;
     if (guidance == null) return;
     final controller = widget.rideController;
     final identity = guidance.instruction.maneuver.identity;
@@ -3988,6 +4072,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       _guidanceManeuverIdentity = identity;
     }
     _lastGuidanceManeuverPosition = guidance.instruction.maneuver.position;
+
+    final speaker = _spokenGuidance;
+    if (speaker == null) return;
 
     final navigation = _mapNavigationPosition.value;
     final passed = _passedManeuverPosition;

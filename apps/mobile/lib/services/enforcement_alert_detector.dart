@@ -38,14 +38,27 @@ class EnforcementAlert {
 /// still announced.
 class EnforcementAlertDetector {
   const EnforcementAlertDetector({
-    this.warningDistanceMeters = 1609.344,
+    this.targetWarningTime = const Duration(seconds: 30),
+    this.minimumWarningDistanceMeters = 250,
+    this.maximumWarningDistanceMeters = 1000,
+    this.fallbackWarningDistanceMeters = 400,
     this.routeCorridorMeters = 250,
     this.aheadHeadingToleranceDegrees = 75,
   });
 
-  /// One mile. The rider asked for at least half a mile of warning; starting a
-  /// full mile out leaves room to react at national-speed-limit pace.
-  final double warningDistanceMeters;
+  /// The approach time the warning aims to provide.
+  ///
+  /// Thirty seconds works out at about 0.25 miles at 30 mph and 0.58 miles at
+  /// 70 mph. That keeps an urban warning relevant without making a motorway
+  /// warning late.
+  final Duration targetWarningTime;
+
+  /// Bounds protect the alert from a stopped or noisy speed sample.
+  final double minimumWarningDistanceMeters;
+  final double maximumWarningDistanceMeters;
+
+  /// Used while the platform has no finite speed sample.
+  final double fallbackWarningDistanceMeters;
 
   /// How far off the loaded route a hazard may sit and still count as on it.
   final double routeCorridorMeters;
@@ -59,6 +72,8 @@ class EnforcementAlertDetector {
     required List<HazardReport> hazards,
     required DateTime now,
     double? headingDegrees,
+    double? speedMetersPerSecond,
+    String? activeHazardId,
     List<GeoPoint> route = const [],
   }) {
     if (position == null) return null;
@@ -74,7 +89,9 @@ class EnforcementAlertDetector {
         ? GeoCalculations.projectOntoPolyline(position, route)
         : null;
 
+    final warningDistance = _warningDistance(speedMetersPerSecond);
     EnforcementAlert? nearest;
+    EnforcementAlert? active;
     for (final hazard in candidates) {
       final distance = _distanceAhead(
         position: position,
@@ -84,12 +101,31 @@ class EnforcementAlertDetector {
         riderDistanceAlongRouteMeters:
             riderAlongRoute?.distanceAlongRouteMeters,
       );
-      if (distance == null || distance > warningDistanceMeters) continue;
+      if (distance == null) continue;
+      // Once announced, keep the same warning stable until it is passed,
+      // dismissed, or expires. Slowing for traffic must not make it vanish and
+      // then re-arm as the speed-derived threshold contracts.
+      if (hazard.id == activeHazardId) {
+        active = EnforcementAlert(hazard: hazard, distanceMeters: distance);
+        continue;
+      }
+      if (distance > warningDistance) continue;
       if (nearest == null || distance < nearest.distanceMeters) {
         nearest = EnforcementAlert(hazard: hazard, distanceMeters: distance);
       }
     }
-    return nearest;
+    return active ?? nearest;
+  }
+
+  double _warningDistance(double? speedMetersPerSecond) {
+    if (speedMetersPerSecond == null || !speedMetersPerSecond.isFinite) {
+      return fallbackWarningDistanceMeters
+          .clamp(minimumWarningDistanceMeters, maximumWarningDistanceMeters)
+          .toDouble();
+    }
+    return (speedMetersPerSecond * targetWarningTime.inMilliseconds / 1000)
+        .clamp(minimumWarningDistanceMeters, maximumWarningDistanceMeters)
+        .toDouble();
   }
 
   double? _distanceAhead({

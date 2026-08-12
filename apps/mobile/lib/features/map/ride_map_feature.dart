@@ -1651,9 +1651,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ),
                 // An approaching camera or police report, in two parts: a bubble
                 // that announces it and a border that holds for the rest of the
-                // approach (#446). Neither is allowed over the navigation area —
-                // which is what every previous version of this was, at 100%, then
-                // 80%, then a third of a landscape screen.
+                // approach (#446). The announcement sits at the top-centre,
+                // clear of the rider marker and the bottom navigation rails.
                 if (widget.enforcementAlert != null)
                   Positioned.fill(
                     child: ValueListenableBuilder<EnforcementAlert?>(
@@ -1669,7 +1668,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           key: ValueKey(alert.hazard.id),
                           alert: alert,
                           distanceUnit: widget.distanceUnit,
-                          bottomInset: _safetyBandReservedHeight(landscape),
+                          topInset: overlayTop,
                           onDismiss: () {
                             setState(
                               () => _dismissedEnforcementAlertId =
@@ -8407,16 +8406,15 @@ class _EnforcementAlertLayer extends StatefulWidget {
     super.key,
     required this.alert,
     required this.distanceUnit,
-    required this.bottomInset,
+    required this.topInset,
     required this.onDismiss,
   });
 
   final EnforcementAlert alert;
   final DistanceUnit distanceUnit;
 
-  /// Height already reserved at the bottom of the map, so the bubble sits above
-  /// the safety band rather than on it.
-  final double bottomInset;
+  /// Safe-area inset, so the bubble follows a notch or Dynamic Island.
+  final double topInset;
 
   final VoidCallback onDismiss;
 
@@ -8468,6 +8466,7 @@ class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
             child: DecoratedBox(
               key: const Key('enforcement-alert-border'),
               decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(enforcementBorderRadius),
                 border: Border.all(
                   color: camera
                       ? const Color(0xFFFF3B30)
@@ -8482,9 +8481,9 @@ class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
           Positioned(
             left: 0,
             right: 0,
-            bottom: widget.bottomInset + 12,
+            top: widget.topInset + 12,
             child: Align(
-              alignment: Alignment.bottomCenter,
+              alignment: Alignment.topCenter,
               child: _EnforcementAlertBubble(
                 alert: widget.alert,
                 distanceUnit: widget.distanceUnit,
@@ -8497,13 +8496,11 @@ class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
   }
 }
 
-/// The announcement itself: compact, loud, and nowhere near the top of the screen.
+/// The announcement itself: compact, loud, and clear of the rider marker.
 ///
-/// Bottom-centre rather than top, because the top is the navigation area — the
-/// directions, the speed and the no-TEC row (#442) — and the report was explicit
-/// that the warning must not block it. Bounded by
-/// [enforcementBubbleMaxWidth] so a landscape phone gets a notification rather
-/// than a band across the screen.
+/// Top-centre keeps it away from the forward-biased current position and the
+/// bottom navigation rails. [enforcementBubbleMaxWidth] keeps a landscape phone
+/// to a notification rather than a band across the screen.
 class _EnforcementAlertBubble extends StatelessWidget {
   const _EnforcementAlertBubble({
     required this.alert,

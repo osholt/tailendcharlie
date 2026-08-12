@@ -583,6 +583,28 @@ void main() {
     expect(instruction.exitNumber, isNull);
   });
 
+  test('ride 392725 slight-left geometry speaks the straight-on bucket', () {
+    final instruction = collapseManeuvers(const [
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.46705, longitude: -2.50050),
+        type: 'roundabout',
+        drivingSide: 'left',
+        bearingBeforeDegrees: 0,
+        bearingAfterDegrees: 300,
+      ),
+      RouteManeuver(
+        position: GeoPoint(latitude: 51.4672, longitude: -2.50030),
+        type: 'exit roundabout',
+        bearingBeforeDegrees: 220,
+        bearingAfterDegrees: 306.6,
+      ),
+    ]).single;
+
+    expect(instruction.direction, ManeuverDirection.slightLeft);
+    expect(instruction.text, 'Take the exit straight on');
+    expect(instruction.standaloneText, 'Roundabout, take the exit straight on');
+  });
+
   test('merged gyratory rings do not invent a combined exit count', () {
     final instruction = collapseManeuvers(const [
       RouteManeuver(

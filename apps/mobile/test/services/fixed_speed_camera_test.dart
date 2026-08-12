@@ -244,7 +244,7 @@ void main() {
       final result = await provider().fetch(query(now));
 
       final alert = const EnforcementAlertDetector().detect(
-        position: const GeoPoint(latitude: 51.5000, longitude: -2.4600),
+        position: const GeoPoint(latitude: 51.5000, longitude: -2.4550),
         hazards: result.hazards,
         now: now,
         route: _route,
@@ -252,7 +252,7 @@ void main() {
 
       expect(alert, isNotNull);
       expect(alert!.hazard.providerId, FixedSpeedCameraProvider.providerId);
-      expect(alert.distanceMeters, lessThan(1609.344));
+      expect(alert.distanceMeters, lessThan(400));
     });
 
     test('an empty layer reports itself unavailable, not "no cameras"', () {

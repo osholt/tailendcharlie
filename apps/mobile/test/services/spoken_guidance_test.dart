@@ -1,10 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
 
 /// The engine is behind an interface so these decisions - what to say, when, and
 /// how often - can be tested without a platform channel. They are the part that
 /// can be wrong in a way a rider on a bike would notice.
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late _RecordingEngine engine;
   late SpokenGuidanceSpeaker speaker;
 
@@ -94,6 +96,57 @@ void main() {
     expect(await speak(key: 'turn-1'), isTrue);
     expect(engine.spoken, hasLength(2));
   });
+
+  test('installed voice discovery keeps usable English voices', () async {
+    final voices = await loadSpokenGuidanceVoices(_VoiceListTts());
+
+    expect(voices, const [
+      SpokenGuidanceVoice(
+        name: 'Daniel',
+        locale: 'en-GB',
+        identifier: 'daniel',
+      ),
+    ]);
+  });
+
+  test(
+    'the chosen voice is applied and system default can be restored',
+    () async {
+      const daniel = SpokenGuidanceVoice(
+        name: 'Daniel',
+        locale: 'en-GB',
+        identifier: 'daniel',
+      );
+      SpokenGuidanceVoice? chosen = daniel;
+      final tts = _VoiceRecordingTts();
+      final voiceEngine = FlutterTtsSpokenGuidanceEngine(
+        tts: tts,
+        voiceProvider: () => chosen,
+      );
+
+      await voiceEngine.speak('Turn left');
+      expect(tts.voices, [daniel.platformArguments]);
+
+      chosen = null;
+      await voiceEngine.speak('Turn right');
+      expect(tts.clearVoiceCalls, 1);
+      expect(tts.spoken, ['Turn left', 'Turn right']);
+    },
+  );
+
+  test('a removed voice falls back instead of losing the prompt', () async {
+    const removed = SpokenGuidanceVoice(name: 'Removed', locale: 'en-GB');
+    final tts = _VoiceRecordingTts(voiceResult: 0);
+    final voiceEngine = FlutterTtsSpokenGuidanceEngine(
+      tts: tts,
+      voiceProvider: () => removed,
+    );
+
+    await voiceEngine.speak('Second exit');
+
+    expect(tts.clearVoiceCalls, 1);
+    expect(tts.spoken, ['Second exit']);
+  });
 }
 
 class _RecordingEngine implements SpokenGuidanceEngine {
@@ -111,4 +164,37 @@ class _RecordingEngine implements SpokenGuidanceEngine {
 
   @override
   Future<void> stop() async => stopped = true;
+}
+
+class _VoiceListTts extends FlutterTts {
+  @override
+  Future<dynamic> get getVoices async => [
+    {'name': 'Daniel', 'locale': 'en-GB', 'identifier': 'daniel'},
+    {'name': 'Thomas', 'locale': 'fr-FR', 'identifier': 'thomas'},
+    {'name': '', 'locale': 'en-US'},
+  ];
+}
+
+class _VoiceRecordingTts extends FlutterTts {
+  _VoiceRecordingTts({this.voiceResult = 1});
+
+  final int voiceResult;
+  final voices = <Map<String, String>>[];
+  final spoken = <String>[];
+  int clearVoiceCalls = 0;
+
+  @override
+  Future<dynamic> setVoice(Map<String, String> voice) async {
+    voices.add(voice);
+    return voiceResult;
+  }
+
+  @override
+  Future<dynamic> clearVoice() async => clearVoiceCalls += 1;
+
+  @override
+  Future<dynamic> speak(String text, {bool focus = false}) async {
+    spoken.add(text);
+    return 1;
+  }
 }

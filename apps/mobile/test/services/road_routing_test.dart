@@ -19,6 +19,7 @@ void main() {
       expect(request.url.queryParameters['geometries'], 'geojson');
       expect(request.url.queryParameters['overview'], 'full');
       expect(request.url.queryParameters['steps'], 'true');
+      expect(request.url.queryParameters['bearings'], isNull);
       expect(request.headers['User-Agent'], contains('TailEndCharlie'));
       return http.Response(
         jsonEncode({
@@ -103,6 +104,25 @@ void main() {
       'right',
     ]);
     expect(result.maneuvers.last.requiresSecondBikeDrop, isFalse);
+  });
+
+  test('OSRM constrains only the moving reroute origin bearing', () async {
+    final client = MockClient((request) async {
+      // OSRM requires one bearings element per coordinate; empty elements keep
+      // the normal snap at later rejoin waypoints.
+      expect(request.url.queryParameters['bearings'], '91,60;;');
+      return http.Response(_osrmResponse(), 200);
+    });
+    final service = OsrmRoadRoutingService(
+      client: client,
+      baseUrl: Uri.parse('https://routing.example.test'),
+    );
+
+    await service.routeThrough(const [
+      GeoPoint(latitude: 53, longitude: -1),
+      GeoPoint(latitude: 53.01, longitude: -1.01),
+      GeoPoint(latitude: 53.02, longitude: -1.02),
+    ], originBearingDegrees: 90.6);
   });
 
   test('roundabout steps keep their bearings, exit count and lanes', () async {

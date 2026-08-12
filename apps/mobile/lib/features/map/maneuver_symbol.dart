@@ -54,7 +54,13 @@ class RoundaboutSymbol extends ManeuverSymbol {
   final bool? leftHandTraffic;
 
   @override
-  ManeuverSide get side => direction.side;
+  ManeuverSide get side => switch (roundaboutExitBucket(direction)) {
+    RoundaboutExitBucket.left => ManeuverSide.left,
+    RoundaboutExitBucket.straightOn => ManeuverSide.ahead,
+    RoundaboutExitBucket.right => ManeuverSide.right,
+    RoundaboutExitBucket.back => ManeuverSide.reverse,
+    null => direction.side,
+  };
 }
 
 ManeuverSymbol maneuverSymbolFor(ManeuverInstruction instruction) {
