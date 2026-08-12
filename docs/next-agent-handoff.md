@@ -1,55 +1,72 @@
 # Next-agent handoff
 
-Updated: 2026-08-09
+Updated: 2026-08-12
 
-## Current state: build 46 shipped, deploy automation next
+## Current state: build 52 with testers, waiting on a ride
 
-**The relay is healthy and current.** It hung on the evening of 9 August — the
-instance stayed `RUNNING` with its IP attached while the guest OS wedged in an
-early boot sequence. A `SOFTRESET` recovered it and it was redeployed to
-`4a8451c`. `serverBuildCommit` matches `main` and the health probe passes. The
-h2 CVE fix reached production after five days undeployed. See #349 and the new
-runbook section, *When the host stops answering*.
+**The relay deploys itself and it has been proved.** A merge to `main` touching
+`apps/server/**` or `deploy/**` deploys pre-production, runs the server suite and
+a live smoke test, promotes to production, then verifies from outside the box.
+Production has auto-deployed and been verified this way. The 2 GB swapfile is in
+place. `serverBuildCommit` remains the only trustworthy answer to what is running;
+the checkout on the box is not it.
 
-**Build 46 is with testers.** iOS 46 is in TestFlight external review; Android 46
-is on the alpha track. Notes are in `tester-release-notes.md`. Nothing in it has
-been ridden, so eight tickets sit at ready-for-validation and need a ride rather
-than more code: #301, #302, #303, #359, #360, #361, #362, #363, #364, #380, #382.
+**Build 52 is with testers** — iOS TestFlight (internal, no external review) and
+the Android alpha track, version 1.0.1. It carries seven merges from the ride of
+12 August 2026:
 
-### Next task, already agreed with the owner
+| Ticket | What it fixes |
+| --- | --- |
+| #456 | The recorded diagnostics log survives the ride and is shareable from Settings and every share door |
+| #457 | The diagnostics switch works mid-ride instead of being sampled once in `initState` |
+| #460 | A close pair of junctions is named in one spoken prompt |
+| #446 | The camera alert is a bubble for ten seconds, then a red border alone |
+| #426 | No start screen — the map is the surface |
+| #431 | Search a destination from the map, then pick solo or group |
+| #452 | CarPlay gets a real time to the turn instead of a zero |
 
-Automatic deploy on merge, gated by the existing pre-production stack. Two
-decisions are made and should not be reopened:
+### The next task is a ride, not code
 
-- **CI pushes over SSH.** Not a poller. This means a deploy credential in GitHub
-  Actions secrets; use a *dedicated* key restricted with `command=` so it can
-  only run the deploy script, never an arbitrary shell.
-- **The gate is the server test suite plus a live smoke test** against the
-  deployed pre-production stack.
+Three tickets are **blocked on field evidence and must not be guessed at**:
 
-Intended shape: push to `main` touching `apps/server/**` or `deploy/**` → deploy
-pre-production → run tests and smoke → promote to production → verify from
-outside the box.
+- **#461** — the second roundabout of a close pair is described as two separate
+  turns, and the wording came out as "at the end of the road". Two candidate
+  causes with different fixes: the engine never calling it a roundabout, or the
+  app failing to merge its two steps.
+- **#450** — no audio at all on a CarPlay ride. The log distinguishes "decided to
+  say nothing" from "said it and nothing came out".
+- **#451** — the mapped speed limit reads a dash on roads with a posted limit.
 
-**Do the swapfile first.** The host has 954 MB with **no swap** and about 269 MB
-free. A `docker build` in that headroom is what will cause the next outage, and
-2 GB of swap against 35 GB of free disk is the cheapest risk reduction available.
+Build 52 is the first build where the instrument for these actually works:
+**Settings → Record ride diagnostics**, reachable from the home screen or the ride
+menu, effective when switched on mid-ride, written to disk as it records, and
+shareable afterwards from **Settings → Recorded rides**. #408 is the standing
+reminder of what guessing at roundabout geometry costs here — the "obvious fix"
+would have drawn an illegal manoeuvre.
 
-**Smoke pre-production over the host's internal network, not its public URL.**
-#398: the pre-production route is missing from the *running* Caddy config, so its
-hostname fails TLS. Fixing that means recreating Caddy, which is the one service
-whose failure takes riders offline — not a good prerequisite for a pipeline.
-Curling the container directly still proves migrations ran, env vars are present
-and the app answers.
+### Open and not blocked
 
-**Two risks the owner has been told about and accepted:**
+#440 stuck on the summary screen · #441 starting a ride from the phone with
+CarPlay attached · #442 CarPlay layout · #444 reroute slow, silent, and ignoring
+heading · #448 position lag of about 22 yards · #449 smoother distance countdown ·
+#452 the clock half, still open · #412 exit direction one off · #413–#417 · #408
+legibility · #398 the pre-production Caddy route · #352 Bouncy Castle · #395.
 
-- A migration that passes against pre-production's data and fails against
-  production's is exactly what this pipeline will not catch. The entrypoint runs
-  `alembic upgrade head`, so such a migration stops the container coming up.
-- Deploy-on-merge puts a bad merge in front of riders within minutes. The health
-  probe is the backstop and rollback is the redeploy procedure with an older
-  commit.
+#431 stays open for the shorter ride-ending flow it also asks for, which overlaps
+#440.
+
+### Decisions recorded rather than re-argued
+
+- `docs/geocoder-decision.md` — destination search stays on the public Nominatim
+  instance and submits rather than autocompletes, because the usage policy lists
+  client-side autocomplete as an unacceptable use. As-you-type needs a geocoder we
+  host, and the relay has 954 MB of RAM.
+- `docs/traffic-provider-decision.md` — no licensed live-traffic feed.
+- The dependency graph submitted to Dependabot is scoped to runtime classpaths,
+  which took alerts from 47 to 3. #350 adds `bcprov-jdk18on` as an
+  `implementation` dependency, so Bouncy Castle now ships in the Android APK and
+  will appear in that graph. That is expected and is how it gets tracked.
+
 
 ### Traps worth knowing before you start
 
@@ -65,6 +82,17 @@ and the app answers.
   before trusting the result.
 - **Recreating Caddy without `compose.preproduction-proxy.yaml` silently drops
   the pre-production route.** That is how #398 happened.
+- **`flutter analyze` prints warnings flush-left, not indented.** A grep for
+  `^\s+(error|warning)` misses every one of them. An `unused_element` warning
+  passed locally that way and failed CI, which treats warnings as errors. Read the
+  "N issues found" line instead of grepping.
+- **A mutation whose target has been reflowed by `dart format` silently does not
+  apply**, and an unapplied mutation reads exactly like a passing test. Assert the
+  marker changed, and prefer line-anchored edits over exact multi-line matches.
+- **Merging a stacked PR with `--delete-branch` auto-closes its children**, and a
+  PR whose base branch is gone cannot be reopened or retargeted. Retarget children
+  to `main` *before* merging the parent. This cost #459, which had to be recreated
+  as #463.
 - **The checkout on the box is not what is deployed.** After the reboot it was at
   `c1ecb1c` while the running image reported `fa13532`. `serverBuildCommit` is
   the only trustworthy answer.
