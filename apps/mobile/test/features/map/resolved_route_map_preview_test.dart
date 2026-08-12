@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/resolved_route_map_preview.dart';
 
@@ -82,5 +82,45 @@ void main() {
     final bounds = routePreviewBounds(points);
     expect(bounds.northeast.latitude, 51.5);
     expect(bounds.southwest.longitude, -2.5);
+  });
+
+  test('reshape zoom steps preserve the map limits', () {
+    expect(
+      routePreviewZoomTarget(currentZoom: 12, delta: 1, maximumZoom: 18),
+      13,
+    );
+    expect(
+      routePreviewZoomTarget(currentZoom: 18, delta: 1, maximumZoom: 18),
+      18,
+    );
+    expect(
+      routePreviewZoomTarget(currentZoom: 3, delta: -1, maximumZoom: 18),
+      3,
+    );
+  });
+
+  testWidgets('reshape zoom controls expose independent in and out actions', (
+    tester,
+  ) async {
+    var zoomInCount = 0;
+    var zoomOutCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: RoutePreviewZoomControls(
+              onZoomIn: () => zoomInCount += 1,
+              onZoomOut: () => zoomOutCount += 1,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('route-preview-zoom-in')));
+    await tester.tap(find.byKey(const Key('route-preview-zoom-out')));
+
+    expect(zoomInCount, 1);
+    expect(zoomOutCount, 1);
   });
 }

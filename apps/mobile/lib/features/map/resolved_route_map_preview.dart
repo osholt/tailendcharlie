@@ -239,6 +239,15 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                 child: _RouteComparisonLegend(),
               ),
             if (widget.reshapeEnabled)
+              Positioned(
+                right: 8,
+                top: widget.referencePaths.isEmpty ? 8 : 66,
+                child: RoutePreviewZoomControls(
+                  onZoomIn: () => unawaited(_zoomBy(1)),
+                  onZoomOut: () => unawaited(_zoomBy(-1)),
+                ),
+              ),
+            if (widget.reshapeEnabled)
               const Positioned(
                 left: 58,
                 right: 58,
@@ -255,7 +264,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                         vertical: 7,
                       ),
                       child: Text(
-                        'Drag the route or a purple handle · exit Reshape to pan',
+                        'Drag route or handle · +/− zoom · exit Reshape to pan',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white, fontSize: 12),
                       ),
@@ -463,6 +472,22 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
         bottom: 34,
       ),
       duration: const Duration(milliseconds: 350),
+    );
+  }
+
+  Future<void> _zoomBy(double delta) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final currentZoom = controller.cameraPosition?.zoom ?? 13;
+    await controller.animateCamera(
+      ml.CameraUpdate.zoomTo(
+        routePreviewZoomTarget(
+          currentZoom: currentZoom,
+          delta: delta,
+          maximumZoom: widget.basemapConfiguration.maximumNativeZoom.toDouble(),
+        ),
+      ),
+      duration: const Duration(milliseconds: 180),
     );
   }
 
@@ -710,6 +735,44 @@ class _RouteComparisonLegend extends StatelessWidget {
   );
 }
 
+class RoutePreviewZoomControls extends StatelessWidget {
+  const RoutePreviewZoomControls({
+    super.key,
+    required this.onZoomIn,
+    required this.onZoomOut,
+  });
+
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: const Color(0xE61A2029),
+    borderRadius: const BorderRadius.all(Radius.circular(18)),
+    clipBehavior: Clip.antiAlias,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          key: const Key('route-preview-zoom-in'),
+          tooltip: 'Zoom in for a more precise edit',
+          onPressed: onZoomIn,
+          color: Colors.white,
+          icon: const Icon(Icons.add),
+        ),
+        const SizedBox(width: 32, child: Divider(height: 1)),
+        IconButton(
+          key: const Key('route-preview-zoom-out'),
+          tooltip: 'Zoom out',
+          onPressed: onZoomOut,
+          color: Colors.white,
+          icon: const Icon(Icons.remove),
+        ),
+      ],
+    ),
+  );
+}
+
 class _RouteLegendRow extends StatelessWidget {
   const _RouteLegendRow({required this.color, required this.label});
 
@@ -736,6 +799,13 @@ double previewPlatformPixelScale({
   required TargetPlatform platform,
   required double devicePixelRatio,
 }) => platform == TargetPlatform.android ? devicePixelRatio : 1;
+
+@visibleForTesting
+double routePreviewZoomTarget({
+  required double currentZoom,
+  required double delta,
+  required double maximumZoom,
+}) => (currentZoom + delta).clamp(3.0, maximumZoom).toDouble();
 
 double _screenDistance(math.Point<num> first, math.Point<num> second) {
   final dx = first.x - second.x;
