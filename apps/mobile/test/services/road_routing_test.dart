@@ -984,6 +984,7 @@ class _ManeuverlessRoadRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async => RoadRouteResult(
     points: const [
       GeoPoint(latitude: 53, longitude: -1),
@@ -1003,6 +1004,7 @@ class _FakeRoadRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     requests.add(waypoints);
     requestedPreferences.add(preferences);
@@ -1031,6 +1033,7 @@ class _FailingRoadRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) {
     throw const FormatException('offline');
   }

@@ -145,6 +145,7 @@ class _RecordingRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     controls = List.unmodifiable(waypoints);
     this.preferences = preferences;

@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../domain/distance_unit.dart';
 import '../domain/imported_route.dart';
 import 'measurement_formatter.dart';
+import 'route_origin_bearing.dart';
 import 'route_twistiness.dart';
 
 class RoutingConfiguration {
@@ -362,6 +363,14 @@ abstract interface class RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+
+    /// Which way the rider is pointing at the first waypoint, in degrees (#444).
+    ///
+    /// A position on a two-way road is ambiguous, and an engine that guesses
+    /// wrong returns a first instruction that only makes sense facing the other
+    /// way. Null means "no usable heading" — see `route_origin_bearing.dart` for
+    /// when that is the honest answer.
+    double? originBearingDegrees,
   });
 }
 
@@ -393,6 +402,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     if (waypoints.length < 2) {
       throw const FormatException('At least two route points are required.');
@@ -418,6 +428,12 @@ class OsrmRoadRoutingService implements RoadRoutingService {
         // no alternatives, and not asking keeps the default request identical
         // to the one this client has always sent.
         if (style.prefersBends) 'alternatives': '$alternativeCount',
+        // Constrains only the origin, so the rejoin point and the target may be
+        // approached however the engine likes (#444).
+        'bearings': ?osrmBearings(
+          originBearingDegrees: originBearingDegrees,
+          waypointCount: waypoints.length,
+        ),
       },
     );
     final response = await client
@@ -630,6 +646,7 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     if (waypoints.length < 2) {
       throw const FormatException('At least two route points are required.');
@@ -973,6 +990,7 @@ class PreferenceAwareRoadRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) => usesMotorcycleCosting(preferences)
       ? motorcycle.routeThrough(waypoints, preferences: preferences)
       : osrm.routeThrough(waypoints, preferences: preferences);
