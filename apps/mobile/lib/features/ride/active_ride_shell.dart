@@ -75,6 +75,7 @@ import '../../services/route_progress.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
+import '../../services/ride_diagnostics_log_writer.dart';
 import '../../services/ride_diagnostics_recorder.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/enforcement_alert_detector.dart';
@@ -1039,6 +1040,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// hot paths below are one null check, not a preference read: the recorder
   /// must not change the timing it exists to measure.
   RideDiagnosticsRecorder? _diagnostics;
+
+  /// Keeps the stored copy of [_diagnostics] in step (#456).
+  ///
+  /// Built lazily rather than in `initState` because it is keyed on the ride id,
+  /// and a shell can exist before its session does.
+  RideDiagnosticsLogWriter? _diagnosticsWriter;
   final _trailRecorder = RiderTrailRecorder();
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
@@ -1170,7 +1177,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // Headless and test surfaces have no audio to speak through, and must not
     // construct a platform speech engine.
     if (widget.rideDiagnostics?.isOn ?? false) {
-      _diagnostics = RideDiagnosticsRecorder();
+      _diagnostics = RideDiagnosticsRecorder(
+        // Each entry keeps the stored log in step, so a force-quit costs nothing
+        // (#456). Coalesced inside the writer, not written once per entry.
+        onEntry: _markDiagnosticsDirty,
+      );
       _diagnostics!.recordNote('recording started');
     }
     if (widget.enableNativeServices && widget.spokenGuidance != null) {
@@ -3471,7 +3482,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
+    if (state != AppLifecycleState.resumed) {
+      // Leaving the foreground is the last certain moment before the process may
+      // be reclaimed, so the log is written out here rather than trusted to a
+      // tidy end-of-ride that may never arrive (#456).
+      unawaited(_diagnosticsWriter?.flush());
+      return;
+    }
     unawaited(_locationController?.restartAfterForegroundResume());
   }
 
@@ -3555,6 +3572,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         onRemoveRide: _removeEndedRide,
         roadRatings: widget.roadRatings,
         relayCanCarryReopen: _relayCanCarryReopen,
+        // The share on this screen omitted the recorded log entirely, so a rider
+        // who ended the ride and pressed the obvious button lost it (#456).
+        diagnostics: _endedRideDiagnostics,
       );
     }
     final selectedBody = _isSimulation
@@ -4618,7 +4638,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       final origin = renderObject is RenderBox && renderObject.hasSize
           ? renderObject.localToGlobal(Offset.zero) & renderObject.size
           : null;
-      final diagnostics = _diagnostics;
       await const SystemRideSummarySharer().share(
         session,
         widget.rideController.events,
@@ -4626,16 +4645,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         sharePositionOrigin: origin,
         // Attached only when an instrumented build was recording, and only ever
         // to a recipient the rider picks in the share sheet (#419).
-        diagnostics: diagnostics == null || diagnostics.isEmpty
-            ? null
-            : diagnostics.render(
-                rideCode: session.rideCode,
-                // The same identity the relay receives, so a report can be tied
-                // to the build that produced it.
-                appBuild:
-                    '${RelayClientDescriptor.current().appVersion}'
-                    '+${RelayClientDescriptor.current().appBuild}',
-              ),
+        diagnostics: _renderedDiagnostics,
       );
     } on Object catch (error) {
       if (!mounted) return;
@@ -4643,6 +4653,65 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         SnackBar(content: Text('Could not share ride summary: $error')),
       );
     }
+  }
+
+  /// The same identity the relay receives, so a report can be tied to the build
+  /// that produced it.
+  static String get _diagnosticsBuildLabel {
+    final descriptor = RelayClientDescriptor.current();
+    return '${descriptor.appVersion}+${descriptor.appBuild}';
+  }
+
+  /// The recorded log as it would be shared, or null when nothing was recorded.
+  ///
+  /// One rendering, used by both the share sheet and the stored copy, so a log on
+  /// disk cannot differ from the one that was handed over (#456).
+  String? get _renderedDiagnostics {
+    final recorder = _diagnostics;
+    final session = widget.rideController.session;
+    if (recorder == null || session == null || recorder.isEmpty) return null;
+    return recorder.render(
+      rideCode: session.rideCode,
+      appBuild: _diagnosticsBuildLabel,
+    );
+  }
+
+  /// Keeps the stored log in step, building the writer the first time there is
+  /// both something to write and a ride to key it on.
+  void _markDiagnosticsDirty() {
+    (_diagnosticsWriter ??= _buildDiagnosticsWriter())?.markDirty();
+  }
+
+  RideDiagnosticsLogWriter? _buildDiagnosticsWriter() {
+    final store = widget.rideDiagnostics?.logStore;
+    final recorder = _diagnostics;
+    final session = widget.rideController.session;
+    // Returning null leaves the field null, so this is retried on the next entry
+    // rather than deciding once — a shell can record its first note before its
+    // session exists.
+    if (store == null || recorder == null || session == null) return null;
+    return RideDiagnosticsLogWriter(
+      store: store,
+      rideId: session.rideId,
+      render: () => recorder.render(
+        rideCode: session.rideCode,
+        appBuild: _diagnosticsBuildLabel,
+      ),
+    );
+  }
+
+  /// The log for the ride just ended, for the share on the summary screen.
+  ///
+  /// Falls back to the stored copy: the recorder is still in memory here, but the
+  /// same screen is reached from a restored ride whose recording happened in a
+  /// previous run of the app.
+  Future<String?> _endedRideDiagnostics() async {
+    final inMemory = _renderedDiagnostics;
+    if (inMemory != null) return inMemory;
+    final store = widget.rideDiagnostics?.logStore;
+    final session = widget.rideController.session;
+    if (store == null || session == null) return null;
+    return store.read(session.rideId);
   }
 
   bool get _relayCanCarryReopen =>
@@ -5184,6 +5253,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Setting an ended ride aside tears this shell down, and with it the only
+    // copy of the log that was ever in memory (#456).
+    unawaited(_diagnosticsWriter?.flush());
     unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);

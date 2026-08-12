@@ -95,9 +95,20 @@ guessing.
 flutter build apk --debug --dart-define=RIDE_RELAY_RIDE_DIAGNOSTICS=true
 ```
 
-Turn the switch on, ride, then share the ride at the end: the log is attached
-beside the summary CSV and the GPX track, as
-`tail-end-charlie-diagnostics-<code>.txt`. The share sheet includes Mail.
+Turn the switch on, ride, then hand the log over any of these ways. The
+attachment is `tail-end-charlie-diagnostics-<code>.txt` and the share sheet
+includes Mail.
+
+| Where | What it gives |
+| --- | --- |
+| **Settings → Recorded rides** | The log on its own, for any of the last few recorded rides. Works from anywhere, at any time, including long after the ride. |
+| **Ride ended → Share ride summary** | The log beside the summary CSV and the GPX track. |
+| **Ride menu → Share ride summary**, mid-ride | The same three, while still riding. |
+| **End this ride? → Share summary** | The same three. Ride leader only. |
+
+There is no order to get right and no moment to catch. That is deliberate: the
+first recorded ride was lost because the log left the phone through exactly one of
+those doors, and the rider used a different one (#456).
 
 ## Bounds worth knowing
 
@@ -107,6 +118,15 @@ beside the summary CSV and the GPX track, as
 - Position fixes are held in a short buffer, not logged. A fix a second for three
   hours is ten thousand lines of nothing; what matters is the two either side of
   each junction.
-- Nothing is written to disk during the ride, so a ride that ends with the app
-  killed or the battery flat leaves no file. That is a known gap — see #419 — and
-  it matters most on exactly the ride worth capturing.
+- The log is written to disk as it records, so a ride that ends with the app killed
+  or the battery flat still leaves a file. Writes are coalesced — one at a time,
+  with a single follow-up covering anything recorded while one was in flight — so a
+  burst of entries costs one extra write rather than one each.
+- `FileRideDiagnosticsLogStore.maximumRetainedLogs` rides are kept and the oldest
+  dropped. Bounded because a log holds a route, and keeping every one forever would
+  quietly accumulate a location history the rider never asked for.
+- Ordering comes from the `Written:` line in the log's own header, **not** from the
+  file's modification time, which has one-second resolution: two logs written in
+  the same second tie, and a tie makes the sort order arbitrary. That is invisible
+  on real rides and immediately visible in a test, which is how it was found —
+  pruning kept the right number of logs and dropped the wrong ones.

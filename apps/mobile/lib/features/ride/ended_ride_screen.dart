@@ -24,6 +24,7 @@ class EndedRideScreen extends StatefulWidget {
     this.roadRatings,
     this.onSetAside,
     this.relayCanCarryReopen = true,
+    this.diagnostics,
   });
 
   final RideController controller;
@@ -46,6 +47,17 @@ class EndedRideScreen extends StatefulWidget {
   /// The negotiated `ride-reopen-v1` capability. False hides the action rather
   /// than offering a reopen that could not reach the rest of the group.
   final bool relayCanCarryReopen;
+
+  /// The recorded diagnostics log for this ride, if it was recorded (#456).
+  ///
+  /// A callback returning a future because the log may have to be read back from
+  /// disk: this screen is also where a rider lands after restoring a ride that
+  /// was recorded in a previous run of the app.
+  ///
+  /// The share here originally took no log at all, which made **Share ride
+  /// summary** — the obvious button once a ride is over — the one door that
+  /// silently dropped the evidence.
+  final Future<String?> Function()? diagnostics;
 
   @override
   State<EndedRideScreen> createState() => _EndedRideScreenState();
@@ -322,11 +334,15 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
         ? renderObject.localToGlobal(Offset.zero) & renderObject.size
         : null;
     try {
+      final diagnostics = await widget.diagnostics?.call();
       await (widget.summarySharer ?? const SystemRideSummarySharer()).share(
         widget.controller.session!,
         widget.controller.events,
         distanceUnit: widget.distanceUnits.value,
         sharePositionOrigin: origin,
+        diagnostics: diagnostics == null || diagnostics.isEmpty
+            ? null
+            : diagnostics,
       );
     } on Object catch (error) {
       if (!context.mounted) return;

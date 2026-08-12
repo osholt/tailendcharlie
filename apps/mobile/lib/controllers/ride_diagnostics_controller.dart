@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/ride_diagnostics_log_store.dart';
 import '../services/ride_diagnostics_configuration.dart';
 
 /// Whether this ride is being recorded for diagnostics (#419).
@@ -19,7 +20,7 @@ import '../services/ride_diagnostics_configuration.dart';
 /// way and for the same reason.
 class RideDiagnosticsController extends ChangeNotifier
     implements ValueListenable<bool> {
-  RideDiagnosticsController._(this._preferences) {
+  RideDiagnosticsController._(this._preferences, this.logStore) {
     _switchedOn = _preferences?.getBool(preferenceKey) ?? false;
   }
 
@@ -27,6 +28,18 @@ class RideDiagnosticsController extends ChangeNotifier
 
   final SharedPreferences? _preferences;
   bool _switchedOn = false;
+
+  /// Where recorded logs are kept between rides (#456).
+  ///
+  /// Hung off the controller rather than plumbed separately because this is
+  /// already carried to every surface that offers the switch — and the fault
+  /// being fixed was precisely that one of several doors to the same room was
+  /// left unwired (#439, and again here). A new parameter threaded through the
+  /// same widgets would be a third chance to make that mistake.
+  ///
+  /// Null in an ordinary build, where nothing may be recorded and so nothing may
+  /// be stored.
+  final RideDiagnosticsLogStore? logStore;
 
   static Future<RideDiagnosticsController> load() async {
     SharedPreferences? preferences;
@@ -37,12 +50,25 @@ class RideDiagnosticsController extends ChangeNotifier
       // not get recording, which is the safe direction to fail in.
       preferences = null;
     }
-    return RideDiagnosticsController._(preferences);
+    RideDiagnosticsLogStore? store;
+    if (RideDiagnosticsConfiguration.enabled) {
+      try {
+        store = await FileRideDiagnosticsLogStore.openDefault();
+      } catch (_) {
+        // Recording still works and can still be shared from the ride itself;
+        // only the keeping-it-afterwards part is lost.
+        store = null;
+      }
+    }
+    return RideDiagnosticsController._(preferences, store);
   }
 
   /// In-memory only, for tests and for a build with no storage.
-  factory RideDiagnosticsController.inMemory({bool switchedOn = false}) {
-    final controller = RideDiagnosticsController._(null);
+  factory RideDiagnosticsController.inMemory({
+    bool switchedOn = false,
+    RideDiagnosticsLogStore? logStore,
+  }) {
+    final controller = RideDiagnosticsController._(null, logStore);
     controller._switchedOn = switchedOn;
     return controller;
   }
