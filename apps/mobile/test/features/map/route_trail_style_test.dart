@@ -108,14 +108,14 @@ void main() {
         RouteTrailStyle.casing,
         RouteTrailStyle.lightBasemapSurfaces['background']!,
       ),
-      closeTo(16.74, 0.01),
+      closeTo(16.35, 0.01),
     );
     expect(
       contrastRatio(
         RouteTrailStyle.casing,
         RouteTrailStyle.lightBasemapSurfaces['minor road']!,
       ),
-      closeTo(18.32, 0.01),
+      closeTo(18.00, 0.01),
     );
     // Every line also separates from its own casing, which is what defines the
     // line's edge in glare.

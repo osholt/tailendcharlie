@@ -59,6 +59,10 @@ class MapStyleResolution {
 }
 
 class MapStyleRepository {
+  // Increment whenever the normalized/repainted style document changes. Tile
+  // regions keep their provider namespace; only this small style cache rotates.
+  static const _styleCacheVersion = 2;
+
   MapStyleRepository({
     required this.directory,
     required this.configuration,
@@ -201,6 +205,9 @@ class MapStyleRepository {
     if (configuration.styleUrl == configuration.darkStyleUrl &&
         configuration.styleUrl.isNotEmpty) {
       _repaintForLegibleDarkMode(style);
+    } else if (configuration.styleUrl ==
+        BasemapConfiguration.defaultLightStyleUrl) {
+      _repaintForRestrainedLightMode(style);
     }
     return jsonEncode(style);
   }
@@ -362,6 +369,177 @@ class MapStyleRepository {
     'waterway',
   ];
 
+  // A daylight companion to the dark palette: quiet ground, restrained road
+  // tint and one clear hierarchy. The route remains the strongest saturated
+  // line on screen, while place and road names still provide orientation.
+  static const lightBasemapPalette = <String, String>{
+    'background': '#F3F2ED',
+    'residential landuse': '#ECEBE5',
+    'park': '#E5EADF',
+    'wood': '#E1E7DC',
+    'grass': '#E8ECE2',
+    'ice': '#F5F7F5',
+    'wetland': '#E2E9E3',
+    'water': '#D8E5EA',
+    'waterway': '#C2D7E0',
+    'sand': '#EEE8D8',
+    'building': '#DEDCD6',
+    'boundary': '#B6B8B7',
+    'path': '#C7CAC6',
+    'service/track': '#F7F6F1',
+    'minor': '#FEFDF9',
+    'tertiary': '#FCF9ED',
+    'secondary': '#F8F2DD',
+    'primary': '#F4E9CF',
+    'trunk': '#F1E2C2',
+    'motorway': '#EEDBB6',
+    'road casing': '#C4C5C1',
+  };
+
+  static const lightBasemapRoadRamp = <String>[
+    'service/track',
+    'minor',
+    'tertiary',
+    'secondary',
+    'primary',
+    'trunk',
+    'motorway',
+  ];
+
+  static const _lightSecondaryTertiary = <Object>[
+    'match',
+    <Object>['get', 'class'],
+    'secondary',
+    '#F8F2DD',
+    '#FCF9ED',
+  ];
+
+  static const _lightTrunkPrimary = <Object>[
+    'match',
+    <Object>['get', 'class'],
+    'trunk',
+    '#F1E2C2',
+    '#F4E9CF',
+  ];
+
+  static const _lightLinkClassColor = <Object>[
+    'match',
+    <Object>['get', 'class'],
+    'motorway',
+    '#EEDBB6',
+    'trunk',
+    '#F1E2C2',
+    'primary',
+    '#F4E9CF',
+    'secondary',
+    '#F8F2DD',
+    'tertiary',
+    '#FCF9ED',
+    '#FEFDF9',
+  ];
+
+  static const _restrainedLightPaint = <String, Map<String, Object?>>{
+    'background': {'background-color': '#F3F2ED'},
+    'natural_earth': {
+      'raster-saturation': -0.75,
+      'raster-contrast': -0.1,
+      'raster-opacity': 0.55,
+    },
+    'park': {'fill-color': '#E5EADF', 'fill-opacity': 0.8},
+    'park_outline': {'line-color': '#D6DED0'},
+    'landuse_residential': {'fill-color': '#ECEBE5'},
+    'landcover_wood': {
+      'fill-color': '#E1E7DC',
+      'fill-pattern': null,
+      'fill-opacity': 1,
+    },
+    'landcover_grass': {'fill-color': '#E8ECE2'},
+    'landcover_ice': {'fill-color': '#F5F7F5'},
+    'landcover_wetland': {'fill-color': '#E2E9E3'},
+    'landuse_pitch': {'fill-color': '#E3E9DD'},
+    'landuse_track': {'fill-color': '#EAE8E1'},
+    'landuse_cemetery': {'fill-color': '#E5E9E1'},
+    'landuse_hospital': {'fill-color': '#EEE8E5'},
+    'landuse_school': {'fill-color': '#ECE9E1'},
+    'water': {'fill-color': '#D8E5EA'},
+    'waterway_tunnel': {'line-color': '#C2D7E0'},
+    'waterway_river': {'line-color': '#C2D7E0'},
+    'waterway_other': {'line-color': '#C2D7E0'},
+    'landcover_sand': {'fill-color': '#EEE8D8'},
+    'aeroway_fill': {'fill-color': '#E8E7E2'},
+    'aeroway_runway': {'line-color': '#D2D3CF'},
+    'aeroway_taxiway': {'line-color': '#D8D9D5'},
+    'road_area_pattern': {'fill-color': '#F7F6F1', 'fill-pattern': null},
+    'building': {'fill-color': '#DEDCD6', 'fill-outline-color': '#D2D0CA'},
+    'building-3d': {
+      'fill-extrusion-color': '#DEDCD6',
+      'fill-extrusion-opacity': 0.55,
+    },
+    'boundary_3': {'line-color': '#C8C9C7'},
+    'boundary_2': {'line-color': '#B6B8B7'},
+    'boundary_disputed': {'line-color': '#B6B8B7'},
+    'waterway_line_label': {
+      'text-color': '#526D7A',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'water_name_point_label': {
+      'text-color': '#526D7A',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'water_name_line_label': {
+      'text-color': '#526D7A',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'highway-name-path': {
+      'text-color': '#626A70',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'highway-name-minor': {
+      'text-color': '#535B63',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'highway-name-major': {
+      'text-color': '#454E57',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_other': {
+      'text-color': '#555D64',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_village': {
+      'text-color': '#4B535B',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_town': {
+      'text-color': '#454D55',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_state': {
+      'text-color': '#555D64',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_city': {
+      'text-color': '#3F474F',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_city_capital': {
+      'text-color': '#394149',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_country_3': {
+      'text-color': '#596168',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_country_2': {
+      'text-color': '#4E565E',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+    'label_country_1': {
+      'text-color': '#434B53',
+      'text-halo-color': 'rgba(243,242,237,0.9)',
+    },
+  };
+
   /// The dark style is fetched rather than hand-authored, so this is the only
   /// point with the parsed layers in hand at which to repaint it. A `null`
   /// override removes the paint property instead of setting it. Anything not
@@ -492,6 +670,85 @@ class MapStyleRepository {
     }
   }
 
+  static void _repaintForRestrainedLightMode(Map<String, dynamic> style) {
+    final layers = style['layers'] as List;
+    final repainted = <Object?>[];
+    for (final layer in layers) {
+      if (layer is! Map) {
+        repainted.add(layer);
+        continue;
+      }
+      final id = layer['id'];
+      if (id is! String) {
+        repainted.add(layer);
+        continue;
+      }
+      // The Liberty provider's four POI tiers are the visual noise this mode
+      // is meant to remove. Road shields, one-way arrows and place labels stay.
+      if (id.startsWith('poi_') || id == 'airport') continue;
+      final overrides =
+          _restrainedLightPaint[id] ?? _restrainedLightRoadPaint(id);
+      if (overrides == null) {
+        repainted.add(layer);
+        continue;
+      }
+      final updated = Map<String, dynamic>.from(layer);
+      final paint = Map<String, dynamic>.from(
+        (updated['paint'] as Map?) ?? const {},
+      );
+      for (final override in overrides.entries) {
+        if (override.value == null) {
+          paint.remove(override.key);
+        } else {
+          paint[override.key] = override.value;
+        }
+      }
+      updated['paint'] = paint;
+      repainted.add(updated);
+    }
+    style['layers'] = repainted;
+  }
+
+  static Map<String, Object?>? _restrainedLightRoadPaint(String id) {
+    if (!(id.startsWith('road_') ||
+        id.startsWith('tunnel_') ||
+        id.startsWith('bridge_'))) {
+      return null;
+    }
+    if (id.contains('one_way_arrow')) return null;
+    if (id.endsWith('_casing')) {
+      return const {'line-color': '#C4C5C1'};
+    }
+    if (id.endsWith('_hatching')) {
+      return const {'line-color': '#F3F2ED'};
+    }
+    if (id.contains('_major_rail') || id.contains('_transit_rail')) {
+      return const {'line-color': '#B6B8B7'};
+    }
+    if (id.contains('path_pedestrian')) {
+      return const {'line-color': '#C7CAC6'};
+    }
+    if (id.contains('service_track')) {
+      return const {'line-color': '#F7F6F1'};
+    }
+    if (id.contains('secondary_tertiary')) {
+      return const {'line-color': _lightSecondaryTertiary};
+    }
+    if (id.contains('trunk_primary')) {
+      return const {'line-color': _lightTrunkPrimary};
+    }
+    if (id.contains('motorway')) {
+      return const {'line-color': '#EEDBB6'};
+    }
+    if (id.endsWith('_link')) {
+      return const {'line-color': _lightLinkClassColor};
+    }
+    if (id.contains('minor') || id.contains('street')) {
+      return const {'line-color': '#FEFDF9'};
+    }
+    return null;
+  }
+
   Future<String?> _readValid(File file) async {
     if (!await file.exists() || await file.length() > maximumStyleBytes) {
       return null;
@@ -512,7 +769,9 @@ class MapStyleRepository {
   }
 
   File _cacheFile() {
-    final digest = sha256.convert(utf8.encode(configuration.styleUrl));
+    final digest = sha256.convert(
+      utf8.encode('$_styleCacheVersion:${configuration.styleUrl}'),
+    );
     return File(path.join(directory.path, '$digest.json'));
   }
 
