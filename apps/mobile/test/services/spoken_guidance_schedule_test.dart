@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/services/measurement_formatter.dart';
@@ -15,6 +17,7 @@ void main() {
     double step = 10,
     double? metersSincePreviousManeuver,
     String instruction = 'take the 3rd exit, right',
+    String? following,
   }) {
     final spoken = <String>{};
     final said = <({double at, GuidanceStage stage, String phrase})>[];
@@ -27,6 +30,7 @@ void main() {
         alreadySpokenKeys: spoken,
         metersSincePreviousManeuver: metersSincePreviousManeuver,
         distanceFormatter: format,
+        followingInstructionText: following,
       );
       if (announcement == null) continue;
       spoken.add(announcement.key);
@@ -169,6 +173,97 @@ void main() {
 
       expect(said.map((s) => s.stage), contains(GuidanceStage.early));
       expect(said.first.at, closeTo(4000, 30));
+    });
+  });
+
+  group('a close pair is named together, in one prompt (#460)', () {
+    // Reported: "sometimes just before as well and sometimes only when at the
+    // junction". A junction can only be announced once it is the nearest one, so a
+    // junction close behind another had no earlier opportunity than the junction
+    // itself.
+    test('the early prompt names both junctions', () {
+      final said = ride(
+        fromMeters: 6000,
+        speedMetersPerSecond: 31.3,
+        following: 'turn right',
+      );
+
+      expect(said[0].phrase, startsWith('In '));
+      expect(
+        said[0].phrase,
+        contains('take the 3rd exit, right, then turn right'),
+      );
+    });
+
+    test('the final prompt names both, without a distance', () {
+      final said = ride(
+        fromMeters: 6000,
+        speedMetersPerSecond: 31.3,
+        following: 'turn right',
+      );
+
+      expect(said.last.phrase, 'take the 3rd exit, right, then turn right');
+    });
+
+    test('a lone junction is unchanged', () {
+      // The staging that produces the 1.5-mile prompt must not move.
+      final alone = ride(fromMeters: 6000, speedMetersPerSecond: 31.3);
+      final paired = ride(
+        fromMeters: 6000,
+        speedMetersPerSecond: 31.3,
+        following: 'turn right',
+      );
+
+      expect(alone.map((s) => s.stage), paired.map((s) => s.stage));
+      expect(alone.map((s) => s.at), paired.map((s) => s.at));
+      expect(alone[0].phrase, isNot(contains('then')));
+    });
+
+    test('an empty or blank following instruction adds nothing', () {
+      for (final following in [null, '', '   ']) {
+        expect(
+          guidanceSubject(
+            instructionText: 'turn left',
+            followingInstructionText: following,
+          ),
+          'turn left',
+          reason:
+              'following was ${following == null ? 'null' : '"$following"'}',
+        );
+      }
+    });
+
+    test('the pair is joined by a word a rider would use', () {
+      expect(
+        guidanceSubject(
+          instructionText: 'turn left',
+          followingInstructionText: 'turn right',
+        ),
+        'turn left, then turn right',
+      );
+    });
+  });
+
+  group('the shell actually hands the pair over', () {
+    test('the following instruction reaches the schedule', () {
+      // The schedule can be given a pair and get it right while the shell never
+      // passes one — which is the whole defect, and no unit test of the schedule
+      // can see it. Structural for the same reason as the #439 reachability check:
+      // no test here can construct `ActiveRideShell`.
+      final source = File(
+        'lib/features/ride/active_ride_shell.dart',
+      ).readAsStringSync();
+
+      expect(
+        source,
+        contains('followingInstructionText:'),
+        reason: 'speech must be given the pair the banner is already showing',
+      );
+      expect(
+        source,
+        contains('guidance.followingInstruction'),
+        reason: 'and it must come from the guidance, not be re-derived',
+      );
     });
   });
 
