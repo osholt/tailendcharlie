@@ -16,6 +16,7 @@ import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import 'home_map_backdrop.dart';
+import 'home_ride_actions.dart';
 import 'scan_invitation_screen.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
@@ -114,10 +115,16 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // #405: the app opens on the map. It used to open on this form, so the
-      // one surface that is useful before any decision has been taken — where
-      // am I, what is this road — sat behind the decision. The actions did not
-      // move or change; they now stand on the map instead of on nothing.
+      // The app opens on the map and the map is the *surface*, not a backdrop
+      // (#426). #405 asked for this and #407 delivered a map behind a
+      // full-screen panel — a brand mark, a heading, a paragraph, four buttons,
+      // two links and a footer over a gradient covering the whole screen. From
+      // the ride: "I don't want the start screen at all. I want the selection of
+      // starting a ride to happen from the map view."
+      //
+      // So there is no panel and no scrim. What is left standing on the map is
+      // one bar of actions at the bottom, the two controls at the top right, and
+      // notices only when there is something to say.
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -126,175 +133,22 @@ class _HomeScreenState extends State<HomeScreen> {
             speedLimitDisplay: widget.speedLimitDisplay,
             distanceUnit: widget.distanceUnits.value,
             enableNativeServices: widget.enableNativeServices,
-          ),
-          // Keeps the words legible over a moving map without hiding it. The
-          // panel itself is opaque where the text is; the gradient is only the
-          // transition.
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xE60E141B),
-                  Color(0x990E141B),
-                  Color(0xE60E141B),
-                ],
-              ),
-            ),
-            child: SizedBox.expand(),
+            // So the map's own "Show my location" control sits above the action
+            // bar rather than under it.
+            bottomInset: HomeRideActions.reservedHeight,
           ),
           SafeArea(
             child: Stack(
               children: [
-                Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 36),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 560),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const _BrandMark(),
-                          const SizedBox(height: 24),
-                          TesterUpdateBanner(identity: _buildIdentity),
-                          const SizedBox(height: 32),
-                          if (widget.onRetryRestoration != null) ...[
-                            _RideRestorationBanner(
-                              rideCode: widget.restoringRideCode,
-                              error: widget.restorationError,
-                              onRetry: widget.onRetryRestoration!,
-                            ),
-                            const SizedBox(height: 20),
-                          ],
-                          if (widget.controller.endedRideSetAside)
-                            _SetAsideRideBanner(
-                              rideCode: widget.controller.session!.rideCode,
-                              onReopen: widget.controller.reopenEndedRide,
-                            ),
-                          if (widget.sharedRoutes.pending case final file?) ...[
-                            _PendingSharedRouteBanner(
-                              fileName: file.name,
-                              onDismiss: widget.sharedRoutes.clearPending,
-                            ),
-                            const SizedBox(height: 20),
-                          ],
-                          if (widget.sharedRoutes.plannerLinkStatus !=
-                              PlannerLinkStatus.idle) ...[
-                            _PlannerLinkStatusBanner(
-                              status: widget.sharedRoutes.plannerLinkStatus,
-                              message:
-                                  widget.sharedRoutes.plannerLinkMessage ??
-                                  'Loading shared route…',
-                              canRetry: widget.sharedRoutes.canRetryPlannerLink,
-                              onRetry: () => unawaited(
-                                widget.sharedRoutes.retryPlannerLink(),
-                              ),
-                              onDismiss:
-                                  widget.sharedRoutes.clearPlannerLinkNotice,
-                            ),
-                            const SizedBox(height: 20),
-                          ],
-                          Text(
-                            'Ready to ride?',
-                            style: Theme.of(context).textTheme.displaySmall,
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Ride solo, create a group, or join with a six-digit ride '
-                            'code. You will go straight to the navigation map.',
-                            style: Theme.of(context).textTheme.bodyLarge
-                                ?.copyWith(
-                                  color: const Color(0xFFB7C0CC),
-                                  height: 1.5,
-                                ),
-                          ),
-                          const SizedBox(height: 40),
-                          FilledButton.icon(
-                            onPressed:
-                                widget.controller.busy ||
-                                    widget.onRetryRestoration != null
-                                ? null
-                                : () => _showRideSheet(context, creating: true),
-                            icon: const Icon(Icons.add_road),
-                            label: const Text('Create a ride'),
-                          ),
-                          const SizedBox(height: 12),
-                          OutlinedButton.icon(
-                            onPressed:
-                                widget.controller.busy ||
-                                    widget.onRetryRestoration != null
-                                ? null
-                                : () =>
-                                      _showRideSheet(context, creating: false),
-                            icon: const Icon(Icons.group_add_outlined),
-                            label: const Text('Join a ride'),
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton.icon(
-                            key: const Key('start-ride-simulator'),
-                            onPressed:
-                                widget.controller.busy ||
-                                    widget.onRetryRestoration != null
-                                ? null
-                                : widget.controller.createSimulationRide,
-                            icon: const Icon(Icons.science_outlined),
-                            label: const Text('Try a simulated ride'),
-                          ),
-                          TextButton.icon(
-                            key: const Key('record-a-route-button'),
-                            onPressed: () => RouteRecorderScreen.show(
-                              context,
-                              widget.recordedRoutes,
-                            ),
-                            icon: const Icon(
-                              Icons.fiber_manual_record_outlined,
-                            ),
-                            label: const Text('Record a route'),
-                          ),
-                          TextButton.icon(
-                            key: const Key('previous-rides-button'),
-                            onPressed: () => _openPreviousRides(context),
-                            icon: const Icon(Icons.history),
-                            label: Text(
-                              widget.completedRides.rides.isEmpty
-                                  ? 'Previous rides'
-                                  : 'Previous rides (${widget.completedRides.rides.length})',
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          const Text(
-                            'No account required · the simulator never shares location',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Color(0xFF7F8A98),
-                              fontSize: 12,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Center(
-                            child: TextButton(
-                              key: const Key('home-build-identity'),
-                              onPressed: () => unawaited(
-                                AboutBuildSheet.show(
-                                  context,
-                                  identity: _buildIdentity,
-                                ),
-                              ),
-                              child: Text(
-                                '${_buildIdentity.versionLabel} · '
-                                '${_buildIdentity.track.label}',
-                                style: const TextStyle(
-                                  color: Color(0xFF7F8A98),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                // Notices, and nothing when there are none. Each of these used
+                // to sit in the scrolling column of a full-screen panel, which
+                // is why the panel existed at all; they are now cards on the map
+                // that appear and go.
+                Positioned(
+                  top: 52,
+                  left: 12,
+                  right: 12,
+                  child: _HomeNotices(children: _notices(context)),
                 ),
                 Positioned(
                   top: 4,
@@ -329,7 +183,125 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: HomeRideActions(
+              enabled:
+                  !widget.controller.busy && widget.onRetryRestoration == null,
+              onCreate: () => _showRideSheet(context, creating: true),
+              onJoin: () => _showRideSheet(context, creating: false),
+              onMore: () => unawaited(_showMoreActions(context)),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  /// The banners that have something to say right now.
+  ///
+  /// Returned as a list rather than built inline so "are there any" is a question
+  /// the layout can answer — a notices area that reserved space for nothing would
+  /// be a small panel, which is the thing being removed.
+  List<Widget> _notices(BuildContext context) => [
+    TesterUpdateBanner(identity: _buildIdentity),
+    if (widget.onRetryRestoration != null)
+      _RideRestorationBanner(
+        rideCode: widget.restoringRideCode,
+        error: widget.restorationError,
+        onRetry: widget.onRetryRestoration!,
+      ),
+    if (widget.controller.endedRideSetAside)
+      _SetAsideRideBanner(
+        rideCode: widget.controller.session!.rideCode,
+        onReopen: widget.controller.reopenEndedRide,
+      ),
+    if (widget.sharedRoutes.pending case final file?)
+      _PendingSharedRouteBanner(
+        fileName: file.name,
+        onDismiss: widget.sharedRoutes.clearPending,
+      ),
+    if (widget.sharedRoutes.plannerLinkStatus != PlannerLinkStatus.idle)
+      _PlannerLinkStatusBanner(
+        status: widget.sharedRoutes.plannerLinkStatus,
+        message:
+            widget.sharedRoutes.plannerLinkMessage ?? 'Loading shared route…',
+        canRetry: widget.sharedRoutes.canRetryPlannerLink,
+        onRetry: () => unawaited(widget.sharedRoutes.retryPlannerLink()),
+        onDismiss: widget.sharedRoutes.clearPlannerLinkNotice,
+      ),
+  ];
+
+  /// The occasional actions, behind one button.
+  ///
+  /// Each of these was a permanent row on the old panel. None is used often enough
+  /// to be worth a strip of map, and together they were most of what made the
+  /// panel full-screen.
+  Future<void> _showMoreActions(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: const Color(0xFF171D25),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('start-ride-simulator'),
+              leading: const Icon(Icons.science_outlined),
+              title: const Text('Try a simulated ride'),
+              subtitle: const Text('Never shares your location'),
+              enabled:
+                  !widget.controller.busy && widget.onRetryRestoration == null,
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                widget.controller.createSimulationRide();
+              },
+            ),
+            ListTile(
+              key: const Key('record-a-route-button'),
+              leading: const Icon(Icons.fiber_manual_record_outlined),
+              title: const Text('Record a route'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                unawaited(
+                  RouteRecorderScreen.show(context, widget.recordedRoutes),
+                );
+              },
+            ),
+            ListTile(
+              key: const Key('previous-rides-button'),
+              leading: const Icon(Icons.history),
+              title: Text(
+                widget.completedRides.rides.isEmpty
+                    ? 'Previous rides'
+                    : 'Previous rides (${widget.completedRides.rides.length})',
+              ),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                unawaited(_openPreviousRides(context));
+              },
+            ),
+            const Divider(height: 8),
+            ListTile(
+              key: const Key('home-build-identity'),
+              leading: const Icon(Icons.info_outline),
+              title: Text(
+                '${_buildIdentity.versionLabel} · '
+                '${_buildIdentity.track.label}',
+              ),
+              subtitle: const Text('No account required'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                unawaited(
+                  AboutBuildSheet.show(context, identity: _buildIdentity),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -456,44 +428,6 @@ class _RideRestorationBanner extends StatelessWidget {
   }
 }
 
-class _BrandMark extends StatelessWidget {
-  const _BrandMark();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primary,
-            borderRadius: BorderRadius.circular(13),
-          ),
-          child: const Icon(Icons.flag_outlined, color: Colors.black),
-        ),
-        const SizedBox(width: 13),
-        const Expanded(
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'TAIL END CHARLIE',
-              maxLines: 1,
-              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// The way back into an ended ride the rider stepped away from (#207).
-///
-/// Without this the exit from the ride-ended screen would be a one-way door, and
-/// the summary, the recap image and any late relayed events would be unreachable
-/// until the recovery window expired.
 class _SetAsideRideBanner extends StatelessWidget {
   const _SetAsideRideBanner({required this.rideCode, required this.onReopen});
 
@@ -1320,6 +1254,44 @@ class _ShareCodeStep extends StatelessWidget {
             child: const Text('Continue to ride'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The notices area: compact cards on the map, and nothing at all when there is
+/// nothing to say (#426).
+///
+/// The old home screen carried these in the scrolling column of a full-screen
+/// panel, which is most of why the panel was full-screen. They still need a home —
+/// a restoration failure, a set-aside ride, a pending shared route and a planner
+/// link all matter — but not one that reserves space when empty.
+///
+/// Scrollable because several can be live at once and the map must not be pushed
+/// off the screen by a stack of them.
+class _HomeNotices extends StatelessWidget {
+  const _HomeNotices({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = children.where((child) => child is! SizedBox).toList();
+    if (visible.isEmpty) return const SizedBox.shrink();
+    return ConstrainedBox(
+      // A third of the screen at most. A notice is worth interrupting the map
+      // for; four notices are not worth losing it.
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height / 3,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final child in visible)
+              Padding(padding: const EdgeInsets.only(bottom: 10), child: child),
+          ],
+        ),
       ),
     );
   }
