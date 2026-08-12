@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
@@ -17,6 +18,8 @@ import '../../services/map_style_repository.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/stored_route_library.dart';
+import '../../services/trail_direction_arrows.dart';
+import '../map/motorcycle_icon.dart';
 import '../map/resolved_route_map_preview.dart'
     show embeddedMapGestureRecognizers;
 import '../map/stored_route_picker.dart';
@@ -211,9 +214,11 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
           ),
           if (_legendKeys(ride) case final keys when keys.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Row(
+            Wrap(
               key: const Key('archived-ride-legend'),
-              mainAxisAlignment: MainAxisAlignment.center,
+              alignment: WrapAlignment.center,
+              spacing: 18,
+              runSpacing: 8,
               children: keys,
             ),
           ],
@@ -455,12 +460,16 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
 
   static List<Widget> _legendKeys(CompletedRide ride) {
     final legend = archivedRideLegend(ride);
+    final hasDirection = legend.traveled || legend.planned;
     return [
       if (legend.planned)
         const _Legend(color: Color(0xFFFF7A1A), label: 'Planned route'),
-      if (legend.planned && legend.traveled) const SizedBox(width: 18),
       if (legend.traveled)
         const _Legend(color: Color(0xFF42C9E8), label: 'Your recorded trail'),
+      if (hasDirection) ...const [
+        _EndpointLegend(color: Color(0xFF63D98B), label: 'Start'),
+        _EndpointLegend(color: Color(0xFFFF6470), label: 'Finish'),
+      ],
     ];
   }
 
@@ -512,8 +521,19 @@ class ArchivedRideMap extends StatefulWidget {
 class _ArchivedRideMapState extends State<ArchivedRideMap> {
   static const _plannedSource = 'archived-planned-source';
   static const _trackSource = 'archived-track-source';
+  static const _directionSource = 'archived-direction-source';
+  static const _directionImage = 'archived-direction-arrow';
   ml.MapLibreMapController? _controller;
+  List<_ArchivedEndpointScreenMarker> _endpointMarkers = const [];
+  bool _styleReady = false;
+  bool _initialFitComplete = false;
   late final Future<String> _mapStyle = _resolveMapStyle();
+
+  ArchivedRideDirectionOverlay? get _directionOverlay =>
+      archivedRideDirectionOverlay(
+        plannedRoute: widget.plannedRoute,
+        traveledRoute: widget.traveledRoute,
+      );
 
   List<GeoPoint> get _points => [
     ...?widget.plannedRoute?.allPoints,
@@ -555,6 +575,9 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
                 ),
                 onMapCreated: (controller) => _controller = controller,
                 onStyleLoadedCallback: () => unawaited(_prepareStyle()),
+                onCameraMove: (_) => _hideEndpointMarkers(),
+                onCameraIdle: () => unawaited(_updateEndpointMarkers()),
+                onMapIdle: () => unawaited(_fitInitialRide()),
                 gestureRecognizers: embeddedMapGestureRecognizers,
                 logoEnabled: false,
                 compassEnabled: true,
@@ -564,6 +587,17 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
                 ),
               ),
             ),
+            for (final marker in _endpointMarkers)
+              Positioned(
+                left: marker.position.dx - 17,
+                top: marker.position.dy - 34,
+                child: IgnorePointer(
+                  child: _ArchivedMapEndpointMarker(
+                    color: marker.color,
+                    label: marker.label,
+                  ),
+                ),
+              ),
             const Positioned(
               right: 6,
               bottom: 5,
@@ -651,9 +685,90 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
         ),
         enableInteraction: false,
       );
-      await _fit();
+      final overlay = _directionOverlay;
+      if (overlay != null) {
+        await controller.addImage(
+          _directionImage,
+          await rasterizeIconGlyphPng(Icons.navigation_rounded),
+          true,
+        );
+        await controller.addGeoJsonSource(
+          _directionSource,
+          archivedRideDirectionGeoJson(overlay),
+        );
+        await controller.addSymbolLayer(
+          _directionSource,
+          'archived-direction-arrows',
+          const ml.SymbolLayerProperties(
+            iconImage: _directionImage,
+            iconColor: ['get', 'color'],
+            iconHaloColor: '#10151C',
+            iconHaloWidth: 2,
+            iconSize: 0.14,
+            iconRotate: ['get', 'bearing'],
+            iconRotationAlignment: 'map',
+            iconPitchAlignment: 'map',
+            iconAllowOverlap: true,
+            iconIgnorePlacement: true,
+          ),
+          enableInteraction: false,
+        );
+      }
+      _styleReady = true;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await _fitInitialRide();
     } on Object {
       // Summary and exports remain usable if a style cannot be loaded.
+    }
+  }
+
+  void _hideEndpointMarkers() {
+    if (_endpointMarkers.isEmpty || !mounted) return;
+    setState(() => _endpointMarkers = const []);
+  }
+
+  Future<void> _fitInitialRide() async {
+    if (!_styleReady || _initialFitComplete || !mounted) return;
+    _initialFitComplete = true;
+    await _fit();
+  }
+
+  Future<void> _updateEndpointMarkers() async {
+    final controller = _controller;
+    final overlay = _directionOverlay;
+    if (controller == null || overlay == null || !mounted) return;
+    try {
+      final locations = await controller.toScreenLocationBatch([
+        ml.LatLng(overlay.start.latitude, overlay.start.longitude),
+        ml.LatLng(overlay.finish.latitude, overlay.finish.longitude),
+      ]);
+      if (!mounted || locations.length != 2) return;
+      final pixelScale = defaultTargetPlatform == TargetPlatform.android
+          ? MediaQuery.devicePixelRatioOf(context)
+          : 1.0;
+      setState(
+        () => _endpointMarkers = [
+          _ArchivedEndpointScreenMarker(
+            position: Offset(
+              locations[0].x / pixelScale,
+              locations[0].y / pixelScale,
+            ),
+            color: const Color(0xFF63D98B),
+            label: 'Start',
+          ),
+          _ArchivedEndpointScreenMarker(
+            position: Offset(
+              locations[1].x / pixelScale,
+              locations[1].y / pixelScale,
+            ),
+            color: const Color(0xFFFF6470),
+            label: 'Finish',
+          ),
+        ],
+      );
+    } on Object {
+      // Direction arrows and the endpoint legend remain available if the
+      // platform cannot project an annotation into Flutter coordinates.
     }
   }
 
@@ -682,7 +797,43 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
       ),
       duration: const Duration(milliseconds: 450),
     );
+    await _updateEndpointMarkers();
   }
+}
+
+class _ArchivedEndpointScreenMarker {
+  const _ArchivedEndpointScreenMarker({
+    required this.position,
+    required this.color,
+    required this.label,
+  });
+
+  final Offset position;
+  final Color color;
+  final String label;
+}
+
+class _ArchivedMapEndpointMarker extends StatelessWidget {
+  const _ArchivedMapEndpointMarker({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: label,
+    child: Stack(
+      alignment: Alignment.topCenter,
+      children: [
+        const Icon(
+          Icons.location_on_rounded,
+          size: 34,
+          color: Color(0xFF10151C),
+        ),
+        Icon(Icons.location_on_rounded, size: 28, color: color),
+      ],
+    ),
+  );
 }
 
 /// Which legend keys the archived-ride map warrants.
@@ -701,6 +852,69 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
 
 bool _hasDrawableLine(ImportedRoute? route) =>
     route?.paths.any((path) => path.points.length >= 2) ?? false;
+
+class ArchivedRideDirectionOverlay {
+  const ArchivedRideDirectionOverlay({
+    required this.start,
+    required this.finish,
+    required this.lineColor,
+    required this.arrows,
+  });
+
+  final GeoPoint start;
+  final GeoPoint finish;
+  final String lineColor;
+  final List<TrailDirectionArrow> arrows;
+}
+
+/// Direction cues use the recording when it contains a line, because that is
+/// where the bike actually went. A planned route is the honest fallback for a
+/// ride whose location recording is absent. One-fix fragments remain stored,
+/// but cannot establish a direction and do not become a detached endpoint.
+@visibleForTesting
+ArchivedRideDirectionOverlay? archivedRideDirectionOverlay({
+  required ImportedRoute? plannedRoute,
+  required ImportedRoute? traveledRoute,
+  TrailDirectionArrowSampler sampler = const TrailDirectionArrowSampler(
+    spacingMeters: 900,
+    minimumTrailMeters: 30,
+    maximumArrows: 40,
+  ),
+}) {
+  final traveledPaths = _drawablePaths(traveledRoute);
+  final plannedPaths = _drawablePaths(plannedRoute);
+  final paths = traveledPaths.isNotEmpty ? traveledPaths : plannedPaths;
+  if (paths.isEmpty) return null;
+  return ArchivedRideDirectionOverlay(
+    start: paths.first.first,
+    finish: paths.last.last,
+    lineColor: traveledPaths.isNotEmpty ? '#42C9E8' : '#FF7A1A',
+    arrows: sampler.sample(paths),
+  );
+}
+
+List<List<GeoPoint>> _drawablePaths(ImportedRoute? route) =>
+    route?.paths
+        .where((path) => path.points.length >= 2)
+        .map((path) => path.points)
+        .toList(growable: false) ??
+    const [];
+
+@visibleForTesting
+Map<String, dynamic> archivedRideDirectionGeoJson(
+  ArchivedRideDirectionOverlay overlay,
+) => MapGeoJson.points(
+  overlay.arrows.indexed.map(
+    (entry) => MapGeoJsonPoint(
+      id: 'archived-direction-${entry.$1}',
+      point: entry.$2.point,
+      properties: {
+        'bearing': entry.$2.bearingDegrees,
+        'color': overlay.lineColor,
+      },
+    ),
+  ),
+);
 
 @visibleForTesting
 ml.LatLngBounds archivedRideBounds(List<GeoPoint> points) {
@@ -743,6 +957,31 @@ class _Legend extends StatelessWidget {
       ),
       const SizedBox(width: 6),
       Text(label, style: const TextStyle(fontSize: 11)),
+    ],
+  );
+}
+
+class _EndpointLegend extends StatelessWidget {
+  const _EndpointLegend({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: 12,
+        height: 12,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 1.5),
+        ),
+      ),
+      const SizedBox(width: 6),
+      Text(label, style: const TextStyle(fontSize: 12)),
     ],
   );
 }
