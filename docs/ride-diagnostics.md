@@ -106,6 +106,11 @@ includes Mail.
 | **Ride menu → Share ride summary**, mid-ride | The same three, while still riding. |
 | **End this ride? → Share summary** | The same three. Ride leader only. |
 
+The switch can be turned on **mid-ride** and recording starts there and then;
+the log opens with a note saying so, since a record that begins halfway
+through and does not say so reads as a whole ride with a quiet first half.
+Turning it off mid-ride stops recording and keeps what was already gathered.
+
 There is no order to get right and no moment to catch. That is deliberate: the
 first recorded ride was lost because the log left the phone through exactly one of
 those doors, and the rider used a different one (#456).

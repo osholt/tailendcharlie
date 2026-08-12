@@ -33,6 +33,7 @@ class RideDiagnosticsRecorder {
   final Map<String, _PendingManoeuvre> _pending = {};
 
   int _dropped = 0;
+  bool _recording = true;
 
   /// Entries recorded, oldest first. Exposed for tests and for the report.
   List<String> get entries => List.unmodifiable(_entries);
@@ -42,7 +43,30 @@ class RideDiagnosticsRecorder {
 
   bool get isEmpty => _entries.isEmpty;
 
+  /// Whether new entries are being accepted (#457).
+  bool get isRecording => _recording;
+
+  /// Stops accepting entries, keeping everything already gathered.
+  ///
+  /// Separate from discarding the recorder because a rider who switches recording
+  /// off mid-ride has not asked to throw away what was already captured — quite
+  /// the opposite, usually: they have seen the thing they were recording for.
+  void stopRecording() {
+    if (!_recording) return;
+    // Noted before the flag, or the note itself would be dropped.
+    _add('NOTE       recording stopped');
+    _recording = false;
+  }
+
+  /// Starts accepting entries again, saying so in the log.
+  void resumeRecording() {
+    if (_recording) return;
+    _recording = true;
+    _add('NOTE       recording resumed');
+  }
+
   void _add(String line) {
+    if (!_recording) return;
     _entries.add('${_stamp()}  $line');
     // Drop from the front: the end of a ride is where the rider was when they
     // noticed something, so the newest entries are the ones worth keeping.
