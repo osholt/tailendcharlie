@@ -21,7 +21,8 @@
 ///
 /// So: a bubble for [enforcementBubbleLife], then a border for the rest of the
 /// approach. The border is the persistent state and the bubble is the
-/// announcement, and neither is ever allowed over the navigation area.
+/// announcement; the bubble stays clear of the rider marker and navigation
+/// controls.
 ///
 /// A fixed life rather than one tied to distance, as asked for. It also removes
 /// the dismiss logic: nothing has to decide when the announcement has been read,
@@ -40,6 +41,12 @@ const enforcementBubbleLife = Duration(seconds: 10);
 /// the full screen used to, and it is the whole of the warning after ten seconds,
 /// so it is not a decoration.
 const enforcementBorderWidth = 7.0;
+
+/// Curves the persistent alarm inside rounded phone screens.
+///
+/// The stroke is painted inside the viewport, while this radius keeps its
+/// corners visible on phones whose display mask removes the square corners.
+const enforcementBorderRadius = 32.0;
 
 /// The bubble never grows past this, whatever the screen.
 ///

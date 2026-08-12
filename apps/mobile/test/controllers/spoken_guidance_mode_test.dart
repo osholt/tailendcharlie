@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
 import 'package:ride_relay/services/spoken_audio_mode.dart';
+import 'package:ride_relay/services/spoken_guidance.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -113,5 +114,39 @@ void main() {
         expect(controller.mode, SpokenAudioMode.silent);
       },
     );
+  });
+
+  group('the selected voice', () {
+    const voice = SpokenGuidanceVoice(
+      name: 'Samantha',
+      locale: 'en-GB',
+      identifier: 'com.apple.voice.samantha',
+    );
+
+    test('survives a restart and can return to system default', () async {
+      final controller = await SpokenGuidanceController.load();
+      await controller.setVoice(voice);
+
+      expect((await SpokenGuidanceController.load()).voice, voice);
+
+      await controller.setVoice(null);
+      expect((await SpokenGuidanceController.load()).voice, isNull);
+    });
+
+    test('a corrupt stored voice falls back to system default', () async {
+      SharedPreferences.setMockInitialValues({
+        SpokenGuidanceController.voicePreferenceKey: '{not json',
+      });
+
+      expect((await SpokenGuidanceController.load()).voice, isNull);
+    });
+
+    test('installed voices are supplied through the controller', () async {
+      final controller = SpokenGuidanceController.inMemory(
+        voiceLoader: () async => const [voice],
+      );
+
+      expect(await controller.availableVoices(), const [voice]);
+    });
   });
 }

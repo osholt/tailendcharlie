@@ -9,6 +9,46 @@ import 'package:ride_relay/features/ride/active_ride_shell.dart';
 import 'package:ride_relay/services/ride_membership.dart';
 
 void main() {
+  group('reroute takeover around a junction', () {
+    test('waits while approaching or clearing the current manoeuvre', () {
+      expect(
+        shouldDeferRejoinNavigation(
+          hasRoutedPlan: true,
+          distanceToCurrentManeuverMeters: 47,
+          metersSincePreviousManeuver: null,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldDeferRejoinNavigation(
+          hasRoutedPlan: true,
+          distanceToCurrentManeuverMeters: 300,
+          metersSincePreviousManeuver: 42,
+        ),
+        isTrue,
+      );
+    });
+
+    test('applies after clearance and never delays a degraded plan', () {
+      expect(
+        shouldDeferRejoinNavigation(
+          hasRoutedPlan: true,
+          distanceToCurrentManeuverMeters: 300,
+          metersSincePreviousManeuver: 80,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldDeferRejoinNavigation(
+          hasRoutedPlan: false,
+          distanceToCurrentManeuverMeters: 10,
+          metersSincePreviousManeuver: 10,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('the registered TEC comes from the reconciled roster', () {
     RideParticipant participant({
       required String riderId,

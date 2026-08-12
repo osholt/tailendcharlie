@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/maneuver_symbol.dart';
 import 'package:ride_relay/services/navigation_guidance.dart';
+import 'package:ride_relay/services/roundabout_exit_bucket.dart';
 
 /// Every manoeuvre type the routing engine documents, plus one it does not, so
 /// an unrecognised type still produces an instruction that matches its symbol.
@@ -431,7 +432,16 @@ void _expectAgreement(ManeuverInstruction instruction) {
       'gave "${instruction.text}" '
       'and "${instruction.standaloneText}"';
 
-  expect(symbol.side, instruction.direction.side, reason: reason);
+  final expectedSide = instruction.kind == ManeuverKind.roundabout
+      ? switch (roundaboutExitBucket(instruction.direction)) {
+          RoundaboutExitBucket.left => ManeuverSide.left,
+          RoundaboutExitBucket.straightOn => ManeuverSide.ahead,
+          RoundaboutExitBucket.right => ManeuverSide.right,
+          RoundaboutExitBucket.back => ManeuverSide.reverse,
+          null => instruction.direction.side,
+        }
+      : instruction.direction.side;
+  expect(symbol.side, expectedSide, reason: reason);
   // The wording beside the symbol and the wording read where there is no symbol
   // must both agree with the symbol: neither may point the other way.
   for (final text in {instruction.text, instruction.standaloneText}) {

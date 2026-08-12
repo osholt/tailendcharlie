@@ -14,9 +14,11 @@ import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
+import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/features/home/home_screen.dart';
+import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -110,6 +112,55 @@ void main() {
 
     expect(find.text('Create a ride'), findsOneWidget);
     expect(find.text('Join a ride'), findsOneWidget);
+  });
+
+  testWidgets('ride setup uses the saved symbol and colour without repicking', (
+    tester,
+  ) async {
+    await riderProfile.save(
+      displayName: 'Oliver',
+      motorcycleStyle: MotorcycleIconStyle.scrambler,
+      riderSymbol: const RiderSymbol.emoji('🦊'),
+      riderColor: RiderColor.cyan,
+    );
+    await pumpHome(tester);
+
+    await tester.tap(find.text('Create a ride'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Your colour'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget.key is ValueKey<String> &&
+            (widget.key! as ValueKey<String>).value.startsWith('ride-symbol-'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget.key is ValueKey<String> &&
+            (widget.key! as ValueKey<String>).value.startsWith('rider-colour-'),
+      ),
+      findsNothing,
+    );
+
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Create ride'),
+      180,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const Key('ride-form-scroll-view')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await tester.pumpAndSettle();
+
+    expect(rideController.session?.riderSymbol, const RiderSymbol.emoji('🦊'));
+    expect(rideController.session?.riderColor, RiderColor.cyan);
   });
 
   testWidgets('a past ride is reachable by words alone', (tester) async {

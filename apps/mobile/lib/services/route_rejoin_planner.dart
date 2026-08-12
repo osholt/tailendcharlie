@@ -102,6 +102,10 @@ enum RouteRejoinStatus {
 
   /// The routing provider failed, timed out, or is offline.
   routingUnavailable,
+
+  /// The provider returned a first leg opposite the rider's reliable heading.
+  /// It is rejected rather than announced as a U-turn or a wrong first turn.
+  initialDirectionConflict,
 }
 
 /// Distance and time thresholds separating "rejoin the route" from "massively
@@ -302,10 +306,9 @@ abstract final class RouteRejoinGeometry {
 
   /// Picks where to send a rider back to the planned route.
   ///
-  /// Forward candidates - progress greater than
-  /// [lastMatchedProgressMeters] - are preferred so the rider does not ride the
-  /// route backwards. Backtracking is used only when no forward candidate is
-  /// admissible, and the caller is expected to say so.
+  /// Only forward candidates - progress greater than
+  /// [lastMatchedProgressMeters] - are admissible, so a rejoin never asks the
+  /// rider to ride the planned course backwards or make a U-turn to recover it.
   ///
   /// When [massivelyOffRoute] is true the admissible window is capped at
   /// [leaderProgressMeters]: such a rider is never given a rejoin point ahead
@@ -343,7 +346,6 @@ abstract final class RouteRejoinGeometry {
         : total;
 
     final forward = <RouteRejoinCandidate>[];
-    final backward = <RouteRejoinCandidate>[];
     var aheadOfLeaderInRange = false;
 
     void consider(double progress) {
@@ -361,11 +363,7 @@ abstract final class RouteRejoinGeometry {
         straightLineDistanceMeters: straightLine,
         requiresBacktracking: bounded < matched,
       );
-      if (candidate.requiresBacktracking) {
-        backward.add(candidate);
-      } else {
-        forward.add(candidate);
-      }
+      if (!candidate.requiresBacktracking) forward.add(candidate);
     }
 
     // Forward sweep first, from the earliest usable rejoin.
@@ -381,17 +379,6 @@ abstract final class RouteRejoinGeometry {
     // steps past it.
     if (total >= firstForward) consider(total);
 
-    // Backward sweep, used only as a fallback but measured now so the reason
-    // for rejecting a selection is honest.
-    for (
-      var progress = matched - thresholds.candidateSpacingMeters;
-      progress >= 0;
-      progress -= thresholds.candidateSpacingMeters
-    ) {
-      consider(progress);
-    }
-    consider(0);
-
     RouteRejoinCandidate? nearest(List<RouteRejoinCandidate> candidates) {
       if (candidates.isEmpty) return null;
       return candidates.reduce(
@@ -403,7 +390,7 @@ abstract final class RouteRejoinGeometry {
       );
     }
 
-    final chosen = nearest(forward) ?? nearest(backward);
+    final chosen = nearest(forward);
     if (chosen != null) return RouteRejoinSelection.selected(chosen);
     if (aheadOfLeaderInRange) {
       return const RouteRejoinSelection.rejected(
@@ -517,6 +504,13 @@ class RouteRejoinPlanner {
   final DistanceUnit distanceUnit;
 
   final Map<String, _RiderRejoinState> _states = {};
+
+  /// A provider result outside this wider guard is unsafe even if the snap
+  /// constraint was ignored or unsupported.
+  static const maximumInitialDirectionDifferenceDegrees = 100.0;
+
+  /// Skip tiny geometry around the snapped GPS point before judging direction.
+  static const initialDirectionProbeMeters = 20.0;
 
   /// Number of routing calls made. Exposed so recompute bounding is testable
   /// rather than asserted by eye.
@@ -733,6 +727,10 @@ class RouteRejoinPlanner {
 
     try {
       _routingCallCount += 1;
+      final originBearing = rejoinOriginBearing(
+        headingDegrees: sample.headingDegrees,
+        speedMetersPerSecond: sample.speedMetersPerSecond,
+      );
       final result = await routingService.routeThrough(
         waypoints.map(_toRouteDomain).toList(growable: false),
         // Which way the rider is pointing (#444). Without it the engine picks a
@@ -744,14 +742,24 @@ class RouteRejoinPlanner {
         // Null below a speed floor: a heading from a stationary bike is whatever
         // the phone was pointing at, and a confidently wrong first instruction
         // is the defect, not a smaller version of it.
-        originBearingDegrees: rejoinOriginBearing(
-          headingDegrees: sample.headingDegrees,
-          speedMetersPerSecond: sample.speedMetersPerSecond,
-        ),
+        originBearingDegrees: originBearing,
       );
       if (result.points.length < 2) {
         throw const FormatException(
           'Road routing returned no usable geometry.',
+        );
+      }
+      if (originBearing != null &&
+          _beginsAgainstHeading(
+            origin: sample.position,
+            headingDegrees: originBearing,
+            points: result.points,
+          )) {
+        state.consecutiveFailures = 0;
+        return degrade(
+          RouteRejoinStatus.initialDirectionConflict,
+          'The route back would begin by turning around, so it was rejected. '
+          'Continue safely and directions will retry.',
         );
       }
       state.consecutiveFailures = 0;
@@ -787,6 +795,27 @@ class RouteRejoinPlanner {
         'Rejoin routing is unavailable, so no route back is being drawn.',
       );
     }
+  }
+
+  static bool _beginsAgainstHeading({
+    required GeoPoint origin,
+    required double headingDegrees,
+    required List<route_domain.GeoPoint> points,
+  }) {
+    for (final point in points) {
+      final candidate = _fromRouteDomain(point);
+      if (GeoCalculations.distanceMeters(origin, candidate) <
+          initialDirectionProbeMeters) {
+        continue;
+      }
+      final routeBearing = GeoCalculations.bearingDegrees(origin, candidate);
+      return GeoCalculations.bearingDifferenceDegrees(
+            headingDegrees,
+            routeBearing,
+          ) >
+          maximumInitialDirectionDifferenceDegrees;
+    }
+    return false;
   }
 
   /// Bands a rider by distance from the planned route and time off it. Either

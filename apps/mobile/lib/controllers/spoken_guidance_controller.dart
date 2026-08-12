@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/spoken_audio_mode.dart';
@@ -11,11 +13,23 @@ import '../services/spoken_guidance.dart';
 /// one who does not must never be surprised by it (#286).
 class SpokenGuidanceController extends ChangeNotifier
     implements ValueListenable<bool> {
-  SpokenGuidanceController._(this._preferences, this._mode, this.engine);
+  SpokenGuidanceController._(
+    this._preferences,
+    this._mode,
+    this._voice,
+    this._engineOverride,
+    this._voiceLoader,
+  );
 
   /// The voice. Carried here rather than built by the ride surface so a test can
   /// substitute one, and so there is exactly one place that decides what speaks.
-  final SpokenGuidanceEngine Function() engine;
+  final SpokenGuidanceEngine Function()? _engineOverride;
+
+  /// Creates the ride's engine. The production closure reads [voice] before
+  /// every phrase, so a Settings change applies without restarting the ride.
+  SpokenGuidanceEngine Function() get engine =>
+      _engineOverride ??
+      () => FlutterTtsSpokenGuidanceEngine(voiceProvider: () => _voice);
 
   static const preferenceKey = 'spoken_guidance_enabled';
 
@@ -26,9 +40,12 @@ class SpokenGuidanceController extends ChangeNotifier
   /// back to the boolean, and `enabled` stays meaningful for every caller that
   /// only needs "is anything spoken".
   static const modePreferenceKey = 'spoken_guidance_mode';
+  static const voicePreferenceKey = 'spoken_guidance_voice';
 
   final SharedPreferences? _preferences;
   SpokenAudioMode _mode;
+  SpokenGuidanceVoice? _voice;
+  final Future<List<SpokenGuidanceVoice>> Function() _voiceLoader;
 
   static Future<SpokenGuidanceController> load() async {
     final preferences = await SharedPreferences.getInstance();
@@ -39,7 +56,9 @@ class SpokenGuidanceController extends ChangeNotifier
         storedMode,
         fallbackEnabled: preferences.getBool(preferenceKey) ?? false,
       ),
-      FlutterTtsSpokenGuidanceEngine.new,
+      _voiceFromStorage(preferences.getString(voicePreferenceKey)),
+      null,
+      loadSpokenGuidanceVoices,
     );
   }
 
@@ -64,12 +83,16 @@ class SpokenGuidanceController extends ChangeNotifier
   SpokenGuidanceController.inMemory({
     bool enabled = false,
     SpokenAudioMode? mode,
+    SpokenGuidanceVoice? voice,
     SpokenGuidanceEngine Function()? engine,
+    Future<List<SpokenGuidanceVoice>> Function()? voiceLoader,
   }) : this._(
          null,
          mode ??
              (enabled ? SpokenAudioMode.everything : SpokenAudioMode.silent),
-         engine ?? FlutterTtsSpokenGuidanceEngine.new,
+         voice,
+         engine,
+         voiceLoader ?? loadSpokenGuidanceVoices,
        );
 
   @override
@@ -80,6 +103,23 @@ class SpokenGuidanceController extends ChangeNotifier
   bool get enabled => _mode != SpokenAudioMode.silent;
 
   SpokenAudioMode get mode => _mode;
+  SpokenGuidanceVoice? get voice => _voice;
+
+  Future<List<SpokenGuidanceVoice>> availableVoices() => _voiceLoader();
+
+  Future<void> setVoice(SpokenGuidanceVoice? voice) async {
+    if (_voice == voice) return;
+    _voice = voice;
+    if (voice == null) {
+      await _preferences?.remove(voicePreferenceKey);
+    } else {
+      await _preferences?.setString(
+        voicePreferenceKey,
+        jsonEncode(voice.toJson()),
+      );
+    }
+    notifyListeners();
+  }
 
   /// What the rider gets by pressing the map control once more.
   SpokenAudioMode get nextMode => nextSpokenAudioMode(_mode);
@@ -99,4 +139,16 @@ class SpokenGuidanceController extends ChangeNotifier
 
   /// Advances to the next mode, which is what the map control does.
   Future<void> cycleMode() => setMode(nextMode);
+
+  static SpokenGuidanceVoice? _voiceFromStorage(String? stored) {
+    if (stored == null || stored.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(stored);
+      return decoded is Map
+          ? SpokenGuidanceVoice.fromJson(Map<String, Object?>.from(decoded))
+          : null;
+    } on FormatException {
+      return null;
+    }
+  }
 }

@@ -36,6 +36,59 @@ permissions by design.
 - ...
 ```
 
+## iOS build 53 / Android build 53 — 12 August 2026
+
+This build follows ride 392725. The diagnostic trace explained two reports that
+looked like missing roundabouts: New Cheltenham Road was receiving roundabout
+geometry but contradictory wording, while the Siston Common instruction was
+being replaced by a reroute before the rider had cleared the junction.
+
+### What to test
+
+1. **New Cheltenham Road double mini-roundabout.** Both close junctions should
+   show and say *straight on*. It must not say *slight left* when the symbol says
+   straight.
+2. **Siston Common after a deviation.** A newly calculated route must not replace
+   the current instruction while you are still in, or immediately leaving, a
+   junction. Its first instruction should also agree with the direction the bike
+   is travelling and must not ask you to backtrack or make a U-turn.
+3. **Fixed speed-camera warning.** On an urban approach it should arm about
+   30 seconds away rather than a mile away. The compact notice should sit at the
+   top without covering the rider marker, and the red border should follow the
+   phone's rounded corners.
+4. **Spoken-guidance voice.** Choose an installed English voice in Settings,
+   restart the app, and confirm the same voice remains selected.
+5. **Start a ride.** Rider symbol, motorcycle style, and colour should come from
+   the saved profile; the route finder should no longer ask for them.
+
+### Fixed
+
+- Roundabout speech and symbols now share the same left/straight/right bucket,
+  including when the router supplies no exit number.
+- Rerouting sends the rider's reliable direction of travel to the router,
+  rejects a first leg that points the wrong way, and never searches backwards
+  along the planned course for a rejoin point.
+- A recalculation is announced once per off-route episode.
+- A calculated route waits until the rider is clear of the active junction
+  before replacing the current guidance.
+- Enforcement warning distance targets roughly 30 seconds from current speed,
+  bounded from 250 m to 1 km, and stays stable once armed.
+- The enforcement notice and border respect the map safe area and rounded
+  screen corners.
+- Installed English text-to-speech voices can be selected and are persisted.
+- Ride creation reuses the saved rider profile instead of asking for appearance
+  choices on every ride.
+
+### Known limitations
+
+- The route and warning fixes are verified with the recorded ride, unit/widget
+  tests, and iOS/Android simulators. They still need confirmation on the same
+  roads with live GPS.
+- OpenStreetMap camera coverage is incomplete; no camera shown does not prove a
+  road has none.
+- Voice availability and naming depend on the voices installed by iOS or
+  Android. Removing a selected voice safely falls back to the system default.
+
 ## iOS build 46 / Android build 46 — 9 August 2026
 
 Everything in this build came from the 2 and 7 August rides. Nothing here has

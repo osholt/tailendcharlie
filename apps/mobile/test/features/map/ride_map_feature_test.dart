@@ -1720,7 +1720,7 @@ void main() {
     expect(find.byKey(const Key('enforcement-alert-overlay')), findsNothing);
   });
 
-  testWidgets('the camera warning is a bubble clear of the navigation area, '
+  testWidgets('the camera warning is a top bubble clear of the rider marker, '
       'then a border alone (#446)', (tester) async {
     // Third time on this. #418's first fix still covered over 80% of a phone
     // screen; its second reached about a third of a landscape one. Each round
@@ -1783,13 +1783,12 @@ void main() {
     );
     final screen = tester.getRect(find.byType(RideMapScreen));
 
-    // The navigation area is the top of the screen — directions, speed, the
-    // no-TEC row (#442). "Not blocking it" is a position, not a size, so it is
-    // asserted as one.
+    // The rider marker is forward-biased around the map centre. The field report
+    // asked for this transient announcement at the top instead.
     expect(
-      bubble.top,
-      greaterThan(screen.center.dy),
-      reason: 'the bubble must be clear of the navigation area entirely',
+      bubble.bottom,
+      lessThan(screen.center.dy),
+      reason: 'the bubble must stay clear of the rider marker',
     );
     expect(
       bubble.width,
@@ -5354,4 +5353,9 @@ void expectRedBorder(WidgetTester tester, {String? reason}) {
   expect(decoration.border, isNotNull, reason: reason);
   expect(decoration.border!.top.width, enforcementBorderWidth, reason: reason);
   expect(decoration.border!.top.color, const Color(0xFFFF3B30), reason: reason);
+  expect(
+    decoration.borderRadius,
+    BorderRadius.circular(enforcementBorderRadius),
+    reason: reason,
+  );
 }

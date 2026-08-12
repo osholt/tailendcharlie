@@ -1,5 +1,89 @@
 import 'package:flutter_tts/flutter_tts.dart';
 
+/// One installed English text-to-speech voice.
+class SpokenGuidanceVoice {
+  const SpokenGuidanceVoice({
+    required this.name,
+    required this.locale,
+    this.identifier,
+  });
+
+  final String name;
+  final String locale;
+
+  /// Stable on Apple platforms. Android identifies a voice by name + locale.
+  final String? identifier;
+
+  String get key =>
+      identifier?.isNotEmpty == true ? identifier! : '$locale\u0000$name';
+
+  String get label => '$name · $locale';
+
+  Map<String, String> get platformArguments => {
+    'name': name,
+    'locale': locale,
+    if (identifier?.isNotEmpty == true) 'identifier': identifier!,
+  };
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'locale': locale,
+    if (identifier?.isNotEmpty == true) 'identifier': identifier,
+  };
+
+  static SpokenGuidanceVoice? fromJson(Map<String, Object?> json) {
+    final name = json['name'];
+    final locale = json['locale'];
+    if (name is! String || name.trim().isEmpty) return null;
+    if (locale is! String || locale.trim().isEmpty) return null;
+    return SpokenGuidanceVoice(
+      name: name.trim(),
+      locale: locale.trim(),
+      identifier: switch (json['identifier']) {
+        final String value when value.trim().isNotEmpty => value.trim(),
+        _ => null,
+      },
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is SpokenGuidanceVoice && other.key == key;
+
+  @override
+  int get hashCode => key.hashCode;
+}
+
+/// Reads usable voices from the platform without making settings depend on the
+/// plugin's dynamic response shape.
+Future<List<SpokenGuidanceVoice>> loadSpokenGuidanceVoices([
+  FlutterTts? tts,
+]) async {
+  try {
+    final raw = await (tts ?? FlutterTts()).getVoices;
+    if (raw is! List) return const [];
+    final voices = <SpokenGuidanceVoice>{};
+    for (final entry in raw.whereType<Map>()) {
+      final voice = SpokenGuidanceVoice.fromJson(
+        Map<String, Object?>.from(entry),
+      );
+      // The guidance phrases are English. Offering a non-English synthesiser
+      // would technically be selectable but would not be a usable voice.
+      if (voice != null && voice.locale.toLowerCase().startsWith('en')) {
+        voices.add(voice);
+      }
+    }
+    return voices.toList(growable: false)..sort((first, second) {
+      final locale = first.locale.compareTo(second.locale);
+      return locale != 0 ? locale : first.name.compareTo(second.name);
+    });
+  } on Object {
+    // Voice choice is optional. A platform/plugin failure leaves the system
+    // default available rather than breaking Settings or speech.
+    return const [];
+  }
+}
+
 /// Speaks turn instructions so a rider does not have to look down.
 ///
 /// A tester asked for it directly: "does the directions also have audio prompts
@@ -38,10 +122,12 @@ abstract interface class SpokenGuidanceEngine {
 /// running another navigation app in front will not hear these; that is a known
 /// limit, not an oversight.
 class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
-  FlutterTtsSpokenGuidanceEngine([FlutterTts? tts])
+  FlutterTtsSpokenGuidanceEngine({FlutterTts? tts, this.voiceProvider})
     : _tts = tts ?? FlutterTts();
 
   final FlutterTts _tts;
+  final SpokenGuidanceVoice? Function()? voiceProvider;
+  SpokenGuidanceVoice? _appliedVoice;
 
   @override
   Future<void> configure() async {
@@ -54,13 +140,36 @@ class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
     // helmet has to land first time.
     await _tts.setSpeechRate(0.48);
     await _tts.awaitSpeakCompletion(true);
+    await _applyVoice();
   }
 
   @override
-  Future<void> speak(String phrase) => _tts.speak(phrase);
+  Future<void> speak(String phrase) async {
+    // Settings can change during a ride. Read the selection at the next phrase
+    // rather than requiring the ride shell to rebuild its speaker.
+    await _applyVoice();
+    await _tts.speak(phrase);
+  }
 
   @override
   Future<void> stop() => _tts.stop();
+
+  Future<void> _applyVoice() async {
+    final chosen = voiceProvider?.call();
+    if (chosen == _appliedVoice) return;
+    if (chosen == null) {
+      await _tts.clearVoice();
+      _appliedVoice = null;
+      return;
+    }
+    final result = await _tts.setVoice(chosen.platformArguments);
+    if (result is num && result != 1) {
+      // The voice may have been removed since it was saved. Keep speaking with
+      // the system default instead of failing the prompt.
+      await _tts.clearVoice();
+    }
+    _appliedVoice = chosen;
+  }
 }
 
 /// Decides what is worth saying, and refuses to say it twice.

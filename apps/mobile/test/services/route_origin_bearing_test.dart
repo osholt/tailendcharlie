@@ -103,7 +103,8 @@ void main() {
         'lib/services/route_rejoin_planner.dart',
       ).readAsStringSync();
 
-      expect(source, contains('originBearingDegrees: rejoinOriginBearing('));
+      expect(source, contains('final originBearing = rejoinOriginBearing('));
+      expect(source, contains('originBearingDegrees: originBearing'));
       expect(source, contains('headingDegrees: sample.headingDegrees'));
       expect(
         source,

@@ -181,7 +181,7 @@ void main() {
       );
     });
 
-    test('backtracks, and says so, when no forward rejoin exists', () {
+    test('refuses to backtrack when no forward rejoin exists', () {
       // The rider left the route at its very end, so nothing lies ahead.
       final selection = RouteRejoinGeometry.selectRejoin(
         route: route,
@@ -189,10 +189,8 @@ void main() {
         lastMatchedProgressMeters: total,
       );
 
-      final candidate = selection.candidate;
-      expect(candidate, isNotNull);
-      expect(candidate!.requiresBacktracking, isTrue);
-      expect(candidate.progressMeters, lessThan(total));
+      expect(selection.candidate, isNull);
+      expect(selection.status, RouteRejoinStatus.noRejoinInRange);
     });
 
     test('an unconstrained rider may rejoin ahead of the leader', () {
@@ -316,6 +314,100 @@ void main() {
       expect(routing.calls.single.last.latitude, closeTo(51, 1e-6));
     });
 
+    test('uses a moving rider heading to constrain the origin road', () async {
+      final routing = _StubRouting();
+      final planner = RouteRejoinPlanner(routingService: routing);
+
+      await planner.update(
+        riderId: 'rider',
+        sample: _sample(51, -0.96, start),
+        assessment: _onRoute(start),
+        plannedRoute: route,
+      );
+      final plan = await planner.update(
+        riderId: 'rider',
+        sample: _sample(
+          51.01,
+          -0.95,
+          start.add(const Duration(minutes: 1)),
+          headingDegrees: 180,
+          speedMetersPerSecond: 12,
+        ),
+        assessment: _offRoute(
+          at: start.add(const Duration(minutes: 1)),
+          distance: 1112,
+          since: start.add(const Duration(seconds: 30)),
+        ),
+        plannedRoute: route,
+      );
+
+      expect(plan.status, RouteRejoinStatus.routed);
+      expect(routing.originBearings, [180]);
+    });
+
+    test('does not trust a stationary heading', () async {
+      final routing = _StubRouting();
+      final planner = RouteRejoinPlanner(routingService: routing);
+
+      await planner.update(
+        riderId: 'rider',
+        sample: _sample(51, -0.96, start),
+        assessment: _onRoute(start),
+        plannedRoute: route,
+      );
+      await planner.update(
+        riderId: 'rider',
+        sample: _sample(
+          51.01,
+          -0.95,
+          start.add(const Duration(minutes: 1)),
+          headingDegrees: 180,
+          speedMetersPerSecond: 0,
+        ),
+        assessment: _offRoute(
+          at: start.add(const Duration(minutes: 1)),
+          distance: 1112,
+          since: start.add(const Duration(seconds: 30)),
+        ),
+        plannedRoute: route,
+      );
+
+      expect(routing.originBearings, isEmpty);
+      expect(routing.calls, hasLength(1));
+    });
+
+    test('rejects a provider route that starts against travel', () async {
+      final routing = _BackwardRouting();
+      final planner = RouteRejoinPlanner(routingService: routing);
+
+      await planner.update(
+        riderId: 'rider',
+        sample: _sample(51, -0.96, start),
+        assessment: _onRoute(start),
+        plannedRoute: route,
+      );
+      final plan = await planner.update(
+        riderId: 'rider',
+        sample: _sample(
+          51.01,
+          -0.95,
+          start.add(const Duration(minutes: 1)),
+          headingDegrees: 180,
+          speedMetersPerSecond: 12,
+        ),
+        assessment: _offRoute(
+          at: start.add(const Duration(minutes: 1)),
+          distance: 1112,
+          since: start.add(const Duration(seconds: 30)),
+        ),
+        plannedRoute: route,
+      );
+
+      expect(plan.status, RouteRejoinStatus.initialDirectionConflict);
+      expect(plan.hasBreadcrumb, isFalse);
+      expect(plan.guidance, contains('turning around'));
+    });
+
     test('routes a massively off-course rider to the TEC', () async {
       final routing = _StubRouting();
       final planner = RouteRejoinPlanner(routingService: routing);
@@ -356,6 +448,12 @@ void main() {
       final planner = RouteRejoinPlanner(routingService: routing);
       final now = start.add(const Duration(minutes: 2));
 
+      await planner.update(
+        riderId: 'rider',
+        sample: _sample(51, -0.96, start),
+        assessment: _onRoute(start),
+        plannedRoute: route,
+      );
       final plan = await planner.update(
         riderId: 'rider',
         sample: _sample(51.03, -0.9, now),
@@ -374,6 +472,12 @@ void main() {
       final planner = RouteRejoinPlanner(routingService: routing);
       final now = start.add(const Duration(minutes: 2));
 
+      await planner.update(
+        riderId: 'rider',
+        sample: _sample(51, -0.96, start),
+        assessment: _onRoute(start),
+        plannedRoute: route,
+      );
       final plan = await planner.update(
         riderId: 'rider',
         sample: _sample(51.03, -0.9, now),
@@ -401,7 +505,14 @@ void main() {
         TecAvailability.stale,
       ]) {
         final routing = _StubRouting();
-        final plan = await RouteRejoinPlanner(routingService: routing).update(
+        final planner = RouteRejoinPlanner(routingService: routing);
+        await planner.update(
+          riderId: 'rider',
+          sample: _sample(51, -0.96, start),
+          assessment: _onRoute(start),
+          plannedRoute: route,
+        );
+        final plan = await planner.update(
           riderId: 'rider',
           sample: _sample(51.03, -0.9, now),
           assessment: _offRoute(at: now, distance: 3336, since: start),
@@ -673,6 +784,7 @@ class _StubRouting implements RoadRoutingService {
 
   final int points;
   final List<List<route_domain.GeoPoint>> calls = [];
+  final List<double> originBearings = [];
 
   int get lastReturnedPointCount => points;
 
@@ -682,6 +794,9 @@ class _StubRouting implements RoadRoutingService {
     route_domain.RoutePreferences? preferences,
     double? originBearingDegrees,
   }) async {
+    if (originBearingDegrees != null) {
+      originBearings.add(originBearingDegrees);
+    }
     calls.add(List.unmodifiable(waypoints));
     final first = waypoints.first;
     final last = waypoints.last;
@@ -703,6 +818,27 @@ class _StubRouting implements RoadRoutingService {
   }
 }
 
+class _BackwardRouting implements RoadRoutingService {
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<route_domain.GeoPoint> waypoints, {
+    route_domain.RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async => RoadRouteResult(
+    points: [
+      waypoints.first,
+      route_domain.GeoPoint(
+        // North, against the fixture rider's southbound heading.
+        latitude: waypoints.first.latitude + 0.001,
+        longitude: waypoints.first.longitude,
+      ),
+      waypoints.last,
+    ],
+    distanceMeters: 1234,
+    duration: const Duration(minutes: 3),
+  );
+}
+
 class _FailingRouting implements RoadRoutingService {
   int calls = 0;
 
@@ -717,12 +853,19 @@ class _FailingRouting implements RoadRoutingService {
   }
 }
 
-LocationSample _sample(double latitude, double longitude, DateTime at) =>
-    LocationSample(
-      position: GeoPoint(latitude: latitude, longitude: longitude),
-      recordedAt: at,
-      accuracyMeters: 5,
-    );
+LocationSample _sample(
+  double latitude,
+  double longitude,
+  DateTime at, {
+  double? headingDegrees,
+  double? speedMetersPerSecond,
+}) => LocationSample(
+  position: GeoPoint(latitude: latitude, longitude: longitude),
+  recordedAt: at,
+  accuracyMeters: 5,
+  headingDegrees: headingDegrees,
+  speedMetersPerSecond: speedMetersPerSecond,
+);
 
 RouteDeviationAssessment _onRoute(DateTime at) => RouteDeviationAssessment(
   state: RouteTrackingState.onRoute,

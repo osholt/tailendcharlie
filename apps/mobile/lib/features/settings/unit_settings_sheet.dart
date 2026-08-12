@@ -15,6 +15,7 @@ import '../../domain/map_style_mode.dart';
 import '../../domain/rider_color.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/build_identity.dart';
+import '../../services/spoken_guidance.dart';
 import 'about_build_sheet.dart';
 import 'rider_profile_sheet.dart';
 import 'ride_diagnostics_section.dart';
@@ -247,19 +248,26 @@ class UnitSettingsSheet extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           if (spokenGuidance case final spoken?)
-            AnimatedBuilder(
-              animation: spoken,
-              builder: (context, _) => SwitchListTile.adaptive(
-                key: const Key('spoken-guidance-toggle'),
-                contentPadding: EdgeInsets.zero,
-                value: spoken.enabled,
-                onChanged: spoken.setEnabled,
-                title: const Text('Speak turn instructions'),
-                subtitle: const Text(
-                  'Reads the next turn aloud so you do not have to look down. '
-                  'Mixes with music or an intercom rather than stopping it.',
+            Column(
+              children: [
+                AnimatedBuilder(
+                  animation: spoken,
+                  builder: (context, _) => SwitchListTile.adaptive(
+                    key: const Key('spoken-guidance-toggle'),
+                    contentPadding: EdgeInsets.zero,
+                    value: spoken.enabled,
+                    onChanged: spoken.setEnabled,
+                    title: const Text('Speak turn instructions'),
+                    subtitle: const Text(
+                      'Reads the next turn aloud so you do not have to look '
+                      'down. Mixes with music or an intercom rather than '
+                      'stopping it.',
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 8),
+                _SpokenVoiceSetting(controller: spoken),
+              ],
             ),
           const SizedBox(height: 20),
           Text(
@@ -301,6 +309,92 @@ class UnitSettingsSheet extends StatelessWidget {
         ],
       ),
     ),
+  );
+}
+
+class _SpokenVoiceSetting extends StatefulWidget {
+  const _SpokenVoiceSetting({required this.controller});
+
+  final SpokenGuidanceController controller;
+
+  @override
+  State<_SpokenVoiceSetting> createState() => _SpokenVoiceSettingState();
+}
+
+class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
+  static const _systemDefaultKey = '__system_default__';
+  late Future<List<SpokenGuidanceVoice>> _voices;
+
+  @override
+  void initState() {
+    super.initState();
+    _voices = widget.controller.availableVoices();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SpokenVoiceSetting oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _voices = widget.controller.availableVoices();
+    }
+  }
+
+  @override
+  Widget build(
+    BuildContext context,
+  ) => FutureBuilder<List<SpokenGuidanceVoice>>(
+    future: _voices,
+    builder: (context, snapshot) {
+      final voices = snapshot.data ?? const <SpokenGuidanceVoice>[];
+      return AnimatedBuilder(
+        animation: widget.controller,
+        builder: (context, _) {
+          final chosen = widget.controller.voice;
+          final installed = chosen == null || voices.contains(chosen);
+          final selectedKey = installed && chosen != null
+              ? chosen.key
+              : _systemDefaultKey;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              DropdownButtonFormField<String>(
+                key: ValueKey('spoken-voice-$selectedKey'),
+                initialValue: selectedKey,
+                decoration: InputDecoration(
+                  labelText: 'Voice',
+                  helperText:
+                      snapshot.connectionState == ConnectionState.waiting
+                      ? 'Loading installed voices…'
+                      : !installed
+                      ? 'The saved voice is unavailable; using the system default.'
+                      : 'Used for directions and safety alerts.',
+                ),
+                items: [
+                  const DropdownMenuItem(
+                    value: _systemDefaultKey,
+                    child: Text('System default'),
+                  ),
+                  for (final voice in voices)
+                    DropdownMenuItem(
+                      value: voice.key,
+                      child: Text(voice.label, overflow: TextOverflow.ellipsis),
+                    ),
+                ],
+                onChanged: snapshot.connectionState == ConnectionState.waiting
+                    ? null
+                    : (key) => unawaited(
+                        widget.controller.setVoice(
+                          key == null || key == _systemDefaultKey
+                              ? null
+                              : voices.firstWhere((voice) => voice.key == key),
+                        ),
+                      ),
+              ),
+            ],
+          );
+        },
+      );
+    },
   );
 }
 

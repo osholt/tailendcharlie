@@ -34,17 +34,18 @@ void main() {
   GeoPoint north(double metres) =>
       GeoPoint(latitude: 51.5 + metres / 111320, longitude: -3.18);
 
-  test('warns about a camera a mile ahead and ignores one further out', () {
+  test('targets thirty seconds of warning at urban speed', () {
     const detector = EnforcementAlertDetector();
 
     final within = detector.detect(
       position: rider,
       headingDegrees: 0,
+      speedMetersPerSecond: 13.4112, // 30 mph: about 402 m in 30 seconds.
       hazards: [
         hazard(
           id: 'camera',
           type: HazardType.speedCamera,
-          position: north(1400),
+          position: north(390),
         ),
       ],
       now: now,
@@ -52,11 +53,12 @@ void main() {
     final beyond = detector.detect(
       position: rider,
       headingDegrees: 0,
+      speedMetersPerSecond: 13.4112,
       hazards: [
         hazard(
           id: 'camera',
           type: HazardType.speedCamera,
-          position: north(2400),
+          position: north(450),
         ),
       ],
       now: now,
@@ -64,8 +66,63 @@ void main() {
 
     expect(within, isNotNull);
     expect(within!.hazard.id, 'camera');
-    expect(within.distanceMeters, closeTo(1400, 5));
+    expect(within.distanceMeters, closeTo(390, 5));
     expect(beyond, isNull);
+  });
+
+  test('extends the same thirty-second warning at motorway speed', () {
+    const detector = EnforcementAlertDetector();
+
+    final within = detector.detect(
+      position: rider,
+      headingDegrees: 0,
+      speedMetersPerSecond: 31.2928, // 70 mph: about 939 m in 30 seconds.
+      hazards: [
+        hazard(
+          id: 'camera',
+          type: HazardType.speedCamera,
+          position: north(900),
+        ),
+      ],
+      now: now,
+    );
+    final beyond = detector.detect(
+      position: rider,
+      headingDegrees: 0,
+      speedMetersPerSecond: 31.2928,
+      hazards: [
+        hazard(
+          id: 'camera',
+          type: HazardType.speedCamera,
+          position: north(980),
+        ),
+      ],
+      now: now,
+    );
+
+    expect(within, isNotNull);
+    expect(beyond, isNull);
+  });
+
+  test('an armed warning stays stable when the rider slows', () {
+    const detector = EnforcementAlertDetector();
+    final camera = hazard(
+      id: 'camera',
+      type: HazardType.speedCamera,
+      position: north(700),
+    );
+
+    final alert = detector.detect(
+      position: rider,
+      headingDegrees: 0,
+      speedMetersPerSecond: 2,
+      activeHazardId: camera.id,
+      hazards: [camera],
+      now: now,
+    );
+
+    expect(alert?.hazard.id, camera.id);
+    expect(alert!.distanceMeters, closeTo(700, 5));
   });
 
   test('a hazard already passed stops alerting', () {
@@ -100,6 +157,7 @@ void main() {
       // though it is well inside the warning radius.
       final alert = detector.detect(
         position: north(600),
+        speedMetersPerSecond: 20,
         hazards: [
           hazard(id: 'behind', type: HazardType.speedCamera, position: rider),
           hazard(
@@ -203,7 +261,7 @@ void main() {
         hazard(
           id: 'camera',
           type: HazardType.speedCamera,
-          position: north(800),
+          position: north(350),
         ),
       ],
       now: now,

@@ -992,8 +992,16 @@ class PreferenceAwareRoadRoutingService implements RoadRoutingService {
     RoutePreferences? preferences,
     double? originBearingDegrees,
   }) => usesMotorcycleCosting(preferences)
-      ? motorcycle.routeThrough(waypoints, preferences: preferences)
-      : osrm.routeThrough(waypoints, preferences: preferences);
+      ? motorcycle.routeThrough(
+          waypoints,
+          preferences: preferences,
+          originBearingDegrees: originBearingDegrees,
+        )
+      : osrm.routeThrough(
+          waypoints,
+          preferences: preferences,
+          originBearingDegrees: originBearingDegrees,
+        );
 }
 
 class DestinationMatch {

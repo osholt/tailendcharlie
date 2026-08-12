@@ -26,13 +26,10 @@ import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_coordination_mode.dart';
-import '../../domain/rider_color.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/stored_route_library.dart';
-import '../map/motorcycle_icon.dart';
-import '../map/rider_symbol_picker.dart';
 import '../ride/route_recorder_screen.dart';
 import '../ride/previous_rides_screen.dart';
 import '../settings/about_build_sheet.dart';
@@ -756,9 +753,6 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
   final _planCodeController = TextEditingController();
   final _codeFocusNode = FocusNode();
   final _codeFieldKey = GlobalKey();
-  late MotorcycleIconStyle _selectedStyle = widget.riderProfile.motorcycleStyle;
-  late RiderSymbol _selectedSymbol = widget.riderProfile.riderSymbol;
-  late RiderColor _selectedColor = widget.riderProfile.riderColor;
   RideCoordinationMode _selectedCoordinationMode =
       RideCoordinationMode.secondBikeDropOff;
 
@@ -943,67 +937,6 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
                   counterText: '',
                 ),
               ),
-              const SizedBox(height: 16),
-              RiderSymbolPicker(
-                displayName: _nameController.text,
-                selectedSymbol: _selectedSymbol,
-                motorcycleStyle: _selectedStyle,
-                badgeColor: _selectedColor.color,
-                keyPrefix: 'ride-symbol',
-                bikeKeyPrefix: 'bike-style',
-                onSymbolChanged: (symbol) =>
-                    setState(() => _selectedSymbol = symbol),
-                onMotorcycleStyleChanged: (style) =>
-                    setState(() => _selectedStyle = style),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Your colour',
-                style: TextStyle(color: Color(0xFFABB5C1)),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 44,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: RiderColor.values.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 10),
-                  itemBuilder: (context, index) {
-                    final riderColor = RiderColor.values[index];
-                    final selected = riderColor == _selectedColor;
-                    return Tooltip(
-                      message: riderColor.label,
-                      child: InkWell(
-                        key: Key('rider-colour-${riderColor.name}'),
-                        customBorder: const CircleBorder(),
-                        onTap: () =>
-                            setState(() => _selectedColor = riderColor),
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            color: riderColor.color,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: selected
-                                  ? Colors.white
-                                  : Colors.transparent,
-                              width: 2.5,
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.only(top: 6),
-                child: Text(
-                  'Lead and Tail End Charlie always show in their own reserved colours, whatever you pick here.',
-                  style: TextStyle(color: Color(0xFF7F8A98), fontSize: 12),
-                ),
-              ),
               if (!widget.creating) ...[
                 const SizedBox(height: 12),
                 KeyedSubtree(
@@ -1181,9 +1114,9 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
       }
       await widget.controller.createRide(
         name,
-        motorcycleStyle: _selectedStyle,
-        riderSymbol: _selectedSymbol,
-        riderColor: _selectedColor,
+        motorcycleStyle: widget.riderProfile.motorcycleStyle,
+        riderSymbol: widget.riderProfile.riderSymbol,
+        riderColor: widget.riderProfile.riderColor,
         coordinationMode: _selectedCoordinationMode,
         rideName: _rideNameController.text,
       );
@@ -1192,9 +1125,9 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
       await widget.controller.joinRide(
         code,
         name,
-        motorcycleStyle: _selectedStyle,
-        riderSymbol: _selectedSymbol,
-        riderColor: _selectedColor,
+        motorcycleStyle: widget.riderProfile.motorcycleStyle,
+        riderSymbol: widget.riderProfile.riderSymbol,
+        riderColor: widget.riderProfile.riderColor,
         joinToken: _pastedJoinToken,
       );
       if (widget.controller.hasActiveRide) {
@@ -1209,9 +1142,9 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     if (widget.controller.hasActiveRide && mounted) {
       await widget.riderProfile.save(
         displayName: name.trim(),
-        motorcycleStyle: _selectedStyle,
-        riderSymbol: _selectedSymbol,
-        riderColor: _selectedColor,
+        motorcycleStyle: widget.riderProfile.motorcycleStyle,
+        riderSymbol: widget.riderProfile.riderSymbol,
+        riderColor: widget.riderProfile.riderColor,
       );
       if (widget.creating) {
         if (_selectedCoordinationMode.isGroup) {
@@ -1287,9 +1220,9 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     await widget.controller.joinRideFromInvitation(
       invitation,
       name,
-      motorcycleStyle: _selectedStyle,
-      riderSymbol: _selectedSymbol,
-      riderColor: _selectedColor,
+      motorcycleStyle: widget.riderProfile.motorcycleStyle,
+      riderSymbol: widget.riderProfile.riderSymbol,
+      riderColor: widget.riderProfile.riderColor,
     );
     if (!mounted) return;
     if (widget.controller.hasActiveRide) {
