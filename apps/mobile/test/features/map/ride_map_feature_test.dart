@@ -22,6 +22,7 @@ import 'package:ride_relay/features/map/hazard_map_symbol.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/enforcement_alert_detector.dart';
+import 'package:ride_relay/services/enforcement_alert_presentation.dart';
 import 'package:ride_relay/services/ride_completion_detector.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/imported_track_matcher.dart';
@@ -1717,6 +1718,197 @@ void main() {
     await tester.tap(find.byKey(const Key('enforcement-alert-overlay')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('enforcement-alert-overlay')), findsNothing);
+  });
+
+  testWidgets('the camera warning is a bubble clear of the navigation area, '
+      'then a border alone (#446)', (tester) async {
+    // Third time on this. #418's first fix still covered over 80% of a phone
+    // screen; its second reached about a third of a landscape one. Each round
+    // traded size for the same argument, so this measures the two things that
+    // actually matter: where the bubble is, and that it goes away.
+    tester.view.physicalSize = const Size(2400, 1080);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    final directory = Directory.systemTemp.createTempSync('camera-bubble-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final now = DateTime.now();
+    final alert = ValueNotifier<EnforcementAlert?>(null);
+    addTearDown(alert.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          distanceUnit: DistanceUnit.miles,
+          enforcementAlert: alert,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('enforcement-alert-border')), findsNothing);
+
+    alert.value = EnforcementAlert(
+      hazard: HazardReport(
+        id: 'tomtom-camera-2',
+        rideId: 'ride-1',
+        type: HazardType.speedCamera,
+        severity: HazardSeverity.serious,
+        position: const awareness_geo.GeoPoint(
+          latitude: 51.5,
+          longitude: -3.18,
+        ),
+        reportedAt: now,
+        updatedAt: now,
+        expiresAt: now.add(const Duration(minutes: 10)),
+        reporterId: 'relay-traffic',
+        source: HazardSource.externalProvider,
+        providerId: 'relay-traffic',
+        details: 'Fixed speed camera · 40 mph · TomTom',
+      ),
+      distanceMeters: 1207,
+    );
+    await tester.pump();
+
+    final bubble = tester.getRect(
+      find.byKey(const Key('enforcement-alert-overlay')),
+    );
+    final screen = tester.getRect(find.byType(RideMapScreen));
+
+    // The navigation area is the top of the screen — directions, speed, the
+    // no-TEC row (#442). "Not blocking it" is a position, not a size, so it is
+    // asserted as one.
+    expect(
+      bubble.top,
+      greaterThan(screen.center.dy),
+      reason: 'the bubble must be clear of the navigation area entirely',
+    );
+    expect(
+      bubble.width,
+      lessThanOrEqualTo(enforcementBubbleMaxWidth),
+      reason: 'a notification, not a band across a landscape screen',
+    );
+    // Kept from #418 as a floor, not a ceiling: this should now be far under it.
+    expect(bubble.height, lessThan(screen.height * 0.4));
+
+    // The border is up from the moment the warning arms and is what carries the
+    // alarm once the bubble has gone. Its *decoration* is asserted, not merely
+    // its presence: with only a findsOneWidget here, deleting the border from the
+    // decoration left the keyed box in place and the test passed. Found by
+    // mutation, which is the whole reason for running them.
+    expectRedBorder(tester);
+
+    // Ten seconds, fixed. Distance keeps changing on an approach; the life does
+    // not depend on it.
+    alert.value = EnforcementAlert(
+      hazard: alert.value!.hazard,
+      distanceMeters: 400,
+    );
+    await tester.pump(enforcementBubbleLife + const Duration(seconds: 1));
+
+    expect(
+      find.byKey(const Key('enforcement-alert-overlay')),
+      findsNothing,
+      reason: 'the announcement is finished after ten seconds',
+    );
+    expectRedBorder(
+      tester,
+      reason: 'the border holds for the rest of approach',
+    );
+
+    // Passing the camera clears both, because the detector stops returning it.
+    alert.value = null;
+    await tester.pump();
+    expect(find.byKey(const Key('enforcement-alert-border')), findsNothing);
+  });
+
+  testWidgets('the speed sign is enlarged on a camera approach (#446)', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('camera-sign-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: _WidgetSpeedLimitProvider(),
+      enabled: true,
+    );
+    addTearDown(speedLimitDisplay.dispose);
+    final now = DateTime.now();
+    final alert = ValueNotifier<EnforcementAlert?>(null);
+    addTearDown(alert.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          speedLimitDisplay: speedLimitDisplay,
+          enforcementAlert: alert,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final ordinary = tester
+        .getRect(find.byKey(const Key('posted-speed-limit-badge')))
+        .width;
+
+    alert.value = EnforcementAlert(
+      hazard: HazardReport(
+        id: 'tomtom-camera-3',
+        rideId: 'ride-1',
+        type: HazardType.speedCamera,
+        severity: HazardSeverity.serious,
+        position: const awareness_geo.GeoPoint(
+          latitude: 51.5,
+          longitude: -3.18,
+        ),
+        reportedAt: now,
+        updatedAt: now,
+        expiresAt: now.add(const Duration(minutes: 10)),
+        reporterId: 'relay-traffic',
+        source: HazardSource.externalProvider,
+        providerId: 'relay-traffic',
+        details: 'Fixed speed camera · 40 mph · TomTom',
+      ),
+      distanceMeters: 900,
+    );
+    await tester.pump();
+
+    final onApproach = tester
+        .getRect(find.byKey(const Key('posted-speed-limit-badge')))
+        .width;
+
+    // Reported as "I didn't notice a larger speed limit sign and speed on the
+    // approach", so the assertion is that it is measurably larger rather than
+    // merely different.
+    expect(
+      onApproach,
+      greaterThan(ordinary * 1.3),
+      reason: 'the enlargement has to be noticeable at a glance',
+    );
+
+    // And it lasts past the bubble: the rider looks down after the
+    // announcement, not during it.
+    await tester.pump(enforcementBubbleLife + const Duration(seconds: 1));
+    expect(
+      tester.getRect(find.byKey(const Key('posted-speed-limit-badge'))).width,
+      onApproach,
+    );
   });
 
   testWidgets('offers file import and loads bundled demo route offline', (
@@ -5146,3 +5338,18 @@ ImportedRoute _testRoute({
   waypoints: const [],
   maneuvers: maneuvers,
 );
+
+/// Asserts a real red border, not merely a box that once had one.
+///
+/// The border *is* the whole warning after ten seconds, so "the keyed widget
+/// exists" is not enough: a `DecoratedBox` with `border: null` satisfies that and
+/// shows nothing. Mutation testing caught exactly that.
+void expectRedBorder(WidgetTester tester, {String? reason}) {
+  final finder = find.byKey(const Key('enforcement-alert-border'));
+  expect(finder, findsOneWidget, reason: reason);
+  final decoration =
+      tester.widget<DecoratedBox>(finder).decoration as BoxDecoration;
+  expect(decoration.border, isNotNull, reason: reason);
+  expect(decoration.border!.top.width, enforcementBorderWidth, reason: reason);
+  expect(decoration.border!.top.color, const Color(0xFFFF3B30), reason: reason);
+}
