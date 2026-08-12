@@ -191,6 +191,76 @@ void main() {
     expect(copy, isNot(contains('have been sent')));
   });
 
+  testWidgets('the way out is on screen without scrolling past the cards (#440)', (
+    tester,
+  ) async {
+    // The reported defect: "the summary screen appears and there is no way back
+    // to the map. No button dismisses it. Sharing the ride and the ride image
+    // both work."
+    //
+    // Both halves of that are explained by list order. The exit was eighth, below
+    // the relay status cards and this rating card; the shares were seventh and
+    // eighth-from-last. A test that supplies none of those three cards has the
+    // exit on screen and passes, which is why one did.
+    //
+    // So this pumps the screen the way a real ride has it — with a card that grows
+    // — on a phone-sized viewport, and asserts the exit is reachable without
+    // scrolling.
+    tester.view.physicalSize = const Size(1170, 2532); // iPhone 13
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
+    final ratings = await _ratings(roads: 3);
+    addTearDown(ratings.dispose);
+    // Prepared here rather than by the screen: the screen's own `_prepareRatings`
+    // returns early when it is already prepared, and the ride in `setUp` has no
+    // position events to build a track from.
+    await ratings.prepare(riddenTrack: _line());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EndedRideScreen(
+          controller: controller,
+          distanceUnits: DistanceUnitController.forLocale(
+            const Locale('en', 'GB'),
+          ),
+          roadRatings: ratings,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The card must actually be there, or this test is asserting nothing.
+    expect(find.byKey(const Key('road-rating-card')), findsOneWidget);
+
+    final exit = find.byKey(const Key('leave-ended-ride-button'));
+    expect(exit, findsOneWidget);
+
+    final screen = tester.getRect(find.byType(EndedRideScreen));
+    final button = tester.getRect(exit);
+    expect(
+      button.bottom,
+      lessThanOrEqualTo(screen.bottom),
+      reason: 'the way out must not be below the fold on a phone',
+    );
+    expect(
+      button.top,
+      greaterThanOrEqualTo(screen.top),
+      reason: 'nor above it',
+    );
+
+    // And it is above the card, not after it: a card that grows must never be
+    // able to push the exit off again.
+    expect(
+      button.top,
+      lessThan(tester.getRect(find.byKey(const Key('road-rating-card'))).top),
+    );
+
+    // It says where it goes. #426 made home a free-roam map, and the report was
+    // that there was no way back to the map.
+    expect(find.text('Back to the map'), findsOneWidget);
+  });
+
   testWidgets('the rating card does not gate sharing, the recap or filing', (
     tester,
   ) async {
