@@ -814,10 +814,7 @@ class _ArchivedEndpointScreenMarker {
 }
 
 class _ArchivedMapEndpointMarker extends StatelessWidget {
-  const _ArchivedMapEndpointMarker({
-    required this.color,
-    required this.label,
-  });
+  const _ArchivedMapEndpointMarker({required this.color, required this.label});
 
   final Color color;
   final String label;
@@ -828,7 +825,11 @@ class _ArchivedMapEndpointMarker extends StatelessWidget {
     child: Stack(
       alignment: Alignment.topCenter,
       children: [
-        const Icon(Icons.location_on_rounded, size: 34, color: Color(0xFF10151C)),
+        const Icon(
+          Icons.location_on_rounded,
+          size: 34,
+          color: Color(0xFF10151C),
+        ),
         Icon(Icons.location_on_rounded, size: 28, color: color),
       ],
     ),
