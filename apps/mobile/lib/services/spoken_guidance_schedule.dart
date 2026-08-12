@@ -113,6 +113,7 @@ GuidanceAnnouncement? nextGuidanceAnnouncement({
   required Set<String> alreadySpokenKeys,
   required double? metersSincePreviousManeuver,
   required String Function(double meters) distanceFormatter,
+  String? followingInstructionText,
 }) {
   if (distanceToManeuverMeters.isNaN || distanceToManeuverMeters < 0) {
     return null;
@@ -136,16 +137,52 @@ GuidanceAnnouncement? nextGuidanceAnnouncement({
   );
   if (stage == null) return null;
 
+  final subject = guidanceSubject(
+    instructionText: instructionText,
+    followingInstructionText: followingInstructionText,
+  );
   return GuidanceAnnouncement(
     key: '$maneuverIdentity|${stage.name}',
     // The immediate prompt carries no distance: at eight seconds out, "in 90
     // yards" is a number the rider has no use for and a syllable they have no
     // time for.
     phrase: stage == GuidanceStage.immediate
-        ? instructionText
-        : 'In ${distanceFormatter(distanceToManeuverMeters)}, $instructionText',
+        ? subject
+        : 'In ${distanceFormatter(distanceToManeuverMeters)}, $subject',
     stage: stage,
   );
+}
+
+/// What the prompt is *about* — one junction, or a close pair named together.
+///
+/// ## Why a pair is named in one prompt (#460)
+///
+/// A junction can only be announced once it is the nearest one, because that is
+/// what the guidance layer hands over. So for a pair A then B, B's first
+/// opportunity is at the A→B spacing rather than at its own scheduled distance:
+///
+/// - over ~500 m apart, B gets all three prompts;
+/// - 300–500 m, B loses the early heads-up;
+/// - under about 100 m, **only the final prompt survives** — which is the reported
+///   *"sometimes only when at the junction"*, and the one that is genuinely late.
+///
+/// A general lookahead would be the wrong answer and would make it worse:
+/// announcing B early while A is still 200 m ahead tells the rider about the wrong
+/// junction.
+///
+/// Instead the pair is named in the prompt for the *first* of them — the one
+/// moment the rider still has time to act on both. The banner has shown pairs like
+/// this since #163; speech simply ignored the following instruction it was already
+/// being given.
+String guidanceSubject({
+  required String instructionText,
+  required String? followingInstructionText,
+}) {
+  final following = followingInstructionText?.trim();
+  if (following == null || following.isEmpty) return instructionText;
+  // "then", not "and then": one syllable fewer, and it is the word a pillion
+  // would use.
+  return '$instructionText, then $following';
 }
 
 /// The nearest stage that is due and has not been said.

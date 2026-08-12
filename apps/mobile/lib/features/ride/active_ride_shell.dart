@@ -4017,6 +4017,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       distanceFormatter: MeasurementFormatter(
         widget.distanceUnits.value,
       ).distance,
+      // The pair the banner is already showing (#163). Speech was given this and
+      // ignored it, which is why a junction close behind another was only ever
+      // announced at the junction itself (#460).
+      followingInstructionText: guidance.followingInstruction?.standaloneText,
     );
     if (announcement == null) return;
 
