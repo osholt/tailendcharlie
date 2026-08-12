@@ -297,8 +297,27 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       //
       // Reading the header alone got this wrong twice. The apinotes file is
       // where a framework's Swift spelling actually lives.
+      //
+      // The time is *not* zero, which is what shipped and what made the car show
+      // an arrival time of the current clock on every update (#452).
+      // CPTravelEstimates.h:
+      //
+      //   A distance value less than 0 or a time remaining value less than 0 will
+      //   render as "--" […] Values less than 0 are distinguished from distance or
+      //   time values equal to 0; your app may display 0 as the user is imminently
+      //   arriving at their destination.
+      //
+      // So zero says "arriving now". Negative is the documented way to say
+      // "unavailable". The estimate itself is computed on the Dart side, where its
+      // edge cases — no speed, stopped at lights, a nonsense fix — are reachable
+      // in a test rather than only by riding.
+      let secondsRemaining =
+        (snapshot["guidanceSecondsRemaining"] as? NSNumber)?.doubleValue ?? -1
       navigationSession.updateEstimates(
-        CPTravelEstimates(distanceRemaining: remaining, timeRemaining: 0),
+        CPTravelEstimates(
+          distanceRemaining: remaining,
+          timeRemaining: secondsRemaining
+        ),
         for: maneuver
       )
     }

@@ -11,6 +11,7 @@ import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 import 'basemap_configuration.dart';
+import 'guidance_time_remaining.dart';
 import 'carplay_tec_status.dart';
 import 'navigation_camera.dart';
 import 'route_progress.dart';
@@ -210,6 +211,14 @@ class CarPlayBridge {
       'guidanceDetail': guidanceDetail,
       'guidanceRoadName': guidanceRoadName,
       'guidanceDistanceMeters': guidanceDistanceMeters,
+      // Computed here rather than in Swift, and independent of the speed-limit
+      // opt-in: that gate exists so a rider who did not ask for a speed readout
+      // does not get one, and an estimate of time to the next turn is not a
+      // speed readout (#452).
+      'guidanceSecondsRemaining': guidanceSecondsRemaining(
+        distanceMeters: guidanceDistanceMeters,
+        speedMetersPerSecond: localSpeedMetersPerSecond,
+      ),
       'distanceUnit': distanceUnit?.name,
       'groupStatus': groupStatus,
       'markerStatus': markerStatus,

@@ -73,6 +73,9 @@ void main() {
       'guidanceDetail': '400 m · A27',
       'guidanceRoadName': null,
       'guidanceDistanceMeters': null,
+      // Null here because this snapshot has neither a distance nor a speed. It is
+      // never 0: zero tells CarPlay the rider is arriving now (#452).
+      'guidanceSecondsRemaining': null,
       'distanceUnit': null,
       'groupStatus': '5 riders visible',
       'markerStatus': 'Marker at the next junction',
@@ -322,6 +325,12 @@ void main() {
       expect(arguments['followRider'], isTrue);
       expect(arguments['guidanceRoadName'], 'A420');
       expect(arguments['guidanceDistanceMeters'], 275);
+      // The estimate the car's ETA card renders. Present because this call
+      // supplies a speed; null rather than 0 when it cannot be computed (#452).
+      expect(
+        arguments['guidanceSecondsRemaining'],
+        anyOf(isNull, isA<double>()),
+      );
       expect(arguments['distanceUnit'], 'miles');
       expect(arguments['routePoints'], [
         {'latitude': 51.45, 'longitude': -2.58},
