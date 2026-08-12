@@ -28,7 +28,14 @@ class HomeMapBackdrop extends StatefulWidget {
     required this.distanceUnit,
     this.enableNativeServices = true,
     this.locationController,
+    this.bottomInset = 0,
   });
+
+  /// Height kept clear at the bottom for whatever stands on the map.
+  ///
+  /// The home actions are a bar there now (#426), and the map's own location
+  /// control has to sit above it rather than behind it.
+  final double bottomInset;
 
   final MapStyleModeController mapStyleMode;
   final SpeedLimitDisplayController speedLimitDisplay;
@@ -129,7 +136,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
         if (!_sharing)
           Positioned(
             right: 12,
-            bottom: 12,
+            bottom: 12 + widget.bottomInset,
             child: SafeArea(
               child: FilledButton.tonalIcon(
                 key: const Key('home-show-my-location'),

@@ -69,10 +69,41 @@ void main() {
 
     expect(find.text('Create a ride'), findsOneWidget);
     expect(find.text('Join a ride'), findsOneWidget);
+    // The simulator is behind "More" now, and there is no heading or paragraph
+    // at all: #426 removed the start panel rather than shrinking it, because
+    // "I don't want the start screen at all" leaves no room for a smaller one.
+    expect(find.text('Ready to ride?'), findsNothing);
+    expect(find.text('Try a simulated ride'), findsNothing);
+
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
     expect(find.text('Try a simulated ride'), findsOneWidget);
-    expect(find.text('Ready to ride?'), findsOneWidget);
 
     controller.dispose();
+  });
+
+  testWidgets('the map is not covered by a panel (#426)', (tester) async {
+    // The reported defect twice over: "the screen is still blocked by a
+    // translucent start screen". Asserted as area, because the previous fix
+    // moved the panel onto the map and left it covering all of it.
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller));
+
+    final screen = tester.getRect(find.byType(HomeMapBackdrop));
+    final actions = tester.getRect(find.byKey(const Key('home-ride-actions')));
+
+    expect(
+      actions.height,
+      lessThan(screen.height * 0.25),
+      reason: 'the actions are a bar on the map, not a screen in front of it',
+    );
+    expect(
+      actions.top,
+      greaterThan(screen.center.dy),
+      reason: 'and they are at the bottom, leaving the map itself alone',
+    );
   });
 
   testWidgets(
