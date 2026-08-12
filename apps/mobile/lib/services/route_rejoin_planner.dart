@@ -9,6 +9,7 @@ import '../domain/imported_route.dart' as route_domain;
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 import 'geo_calculations.dart';
+import 'route_origin_bearing.dart';
 import 'leader_ride_status.dart' show TecAvailability;
 import 'measurement_formatter.dart';
 import 'road_routing.dart'
@@ -734,6 +735,19 @@ class RouteRejoinPlanner {
       _routingCallCount += 1;
       final result = await routingService.routeThrough(
         waypoints.map(_toRouteDomain).toList(growable: false),
+        // Which way the rider is pointing (#444). Without it the engine picks a
+        // direction for an ambiguous position on a two-way road, and half the
+        // time it picks the one the rider is not facing — so the first
+        // instruction after going off course is a U-turn dressed up as a turn,
+        // at the moment a rider has least attention to spare.
+        //
+        // Null below a speed floor: a heading from a stationary bike is whatever
+        // the phone was pointing at, and a confidently wrong first instruction
+        // is the defect, not a smaller version of it.
+        originBearingDegrees: rejoinOriginBearing(
+          headingDegrees: sample.headingDegrees,
+          speedMetersPerSecond: sample.speedMetersPerSecond,
+        ),
       );
       if (result.points.length < 2) {
         throw const FormatException(

@@ -5253,6 +5253,7 @@ class _StraightRoadRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async => RoadRouteResult(
     points: waypoints,
     distanceMeters: 12000,
@@ -5267,6 +5268,7 @@ class _RouteStartRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     calls.add(List<GeoPoint>.of(waypoints));
     return RoadRouteResult(

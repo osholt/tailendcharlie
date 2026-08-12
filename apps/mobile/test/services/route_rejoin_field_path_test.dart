@@ -223,6 +223,7 @@ class _RecordingRoutingService implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<route_domain.GeoPoint> waypoints, {
     route_domain.RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     calls += 1;
     return RoadRouteResult(

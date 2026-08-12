@@ -680,6 +680,7 @@ class _StubRouting implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<route_domain.GeoPoint> waypoints, {
     route_domain.RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     calls.add(List.unmodifiable(waypoints));
     final first = waypoints.first;
@@ -709,6 +710,7 @@ class _FailingRouting implements RoadRoutingService {
   Future<RoadRouteResult> routeThrough(
     List<route_domain.GeoPoint> waypoints, {
     route_domain.RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     calls += 1;
     throw const FormatException('No road route was found.');
