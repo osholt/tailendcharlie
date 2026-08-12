@@ -1191,7 +1191,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _rejoinRoute,
       _effectivePosition,
     );
-    _observeSpeedLimit(_navigationFix);
+    // The app-level AnimatedBuilder already listens to this shared controller.
+    // Starting the lookup here used to notify that ancestor while its
+    // FutureBuilder was still constructing this map (#485).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _observeSpeedLimit(_navigationFix);
+    });
     _watchBasemapViewLoad();
     _markerOverviewVisible =
         widget.junctionMarkerOverlay?.value?.isLocalMarker ?? false;
