@@ -16,10 +16,15 @@ import 'ride_diagnostics_configuration.dart';
 /// **Positions in here are the local rider's own.** Other riders' positions are
 /// someone else's data and are never recorded; see #419.
 class RideDiagnosticsRecorder {
-  RideDiagnosticsRecorder({DateTime Function()? clock})
+  RideDiagnosticsRecorder({DateTime Function()? clock, this.onEntry})
     : _clock = clock ?? DateTime.now;
 
   final DateTime Function() _clock;
+
+  /// Called after each entry, so a log on disk can be kept in step without the
+  /// recorder knowing what a file is (#456). Still no filesystem in here: the
+  /// pairing logic stays drivable by a synthetic track in a unit test.
+  final void Function()? onEntry;
   final List<String> _entries = [];
   final List<_PositionSample> _recentPositions = [];
 
@@ -45,6 +50,7 @@ class RideDiagnosticsRecorder {
       _entries.removeAt(0);
       _dropped += 1;
     }
+    onEntry?.call();
   }
 
   String _stamp() => _clock().toUtc().toIso8601String();
