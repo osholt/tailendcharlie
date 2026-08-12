@@ -5059,12 +5059,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
-  bool _canGenerateNavigableRoute(ImportedRoute route) =>
-      route.maneuvers.isEmpty &&
-      route.paths.isNotEmpty &&
-      route.paths.every(
-        (path) => path.kind == RoutePathKind.track && path.points.length >= 2,
-      );
+  bool _canGenerateNavigableRoute(ImportedRoute route) {
+    final drawablePaths = route.paths.where((path) => path.points.length >= 2);
+    return route.maneuvers.isEmpty &&
+        drawablePaths.isNotEmpty &&
+        drawablePaths.every((path) => path.kind == RoutePathKind.track);
+  }
 
   Future<_ImportedTrackChoice> _chooseImportedTrackTreatment(
     ImportedRoute route,

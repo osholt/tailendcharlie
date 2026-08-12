@@ -117,6 +117,38 @@ void main() {
       ),
     );
   });
+
+  test('ignores a one-fix fragment beside a drawable recorded track', () async {
+    var requests = 0;
+    final matcher = OsrmImportedTrackMatcher(
+      client: MockClient((_) async {
+        requests += 1;
+        return http.Response(jsonEncode(_matchResponse()), 200);
+      }),
+      baseUrl: Uri.parse('https://routing.example.test'),
+    );
+    final main = _track();
+    final result = await matcher.match(
+      ImportedRoute(
+        id: main.id,
+        name: main.name,
+        importedAt: main.importedAt,
+        sourceFileName: main.sourceFileName,
+        paths: [
+          const RoutePath(
+            kind: RoutePathKind.track,
+            points: [GeoPoint(latitude: 51.002, longitude: -2.002)],
+          ),
+          ...main.paths,
+        ],
+        waypoints: main.waypoints,
+      ),
+    );
+
+    expect(requests, 1);
+    expect(result.route.paths, hasLength(1));
+    expect(result.traceCoverage, 1);
+  });
 }
 
 OsrmImportedTrackMatcher _matcher(Map<String, Object?> response) =>
