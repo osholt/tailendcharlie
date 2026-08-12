@@ -8,6 +8,7 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/ride/previous_rides_screen.dart';
 import 'package:ride_relay/services/stored_route_library.dart';
+import 'package:ride_relay/services/trail_direction_arrows.dart';
 
 void main() {
   test('archived map bounds include sparse and self-crossing geometry', () {
@@ -22,6 +23,71 @@ void main() {
     expect(bounds.southwest.longitude, closeTo(-2.3, 1e-9));
     expect(bounds.northeast.latitude, 54.1);
     expect(bounds.northeast.longitude, closeTo(-0.8, 1e-9));
+  });
+
+  test(
+    'archived direction uses the drawable trail and ignores a one-fix tail',
+    () {
+      final overlay = archivedRideDirectionOverlay(
+        plannedRoute: _line(const [
+          GeoPoint(latitude: 50, longitude: -3),
+          GeoPoint(latitude: 50.01, longitude: -3),
+        ]),
+        traveledRoute: ImportedRoute(
+          id: 'travelled',
+          name: 'Travelled',
+          importedAt: DateTime.utc(2026, 8, 12),
+          sourceFileName: 'ride.gpx',
+          paths: const [
+            RoutePath(
+              kind: RoutePathKind.track,
+              points: [
+                GeoPoint(latitude: 51, longitude: -2),
+                GeoPoint(latitude: 51, longitude: -1.98),
+              ],
+            ),
+            RoutePath(
+              kind: RoutePathKind.track,
+              points: [GeoPoint(latitude: 51.001, longitude: -1.979)],
+            ),
+          ],
+          waypoints: const [],
+        ),
+        sampler: const TrailDirectionArrowSampler(spacingMeters: 400),
+      );
+
+      expect(overlay, isNotNull);
+      expect(overlay!.start, const GeoPoint(latitude: 51, longitude: -2));
+      expect(overlay.finish, const GeoPoint(latitude: 51, longitude: -1.98));
+      expect(overlay.lineColor, '#42C9E8');
+      expect(overlay.arrows, isNotEmpty);
+      expect(
+        overlay.arrows.every((arrow) => arrow.bearingDegrees > 80),
+        isTrue,
+      );
+    },
+  );
+
+  test('reversing stored geometry reverses every archived direction arrow', () {
+    const eastbound = [
+      GeoPoint(latitude: 51, longitude: -2),
+      GeoPoint(latitude: 51, longitude: -1.98),
+    ];
+    final forward = archivedRideDirectionOverlay(
+      plannedRoute: _line(eastbound),
+      traveledRoute: null,
+      sampler: const TrailDirectionArrowSampler(spacingMeters: 400),
+    )!;
+    final reverse = archivedRideDirectionOverlay(
+      plannedRoute: _line(eastbound.reversed.toList()),
+      traveledRoute: null,
+      sampler: const TrailDirectionArrowSampler(spacingMeters: 400),
+    )!;
+
+    expect(forward.start, eastbound.first);
+    expect(reverse.start, eastbound.last);
+    expect(forward.arrows.first.bearingDegrees, closeTo(90, 1));
+    expect(reverse.arrows.first.bearingDegrees, closeTo(270, 1));
   });
 
   test('archived map bounds retain a stationary single point', () {
@@ -120,6 +186,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.byKey(const Key('archived-ride-again')), findsOneWidget);
+    expect(find.text('Start'), findsOneWidget);
+    expect(find.text('Finish'), findsOneWidget);
     await tester.ensureVisible(find.byKey(const Key('archived-ride-again')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('archived-ride-again')));
