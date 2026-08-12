@@ -156,7 +156,7 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
       title: const Text('Ride ended'),
       leading: IconButton(
         key: const Key('leave-ended-ride-screen-button'),
-        tooltip: 'Back to home',
+        tooltip: 'Back to the map',
         onPressed: _setAside,
         icon: const Icon(Icons.close),
       ),
@@ -274,6 +274,26 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
           'screen any time — nothing here has to be done now.',
           style: TextStyle(color: Color(0xFF7F8A98), height: 1.45),
         ),
+        const SizedBox(height: 16),
+        // The way out, **above** everything that can grow.
+        //
+        // It used to be eighth in this list, below two relay status cards and the
+        // road-rating card. In a test none of those three is supplied, so the
+        // button was on screen and a passing test said the exit worked. On a real
+        // ride all three are present and it went off the bottom — which is
+        // precisely what was reported: the shares worked and nothing dismissed the
+        // screen (#440). The shares are directly above where it used to be.
+        //
+        // Filled, not outlined: it is the ordinary thing to do here. Filing the
+        // ride is the deliberate one and it stays at the bottom.
+        FilledButton.icon(
+          key: const Key('leave-ended-ride-button'),
+          onPressed: _setAside,
+          icon: const Icon(Icons.map_outlined),
+          // "the map", not "home": #426 made the home screen a free-roam map, and
+          // the report was that there was "no way back to the map".
+          label: const Text('Back to the map'),
+        ),
         const SizedBox(height: 18),
         if (widget.nearbyRelayController case final nearby?) ...[
           RelayStatusCard(controller: nearby),
@@ -308,13 +328,6 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
             label: const Text("This ride hasn't finished — resume it"),
           ),
         ],
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          key: const Key('leave-ended-ride-button'),
-          onPressed: _setAside,
-          icon: const Icon(Icons.home_outlined),
-          label: const Text('Back to home'),
-        ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
           key: const Key('file-ended-ride-button'),

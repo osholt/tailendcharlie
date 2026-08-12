@@ -109,14 +109,20 @@ class RoadRatingCard extends StatelessWidget {
           label: const Text('No, it does not'),
         ),
         const SizedBox(height: 4),
-        Row(
+        // A Wrap, not a Row with a Spacer (#469). At iPhone 13 width the two
+        // controls overflowed by 24 px and drew the striped overflow bar at the
+        // end of a real ride. It went unseen because every test of this card ran
+        // at the default 800x600 viewport, which is wider than any phone the app
+        // is used on. A Wrap cannot overflow: it takes a second line instead.
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          spacing: 8,
           children: [
             TextButton(
               key: const Key('road-rating-skip-button'),
               onPressed: controller.skip,
               child: const Text('Skip this road'),
             ),
-            const Spacer(),
             TextButton(
               key: const Key('road-rating-dismiss-button'),
               onPressed: controller.dismiss,
