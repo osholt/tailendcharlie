@@ -711,14 +711,11 @@ private final class CarPlayNavigationViewController: UIViewController,
     clockLabel.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(clockLabel)
     NSLayoutConstraint.activate([
-      tecBadge.leadingAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.leadingAnchor,
-        constant: 12
-      ),
-      tecBadge.topAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.topAnchor,
-        constant: 12
-      ),
+      // Speed pair top-trailing, and the TEC message *below* it rather than in
+      // the leading corner (#442). CarPlay draws the manoeuvre card top-leading,
+      // so the TEC badge was competing with the directions — which is the thing a
+      // rider reads first. "The no-TEC message goes below the speed limit, not
+      // competing with the directions."
       speedBadge.trailingAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.trailingAnchor,
         constant: -52
@@ -726,6 +723,18 @@ private final class CarPlayNavigationViewController: UIViewController,
       speedBadge.topAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 10
+      ),
+      tecBadge.trailingAnchor.constraint(
+        equalTo: speedBadge.trailingAnchor
+      ),
+      tecBadge.topAnchor.constraint(
+        equalTo: speedBadge.bottomAnchor,
+        constant: 8
+      ),
+      // Bounded so a long message cannot reach back across the screen into the
+      // directions it was just moved away from.
+      tecBadge.leadingAnchor.constraint(
+        greaterThanOrEqualTo: view.safeAreaLayoutGuide.centerXAnchor
       ),
       groupMiniMap.widthAnchor.constraint(equalToConstant: 110),
       groupMiniMap.heightAnchor.constraint(equalToConstant: 70),
@@ -1529,8 +1538,17 @@ private final class CarPlayGroupMiniMapView: UIView {
     backgroundColor = CarPlayPalette.cardFill
     layer.cornerRadius = 10
     layer.cornerCurve = .continuous
-    layer.borderWidth = 1.5
-    layer.borderColor = CarPlayPalette.casing.cgColor
+    // Thicker and brighter than the 1.5 px casing it had (#442): "it blends into
+    // the main map, so it is not obvious which is which". A hairline in the
+    // casing colour is invisible against a basemap that is mostly the same
+    // greys.
+    layer.borderWidth = 3
+    layer.borderColor = UIColor.white.withAlphaComponent(0.85).cgColor
+    layer.shadowColor = UIColor.black.cgColor
+    layer.shadowOpacity = 0.6
+    layer.shadowRadius = 6
+    layer.shadowOffset = .zero
+    layer.masksToBounds = false
     clipsToBounds = true
 
     imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -1545,6 +1563,8 @@ private final class CarPlayGroupMiniMapView: UIView {
     caption.layer.cornerCurve = .continuous
     caption.clipsToBounds = true
     caption.textAlignment = .center
+    caption.adjustsFontSizeToFitWidth = true
+    caption.minimumScaleFactor = 0.7
     addSubview(caption)
 
     NSLayoutConstraint.activate([
@@ -1553,10 +1573,44 @@ private final class CarPlayGroupMiniMapView: UIView {
       imageView.topAnchor.constraint(equalTo: topAnchor),
       imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
       caption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+      // Bounded on both sides now that it carries a scale as well as a count:
+      // the view is 110pt wide and the text must give way inside it rather than
+      // widening the overview.
+      caption.trailingAnchor.constraint(
+        lessThanOrEqualTo: trailingAnchor,
+        constant: -6
+      ),
       caption.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
       caption.heightAnchor.constraint(equalToConstant: 19),
-      caption.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
     ])
+  }
+
+  /// The east-west span of the overview, in the rider's own units.
+  ///
+  /// The width rather than the diagonal: it is what the eye reads across the
+  /// picture, and it is the number a map scale bar has always meant.
+  static func spanLabel(
+    for bounds: MLNCoordinateBounds,
+    usesMiles: Bool
+  ) -> String {
+    let west = CLLocation(
+      latitude: bounds.sw.latitude,
+      longitude: bounds.sw.longitude
+    )
+    let east = CLLocation(
+      latitude: bounds.sw.latitude,
+      longitude: bounds.ne.longitude
+    )
+    let meters = west.distance(from: east)
+    if usesMiles {
+      let miles = meters / 1_609.344
+      return miles < 0.5
+        ? "\(Int((meters / 0.9144).rounded())) yd"
+        : String(format: "%.1f mi", miles)
+    }
+    return meters < 950
+      ? "\(Int(meters.rounded())) m"
+      : String(format: "%.1f km", meters / 1_000)
   }
 
   @available(*, unavailable)
@@ -1584,7 +1638,14 @@ private final class CarPlayGroupMiniMapView: UIView {
 
     isHidden = false
     let riderWord = riders.count == 1 ? "rider" : "riders"
-    caption.text = "  Group · \(riders.count) \(riderWord)  "
+    // How far the picture spans, so a rider can tell what they are looking at
+    // (#442: "It needs a clear edge, and a scale"). Without it the overview could
+    // be a hundred metres or ten miles and there is nothing on it to say which.
+    let span = Self.spanLabel(
+      for: Self.groupBounds(for: riders.map(\.coordinate)),
+      usesMiles: (snapshot["distanceUnit"] as? String) == "miles"
+    )
+    caption.text = "  \(riders.count) \(riderWord) · \(span)  "
     accessibilityLabel = "Group overview, \(riders.count) \(riderWord)"
 
     let now = Date()
