@@ -31,6 +31,7 @@ import '../../services/basemap_status.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
+import 'ride_clock.dart';
 import '../../services/enforcement_alert_presentation.dart';
 import '../../services/fixed_speed_camera_catalogue.dart';
 import '../../services/ride_completion_detector.dart';
@@ -2175,6 +2176,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 top: safeTop + 10,
                 child: speedLimit,
               ),
+            // The clock (#452), landscape only, drawn by the app rather than by
+            // Apple's widget. Top-centre because that is the one part of this
+            // band with nothing in it — the ride menu holds the leading corner
+            // and the speed sign the trailing one — and because it is where a car
+            // puts its clock. A helmet and gloves make a wrist watch useless and
+            // the phone is already in front of the rider.
+            Positioned(
+              left: safeLeft,
+              right: safeRight,
+              top: safeTop + 12,
+              child: const IgnorePointer(child: Center(child: RideClock())),
+            ),
             Positioned(
               left: safeLeft + 10,
               bottom: safeBottom + 10,

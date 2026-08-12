@@ -634,6 +634,7 @@ private final class CarPlayNavigationViewController: UIViewController,
   private let tecBadge = CarPlayTecBadge()
   private let speedBadge = CarPlaySpeedLimitBadge()
   private let groupMiniMap = CarPlayGroupMiniMapView()
+  private let clockLabel = CarPlayClockLabel()
   private var routeSource: MLNShapeSource?
   private var travelledRouteAnnotation: MLNPolyline?
   private var travelledRouteCasingAnnotation: MLNPolyline?
@@ -704,6 +705,11 @@ private final class CarPlayNavigationViewController: UIViewController,
     view.addSubview(speedBadge)
     groupMiniMap.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(groupMiniMap)
+    // The clock (#452), drawn by the app. Apple's own widget was ruled out
+    // explicitly: it carries its own styling and placement and would not sit with
+    // the badges either side of it.
+    clockLabel.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(clockLabel)
     NSLayoutConstraint.activate([
       tecBadge.leadingAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.leadingAnchor,
@@ -728,6 +734,18 @@ private final class CarPlayNavigationViewController: UIViewController,
         constant: -12
       ),
       groupMiniMap.bottomAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+        constant: -14
+      ),
+      // Bottom-leading: the only corner of this view with nothing in it. The
+      // navigation bar and the trailing map buttons belong to CarPlay's own
+      // template, the TEC badge holds the top-leading corner, the speed badge the
+      // top-trailing, and the group mini-map the bottom-trailing.
+      clockLabel.leadingAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+        constant: 12
+      ),
+      clockLabel.bottomAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.bottomAnchor,
         constant: -14
       ),
@@ -1957,6 +1975,79 @@ private final class CarPlayTecBadge: UIView {
       label.textColor = CarPlayPalette.cardLabel
     default:
       label.textColor = CarPlayPalette.cardTitle
+    }
+  }
+}
+
+/// The time of day on the CarPlay map, drawn by the app (#452).
+///
+/// > Show the time on the map in landscape mode and on CarPlay but don't use
+/// > Apple's built in widgets to do it.
+///
+/// A `DateFormatter` with the `j:mm` template rather than a hard "HH:mm": `j`
+/// resolves to whichever of 12- or 24-hour the head unit's locale uses, so a car
+/// set to a 12-hour clock does not suddenly show 13:00.
+///
+/// It ticks on the minute, not the second. A clock showing hours and minutes only
+/// changes sixty times an hour, and this view is over a moving map.
+final class CarPlayClockLabel: UIView {
+  private let label = UILabel()
+  private var tick: Timer?
+  private let formatter = DateFormatter()
+
+  /// Overridden by tests; production reads the device clock.
+  var clock: () -> Date = Date.init
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    formatter.setLocalizedDateFormatFromTemplate("j:mm")
+    label.font = .systemFont(ofSize: 20, weight: .semibold)
+    label.textColor = .white
+    // The map behind this is any colour, so the glyphs carry their own shadow
+    // rather than a panel — the same reasoning as the phone's map labels.
+    label.layer.shadowColor = UIColor.black.cgColor
+    label.layer.shadowOpacity = 0.8
+    label.layer.shadowRadius = 4
+    label.layer.shadowOffset = .zero
+    label.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(label)
+    NSLayoutConstraint.activate([
+      label.leadingAnchor.constraint(equalTo: leadingAnchor),
+      label.trailingAnchor.constraint(equalTo: trailingAnchor),
+      label.topAnchor.constraint(equalTo: topAnchor),
+      label.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+    isUserInteractionEnabled = false
+    refresh()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  deinit { tick?.invalidate() }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    // Stopped when the view leaves the window, so a disconnected head unit does
+    // not keep a timer alive.
+    window == nil ? tick?.invalidate() : refresh()
+  }
+
+  private func refresh() {
+    let now = clock()
+    label.text = formatter.string(from: now)
+    tick?.invalidate()
+    guard window != nil else { return }
+    // Rescheduled from the new time rather than repeating a fixed minute: a timer
+    // that drifts eventually fires just before the boundary and shows the minute
+    // that has already passed.
+    let seconds = Calendar.current.component(.second, from: now)
+    let delay = max(1, 60 - seconds)
+    tick = Timer.scheduledTimer(
+      withTimeInterval: TimeInterval(delay),
+      repeats: false
+    ) { [weak self] _ in
+      self?.refresh()
     }
   }
 }
