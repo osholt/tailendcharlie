@@ -461,7 +461,7 @@ Set<String> registeredTecRiderIds({
 class _RideActionsPanel extends StatelessWidget {
   const _RideActionsPanel({
     required this.canChangeRoute,
-    required this.onSettings,
+    required this.onAlertsAndReports,
     required this.onShareSummary,
     required this.onOpenRoster,
     required this.onShareRoster,
@@ -488,7 +488,7 @@ class _RideActionsPanel extends StatelessWidget {
   });
 
   final bool canChangeRoute;
-  final VoidCallback onSettings;
+  final VoidCallback onAlertsAndReports;
   final VoidCallback onShareSummary;
   final VoidCallback onOpenRoster;
   final VoidCallback onShareRoster;
@@ -540,13 +540,14 @@ class _RideActionsPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           ListTile(
-            key: const Key('ride-actions-settings'),
-            leading: const Icon(Icons.settings_outlined),
-            title: const Text('Settings'),
+            key: const Key('ride-actions-alerts'),
+            leading: const Icon(Icons.warning_amber_outlined),
+            title: const Text('Alerts and reports'),
             subtitle: const Text(
-              'Units, map style, rider symbol and ride preferences',
+              'Road alerts, off-route riders and traffic alternatives',
             ),
-            onTap: onSettings,
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onAlertsAndReports,
           ),
           ListTile(
             key: const Key('ride-actions-share-summary'),
@@ -885,7 +886,7 @@ List<RideDestination> rideDestinations({required bool simulation}) {
     next('Map', Icons.map_outlined, Icons.map),
     if (simulation) next('Ride Lab', Icons.science_outlined, Icons.science),
     next('Ride', Icons.two_wheeler_outlined, Icons.two_wheeler),
-    next('Alerts', Icons.warning_amber_outlined, Icons.warning_amber),
+    next('Settings', Icons.settings_outlined, Icons.settings),
   ];
 }
 
@@ -3669,12 +3670,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             0 => _buildMap(),
             1 => _buildSimulation(),
             2 => _buildDetails(),
-            _ => _buildAwareness(),
+            _ => _buildSettings(),
           }
         : switch (_selectedIndex) {
             0 => _buildMap(),
             1 => _buildDetails(),
-            _ => _buildAwareness(),
+            _ => _buildSettings(),
           };
     final session = widget.rideController.session!;
     final body = widget.rideController.rideStarted
@@ -4693,7 +4694,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   Widget _buildRideActions() => _RideActionsPanel(
     coordinationMode: widget.rideController.coordinationMode,
     canChangeRoute: _isSimulation || widget.rideController.isLocalRideLeader,
-    onSettings: _openUnitSettings,
+    onAlertsAndReports: _openAlertsAndReports,
     onShareSummary: _shareCurrentRideSummary,
     onOpenRoster: _openRoster,
     onShareRoster: _shareRoster,
@@ -4726,20 +4727,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     onLeaveOrEndRide: _confirmLeaveRideFromMap,
   );
 
-  void _openUnitSettings() {
+  void _openAlertsAndReports() {
     unawaited(
-      UnitSettingsSheet.show(
+      Navigator.of(
         context,
-        widget.distanceUnits,
-        widget.mapStyleMode,
-        widget.riderProfile,
-        speedLimitDisplay: widget.speedLimitDisplay,
-        currentRideActive: true,
-        lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
-        testControl: widget.testControl,
-        spokenGuidance: widget.spokenGuidance,
-        rideDiagnostics: widget.rideDiagnostics,
-      ),
+      ).push<void>(MaterialPageRoute<void>(builder: (_) => _buildAwareness())),
     );
   }
 
@@ -4872,8 +4864,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// #404: once a ride is under way on the map tab, with a route and a
   /// navigation fix, `hideWhileMoving` removes the whole bar — and the
   /// condition includes `_selectedIndex == 0`, so hiding the only control that
-  /// can change the index kept it hidden for the rest of the ride. The Ride and
-  /// Alerts tabs became unreachable, and the map's own corner menu could not
+  /// can change the index kept it hidden for the rest of the ride. Ride and
+  /// Settings became unreachable, and the map's own corner menu could not
   /// help because [RideMapFeature.onOpenRideMenu] was never supplied here: the
   /// button #133 added rendered in widget tests and never in the app.
   ///
@@ -5287,6 +5279,21 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         _observerAccessController?.localAssistance != null,
     serviceWarning: _warnings.isEmpty ? null : _warnings.join('\n'),
     connectivity: _connectivitySummary,
+  );
+
+  Widget _buildSettings() => SafeArea(
+    child: UnitSettingsSheet(
+      controller: widget.distanceUnits,
+      mapStyleMode: widget.mapStyleMode,
+      riderProfile: widget.riderProfile,
+      speedLimitDisplay: widget.speedLimitDisplay,
+      currentRideActive: true,
+      lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
+      testControl: widget.testControl,
+      spokenGuidance: widget.spokenGuidance,
+      rideDiagnostics: widget.rideDiagnostics,
+      embedded: true,
+    ),
   );
 
   /// The one connectivity answer, built here because this is the only place that
