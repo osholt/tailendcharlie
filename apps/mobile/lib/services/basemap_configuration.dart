@@ -12,6 +12,7 @@ class BasemapConfiguration {
     this.cacheNamespace = defaultCacheNamespace,
     this.persistentCachingAllowed = true,
     this.maximumNativeZoom = 18,
+    this.restrainedLightStyle = true,
   });
 
   factory BasemapConfiguration.fromEnvironment() => BasemapConfiguration(
@@ -62,6 +63,11 @@ class BasemapConfiguration {
   final String cacheNamespace;
   final bool persistentCachingAllowed;
 
+  /// Whether the default Liberty day style receives Tail End Charlie's
+  /// quieter road-first repaint. False preserves the provider's original
+  /// daytime palette. Custom styles are never repainted either way (#489).
+  final bool restrainedLightStyle;
+
   /// Names the provider whose tiles are cached, so a build that changes provider
   /// cannot serve the previous one's tiles out of the old cache. Tied to the
   /// default style; override it alongside the style URL.
@@ -70,8 +76,29 @@ class BasemapConfiguration {
 
   /// A copy using [darkStyleUrl] in place of [styleUrl] when [dark] is true
   /// and a dark style is actually configured; otherwise unchanged.
-  BasemapConfiguration forBrightness({required bool dark}) {
-    if (!dark || darkStyleUrl.trim().isEmpty) return this;
+  BasemapConfiguration forBrightness({
+    required bool dark,
+    bool restrainedLightStyle = true,
+  }) {
+    if (!dark) {
+      if (this.restrainedLightStyle == restrainedLightStyle) return this;
+      return BasemapConfiguration(
+        styleUrl: styleUrl,
+        darkStyleUrl: darkStyleUrl,
+        urlTemplate: urlTemplate,
+        attribution: attribution,
+        cacheNamespace: cacheNamespace,
+        persistentCachingAllowed: persistentCachingAllowed,
+        maximumNativeZoom: maximumNativeZoom,
+        restrainedLightStyle: restrainedLightStyle,
+      );
+    }
+    if (darkStyleUrl.trim().isEmpty) {
+      return forBrightness(
+        dark: false,
+        restrainedLightStyle: restrainedLightStyle,
+      );
+    }
     return BasemapConfiguration(
       styleUrl: darkStyleUrl,
       darkStyleUrl: darkStyleUrl,
@@ -80,6 +107,7 @@ class BasemapConfiguration {
       cacheNamespace: cacheNamespace,
       persistentCachingAllowed: persistentCachingAllowed,
       maximumNativeZoom: maximumNativeZoom,
+      restrainedLightStyle: restrainedLightStyle,
     );
   }
 

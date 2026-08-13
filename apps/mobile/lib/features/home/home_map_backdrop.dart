@@ -6,6 +6,7 @@ import '../../controllers/speed_limit_display_controller.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/imported_route.dart' as route_domain;
+import '../../domain/map_style_mode.dart';
 import '../../services/device_location_source.dart';
 import '../map/ride_map_feature.dart';
 
@@ -135,6 +136,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
             darkMapStyle: widget.mapStyleMode.resolveDark(
               MediaQuery.platformBrightnessOf(context),
             ),
+            restrainedLightMapStyle:
+                widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
             speedLimitDisplay: widget.speedLimitDisplay,
             distanceUnit: widget.distanceUnit,
             // No ride yet, so nothing may edit a ride's route from here and no

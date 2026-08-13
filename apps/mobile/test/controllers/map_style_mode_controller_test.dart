@@ -114,6 +114,27 @@ void main() {
     expect(reloaded.value, MapStyleMode.dark);
   });
 
+  test(
+    'defaults to restrained day tiles and persists original tiles',
+    () async {
+      final controller = await MapStyleModeController.load(
+        locationSource: () async => null,
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.dayStyle, DayMapStyle.restrained);
+
+      await controller.setDayStyle(DayMapStyle.original);
+      expect(controller.dayStyle, DayMapStyle.original);
+
+      final reloaded = await MapStyleModeController.load(
+        locationSource: () async => null,
+      );
+      addTearDown(reloaded.dispose);
+      expect(reloaded.dayStyle, DayMapStyle.original);
+    },
+  );
+
   group('sun position caching', () {
     test('setMode(sunriseSunset) fetches a location fix', () async {
       const fixture = (latitude: 51.5, longitude: -0.1);

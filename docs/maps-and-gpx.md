@@ -16,6 +16,12 @@ no account, HTTP client, contribution credential or server request in this
 personal-layer path; global opt-in coverage is a separate feature and data
 boundary.
 
+The daytime map has two saved settings: **Restrained** applies Tail End
+Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
+keeps the provider's daytime colours and labels. They use the same vector tile
+source and offline tile cache; only their small style-document caches are kept
+separate so switching cannot serve the wrong palette.
+
 ## Saved-route place labels stay offline
 
 The Ride library labels stored geometry with an approximate start and finish

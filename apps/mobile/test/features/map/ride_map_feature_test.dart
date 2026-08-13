@@ -112,6 +112,12 @@ void main() {
     expect(find.byKey(const Key('personal-rides-heatmap-layer')), findsNothing);
   });
 
+  test('environment map factory can preserve original daytime tiles', () {
+    final map = RideMapFeature.fromEnvironment(restrainedLightMapStyle: false);
+
+    expect(map.basemapConfiguration.restrainedLightStyle, isFalse);
+  });
+
   test('group mini-map avoids a second MapLibre surface on Android', () {
     expect(
       groupMiniMapRenderer(

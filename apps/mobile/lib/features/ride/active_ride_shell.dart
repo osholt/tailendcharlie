@@ -32,6 +32,7 @@ import '../../domain/completed_ride_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart' as route_domain;
+import '../../domain/map_style_mode.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/ride_coordination_mode.dart';
 import '../../domain/ride_event.dart';
@@ -1730,6 +1731,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               dark: widget.mapStyleMode.resolveDark(
                 MediaQuery.platformBrightnessOf(context),
               ),
+              restrainedLightStyle:
+                  widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
             ),
         distanceMeters: preview.alternativeDistanceMeters,
         duration: preview.alternativeDuration,
@@ -2590,6 +2593,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           dark: widget.mapStyleMode.resolveDark(
             MediaQuery.platformBrightnessOf(context),
           ),
+          restrainedLightStyle:
+              widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
         );
     final markerOverlay = _junctionMarkerOverlay.value;
     final navigationPosition = _mapNavigationPosition.value;
@@ -3903,6 +3908,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           dark: widget.mapStyleMode.resolveDark(
             MediaQuery.platformBrightnessOf(context),
           ),
+          restrainedLightStyle:
+              widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
         );
         unawaited(
           bridge.publishMapStyle(
@@ -3925,6 +3932,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
       ),
+      restrainedLightMapStyle:
+          widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
       localMotorcycleStyle:
           widget.rideController.session?.motorcycleStyle ??
           motorcycleIconStyleDefault,

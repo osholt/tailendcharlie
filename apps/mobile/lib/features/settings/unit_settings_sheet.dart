@@ -218,6 +218,37 @@ class UnitSettingsSheet extends StatelessWidget {
             style: const TextStyle(color: Color(0xFF98A3B1)),
           ),
           const SizedBox(height: 18),
+          Text(
+            'DAYTIME MAP',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF8D98A7),
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SegmentedButton<DayMapStyle>(
+            key: const Key('day-map-style-selector'),
+            segments: DayMapStyle.values
+                .map(
+                  (style) => ButtonSegment<DayMapStyle>(
+                    value: style,
+                    label: Text(style.label),
+                  ),
+                )
+                .toList(growable: false),
+            selected: {mapStyleMode.dayStyle},
+            onSelectionChanged: (selection) {
+              unawaited(mapStyleMode.setDayStyle(selection.single));
+            },
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Restrained uses the quieter road-first daytime palette. Original '
+            'keeps the OpenFreeMap Liberty colours. This applies whenever the '
+            'map is in light or sun-based daytime mode.',
+            style: TextStyle(color: Color(0xFF98A3B1)),
+          ),
+          const SizedBox(height: 18),
           SwitchListTile.adaptive(
             key: const Key('posted-speed-limit-toggle'),
             contentPadding: EdgeInsets.zero,
