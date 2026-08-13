@@ -166,7 +166,7 @@ void main() {
   testWidgets('a past ride is reachable by words alone', (tester) async {
     // Moved one tap in by #426, which removed the full-screen start panel these
     // rows used to sit on. The #306 rule is what matters and it still holds: the
-    // path is words the whole way, "More" then "Previous rides", with no
+    // path is words the whole way, "More" then "Ride library", with no
     // unlabelled icon anywhere on it. An overflow nobody can read would not be
     // reachable, which is why the control is a word rather than `more_horiz`.
     await pumpHome(tester);
@@ -175,7 +175,16 @@ void main() {
     await tester.tap(find.text('More'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Previous rides'), findsOneWidget);
+    expect(find.text('Ride library'), findsOneWidget);
+    expect(
+      find.textContaining('Recorded routes and previous rides'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Ride library'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ride library'), findsOneWidget);
+    expect(find.text('No saved routes yet'), findsOneWidget);
   });
 
   testWidgets('the simulator and route recorder are reachable too', (

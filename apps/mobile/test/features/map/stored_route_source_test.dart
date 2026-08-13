@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/imported_track_matcher.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
+import 'package:ride_relay/services/approximate_place_index.dart';
 import 'package:ride_relay/services/route_importer.dart';
 import 'package:ride_relay/services/stored_route_library.dart';
 
@@ -42,7 +44,7 @@ void main() {
     await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Use a saved route'), findsWidgets);
+    expect(find.text('Ride library'), findsWidgets);
     expect(find.text('RECORDED ROUTES'), findsOneWidget);
     expect(find.text('Scouted loop'), findsOneWidget);
 
@@ -311,6 +313,7 @@ Future<void> _pumpMap(
           completedRides: rides ?? InMemoryCompletedRideStore(),
           idFactory: () => 'stored-route-id',
           clock: () => DateTime.utc(2026, 7, 28),
+          approximatePlaceIndex: _testPlaces,
         ),
         changeRouteRequestToken: openChangeRouteSheet ? Object() : null,
         onRouteCommitted: onRouteCommitted,
@@ -320,6 +323,17 @@ Future<void> _pumpMap(
   );
   await tester.pumpAndSettle();
 }
+
+final _testPlaces = ApproximatePlaceIndex.fromJson(
+  jsonEncode({
+    'schemaVersion': 1,
+    'attribution': 'Test offline places',
+    'places': [
+      [5145000, -259000, 'Kingswood', 2],
+      [5147000, -259000, 'Chippenham', 1],
+    ],
+  }),
+);
 
 Future<void> _confirmReview(WidgetTester tester) async {
   await tester.scrollUntilVisible(

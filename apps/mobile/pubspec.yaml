@@ -90,6 +90,7 @@ flutter:
     - assets/discovery_catalogue.geojson
     - assets/fixed_speed_cameras.geojson
     - assets/mini_roundabouts.geojson
+    - assets/route_places.json
     - assets/icons/motorcycles/
 
   # To add assets to your application, add an assets section, like this:
