@@ -449,7 +449,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       self?.mapViewController?.recenter()
     }
     button.image = mapButtonImage(
-      named: "location.north.fill",
+      // The phone's landscape control uses an outlined navigation arrow.
+      named: "location.north",
       color: CarPlayPalette.actionInk,
       accessibilityLabel: "Follow my location"
     )
@@ -485,7 +486,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       self?.presentEmergencyConfirmation()
     }
     button.image = mapButtonImage(
-      named: "sos.circle.fill",
+      // CPMapButton supplies the circular target already. The bare SOS glyph
+      // matches the phone and avoids the double-circle visible on the head unit.
+      named: "sos",
       color: CarPlayPalette.emergencyFill,
       accessibilityLabel: "SOS"
     )
@@ -512,7 +515,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     interfaceController: CPInterfaceController,
     template: CPListTemplate
   ) -> CPBarButton {
-    CPBarButton(title: "Ride") { [weak self, weak interfaceController] _ in
+    // Mirror the phone's compact landscape hamburger instead of allowing the
+    // word "Ride" to expand into the largest control in the navigation bar.
+    let image = mapButtonImage(
+      named: "line.3.horizontal",
+      color: CarPlayPalette.actionInk,
+      accessibilityLabel: "Ride actions"
+    ) ?? UIImage()
+    return CPBarButton(image: image) { [weak self, weak interfaceController] _ in
       guard
         let self,
         self.sceneLifecycle.rootReady,
@@ -871,8 +881,11 @@ private final class CarPlayNavigationViewController: UIViewController,
       tecBadge.leadingAnchor.constraint(
         greaterThanOrEqualTo: view.safeAreaLayoutGuide.centerXAnchor
       ),
-      groupMiniMap.widthAnchor.constraint(equalToConstant: 110),
-      groupMiniMap.heightAnchor.constraint(equalToConstant: 70),
+      // The same glance-sized footprint as the phone in landscape. The old
+      // 110x70 card made rider initials and its distance scale needlessly tiny
+      // on the much wider CarPlay canvas.
+      groupMiniMap.widthAnchor.constraint(equalToConstant: 196),
+      groupMiniMap.heightAnchor.constraint(equalToConstant: 116),
       groupMiniMap.trailingAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.trailingAnchor,
         constant: -12
@@ -881,17 +894,14 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.bottomAnchor,
         constant: -14
       ),
-      // Bottom-leading: the only corner of this view with nothing in it. The
-      // navigation bar and the trailing map buttons belong to CarPlay's own
-      // template, the TEC badge holds the top-leading corner, the speed badge the
-      // top-trailing, and the group mini-map the bottom-trailing.
-      clockLabel.leadingAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.leadingAnchor,
-        constant: 12
+      // Match the phone's landscape clock at top-centre. This also keeps it off
+      // MapLibre's attribution control, which occupies the bottom-leading edge.
+      clockLabel.centerXAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.centerXAnchor
       ),
-      clockLabel.bottomAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-        constant: -14
+      clockLabel.topAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.topAnchor,
+        constant: 12
       ),
     ])
   }
