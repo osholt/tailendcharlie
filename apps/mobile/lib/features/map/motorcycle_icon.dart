@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -80,6 +81,33 @@ MotorcycleIconStyle motorcycleIconStyleFromName(String? name) =>
 
 enum RiderSymbolKind { motorcycle, initials, emoji }
 
+/// Ink choices for an initials marker. These stay separate from the rider's
+/// badge colour because the same initials need to remain recognisable when two
+/// riders choose similar identity colours.
+enum RiderInitialsInk { dark, white, yellow, cyan, pink, purple }
+
+extension RiderInitialsInkData on RiderInitialsInk {
+  Color get color => switch (this) {
+    RiderInitialsInk.dark => const Color(0xFF14202B),
+    RiderInitialsInk.white => const Color(0xFFFFFFFF),
+    RiderInitialsInk.yellow => const Color(0xFFFFD84D),
+    RiderInitialsInk.cyan => const Color(0xFF3DDCFF),
+    RiderInitialsInk.pink => const Color(0xFFFF76C8),
+    RiderInitialsInk.purple => const Color(0xFF9B7BFF),
+  };
+
+  String get label => switch (this) {
+    RiderInitialsInk.dark => 'Dark',
+    RiderInitialsInk.white => 'White',
+    RiderInitialsInk.yellow => 'Yellow',
+    RiderInitialsInk.cyan => 'Cyan',
+    RiderInitialsInk.pink => 'Pink',
+    RiderInitialsInk.purple => 'Purple',
+  };
+}
+
+const riderInitialsInkDefault = RiderInitialsInk.dark;
+
 /// How a rider identifies themselves inside their coloured marker badge.
 ///
 /// The wire representation deliberately reuses the existing
@@ -89,20 +117,33 @@ enum RiderSymbolKind { motorcycle, initials, emoji }
 class RiderSymbol {
   const RiderSymbol.motorcycle()
     : kind = RiderSymbolKind.motorcycle,
-      emoji = null;
+      emoji = null,
+      customInitials = null,
+      initialsInk = riderInitialsInkDefault;
 
-  const RiderSymbol.initials() : kind = RiderSymbolKind.initials, emoji = null;
+  const RiderSymbol.initials({
+    this.customInitials,
+    this.initialsInk = riderInitialsInkDefault,
+  }) : kind = RiderSymbolKind.initials,
+       emoji = null;
 
   const RiderSymbol.emoji(this.emoji)
     : kind = RiderSymbolKind.emoji,
+      customInitials = null,
+      initialsInk = riderInitialsInkDefault,
       assert(emoji != null && emoji != '');
 
   final RiderSymbolKind kind;
   final String? emoji;
+  final String? customInitials;
+  final RiderInitialsInk initialsInk;
 
   String get storageValue => switch (kind) {
     RiderSymbolKind.motorcycle => 'motorcycle',
-    RiderSymbolKind.initials => 'initials',
+    RiderSymbolKind.initials =>
+      customInitials == null && initialsInk == riderInitialsInkDefault
+          ? 'initials'
+          : 'initials:v1:${_encodeInitials(customInitials)}:${initialsInk.name}',
     RiderSymbolKind.emoji => 'emoji:$emoji',
   };
 
@@ -114,23 +155,48 @@ class RiderSymbol {
   String label(String displayName, MotorcycleIconStyle motorcycleStyle) =>
       switch (kind) {
         RiderSymbolKind.motorcycle => motorcycleStyle.label,
-        RiderSymbolKind.initials => 'Initials ${riderInitials(displayName)}',
+        RiderSymbolKind.initials => 'Initials ${initialsFor(displayName)}',
         RiderSymbolKind.emoji => 'Emoji $emoji',
       };
+
+  String initialsFor(String displayName) =>
+      customInitials ?? riderInitials(displayName);
+
+  RiderSymbol withInitials({
+    String? customInitials,
+    bool useAutomaticInitials = false,
+    RiderInitialsInk? ink,
+  }) => RiderSymbol.initials(
+    customInitials: useAutomaticInitials
+        ? null
+        : customInitials ?? this.customInitials,
+    initialsInk: ink ?? initialsInk,
+  );
 
   String imageName(String displayName, MotorcycleIconStyle motorcycleStyle) {
     if (kind == RiderSymbolKind.motorcycle) return motorcycleStyle.name;
     final glyph = kind == RiderSymbolKind.initials
-        ? riderInitials(displayName)
+        ? initialsFor(displayName)
         : emoji!;
     final codePoints = glyph.runes
         .map((value) => value.toRadixString(16))
         .join('-');
-    return 'rider-symbol-${kind.name}-$codePoints';
+    return 'rider-symbol-${kind.name}-$codePoints'
+        '${kind == RiderSymbolKind.initials ? '-${initialsInk.name}' : ''}';
   }
 
   static RiderSymbol fromStorageValue(String? value) {
     if (value == 'initials') return const RiderSymbol.initials();
+    if (value?.startsWith('initials:v1:') ?? false) {
+      final parts = value!.split(':');
+      if (parts.length != 4) return riderSymbolDefault;
+      final initials = _decodeInitials(parts[2]);
+      final ink = _riderInitialsInkFromName(parts[3]);
+      if ((parts[2].isNotEmpty && initials == null) || ink == null) {
+        return riderSymbolDefault;
+      }
+      return RiderSymbol.initials(customInitials: initials, initialsInk: ink);
+    }
     if (value?.startsWith('emoji:') ?? false) {
       final emoji = value!.substring('emoji:'.length);
       if (riderEmojiChoices.contains(emoji)) return RiderSymbol.emoji(emoji);
@@ -147,10 +213,14 @@ class RiderSymbol {
 
   @override
   bool operator ==(Object other) =>
-      other is RiderSymbol && other.kind == kind && other.emoji == emoji;
+      other is RiderSymbol &&
+      other.kind == kind &&
+      other.emoji == emoji &&
+      other.customInitials == customInitials &&
+      other.initialsInk == initialsInk;
 
   @override
-  int get hashCode => Object.hash(kind, emoji);
+  int get hashCode => Object.hash(kind, emoji, customInitials, initialsInk);
 }
 
 const riderSymbolDefault = RiderSymbol.motorcycle();
@@ -175,7 +245,63 @@ const riderEmojiChoices = <String>[
   '🦄',
   '🐢',
   '🦉',
+  '🧭',
+  '🏔️',
+  '🦅',
+  '🦁',
+  '🐻',
+  '🐙',
+  '🍩',
+  '🎯',
+  '🤘',
+  '💀',
+  '👻',
+  '🥷',
+  '🦖',
+  '🐸',
+  '🌈',
+  '☕',
 ];
+
+/// Returns an uppercase 1–3 letter/number identity, or null for automatic
+/// initials. Punctuation and control characters are deliberately excluded so
+/// the compact wire value is safe to parse on Flutter and CarPlay.
+String? normalizeCustomRiderInitials(String value) {
+  final normalized = value.trim().toUpperCase();
+  if (normalized.isEmpty) return null;
+  final characters = normalized.characters.toList(growable: false);
+  if (characters.length > 3) return null;
+  final letterOrNumber = RegExp(r'^[\p{L}\p{N}]$', unicode: true);
+  if (characters.any((character) => !letterOrNumber.hasMatch(character))) {
+    return null;
+  }
+  // Keeps `initials:v1:<base64>:<ink>` below the existing 40-character
+  // motorcycleStyle relay limit even for multi-byte letters.
+  if (utf8.encode(normalized).length > 12) return null;
+  return normalized;
+}
+
+String _encodeInitials(String? initials) {
+  if (initials == null) return '';
+  return base64Url.encode(utf8.encode(initials)).replaceAll('=', '');
+}
+
+String? _decodeInitials(String encoded) {
+  if (encoded.isEmpty) return null;
+  try {
+    final padded = encoded.padRight((encoded.length + 3) ~/ 4 * 4, '=');
+    return normalizeCustomRiderInitials(utf8.decode(base64Url.decode(padded)));
+  } on FormatException {
+    return null;
+  }
+}
+
+RiderInitialsInk? _riderInitialsInkFromName(String name) {
+  for (final ink in RiderInitialsInk.values) {
+    if (ink.name == name) return ink;
+  }
+  return null;
+}
 
 String riderInitials(String displayName) {
   final words = displayName
@@ -311,10 +437,14 @@ class RiderMarkerBadge extends StatelessWidget {
             key: const Key('rider-marker-initials-fill'),
             fit: BoxFit.contain,
             child: Text(
-              riderInitials(displayName),
+              symbol.initialsFor(displayName),
               maxLines: 1,
               style: TextStyle(
-                color: glyphColor,
+                color: symbol.initialsInk.color,
+                shadows: riderInitialsShadows(
+                  symbol.initialsInk.color,
+                  size * 0.025,
+                ),
                 // Start at the badge diameter, then let FittedBox use whichever
                 // dimension is limiting. One and two letters therefore occupy
                 // the circle instead of inheriting a body-text-sized glyph
@@ -356,7 +486,7 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
     return (bytes: await loadMotorcycleIconPng(motorcycleStyle), sdf: true);
   }
   final glyph = symbol.kind == RiderSymbolKind.initials
-      ? riderInitials(displayName)
+      ? symbol.initialsFor(displayName)
       : symbol.emoji!;
   final initials = symbol.kind == RiderSymbolKind.initials;
   return (
@@ -370,11 +500,16 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
           text: TextSpan(
             text: glyph,
             style: TextStyle(
-              color: const Color(0xFFFFFFFF),
+              color: initials
+                  ? symbol.initialsInk.color
+                  : const Color(0xFFFFFFFF),
               fontSize: size * (initials ? 1 : 0.72),
               height: initials ? 0.9 : 1,
               fontWeight: initials ? FontWeight.w900 : FontWeight.normal,
               letterSpacing: initials ? -3 : null,
+              shadows: initials
+                  ? riderInitialsShadows(symbol.initialsInk.color, size * 0.012)
+                  : null,
             ),
           ),
         )..layout();
@@ -404,8 +539,23 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
         );
       },
     ),
-    sdf: initials,
+    // Initials now carry rider-selected ink and their own contrast edge. A
+    // non-SDF image preserves those colours; MapLibre ignores iconColor for it
+    // just as it already does for emoji rasters.
+    sdf: false,
   );
+}
+
+List<Shadow> riderInitialsShadows(Color ink, double offset) {
+  final edge = ink.computeLuminance() > 0.48
+      ? const Color(0xE610151C)
+      : const Color(0xE6FFFFFF);
+  return <Shadow>[
+    Shadow(color: edge, offset: Offset(-offset, 0)),
+    Shadow(color: edge, offset: Offset(offset, 0)),
+    Shadow(color: edge, offset: Offset(0, -offset)),
+    Shadow(color: edge, offset: Offset(0, offset)),
+  ];
 }
 
 /// Renders an arbitrary Material icon glyph as a PNG, for markers (such as

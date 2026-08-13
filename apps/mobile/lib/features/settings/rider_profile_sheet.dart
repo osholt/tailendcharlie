@@ -118,7 +118,7 @@ class _RiderProfileSheetState extends State<RiderProfileSheet> {
                         shape: BoxShape.circle,
                         border: Border.all(
                           color: color == _color
-                              ? Colors.white
+                              ? riderBadgeStrokeColor(color.color)
                               : Colors.transparent,
                           width: 3,
                         ),

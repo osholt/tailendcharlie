@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'motorcycle_icon.dart';
 
@@ -52,11 +53,17 @@ class RiderSymbolPicker extends StatelessWidget {
             key: Key('$keyPrefix-initials'),
             label: 'Initials',
             selected: selectedSymbol.kind == RiderSymbolKind.initials,
-            symbol: const RiderSymbol.initials(),
+            symbol: selectedSymbol.kind == RiderSymbolKind.initials
+                ? selectedSymbol
+                : const RiderSymbol.initials(),
             displayName: displayName,
             motorcycleStyle: motorcycleStyle,
             badgeColor: badgeColor,
-            onTap: () => onSymbolChanged(const RiderSymbol.initials()),
+            onTap: () => onSymbolChanged(
+              selectedSymbol.kind == RiderSymbolKind.initials
+                  ? selectedSymbol
+                  : const RiderSymbol.initials(),
+            ),
           ),
           _SymbolChoice(
             key: Key('$keyPrefix-emoji'),
@@ -163,11 +170,90 @@ class RiderSymbolPicker extends StatelessWidget {
               ),
           ],
         )
-      else
+      else ...[
+        TextFormField(
+          key: const Key('rider-custom-initials'),
+          initialValue: selectedSymbol.customInitials ?? '',
+          maxLength: 3,
+          textCapitalization: TextCapitalization.characters,
+          inputFormatters: [
+            LengthLimitingTextInputFormatter(3),
+            FilteringTextInputFormatter.allow(
+              RegExp(r'[\p{L}\p{N}]', unicode: true),
+            ),
+          ],
+          decoration: InputDecoration(
+            labelText: 'Marker initials',
+            hintText: riderInitials(displayName),
+            counterText: '',
+            helperText:
+                'Leave blank to use ${riderInitials(displayName)} from your name.',
+          ),
+          onChanged: (value) {
+            final normalized = normalizeCustomRiderInitials(value);
+            onSymbolChanged(
+              selectedSymbol.withInitials(
+                customInitials: normalized,
+                useAutomaticInitials: normalized == null,
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Initials colour',
+          style: TextStyle(color: Color(0xFFABB5C1)),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 9,
+          runSpacing: 9,
+          children: [
+            for (final ink in RiderInitialsInk.values)
+              Semantics(
+                button: true,
+                selected: selectedSymbol.initialsInk == ink,
+                label: '${ink.label} initials colour',
+                child: InkWell(
+                  key: Key('$keyPrefix-initials-ink-${ink.name}'),
+                  customBorder: const CircleBorder(),
+                  onTap: () =>
+                      onSymbolChanged(selectedSymbol.withInitials(ink: ink)),
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: badgeColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: selectedSymbol.initialsInk == ink
+                            ? Colors.white
+                            : Colors.transparent,
+                        width: 2,
+                      ),
+                    ),
+                    child: Text(
+                      'A',
+                      style: TextStyle(
+                        color: ink.color,
+                        shadows: riderInitialsShadows(ink.color, 0.8),
+                        fontSize: 26,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
         Text(
-          'Your marker will show ${riderInitials(displayName)}.',
+          'Your marker will show ${selectedSymbol.initialsFor(displayName)} in ${selectedSymbol.initialsInk.label.toLowerCase()}.',
           style: const TextStyle(color: Color(0xFF8994A2), fontSize: 12),
         ),
+      ],
     ],
   );
 }

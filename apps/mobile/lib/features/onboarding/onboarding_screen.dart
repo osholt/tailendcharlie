@@ -196,7 +196,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     shape: BoxShape.circle,
                     border: Border.all(
                       color: color == _riderColor
-                          ? Colors.white
+                          ? riderBadgeStrokeColor(color.color)
                           : Colors.transparent,
                       width: 3,
                     ),

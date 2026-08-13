@@ -1444,14 +1444,22 @@ private final class CarPlayRiderAnnotationView: MLNAnnotationView {
     layer.borderColor = CarPlayPalette.casing.cgColor
     label.text = nil
     label.attributedText = nil
+    label.textColor = CarPlayPalette.markerGlyph
+    label.shadowColor = nil
+    label.shadowOffset = .zero
     imageView.image = nil
 
-    if rider.riderSymbol == "initials" {
-      let initials = riderInitials(rider.title ?? "")
+    if let initials = initialsIdentity(
+      symbol: rider.riderSymbol,
+      fallbackName: rider.title ?? ""
+    ) {
       label.attributedText = NSAttributedString(
-        string: initials,
+        string: initials.text,
         attributes: [.kern: -0.8]
       )
+      label.textColor = initials.color
+      label.shadowColor = initials.edge
+      label.shadowOffset = CGSize(width: 0.7, height: 0.7)
       label.font = .systemFont(ofSize: 30, weight: .black)
     } else if rider.riderSymbol.hasPrefix("emoji:") {
       label.text = String(rider.riderSymbol.dropFirst("emoji:".count))
@@ -1460,6 +1468,52 @@ private final class CarPlayRiderAnnotationView: MLNAnnotationView {
       imageView.image = motorcycleImage(for: rider.motorcycleStyle)
     }
     setNeedsLayout()
+  }
+
+  private func initialsIdentity(
+    symbol: String,
+    fallbackName: String
+  ) -> (text: String, color: UIColor, edge: UIColor)? {
+    if symbol == "initials" {
+      return (
+        riderInitials(fallbackName),
+        CarPlayPalette.markerGlyph,
+        UIColor.white.withAlphaComponent(0.9)
+      )
+    }
+    guard symbol.hasPrefix("initials:v1:") else { return nil }
+    let parts = symbol.split(separator: ":", omittingEmptySubsequences: false)
+    guard parts.count == 4, parts[0] == "initials", parts[1] == "v1" else {
+      return nil
+    }
+    let encoded = String(parts[2])
+    let text: String
+    if encoded.isEmpty {
+      text = riderInitials(fallbackName)
+    } else {
+      var base64 = encoded.replacingOccurrences(of: "-", with: "+")
+        .replacingOccurrences(of: "_", with: "/")
+      base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+      guard
+        let data = Data(base64Encoded: base64),
+        let decoded = String(data: data, encoding: .utf8)
+      else { return nil }
+      let normalized = decoded.uppercased()
+      guard
+        (1...3).contains(normalized.count),
+        normalized.unicodeScalars.allSatisfy({
+          CharacterSet.alphanumerics.contains($0)
+        })
+      else { return nil }
+      text = normalized
+    }
+    let inkName = String(parts[3])
+    guard let ink = initialsInk(named: inkName) else { return nil }
+    let darkEdgeNames: Set<String> = ["white", "yellow", "cyan", "pink"]
+    let edge = darkEdgeNames.contains(inkName)
+      ? CarPlayPalette.casing.withAlphaComponent(0.9)
+      : UIColor.white.withAlphaComponent(0.9)
+    return (text, ink, edge)
   }
 
   private func riderInitials(_ name: String) -> String {
@@ -1478,7 +1532,24 @@ private final class CarPlayRiderAnnotationView: MLNAnnotationView {
     case "cyan": return UIColor(red: 0x5A / 255, green: 0xC8 / 255, blue: 0xFA / 255, alpha: 1)
     case "amber": return UIColor(red: 0xD9 / 255, green: 0xA4 / 255, blue: 0x41 / 255, alpha: 1)
     case "crimson": return UIColor(red: 0xD9 / 255, green: 0x60 / 255, blue: 0x7A / 255, alpha: 1)
+    case "purple": return UIColor(red: 0x9B / 255, green: 0x7B / 255, blue: 0xFF / 255, alpha: 1)
+    case "white": return UIColor(red: 0xF4 / 255, green: 0xF6 / 255, blue: 0xF8 / 255, alpha: 1)
+    case "blue": return UIColor(red: 0x5B / 255, green: 0x8D / 255, blue: 0xEF / 255, alpha: 1)
+    case "lime": return UIColor(red: 0xA7 / 255, green: 0xD9 / 255, blue: 0x57 / 255, alpha: 1)
+    case "slate": return UIColor(red: 0x87 / 255, green: 0x96 / 255, blue: 0xA8 / 255, alpha: 1)
     default: return CarPlayPalette.rider
+    }
+  }
+
+  private func initialsInk(named name: String) -> UIColor? {
+    switch name {
+    case "dark": return CarPlayPalette.markerGlyph
+    case "white": return .white
+    case "yellow": return UIColor(red: 0xFF / 255, green: 0xD8 / 255, blue: 0x4D / 255, alpha: 1)
+    case "cyan": return UIColor(red: 0x3D / 255, green: 0xDC / 255, blue: 0xFF / 255, alpha: 1)
+    case "pink": return UIColor(red: 0xFF / 255, green: 0x76 / 255, blue: 0xC8 / 255, alpha: 1)
+    case "purple": return UIColor(red: 0x9B / 255, green: 0x7B / 255, blue: 0xFF / 255, alpha: 1)
+    default: return nil
     }
   }
 
