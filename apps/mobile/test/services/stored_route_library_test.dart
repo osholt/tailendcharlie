@@ -33,6 +33,46 @@ void main() {
     expect(candidates[1].rideCode, 'AB12CD');
     expect(candidates[1].isRecording, isFalse);
     expect(candidates[2].isRecording, isTrue);
+    expect(candidates.first.startPoint?.latitude, 51.45);
+    expect(candidates.first.endPoint?.latitude, 51.46);
+  });
+
+  test('endpoint points ignore unridable fragments around the track', () async {
+    final recorded = InMemoryRecordedRouteStore();
+    await recorded.save(
+      ImportedRoute(
+        id: 'fragments',
+        name: 'With fragments',
+        importedAt: DateTime.utc(2026, 7, 26),
+        sourceFileName: 'recorded.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [GeoPoint(latitude: 0, longitude: 0)],
+          ),
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 51.45, longitude: -2.1),
+              GeoPoint(latitude: 51.46, longitude: -1.5),
+            ],
+          ),
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [GeoPoint(latitude: 1, longitude: 1)],
+          ),
+        ],
+        waypoints: const [],
+      ),
+    );
+
+    final candidate = (await _library(
+      recorded,
+      InMemoryCompletedRideStore(),
+    ).list()).single;
+
+    expect(candidate.startPoint?.latitude, 51.45);
+    expect(candidate.endPoint?.longitude, -1.5);
   });
 
   test('a ride whose geometry is gone is not selectable', () async {

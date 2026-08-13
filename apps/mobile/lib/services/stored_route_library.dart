@@ -4,6 +4,7 @@ import '../domain/completed_ride.dart';
 import '../domain/completed_ride_store.dart';
 import '../domain/imported_route.dart';
 import '../domain/recorded_route_store.dart';
+import 'approximate_place_index.dart';
 import 'recorded_track_cleaner.dart';
 
 /// What a stored route actually is, which decides how it may be offered.
@@ -63,6 +64,16 @@ class StoredRouteCandidate {
   bool get isRecording => origin != StoredRouteOrigin.previousRidePlan;
 
   int get pointCount => geometry.pathPointCount;
+
+  List<RoutePath> get _ridablePaths => geometry.paths
+      .where((path) => path.points.length >= 2)
+      .toList(growable: false);
+
+  GeoPoint? get startPoint =>
+      _ridablePaths.isEmpty ? null : _ridablePaths.first.points.first;
+
+  GeoPoint? get endPoint =>
+      _ridablePaths.isEmpty ? null : _ridablePaths.last.points.last;
 }
 
 /// A rider's answer to "which of these, and how".
@@ -116,6 +127,7 @@ class StoredRouteLibrary {
     required this.recordedRoutes,
     required this.completedRides,
     this.cleaner = const RecordedTrackCleaner(),
+    this.approximatePlaceIndex,
     String Function()? idFactory,
     DateTime Function()? clock,
   }) : _idFactory = idFactory ?? const Uuid().v4,
@@ -124,6 +136,7 @@ class StoredRouteLibrary {
   final RecordedRouteStore recordedRoutes;
   final CompletedRideStore completedRides;
   final RecordedTrackCleaner cleaner;
+  final ApproximatePlaceIndex? approximatePlaceIndex;
   final String Function() _idFactory;
   final DateTime Function() _clock;
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/measurement_formatter.dart';
+import '../../services/approximate_place_index.dart';
 import '../../services/stored_route_library.dart';
 import '../ride/route_sketch.dart';
 import 'route_review_screen.dart' show routeLengthMeters;
@@ -20,20 +21,28 @@ class StoredRoutePickerScreen extends StatefulWidget {
     super.key,
     required this.library,
     required this.distanceUnit,
+    this.openPreviousRideArchive,
   });
 
   final StoredRouteLibrary library;
   final DistanceUnit distanceUnit;
+  final Future<StoredRouteSelection?> Function(BuildContext context)?
+  openPreviousRideArchive;
 
   static Future<StoredRouteSelection?> show(
     BuildContext context, {
     required StoredRouteLibrary library,
     required DistanceUnit distanceUnit,
+    Future<StoredRouteSelection?> Function(BuildContext context)?
+    openPreviousRideArchive,
   }) => Navigator.of(context).push<StoredRouteSelection>(
     MaterialPageRoute(
       fullscreenDialog: true,
-      builder: (_) =>
-          StoredRoutePickerScreen(library: library, distanceUnit: distanceUnit),
+      builder: (_) => StoredRoutePickerScreen(
+        library: library,
+        distanceUnit: distanceUnit,
+        openPreviousRideArchive: openPreviousRideArchive,
+      ),
     ),
   );
 
@@ -43,14 +52,26 @@ class StoredRoutePickerScreen extends StatefulWidget {
 }
 
 class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
-  late final Future<List<StoredRouteCandidate>> _candidates = widget.library
-      .list();
+  late final Future<_StoredRoutePickerData> _data = _load();
+
+  Future<_StoredRoutePickerData> _load() async {
+    final candidates = await widget.library.list();
+    if (candidates.isEmpty) {
+      return _StoredRoutePickerData(candidates: candidates, places: null);
+    }
+    return _StoredRoutePickerData(
+      candidates: candidates,
+      places:
+          widget.library.approximatePlaceIndex ??
+          await ApproximatePlaceIndex.load(),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Use a saved route')),
-    body: FutureBuilder<List<StoredRouteCandidate>>(
-      future: _candidates,
+    appBar: AppBar(title: const Text('Ride library')),
+    body: FutureBuilder<_StoredRoutePickerData>(
+      future: _data,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return _Message(
@@ -58,11 +79,19 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
             body: '${snapshot.error}',
           );
         }
-        final candidates = snapshot.data;
-        if (candidates == null) {
+        final data = snapshot.data;
+        if (data == null) {
           return const Center(child: CircularProgressIndicator());
         }
-        if (candidates.isEmpty) return const _EmptyLibrary();
+        final candidates = data.candidates;
+        if (candidates.isEmpty) {
+          return _EmptyLibrary(
+            onOpenPreviousRideArchive: widget.openPreviousRideArchive == null
+                ? null
+                : _openPreviousRideArchive,
+          );
+        }
+        final places = data.places!;
         final recordings = candidates
             .where(
               (candidate) =>
@@ -80,16 +109,33 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
           children: [
             const Text(
               'Routes already on this phone. No file, no export step, and '
-              'nothing leaves the phone to use one.',
+              'nothing leaves the phone to use one. Approximate place names '
+              'come from the offline index.',
               style: TextStyle(color: Color(0xFFABB5C1), height: 1.4),
             ),
+            if (widget.openPreviousRideArchive != null) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const Key('ride-library-details-and-exports'),
+                onPressed: _openPreviousRideArchive,
+                icon: const Icon(Icons.receipt_long_outlined),
+                label: const Text('Ride details and exports'),
+              ),
+            ],
             if (recordings.isNotEmpty) ...[
               const _SectionHeading('Recorded routes'),
-              for (final candidate in recordings) _tile(candidate),
+              for (final candidate in recordings) _tile(candidate, places),
             ],
             if (rides.isNotEmpty) ...[
               const _SectionHeading('Previous rides'),
-              for (final candidate in rides) _tile(candidate),
+              for (final candidate in rides) _tile(candidate, places),
+            ],
+            if (candidates.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                places.attribution,
+                style: const TextStyle(color: Color(0xFF778391), fontSize: 11),
+              ),
             ],
           ],
         );
@@ -97,14 +143,20 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     ),
   );
 
-  Widget _tile(StoredRouteCandidate candidate) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: StoredRouteCandidateTile(
-      candidate: candidate,
-      distanceUnit: widget.distanceUnit,
-      onTap: () => _chooseOptions(candidate),
-    ),
-  );
+  Widget _tile(StoredRouteCandidate candidate, ApproximatePlaceIndex places) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: StoredRouteCandidateTile(
+          candidate: candidate,
+          endpointLabel: approximateEndpointLabel(
+            index: places,
+            start: candidate.startPoint,
+            end: candidate.endPoint,
+          ),
+          distanceUnit: widget.distanceUnit,
+          onTap: () => _chooseOptions(candidate),
+        ),
+      );
 
   Future<void> _chooseOptions(StoredRouteCandidate candidate) async {
     final selection = await showModalBottomSheet<StoredRouteSelection>(
@@ -119,6 +171,12 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     if (selection == null || !mounted) return;
     Navigator.of(context).pop(selection);
   }
+
+  Future<void> _openPreviousRideArchive() async {
+    final selection = await widget.openPreviousRideArchive!(context);
+    if (selection == null || !mounted) return;
+    Navigator.of(context).pop(selection);
+  }
 }
 
 /// One choosable stored route: its shape, what it is, when it was ridden and
@@ -127,11 +185,13 @@ class StoredRouteCandidateTile extends StatelessWidget {
   const StoredRouteCandidateTile({
     super.key,
     required this.candidate,
+    this.endpointLabel,
     required this.distanceUnit,
     required this.onTap,
   });
 
   final StoredRouteCandidate candidate;
+  final String? endpointLabel;
   final DistanceUnit distanceUnit;
   final VoidCallback onTap;
 
@@ -146,6 +206,7 @@ class StoredRouteCandidateTile extends StatelessWidget {
       ),
       title: Text(candidate.title),
       subtitle: Text(
+        '${endpointLabel == null ? '' : '$endpointLabel\n'}'
         '${storedRouteKindLabel(candidate.origin)} · '
         '${_date(candidate.storedAt)}\n'
         '${MeasurementFormatter(distanceUnit).distance(routeLengthMeters(candidate.geometry))} · '
@@ -157,6 +218,16 @@ class StoredRouteCandidateTile extends StatelessWidget {
       onTap: onTap,
     ),
   );
+}
+
+class _StoredRoutePickerData {
+  const _StoredRoutePickerData({
+    required this.candidates,
+    required this.places,
+  });
+
+  final List<StoredRouteCandidate> candidates;
+  final ApproximatePlaceIndex? places;
 }
 
 /// A map-free thumbnail of the route's shape, drawn from the geometry already
@@ -333,23 +404,34 @@ class _SectionHeading extends StatelessWidget {
 }
 
 class _EmptyLibrary extends StatelessWidget {
-  const _EmptyLibrary();
+  const _EmptyLibrary({this.onOpenPreviousRideArchive});
+
+  final VoidCallback? onOpenPreviousRideArchive;
 
   @override
-  Widget build(BuildContext context) => const _Message(
+  Widget build(BuildContext context) => _Message(
     title: 'No saved routes yet',
     body:
         'Record one with "Record a route" on the home screen, or finish a ride '
         'and it will appear here. A ride whose geometry has been deleted is '
         'not listed, because there is nothing left to ride.',
+    action: onOpenPreviousRideArchive == null
+        ? null
+        : OutlinedButton.icon(
+            key: const Key('ride-library-details-and-exports'),
+            onPressed: onOpenPreviousRideArchive,
+            icon: const Icon(Icons.receipt_long_outlined),
+            label: const Text('Ride details and exports'),
+          ),
   );
 }
 
 class _Message extends StatelessWidget {
-  const _Message({required this.title, required this.body});
+  const _Message({required this.title, required this.body, this.action});
 
   final String title;
   final String body;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -370,6 +452,7 @@ class _Message extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(color: Color(0xFFABB5C1), height: 1.4),
           ),
+          if (action != null) ...[const SizedBox(height: 16), action!],
         ],
       ),
     ),

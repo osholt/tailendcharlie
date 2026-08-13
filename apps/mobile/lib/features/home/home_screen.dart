@@ -30,8 +30,9 @@ import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/stored_route_library.dart';
-import '../ride/route_recorder_screen.dart';
+import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
+import '../ride/route_recorder_screen.dart';
 import '../settings/about_build_sheet.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
@@ -323,16 +324,17 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             ListTile(
-              key: const Key('previous-rides-button'),
-              leading: const Icon(Icons.history),
-              title: Text(
+              key: const Key('ride-library-button'),
+              leading: const Icon(Icons.route_outlined),
+              title: const Text('Ride library'),
+              subtitle: Text(
                 widget.completedRides.rides.isEmpty
-                    ? 'Previous rides'
-                    : 'Previous rides (${widget.completedRides.rides.length})',
+                    ? 'Recorded routes and previous rides'
+                    : 'Recorded routes and ${widget.completedRides.rides.length} previous ride${widget.completedRides.rides.length == 1 ? '' : 's'}',
               ),
               onTap: () {
                 Navigator.of(sheetContext).pop();
-                unawaited(_openPreviousRides(context));
+                unawaited(_openRideLibrary(context));
               },
             ),
             const Divider(height: 8),
@@ -384,7 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
           case HomeSearchHandoffKind.plannedRouteCode:
             await _showRideSheet(context, creating: true);
           case HomeSearchHandoffKind.storedRoute:
-            await _openPreviousRides(context);
+            await _openRideLibrary(context);
         }
     }
   }
@@ -464,17 +466,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _openPreviousRides(BuildContext launchContext) async {
-    final selection = await PreviousRidesScreen.show(
-      launchContext,
-      widget.completedRides,
-      widget.distanceUnits,
-    );
-    if (selection == null || !mounted) return;
+  Future<void> _openRideLibrary(BuildContext launchContext) async {
     final library = StoredRouteLibrary(
       recordedRoutes: widget.recordedRoutes,
       completedRides: widget.completedRides,
     );
+    final selection = await StoredRoutePickerScreen.show(
+      launchContext,
+      library: library,
+      distanceUnit: widget.distanceUnits.value,
+      openPreviousRideArchive: (libraryContext) => PreviousRidesScreen.show(
+        libraryContext,
+        widget.completedRides,
+        widget.distanceUnits,
+      ),
+    );
+    if (selection == null || !mounted) return;
     final prepared = library.prepare(selection);
     await _showRideSheet(
       context,
