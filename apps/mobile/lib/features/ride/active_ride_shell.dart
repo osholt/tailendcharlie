@@ -4195,6 +4195,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
 
+    _diagnostics?.recordNote('start ride accepted from CarPlay');
     _localRideStartInProgress = true;
     try {
       await controller.startRide();
@@ -4508,8 +4509,25 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   Future<void> _confirmStartRide() async {
-    if (widget.rideController.session?.role != RideRole.lead ||
-        widget.rideController.rideStarted) {
+    // Recorded before the gate, not after (#441). The report is that this
+    // control "does nothing" with CarPlay connected, and no path in this file
+    // treats a CarPlay session differently — so the first thing to establish is
+    // whether the tap arrives at all, and if it does, which of the two early
+    // returns swallows it. An entry here and no `start decision` after it means
+    // the gate; no entry at all means the tap never reached Dart.
+    final controller = widget.rideController;
+    _diagnostics?.recordNote(
+      'start ride tapped on the phone: '
+      'role=${controller.session?.role.name ?? 'none'} '
+      'started=${controller.rideStarted} '
+      'busy=${controller.busy} '
+      'route=${_activeRoute == null ? 'none' : 'selected'}',
+    );
+    if (controller.session?.role != RideRole.lead || controller.rideStarted) {
+      _diagnostics?.recordNote(
+        'start ride refused before the dialog: not the leader, or already '
+        'started',
+      );
       return;
     }
     final route = _activeRoute;
@@ -4556,6 +4574,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             ),
         ],
       ),
+    );
+    _diagnostics?.recordNote(
+      'start ride decision: ${decision?.name ?? 'dismissed'}',
     );
     if (decision == _StartRideDecision.chooseRoute) {
       _requestRouteChange();
