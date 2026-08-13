@@ -36,6 +36,50 @@ permissions by design.
 - ...
 ```
 
+## iOS build 55 / Android build 55 — 13 August 2026
+
+This build simplifies the main navigation, makes both daytime map designs
+available, adds a proper library for saved rides, and introduces an optional
+private heatmap of roads ridden on this phone.
+
+### What to test
+
+1. **Bottom navigation.** Settings should now be a bottom tab. Alerts should no
+   longer have their own tab; open Ride and confirm the alert actions remain
+   available there.
+2. **Daytime maps.** In Settings, switch the daytime map between **Restrained**
+   and **Original**. Check the home map, route review and an active ride, then
+   restart the app and confirm the chosen style is retained.
+3. **Ride library.** Open **More → Ride library**, scroll through recorded
+   routes and previous rides, and check the approximate start-to-finish labels
+   (for example, “Kingswood to Chippenham”). Open an older ride and confirm its
+   details and export actions are still available.
+4. **Personal heatmap.** Open the map layers menu and enable **Personal rides
+   heatmap**. It should be off by default, show only tracks actually travelled
+   in completed rides, sit beneath the current route, and make repeatedly
+   ridden roads more prominent. Disable it and confirm it disappears.
+
+### Fixed
+
+- Replaced the Alerts bottom tab with Settings and moved alert access into Ride.
+- Added one scrollable Ride library for recorded routes and previous rides.
+- Added offline approximate start and finish place names without uploading ride
+  endpoints to a reverse-geocoding service.
+- Restored the original OpenFreeMap daytime design as a saved alternative to
+  the newer restrained design.
+- Added an opt-in personal ride heatmap that is calculated and stored entirely
+  on the phone from completed travelled tracks; planned routes are excluded.
+
+### Known limitations
+
+- Place names are approximate and currently use a bundled Great Britain
+  settlement index; routes outside its coverage use neutral wording.
+- The personal heatmap needs completed rides in the on-device archive and still
+  needs visual confirmation on physical iOS and Android devices.
+- The global heatmap is not in this build. Its privacy model is designed and
+  ticketed, but contribution, aggregation and web-planner work remain disabled
+  until their privacy and release gates are met.
+
 ## iOS build 54 / Android build 54 — 13 August 2026
 
 This build adds the route-review fixes found while replaying ride 392725 and
