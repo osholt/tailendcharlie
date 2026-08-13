@@ -5,6 +5,12 @@ and rendered locally. The production map path uses the open-source MapLibre
 Native SDK on both iOS and Android. It does not depend on Apple Maps and it does
 not bulk-download from the public OpenStreetMap tile servers.
 
+The daytime map has two saved settings: **Restrained** applies Tail End
+Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
+keeps the provider's daytime colours and labels. They use the same vector tile
+source and offline tile cache; only their small style-document caches are kept
+separate so switching cannot serve the wrong palette.
+
 ## Saved-route place labels stay offline
 
 The Ride library labels stored geometry with an approximate start and finish

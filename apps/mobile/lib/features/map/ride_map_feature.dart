@@ -250,6 +250,7 @@ class RideMapFeature extends StatefulWidget {
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     SpeedLimitDisplayController? speedLimitDisplay,
     bool darkMapStyle = false,
+    bool restrainedLightMapStyle = true,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
     RiderSymbol localRiderSymbol = riderSymbolDefault,
     String localDisplayName = 'You',
@@ -307,6 +308,7 @@ class RideMapFeature extends StatefulWidget {
     speedLimitDisplay: speedLimitDisplay,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
       dark: darkMapStyle,
+      restrainedLightStyle: restrainedLightMapStyle,
     ),
     localMotorcycleStyle: localMotorcycleStyle,
     localRiderSymbol: localRiderSymbol,

@@ -36,6 +36,12 @@ import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/speed_limit.dart';
 
 void main() {
+  test('environment map factory can preserve original daytime tiles', () {
+    final map = RideMapFeature.fromEnvironment(restrainedLightMapStyle: false);
+
+    expect(map.basemapConfiguration.restrainedLightStyle, isFalse);
+  });
+
   test('group mini-map avoids a second MapLibre surface on Android', () {
     expect(
       groupMiniMapRenderer(

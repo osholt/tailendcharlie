@@ -14,6 +14,7 @@ import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/map_style_mode.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_event.dart';
@@ -459,6 +460,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('DISTANCE UNITS'), findsOneWidget);
     expect(find.text('MAP APPEARANCE'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('DAYTIME MAP'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(const Key('day-map-style-selector')), findsOneWidget);
+    await tester.tap(find.text('Original'));
+    await tester.pumpAndSettle();
+    expect(_mapStyleMode.dayStyle, DayMapStyle.original);
 
     controller.dispose();
   });

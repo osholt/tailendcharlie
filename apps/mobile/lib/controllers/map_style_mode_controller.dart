@@ -8,14 +8,22 @@ typedef SunPositionSource = Future<GeoCoordinate?> Function();
 
 class MapStyleModeController extends ChangeNotifier
     implements ValueListenable<MapStyleMode> {
-  MapStyleModeController._(this._preferences, this._mode, this._locationSource);
+  MapStyleModeController._(
+    this._preferences,
+    this._mode,
+    this._dayStyle,
+    this._locationSource,
+  );
 
   static const preferenceKey = 'map_style_mode';
+  static const dayStylePreferenceKey = 'day_map_style';
   static const defaultMode = MapStyleMode.system;
+  static const defaultDayStyle = DayMapStyle.restrained;
 
   final SharedPreferences? _preferences;
   final SunPositionSource _locationSource;
   MapStyleMode _mode;
+  DayMapStyle _dayStyle;
   GeoCoordinate? _lastKnownSunPosition;
 
   static Future<MapStyleModeController> load({
@@ -28,9 +36,16 @@ class MapStyleModeController extends ChangeNotifier
             .where((value) => value.name == stored)
             .firstOrNull ??
         defaultMode;
+    final storedDayStyle = preferences.getString(dayStylePreferenceKey);
+    final dayStyle =
+        DayMapStyle.values
+            .where((value) => value.name == storedDayStyle)
+            .firstOrNull ??
+        defaultDayStyle;
     final controller = MapStyleModeController._(
       preferences,
       mode,
+      dayStyle,
       locationSource ?? _lastKnownDevicePosition,
     );
     if (mode == MapStyleMode.sunriseSunset) {
@@ -41,6 +56,8 @@ class MapStyleModeController extends ChangeNotifier
 
   @override
   MapStyleMode get value => _mode;
+
+  DayMapStyle get dayStyle => _dayStyle;
 
   /// Whether a location fix is already cached for [MapStyleMode.sunriseSunset]
   /// - if not, [resolveDark] is currently falling back to platform brightness.
@@ -59,6 +76,13 @@ class MapStyleModeController extends ChangeNotifier
     if (mode == MapStyleMode.sunriseSunset && _lastKnownSunPosition == null) {
       await refreshSunPosition();
     }
+  }
+
+  Future<void> setDayStyle(DayMapStyle style) async {
+    if (_dayStyle == style) return;
+    _dayStyle = style;
+    await _preferences?.setString(dayStylePreferenceKey, style.name);
+    notifyListeners();
   }
 
   /// Re-reads the device's last known location for
