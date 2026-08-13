@@ -107,6 +107,84 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(novelty.label), findsOneWidget);
   });
+
+  testWidgets(
+    'iPhone explains downloads and refreshes newly installed voices',
+    (tester) async {
+      const daniel = SpokenGuidanceVoice(
+        name: 'Daniel',
+        locale: 'en-GB',
+        identifier: 'com.apple.voice.compact.en-GB.Daniel',
+      );
+      const premium = SpokenGuidanceVoice(
+        name: 'Serena',
+        locale: 'en-GB',
+        identifier: 'com.apple.voice.premium.en-GB.Serena',
+        quality: 'premium',
+      );
+      var installedVoices = const <SpokenGuidanceVoice>[daniel];
+      final spoken = SpokenGuidanceController.inMemory(
+        voiceLoader: () async => installedVoices,
+      );
+      final mapStyle = await MapStyleModeController.load();
+      final riderProfile = await RiderProfileController.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.iOS),
+          home: Scaffold(
+            body: UnitSettingsSheet(
+              controller: DistanceUnitController.forLocale(
+                const Locale('en', 'GB'),
+              ),
+              mapStyleMode: mapStyle,
+              riderProfile: riderProfile,
+              speedLimitDisplay: SpeedLimitDisplayController.inMemory(),
+              spokenGuidance: spoken,
+              embedded: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('No Enhanced or Premium voices are installed'),
+        findsOneWidget,
+      );
+      final help = find.byKey(const Key('add-natural-ios-voice-help'));
+      await tester.ensureVisible(help);
+      await tester.tap(help);
+      await tester.pumpAndSettle();
+      expect(find.text('Add a more natural iPhone voice'), findsOneWidget);
+      expect(
+        find.textContaining('Accessibility → VoiceOver → Speech'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Siri assistant voices are not guaranteed'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+
+      installedVoices = const [daniel, premium];
+      final refresh = find.byKey(const Key('refresh-spoken-voices'));
+      await tester.ensureVisible(refresh);
+      await tester.tap(refresh);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('1 Enhanced or Premium voice installed.'),
+        findsOneWidget,
+      );
+      final selector = find.byType(DropdownButtonFormField<String>);
+      await tester.ensureVisible(selector);
+      await tester.tap(selector);
+      await tester.pumpAndSettle();
+      expect(find.text(premium.label), findsOneWidget);
+    },
+  );
 }
 
 class _RecordingEngine implements SpokenGuidanceEngine {
