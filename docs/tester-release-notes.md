@@ -36,6 +36,53 @@ permissions by design.
 - ...
 ```
 
+## iOS build 54 / Android build 54 — 13 August 2026
+
+This build adds the route-review fixes found while replaying ride 392725 and
+finishes several pieces that can be checked without another road test.
+
+### What to test
+
+1. **Ride a previous ride in reverse.** Open a cleaned recorded track, reverse
+   it and choose Ride again. The full track should remain visible and produce a
+   valid route even if the recording ends with a very short GPS fragment.
+2. **Review a previous ride.** The map should frame the complete track and show
+   green Start, red Finish and direction arrows clearly enough to tell which
+   way it was ridden.
+3. **Reshape a route.** Use the new plus and minus controls to zoom in for a
+   precise drag and back out to review the whole change.
+4. **Use the light map.** It should retain the dark map's restrained road-first
+   appearance, labels and one-way information without bringing back noisy POIs.
+5. **Watch the turn countdown.** The displayed distance should count down
+   smoothly while spoken prompts continue to use the real measured distance.
+6. **CarPlay layout.** Directions stay at the upper left, the speed/limit pair
+   stays at the upper right, and the overview mini-map has a visible edge.
+
+### Fixed
+
+- Reversing a cleaned previous ride no longer treats an isolated final GPS fix
+  as the route and then fails to build directions.
+- Archived rides auto-frame the drawable track and show explicit start, finish
+  and travel-direction cues.
+- Route reshaping now has explicit, bounded zoom controls.
+- The light basemap now matches the dark basemap's restrained visual hierarchy.
+- The initial speed-limit observation is deferred until after the first frame,
+  avoiding a `setState`-during-build exception.
+- Turn distance presentation interpolates between real measurements rather than
+  stepping once per location update.
+- CarPlay start attempts now leave enough diagnostic evidence to distinguish a
+  swallowed tap from the route-choice dialog and other safety gates.
+- CarPlay's speed pair and overview mini-map have fixed, testable layout bounds.
+
+### Known limitations
+
+- Previous-ride, zoom and light-map changes were verified with ride 392725 in
+  the iOS Simulator and automated tests; physical iOS and Android precision is
+  still being tracked separately.
+- Smooth countdown behaviour still needs an on-road check.
+- The phone-start diagnostic and final CarPlay layout still require a physical
+  CarPlay-connected ride before their field tickets can close.
+
 ## iOS build 53 / Android build 53 — 12 August 2026
 
 This build follows ride 392725. The diagnostic trace explained two reports that
