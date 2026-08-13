@@ -43,6 +43,17 @@ void main() {
   });
 
   group('the mini-map is distinguishable from the map (#442)', () {
+    test('it uses the phone landscape footprint', () {
+      expect(
+        source,
+        contains('groupMiniMap.widthAnchor.constraint(equalToConstant: 196)'),
+      );
+      expect(
+        source,
+        contains('groupMiniMap.heightAnchor.constraint(equalToConstant: 116)'),
+      );
+    });
+
     test('its border is thick enough to read against a basemap', () {
       // "It blends into the main map, so it is not obvious which is which."
       // A 1.5px hairline in the casing grey is invisible over a mostly-grey map.
@@ -69,6 +80,27 @@ void main() {
       // text gives way inside a fixed width rather than moving the surface.
       expect(source, contains('caption.adjustsFontSizeToFitWidth = true'));
       expect(source, contains('caption.trailingAnchor.constraint('));
+    });
+  });
+
+  group('CarPlay echoes the phone landscape controls (#442)', () {
+    test('the ride menu is the same compact hamburger', () {
+      expect(source, contains('named: "line.3.horizontal"'));
+      expect(source, contains('accessibilityLabel: "Ride actions"'));
+      expect(source, contains('return CPBarButton(image: image)'));
+      expect(source, isNot(contains('CPBarButton(title: "Ride")')));
+    });
+
+    test('follow and SOS use the phone-style glyphs', () {
+      expect(source, contains('named: "location.north"'));
+      expect(source, contains('named: "sos"'));
+      expect(source, isNot(contains('named: "sos.circle.fill"')));
+    });
+
+    test('the clock is top-centre and clear of map attribution', () {
+      expect(source, contains('clockLabel.centerXAnchor.constraint('));
+      expect(source, contains('clockLabel.topAnchor.constraint('));
+      expect(source, isNot(contains('clockLabel.bottomAnchor.constraint(')));
     });
   });
 }
