@@ -11,6 +11,16 @@ keeps the provider's daytime colours and labels. They use the same vector tile
 source and offline tile cache; only their small style-document caches are kept
 separate so switching cannot serve the wrong palette.
 
+## Saved-route place labels stay offline
+
+The Ride library labels stored geometry with an approximate start and finish
+settlement (for example, “Kingswood to Chippenham”). It resolves those names
+entirely on the phone using the bundled Great Britain settlement subset from
+OS Open Names; start and finish coordinates are never sent to Nominatim or any
+other reverse geocoder. Routes outside the bundled coverage show neutral copy
+instead of exposing coordinates. The generator and Open Government Licence
+attribution are in `tools/places/`.
+
 ## GPX behaviour
 
 - Imports GPX 1.1 tracks, routes, and waypoints through the system picker.
