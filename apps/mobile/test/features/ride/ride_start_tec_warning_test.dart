@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
 import 'package:ride_relay/controllers/completed_rides_controller.dart';
@@ -124,6 +125,40 @@ void main() {
 
     expect(find.byKey(const Key('no-tec-warning')), findsNothing);
     expect(harness.controller.rideStarted, isTrue);
+  });
+
+  testWidgets('CarPlay cannot start behind the phone confirmation', (
+    tester,
+  ) async {
+    final harness = await _harness();
+    addTearDown(harness.dispose);
+    await harness.controller.createRide('Oliver');
+
+    await tester.pumpWidget(harness.app);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('start-ride-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('Start this ride?'), findsOneWidget);
+
+    // A head-unit tap can arrive while this modal choice is open. Before #441
+    // that second surface bypassed the phone decision and recorded the start
+    // behind the dialog.
+    const channel = MethodChannel('me.osholt.ride_relay/carplay');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    await messenger.handlePlatformMessage(
+      channel.name,
+      channel.codec.encodeMethodCall(const MethodCall('startPreparedRide')),
+      (_) {},
+    );
+    await tester.pumpAndSettle();
+
+    expect(harness.controller.rideStarted, isFalse);
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('a rider who is not the TEC does not satisfy the warning', (

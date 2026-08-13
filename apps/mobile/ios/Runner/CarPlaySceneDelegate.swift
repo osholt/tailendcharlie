@@ -5,6 +5,36 @@ import MapLibre
 import MapKit
 import UIKit
 
+/// Keeps asynchronous CarPlay template completions tied to the connection that
+/// created them. A phone-side ride start can publish a navigation snapshot while
+/// the head unit is still installing its root template; applying template state
+/// before that completion, or accepting a completion from a disconnected scene,
+/// can make CarPlay raise an Objective-C exception instead of returning an error.
+struct CarPlaySceneLifecycle {
+  private(set) var generation = 0
+  private(set) var rootReady = false
+
+  mutating func beginConnection() -> Int {
+    generation &+= 1
+    rootReady = false
+    return generation
+  }
+
+  mutating func completeRootPresentation(
+    generation completedGeneration: Int,
+    succeeded: Bool
+  ) -> Bool {
+    guard completedGeneration == generation, succeeded else { return false }
+    rootReady = true
+    return true
+  }
+
+  mutating func disconnect() {
+    generation &+= 1
+    rootReady = false
+  }
+}
+
 /// Owns the navigation-app CarPlay scene. Navigation apps must use the
 /// window-bearing delegate callback and place a `CPMapTemplate` at the root.
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate,
@@ -20,6 +50,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var rideStartPrompt: [String: Any]?
   private var isShowingPanningInterface = false
   private weak var interfaceController: CPInterfaceController?
+  private var sceneLifecycle = CarPlaySceneLifecycle()
 
   /// The request the presented alert is asking about, so the same question is
   /// not raised twice and a question that has gone away takes its alert with
@@ -31,6 +62,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     didConnect interfaceController: CPInterfaceController,
     to window: CPWindow
   ) {
+    let connectionGeneration = sceneLifecycle.beginConnection()
     let mapViewController = CarPlayNavigationViewController()
     let mapTemplate = CPMapTemplate()
     let statusTemplate = CarPlayStatusTemplate.makeTemplate()
@@ -54,8 +86,30 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapTemplate.trailingNavigationBarButtons = [
       statusButton(interfaceController: interfaceController, template: statusTemplate),
     ]
-    interfaceController.setRootTemplate(mapTemplate, animated: true, completion: nil)
-    (UIApplication.shared.delegate as? AppDelegate)?.carPlayDidConnect(self)
+    // Apple's header explicitly says a failed presentation throws when no
+    // completion is supplied. More importantly, a navigation session must not
+    // start until this root has actually been accepted by the head unit. The
+    // phone can publish Start ride while this asynchronous operation is in
+    // flight, which is the field crash reported in #441.
+    interfaceController.setRootTemplate(mapTemplate, animated: false) {
+      [weak self, weak interfaceController] success, error in
+      guard
+        let self,
+        let interfaceController,
+        self.interfaceController === interfaceController
+      else { return }
+      let becameReady = self.sceneLifecycle.completeRootPresentation(
+        generation: connectionGeneration,
+        succeeded: success
+      )
+      guard becameReady else {
+        if let error {
+          NSLog("CarPlay root template was not presented: %@", error.localizedDescription)
+        }
+        return
+      }
+      (UIApplication.shared.delegate as? AppDelegate)?.carPlayDidConnect(self)
+    }
   }
 
   func templateApplicationScene(
@@ -63,10 +117,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     didDisconnectInterfaceController interfaceController: CPInterfaceController,
     from window: CPWindow
   ) {
+    // A delayed disconnect from an earlier scene must not cancel the current
+    // navigation session or clear its view hierarchy.
+    guard self.interfaceController === interfaceController else { return }
+    sceneLifecycle.disconnect()
     navigationSession?.cancelTrip()
     navigationSession = nil
     window.rootViewController = nil
     self.interfaceController = nil
+    mapTemplate = nil
+    mapViewController = nil
+    statusTemplate = nil
+    rideStartPrompt = nil
     presentedTecRequestID = nil
     (UIApplication.shared.delegate as? AppDelegate)?.carPlayDidDisconnect(self)
   }
@@ -76,6 +138,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     if let statusTemplate {
       CarPlayStatusTemplate.apply(snapshot: snapshot, to: statusTemplate)
     }
+    // App-owned map/status views can accept data while the root is installing,
+    // but CarPlay template and navigation APIs cannot. AppDelegate retains the
+    // same snapshot and replays it after the root completion above.
+    guard sceneLifecycle.rootReady else { return }
     updateNavigationSession(snapshot: snapshot)
     updateTecRoleRequest(snapshot["tecRequest"] as? [String: Any])
     updateRideStart(snapshot["rideStart"] as? [String: Any])
@@ -106,7 +172,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     else {
       if presentedTecRequestID != nil {
         presentedTecRequestID = nil
-        interfaceController?.dismissTemplate(animated: true, completion: nil)
+        interfaceController?.dismissTemplate(animated: true) { _, error in
+          if let error {
+            NSLog("CarPlay role request could not be dismissed: %@", error.localizedDescription)
+          }
+        }
       }
       return
     }
@@ -115,7 +185,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     let answer: (Bool) -> Void = { [weak self] accepted in
       self?.presentedTecRequestID = nil
-      interfaceController.dismissTemplate(animated: true, completion: nil)
+      interfaceController.dismissTemplate(animated: true) { _, error in
+        if let error {
+          NSLog("CarPlay role answer could not be dismissed: %@", error.localizedDescription)
+        }
+      }
       (UIApplication.shared.delegate as? AppDelegate)?
         .answerCarPlayTecRoleRequest(requestID: requestID, accepted: accepted)
     }
@@ -133,7 +207,20 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       ]
     )
     presentedTecRequestID = requestID
-    interfaceController.presentTemplate(alert, animated: true, completion: nil)
+    interfaceController.presentTemplate(alert, animated: true) {
+      [weak self, weak interfaceController] success, error in
+      guard
+        let self,
+        let interfaceController,
+        self.interfaceController === interfaceController
+      else { return }
+      if !success, self.presentedTecRequestID == requestID {
+        self.presentedTecRequestID = nil
+      }
+      if let error {
+        NSLog("CarPlay role request was not presented: %@", error.localizedDescription)
+      }
+    }
   }
 
   @available(iOS 17.4, *)
@@ -192,6 +279,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   private func updateNavigationSession(snapshot: [String: Any]) {
+    guard sceneLifecycle.rootReady else { return }
     let marker = snapshot["marker"] as? [String: Any]
     let guidanceTitle = nonEmptyString(marker?["title"])
       ?? nonEmptyString(snapshot["guidanceTitle"])
@@ -424,8 +512,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     interfaceController: CPInterfaceController,
     template: CPListTemplate
   ) -> CPBarButton {
-    CPBarButton(title: "Ride") { _ in
-      interfaceController.pushTemplate(template, animated: true, completion: nil)
+    CPBarButton(title: "Ride") { [weak self, weak interfaceController] _ in
+      guard
+        let self,
+        self.sceneLifecycle.rootReady,
+        let interfaceController,
+        self.interfaceController === interfaceController
+      else { return }
+      interfaceController.pushTemplate(template, animated: true) { success, error in
+        if !success, let error {
+          NSLog("CarPlay ride status was not presented: %@", error.localizedDescription)
+        }
+      }
     }
   }
 
@@ -451,6 +549,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
   private func presentStartRideConfirmation() {
     guard
+      sceneLifecycle.rootReady,
       let interfaceController,
       let prompt = rideStartPrompt,
       (prompt["enabled"] as? NSNumber)?.boolValue == true
@@ -464,7 +563,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       message: message.isEmpty ? nil : message,
       actions: [
         CPAlertAction(title: "Start ride", style: .default) { [weak self] _ in
-          interfaceController.dismissTemplate(animated: true, completion: nil)
+          interfaceController.dismissTemplate(animated: true) { _, error in
+            if let error {
+              NSLog("CarPlay start sheet could not be dismissed: %@", error.localizedDescription)
+            }
+          }
           // Hide the action immediately. Dart will either publish the active
           // ride or re-offer it if revalidation rejects the stale snapshot.
           self?.rideStartPrompt = nil
@@ -472,17 +575,29 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
           (UIApplication.shared.delegate as? AppDelegate)?.startPreparedRideFromCarPlay()
         },
         CPAlertAction(title: "Cancel", style: .cancel) { _ in
-          interfaceController.dismissTemplate(animated: true, completion: nil)
+          interfaceController.dismissTemplate(animated: true) { _, error in
+            if let error {
+              NSLog("CarPlay start sheet could not be dismissed: %@", error.localizedDescription)
+            }
+          }
         },
       ]
     )
-    interfaceController.presentTemplate(sheet, animated: true, completion: nil)
+    interfaceController.presentTemplate(sheet, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay start sheet was not presented: %@", error.localizedDescription)
+      }
+    }
   }
 
   private func presentReportActions() {
-    guard let interfaceController else { return }
+    guard sceneLifecycle.rootReady, let interfaceController else { return }
     let report: (String) -> Void = { type in
-      interfaceController.dismissTemplate(animated: true, completion: nil)
+      interfaceController.dismissTemplate(animated: true) { _, error in
+        if let error {
+          NSLog("CarPlay report sheet could not be dismissed: %@", error.localizedDescription)
+        }
+      }
       (UIApplication.shared.delegate as? AppDelegate)?
         .reportCarPlayHazard(type: type)
     }
@@ -500,28 +615,48 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
           report("other")
         },
         CPAlertAction(title: "Cancel", style: .cancel) { _ in
-          interfaceController.dismissTemplate(animated: true, completion: nil)
+          interfaceController.dismissTemplate(animated: true) { _, error in
+            if let error {
+              NSLog("CarPlay report sheet could not be dismissed: %@", error.localizedDescription)
+            }
+          }
         },
       ]
     )
-    interfaceController.presentTemplate(sheet, animated: true, completion: nil)
+    interfaceController.presentTemplate(sheet, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay report sheet was not presented: %@", error.localizedDescription)
+      }
+    }
   }
 
   private func presentEmergencyConfirmation() {
-    guard let interfaceController else { return }
+    guard sceneLifecycle.rootReady, let interfaceController else { return }
     let alert = CPAlertTemplate(
       titleVariants: ["Send SOS to the group?", "Send SOS?"],
       actions: [
         CPAlertAction(title: "Send SOS", style: .destructive) { _ in
-          interfaceController.dismissTemplate(animated: true, completion: nil)
+          interfaceController.dismissTemplate(animated: true) { _, error in
+            if let error {
+              NSLog("CarPlay SOS alert could not be dismissed: %@", error.localizedDescription)
+            }
+          }
           (UIApplication.shared.delegate as? AppDelegate)?.triggerCarPlayEmergency()
         },
         CPAlertAction(title: "Cancel", style: .cancel) { _ in
-          interfaceController.dismissTemplate(animated: true, completion: nil)
+          interfaceController.dismissTemplate(animated: true) { _, error in
+            if let error {
+              NSLog("CarPlay SOS alert could not be dismissed: %@", error.localizedDescription)
+            }
+          }
         },
       ]
     )
-    interfaceController.presentTemplate(alert, animated: true, completion: nil)
+    interfaceController.presentTemplate(alert, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay SOS alert was not presented: %@", error.localizedDescription)
+      }
+    }
   }
 
   private func coordinate(from raw: [String: Any]?) -> CLLocationCoordinate2D? {

@@ -1223,6 +1223,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   bool _trafficRerouting = false;
   bool _observedRideStarted = false;
   bool _localRideStartInProgress = false;
+  bool _rideStartFlowInProgress = false;
   RideRole? _lastPushRole;
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
@@ -4223,42 +4224,65 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         !controller.isLocalRideLeader ||
         controller.rideStarted ||
         controller.rideEnded ||
-        controller.busy) {
+        controller.busy ||
+        _rideStartFlowInProgress) {
       _updateMapOverlays(updateDerivedState: false);
       return;
     }
-    final locationController = _locationController;
-    if (!_isSimulation &&
-        widget.enableNativeServices &&
-        (locationController == null || !locationController.status.canSample)) {
-      final added = _warnings.add(
-        'Open Tail End Charlie on the iPhone and allow location access before '
-        'starting the ride from CarPlay.',
-      );
-      _updateMapOverlays(updateDerivedState: false);
-      if (added && mounted) setState(() {});
-      return;
-    }
+    _rideStartFlowInProgress = true;
+    try {
+      final locationController = _locationController;
+      if (!_isSimulation &&
+          widget.enableNativeServices &&
+          (locationController == null ||
+              !locationController.status.canSample)) {
+        final added = _warnings.add(
+          'Open Tail End Charlie on the iPhone and allow location access before '
+          'starting the ride from CarPlay.',
+        );
+        _updateMapOverlays(updateDerivedState: false);
+        if (added && mounted) setState(() {});
+        return;
+      }
 
-    _diagnostics?.recordNote('start ride accepted from CarPlay');
+      _diagnostics?.recordNote('start ride accepted from CarPlay');
+      if (await _commitRideStart(source: 'CarPlay')) {
+        await _resumeLocationForActiveRide();
+      }
+    } finally {
+      _rideStartFlowInProgress = false;
+      if (mounted) _updateMapOverlays(updateDerivedState: false);
+    }
+  }
+
+  /// Records the one durable start transition for either surface and contains
+  /// storage/authentication failures. An uncaught Future error from a button
+  /// callback used to escape Flutter's UI path; CarPlay already caught its copy,
+  /// so the two surfaces behaved differently under the same failure.
+  Future<bool> _commitRideStart({required String source}) async {
     _localRideStartInProgress = true;
     try {
-      await controller.startRide();
-      await _resumeLocationForActiveRide();
+      await widget.rideController.startRide();
+      return true;
     } on Object catch (error, stackTrace) {
+      _diagnostics?.recordNote(
+        'start ride failed from $source: ${error.runtimeType}: $error',
+      );
       if (kDebugMode) {
         debugPrint(
-          'Could not start the prepared ride from CarPlay: $error\n$stackTrace',
+          'Could not start the ride from $source: $error\n$stackTrace',
         );
       }
-      final added = _warnings.add(
-        'CarPlay could not start the ride. Open Tail End Charlie on the iPhone '
-        'and try again.',
-      );
+      final message = source == 'CarPlay'
+          ? 'CarPlay could not start the ride. Open Tail End Charlie on the '
+                'iPhone and try again.'
+          : 'The ride could not start. Please try again.';
+      final added = _warnings.add(message);
       if (added && mounted) setState(() {});
+      if (source != 'CarPlay' && mounted) _showRideSnackBar(message);
+      return false;
     } finally {
       _localRideStartInProgress = false;
-      if (mounted) _updateMapOverlays(updateDerivedState: false);
     }
   }
 
@@ -4568,88 +4592,98 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       'busy=${controller.busy} '
       'route=${_activeRoute == null ? 'none' : 'selected'}',
     );
-    if (controller.session?.role != RideRole.lead || controller.rideStarted) {
+    if (_rideStartFlowInProgress) {
       _diagnostics?.recordNote(
-        'start ride refused before the dialog: not the leader, or already '
-        'started',
+        'start ride refused before the dialog: another start flow is active',
       );
       return;
     }
-    final route = _activeRoute;
-    final decision = await showDialog<_StartRideDecision>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Start this ride?'),
-        content: Text(
-          route == null
-              ? 'No route is selected. You can choose one now, or start '
-                    'without navigation. Live location sharing and ride '
-                    'recording begin only after you start.'
-              : 'Route: ${route.name}\n\nLive location sharing, route '
-                    'progress, off-course alerts and ride recording will '
-                    'begin for the group.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, _StartRideDecision.cancel),
-            child: const Text('Cancel'),
-          ),
-          if (route == null) ...[
-            TextButton(
-              key: const Key('start-without-route-button'),
-              onPressed: () =>
-                  Navigator.pop(dialogContext, _StartRideDecision.start),
-              child: const Text('Start without route'),
-            ),
-            FilledButton.icon(
-              key: const Key('choose-route-before-start-button'),
-              onPressed: () =>
-                  Navigator.pop(dialogContext, _StartRideDecision.chooseRoute),
-              icon: const Icon(Icons.route_outlined),
-              label: const Text('Choose route'),
-            ),
-          ] else
-            FilledButton.icon(
-              key: const Key('confirm-start-ride-button'),
-              onPressed: () =>
-                  Navigator.pop(dialogContext, _StartRideDecision.start),
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Start ride'),
-            ),
-        ],
-      ),
-    );
-    _diagnostics?.recordNote(
-      'start ride decision: ${decision?.name ?? 'dismissed'}',
-    );
-    if (decision == _StartRideDecision.chooseRoute) {
-      _requestRouteChange();
-      return;
-    }
-    if (decision == _StartRideDecision.start) {
-      if (!await _confirmStartWithoutTec()) return;
-      _localRideStartInProgress = true;
-      try {
-        await widget.rideController.startRide();
-        try {
-          // The confirmation is an explicit user action and promises that
-          // live sharing begins now, so it is the correct place to request
-          // permission when the leader has not granted it yet.
-          await _locationController?.requestAndStart();
-        } on Object catch (error, stackTrace) {
-          if (kDebugMode) {
-            debugPrint('Could not start live GPS: $error\n$stackTrace');
-          }
-          final added = _warnings.add(
-            'The ride started, but live GPS could not start. Use Follow me '
-            'or Safety to try again.',
-          );
-          if (added && mounted) setState(() {});
-        }
-      } finally {
-        _localRideStartInProgress = false;
+    _rideStartFlowInProgress = true;
+    try {
+      if (controller.session?.role != RideRole.lead || controller.rideStarted) {
+        _diagnostics?.recordNote(
+          'start ride refused before the dialog: not the leader, or already '
+          'started',
+        );
+        return;
       }
+      final route = _activeRoute;
+      final decision = await showDialog<_StartRideDecision>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Start this ride?'),
+          content: Text(
+            route == null
+                ? 'No route is selected. You can choose one now, or start '
+                      'without navigation. Live location sharing and ride '
+                      'recording begin only after you start.'
+                : 'Route: ${route.name}\n\nLive location sharing, route '
+                      'progress, off-course alerts and ride recording will '
+                      'begin for the group.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, _StartRideDecision.cancel),
+              child: const Text('Cancel'),
+            ),
+            if (route == null) ...[
+              TextButton(
+                key: const Key('start-without-route-button'),
+                onPressed: () =>
+                    Navigator.pop(dialogContext, _StartRideDecision.start),
+                child: const Text('Start without route'),
+              ),
+              FilledButton.icon(
+                key: const Key('choose-route-before-start-button'),
+                onPressed: () => Navigator.pop(
+                  dialogContext,
+                  _StartRideDecision.chooseRoute,
+                ),
+                icon: const Icon(Icons.route_outlined),
+                label: const Text('Choose route'),
+              ),
+            ] else
+              FilledButton.icon(
+                key: const Key('confirm-start-ride-button'),
+                onPressed: () =>
+                    Navigator.pop(dialogContext, _StartRideDecision.start),
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Start ride'),
+              ),
+          ],
+        ),
+      );
+      _diagnostics?.recordNote(
+        'start ride decision: ${decision?.name ?? 'dismissed'}',
+      );
+      if (decision == _StartRideDecision.chooseRoute) {
+        _requestRouteChange();
+        return;
+      }
+      if (decision == _StartRideDecision.start) {
+        if (!await _confirmStartWithoutTec()) return;
+        if (await _commitRideStart(source: 'phone')) {
+          try {
+            // The confirmation is an explicit user action and promises that
+            // live sharing begins now, so it is the correct place to request
+            // permission when the leader has not granted it yet.
+            await _locationController?.requestAndStart();
+          } on Object catch (error, stackTrace) {
+            if (kDebugMode) {
+              debugPrint('Could not start live GPS: $error\n$stackTrace');
+            }
+            final added = _warnings.add(
+              'The ride started, but live GPS could not start. Use Follow me '
+              'or Safety to try again.',
+            );
+            if (added && mounted) setState(() {});
+          }
+        }
+      }
+    } finally {
+      _rideStartFlowInProgress = false;
+      if (mounted) _updateMapOverlays(updateDerivedState: false);
     }
   }
 
