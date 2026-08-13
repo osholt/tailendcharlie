@@ -405,7 +405,7 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
                       ? 'Loading installed voices…'
                       : !installed
                       ? 'The saved voice is unavailable; using the system default.'
-                      : 'Used for directions and safety alerts.',
+                      : 'Used for directions and safety alerts. Selecting one plays a preview.',
                 ),
                 items: [
                   const DropdownMenuItem(
@@ -421,7 +421,7 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
                 onChanged: snapshot.connectionState == ConnectionState.waiting
                     ? null
                     : (key) => unawaited(
-                        widget.controller.setVoice(
+                        widget.controller.setVoiceAndPreview(
                           key == null || key == _systemDefaultKey
                               ? null
                               : voices.firstWhere((voice) => voice.key == key),

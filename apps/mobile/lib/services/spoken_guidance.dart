@@ -148,7 +148,11 @@ class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
     // Settings can change during a ride. Read the selection at the next phrase
     // rather than requiring the ride shell to rebuild its speaker.
     await _applyVoice();
-    await _tts.speak(phrase);
+    // The map needs compact labels such as "55 yd", but those same labels are
+    // not safe speech input: at least one installed voice read `yd` as "id"
+    // (#503). Expand only complete unit tokens here, at the final boundary, so
+    // road names such as Lloyd and route names such as M4 remain untouched.
+    await _tts.speak(_expandSpokenAbbreviations(phrase));
   }
 
   @override
@@ -170,6 +174,36 @@ class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
     }
     _appliedVoice = chosen;
   }
+}
+
+const _spokenUnits = <({String abbreviation, String singular, String plural})>[
+  (
+    abbreviation: 'km/h',
+    singular: 'kilometres per hour',
+    plural: 'kilometres per hour',
+  ),
+  (abbreviation: 'mph', singular: 'miles per hour', plural: 'miles per hour'),
+  (abbreviation: 'yd', singular: 'yard', plural: 'yards'),
+  (abbreviation: 'mi', singular: 'mile', plural: 'miles'),
+  (abbreviation: 'ft', singular: 'foot', plural: 'feet'),
+  (abbreviation: 'km', singular: 'kilometre', plural: 'kilometres'),
+  (abbreviation: 'm', singular: 'metre', plural: 'metres'),
+];
+
+String _expandSpokenAbbreviations(String phrase) {
+  var expanded = phrase;
+  for (final unit in _spokenUnits) {
+    final abbreviation = RegExp.escape(unit.abbreviation);
+    expanded = expanded.replaceAllMapped(
+      RegExp('\\b(1(?:\\.0+)?)\\s+$abbreviation\\b', caseSensitive: false),
+      (match) => '${match.group(1)} ${unit.singular}',
+    );
+    expanded = expanded.replaceAll(
+      RegExp('\\b$abbreviation\\b', caseSensitive: false),
+      unit.plural,
+    );
+  }
+  return expanded;
 }
 
 /// Decides what is worth saying, and refuses to say it twice.

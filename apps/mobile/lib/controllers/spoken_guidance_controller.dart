@@ -41,6 +41,8 @@ class SpokenGuidanceController extends ChangeNotifier
   /// only needs "is anything spoken".
   static const modePreferenceKey = 'spoken_guidance_mode';
   static const voicePreferenceKey = 'spoken_guidance_voice';
+  static const voicePreviewPhrase =
+      'In 2 miles, at the roundabout, turn right.';
 
   final SharedPreferences? _preferences;
   SpokenAudioMode _mode;
@@ -119,6 +121,24 @@ class SpokenGuidanceController extends ChangeNotifier
       );
     }
     notifyListeners();
+  }
+
+  /// Saves a voice selection and gives the rider an immediate useful sample.
+  ///
+  /// Preview does not depend on guidance being enabled: Settings is where a
+  /// rider decides whether they like a voice. Saving happens first and remains
+  /// successful if a platform has no working speech engine (#503).
+  Future<void> setVoiceAndPreview(SpokenGuidanceVoice? voice) async {
+    await setVoice(voice);
+    final preview = engine();
+    try {
+      await preview.configure();
+      await preview.speak(voicePreviewPhrase);
+    } on Object {
+      // A voice preview is helpful, not a prerequisite for saving the choice.
+      // The ordinary speech path will still fall back to the system default if
+      // an installed voice disappears between Settings and the next ride.
+    }
   }
 
   /// What the rider gets by pressing the map control once more.

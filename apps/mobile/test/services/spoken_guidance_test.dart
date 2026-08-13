@@ -147,6 +147,26 @@ void main() {
     expect(tts.clearVoiceCalls, 1);
     expect(tts.spoken, ['Second exit']);
   });
+
+  test('expands display abbreviations before handing text to TTS', () async {
+    final tts = _VoiceRecordingTts();
+    final voiceEngine = FlutterTtsSpokenGuidanceEngine(tts: tts);
+
+    await voiceEngine.speak(
+      'In 1 yd, then 55 yd. Continue for 1.0 mi, then 2 mi. '
+      'Clearance 1 ft, then 8 ft. In 1 m, then 400 m. '
+      'Continue for 1.0 km, then 2 km at 30 mph or 50 km/h. '
+      'Stay on the M4 past Lloyd Way.',
+    );
+
+    expect(tts.spoken, [
+      'In 1 yard, then 55 yards. Continue for 1.0 mile, then 2 miles. '
+          'Clearance 1 foot, then 8 feet. In 1 metre, then 400 metres. '
+          'Continue for 1.0 kilometre, then 2 kilometres at '
+          '30 miles per hour or 50 kilometres per hour. '
+          'Stay on the M4 past Lloyd Way.',
+    ]);
+  });
 }
 
 class _RecordingEngine implements SpokenGuidanceEngine {
