@@ -105,8 +105,59 @@ void main() {
         name: 'Daniel',
         locale: 'en-GB',
         identifier: 'daniel',
+        quality: 'enhanced',
+        gender: 'male',
       ),
     ]);
+    expect(voices.single.label, 'Daniel · en-GB · Enhanced');
+  });
+
+  test('Daniel and natural British voices sort ahead of novelty voices', () {
+    final voices = [
+      const SpokenGuidanceVoice(name: 'Bells', locale: 'en-US'),
+      const SpokenGuidanceVoice(
+        name: 'Samantha',
+        locale: 'en-US',
+        quality: 'premium',
+      ),
+      const SpokenGuidanceVoice(name: 'Martha', locale: 'en-GB'),
+      const SpokenGuidanceVoice(
+        name: 'Serena',
+        locale: 'en-GB',
+        quality: 'enhanced',
+      ),
+      const SpokenGuidanceVoice(name: 'Daniel', locale: 'en-GB'),
+    ]..sort(compareSpokenGuidanceVoices);
+
+    expect(voices.map((voice) => voice.name), [
+      'Daniel',
+      'Serena',
+      'Martha',
+      'Samantha',
+      'Bells',
+    ]);
+    expect(voices.last.isRecommended, isFalse);
+  });
+
+  test('Android voice metadata identifies natural offline voices', () {
+    final voice = SpokenGuidanceVoice.fromJson({
+      'name': 'en-gb-x-gbb-local',
+      'locale': 'en-GB',
+      'quality': 'very high',
+      'network_required': '0',
+    });
+
+    expect(voice, isNotNull);
+    expect(voice!.requiresNetwork, isFalse);
+    expect(voice.isRecommended, isTrue);
+    expect(
+      voice.label,
+      'en-gb-x-gbb-local · en-GB · Very high quality · Offline',
+    );
+    expect(
+      SpokenGuidanceVoice.fromJson(voice.toJson())!.requiresNetwork,
+      isFalse,
+    );
   });
 
   test(
@@ -189,7 +240,13 @@ class _RecordingEngine implements SpokenGuidanceEngine {
 class _VoiceListTts extends FlutterTts {
   @override
   Future<dynamic> get getVoices async => [
-    {'name': 'Daniel', 'locale': 'en-GB', 'identifier': 'daniel'},
+    {
+      'name': 'Daniel',
+      'locale': 'en-GB',
+      'identifier': 'daniel',
+      'quality': 'enhanced',
+      'gender': 'male',
+    },
     {'name': 'Thomas', 'locale': 'fr-FR', 'identifier': 'thomas'},
     {'name': '', 'locale': 'en-US'},
   ];
