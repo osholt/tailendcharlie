@@ -426,12 +426,19 @@ void main() {
     expect(find.text('Navigation map'), findsOneWidget);
     expect(find.byIcon(Icons.map), findsOneWidget);
     expect(find.byIcon(Icons.two_wheeler_outlined), findsOneWidget);
-    expect(find.byIcon(Icons.warning_amber_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.settings_outlined), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
     await tester.pumpAndSettle();
 
     expect(find.text('Oliver'), findsOneWidget);
+    expect(find.text('Ride actions'), findsOneWidget);
+    expect(find.text('Alerts and reports'), findsOneWidget);
+    expect(find.text('Share ride summary'), findsOneWidget);
+    expect(find.text('Ride roster'), findsWidgets);
+    expect(find.text('Navigation map'), findsNothing);
+    expect(find.text('End ride'), findsNothing);
+
     await tester.scrollUntilVisible(
       find.text('MARKING STATS'),
       260,
@@ -441,13 +448,6 @@ void main() {
     expect(find.byKey(const Key('open-ride-actions')), findsNothing);
     expect(find.text('MARKING STATS'), findsOneWidget);
 
-    expect(find.text('Ride actions'), findsOneWidget);
-    expect(find.text('Settings'), findsOneWidget);
-    expect(find.text('Share ride summary'), findsOneWidget);
-    expect(find.text('Ride roster'), findsWidgets);
-    expect(find.text('Navigation map'), findsNothing);
-    expect(find.text('End ride'), findsNothing);
-
     await tester.scrollUntilVisible(
       find.text('QUICK MESSAGES'),
       300,
@@ -455,15 +455,65 @@ void main() {
     );
     expect(find.text('QUICK MESSAGES'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.warning_amber_outlined));
+    await tester.tap(find.byIcon(Icons.settings_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('DISTANCE UNITS'), findsOneWidget);
+    expect(find.text('MAP APPEARANCE'), findsOneWidget);
+
+    controller.dispose();
+  });
+
+  testWidgets('alerts are a Ride action rather than a primary destination', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    await controller.startRide();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
-    expect(find.text('Alerts'), findsWidgets);
+    expect(find.text('Alerts'), findsNothing);
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
+    await tester.pumpAndSettle();
+    final alerts = find.byKey(const Key('ride-actions-alerts'));
+    await tester.scrollUntilVisible(
+      alerts,
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(alerts);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alerts'), findsOneWidget);
     expect(find.text('ROAD ALERTS'), findsOneWidget);
     expect(find.text('EXTERNAL SOURCES'), findsNothing);
     expect(find.text('RIDER STATUS'), findsNothing);
+  });
 
-    controller.dispose();
+  testWidgets('embedded Settings keeps the active ride behind nested editors', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    await controller.createRide('Oliver');
+    await controller.startRide();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.settings_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('DISTANCE UNITS'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('open-rider-profile')));
+    await tester.pumpAndSettle();
+    expect(find.text('Rider profile'), findsOneWidget);
+    Navigator.of(tester.element(find.text('Rider profile'))).pop();
+    await tester.pumpAndSettle();
+
+    expect(find.text('DISTANCE UNITS'), findsOneWidget);
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(controller.session, isNotNull);
   });
 
   testWidgets('leader confirms start while pre-start roster stays private', (
@@ -577,7 +627,7 @@ void main() {
 
     final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
     expect(bar.labelBehavior, NavigationDestinationLabelBehavior.alwaysShow);
-    for (final label in ['Map', 'Ride', 'Alerts']) {
+    for (final label in ['Map', 'Ride', 'Settings']) {
       expect(find.text(label), findsWidgets, reason: label);
     }
 
@@ -610,7 +660,7 @@ void main() {
       // paid at a standstill.
       expect(rail.minWidth, 72);
       expect(rail.labelType, NavigationRailLabelType.all);
-      for (final label in ['Map', 'Ride', 'Alerts']) {
+      for (final label in ['Map', 'Ride', 'Settings']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
 
