@@ -234,6 +234,49 @@ void main() {
     expect(find.text('Ready for solo ride'), findsOneWidget);
   });
 
+  testWidgets('a solo pre-start map can switch straight to joining a group', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 667);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    await controller.createRide(
+      'Oliver',
+      coordinationMode: RideCoordinationMode.solo,
+    );
+
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('start-ride-button')), findsOneWidget);
+    expect(
+      find.byKey(const Key('join-group-before-start-button')),
+      findsOneWidget,
+    );
+    final joinButton = tester.getRect(
+      find.byKey(const Key('join-group-before-start-button')),
+    );
+    final startButton = tester.getRect(
+      find.byKey(const Key('start-ride-button')),
+    );
+    expect(joinButton.top, startButton.top);
+    expect(joinButton.right, lessThan(startButton.left));
+
+    await tester.tap(find.byKey(const Key('join-group-before-start-button')));
+    await tester.pumpAndSettle();
+
+    expect(controller.hasActiveRide, isFalse);
+    expect(find.text('Join your group'), findsOneWidget);
+    expect(find.byKey(const Key('ride-code-field')), findsOneWidget);
+    expect(
+      find.byKey(const Key('scan-invitation-labelled-button')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('join form keeps the active ride code above an iOS keyboard', (
     tester,
   ) async {
@@ -540,6 +583,10 @@ void main() {
     expect(find.textContaining('Current positions only'), findsOneWidget);
     expect(find.byKey(const Key('pre-start-roster')), findsOneWidget);
     expect(find.textContaining('Oliver (you)'), findsOneWidget);
+    expect(
+      find.byKey(const Key('join-group-before-start-button')),
+      findsNothing,
+    );
     expect(controller.rideStarted, isFalse);
 
     await tester.tap(find.byKey(const Key('start-ride-button')));
