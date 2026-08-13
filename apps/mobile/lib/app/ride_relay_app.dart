@@ -95,6 +95,9 @@ class RideRelayApp extends StatelessWidget {
     required bool showRestorationFallback,
     required Object? restorationError,
     required VoidCallback retryRestoration,
+    required bool openJoinGroup,
+    required VoidCallback requestJoinGroup,
+    required VoidCallback consumeJoinGroupRequest,
   }) {
     const background = Color(0xFF0D1117);
     const surface = Color(0xFF171D25);
@@ -132,6 +135,8 @@ class RideRelayApp extends StatelessWidget {
             restoringRideCode: controller.session?.rideCode,
             restorationError: restorationError,
             onRetryRestoration: retryRestoration,
+            openJoinGroup: openJoinGroup,
+            onJoinGroupOpened: consumeJoinGroupRequest,
             enableNativeServices: enableNativeServices,
           );
         }
@@ -154,6 +159,7 @@ class RideRelayApp extends StatelessWidget {
             testControlRegistry: testControlRegistry,
             spokenGuidance: spokenGuidance,
             rideDiagnostics: rideDiagnostics,
+            onJoinGroupRequested: requestJoinGroup,
           );
         }
         if (riderProfile.needsOnboarding) {
@@ -173,6 +179,8 @@ class RideRelayApp extends StatelessWidget {
           testControl: testControl,
           spokenGuidance: spokenGuidance,
           rideDiagnostics: rideDiagnostics,
+          openJoinGroup: openJoinGroup,
+          onJoinGroupOpened: consumeJoinGroupRequest,
           enableNativeServices: enableNativeServices,
         );
       },
@@ -275,6 +283,7 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
   bool _showRestorationFallback = false;
   Object? _restorationError;
   int _attempt = 0;
+  bool _openJoinGroup = false;
 
   @override
   void initState() {
@@ -327,12 +336,23 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
     );
   }
 
+  void _requestJoinGroup() {
+    if (mounted) setState(() => _openJoinGroup = true);
+  }
+
+  void _consumeJoinGroupRequest() {
+    if (mounted && _openJoinGroup) setState(() => _openJoinGroup = false);
+  }
+
   @override
   Widget build(BuildContext context) => widget.app._buildApp(
     restorationComplete: _restorationComplete,
     showRestorationFallback: _showRestorationFallback,
     restorationError: _restorationError,
     retryRestoration: _beginRestoration,
+    openJoinGroup: _openJoinGroup,
+    requestJoinGroup: _requestJoinGroup,
+    consumeJoinGroupRequest: _consumeJoinGroupRequest,
   );
 }
 

@@ -294,6 +294,7 @@ class ActiveRideShell extends StatefulWidget {
     this.testControlRegistry,
     this.spokenGuidance,
     this.rideDiagnostics,
+    this.onJoinGroupRequested,
   });
 
   final RideController rideController;
@@ -312,6 +313,11 @@ class ActiveRideShell extends StatefulWidget {
   /// Records what the app said beside what the bike did (#419). Null, or off,
   /// in every ordinary build.
   final RideDiagnosticsController? rideDiagnostics;
+
+  /// Returns an unstarted solo rider to the established group-join sheet.
+  /// The shell owns leaving because it must stop its ride-scoped services first;
+  /// the app owns opening Home's sheet after this shell has been removed (#261).
+  final VoidCallback? onJoinGroupRequested;
 
   final DistanceUnitController distanceUnits;
   final MapStyleModeController mapStyleMode;
@@ -713,6 +719,7 @@ class _PreStartRidePanel extends StatelessWidget {
     required this.routeName,
     required this.onStartRide,
     required this.onChooseRoute,
+    this.onJoinGroup,
   });
 
   final String rideCode;
@@ -723,6 +730,7 @@ class _PreStartRidePanel extends StatelessWidget {
   final String? routeName;
   final VoidCallback onStartRide;
   final VoidCallback onChooseRoute;
+  final VoidCallback? onJoinGroup;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -766,14 +774,7 @@ class _PreStartRidePanel extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (isLeader)
-                  FilledButton.icon(
-                    key: const Key('start-ride-button'),
-                    onPressed: busy ? null : onStartRide,
-                    icon: const Icon(Icons.play_arrow),
-                    label: const Text('Start ride'),
-                  )
-                else
+                if (!isLeader)
                   const Text(
                     'LEADER STARTS',
                     style: TextStyle(
@@ -784,6 +785,33 @@ class _PreStartRidePanel extends StatelessWidget {
                   ),
               ],
             ),
+            if (isLeader) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  if (coordinationMode == RideCoordinationMode.solo &&
+                      onJoinGroup != null) ...[
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        key: const Key('join-group-before-start-button'),
+                        onPressed: busy ? null : onJoinGroup,
+                        icon: const Icon(Icons.group_add_outlined),
+                        label: const Text('Join group'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: FilledButton.icon(
+                      key: const Key('start-ride-button'),
+                      onPressed: busy ? null : onStartRide,
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('Start ride'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 9),
             Row(
               children: [
@@ -3702,6 +3730,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 routeName: _activeRoute?.name,
                 onStartRide: _confirmStartRide,
                 onChooseRoute: _requestRouteChange,
+                onJoinGroup: widget.onJoinGroupRequested == null
+                    ? null
+                    : _joinGroupBeforeStart,
               ),
               Expanded(
                 child: MediaQuery.removePadding(
@@ -5412,6 +5443,22 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         await _internetRelayController?.synchronizeNow();
       },
     );
+  }
+
+  Future<void> _joinGroupBeforeStart() async {
+    final onRequested = widget.onJoinGroupRequested;
+    final controller = widget.rideController;
+    if (onRequested == null ||
+        controller.rideStarted ||
+        controller.busy ||
+        controller.coordinationMode != RideCoordinationMode.solo ||
+        controller.session?.role != RideRole.lead) {
+      return;
+    }
+    await _leaveRide();
+    // Leaving rebuilds the app without this ride-scoped shell. The callback is
+    // captured first so it remains safe to invoke after that disposal.
+    onRequested();
   }
 
   @override

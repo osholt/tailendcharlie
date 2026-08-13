@@ -56,6 +56,8 @@ class HomeScreen extends StatefulWidget {
     this.restoringRideCode,
     this.restorationError,
     this.onRetryRestoration,
+    this.openJoinGroup = false,
+    this.onJoinGroupOpened,
     this.enableNativeServices = true,
   });
 
@@ -87,6 +89,11 @@ class HomeScreen extends StatefulWidget {
   final Object? restorationError;
   final VoidCallback? onRetryRestoration;
 
+  /// Set while an unstarted solo session is being replaced from the map. The
+  /// ordinary join sheet opens as soon as Home owns the screen again (#261).
+  final bool openJoinGroup;
+  final VoidCallback? onJoinGroupOpened;
+
   /// False in widget tests and plugin-less builds; the map backdrop stands
   /// down rather than waiting on a platform map that will never load.
   final bool enableNativeServices;
@@ -97,10 +104,15 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _buildIdentity = BuildIdentity.fromEnvironment();
+  bool _joinGroupOpenScheduled = false;
 
   @override
   void initState() {
     super.initState();
+    if (widget.openJoinGroup) {
+      _scheduleJoinGroupSheet();
+      return;
+    }
     final choice = widget.riderProfile.takePendingRideChoice();
     if (choice != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -112,6 +124,25 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       });
     }
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.openJoinGroup && widget.openJoinGroup) {
+      _scheduleJoinGroupSheet();
+    }
+  }
+
+  void _scheduleJoinGroupSheet() {
+    if (_joinGroupOpenScheduled) return;
+    _joinGroupOpenScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      widget.onJoinGroupOpened?.call();
+      await _showRideSheet(context, creating: false);
+      _joinGroupOpenScheduled = false;
+    });
   }
 
   /// Where the rider is, shared with the map below so a searched destination can
