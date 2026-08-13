@@ -9,6 +9,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
+import 'package:ride_relay/controllers/personal_ride_heatmap_controller.dart';
+import 'package:ride_relay/domain/completed_ride.dart';
+import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/geo_point.dart' as awareness_geo;
 import 'package:ride_relay/domain/hazard.dart';
@@ -34,8 +37,81 @@ import 'package:ride_relay/services/received_quick_message.dart';
 import 'package:ride_relay/services/route_importer.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/speed_limit.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  testWidgets('personal ride heatmap is optional and below the active route', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      PersonalRideHeatmapController.preferenceKey: true,
+    });
+    final archive = InMemoryCompletedRideStore();
+    final travelled = ImportedRoute(
+      id: 'travelled',
+      name: 'Travelled',
+      importedAt: DateTime.utc(2026, 8, 12),
+      sourceFileName: 'archive',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.46, longitude: -2.58),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    await archive.save(_completedHeatmapRide(travelled));
+    final heatmap = await PersonalRideHeatmapController.load(store: archive);
+    addTearDown(heatmap.dispose);
+    final directory = Directory.systemTemp.createTempSync('personal-heatmap');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(travelled),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          completedRideStore: archive,
+          personalRideHeatmap: heatmap,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('personal-rides-heatmap-layer')),
+      findsOneWidget,
+    );
+    final map = tester.widget<FlutterMap>(find.byType(FlutterMap));
+    final heatmapIndex = map.children.indexWhere(
+      (child) => child is CircleLayer,
+    );
+    final routeIndex = map.children.indexWhere(
+      (child) => child is PolylineLayer,
+    );
+    expect(heatmapIndex, greaterThanOrEqualTo(0));
+    expect(routeIndex, greaterThan(heatmapIndex));
+
+    await tester.tap(find.byKey(const Key('map-layer-actions')));
+    await tester.pumpAndSettle();
+    expect(find.text('Personal rides heatmap'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('personal-rides-heatmap-toggle')));
+    await tester.pumpAndSettle();
+
+    expect(heatmap.visible, isFalse);
+    expect(find.byKey(const Key('personal-rides-heatmap-layer')), findsNothing);
+  });
+
   test('environment map factory can preserve original daytime tiles', () {
     final map = RideMapFeature.fromEnvironment(restrainedLightMapStyle: false);
 
@@ -5205,6 +5281,24 @@ void main() {
     await verify(landscape: true);
   });
 }
+
+CompletedRide _completedHeatmapRide(ImportedRoute traveledRoute) =>
+    CompletedRide(
+      rideId: 'heatmap-ride',
+      rideCode: '392725',
+      rideName: 'Previous ride',
+      localDisplayName: 'Oliver',
+      localRole: RideRole.lead,
+      startedAt: DateTime.utc(2026, 8, 12, 9),
+      endedAt: DateTime.utc(2026, 8, 12, 10),
+      archivedAt: DateTime.utc(2026, 8, 12, 10, 1),
+      riderCount: 1,
+      eventCount: 0,
+      totalDistanceMeters: 1000,
+      markerSessions: const [],
+      plannedRoute: null,
+      traveledRoute: traveledRoute,
+    );
 
 /// A received quick message as the ride shell publishes one.
 RideQuickMessageAlert _quickMessageAlert({

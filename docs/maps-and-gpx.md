@@ -5,6 +5,17 @@ and rendered locally. The production map path uses the open-source MapLibre
 Native SDK on both iOS and Android. It does not depend on Apple Maps and it does
 not bulk-download from the public OpenStreetMap tile servers.
 
+## Personal ride heatmap stays on the phone
+
+The map layer menu can show **Personal rides heatmap**. It is off by default
+and derives its coverage only from travelled track segments in the completed
+ride archive—never planned routes. It quantises those tracks into a bounded
+z17 spatial index, so a large archive does not become one map object per GPS
+fix. Saving or deleting an archived ride rebuilds the visible index. There is
+no account, HTTP client, contribution credential or server request in this
+personal-layer path; global opt-in coverage is a separate feature and data
+boundary.
+
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
 keeps the provider's daytime colours and labels. They use the same vector tile

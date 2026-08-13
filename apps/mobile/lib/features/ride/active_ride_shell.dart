@@ -28,6 +28,7 @@ import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../data/secure_observer_grant_store.dart';
 import '../../domain/event_store.dart';
+import '../../domain/completed_ride_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart' as route_domain;
@@ -283,6 +284,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.riderProfile,
     required this.sharedRoutes,
     required this.speedLimitDisplay,
+    this.completedRideStore,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.pushTokenSource,
@@ -318,6 +320,7 @@ class ActiveRideShell extends StatefulWidget {
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final CompletedRideStore? completedRideStore;
   final ScreenWakeLock screenWakeLock;
   final Duration screenWakeReassertInterval;
   final PushTokenSource? pushTokenSource;
@@ -3850,6 +3853,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         '${_activeRoute?.id ?? 'none'}',
       ),
       currentPosition: _mapPosition,
+      completedRideStore: widget.completedRideStore,
       navigationPosition: _mapNavigationPosition,
       overlayMarkers: _mapOverlays,
       riderTrails: _riderTrails,
