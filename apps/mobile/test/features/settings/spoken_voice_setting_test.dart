@@ -59,6 +59,54 @@ void main() {
     expect(engine.configured, isTrue);
     expect(engine.spoken, ['In 2 miles, at the roundabout, turn right.']);
   });
+
+  testWidgets('Daniel is selected and novelty voices stay behind Show all', (
+    tester,
+  ) async {
+    const daniel = SpokenGuidanceVoice(
+      name: 'Daniel',
+      locale: 'en-GB',
+      identifier: 'com.apple.voice.compact.en-GB.Daniel',
+    );
+    const novelty = SpokenGuidanceVoice(name: 'Bells', locale: 'en-US');
+    final spoken = SpokenGuidanceController.inMemory(
+      voice: SpokenGuidanceController.preferredDefaultVoice,
+      voiceLoader: () async => const [daniel, novelty],
+    );
+    final mapStyle = await MapStyleModeController.load();
+    final riderProfile = await RiderProfileController.load();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: UnitSettingsSheet(
+            controller: DistanceUnitController.forLocale(
+              const Locale('en', 'GB'),
+            ),
+            mapStyleMode: mapStyle,
+            riderProfile: riderProfile,
+            speedLimitDisplay: SpeedLimitDisplayController.inMemory(),
+            spokenGuidance: spoken,
+            embedded: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text(daniel.label), findsOneWidget);
+    expect(find.text(novelty.label), findsNothing);
+    final showAll = find.byKey(const Key('show-all-spoken-voices'));
+    await tester.ensureVisible(showAll);
+    await tester.tap(showAll);
+    await tester.pumpAndSettle();
+
+    final selector = find.byType(DropdownButtonFormField<String>);
+    await tester.ensureVisible(selector);
+    await tester.tap(selector);
+    await tester.pumpAndSettle();
+    expect(find.text(novelty.label), findsOneWidget);
+  });
 }
 
 class _RecordingEngine implements SpokenGuidanceEngine {

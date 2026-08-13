@@ -123,6 +123,19 @@ void main() {
       identifier: 'com.apple.voice.samantha',
     );
 
+    test(
+      'a fresh profile starts with Daniel without enabling speech',
+      () async {
+        final controller = await SpokenGuidanceController.load();
+
+        expect(
+          controller.voice,
+          SpokenGuidanceController.preferredDefaultVoice,
+        );
+        expect(controller.enabled, isFalse);
+      },
+    );
+
     test('survives a restart and can return to system default', () async {
       final controller = await SpokenGuidanceController.load();
       await controller.setVoice(voice);
@@ -131,6 +144,23 @@ void main() {
 
       await controller.setVoice(null);
       expect((await SpokenGuidanceController.load()).voice, isNull);
+      final preferences = await SharedPreferences.getInstance();
+      expect(
+        preferences.getBool(
+          SpokenGuidanceController.voiceChoiceMadePreferenceKey,
+        ),
+        isTrue,
+      );
+    });
+
+    test('an existing saved voice is never replaced by Daniel', () async {
+      SharedPreferences.setMockInitialValues({
+        SpokenGuidanceController.voicePreferenceKey:
+            '{"name":"Samantha","locale":"en-GB",'
+            '"identifier":"com.apple.voice.samantha"}',
+      });
+
+      expect((await SpokenGuidanceController.load()).voice, voice);
     });
 
     test('a corrupt stored voice falls back to system default', () async {
