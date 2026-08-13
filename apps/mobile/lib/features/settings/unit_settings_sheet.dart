@@ -378,13 +378,46 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
     }
   }
 
+  void _refreshVoices() {
+    setState(() {
+      _voices = widget.controller.availableVoices();
+    });
+  }
+
+  Future<void> _showIosVoiceInstallationHelp() => showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Add a more natural iPhone voice'),
+      content: const Text(
+        'Tail End Charlie can use Enhanced and Premium Apple speech voices '
+        'after they are downloaded.\n\n'
+        '1. Open iPhone Settings.\n'
+        '2. Go to Accessibility → VoiceOver → Speech.\n'
+        '3. Choose the primary voice or Add Rotor Voice, then download an '
+        'enhanced English voice.\n'
+        '4. Return here and tap Refresh installed voices.\n\n'
+        'Siri assistant voices are not guaranteed to be available to apps.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Done'),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(
     BuildContext context,
   ) => FutureBuilder<List<SpokenGuidanceVoice>>(
     future: _voices,
     builder: (context, snapshot) {
+      final isIos = Theme.of(context).platform == TargetPlatform.iOS;
       final voices = snapshot.data ?? const <SpokenGuidanceVoice>[];
+      final highQualityVoiceCount = voices
+          .where((voice) => voice.isHighQuality)
+          .length;
       return AnimatedBuilder(
         animation: widget.controller,
         builder: (context, _) {
@@ -440,6 +473,45 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
                               : voices.firstWhere((voice) => voice.key == key),
                         ),
                       ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                highQualityVoiceCount == 0
+                    ? isIos
+                          ? 'No Enhanced or Premium voices are installed. Only '
+                                'voices installed on this iPhone appear here.'
+                          : 'No high-quality offline voices were reported by '
+                                'this device. Only voices installed by the '
+                                'system speech engine appear here.'
+                    : '$highQualityVoiceCount '
+                          '${isIos ? 'Enhanced or Premium' : 'high-quality'} '
+                          '${highQualityVoiceCount == 1 ? 'voice' : 'voices'} '
+                          'installed.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 4,
+                  children: [
+                    TextButton.icon(
+                      key: const Key('refresh-spoken-voices'),
+                      onPressed:
+                          snapshot.connectionState == ConnectionState.waiting
+                          ? null
+                          : _refreshVoices,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Refresh installed voices'),
+                    ),
+                    if (isIos)
+                      TextButton.icon(
+                        key: const Key('add-natural-ios-voice-help'),
+                        onPressed: _showIosVoiceInstallationHelp,
+                        icon: const Icon(Icons.download_outlined),
+                        label: const Text('How to add natural voices'),
+                      ),
+                  ],
+                ),
               ),
               if (!_showAllVoices && visibleVoices.length < voices.length)
                 Align(
