@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/ride_role.dart';
+import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/features/map/rider_symbol_picker.dart';
@@ -33,6 +34,64 @@ void main() {
     expect(RiderSymbol.fromWireValue('initials'), initials);
     expect(RiderSymbol.fromWireValue('emoji:😈'), emoji);
     expect(RiderSymbol.fromWireValue('emoji:not-an-emoji'), riderSymbolDefault);
+  });
+
+  test('custom initials and ink round-trip inside the legacy wire field', () {
+    const custom = RiderSymbol.initials(
+      customInitials: 'OH',
+      initialsInk: RiderInitialsInk.purple,
+    );
+
+    expect(custom.storageValue, 'initials:v1:T0g:purple');
+    expect(custom.storageValue.length, lessThanOrEqualTo(40));
+    expect(custom.initialsFor('Different Name'), 'OH');
+    expect(RiderSymbol.fromStorageValue(custom.storageValue), custom);
+    expect(
+      RiderSymbol.fromWireValue(
+        custom.wireValue(MotorcycleIconStyle.scrambler),
+      ),
+      custom,
+    );
+    expect(
+      RiderSymbol.fromStorageValue('initials:v1::white'),
+      const RiderSymbol.initials(initialsInk: RiderInitialsInk.white),
+    );
+  });
+
+  test('malformed or oversized initials fail back to the legacy bike', () {
+    expect(normalizeCustomRiderInitials('oh'), 'OH');
+    expect(normalizeCustomRiderInitials('É2'), 'É2');
+    expect(normalizeCustomRiderInitials('ABCD'), isNull);
+    expect(normalizeCustomRiderInitials('A:B'), isNull);
+    expect(
+      RiderSymbol.fromStorageValue('initials:v1:!!!:purple'),
+      riderSymbolDefault,
+    );
+    expect(
+      RiderSymbol.fromStorageValue('initials:v1:QUJDRA:purple'),
+      riderSymbolDefault,
+    );
+    expect(
+      RiderSymbol.fromStorageValue('initials:v1:T0g:ultraviolet'),
+      riderSymbolDefault,
+    );
+  });
+
+  test('the expanded rider palette includes visible Purple and White', () {
+    expect(riderColorFromName('purple'), RiderColor.purple);
+    expect(riderColorFromName('white'), RiderColor.white);
+    expect(RiderColor.purple.color, const Color(0xFF9B7BFF));
+    expect(RiderColor.white.color, const Color(0xFFF4F6F8));
+    expect(RiderColor.values.length, greaterThanOrEqualTo(13));
+    expect(
+      riderBadgeStrokeColor(RiderColor.white.color),
+      const Color(0xFF10151C),
+    );
+  });
+
+  test('the curated emoji catalogue includes more rider identities', () {
+    expect(riderEmojiChoices.length, greaterThanOrEqualTo(30));
+    expect(riderEmojiChoices, containsAll(const ['🧭', '🍩', '🦅', '🥷']));
   });
 
   test('live location carries a custom symbol through the existing field', () {
@@ -108,6 +167,49 @@ void main() {
     expect(find.text('😈'), findsWidgets);
   });
 
+  testWidgets('picker edits initials and their ink with a live preview', (
+    tester,
+  ) async {
+    var symbol = const RiderSymbol.initials();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => SingleChildScrollView(
+              child: RiderSymbolPicker(
+                displayName: 'Oliver Holt',
+                selectedSymbol: symbol,
+                motorcycleStyle: MotorcycleIconStyle.scrambler,
+                badgeColor: RiderColor.white.color,
+                keyPrefix: 'custom-symbol',
+                bikeKeyPrefix: 'custom-bike',
+                onSymbolChanged: (value) => setState(() => symbol = value),
+                onMotorcycleStyleChanged: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('rider-custom-initials')),
+      'tec',
+    );
+    await tester.pump();
+    final purpleInk = find.byKey(
+      const Key('custom-symbol-initials-ink-purple'),
+    );
+    await tester.ensureVisible(purpleInk);
+    await tester.tap(purpleInk);
+    await tester.pump();
+
+    expect(symbol.storageValue, 'initials:v1:VEVD:purple');
+    expect(find.text('TEC'), findsWidgets);
+    expect(find.textContaining('in purple'), findsOneWidget);
+  });
+
   testWidgets('initials use the available rider badge instead of body text', (
     tester,
   ) async {
@@ -159,6 +261,41 @@ void main() {
 
     expect(right - left, greaterThan(bottom - top));
     expect(right - left, greaterThan(100));
+  });
+
+  test('MapLibre raster preserves the chosen initials ink', () async {
+    const symbol = RiderSymbol.initials(
+      customInitials: 'OH',
+      initialsInk: RiderInitialsInk.purple,
+    );
+    final result = await rasterizeRiderSymbolPng(
+      symbol: symbol,
+      displayName: 'Ignored Name',
+      motorcycleStyle: MotorcycleIconStyle.scrambler,
+    );
+    final frame = await (await ui.instantiateImageCodec(
+      result.bytes,
+    )).getNextFrame();
+    final data = await frame.image.toByteData(
+      format: ui.ImageByteFormat.rawRgba,
+    );
+    final pixels = data!.buffer.asUint8List();
+    var purplePixels = 0;
+    for (var index = 0; index < pixels.length; index += 4) {
+      if (pixels[index] > 140 &&
+          pixels[index + 1] > 100 &&
+          pixels[index + 2] > 220 &&
+          pixels[index + 3] > 180) {
+        purplePixels += 1;
+      }
+    }
+
+    expect(result.sdf, isFalse);
+    expect(purplePixels, greaterThan(100));
+    expect(
+      symbol.imageName('Ignored Name', MotorcycleIconStyle.scrambler),
+      contains('purple'),
+    );
   });
 
   group('the map and the picker size initials by one rule (#259)', () {

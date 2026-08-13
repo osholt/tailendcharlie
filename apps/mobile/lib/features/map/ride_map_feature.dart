@@ -25,6 +25,7 @@ import '../../domain/imported_route.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
+import '../../domain/rider_color.dart';
 import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/basemap_configuration.dart';
@@ -4293,7 +4294,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
           circleRadius: _localBadgeRadius,
           circleColor: _hexColor(widget.localBadgeColor),
           circleStrokeWidth: 3,
-          circleStrokeColor: '#FFFFFF',
+          circleStrokeColor: _hexColor(
+            riderBadgeStrokeColor(widget.localBadgeColor),
+          ),
         ),
         enableInteraction: false,
       );
@@ -7512,7 +7515,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
           circleRadius: _miniBadgeRadius,
           circleColor: ['get', 'color'],
           circleStrokeWidth: 1.5,
-          circleStrokeColor: '#FFFFFF',
+          circleStrokeColor: ['get', 'strokeColor'],
         ),
         enableInteraction: false,
       );
@@ -7691,6 +7694,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
             point: rider.point,
             properties: {
               'color': _hexColor(rider.color),
+              'strokeColor': _hexColor(riderBadgeStrokeColor(rider.color)),
               'iconImage': rider.riderSymbol.imageName(
                 rider.riderDisplayName ?? rider.label,
                 rider.motorcycleStyle ?? motorcycleIconStyleDefault,
@@ -7705,6 +7709,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
             point: point,
             properties: {
               'color': '#FF7A1A',
+              'strokeColor': _hexColor(
+                riderBadgeStrokeColor(const Color(0xFFFF7A1A)),
+              ),
               'iconImage': widget.localRiderSymbol.imageName(
                 widget.localDisplayName,
                 widget.localMotorcycleStyle,

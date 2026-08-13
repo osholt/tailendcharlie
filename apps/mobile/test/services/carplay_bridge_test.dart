@@ -454,8 +454,11 @@ void main() {
           ),
           receivedAt: now,
           motorcycleStyle: MotorcycleIconStyle.cafeRacer,
-          riderSymbol: const RiderSymbol.initials(),
-          riderColor: RiderColor.orange,
+          riderSymbol: const RiderSymbol.initials(
+            customInitials: 'OH',
+            initialsInk: RiderInitialsInk.purple,
+          ),
+          riderColor: RiderColor.white,
         ),
       ],
       routeAlerts: const [],
@@ -464,9 +467,9 @@ void main() {
 
     final rider =
         ((received!.arguments as Map)['riders'] as List).single as Map;
-    expect(rider['riderSymbol'], 'initials');
+    expect(rider['riderSymbol'], 'initials:v1:T0g:purple');
     expect(rider['motorcycleStyle'], 'cafeRacer');
-    expect(rider['riderColor'], 'orange');
+    expect(rider['riderColor'], 'white');
   });
 
   test('publishes structured junction marker mode for the turn card', () async {

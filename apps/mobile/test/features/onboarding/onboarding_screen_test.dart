@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/rider_profile_controller.dart';
-import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/features/onboarding/onboarding_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -36,6 +35,19 @@ void main() {
     await tester.ensureVisible(initialsChoice);
     await tester.tap(initialsChoice);
     await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('rider-custom-initials')),
+      'TEC',
+    );
+    await tester.pump();
+    final purpleInk = find.byKey(
+      const Key('onboarding-symbol-initials-ink-purple'),
+    );
+    await tester.ensureVisible(purpleInk);
+    await tester.tap(purpleInk);
+    final purpleColour = find.byKey(const Key('onboarding-colour-purple'));
+    await tester.ensureVisible(purpleColour);
+    await tester.tap(purpleColour);
     await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
     await tester.pumpAndSettle();
     expect(find.text('You are ready to ride'), findsOneWidget);
@@ -46,7 +58,8 @@ void main() {
     expect(profile.onboardingCompleted, isTrue);
     expect(profile.onboardingEducationSkipped, isTrue);
     expect(profile.displayName, 'Oliver');
-    expect(profile.riderSymbol, const RiderSymbol.initials());
+    expect(profile.riderSymbol.storageValue, 'initials:v1:VEVD:purple');
+    expect(profile.riderColor.name, 'purple');
     expect(profile.takePendingRideChoice(), OnboardingRideChoice.join);
   });
 

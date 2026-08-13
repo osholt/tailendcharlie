@@ -71,6 +71,28 @@ void main() {
     expect(reloaded.riderColor, RiderColor.cyan);
   });
 
+  test(
+    'custom initials, ink and the expanded palette survive a restart',
+    () async {
+      final profile = await RiderProfileController.load();
+      const symbol = RiderSymbol.initials(
+        customInitials: 'TEC',
+        initialsInk: RiderInitialsInk.white,
+      );
+
+      await profile.save(
+        displayName: 'Tail End Charlie',
+        motorcycleStyle: MotorcycleIconStyle.fullTourer,
+        riderSymbol: symbol,
+        riderColor: RiderColor.purple,
+      );
+      final reloaded = await RiderProfileController.load();
+
+      expect(reloaded.riderSymbol, symbol);
+      expect(reloaded.riderColor, RiderColor.purple);
+    },
+  );
+
   test('optional education can be skipped and onboarding replayed', () async {
     final profile = await RiderProfileController.load();
     await profile.completeOnboarding(
