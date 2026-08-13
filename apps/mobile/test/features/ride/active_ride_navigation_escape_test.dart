@@ -51,7 +51,7 @@ void main() {
     // navigation fix, `hideWhileMoving` removes the whole navigation bar. Its
     // condition includes `_selectedIndex == 0`, so hiding the only control that
     // could change the index kept it hidden for the rest of the ride — Ride and
-    // Alerts were gone until the ride ended.
+    // Settings were gone until the ride ended.
     //
     // It needs a *moving* ride with a route to appear, which is why a
     // stationary phone never showed it. That is the #133 pattern again.
@@ -139,7 +139,7 @@ void main() {
     // lands on the barrier instead. Let it finish arriving.
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('Ride'), findsWidgets);
-    expect(find.text('Alerts'), findsWidgets);
+    expect(find.text('Settings'), findsWidgets);
 
     // Leaving the map puts the rider's navigation back, because the condition
     // that hid it required the map tab.
