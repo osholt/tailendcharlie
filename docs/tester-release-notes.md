@@ -36,6 +36,50 @@ permissions by design.
 - ...
 ```
 
+## iOS build 56 / Android build 56 — 13 August 2026
+
+This build makes it easier to join a group after preparing a solo ride and
+improves the spoken-guidance voice controls and measurement wording.
+
+### What to test
+
+1. **Voice preview.** Open Settings, choose a navigation voice, and confirm the
+   newly selected voice immediately says: “In 2 miles, at the roundabout, turn
+   right.” Try this once with spoken guidance disabled as well; the preview
+   should still play, while ordinary ride prompts remain disabled.
+2. **Spoken distances.** Follow a route with voice guidance and listen to a few
+   distance prompts. Abbreviations such as `yd`, `mi`, `ft`, `m`, `km`, `mph`
+   and `km/h` should be spoken as natural words rather than read as letters or
+   mispronounced. The visual map labels should remain compact abbreviations.
+3. **Join a group from the map.** Prepare a solo ride but do not start it. A
+   labelled **Join group** button should sit beside **Start ride**. Tap it and
+   join using a six-digit code, paste or invitation scan. The empty solo session
+   should be replaced rather than left behind.
+4. **Button visibility.** The new **Join group** button should not appear once a
+   ride has started, while following another leader, or in an existing group
+   lobby.
+
+### Fixed
+
+- Selecting an installed navigation voice now saves it and plays a realistic
+  navigation preview immediately.
+- The final speech boundary expands common route and speed units into natural
+  singular or plural wording without corrupting place names such as “Lloyd” or
+  road names such as “M4”.
+- An unstarted solo ride now exposes the existing group-code, paste and invite
+  scan flow directly beside the primary start action.
+- Switching to a group cleans up the unused solo session before opening the join
+  flow.
+
+### Known limitations
+
+- The automated tests prove the selected voice and expanded speech reach the
+  text-to-speech engine, but the actual sound and pronunciation still depend on
+  the voices installed by iOS or Android and need listening checks on each
+  device.
+- The two-button layout is verified at a 375-point phone width and still needs a
+  quick usability check on the physical phones used for rides.
+
 ## iOS build 55 / Android build 55 — 13 August 2026
 
 This build simplifies the main navigation, makes both daytime map designs
