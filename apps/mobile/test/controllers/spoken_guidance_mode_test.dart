@@ -148,5 +148,26 @@ void main() {
 
       expect(await controller.availableVoices(), const [voice]);
     });
+
+    test('a failed preview does not undo the saved voice', () async {
+      final controller = SpokenGuidanceController.inMemory(
+        engine: _FailingEngine.new,
+      );
+
+      await controller.setVoiceAndPreview(voice);
+
+      expect(controller.voice, voice);
+    });
   });
+}
+
+class _FailingEngine implements SpokenGuidanceEngine {
+  @override
+  Future<void> configure() => Future<void>.error(StateError('no TTS'));
+
+  @override
+  Future<void> speak(String phrase) async {}
+
+  @override
+  Future<void> stop() async {}
 }
