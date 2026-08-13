@@ -6,6 +6,9 @@ class SpokenGuidanceVoice {
     required this.name,
     required this.locale,
     this.identifier,
+    this.quality,
+    this.gender,
+    this.requiresNetwork,
   });
 
   final String name;
@@ -14,10 +17,55 @@ class SpokenGuidanceVoice {
   /// Stable on Apple platforms. Android identifies a voice by name + locale.
   final String? identifier;
 
+  /// Apple reports `premium`, `enhanced`, or `default`; Android reports a
+  /// five-step quality scale. Keeping the platform value lets Settings put the
+  /// voices most likely to sound natural ahead of novelty/compact voices.
+  final String? quality;
+  final String? gender;
+
+  /// Android exposes whether synthesis needs a network connection. Null on
+  /// Apple, where installed voices are supplied by the operating system.
+  final bool? requiresNetwork;
+
   String get key =>
       identifier?.isNotEmpty == true ? identifier! : '$locale\u0000$name';
 
-  String get label => '$name · $locale';
+  String get label {
+    final details = <String>[name, locale];
+    if (qualityLabel case final quality?) details.add(quality);
+    if (requiresNetwork == true) {
+      details.add('Network');
+    } else if (requiresNetwork == false) {
+      details.add('Offline');
+    }
+    return details.join(' · ');
+  }
+
+  String? get qualityLabel => switch (quality?.toLowerCase()) {
+    'premium' => 'Premium',
+    'enhanced' => 'Enhanced',
+    'very high' => 'Very high quality',
+    'high' => 'High quality',
+    _ => null,
+  };
+
+  bool get isBritishEnglish => locale.toLowerCase() == 'en-gb';
+
+  bool get isDaniel => isBritishEnglish && name.toLowerCase() == 'daniel';
+
+  bool get isHighQuality => switch (quality?.toLowerCase()) {
+    'premium' || 'enhanced' || 'very high' || 'high' => true,
+    _ => false,
+  };
+
+  /// The short list keeps the ordinary picker useful on Apple devices whose
+  /// installed catalogue includes dozens of novelty voices. Nothing is hidden:
+  /// Settings can still expand to the complete English catalogue.
+  bool get isRecommended => isDaniel || isBritishEnglish || isHighQuality;
+
+  bool hasSameNameAndLocale(SpokenGuidanceVoice other) =>
+      name.toLowerCase() == other.name.toLowerCase() &&
+      locale.toLowerCase() == other.locale.toLowerCase();
 
   Map<String, String> get platformArguments => {
     'name': name,
@@ -25,11 +73,18 @@ class SpokenGuidanceVoice {
     if (identifier?.isNotEmpty == true) 'identifier': identifier!,
   };
 
-  Map<String, Object?> toJson() => {
-    'name': name,
-    'locale': locale,
-    if (identifier?.isNotEmpty == true) 'identifier': identifier,
-  };
+  Map<String, Object?> toJson() {
+    final json = <String, Object?>{
+      'name': name,
+      'locale': locale,
+      if (identifier?.isNotEmpty == true) 'identifier': identifier,
+      if (quality?.isNotEmpty == true) 'quality': quality,
+      if (gender?.isNotEmpty == true) 'gender': gender,
+    };
+    final network = requiresNetwork;
+    if (network != null) json['requiresNetwork'] = network;
+    return json;
+  }
 
   static SpokenGuidanceVoice? fromJson(Map<String, Object?> json) {
     final name = json['name'];
@@ -41,6 +96,24 @@ class SpokenGuidanceVoice {
       locale: locale.trim(),
       identifier: switch (json['identifier']) {
         final String value when value.trim().isNotEmpty => value.trim(),
+        _ => null,
+      },
+      quality: switch (json['quality']) {
+        final String value when value.trim().isNotEmpty => value.trim(),
+        _ => null,
+      },
+      gender: switch (json['gender']) {
+        final String value when value.trim().isNotEmpty => value.trim(),
+        _ => null,
+      },
+      requiresNetwork: switch (json['requiresNetwork'] ??
+          json['network_required']) {
+        final bool value => value,
+        final String value when value == '1' || value.toLowerCase() == 'true' =>
+          true,
+        final String value
+            when value == '0' || value.toLowerCase() == 'false' =>
+          false,
         _ => null,
       },
     );
@@ -73,16 +146,48 @@ Future<List<SpokenGuidanceVoice>> loadSpokenGuidanceVoices([
         voices.add(voice);
       }
     }
-    return voices.toList(growable: false)..sort((first, second) {
-      final locale = first.locale.compareTo(second.locale);
-      return locale != 0 ? locale : first.name.compareTo(second.name);
-    });
+    return voices.toList(growable: false)..sort(compareSpokenGuidanceVoices);
   } on Object {
     // Voice choice is optional. A platform/plugin failure leaves the system
     // default available rather than breaking Settings or speech.
     return const [];
   }
 }
+
+int compareSpokenGuidanceVoices(
+  SpokenGuidanceVoice first,
+  SpokenGuidanceVoice second,
+) {
+  final preference = _voicePreferenceRank(
+    first,
+  ).compareTo(_voicePreferenceRank(second));
+  if (preference != 0) return preference;
+  final quality = _voiceQualityRank(
+    first.quality,
+  ).compareTo(_voiceQualityRank(second.quality));
+  if (quality != 0) return quality;
+  final locale = first.locale.compareTo(second.locale);
+  return locale != 0 ? locale : first.name.compareTo(second.name);
+}
+
+int _voicePreferenceRank(SpokenGuidanceVoice voice) {
+  if (voice.isDaniel) return 0;
+  if (voice.isBritishEnglish && voice.isHighQuality) return 1;
+  if (voice.isBritishEnglish) return 2;
+  if (voice.isHighQuality) return 3;
+  return 4;
+}
+
+int _voiceQualityRank(String? quality) => switch (quality?.toLowerCase()) {
+  'premium' => 0,
+  'enhanced' => 1,
+  'very high' => 2,
+  'high' => 3,
+  'normal' || 'default' => 4,
+  'low' => 5,
+  'very low' => 6,
+  _ => 7,
+};
 
 /// Speaks turn instructions so a rider does not have to look down.
 ///

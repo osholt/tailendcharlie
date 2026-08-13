@@ -41,8 +41,14 @@ class SpokenGuidanceController extends ChangeNotifier
   /// only needs "is anything spoken".
   static const modePreferenceKey = 'spoken_guidance_mode';
   static const voicePreferenceKey = 'spoken_guidance_voice';
+  static const voiceChoiceMadePreferenceKey =
+      'spoken_guidance_voice_choice_made';
   static const voicePreviewPhrase =
       'In 2 miles, at the roundabout, turn right.';
+  static const preferredDefaultVoice = SpokenGuidanceVoice(
+    name: 'Daniel',
+    locale: 'en-GB',
+  );
 
   final SharedPreferences? _preferences;
   SpokenAudioMode _mode;
@@ -58,7 +64,7 @@ class SpokenGuidanceController extends ChangeNotifier
         storedMode,
         fallbackEnabled: preferences.getBool(preferenceKey) ?? false,
       ),
-      _voiceFromStorage(preferences.getString(voicePreferenceKey)),
+      _voiceOnLoad(preferences),
       null,
       loadSpokenGuidanceVoices,
     );
@@ -110,7 +116,7 @@ class SpokenGuidanceController extends ChangeNotifier
   Future<List<SpokenGuidanceVoice>> availableVoices() => _voiceLoader();
 
   Future<void> setVoice(SpokenGuidanceVoice? voice) async {
-    if (_voice == voice) return;
+    final changed = _voice != voice;
     _voice = voice;
     if (voice == null) {
       await _preferences?.remove(voicePreferenceKey);
@@ -120,7 +126,11 @@ class SpokenGuidanceController extends ChangeNotifier
         jsonEncode(voice.toJson()),
       );
     }
-    notifyListeners();
+    // Null has two meanings without this marker: a rider deliberately chose
+    // System default, or an older/fresh install has never chosen. Only the
+    // latter should receive Daniel as the product default (#508).
+    await _preferences?.setBool(voiceChoiceMadePreferenceKey, true);
+    if (changed) notifyListeners();
   }
 
   /// Saves a voice selection and gives the rider an immediate useful sample.
@@ -170,5 +180,14 @@ class SpokenGuidanceController extends ChangeNotifier
     } on FormatException {
       return null;
     }
+  }
+
+  static SpokenGuidanceVoice? _voiceOnLoad(SharedPreferences preferences) {
+    final stored = preferences.getString(voicePreferenceKey);
+    final hasMadeChoice =
+        preferences.getBool(voiceChoiceMadePreferenceKey) ??
+        preferences.containsKey(voicePreferenceKey);
+    if (hasMadeChoice) return _voiceFromStorage(stored);
+    return preferredDefaultVoice;
   }
 }

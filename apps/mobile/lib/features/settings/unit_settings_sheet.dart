@@ -362,6 +362,7 @@ class _SpokenVoiceSetting extends StatefulWidget {
 class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
   static const _systemDefaultKey = '__system_default__';
   late Future<List<SpokenGuidanceVoice>> _voices;
+  bool _showAllVoices = false;
 
   @override
   void initState() {
@@ -388,10 +389,22 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
         animation: widget.controller,
         builder: (context, _) {
           final chosen = widget.controller.voice;
-          final installed = chosen == null || voices.contains(chosen);
-          final selectedKey = installed && chosen != null
-              ? chosen.key
-              : _systemDefaultKey;
+          final installedVoice = chosen == null
+              ? null
+              : _installedMatch(chosen, voices);
+          final installed = chosen == null || installedVoice != null;
+          final selectedKey = installedVoice?.key ?? _systemDefaultKey;
+          final recommended = voices
+              .where((voice) => voice.isRecommended)
+              .toList(growable: false);
+          final visibleVoices =
+              (_showAllVoices || recommended.isEmpty
+                    ? List<SpokenGuidanceVoice>.of(voices)
+                    : <SpokenGuidanceVoice>{
+                        ...recommended,
+                        ?installedVoice,
+                      }.toList())
+                ..sort(compareSpokenGuidanceVoices);
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -412,7 +425,7 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
                     value: _systemDefaultKey,
                     child: Text('System default'),
                   ),
-                  for (final voice in voices)
+                  for (final voice in visibleVoices)
                     DropdownMenuItem(
                       value: voice.key,
                       child: Text(voice.label, overflow: TextOverflow.ellipsis),
@@ -428,12 +441,33 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
                         ),
                       ),
               ),
+              if (!_showAllVoices && visibleVoices.length < voices.length)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('show-all-spoken-voices'),
+                    onPressed: () => setState(() => _showAllVoices = true),
+                    child: Text(
+                      'Show all ${voices.length} installed English voices',
+                    ),
+                  ),
+                ),
             ],
           );
         },
       );
     },
   );
+
+  SpokenGuidanceVoice? _installedMatch(
+    SpokenGuidanceVoice chosen,
+    List<SpokenGuidanceVoice> installed,
+  ) {
+    for (final voice in installed) {
+      if (voice == chosen || voice.hasSameNameAndLocale(chosen)) return voice;
+    }
+    return null;
+  }
 }
 
 /// Settings row that both shows the running build and opens the full
