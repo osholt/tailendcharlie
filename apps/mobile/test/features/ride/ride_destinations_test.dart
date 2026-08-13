@@ -8,20 +8,20 @@ void main() {
     // so a copy that drifted would send a rider to the wrong tab at exactly the
     // moment they cannot look at the screen.
 
-    test('an ordinary ride is Map, Ride, Alerts', () {
+    test('an ordinary ride is Map, Ride, Settings', () {
       final destinations = rideDestinations(simulation: false);
 
       expect(destinations.map((destination) => destination.label), [
         'Map',
         'Ride',
-        'Alerts',
+        'Settings',
       ]);
       expect(destinations.map((destination) => destination.index), [0, 1, 2]);
     });
 
     test('a simulation inserts Ride Lab and shifts what follows it', () {
       // The shell's `switch` puts Ride Lab at 1 in a simulation, so Ride and
-      // Alerts are one further along than in an ordinary ride. Carrying the
+      // Settings is one further along than in an ordinary ride. Carrying the
       // index rather than letting a caller count is what keeps the menu
       // agreeing with the bar.
       final destinations = rideDestinations(simulation: true);
@@ -30,7 +30,7 @@ void main() {
         'Map',
         'Ride Lab',
         'Ride',
-        'Alerts',
+        'Settings',
       ]);
       expect(destinations.map((destination) => destination.index), [
         0,

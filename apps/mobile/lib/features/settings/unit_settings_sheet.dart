@@ -34,6 +34,7 @@ class UnitSettingsSheet extends StatelessWidget {
     this.testControl,
     this.spokenGuidance,
     this.rideDiagnostics,
+    this.embedded = false,
   });
 
   final DistanceUnitController controller;
@@ -41,6 +42,11 @@ class UnitSettingsSheet extends StatelessWidget {
   final RiderProfileController riderProfile;
   final SpeedLimitDisplayController speedLimitDisplay;
   final bool currentRideActive;
+
+  /// Whether these settings are the body of a primary destination rather than
+  /// a dismissible sheet. Nested editors must not pop the active ride when
+  /// Settings occupies the bottom-bar slot (#306).
+  final bool embedded;
 
   /// Whether turn instructions are spoken. Off by default: most riders already
   /// have an intercom carrying music or another app's prompts, and a second
@@ -130,7 +136,7 @@ class UnitSettingsSheet extends StatelessWidget {
                 context,
                 rootNavigator: true,
               ).context;
-              Navigator.of(context).pop();
+              if (!embedded) Navigator.of(context).pop();
               unawaited(
                 RiderProfileSheet.show(
                   appContext,
@@ -285,6 +291,7 @@ class UnitSettingsSheet extends StatelessWidget {
           _AboutBuildTile(
             identity: buildIdentity ?? BuildIdentity.fromEnvironment(),
             lastRelaySync: lastRelaySync,
+            dismissSettingsBeforeOpening: !embedded,
           ),
           Align(
             alignment: Alignment.centerLeft,
@@ -402,9 +409,14 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
 /// About & build detail. Two taps from the settings button, and the build
 /// number is legible without opening anything.
 class _AboutBuildTile extends StatelessWidget {
-  const _AboutBuildTile({required this.identity, this.lastRelaySync});
+  const _AboutBuildTile({
+    required this.identity,
+    required this.dismissSettingsBeforeOpening,
+    this.lastRelaySync,
+  });
 
   final BuildIdentity identity;
+  final bool dismissSettingsBeforeOpening;
   final DateTime? lastRelaySync;
 
   @override
@@ -428,7 +440,7 @@ class _AboutBuildTile extends StatelessWidget {
       trailing: const Icon(Icons.chevron_right),
       onTap: () {
         final appContext = Navigator.of(context, rootNavigator: true).context;
-        Navigator.of(context).pop();
+        if (dismissSettingsBeforeOpening) Navigator.of(context).pop();
         unawaited(
           AboutBuildSheet.show(
             appContext,
