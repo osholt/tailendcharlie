@@ -3,6 +3,13 @@ import 'dart:ui' show Brightness;
 
 enum MapStyleMode { system, light, dark, sunriseSunset }
 
+/// Which palette to use when the map resolves to daytime/light mode.
+///
+/// Both choices use the same OpenFreeMap Liberty data. [restrained] applies
+/// Tail End Charlie's quieter road-first repaint; [original] leaves the
+/// provider style unchanged (#489).
+enum DayMapStyle { restrained, original }
+
 typedef GeoCoordinate = ({double latitude, double longitude});
 
 extension MapStyleModeLabel on MapStyleMode {
@@ -34,6 +41,13 @@ extension MapStyleModeLabel on MapStyleMode {
               longitude: sunPosition.longitude,
               utcNow: utcNow ?? DateTime.now().toUtc(),
             ),
+  };
+}
+
+extension DayMapStyleLabel on DayMapStyle {
+  String get label => switch (this) {
+    DayMapStyle.restrained => 'Restrained',
+    DayMapStyle.original => 'Original',
   };
 }
 

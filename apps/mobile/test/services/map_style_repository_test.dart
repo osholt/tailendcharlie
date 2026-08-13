@@ -306,6 +306,57 @@ void main() {
         );
       }
     });
+
+    test(
+      'original Liberty remains unchanged and has a separate cache',
+      () async {
+        var requests = 0;
+        http.Response response() {
+          requests += 1;
+          return http.Response(jsonEncode(_lightStyleFixture), 200);
+        }
+
+        final restrained = await MapStyleRepository(
+          directory: directory,
+          configuration: _lightConfiguration,
+          client: MockClient((_) async => response()),
+        ).resolve();
+        final original = await MapStyleRepository(
+          directory: directory,
+          configuration: _lightConfiguration.forBrightness(
+            dark: false,
+            restrainedLightStyle: false,
+          ),
+          client: MockClient((_) async => response()),
+        ).resolve();
+
+        final restrainedLayers =
+            (jsonDecode(restrained.style) as Map)['layers'] as List;
+        final originalLayers =
+            (jsonDecode(original.style) as Map)['layers'] as List;
+        Map background(List layers) =>
+            layers.singleWhere((layer) => (layer as Map)['id'] == 'background')
+                as Map;
+
+        expect(
+          (background(restrainedLayers)['paint'] as Map)['background-color'],
+          MapStyleRepository.lightBasemapPalette['background'],
+        );
+        expect(
+          (background(originalLayers)['paint'] as Map)['background-color'],
+          '#F8F4F0',
+        );
+        expect(
+          originalLayers.cast<Map>().map((layer) => layer['id']),
+          contains('poi_r20'),
+        );
+        expect(
+          requests,
+          2,
+          reason: 'the restrained cache must not mask original',
+        );
+      },
+    );
   });
 
   group('the resolution says where the style came from (#281)', () {

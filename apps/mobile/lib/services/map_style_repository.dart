@@ -61,7 +61,7 @@ class MapStyleResolution {
 class MapStyleRepository {
   // Increment whenever the normalized/repainted style document changes. Tile
   // regions keep their provider namespace; only this small style cache rotates.
-  static const _styleCacheVersion = 2;
+  static const _styleCacheVersion = 3;
 
   MapStyleRepository({
     required this.directory,
@@ -205,8 +205,8 @@ class MapStyleRepository {
     if (configuration.styleUrl == configuration.darkStyleUrl &&
         configuration.styleUrl.isNotEmpty) {
       _repaintForLegibleDarkMode(style);
-    } else if (configuration.styleUrl ==
-        BasemapConfiguration.defaultLightStyleUrl) {
+    } else if (configuration.restrainedLightStyle &&
+        configuration.styleUrl == BasemapConfiguration.defaultLightStyleUrl) {
       _repaintForRestrainedLightMode(style);
     }
     return jsonEncode(style);
@@ -769,8 +769,14 @@ class MapStyleRepository {
   }
 
   File _cacheFile() {
+    final lightVariant =
+        configuration.styleUrl == BasemapConfiguration.defaultLightStyleUrl
+        ? configuration.restrainedLightStyle
+        : true;
     final digest = sha256.convert(
-      utf8.encode('$_styleCacheVersion:${configuration.styleUrl}'),
+      utf8.encode(
+        '$_styleCacheVersion:${configuration.styleUrl}:$lightVariant',
+      ),
     );
     return File(path.join(directory.path, '$digest.json'));
   }
