@@ -148,6 +148,7 @@ class RideRelayApp extends StatelessWidget {
             riderProfile: riderProfile,
             sharedRoutes: sharedRoutes,
             speedLimitDisplay: speedLimitDisplay,
+            completedRideStore: completedRides,
             roadRatings: roadRatings,
             testControl: testControl,
             testControlRegistry: testControlRegistry,

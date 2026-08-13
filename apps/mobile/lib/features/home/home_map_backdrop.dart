@@ -4,6 +4,7 @@ import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../domain/distance_unit.dart';
+import '../../domain/completed_ride_store.dart';
 import '../../domain/imported_route.dart' as route_domain;
 import '../../services/device_location_source.dart';
 import '../map/ride_map_feature.dart';
@@ -30,6 +31,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.locationController,
     this.bottomInset = 0,
     this.position,
+    this.completedRideStore,
   });
 
   /// Height kept clear at the bottom for whatever stands on the map.
@@ -48,6 +50,7 @@ class HomeMapBackdrop extends StatefulWidget {
   final MapStyleModeController mapStyleMode;
   final SpeedLimitDisplayController speedLimitDisplay;
   final DistanceUnit distanceUnit;
+  final CompletedRideStore? completedRideStore;
 
   /// False in widget tests and on any build without the platform plugins, where
   /// the map would be a spinner and the location plugin is not answering.
@@ -128,6 +131,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
           RideMapFeature.fromEnvironment(
             key: const Key('home-map'),
             currentPosition: _position,
+            completedRideStore: widget.completedRideStore,
             darkMapStyle: widget.mapStyleMode.resolveDark(
               MediaQuery.platformBrightnessOf(context),
             ),

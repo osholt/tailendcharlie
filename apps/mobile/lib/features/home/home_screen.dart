@@ -170,6 +170,7 @@ class _HomeScreenState extends State<HomeScreen> {
             mapStyleMode: widget.mapStyleMode,
             speedLimitDisplay: widget.speedLimitDisplay,
             distanceUnit: widget.distanceUnits.value,
+            completedRideStore: widget.completedRides,
             enableNativeServices: widget.enableNativeServices,
             // So the map's own "Show my location" control sits above the action
             // bar rather than under it.
