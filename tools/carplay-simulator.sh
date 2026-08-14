@@ -201,15 +201,43 @@ for w in wl:
 PY
 }
 
+# `carplay_window` proves Simulator.app drew an external window, but a failed
+# custom-display setup can leave a surface-less TV-out under the same device.
+# A usable session has both the CarPlay launcher process and an IOSurface for
+# the external framebuffer. (Simulator labels even working CarPlay output as
+# `Screen Type: TVOut`, so that metadata is not a valid discriminator.)
+carplay_host_running() {
+  xcrun simctl spawn "$UDID" launchctl print user/501 2>/dev/null \
+    | grep -Eq '^[[:space:]]+[1-9][0-9]*[[:space:]]+-[[:space:]]+com\.apple\.CarPlayApp$'
+}
+
+external_framebuffer_ready() {
+  xcrun simctl io "$UDID" enumerate | awk '
+    /Display class: 1/ { external = 1; next }
+    external && /IOSurface port:/ { ready = 1 }
+    external && /^Port:/ { exit }
+    END { exit ready ? 0 : 1 }
+  '
+}
+
+wait_for_carplay_session() {
+  for _ in $(seq 1 40); do
+    if carplay_host_running && external_framebuffer_ready; then return 0; fi
+    sleep 0.25
+  done
+  return 1
+}
+
 # Set the display, once. The menu acts on Simulator.app's key device window, so
 # with more than one device booted the *named* device's own window has to be
 # raised first - otherwise the CarPlay display silently lands on somebody
 # else's simulator, or the click is accepted and does nothing at all.
 set_display() {
-  osascript - "$DEVICE_NAME" "$1" <<'APPLESCRIPT' >/dev/null
+  if ! timeout 30 osascript - "$DEVICE_NAME" "$1" <<'APPLESCRIPT' >/dev/null
 on run argv
   set deviceName to item 1 of argv
   set choice to item 2 of argv
+  my activateSimulatorSpace()
   tell application "System Events" to tell process "Simulator"
     set frontmost to true
     delay 1
@@ -238,12 +266,48 @@ on run argv
     end if
     click menu item menuChoice of carPlayMenu
     if menuChoice is "CarPlay…" then
-      delay 1
+      set setupWindowReady to false
+      repeat 20 times
+        if exists window "TV Out Extended Setup" then
+          set setupWindowReady to true
+          exit repeat
+        end if
+        delay 0.25
+      end repeat
+      if not setupWindowReady then
+        -- The dialog follows the device window onto its macOS Space. Merely
+        -- making Simulator frontmost does not leave a full-screen Space, so
+        -- make the same Dock click a person would and wait once more.
+        my activateSimulatorSpace()
+        repeat 20 times
+          if exists window "TV Out Extended Setup" then
+            set setupWindowReady to true
+            exit repeat
+          end if
+          delay 0.25
+        end repeat
+      end if
+      if not setupWindowReady then
+        error "The CarPlay setup window opened on another macOS Space. Move to Simulator's Space or reset its saved DevicePreferences."
+      end if
       click button "Run" of window "TV Out Extended Setup"
     end if
   end tell
   delay 4
 end run
+
+-- Programmatic activation changes the active app but does not leave a
+-- full-screen macOS Space. A Dock click does, and also restores a minimized
+-- Simulator window, which makes its windows visible to the accessibility API.
+on activateSimulatorSpace()
+  tell application "System Events" to tell process "Dock"
+    if not (exists first UI element of list 1 whose name is "Simulator") then
+      error "Simulator is not present in the Dock."
+    end if
+    click (first UI element of list 1 whose name is "Simulator")
+  end tell
+  delay 1
+end activateSimulatorSpace
 
 -- Raises the phone window belonging to one device. Its Window-menu entry is
 -- "<device> - iOS <version>"; the head unit's is "<device> - CarPlay".
@@ -264,6 +328,10 @@ on raiseDevice(deviceName)
   end tell
 end raiseDevice
 APPLESCRIPT
+  then
+    echo "Simulator did not complete the $1 display change within 30 seconds." >&2
+    return 1
+  fi
 }
 
 # Disabled first, so the display is rebuilt even when the menu already claims
@@ -277,18 +345,21 @@ CARPLAY_WINDOW=""
 for attempt in 1 2 3; do
   set_display CarPlay
   CARPLAY_WINDOW="$(carplay_window)"
-  [ -n "$CARPLAY_WINDOW" ] && break
-  log "The CarPlay display did not open (attempt $attempt) - retrying"
+  if [ -n "$CARPLAY_WINDOW" ] && wait_for_carplay_session; then break; fi
+  CARPLAY_WINDOW=""
+  log "A usable CarPlay session did not connect (attempt $attempt) - retrying"
   set_display Disabled
 done
 
-[ -n "$CARPLAY_WINDOW" ] || { echo "The CarPlay display did not open." >&2; exit 1; }
+[ -n "$CARPLAY_WINDOW" ] \
+  || { echo "A usable CarPlay session did not connect." >&2; exit 1; }
 log "CarPlay display is up (window $CARPLAY_WINDOW)"
 
 if [ -n "$SHOT_PATH" ]; then
   # Window capture returns black and a whole-screen capture can land on another
   # macOS Space. CoreSimulator owns the external display pixels directly.
-  xcrun simctl io "$UDID" screenshot --display external "$SHOT_PATH" >/dev/null
+  timeout 30 xcrun simctl io "$UDID" screenshot --display external "$SHOT_PATH" >/dev/null \
+    || { echo "CarPlay screenshot did not complete within 30 seconds." >&2; exit 1; }
   log "Screenshot written to $SHOT_PATH"
 fi
 
