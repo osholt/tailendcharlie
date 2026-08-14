@@ -67,26 +67,34 @@ class RouteProgressPanel extends StatelessWidget {
                     ),
                   ),
                 ),
+              ],
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Route ETA $arrival',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFC4CDD8),
+                      fontSize: 11,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
                 if (showClock) ...[
                   const SizedBox(width: 7),
                   const RideClock(
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 14,
+                      fontSize: 12,
                       fontWeight: FontWeight.w800,
                       height: 1,
                     ),
                   ),
                 ],
               ],
-            ),
-            Text(
-              'Route ETA $arrival',
-              style: const TextStyle(
-                color: Color(0xFFC4CDD8),
-                fontSize: 11,
-                height: 1.35,
-              ),
             ),
             if (nextName != null && nextDistance != null) ...[
               const SizedBox(height: 4),
