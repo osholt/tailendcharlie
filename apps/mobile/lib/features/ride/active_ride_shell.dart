@@ -15,6 +15,7 @@ import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
@@ -74,6 +75,7 @@ import '../../services/navigation_guidance.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/route_progress.dart';
+import '../../services/route_journey_progress.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
@@ -284,6 +286,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.riderProfile,
     required this.sharedRoutes,
     required this.speedLimitDisplay,
+    this.routeProgressDisplay,
     this.completedRideStore,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
@@ -326,6 +329,7 @@ class ActiveRideShell extends StatefulWidget {
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final RouteProgressDisplayController? routeProgressDisplay;
   final CompletedRideStore? completedRideStore;
   final ScreenWakeLock screenWakeLock;
   final Duration screenWakeReassertInterval;
@@ -1026,6 +1030,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
   final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _carPlayRouteProgressTracker = RouteProgressTracker();
+  final _carPlayJourneyProgressTracker = RouteJourneyProgressTracker();
   final _trailSimplifier = const TrailDisplaySimplifier();
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
 
@@ -2631,6 +2636,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         navigationPosition != null &&
         DateTime.now().difference(navigationPosition.recordedAt) >=
             const Duration(seconds: 3);
+    final journeyProgress = widget.routeProgressDisplay?.enabled == false
+        ? null
+        : _carPlayJourneyProgressTracker.update(
+            route: navigationRoute,
+            geometry: routeProgress,
+            speedMetersPerSecond: localSpeedIsAgeing
+                ? null
+                : navigationPosition?.speedMetersPerSecond,
+            now: DateTime.now(),
+          );
     final marker = markerOverlay == null
         ? null
         : CarPlayMarkerStatus(
@@ -2688,6 +2703,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         speedLimitMilesPerHour: widget.speedLimitDisplay.limit?.milesPerHour,
         speedLimitUnlimited: widget.speedLimitDisplay.limit?.unlimited ?? false,
         routeProgress: routeProgress,
+        journeyProgress: journeyProgress,
         tecRequest: pendingTecRequest == null
             ? null
             : CarPlayTecRequest(
@@ -3961,6 +3977,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       canEditRoute: _isSimulation || widget.rideController.isLocalRideLeader,
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
+      showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
       ),
@@ -5365,6 +5382,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       mapStyleMode: widget.mapStyleMode,
       riderProfile: widget.riderProfile,
       speedLimitDisplay: widget.speedLimitDisplay,
+      routeProgressDisplay: widget.routeProgressDisplay,
       currentRideActive: true,
       lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
       testControl: widget.testControl,

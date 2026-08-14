@@ -11,6 +11,7 @@ import 'controllers/ride_code_preference_controller.dart';
 import 'controllers/ride_diagnostics_controller.dart';
 import 'controllers/ride_controller.dart';
 import 'controllers/ride_invitation_link_controller.dart';
+import 'controllers/route_progress_display_controller.dart';
 import 'controllers/rider_profile_controller.dart';
 import 'controllers/road_rating_controller.dart';
 import 'controllers/shared_route_controller.dart';
@@ -63,6 +64,7 @@ Future<void> main() async {
     testControl,
     spokenGuidance,
     rideInvitationLinks,
+    routeProgressDisplay,
   ) = await (
     (
       RiderProfileController.load(),
@@ -80,6 +82,7 @@ Future<void> main() async {
     TestControlController.load(),
     SpokenGuidanceController.load(),
     RideInvitationLinkController.load(),
+    RouteProgressDisplayController.load(),
   ).wait;
 
   final completedRides = await CompletedRidesController.load(
@@ -122,6 +125,7 @@ Future<void> main() async {
       riderProfile: riderProfile,
       sharedRoutes: sharedRoutes,
       speedLimitDisplay: speedLimitDisplay,
+      routeProgressDisplay: routeProgressDisplay,
       recordedRoutes: recordedRoutes,
       completedRides: completedRides,
       rideInvitationLinks: rideInvitationLinks,

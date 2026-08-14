@@ -26,6 +26,34 @@ class RouteProgressGeometry {
   final double totalMeters;
 }
 
+/// Along-route positions for the route's deliberate stops, in waypoint order.
+///
+/// A waypoint is projected against the same primary path used by
+/// [RouteProgressTracker]. Passing the previous waypoint's progress back into
+/// the projection disambiguates loops: a finish that shares the start's
+/// coordinate belongs at the end of the route, not at metre zero.
+List<double> routeWaypointProgressMeters(ImportedRoute route) {
+  if (route.paths.isEmpty || route.waypoints.isEmpty) return const [];
+  final primary = route.paths[_primaryPathIndex(route.paths)].points;
+  if (primary.length < 2) return const [];
+
+  final progresses = <double>[];
+  double? previous;
+  for (final waypoint in route.waypoints) {
+    final projection = _project(
+      waypoint.point,
+      primary,
+      previousProgressMeters: previous,
+    );
+    // Route waypoints are ordered. Never let a noisy or slightly off-road point
+    // make a later stop appear behind an earlier one.
+    final progress = math.max(previous ?? 0, projection.progressMeters);
+    progresses.add(progress);
+    previous = progress;
+  }
+  return List.unmodifiable(progresses);
+}
+
 /// Straight-line distance from [position] to the nearest point on any route
 /// segment.
 ///

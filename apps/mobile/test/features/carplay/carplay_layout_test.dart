@@ -102,5 +102,21 @@ void main() {
       expect(source, contains('clockLabel.topAnchor.constraint('));
       expect(source, isNot(contains('clockLabel.bottomAnchor.constraint(')));
     });
+
+    test('route progress owns only the bottom-leading corner', () {
+      expect(source, contains('routeProgressView.leadingAnchor.constraint('));
+      expect(source, contains('routeProgressView.bottomAnchor.constraint('));
+      expect(
+        source,
+        contains(
+          'routeProgressView.trailingAnchor.constraint(\n'
+          '        lessThanOrEqualTo: view.safeAreaLayoutGuide.centerXAnchor',
+        ),
+      );
+      expect(source, contains('constant: -42'));
+      expect(source, contains('CarPlayRouteProgressView'));
+      expect(source, contains(r'\(duration)'));
+      expect(source, contains(r'\(waypointName)'));
+    });
   });
 }

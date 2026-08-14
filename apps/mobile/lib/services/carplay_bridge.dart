@@ -15,6 +15,7 @@ import 'guidance_time_remaining.dart';
 import 'carplay_tec_status.dart';
 import 'navigation_camera.dart';
 import 'route_progress.dart';
+import 'route_journey_progress.dart';
 
 /// Publishes projected ride and navigation state to the native CarPlay and
 /// Android Auto scenes, and relays the CarPlay emergency button back to
@@ -165,6 +166,7 @@ class CarPlayBridge {
     bool speedLimitUnlimited = false,
     bool localSpeedIsAgeing = false,
     RouteProgressGeometry? routeProgress,
+    RouteJourneyProgress? journeyProgress,
   }) async {
     final now = _clock();
     // A question addressed to this rider is an event, not a state refresh. It
@@ -207,6 +209,7 @@ class CarPlayBridge {
         routeProgress?.remainingPaths,
       ),
       'riddenRoutePoints': _projectProgressPath(routeProgress?.riddenPaths),
+      'journeyProgress': journeyProgress?.toSnapshot(),
       'guidanceTitle': guidanceTitle,
       'guidanceDetail': guidanceDetail,
       'guidanceRoadName': guidanceRoadName,

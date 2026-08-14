@@ -15,6 +15,7 @@ import 'package:ride_relay/services/carplay_tec_status.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
 import 'package:ride_relay/services/route_progress.dart';
+import 'package:ride_relay/services/route_journey_progress.dart';
 import 'package:ride_relay/services/tec_gap_trend.dart';
 
 void main() {
@@ -69,6 +70,7 @@ void main() {
       'routeTotalMeters': null,
       'remainingRoutePoints': <Object?>[],
       'riddenRoutePoints': <Object?>[],
+      'journeyProgress': null,
       'guidanceTitle': 'turn right',
       'guidanceDetail': '400 m · A27',
       'guidanceRoadName': null,
@@ -383,6 +385,44 @@ void main() {
       {'latitude': 51.46, 'longitude': -2.57},
       {'latitude': 51.47, 'longitude': -2.56},
     ]);
+  });
+
+  test('projects route and next-stop estimates for CarPlay', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+    final arrival = DateTime.utc(2026, 8, 14, 15, 42);
+    final waypointArrival = DateTime.utc(2026, 8, 14, 15, 20);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+      distanceUnit: DistanceUnit.miles,
+      journeyProgress: RouteJourneyProgress(
+        remainingDistanceMeters: 16093.44,
+        remainingTime: const Duration(minutes: 42),
+        arrivalTime: arrival,
+        nextWaypointName: 'Chippenham',
+        nextWaypointDistanceMeters: 8046.72,
+        nextWaypointArrivalTime: waypointArrival,
+      ),
+    );
+
+    final arguments = Map<String, Object?>.from(received!.arguments as Map);
+    expect(arguments['journeyProgress'], {
+      'remainingDistanceMeters': 16093.44,
+      'remainingSeconds': 2520,
+      'arrivalTimeMillis': arrival.millisecondsSinceEpoch,
+      'nextWaypointName': 'Chippenham',
+      'nextWaypointDistanceMeters': 8046.72,
+      'nextWaypointArrivalTimeMillis': waypointArrival.millisecondsSinceEpoch,
+    });
   });
 
   test(

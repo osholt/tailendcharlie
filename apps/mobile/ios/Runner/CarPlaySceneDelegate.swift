@@ -780,6 +780,7 @@ private final class CarPlayNavigationViewController: UIViewController,
   private let speedBadge = CarPlaySpeedLimitBadge()
   private let groupMiniMap = CarPlayGroupMiniMapView()
   private let clockLabel = CarPlayClockLabel()
+  private let routeProgressView = CarPlayRouteProgressView()
   private var routeSource: MLNShapeSource?
   private var travelledRouteAnnotation: MLNPolyline?
   private var travelledRouteCasingAnnotation: MLNPolyline?
@@ -855,6 +856,8 @@ private final class CarPlayNavigationViewController: UIViewController,
     // the badges either side of it.
     clockLabel.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(clockLabel)
+    routeProgressView.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(routeProgressView)
     NSLayoutConstraint.activate([
       // Speed pair top-trailing, and the TEC message *below* it rather than in
       // the leading corner (#442). CarPlay draws the manoeuvre card top-leading,
@@ -903,6 +906,24 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 12
       ),
+      // Bottom-leading is the one quiet corner: directions own top-leading,
+      // speed/TEC own top-trailing, and the group overview owns bottom-trailing.
+      // Raised above MapLibre attribution and bounded to the leading half so it
+      // cannot cover the rider in the centre of the map (#413).
+      routeProgressView.leadingAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+        constant: 12
+      ),
+      routeProgressView.bottomAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+        constant: -42
+      ),
+      routeProgressView.trailingAnchor.constraint(
+        lessThanOrEqualTo: view.safeAreaLayoutGuide.centerXAnchor,
+        constant: -8
+      ),
+      routeProgressView.widthAnchor.constraint(greaterThanOrEqualToConstant: 190),
+      routeProgressView.widthAnchor.constraint(lessThanOrEqualToConstant: 250),
     ])
   }
 
@@ -941,6 +962,10 @@ private final class CarPlayNavigationViewController: UIViewController,
     )
     tecBadge.apply(snapshot["tec"] as? [String: Any])
     speedBadge.apply(snapshot["speed"] as? [String: Any])
+    routeProgressView.apply(
+      snapshot["journeyProgress"] as? [String: Any],
+      usesMiles: (snapshot["distanceUnit"] as? String) == "miles"
+    )
     let requestedRiderFollow =
       (snapshot["followRider"] as? NSNumber)?.boolValue ?? false
     let cameraModeChanged = requestedRiderFollow != snapshotWantsRiderFollow
@@ -2253,6 +2278,114 @@ private final class CarPlayTecBadge: UIView {
     default:
       label.textColor = CarPlayPalette.cardTitle
     }
+  }
+}
+
+/// Compact route-wide timing in the unused bottom-leading CarPlay corner.
+///
+/// Dart owns the estimate and waypoint selection so the phone and car never
+/// disagree. Native only formats the rider's units and local clock convention.
+private final class CarPlayRouteProgressView: UIView {
+  private let routeLabel = UILabel()
+  private let waypointLabel = UILabel()
+  private let timeFormatter = DateFormatter()
+
+  init() {
+    super.init(frame: .zero)
+    isHidden = true
+    isUserInteractionEnabled = false
+    backgroundColor = CarPlayPalette.cardFill
+    layer.cornerRadius = 10
+    layer.cornerCurve = .continuous
+    layer.borderWidth = 1
+    layer.borderColor = UIColor.white.withAlphaComponent(0.18).cgColor
+    timeFormatter.setLocalizedDateFormatFromTemplate("j:mm")
+
+    routeLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+    routeLabel.textColor = CarPlayPalette.cardTitle
+    routeLabel.adjustsFontSizeToFitWidth = true
+    routeLabel.minimumScaleFactor = 0.78
+    waypointLabel.font = .systemFont(ofSize: 12, weight: .medium)
+    waypointLabel.textColor = CarPlayPalette.cardLabel
+    waypointLabel.adjustsFontSizeToFitWidth = true
+    waypointLabel.minimumScaleFactor = 0.78
+    for label in [routeLabel, waypointLabel] {
+      label.translatesAutoresizingMaskIntoConstraints = false
+      label.numberOfLines = 1
+      addSubview(label)
+    }
+    NSLayoutConstraint.activate([
+      routeLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      routeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      routeLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+      waypointLabel.leadingAnchor.constraint(equalTo: routeLabel.leadingAnchor),
+      waypointLabel.trailingAnchor.constraint(equalTo: routeLabel.trailingAnchor),
+      waypointLabel.topAnchor.constraint(equalTo: routeLabel.bottomAnchor, constant: 4),
+      waypointLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  func apply(_ progress: [String: Any]?, usesMiles: Bool) {
+    guard
+      let progress,
+      let remaining = (progress["remainingDistanceMeters"] as? NSNumber)?.doubleValue
+    else {
+      isHidden = true
+      return
+    }
+    isHidden = false
+    let duration = durationLabel(progress["remainingSeconds"] as? NSNumber)
+    let arrival = timeLabel(progress["arrivalTimeMillis"] as? NSNumber)
+    routeLabel.text =
+      "\(duration) · \(distanceLabel(remaining, usesMiles: usesMiles)) left · ETA \(arrival)"
+
+    let waypointName = (progress["nextWaypointName"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let waypointDistance =
+      (progress["nextWaypointDistanceMeters"] as? NSNumber)?.doubleValue
+    if let waypointName, !waypointName.isEmpty, let waypointDistance {
+      let waypointArrival = timeLabel(
+        progress["nextWaypointArrivalTimeMillis"] as? NSNumber
+      )
+      waypointLabel.isHidden = false
+      waypointLabel.text =
+        "⚑ \(waypointName) · \(distanceLabel(waypointDistance, usesMiles: usesMiles)) · \(waypointArrival)"
+    } else {
+      waypointLabel.isHidden = true
+      waypointLabel.text = nil
+    }
+    accessibilityLabel = [routeLabel.text, waypointLabel.text]
+      .compactMap { $0 }
+      .joined(separator: ". ")
+  }
+
+  private func durationLabel(_ seconds: NSNumber?) -> String {
+    guard let seconds else { return "Time —" }
+    let minutes = Int(ceil(seconds.doubleValue / 60))
+    guard minutes >= 60 else { return "\(minutes) min" }
+    let hours = minutes / 60
+    let remainder = minutes % 60
+    return remainder == 0 ? "\(hours) h" : "\(hours) h \(remainder) min"
+  }
+
+  private func timeLabel(_ milliseconds: NSNumber?) -> String {
+    guard let milliseconds else { return "—" }
+    return timeFormatter.string(
+      from: Date(timeIntervalSince1970: milliseconds.doubleValue / 1_000)
+    )
+  }
+
+  private func distanceLabel(_ metres: Double, usesMiles: Bool) -> String {
+    if usesMiles {
+      let miles = metres / 1_609.344
+      if miles < 0.1 { return "\(Int((metres * 1.093613).rounded())) yd" }
+      return String(format: "%.1f mi", miles)
+    }
+    if metres < 1_000 { return "\(Int(metres.rounded())) m" }
+    return String(format: "%.1f km", metres / 1_000)
   }
 }
 

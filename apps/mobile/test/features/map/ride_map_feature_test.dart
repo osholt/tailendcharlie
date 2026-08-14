@@ -2917,6 +2917,16 @@ void main() {
       expect(find.byType(AppBar), findsNothing);
       expect(find.byKey(const Key('ride-menu-button')), findsOneWidget);
       expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
+      expect(find.byKey(const Key('route-progress-panel')), findsOneWidget);
+      final landscapeProgress = tester.getRect(
+        find.byKey(const Key('route-progress-panel')),
+      );
+      final landscapeMiniMap = tester.getRect(
+        find.byKey(const Key('group-mini-map')),
+      );
+      expect(landscapeProgress.right, closeTo(844 - 10, 1));
+      expect(landscapeProgress.bottom, lessThan(landscapeMiniMap.top));
+      expect(find.byKey(const Key('ride-clock')), findsOneWidget);
       expect(find.text('3 RIDERS'), findsOneWidget);
       expect(find.byKey(const Key('mini-map-you-legend')), findsOneWidget);
       expect(find.byKey(const Key('mini-map-north-indicator')), findsOneWidget);
@@ -2965,6 +2975,9 @@ void main() {
       final portraitMiniMap = tester.getRect(
         find.byKey(const Key('group-mini-map')),
       );
+      final portraitProgress = tester.getRect(
+        find.byKey(const Key('route-progress-panel-position')),
+      );
       expect(portraitMiniMap.width, 150);
       // The 104 pixel canvas plus the rider-count caption, which is now in the
       // layout rather than hung below the box on a negative offset (#133) - so
@@ -2980,6 +2993,11 @@ void main() {
           tester.view.physicalSize / tester.view.devicePixelRatio;
       expect(portraitMiniMap.top, lessThan(portraitSize.height / 3));
       expect(portraitMiniMap.right, closeTo(portraitSize.width - 12, 1));
+      expect(portraitProgress.left, closeTo(12, 1));
+      expect(portraitProgress.top, closeTo(72, 1));
+      expect(portraitProgress.right, lessThanOrEqualTo(portraitMiniMap.left));
+      // Portrait has one clock, folded into the compact route card.
+      expect(find.byKey(const Key('ride-clock')), findsOneWidget);
       riders.value = [
         ...riders.value,
         const MapOverlayMarker(
