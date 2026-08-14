@@ -10,7 +10,7 @@
 #
 # Environment:
 #   CARPLAY_SIM_NAME     device name to use          (default "Tail End Charlie CarPlay")
-#   CARPLAY_SIM_TYPE     simctl device type          (default iPhone-17-Pro)
+#   CARPLAY_SIM_TYPE     simctl device type          (default iPhone-15-Pro)
 #   CARPLAY_SIM_RUNTIME  simctl runtime              (default the newest installed iOS)
 #
 # Three things make this fail, and none of them are the app. They are the
@@ -37,7 +37,10 @@
 set -euo pipefail
 
 DEVICE_NAME="${CARPLAY_SIM_NAME:-Tail End Charlie CarPlay}"
-DEVICE_TYPE="${CARPLAY_SIM_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro}"
+# iPhone 15 Pro exists in the iOS 17.5 runtime deliberately selected below.
+# iPhone 17 Pro requires iOS 26 and makes `--recreate` fail with
+# "Incompatible device" after selecting the CarPlay-safe runtime.
+DEVICE_TYPE="${CARPLAY_SIM_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-15-Pro}"
 APP_PATH=""
 SHOT_PATH=""
 RECREATE=0
@@ -140,9 +143,16 @@ for devices in json.load(sys.stdin)["devices"].values():
 
 UDID="$(udid_for_name || true)"
 if [ "$RECREATE" = 1 ] && [ -n "$UDID" ]; then
+  # Prove the requested device type/runtime pair is valid before deleting the
+  # working device. This keeps `--recreate` recoverable when Xcode changes its
+  # newest device type but the CarPlay-safe runtime remains an older iOS.
+  REPLACEMENT_NAME="$DEVICE_NAME replacement $$"
+  log "Creating replacement $DEVICE_NAME"
+  REPLACEMENT_UDID="$(xcrun simctl create "$REPLACEMENT_NAME" "$DEVICE_TYPE" "$RUNTIME")"
   log "Deleting the existing $DEVICE_NAME device"
   xcrun simctl delete "$UDID"
-  UDID=""
+  xcrun simctl rename "$REPLACEMENT_UDID" "$DEVICE_NAME"
+  UDID="$REPLACEMENT_UDID"
 fi
 if [ -z "$UDID" ]; then
   log "Creating $DEVICE_NAME"
