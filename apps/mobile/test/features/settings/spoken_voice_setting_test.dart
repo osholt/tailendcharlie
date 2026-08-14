@@ -6,6 +6,7 @@ import 'package:ride_relay/controllers/rider_profile_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
 import 'package:ride_relay/features/settings/unit_settings_sheet.dart';
+import 'package:ride_relay/services/natural_voice_pack.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -158,11 +159,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Add a more natural iPhone voice'), findsOneWidget);
       expect(
-        find.textContaining('Accessibility → VoiceOver → Speech'),
+        find.textContaining('Accessibility → Read & Speak → Voices'),
         findsOneWidget,
       );
       expect(
-        find.textContaining('Siri assistant voices are not guaranteed'),
+        find.textContaining('Siri Voice choice can remain reserved'),
         findsOneWidget,
       );
       await tester.tap(find.text('Done'));
@@ -185,6 +186,52 @@ void main() {
       expect(find.text(premium.label), findsOneWidget);
     },
   );
+
+  testWidgets('natural voice pack installs and previews on either platform', (
+    tester,
+  ) async {
+    final store = _FakeNaturalVoicePackStore();
+    final naturalPack = NaturalVoicePackController.inMemory(store: store);
+    final preview = _RecordingEngine();
+    final spoken = SpokenGuidanceController.inMemory(
+      naturalVoicePack: naturalPack,
+      naturalPreviewEngine: () => preview,
+      voiceLoader: () async => const [],
+    );
+    final mapStyle = await MapStyleModeController.load();
+    final riderProfile = await RiderProfileController.load();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(platform: TargetPlatform.android),
+        home: Scaffold(
+          body: UnitSettingsSheet(
+            controller: DistanceUnitController.forLocale(
+              const Locale('en', 'GB'),
+            ),
+            mapStyleMode: mapStyle,
+            riderProfile: riderProfile,
+            speedLimitDisplay: SpeedLimitDisplayController.inMemory(),
+            spokenGuidance: spoken,
+            embedded: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Natural offline voice · Beta'), findsOneWidget);
+    final install = find.byKey(const Key('install-natural-voice'));
+    await tester.ensureVisible(install);
+    await tester.tap(install);
+    await tester.pumpAndSettle();
+
+    expect(store.installCalls, 1);
+    expect(naturalPack.enabled, isTrue);
+    expect(find.byKey(const Key('natural-voice-toggle')), findsOneWidget);
+    expect(preview.configured, isTrue);
+    expect(preview.spoken, ['In 2 miles, at the roundabout, turn right.']);
+  });
 }
 
 class _RecordingEngine implements SpokenGuidanceEngine {
@@ -199,4 +246,29 @@ class _RecordingEngine implements SpokenGuidanceEngine {
 
   @override
   Future<void> stop() async {}
+}
+
+class _FakeNaturalVoicePackStore implements NaturalVoicePackStore {
+  bool installed = false;
+  int installCalls = 0;
+
+  @override
+  String get modelDirectory => '/fake/kokoro';
+
+  @override
+  Future<void> cancelInstall() async {}
+
+  @override
+  Future<void> install({required ValueChanged<double?> onProgress}) async {
+    installCalls += 1;
+    onProgress(0.5);
+    installed = true;
+    onProgress(1);
+  }
+
+  @override
+  Future<bool> isInstalled() async => installed;
+
+  @override
+  Future<void> remove() async => installed = false;
 }

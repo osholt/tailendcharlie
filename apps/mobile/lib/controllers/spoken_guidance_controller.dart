@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/natural_voice_pack.dart';
+import '../services/neural_spoken_guidance.dart';
 import '../services/spoken_audio_mode.dart';
 import '../services/spoken_guidance.dart';
 
@@ -19,17 +21,38 @@ class SpokenGuidanceController extends ChangeNotifier
     this._voice,
     this._engineOverride,
     this._voiceLoader,
-  );
+    this.naturalVoicePack,
+    this._naturalPreviewEngineOverride,
+  ) {
+    naturalVoicePack.addListener(_onNaturalVoiceChanged);
+  }
 
   /// The voice. Carried here rather than built by the ride surface so a test can
   /// substitute one, and so there is exactly one place that decides what speaks.
   final SpokenGuidanceEngine Function()? _engineOverride;
 
+  final SpokenGuidanceEngine Function()? _naturalPreviewEngineOverride;
+
+  /// Cross-platform voice pack state is kept beside the OS voice choice. The
+  /// installed OS voice remains the fail-safe for every natural utterance.
+  final NaturalVoicePackController naturalVoicePack;
+
   /// Creates the ride's engine. The production closure reads [voice] before
   /// every phrase, so a Settings change applies without restarting the ride.
   SpokenGuidanceEngine Function() get engine =>
       _engineOverride ??
-      () => FlutterTtsSpokenGuidanceEngine(voiceProvider: () => _voice);
+      () {
+        final fallback = FlutterTtsSpokenGuidanceEngine(
+          voiceProvider: () => _voice,
+        );
+        return AdaptiveNeuralSpokenGuidanceEngine(
+          enabled: () =>
+              naturalVoicePack.enabled &&
+              naturalVoicePack.modelDirectory != null,
+          neuralFactory: _createNaturalEngine,
+          fallback: fallback,
+        );
+      };
 
   static const preferenceKey = 'spoken_guidance_enabled';
 
@@ -57,6 +80,17 @@ class SpokenGuidanceController extends ChangeNotifier
 
   static Future<SpokenGuidanceController> load() async {
     final preferences = await SharedPreferences.getInstance();
+    late NaturalVoicePackController naturalVoicePack;
+    try {
+      naturalVoicePack = await NaturalVoicePackController.load();
+    } on Object {
+      // The optional pack must not prevent startup when platform storage is
+      // unavailable (including pure Dart controller tests). OS speech remains
+      // fully usable.
+      naturalVoicePack = NaturalVoicePackController.inMemory(
+        store: _UnavailableNaturalVoicePackStore(),
+      );
+    }
     final storedMode = preferences.getString(modePreferenceKey);
     return SpokenGuidanceController._(
       preferences,
@@ -67,6 +101,8 @@ class SpokenGuidanceController extends ChangeNotifier
       _voiceOnLoad(preferences),
       null,
       loadSpokenGuidanceVoices,
+      naturalVoicePack,
+      null,
     );
   }
 
@@ -94,6 +130,8 @@ class SpokenGuidanceController extends ChangeNotifier
     SpokenGuidanceVoice? voice,
     SpokenGuidanceEngine Function()? engine,
     Future<List<SpokenGuidanceVoice>> Function()? voiceLoader,
+    NaturalVoicePackController? naturalVoicePack,
+    SpokenGuidanceEngine Function()? naturalPreviewEngine,
   }) : this._(
          null,
          mode ??
@@ -101,6 +139,11 @@ class SpokenGuidanceController extends ChangeNotifier
          voice,
          engine,
          voiceLoader ?? loadSpokenGuidanceVoices,
+         naturalVoicePack ??
+             NaturalVoicePackController.inMemory(
+               store: _UnavailableNaturalVoicePackStore(),
+             ),
+         naturalPreviewEngine,
        );
 
   @override
@@ -140,7 +183,9 @@ class SpokenGuidanceController extends ChangeNotifier
   /// successful if a platform has no working speech engine (#503).
   Future<void> setVoiceAndPreview(SpokenGuidanceVoice? voice) async {
     await setVoice(voice);
-    final preview = engine();
+    final preview =
+        _engineOverride?.call() ??
+        FlutterTtsSpokenGuidanceEngine(voiceProvider: () => _voice);
     try {
       await preview.configure();
       await preview.speak(voicePreviewPhrase);
@@ -150,6 +195,48 @@ class SpokenGuidanceController extends ChangeNotifier
       // an installed voice disappears between Settings and the next ride.
     }
   }
+
+  Future<void> installNaturalVoiceAndPreview() async {
+    await naturalVoicePack.install();
+    if (naturalVoicePack.installed) await previewNaturalVoice();
+  }
+
+  Future<void> setNaturalVoiceAndPreview(NaturalNavigationVoice voice) async {
+    await naturalVoicePack.setVoice(voice);
+    await previewNaturalVoice();
+  }
+
+  Future<void> previewNaturalVoice() async {
+    if (!naturalVoicePack.installed) return;
+    final preview =
+        _naturalPreviewEngineOverride?.call() ??
+        _createNaturalEngine(disposePlayerOnStop: true);
+    try {
+      await preview.configure();
+      await preview.speak(voicePreviewPhrase);
+    } on Object {
+      // Installation remains useful even if this one preview cannot start. The
+      // live ride engine will use the already configured OS fallback.
+    } finally {
+      await preview.stop();
+    }
+  }
+
+  NeuralSpokenGuidanceEngine _createNaturalEngine({
+    bool disposePlayerOnStop = false,
+  }) {
+    final directory = naturalVoicePack.modelDirectory;
+    if (directory == null) {
+      throw StateError('The natural voice pack is not installed.');
+    }
+    return NeuralSpokenGuidanceEngine(
+      backend: SherpaOnnxNeuralSpeechBackend(modelDirectory: directory),
+      voiceProvider: () => naturalVoicePack.voice,
+      disposePlayerOnStop: disposePlayerOnStop,
+    );
+  }
+
+  void _onNaturalVoiceChanged() => notifyListeners();
 
   /// What the rider gets by pressing the map control once more.
   SpokenAudioMode get nextMode => nextSpokenAudioMode(_mode);
@@ -190,4 +277,30 @@ class SpokenGuidanceController extends ChangeNotifier
     if (hasMadeChoice) return _voiceFromStorage(stored);
     return preferredDefaultVoice;
   }
+
+  @override
+  void dispose() {
+    naturalVoicePack.removeListener(_onNaturalVoiceChanged);
+    naturalVoicePack.dispose();
+    super.dispose();
+  }
+}
+
+class _UnavailableNaturalVoicePackStore implements NaturalVoicePackStore {
+  @override
+  String get modelDirectory => '';
+
+  @override
+  Future<void> cancelInstall() async {}
+
+  @override
+  Future<void> install({required ValueChanged<double?> onProgress}) async {
+    throw StateError('No natural voice pack store was supplied.');
+  }
+
+  @override
+  Future<bool> isInstalled() async => false;
+
+  @override
+  Future<void> remove() async {}
 }
