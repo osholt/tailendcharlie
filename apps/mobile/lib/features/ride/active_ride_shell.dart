@@ -1169,6 +1169,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   FixedSpeedCameraCatalogue? _fixedSpeedCameras;
   CarPlayBridge? _carPlayBridge;
   String? _carPlayMapStyleJson;
+  late final http.Client _carPlayRoutingClient;
+  late final DestinationRoutePlanner _carPlayDestinationPlanner;
   ForegroundLocationController? _locationController;
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
@@ -1267,6 +1269,24 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       distanceUnit: widget.distanceUnits.value,
     );
     _rejoinPlanner = _managedRejoinPlanner.planner;
+    final carPlayRouting = RoutingConfiguration.fromEnvironment();
+    _carPlayRoutingClient = http.Client();
+    _carPlayDestinationPlanner = DestinationRoutePlanner(
+      searchService: NominatimDestinationSearchService(
+        client: _carPlayRoutingClient,
+        baseUrl: carPlayRouting.geocodingBaseUrl,
+      ),
+      routingService: PreferenceAwareRoadRoutingService(
+        osrm: OsrmRoadRoutingService(
+          client: _carPlayRoutingClient,
+          baseUrl: carPlayRouting.routingBaseUrl,
+        ),
+        motorcycle: ValhallaMotorcycleRoutingService(
+          client: _carPlayRoutingClient,
+          routeUrl: carPlayRouting.motorcycleRoutingUrl,
+        ),
+      ),
+    );
     widget.rideController.addListener(_onRideControllerChanged);
     widget.sharedRoutes.addListener(_onSharedRoutesChanged);
     _capturePlannerLinkError();
@@ -1295,6 +1315,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onHazardReported: _reportHazardFromMap,
       onTecRoleAnswered: _answerTecRoleRequestFromCarPlay,
       onRideStartRequested: _startPreparedRideFromCarPlay,
+      onDestinationSearch: _searchCarPlayDestinations,
+      onDestinationSelected: _planCarPlayDestination,
       onStateRequested: () async {
         if (!mounted) return;
         _updateMapOverlays(updateDerivedState: false);
@@ -2689,6 +2711,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         tec: tec,
         effectiveTecRiderIds: effectiveTecRiderIds,
         rideStart: _carPlayRideStart,
+        surfaceMode: widget.rideController.rideEnded
+            ? CarPlaySurfaceMode.endedRide
+            : widget.rideController.rideStarted
+            ? CarPlaySurfaceMode.activeRide
+            : CarPlaySurfaceMode.preRide,
+        canPlanRoute:
+            widget.rideController.isLocalRideLeader &&
+            !widget.rideController.rideStarted &&
+            !widget.rideController.rideEnded &&
+            !widget.rideController.busy,
         basemap: selectedBasemap,
         mapStyleJson: _carPlayMapStyleJson,
         localPosition: _mapPosition.value,
@@ -2735,6 +2767,58 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     );
     if (!mounted) return;
     _updateMapOverlays(updateNavigationPosition: false);
+  }
+
+  Future<List<CarPlayDestination>> _searchCarPlayDestinations(
+    String query,
+  ) async {
+    final controller = widget.rideController;
+    if (!controller.isLocalRideLeader ||
+        controller.rideStarted ||
+        controller.rideEnded ||
+        controller.busy) {
+      throw const FormatException(
+        'Only the ride leader can plan a route before the ride starts.',
+      );
+    }
+    return [
+      for (final match in await _carPlayDestinationPlanner.searchService.search(
+        query,
+      ))
+        CarPlayDestination(label: match.label, point: match.point),
+    ];
+  }
+
+  Future<void> _planCarPlayDestination(
+    CarPlayDestination destination,
+    bool? groupRide,
+  ) async {
+    final controller = widget.rideController;
+    if (!controller.isLocalRideLeader ||
+        controller.rideStarted ||
+        controller.rideEnded ||
+        controller.busy) {
+      throw const FormatException(
+        'Only the ride leader can plan a route before the ride starts.',
+      );
+    }
+    final origin = _mapPosition.value ?? await _acquireCurrentPosition();
+    if (origin == null) {
+      throw const FormatException(
+        'Allow location access on the iPhone before planning from CarPlay.',
+      );
+    }
+    final plan = await _carPlayDestinationPlanner.planForReview(
+      origin: origin,
+      query: destination.label,
+      selectedDestination: DestinationMatch(
+        label: destination.label,
+        point: destination.point,
+      ),
+      distanceUnit: widget.distanceUnits.value,
+    );
+    await _handleRouteChanged(plan.route);
+    if (mounted) _updateMapOverlays(updateDerivedState: false);
   }
 
   /// Publishes the quick messages the ride map has to present, and returns the
@@ -5562,6 +5646,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _enforcementAlert.dispose();
     _rideCompletionSuggestion.dispose();
     unawaited(_carPlayBridge?.dispose());
+    _carPlayRoutingClient.close();
     super.dispose();
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
@@ -65,6 +67,9 @@ void main() {
       'routeName': 'Friday to the Ferry',
       'routePoints': <Object?>[],
       'rideState': 'Ride in progress',
+      'surfaceMode': 'activeRide',
+      'canPlanRoute': false,
+      'canFreeRoam': false,
       'followRider': false,
       'routeProgressMeters': null,
       'routeTotalMeters': null,
@@ -131,6 +136,54 @@ void main() {
       'limitStatus': 'known',
       'limitMilesPerHour': 30,
       'limitUnlimited': false,
+    });
+  });
+
+  test('projects the phone home map and saved rider identity', () async {
+    MethodCall? received;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+    final bridge = CarPlayBridge(channel: channel);
+    addTearDown(bridge.dispose);
+
+    await bridge.publish(
+      session: null,
+      riderLocations: const [],
+      routeAlerts: const [],
+      activeHazards: const [],
+      surfaceMode: CarPlaySurfaceMode.home,
+      canPlanRoute: true,
+      canFreeRoam: true,
+      showTecStatus: false,
+      followRider: true,
+      localPosition: const GeoPoint(latitude: 51.46, longitude: -2.51),
+      localRider: const CarPlayLocalRider(
+        riderId: 'installation-1',
+        displayName: 'Oliver',
+        motorcycleStyle: MotorcycleIconStyle.scrambler,
+        riderSymbol: RiderSymbol.emoji('🦊'),
+        riderColor: RiderColor.purple,
+      ),
+    );
+
+    final snapshot = received!.arguments as Map;
+    expect(snapshot['surfaceMode'], 'home');
+    expect(snapshot['canPlanRoute'], isTrue);
+    expect(snapshot['canFreeRoam'], isTrue);
+    expect(snapshot['tec'], isNull);
+    expect(snapshot['localRider'], {
+      'riderId': 'installation-1',
+      'label': 'Oliver',
+      'isLocal': true,
+      'role': 'Rider',
+      'riderSymbol': 'emoji:🦊',
+      'motorcycleStyle': 'scrambler',
+      'riderColor': 'purple',
+      'latitude': 51.46,
+      'longitude': -2.51,
+      'headingDegrees': null,
     });
   });
 
@@ -963,4 +1016,136 @@ void main() {
 
     expect(starts, 1);
   });
+
+  test('searches only a submitted CarPlay destination query', () async {
+    final queries = <String>[];
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onDestinationSearch: (query) async {
+        queries.add(query);
+        return const [
+          CarPlayDestination(
+            label: 'Chippenham, Wiltshire',
+            point: GeoPoint(latitude: 51.46, longitude: -2.12),
+          ),
+        ];
+      },
+    );
+    addTearDown(bridge.dispose);
+
+    final response = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('searchDestinations', {'query': '  Chippenham  '}),
+    );
+
+    expect(queries, ['Chippenham']);
+    expect(response, {
+      'results': [
+        {
+          'label': 'Chippenham, Wiltshire',
+          'latitude': 51.46,
+          'longitude': -2.12,
+        },
+      ],
+      'error': null,
+    });
+  });
+
+  test('relays an exact destination, ride type, and free-roam start', () async {
+    final plans = <(CarPlayDestination, bool?)>[];
+    var freeRoamStarts = 0;
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onDestinationSelected: (destination, groupRide) async {
+        plans.add((destination, groupRide));
+      },
+      onFreeRoamRequested: () async {
+        freeRoamStarts += 1;
+      },
+    );
+    addTearDown(bridge.dispose);
+
+    final planned = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('planDestination', {
+        'label': 'Chippenham, Wiltshire',
+        'latitude': 51.46,
+        'longitude': -2.12,
+        'groupRide': true,
+      }),
+    );
+    final invalid = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('planDestination', {
+        'label': 'Invalid',
+        'latitude': 95,
+        'longitude': -2.12,
+      }),
+    );
+    final freeRoam = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('startFreeRoam'),
+    );
+
+    expect(planned, {'ok': true, 'error': null});
+    expect(invalid, {
+      'ok': false,
+      'error': 'That destination is invalid. Search again.',
+    });
+    expect(plans, hasLength(1));
+    expect(plans.single.$1.label, 'Chippenham, Wiltshire');
+    expect(plans.single.$1.point.latitude, 51.46);
+    expect(plans.single.$2, isTrue);
+    expect(freeRoam, {'ok': true, 'error': null});
+    expect(freeRoamStarts, 1);
+  });
+
+  test('a retiring surface cannot clear the next surface handler', () async {
+    var firstStarts = 0;
+    var secondStarts = 0;
+    final first = CarPlayBridge(
+      channel: channel,
+      onFreeRoamRequested: () async => firstStarts += 1,
+    );
+    final second = CarPlayBridge(
+      channel: channel,
+      onFreeRoamRequested: () async => secondStarts += 1,
+    );
+    addTearDown(second.dispose);
+
+    // Mirrors Flutter's child replacement: the new shell has already installed
+    // its handler when the old shell is finally unmounted.
+    await first.dispose();
+    final response = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('startFreeRoam'),
+    );
+
+    expect(response, {'ok': true, 'error': null});
+    expect(firstStarts, 0);
+    expect(secondStarts, 1);
+  });
+}
+
+Future<Object?> invokeDartChannel(
+  TestDefaultBinaryMessenger messenger,
+  MethodChannel channel,
+  MethodCall call,
+) {
+  final response = Completer<Object?>();
+  messenger.handlePlatformMessage(
+    channel.name,
+    channel.codec.encodeMethodCall(call),
+    (data) {
+      response.complete(
+        data == null ? null : channel.codec.decodeEnvelope(data),
+      );
+    },
+  );
+  return response.future;
 }

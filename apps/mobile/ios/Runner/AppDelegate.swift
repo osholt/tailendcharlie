@@ -178,6 +178,9 @@ import UserNotifications
           return
         }
         self?.latestCarPlaySnapshot = value
+        if value["surfaceMode"] as? String != "activeRide" {
+          self?.latestCarPlayViewport = nil
+        }
         self?.carPlaySceneDelegate?.apply(snapshot: value)
         result(nil)
       case "updateViewport":
@@ -393,6 +396,65 @@ import UserNotifications
   /// state because the native snapshot may have become stale before the tap.
   func startPreparedRideFromCarPlay() {
     carPlayChannel?.invokeMethod("startPreparedRide", arguments: nil)
+  }
+
+  func searchCarPlayDestinations(
+    query: String,
+    completion: @escaping ([String: Any]) -> Void
+  ) {
+    carPlayChannel?.invokeMethod(
+      "searchDestinations",
+      arguments: ["query": query]
+    ) { value in
+      guard let response = value as? [String: Any] else {
+        completion([
+          "results": [],
+          "error": "Destination search is unavailable. Try again on the iPhone.",
+        ])
+        return
+      }
+      completion(response)
+    }
+  }
+
+  func planCarPlayDestination(
+    label: String,
+    latitude: Double,
+    longitude: Double,
+    groupRide: Bool?,
+    completion: @escaping (Bool, String?) -> Void
+  ) {
+    var arguments: [String: Any] = [
+      "label": label,
+      "latitude": latitude,
+      "longitude": longitude,
+    ]
+    if let groupRide { arguments["groupRide"] = groupRide }
+    carPlayChannel?.invokeMethod("planDestination", arguments: arguments) { value in
+      guard let response = value as? [String: Any] else {
+        completion(false, "Route planning is unavailable. Try again on the iPhone.")
+        return
+      }
+      completion(
+        (response["ok"] as? NSNumber)?.boolValue ?? false,
+        response["error"] as? String
+      )
+    }
+  }
+
+  func startFreeRoamFromCarPlay(
+    completion: @escaping (Bool, String?) -> Void
+  ) {
+    carPlayChannel?.invokeMethod("startFreeRoam", arguments: nil) { value in
+      guard let response = value as? [String: Any] else {
+        completion(false, "Free roam is unavailable. Try again on the iPhone.")
+        return
+      }
+      completion(
+        (response["ok"] as? NSNumber)?.boolValue ?? false,
+        response["error"] as? String
+      )
+    }
   }
 
   /// Reports one of the same first-hand hazards available on the phone map.

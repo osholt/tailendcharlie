@@ -144,4 +144,35 @@ void main() {
       expect(source, contains(r'\(waypointName)'));
     });
   });
+
+  group('CarPlay home map and ride entry', () {
+    test('starts with the phone home fallback instead of the world', () {
+      expect(
+        source,
+        contains('CLLocationCoordinate2D(latitude: 54.5, longitude: -3.2)'),
+      );
+      expect(source, contains('zoomLevel: 5'));
+      expect(source, contains('mapView.setCenter(coordinate, zoomLevel: 14'));
+    });
+
+    test('uses matching plan, free-roam, report, and SOS glyphs', () {
+      expect(source, contains('named: "magnifyingglass"'));
+      expect(source, contains('named: "road.lanes"'));
+      expect(source, contains('named: "bell.badge.fill"'));
+      expect(source, contains('named: "sos"'));
+      expect(source, contains('surfaceMode == "activeRide"'));
+    });
+
+    test('search waits for explicit submission', () {
+      expect(source, contains('submittedSearchText = searchText'));
+      expect(source, contains('completionHandler([])'));
+      expect(source, contains('searchTemplateSearchButtonPressed'));
+      expect(source, contains('searchCarPlayDestinations(query: query)'));
+    });
+
+    test('home hides ride-only status overlays', () {
+      expect(source, contains('clockLabel.isHidden = surfaceMode == "home"'));
+      expect(source, contains('groupMiniMap.isHidden = true'));
+    });
+  });
 }

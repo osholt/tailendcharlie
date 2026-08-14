@@ -6,16 +6,87 @@ import 'package:flutter/services.dart';
 import '../domain/hazard.dart';
 import '../domain/imported_route.dart';
 import '../domain/distance_unit.dart';
+import '../domain/rider_color.dart';
 import '../domain/ride_role.dart';
 import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
+import '../features/map/motorcycle_icon.dart';
 import 'basemap_configuration.dart';
 import 'guidance_time_remaining.dart';
 import 'carplay_tec_status.dart';
 import 'navigation_camera.dart';
 import 'route_progress.dart';
 import 'route_journey_progress.dart';
+
+enum CarPlaySurfaceMode { home, preRide, activeRide, endedRide }
+
+/// A submitted CarPlay search result. Coordinates are carried with the label so
+/// choosing the second of several places with the same name cannot silently
+/// route to the geocoder's first result instead.
+class CarPlayDestination {
+  const CarPlayDestination({required this.label, required this.point});
+
+  final String label;
+  final GeoPoint point;
+
+  Map<String, Object> toSnapshot() => {
+    'label': label,
+    'latitude': point.latitude,
+    'longitude': point.longitude,
+  };
+
+  static CarPlayDestination? tryParse(Object? raw) {
+    if (raw is! Map) return null;
+    final label = raw['label'];
+    final latitude = raw['latitude'];
+    final longitude = raw['longitude'];
+    if (label is! String ||
+        label.trim().isEmpty ||
+        latitude is! num ||
+        longitude is! num) {
+      return null;
+    }
+    final lat = latitude.toDouble();
+    final lon = longitude.toDouble();
+    if (!lat.isFinite ||
+        !lon.isFinite ||
+        lat < -90 ||
+        lat > 90 ||
+        lon < -180 ||
+        lon > 180) {
+      return null;
+    }
+    return CarPlayDestination(
+      label: label.trim(),
+      point: GeoPoint(latitude: lat, longitude: lon),
+    );
+  }
+}
+
+/// The saved phone identity used on the home map before a ride session exists.
+/// It keeps CarPlay's local marker identical to the phone rather than replacing
+/// it with a generic blue dot until a ride is created.
+class CarPlayLocalRider {
+  const CarPlayLocalRider({
+    required this.riderId,
+    required this.displayName,
+    required this.motorcycleStyle,
+    required this.riderSymbol,
+    required this.riderColor,
+    this.roleLabel = 'Rider',
+  });
+
+  final String riderId;
+  final String displayName;
+  final MotorcycleIconStyle motorcycleStyle;
+  final RiderSymbol riderSymbol;
+  final RiderColor riderColor;
+  final String roleLabel;
+}
+
+String _readableCarPlayError(Object error, {required String fallback}) =>
+    error is FormatException ? error.message : fallback;
 
 /// Publishes projected ride and navigation state to the native CarPlay and
 /// Android Auto scenes, and relays the CarPlay emergency button back to
@@ -41,6 +112,9 @@ class CarPlayBridge {
     this.onHazardReported,
     this.onTecRoleAnswered,
     this.onRideStartRequested,
+    this.onDestinationSearch,
+    this.onDestinationSelected,
+    this.onFreeRoamRequested,
     this.onStateRequested,
     @visibleForTesting MethodChannel? channel,
     @visibleForTesting DateTime Function()? clock,
@@ -49,8 +123,15 @@ class CarPlayBridge {
   }) : _channel =
            channel ?? const MethodChannel('me.osholt.ride_relay/carplay'),
        _clock = clock ?? DateTime.now {
+    _methodHandlerOwner = this;
     _channel.setMethodCallHandler(_handleMethodCall);
   }
+
+  /// Flutter can inflate the next ride surface before unmounting the previous
+  /// one. Without ownership, the old surface's late dispose clears the new
+  /// surface's handler and CarPlay controls stop responding at exactly the
+  /// home-to-ride transition.
+  static CarPlayBridge? _methodHandlerOwner;
 
   final MethodChannel _channel;
   final DateTime Function() _clock;
@@ -72,6 +153,21 @@ class CarPlayBridge {
   /// revalidates the leader and lifecycle state before recording anything.
   final Future<void> Function()? onRideStartRequested;
 
+  /// Searches only after the rider submits CarPlay's search field. The public
+  /// geocoder used by the phone forbids autocomplete, so native deliberately
+  /// does not call this while each character is entered.
+  final Future<List<CarPlayDestination>> Function(String query)?
+  onDestinationSearch;
+
+  /// Plans the selected result on the phone, which remains the single owner of
+  /// routing, route persistence and ride creation. [groupRide] is non-null on
+  /// the home surface and null when a prepared ride is changing its route.
+  final Future<void> Function(CarPlayDestination destination, bool? groupRide)?
+  onDestinationSelected;
+
+  /// Creates and starts a route-less solo ride from the home map.
+  final Future<void> Function()? onFreeRoamRequested;
+
   /// Rebuilds the current projection when the CarPlay scene opens.
   ///
   /// The scene can connect after a quiet or restored ride, when no new
@@ -85,6 +181,7 @@ class CarPlayBridge {
   /// throttle and an answered one can take its alert down.
   String? _publishedTecRequestId;
   String? _publishedRideStartKey;
+  String? _publishedSurfaceKey;
   int _publishAttempt = 0;
 
   /// The status list is glanceable, but the same snapshot also drives the live
@@ -121,6 +218,92 @@ class CarPlayBridge {
         await onTecRoleAnswered?.call(requestId, accepted);
       case 'startPreparedRide':
         await onRideStartRequested?.call();
+      case 'searchDestinations':
+        final arguments = call.arguments;
+        final query = arguments is Map ? arguments['query'] : null;
+        if (query is! String || query.trim().isEmpty) {
+          return const {
+            'results': <Object?>[],
+            'error': 'Enter a destination.',
+          };
+        }
+        final search = onDestinationSearch;
+        if (search == null) {
+          return const {
+            'results': <Object?>[],
+            'error': 'Destination search is unavailable on this screen.',
+          };
+        }
+        try {
+          final results = await search(query.trim());
+          return {
+            'results': [for (final result in results) result.toSnapshot()],
+            'error': null,
+          };
+        } on Object catch (error) {
+          return {
+            'results': const <Object?>[],
+            'error': _readableCarPlayError(
+              error,
+              fallback: 'Could not search for that destination.',
+            ),
+          };
+        }
+      case 'planDestination':
+        final destination = CarPlayDestination.tryParse(call.arguments);
+        final planner = onDestinationSelected;
+        if (destination == null) {
+          return const {
+            'ok': false,
+            'error': 'That destination is invalid. Search again.',
+          };
+        }
+        if (planner == null) {
+          return const {
+            'ok': false,
+            'error': 'Route planning is unavailable on this screen.',
+          };
+        }
+        final arguments = call.arguments as Map;
+        final rawGroupRide = arguments['groupRide'];
+        if (rawGroupRide != null && rawGroupRide is! bool) {
+          return const {
+            'ok': false,
+            'error': 'The ride type is invalid. Try again.',
+          };
+        }
+        try {
+          await planner(destination, rawGroupRide as bool?);
+          return const {'ok': true, 'error': null};
+        } on Object catch (error) {
+          return {
+            'ok': false,
+            'error': _readableCarPlayError(
+              error,
+              fallback: 'Could not plan that route.',
+            ),
+          };
+        }
+      case 'startFreeRoam':
+        final start = onFreeRoamRequested;
+        if (start == null) {
+          return const {
+            'ok': false,
+            'error': 'Free roam is unavailable on this screen.',
+          };
+        }
+        try {
+          await start();
+          return const {'ok': true, 'error': null};
+        } on Object catch (error) {
+          return {
+            'ok': false,
+            'error': _readableCarPlayError(
+              error,
+              fallback: 'Could not start free roam.',
+            ),
+          };
+        }
       case 'requestState':
         _lastPublishedAt = null;
         await onStateRequested?.call();
@@ -155,6 +338,11 @@ class CarPlayBridge {
     Set<String> effectiveTecRiderIds = const {},
     CarPlayTecRequest? tecRequest,
     CarPlayRideStart? rideStart,
+    CarPlaySurfaceMode surfaceMode = CarPlaySurfaceMode.activeRide,
+    bool canPlanRoute = false,
+    bool canFreeRoam = false,
+    bool showTecStatus = true,
+    CarPlayLocalRider? localRider,
     BasemapConfiguration? basemap,
     String? mapStyleJson,
     GeoPoint? localPosition,
@@ -177,8 +365,12 @@ class CarPlayBridge {
     final requestChanged = tecRequest?.requestId != _publishedTecRequestId;
     final rideStartKey = rideStart?.projectionKey;
     final rideStartChanged = rideStartKey != _publishedRideStartKey;
+    final surfaceKey =
+        '${surfaceMode.name}|$canPlanRoute|$canFreeRoam|$showTecStatus';
+    final surfaceChanged = surfaceKey != _publishedSurfaceKey;
     if (!requestChanged &&
         !rideStartChanged &&
+        !surfaceChanged &&
         _lastPublishedAt != null &&
         now.difference(_lastPublishedAt!) < _minimumPublishInterval) {
       return;
@@ -186,10 +378,12 @@ class CarPlayBridge {
     final previousPublishedAt = _lastPublishedAt;
     final previousTecRequestId = _publishedTecRequestId;
     final previousRideStartKey = _publishedRideStartKey;
+    final previousSurfaceKey = _publishedSurfaceKey;
     final attempt = ++_publishAttempt;
     _lastPublishedAt = now;
     _publishedTecRequestId = tecRequest?.requestId;
     _publishedRideStartKey = rideStartKey;
+    _publishedSurfaceKey = surfaceKey;
     final alertsByRider = {
       for (final alert in routeAlerts) alert.riderId: alert,
     };
@@ -198,6 +392,9 @@ class CarPlayBridge {
       'routeName': routeName,
       'routePoints': _projectRoute(route),
       'rideState': rideState,
+      'surfaceMode': surfaceMode.name,
+      'canPlanRoute': canPlanRoute,
+      'canFreeRoam': canFreeRoam,
       // Before the leader starts, the phone frames the complete route so the
       // group can review it. Once underway it changes to the forward-looking
       // rider camera. CarPlay needs that state explicitly; the presence of a
@@ -226,7 +423,7 @@ class CarPlayBridge {
       'groupStatus': groupStatus,
       'markerStatus': markerStatus,
       'marker': marker?.toSnapshot(),
-      'tec': tec.toSnapshot(),
+      'tec': showTecStatus ? tec.toSnapshot() : null,
       'tecRequest': tecRequest?.toSnapshot(),
       'rideStart': rideStart?.toSnapshot(),
       'speed': !speedLimitEnabled
@@ -259,15 +456,18 @@ class CarPlayBridge {
           'longitude': localPosition.longitude,
           'headingDegrees': localHeadingDegrees,
         },
-      if (session != null && localPosition != null)
+      if ((localRider != null || session != null) && localPosition != null)
         'localRider': {
-          'riderId': session.localRiderId,
-          'label': session.displayName,
+          'riderId': localRider?.riderId ?? session!.localRiderId,
+          'label': localRider?.displayName ?? session!.displayName,
           'isLocal': true,
-          'role': session.role.label,
-          'riderSymbol': session.riderSymbol.storageValue,
-          'motorcycleStyle': session.motorcycleStyle.name,
-          'riderColor': session.riderColor.name,
+          'role': localRider?.roleLabel ?? session!.role.label,
+          'riderSymbol':
+              localRider?.riderSymbol.storageValue ??
+              session!.riderSymbol.storageValue,
+          'motorcycleStyle':
+              localRider?.motorcycleStyle.name ?? session!.motorcycleStyle.name,
+          'riderColor': localRider?.riderColor.name ?? session!.riderColor.name,
           'latitude': localPosition.latitude,
           'longitude': localPosition.longitude,
           'headingDegrees': localHeadingDegrees,
@@ -311,13 +511,17 @@ class CarPlayBridge {
         _lastPublishedAt = previousPublishedAt;
         _publishedTecRequestId = previousTecRequestId;
         _publishedRideStartKey = previousRideStartKey;
+        _publishedSurfaceKey = previousSurfaceKey;
       }
       if (kDebugMode) debugPrint('Could not publish CarPlay snapshot: $error');
     }
   }
 
   Future<void> dispose() async {
-    _channel.setMethodCallHandler(null);
+    if (identical(_methodHandlerOwner, this)) {
+      _methodHandlerOwner = null;
+      _channel.setMethodCallHandler(null);
+    }
   }
 
   /// Sends the phone map's actual navigation viewport without rebuilding the

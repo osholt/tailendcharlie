@@ -18,6 +18,7 @@ import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
+import '../../domain/map_style_mode.dart';
 import '../../services/road_routing.dart';
 import 'home_destination_search.dart';
 import 'home_map_backdrop.dart';
@@ -29,6 +30,8 @@ import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_coordination_mode.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
+import '../../services/basemap_configuration.dart';
+import '../../services/carplay_bridge.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/stored_route_library.dart';
 import '../map/stored_route_picker.dart';
@@ -108,10 +111,22 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _buildIdentity = BuildIdentity.fromEnvironment();
   bool _joinGroupOpenScheduled = false;
+  late final CarPlayBridge _carPlayBridge;
+  String? _carPlayMapStyleJson;
 
   @override
   void initState() {
     super.initState();
+    _carPlayBridge = CarPlayBridge(
+      onDestinationSearch: _searchCarPlayDestinations,
+      onDestinationSelected: _planCarPlayDestination,
+      onFreeRoamRequested: _startCarPlayFreeRoam,
+      onStateRequested: () async => _publishHomeCarPlayState(),
+    );
+    _position.addListener(_publishHomeCarPlayState);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _publishHomeCarPlayState();
+    });
     if (widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
       return;
@@ -132,6 +147,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void didUpdateWidget(covariant HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _publishHomeCarPlayState();
+    });
     if (!oldWidget.openJoinGroup && widget.openJoinGroup) {
       _scheduleJoinGroupSheet();
     }
@@ -156,6 +174,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     // This screen had nothing to dispose until #431 gave it a notifier it shares
     // with the map and a client it lends to the geocoder.
+    _position.removeListener(_publishHomeCarPlayState);
+    unawaited(_carPlayBridge.dispose());
     _position.dispose();
     _routingClient.close();
     super.dispose();
@@ -185,6 +205,128 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }();
 
+  BasemapConfiguration get _homeBasemap =>
+      BasemapConfiguration.fromEnvironment().forBrightness(
+        dark: widget.mapStyleMode.resolveDark(
+          MediaQuery.platformBrightnessOf(context),
+        ),
+        restrainedLightStyle:
+            widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
+      );
+
+  void _publishHomeCarPlayState() {
+    if (!mounted) return;
+    final position = _position.value;
+    unawaited(
+      _carPlayBridge.publish(
+        session: null,
+        riderLocations: const [],
+        routeAlerts: const [],
+        activeHazards: const [],
+        rideState: _planningDestination
+            ? 'Planning route…'
+            : 'Ready to plan or free roam',
+        surfaceMode: CarPlaySurfaceMode.home,
+        canPlanRoute: true,
+        canFreeRoam: true,
+        showTecStatus: false,
+        followRider: position != null,
+        distanceUnit: widget.distanceUnits.value,
+        basemap: _homeBasemap,
+        mapStyleJson: _carPlayMapStyleJson,
+        localPosition: position,
+        localRider: CarPlayLocalRider(
+          riderId: widget.riderProfile.installationId,
+          displayName: widget.riderProfile.displayName,
+          motorcycleStyle: widget.riderProfile.motorcycleStyle,
+          riderSymbol: widget.riderProfile.riderSymbol,
+          riderColor: widget.riderProfile.riderColor,
+        ),
+      ),
+    );
+  }
+
+  Future<List<CarPlayDestination>> _searchCarPlayDestinations(
+    String query,
+  ) async => [
+    for (final match in await _destinationPlanner.searchService.search(query))
+      CarPlayDestination(label: match.label, point: match.point),
+  ];
+
+  Future<void> _planCarPlayDestination(
+    CarPlayDestination destination,
+    bool? groupRide,
+  ) async {
+    if (_planningDestination || widget.controller.busy) {
+      throw const FormatException('Ride setup is already in progress.');
+    }
+    final origin = _position.value;
+    if (origin == null) {
+      throw const FormatException(
+        'Show your location on the iPhone before planning from CarPlay.',
+      );
+    }
+    if (groupRide == null) {
+      throw const FormatException('Choose a solo or group ride and try again.');
+    }
+    final controller = widget.controller;
+    final profile = widget.riderProfile;
+    setState(() => _planningDestination = true);
+    _publishHomeCarPlayState();
+    try {
+      final plan = await _destinationPlanner.planForReview(
+        origin: origin,
+        query: destination.label,
+        selectedDestination: DestinationMatch(
+          label: destination.label,
+          point: destination.point,
+        ),
+        distanceUnit: widget.distanceUnits.value,
+      );
+      await controller.createRide(
+        profile.displayName,
+        motorcycleStyle: profile.motorcycleStyle,
+        riderSymbol: profile.riderSymbol,
+        riderColor: profile.riderColor,
+        coordinationMode: groupRide
+            ? RideCoordinationMode.secondBikeDropOff
+            : RideCoordinationMode.solo,
+        rideName: destination.label,
+      );
+      // Publish the exact selected route before the active shell restores. The
+      // authoritative journal then drives both phone and CarPlay without a
+      // phone-only review sheet blocking the in-car flow.
+      await controller.publishRoute(plan.route);
+    } finally {
+      if (mounted) {
+        setState(() => _planningDestination = false);
+        _publishHomeCarPlayState();
+      }
+    }
+  }
+
+  Future<void> _startCarPlayFreeRoam() async {
+    if (_planningDestination || widget.controller.busy) {
+      throw const FormatException('Ride setup is already in progress.');
+    }
+    if (_position.value == null) {
+      throw const FormatException(
+        'Show your location on the iPhone before starting free roam.',
+      );
+    }
+    final controller = widget.controller;
+    final profile = widget.riderProfile;
+    await controller.createRide(
+      profile.displayName,
+      motorcycleStyle: profile.motorcycleStyle,
+      riderSymbol: profile.riderSymbol,
+      riderColor: profile.riderColor,
+      coordinationMode: RideCoordinationMode.solo,
+      rideName: 'Free roam',
+    );
+    await controller.startRide();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -211,6 +353,17 @@ class _HomeScreenState extends State<HomeScreen> {
             // bar rather than under it.
             bottomInset: HomeRideActions.reservedHeight,
             position: _position,
+            onMapStyleResolved: (styleJson) {
+              _carPlayMapStyleJson = styleJson;
+              final basemap = _homeBasemap;
+              unawaited(
+                _carPlayBridge.publishMapStyle(
+                  styleJson: styleJson,
+                  fallbackStyleUrl: basemap.styleUrl,
+                ),
+              );
+              _publishHomeCarPlayState();
+            },
           ),
           SafeArea(
             child: Stack(
@@ -447,6 +600,10 @@ class _HomeScreenState extends State<HomeScreen> {
         // query so this is the same lookup again, and it keeps the route named
         // after the place rather than a pair of numbers.
         query: choice.label,
+        selectedDestination: DestinationMatch(
+          label: choice.label,
+          point: choice.point,
+        ),
         distanceUnit: widget.distanceUnits.value,
       );
       if (!mounted) return;

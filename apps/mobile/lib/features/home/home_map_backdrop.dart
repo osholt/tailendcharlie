@@ -33,6 +33,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.bottomInset = 0,
     this.position,
     this.completedRideStore,
+    this.onMapStyleResolved,
   });
 
   /// Height kept clear at the bottom for whatever stands on the map.
@@ -52,6 +53,7 @@ class HomeMapBackdrop extends StatefulWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final DistanceUnit distanceUnit;
   final CompletedRideStore? completedRideStore;
+  final ValueChanged<String>? onMapStyleResolved;
 
   /// False in widget tests and on any build without the platform plugins, where
   /// the map would be a spinner and the location plugin is not answering.
@@ -140,6 +142,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
                 widget.mapStyleMode.dayStyle == DayMapStyle.restrained,
             speedLimitDisplay: widget.speedLimitDisplay,
             distanceUnit: widget.distanceUnit,
+            onMapStyleResolved: widget.onMapStyleResolved,
             // No ride yet, so nothing may edit a ride's route from here and no
             // ride surface has anything to say.
             canEditRoute: false,
