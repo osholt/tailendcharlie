@@ -49,6 +49,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var activeManeuver: CPManeuver?
   private var rideStartPrompt: [String: Any]?
   private var isShowingPanningInterface = false
+  private var rideMenuButton: CPBarButton?
   private weak var interfaceController: CPInterfaceController?
   private var sceneLifecycle = CarPlaySceneLifecycle()
 
@@ -71,6 +72,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     self.mapViewController = mapViewController
     self.statusTemplate = statusTemplate
     self.interfaceController = interfaceController
+    let rideMenuButton = statusButton(
+      interfaceController: interfaceController,
+      template: statusTemplate
+    )
+    self.rideMenuButton = rideMenuButton
 
     window.rootViewController = mapViewController
     mapTemplate.mapDelegate = self
@@ -83,9 +89,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       reportButton(),
       emergencyButton(),
     ]
-    mapTemplate.trailingNavigationBarButtons = [
-      statusButton(interfaceController: interfaceController, template: statusTemplate),
-    ]
+    // Phone landscape puts its compact ride menu at the leading edge. Keep the
+    // same learned location in the car; CarPlay still owns the navigation bar
+    // and lays its manoeuvre card below it.
+    mapTemplate.leadingNavigationBarButtons = [rideMenuButton]
     // Apple's header explicitly says a failed presentation throws when no
     // completion is supplied. More importantly, a navigation session must not
     // start until this root has actually been accepted by the head unit. The
@@ -128,6 +135,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapTemplate = nil
     mapViewController = nil
     statusTemplate = nil
+    rideMenuButton = nil
     rideStartPrompt = nil
     presentedTecRequestID = nil
     (UIApplication.shared.delegate as? AppDelegate)?.carPlayDidDisconnect(self)
@@ -546,9 +554,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   private func updateLeadingNavigationButtons() {
-    guard let mapTemplate, !isShowingPanningInterface else { return }
+    guard
+      let mapTemplate,
+      let rideMenuButton,
+      !isShowingPanningInterface
+    else { return }
     let enabled = (rideStartPrompt?["enabled"] as? NSNumber)?.boolValue ?? false
-    mapTemplate.leadingNavigationBarButtons = enabled ? [startRideButton()] : []
+    mapTemplate.leadingNavigationBarButtons = enabled
+      ? [rideMenuButton, startRideButton()]
+      : [rideMenuButton]
   }
 
   private func startRideButton() -> CPBarButton {
@@ -906,24 +920,24 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 12
       ),
-      // Bottom-leading is the one quiet corner: directions own top-leading,
-      // speed/TEC own top-trailing, and the group overview owns bottom-trailing.
-      // Raised above MapLibre attribution and bounded to the leading half so it
-      // cannot cover the rider in the centre of the map (#413).
-      routeProgressView.leadingAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.leadingAnchor,
-        constant: 12
-      ),
+      // The phone's landscape status rail ends with route progress above the
+      // group overview. A CarPlay canvas is much shorter, so the same pair
+      // reflows into one bottom-trailing row: progress immediately beside the
+      // overview, with the same 10pt rail gap. This keeps the upper-middle map
+      // clear while preserving the learned information grouping (#413, #442).
       routeProgressView.bottomAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-        constant: -42
+        equalTo: groupMiniMap.bottomAnchor
       ),
       routeProgressView.trailingAnchor.constraint(
-        lessThanOrEqualTo: view.safeAreaLayoutGuide.centerXAnchor,
-        constant: -8
+        equalTo: groupMiniMap.leadingAnchor,
+        constant: -10
+      ),
+      routeProgressView.leadingAnchor.constraint(
+        greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor,
+        constant: 12
       ),
       routeProgressView.widthAnchor.constraint(greaterThanOrEqualToConstant: 190),
-      routeProgressView.widthAnchor.constraint(lessThanOrEqualToConstant: 250),
+      routeProgressView.widthAnchor.constraint(lessThanOrEqualToConstant: 230),
     ])
   }
 
@@ -2281,7 +2295,7 @@ private final class CarPlayTecBadge: UIView {
   }
 }
 
-/// Compact route-wide timing in the unused bottom-leading CarPlay corner.
+/// Compact route-wide timing beside the bottom-trailing group overview.
 ///
 /// Dart owns the estimate and waypoint selection so the phone and car never
 /// disagree. Native only formats the rider's units and local clock convention.

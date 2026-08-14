@@ -995,11 +995,15 @@ this is written down:
   cleanly afterwards, so the canvas starts as a plain black view and installs
   the map once Dart has named a style.
 
-CarPlay keeps the same glance hierarchy as phone landscape: current time at the
-top centre, speed and TEC status at the trailing edge, and the group overview in
-the bottom-trailing corner. Route and next-stop progress occupy a compact
-bottom-leading card, raised above MapLibre's logo and attribution. Attribution
-stays visible: it is a licence condition, not decoration.
+CarPlay keeps the same glance hierarchy as phone landscape: the ride menu at the
+leading edge, current time at the top centre, speed and TEC status at the
+trailing edge, and route progress grouped with the rider overview at the bottom
+trailing edge. The phone has enough height to stack that last pair; the shorter
+CarPlay canvas reflows it into one row, with progress immediately beside the
+overview. MapLibre attribution remains visible at bottom leading: it is a
+licence condition, not decoration. CarPlay's recenter, pan, report and SOS
+targets remain platform-managed `CPMapButton`s, so their trailing-edge placement
+is intentionally not replaced with app-drawn phone controls.
 
 ## MapLibre provider configuration
 

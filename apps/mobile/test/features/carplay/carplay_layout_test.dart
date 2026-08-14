@@ -84,11 +84,21 @@ void main() {
   });
 
   group('CarPlay echoes the phone landscape controls (#442)', () {
-    test('the ride menu is the same compact hamburger', () {
+    test('the ride menu is the same leading compact hamburger', () {
       expect(source, contains('named: "line.3.horizontal"'));
       expect(source, contains('accessibilityLabel: "Ride actions"'));
       expect(source, contains('return CPBarButton(image: image)'));
       expect(source, isNot(contains('CPBarButton(title: "Ride")')));
+      expect(
+        source,
+        contains('mapTemplate.leadingNavigationBarButtons = [rideMenuButton]'),
+      );
+      expect(
+        source,
+        isNot(contains('mapTemplate.trailingNavigationBarButtons = [\n')),
+      );
+      expect(source, contains('? [rideMenuButton, startRideButton()]'));
+      expect(source, contains(': [rideMenuButton]'));
     });
 
     test('follow and SOS use the phone-style glyphs', () {
@@ -103,17 +113,32 @@ void main() {
       expect(source, isNot(contains('clockLabel.bottomAnchor.constraint(')));
     });
 
-    test('route progress owns only the bottom-leading corner', () {
+    test('route progress shares the bottom status cluster with the mini-map', () {
       expect(source, contains('routeProgressView.leadingAnchor.constraint('));
       expect(source, contains('routeProgressView.bottomAnchor.constraint('));
       expect(
         source,
         contains(
           'routeProgressView.trailingAnchor.constraint(\n'
-          '        lessThanOrEqualTo: view.safeAreaLayoutGuide.centerXAnchor',
+          '        equalTo: groupMiniMap.leadingAnchor,\n'
+          '        constant: -10',
         ),
       );
-      expect(source, contains('constant: -42'));
+      expect(
+        source,
+        contains(
+          'routeProgressView.bottomAnchor.constraint(\n'
+          '        equalTo: groupMiniMap.bottomAnchor',
+        ),
+      );
+      expect(
+        source,
+        contains(
+          'routeProgressView.leadingAnchor.constraint(\n'
+          '        greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor',
+        ),
+      );
+      expect(source, contains('lessThanOrEqualToConstant: 230'));
       expect(source, contains('CarPlayRouteProgressView'));
       expect(source, contains(r'\(duration)'));
       expect(source, contains(r'\(waypointName)'));
