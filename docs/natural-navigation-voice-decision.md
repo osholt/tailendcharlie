@@ -1,8 +1,26 @@
 # Natural and shareable navigation voices - architecture decision
 
 Decision date: 13 August 2026  
-Status: accepted for staged implementation  
+Status: accepted; optional beta implemented, physical-device gates outstanding
 Tracks: #509, with follow-up work in #512, #513, #514, and #515
+
+## Implemented beta (14 August 2026)
+
+Settings now offers one optional, cross-platform Kokoro English v0.19 pack
+through Sherpa-ONNX. It is not bundled in the app and is not the default. The
+download is 103,248,205 bytes, expands to about 153 MB, is pinned to SHA-256
+`c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd`, and
+provides four British voices. The app streams the download to disk, verifies it
+before extraction, generates whole prompts on a background isolate, and keeps
+a bounded 50 MB utterance cache.
+
+Daniel remains the default operating-system voice. The selected phone voice is
+configured before the neural model warms and speaks the identical complete
+prompt if neural audio has not begun within 800 ms. This lets testers evaluate
+the candidate on iOS and Android without making the unmeasured engine a
+safety-critical dependency. Passing the physical latency, memory, thermal,
+offline, pronunciation, and 500-prompt reliability gates below is still
+required before removing the Beta label or enabling it by default.
 
 ## Decision
 

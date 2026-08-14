@@ -15,6 +15,7 @@ import '../../domain/map_style_mode.dart';
 import '../../domain/rider_color.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/build_identity.dart';
+import '../../services/natural_voice_pack.dart';
 import '../../services/spoken_guidance.dart';
 import 'about_build_sheet.dart';
 import 'rider_profile_sheet.dart';
@@ -303,6 +304,19 @@ class UnitSettingsSheet extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 8),
+                _NaturalVoicePackSetting(controller: spoken),
+                const SizedBox(height: 18),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'PHONE VOICE FALLBACK',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: const Color(0xFF8D98A7),
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
                 _SpokenVoiceSetting(controller: spoken),
               ],
             ),
@@ -392,11 +406,13 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
         'Tail End Charlie can use Enhanced and Premium Apple speech voices '
         'after they are downloaded.\n\n'
         '1. Open iPhone Settings.\n'
-        '2. Go to Accessibility → VoiceOver → Speech.\n'
-        '3. Choose the primary voice or Add Rotor Voice, then download an '
-        'enhanced English voice.\n'
+        '2. Go to Accessibility → Read & Speak → Voices.\n'
+        '3. Choose English → British English, then download an Enhanced or '
+        'Premium named voice.\n'
         '4. Return here and tap Refresh installed voices.\n\n'
-        'Siri assistant voices are not guaranteed to be available to apps.',
+        'A Siri Voice choice can remain reserved for Siri or VoiceOver and may '
+        'not appear in third-party apps. The Natural voice pack above does not '
+        'have that limitation.',
       ),
       actions: [
         TextButton(
@@ -445,7 +461,7 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
                 key: ValueKey('spoken-voice-$selectedKey'),
                 initialValue: selectedKey,
                 decoration: InputDecoration(
-                  labelText: 'Voice',
+                  labelText: 'Fallback/system voice',
                   helperText:
                       snapshot.connectionState == ConnectionState.waiting
                       ? 'Loading installed voices…'
@@ -539,6 +555,179 @@ class _SpokenVoiceSettingState extends State<_SpokenVoiceSetting> {
       if (voice == chosen || voice.hasSameNameAndLocale(chosen)) return voice;
     }
     return null;
+  }
+}
+
+class _NaturalVoicePackSetting extends StatelessWidget {
+  const _NaturalVoicePackSetting({required this.controller});
+
+  final SpokenGuidanceController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final pack = controller.naturalVoicePack;
+    return AnimatedBuilder(
+      animation: pack,
+      builder: (context, _) => Material(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.graphic_eq),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Natural offline voice · Beta',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  if (pack.installed)
+                    const Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text('Installed'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'A more expressive British voice generated on this phone for '
+                'complete directions, road names and rider alerts. The same '
+                'voice works on iPhone and Android without a connection.',
+              ),
+              const SizedBox(height: 8),
+              if (pack.downloading) ...[
+                LinearProgressIndicator(value: pack.downloadProgress),
+                const SizedBox(height: 8),
+                Text(
+                  pack.downloadProgress == null
+                      ? 'Downloading natural voice…'
+                      : pack.downloadProgress! >= 1
+                      ? 'Installing natural voice…'
+                      : 'Downloading natural voice · '
+                            '${(pack.downloadProgress! * 100).round()}%',
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('cancel-natural-voice-download'),
+                    onPressed: pack.cancelInstall,
+                    child: const Text('Cancel'),
+                  ),
+                ),
+              ] else if (!pack.installed) ...[
+                if (pack.failure case final failure?) ...[
+                  Text(
+                    failure,
+                    key: const Key('natural-voice-install-failure'),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.icon(
+                    key: const Key('install-natural-voice'),
+                    onPressed: controller.installNaturalVoiceAndPreview,
+                    icon: const Icon(Icons.download),
+                    label: const Text('Download natural voice · 103 MB'),
+                  ),
+                ),
+              ] else ...[
+                SwitchListTile.adaptive(
+                  key: const Key('natural-voice-toggle'),
+                  contentPadding: EdgeInsets.zero,
+                  value: pack.enabled,
+                  onChanged: pack.setEnabled,
+                  title: const Text('Use natural voice'),
+                  subtitle: const Text(
+                    'If it cannot start within 0.8 seconds, the phone voice '
+                    'speaks the complete prompt instead.',
+                  ),
+                ),
+                DropdownButtonFormField<NaturalNavigationVoice>(
+                  key: ValueKey('natural-voice-${pack.voice.name}'),
+                  initialValue: pack.voice,
+                  decoration: const InputDecoration(labelText: 'Natural voice'),
+                  items: [
+                    for (final voice in NaturalNavigationVoice.values)
+                      DropdownMenuItem(
+                        value: voice,
+                        child: Text(
+                          voice.label,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (voice) {
+                    if (voice != null) {
+                      unawaited(controller.setNaturalVoiceAndPreview(voice));
+                    }
+                  },
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 4,
+                  children: [
+                    TextButton.icon(
+                      key: const Key('preview-natural-voice'),
+                      onPressed: controller.previewNaturalVoice,
+                      icon: const Icon(Icons.play_arrow),
+                      label: const Text('Preview'),
+                    ),
+                    TextButton.icon(
+                      key: const Key('remove-natural-voice'),
+                      onPressed: () => _confirmRemove(context, pack),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Remove download'),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 4),
+              const Text(
+                'Kokoro English v0.19 via Sherpa-ONNX · Apache 2.0. About '
+                '153 MB installed. Audio and text stay on this device.',
+                style: TextStyle(fontSize: 11, color: Color(0xFF98A3B1)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmRemove(
+    BuildContext context,
+    NaturalVoicePackController pack,
+  ) async {
+    final remove = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove natural voice?'),
+        content: const Text(
+          'This frees about 153 MB. Navigation will continue with the selected '
+          'phone voice, and the natural voice can be downloaded again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (remove == true) await pack.remove();
   }
 }
 
