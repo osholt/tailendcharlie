@@ -2412,7 +2412,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
             Positioned(
               key: const Key('route-progress-panel-position'),
               left: safeLeft + 12,
-              top: safeTop + (rideMenu == null ? 12 : 72),
+              // ActiveRideShell owns the moving ride-menu button (#404), so it
+              // is deliberately not passed into this map. Reserve its corner
+              // whenever the moving canvas is active even when [rideMenu] is
+              // therefore null; otherwise the button covers the first digits
+              // of the route summary on a real portrait ride.
+              top: safeTop + (hideChrome ? 72 : 12),
               width: math.min(
                 210,
                 (MediaQuery.sizeOf(context).width - safeLeft - safeRight) *

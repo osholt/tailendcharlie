@@ -2669,6 +2669,79 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('reserves the shell ride-menu corner on a portrait moving map', (
+    tester,
+  ) async {
+    // ActiveRideShell owns the moving ride-menu button (#404), so the map does
+    // not receive onOpenRideMenu in production. It must still reserve that
+    // portrait corner or the button covers the first digits of route progress.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync(
+      'map-shell-menu-space-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.01),
+        recordedAt: DateTime.utc(2026, 8, 14, 11),
+        speedMetersPerSecond: 10,
+        headingDegrees: 90,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final route = ImportedRoute(
+      id: 'shell-menu-route',
+      name: 'Shell menu route',
+      importedAt: DateTime.utc(2026, 8, 14),
+      sourceFileName: 'route.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1.00),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapFeature(
+          routeStore: InMemoryRouteStore(route),
+          offlineTileCache: cache,
+          mapStyleString:
+              '{"version":8,"sources":{},"layers":[{"id":"background","type":"background"}]}',
+          navigationPosition: navigation,
+        ),
+      ),
+    );
+    await tester.pump();
+    for (var frame = 0; frame < 5; frame += 1) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.byKey(const Key('ride-menu-button')), findsNothing);
+    final progress = find.byKey(const Key('route-progress-panel-position'));
+    expect(progress, findsOneWidget);
+    expect(tester.getRect(progress).top, closeTo(72, 1));
+
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets(
     'keeps an automatic junction marker on the zoomed-out map overview',
     (tester) async {
