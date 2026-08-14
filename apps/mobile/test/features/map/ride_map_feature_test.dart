@@ -2669,6 +2669,79 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('reserves the shell ride-menu corner on a portrait moving map', (
+    tester,
+  ) async {
+    // ActiveRideShell owns the moving ride-menu button (#404), so the map does
+    // not receive onOpenRideMenu in production. It must still reserve that
+    // portrait corner or the button covers the first digits of route progress.
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final directory = Directory.systemTemp.createTempSync(
+      'map-shell-menu-space-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 53, longitude: -1.01),
+        recordedAt: DateTime.utc(2026, 8, 14, 11),
+        speedMetersPerSecond: 10,
+        headingDegrees: 90,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final route = ImportedRoute(
+      id: 'shell-menu-route',
+      name: 'Shell menu route',
+      importedAt: DateTime.utc(2026, 8, 14),
+      sourceFileName: 'route.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1.00),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapFeature(
+          routeStore: InMemoryRouteStore(route),
+          offlineTileCache: cache,
+          mapStyleString:
+              '{"version":8,"sources":{},"layers":[{"id":"background","type":"background"}]}',
+          navigationPosition: navigation,
+        ),
+      ),
+    );
+    await tester.pump();
+    for (var frame = 0; frame < 5; frame += 1) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.byKey(const Key('ride-menu-button')), findsNothing);
+    final progress = find.byKey(const Key('route-progress-panel-position'));
+    expect(progress, findsOneWidget);
+    expect(tester.getRect(progress).top, closeTo(72, 1));
+
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets(
     'keeps an automatic junction marker on the zoomed-out map overview',
     (tester) async {
@@ -2917,6 +2990,16 @@ void main() {
       expect(find.byType(AppBar), findsNothing);
       expect(find.byKey(const Key('ride-menu-button')), findsOneWidget);
       expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
+      expect(find.byKey(const Key('route-progress-panel')), findsOneWidget);
+      final landscapeProgress = tester.getRect(
+        find.byKey(const Key('route-progress-panel')),
+      );
+      final landscapeMiniMap = tester.getRect(
+        find.byKey(const Key('group-mini-map')),
+      );
+      expect(landscapeProgress.right, closeTo(844 - 10, 1));
+      expect(landscapeProgress.bottom, lessThan(landscapeMiniMap.top));
+      expect(find.byKey(const Key('ride-clock')), findsOneWidget);
       expect(find.text('3 RIDERS'), findsOneWidget);
       expect(find.byKey(const Key('mini-map-you-legend')), findsOneWidget);
       expect(find.byKey(const Key('mini-map-north-indicator')), findsOneWidget);
@@ -2965,6 +3048,9 @@ void main() {
       final portraitMiniMap = tester.getRect(
         find.byKey(const Key('group-mini-map')),
       );
+      final portraitProgress = tester.getRect(
+        find.byKey(const Key('route-progress-panel-position')),
+      );
       expect(portraitMiniMap.width, 150);
       // The 104 pixel canvas plus the rider-count caption, which is now in the
       // layout rather than hung below the box on a negative offset (#133) - so
@@ -2980,6 +3066,11 @@ void main() {
           tester.view.physicalSize / tester.view.devicePixelRatio;
       expect(portraitMiniMap.top, lessThan(portraitSize.height / 3));
       expect(portraitMiniMap.right, closeTo(portraitSize.width - 12, 1));
+      expect(portraitProgress.left, closeTo(12, 1));
+      expect(portraitProgress.top, closeTo(72, 1));
+      expect(portraitProgress.right, lessThanOrEqualTo(portraitMiniMap.left));
+      // Portrait has one clock, folded into the compact route card.
+      expect(find.byKey(const Key('ride-clock')), findsOneWidget);
       riders.value = [
         ...riders.value,
         const MapOverlayMarker(

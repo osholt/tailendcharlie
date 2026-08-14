@@ -154,7 +154,10 @@ dialog rather than offering a direct CarPlay menu item. The helper accepts both
 forms, preserves the configured size/touch controls and presses **Run** for the
 custom form. It also installs the app before attaching the display, because the
 CarPlay app catalogue is fixed when the session starts, and `--shot` captures
-CoreSimulator's external display directly.
+CoreSimulator's external display directly. It clicks Simulator's Dock icon
+before each display change so a dialog on another macOS Space becomes
+accessible, verifies both the CarPlay host and external framebuffer came up,
+and times out instead of hanging on a broken external display.
 
 This works, and it stopped working three separate times for three reasons that
 all look like "the app is broken" and are not:

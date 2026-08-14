@@ -60,6 +60,7 @@ import '../../services/road_routing.dart';
 import '../../services/route_geometry_enricher.dart';
 import '../../services/route_importer.dart';
 import '../../services/route_marker_plan.dart';
+import '../../services/route_journey_progress.dart';
 import '../../services/route_progress.dart';
 import '../../services/route_reshape_planner.dart';
 import '../../services/speed_limit.dart';
@@ -75,6 +76,7 @@ import 'group_mini_map_framing.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
 import 'route_review_screen.dart';
+import 'route_progress_panel.dart';
 import 'route_trail_style.dart';
 import 'smooth_countdown.dart';
 import 'stored_route_picker.dart';
@@ -194,6 +196,7 @@ class RideMapFeature extends StatefulWidget {
     this.personalRideHeatmap,
     this.distanceUnit = DistanceUnit.kilometres,
     this.speedLimitDisplay,
+    this.showRouteProgress = true,
     this.basemapConfiguration = const BasemapConfiguration(),
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
     this.localRiderSymbol = riderSymbolDefault,
@@ -255,6 +258,7 @@ class RideMapFeature extends StatefulWidget {
     bool canEditRoute = true,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     SpeedLimitDisplayController? speedLimitDisplay,
+    bool showRouteProgress = true,
     bool darkMapStyle = false,
     bool restrainedLightMapStyle = true,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
@@ -314,6 +318,7 @@ class RideMapFeature extends StatefulWidget {
     canEditRoute: canEditRoute,
     distanceUnit: distanceUnit,
     speedLimitDisplay: speedLimitDisplay,
+    showRouteProgress: showRouteProgress,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
       dark: darkMapStyle,
       restrainedLightStyle: restrainedLightMapStyle,
@@ -413,6 +418,7 @@ class RideMapFeature extends StatefulWidget {
   final PersonalRideHeatmapController? personalRideHeatmap;
   final DistanceUnit distanceUnit;
   final SpeedLimitDisplayController? speedLimitDisplay;
+  final bool showRouteProgress;
   final BasemapConfiguration basemapConfiguration;
   final MotorcycleIconStyle localMotorcycleStyle;
   final RiderSymbol localRiderSymbol;
@@ -574,6 +580,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         navigationExportCoordinator: widget.navigationExportCoordinator,
         distanceUnit: widget.distanceUnit,
         speedLimitDisplay: widget.speedLimitDisplay,
+        showRouteProgress: widget.showRouteProgress,
         localMotorcycleStyle: widget.localMotorcycleStyle,
         localRiderSymbol: widget.localRiderSymbol,
         localDisplayName: widget.localDisplayName,
@@ -671,6 +678,7 @@ class RideMapScreen extends StatefulWidget {
     this.storedRouteLibrary,
     this.distanceUnit = DistanceUnit.kilometres,
     this.speedLimitDisplay,
+    this.showRouteProgress = true,
     this.disposeOfflineTileCache = false,
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
     this.localRiderSymbol = riderSymbolDefault,
@@ -789,6 +797,7 @@ class RideMapScreen extends StatefulWidget {
 
   final DistanceUnit distanceUnit;
   final SpeedLimitDisplayController? speedLimitDisplay;
+  final bool showRouteProgress;
   final bool disposeOfflineTileCache;
   final MotorcycleIconStyle localMotorcycleStyle;
   final RiderSymbol localRiderSymbol;
@@ -825,6 +834,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
+  final RouteJourneyProgressTracker _routeJourneyProgressTracker =
+      RouteJourneyProgressTracker();
   final RouteProgressTracker _rejoinProgressTracker = RouteProgressTracker();
   final ValueNotifier<NavigationGuidanceAssessment> _navigationGuidance =
       ValueNotifier(const NavigationGuidanceAssessment.noRoute());
@@ -1979,6 +1990,34 @@ class _RideMapScreenState extends State<RideMapScreen> {
               height: groupMiniMapHeight,
             )
           : null;
+      final routeProgressPanel =
+          !widget.showRouteProgress ||
+              markerOverviewActive ||
+              _route == null ||
+              _progressGeometry.totalMeters <= 0
+          ? null
+          : ValueListenableBuilder<({double value, bool ageing})?>(
+              valueListenable: _riderSpeed,
+              builder: (context, riderSpeed, _) {
+                final progress = _routeJourneyProgressTracker.update(
+                  route: _route,
+                  geometry: _progressGeometry,
+                  speedMetersPerSecond: riderSpeed?.ageing == false
+                      ? riderSpeed!.value
+                      : null,
+                  now: DateTime.now(),
+                );
+                return progress == null
+                    ? const SizedBox.shrink()
+                    : RouteProgressPanel(
+                        progress: progress,
+                        distanceUnit: widget.distanceUnit,
+                        // Landscape already has its app-drawn clock at the top
+                        // centre. Portrait folds it into this one small card.
+                        showClock: !landscape,
+                      );
+              },
+            );
       // Arriving and approaching a junction are mutually exclusive: the
       // suggestion only appears once the whole group is inside the destination
       // radius with the route run, so there is no next junction to draw. Taking
@@ -2330,7 +2369,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 // The group overview sits at the very bottom right (#133): it is
                 // a glance, not a target, and the corner furthest from the road
                 // ahead is the cheapest place on the screen to put one.
-                children: [?followMe, ?junctionCard, ?miniMap],
+                children: [
+                  ?routeProgressPanel,
+                  ?followMe,
+                  ?junctionCard,
+                  ?miniMap,
+                ],
               ),
             ),
           ],
@@ -2364,6 +2408,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
         children: [
           if (rideMenu != null)
             Positioned(left: safeLeft + 12, top: safeTop + 12, child: rideMenu),
+          if (routeProgressPanel != null)
+            Positioned(
+              key: const Key('route-progress-panel-position'),
+              left: safeLeft + 12,
+              // ActiveRideShell owns the moving ride-menu button (#404), so it
+              // is deliberately not passed into this map. Reserve its corner
+              // whenever the moving canvas is active even when [rideMenu] is
+              // therefore null; otherwise the button covers the first digits
+              // of the route summary on a real portrait ride.
+              top: safeTop + (hideChrome ? 72 : 12),
+              width: math.min(
+                210,
+                (MediaQuery.sizeOf(context).width - safeLeft - safeRight) *
+                    0.54,
+              ),
+              child: routeProgressPanel,
+            ),
           // The group overview is the second corner element (#133), opposite the
           // ride menu. It is a glance rather than a target, so the top trailing
           // corner costs the rider nothing - and out of the bottom band it stops

@@ -15,6 +15,7 @@ import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
@@ -74,6 +75,7 @@ import '../../services/navigation_guidance.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/route_progress.dart';
+import '../../services/route_journey_progress.dart';
 import '../../services/ride_membership.dart';
 import '../../services/ride_screen_awake.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
@@ -284,6 +286,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.riderProfile,
     required this.sharedRoutes,
     required this.speedLimitDisplay,
+    this.routeProgressDisplay,
     this.completedRideStore,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
@@ -326,6 +329,7 @@ class ActiveRideShell extends StatefulWidget {
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final RouteProgressDisplayController? routeProgressDisplay;
   final CompletedRideStore? completedRideStore;
   final ScreenWakeLock screenWakeLock;
   final Duration screenWakeReassertInterval;
@@ -1026,6 +1030,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
   final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _carPlayRouteProgressTracker = RouteProgressTracker();
+  final _carPlayJourneyProgressTracker = RouteJourneyProgressTracker();
   final _trailSimplifier = const TrailDisplaySimplifier();
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
 
@@ -1164,6 +1169,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   FixedSpeedCameraCatalogue? _fixedSpeedCameras;
   CarPlayBridge? _carPlayBridge;
   String? _carPlayMapStyleJson;
+  late final http.Client _carPlayRoutingClient;
+  late final DestinationRoutePlanner _carPlayDestinationPlanner;
   ForegroundLocationController? _locationController;
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
@@ -1262,6 +1269,24 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       distanceUnit: widget.distanceUnits.value,
     );
     _rejoinPlanner = _managedRejoinPlanner.planner;
+    final carPlayRouting = RoutingConfiguration.fromEnvironment();
+    _carPlayRoutingClient = http.Client();
+    _carPlayDestinationPlanner = DestinationRoutePlanner(
+      searchService: NominatimDestinationSearchService(
+        client: _carPlayRoutingClient,
+        baseUrl: carPlayRouting.geocodingBaseUrl,
+      ),
+      routingService: PreferenceAwareRoadRoutingService(
+        osrm: OsrmRoadRoutingService(
+          client: _carPlayRoutingClient,
+          baseUrl: carPlayRouting.routingBaseUrl,
+        ),
+        motorcycle: ValhallaMotorcycleRoutingService(
+          client: _carPlayRoutingClient,
+          routeUrl: carPlayRouting.motorcycleRoutingUrl,
+        ),
+      ),
+    );
     widget.rideController.addListener(_onRideControllerChanged);
     widget.sharedRoutes.addListener(_onSharedRoutesChanged);
     _capturePlannerLinkError();
@@ -1290,6 +1315,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onHazardReported: _reportHazardFromMap,
       onTecRoleAnswered: _answerTecRoleRequestFromCarPlay,
       onRideStartRequested: _startPreparedRideFromCarPlay,
+      onDestinationSearch: _searchCarPlayDestinations,
+      onDestinationSelected: _planCarPlayDestination,
       onStateRequested: () async {
         if (!mounted) return;
         _updateMapOverlays(updateDerivedState: false);
@@ -2631,6 +2658,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         navigationPosition != null &&
         DateTime.now().difference(navigationPosition.recordedAt) >=
             const Duration(seconds: 3);
+    final journeyProgress = widget.routeProgressDisplay?.enabled == false
+        ? null
+        : _carPlayJourneyProgressTracker.update(
+            route: navigationRoute,
+            geometry: routeProgress,
+            speedMetersPerSecond: localSpeedIsAgeing
+                ? null
+                : navigationPosition?.speedMetersPerSecond,
+            now: DateTime.now(),
+          );
     final marker = markerOverlay == null
         ? null
         : CarPlayMarkerStatus(
@@ -2674,6 +2711,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         tec: tec,
         effectiveTecRiderIds: effectiveTecRiderIds,
         rideStart: _carPlayRideStart,
+        surfaceMode: widget.rideController.rideEnded
+            ? CarPlaySurfaceMode.endedRide
+            : widget.rideController.rideStarted
+            ? CarPlaySurfaceMode.activeRide
+            : CarPlaySurfaceMode.preRide,
+        canPlanRoute:
+            widget.rideController.isLocalRideLeader &&
+            !widget.rideController.rideStarted &&
+            !widget.rideController.rideEnded &&
+            !widget.rideController.busy,
         basemap: selectedBasemap,
         mapStyleJson: _carPlayMapStyleJson,
         localPosition: _mapPosition.value,
@@ -2688,6 +2735,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         speedLimitMilesPerHour: widget.speedLimitDisplay.limit?.milesPerHour,
         speedLimitUnlimited: widget.speedLimitDisplay.limit?.unlimited ?? false,
         routeProgress: routeProgress,
+        journeyProgress: journeyProgress,
         tecRequest: pendingTecRequest == null
             ? null
             : CarPlayTecRequest(
@@ -2719,6 +2767,58 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     );
     if (!mounted) return;
     _updateMapOverlays(updateNavigationPosition: false);
+  }
+
+  Future<List<CarPlayDestination>> _searchCarPlayDestinations(
+    String query,
+  ) async {
+    final controller = widget.rideController;
+    if (!controller.isLocalRideLeader ||
+        controller.rideStarted ||
+        controller.rideEnded ||
+        controller.busy) {
+      throw const FormatException(
+        'Only the ride leader can plan a route before the ride starts.',
+      );
+    }
+    return [
+      for (final match in await _carPlayDestinationPlanner.searchService.search(
+        query,
+      ))
+        CarPlayDestination(label: match.label, point: match.point),
+    ];
+  }
+
+  Future<void> _planCarPlayDestination(
+    CarPlayDestination destination,
+    bool? groupRide,
+  ) async {
+    final controller = widget.rideController;
+    if (!controller.isLocalRideLeader ||
+        controller.rideStarted ||
+        controller.rideEnded ||
+        controller.busy) {
+      throw const FormatException(
+        'Only the ride leader can plan a route before the ride starts.',
+      );
+    }
+    final origin = _mapPosition.value ?? await _acquireCurrentPosition();
+    if (origin == null) {
+      throw const FormatException(
+        'Allow location access on the iPhone before planning from CarPlay.',
+      );
+    }
+    final plan = await _carPlayDestinationPlanner.planForReview(
+      origin: origin,
+      query: destination.label,
+      selectedDestination: DestinationMatch(
+        label: destination.label,
+        point: destination.point,
+      ),
+      distanceUnit: widget.distanceUnits.value,
+    );
+    await _handleRouteChanged(plan.route);
+    if (mounted) _updateMapOverlays(updateDerivedState: false);
   }
 
   /// Publishes the quick messages the ride map has to present, and returns the
@@ -3961,6 +4061,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       canEditRoute: _isSimulation || widget.rideController.isLocalRideLeader,
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
+      showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
       ),
@@ -5365,6 +5466,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       mapStyleMode: widget.mapStyleMode,
       riderProfile: widget.riderProfile,
       speedLimitDisplay: widget.speedLimitDisplay,
+      routeProgressDisplay: widget.routeProgressDisplay,
       currentRideActive: true,
       lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
       testControl: widget.testControl,
@@ -5544,6 +5646,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _enforcementAlert.dispose();
     _rideCompletionSuggestion.dispose();
     unawaited(_carPlayBridge?.dispose());
+    _carPlayRoutingClient.close();
     super.dispose();
   }
 }

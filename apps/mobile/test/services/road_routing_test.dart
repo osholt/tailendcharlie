@@ -436,6 +436,38 @@ void main() {
     },
   );
 
+  test('destination review keeps the exact submitted search result', () async {
+    const selected = DestinationMatch(
+      label: 'Chippenham, Wiltshire',
+      point: GeoPoint(latitude: 51.46, longitude: -2.12),
+    );
+    final routing = _FakeRoadRoutingService();
+    final planner = DestinationRoutePlanner(
+      // A repeated text search would pick the wrong same-named place. The
+      // CarPlay row carries its coordinates so selection remains exact.
+      searchService: const _FakeDestinationSearchService({
+        'Chippenham, Wiltshire': [
+          DestinationMatch(
+            label: 'Chippenham, Cambridgeshire',
+            point: GeoPoint(latitude: 52.2, longitude: 0.1),
+          ),
+        ],
+      }),
+      routingService: routing,
+    );
+
+    final plan = await planner.planForReview(
+      origin: const GeoPoint(latitude: 51.45, longitude: -2.58),
+      query: selected.label,
+      selectedDestination: selected,
+    );
+
+    expect(routing.requests.single.last.latitude, 51.46);
+    expect(routing.requests.single.last.longitude, -2.12);
+    expect(plan.route.name, 'To Chippenham');
+    expect(plan.warnings, isEmpty);
+  });
+
   test('routing failure preserves the original sparse GPX route', () async {
     final route = ImportedRoute(
       id: 'route',

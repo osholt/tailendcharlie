@@ -8,6 +8,7 @@ import '../controllers/map_style_mode_controller.dart';
 import '../controllers/ride_code_preference_controller.dart';
 import '../controllers/ride_controller.dart';
 import '../controllers/ride_invitation_link_controller.dart';
+import '../controllers/route_progress_display_controller.dart';
 import '../controllers/rider_profile_controller.dart';
 import '../controllers/road_rating_controller.dart';
 import '../controllers/shared_route_controller.dart';
@@ -33,6 +34,7 @@ class RideRelayApp extends StatelessWidget {
     required this.riderProfile,
     required this.sharedRoutes,
     required this.speedLimitDisplay,
+    this.routeProgressDisplay,
     required this.recordedRoutes,
     required this.completedRides,
     this.rideInvitationLinks,
@@ -54,6 +56,7 @@ class RideRelayApp extends StatelessWidget {
   final RiderProfileController riderProfile;
   final SharedRouteController sharedRoutes;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final RouteProgressDisplayController? routeProgressDisplay;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final RideInvitationLinkController? rideInvitationLinks;
@@ -112,6 +115,7 @@ class RideRelayApp extends StatelessWidget {
         sharedRoutes,
         riderProfile,
         speedLimitDisplay,
+        ?routeProgressDisplay,
       ]),
       builder: (context, _) {
         if (!restorationComplete && !showRestorationFallback) {
@@ -126,6 +130,7 @@ class RideRelayApp extends StatelessWidget {
             riderProfile: riderProfile,
             sharedRoutes: sharedRoutes,
             speedLimitDisplay: speedLimitDisplay,
+            routeProgressDisplay: routeProgressDisplay,
             recordedRoutes: recordedRoutes,
             completedRides: completedRides,
             planDirectory: planDirectory,
@@ -153,6 +158,7 @@ class RideRelayApp extends StatelessWidget {
             riderProfile: riderProfile,
             sharedRoutes: sharedRoutes,
             speedLimitDisplay: speedLimitDisplay,
+            routeProgressDisplay: routeProgressDisplay,
             completedRideStore: completedRides,
             roadRatings: roadRatings,
             testControl: testControl,
@@ -173,6 +179,7 @@ class RideRelayApp extends StatelessWidget {
           riderProfile: riderProfile,
           sharedRoutes: sharedRoutes,
           speedLimitDisplay: speedLimitDisplay,
+          routeProgressDisplay: routeProgressDisplay,
           recordedRoutes: recordedRoutes,
           completedRides: completedRides,
           planDirectory: planDirectory,

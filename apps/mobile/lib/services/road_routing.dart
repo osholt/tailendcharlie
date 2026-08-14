@@ -1109,6 +1109,7 @@ class DestinationRoutePlanner {
     String? originQuery,
     List<String> stopQueries = const [],
     required String query,
+    DestinationMatch? selectedDestination,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     RoutePreferences preferences = RoutePreferences.defaults,
   }) async {
@@ -1148,8 +1149,10 @@ class DestinationRoutePlanner {
       resolvedStops.add(matches.first);
     }
 
-    final destinationMatches = await searchService.search(query);
-    if (destinationMatches.length > 1) {
+    final destinationMatches = selectedDestination == null
+        ? await searchService.search(query)
+        : [selectedDestination];
+    if (selectedDestination == null && destinationMatches.length > 1) {
       warnings.add(
         'The destination had ${destinationMatches.length} possible matches. '
         'Check the selected pin before confirming.',

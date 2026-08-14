@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
+import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
@@ -29,6 +30,7 @@ class UnitSettingsSheet extends StatelessWidget {
     required this.mapStyleMode,
     required this.riderProfile,
     required this.speedLimitDisplay,
+    this.routeProgressDisplay,
     this.currentRideActive = false,
     this.lastRelaySync,
     this.buildIdentity,
@@ -42,6 +44,7 @@ class UnitSettingsSheet extends StatelessWidget {
   final MapStyleModeController mapStyleMode;
   final RiderProfileController riderProfile;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final RouteProgressDisplayController? routeProgressDisplay;
   final bool currentRideActive;
 
   /// Whether these settings are the body of a primary destination rather than
@@ -76,6 +79,7 @@ class UnitSettingsSheet extends StatelessWidget {
     MapStyleModeController mapStyleMode,
     RiderProfileController riderProfile, {
     required SpeedLimitDisplayController speedLimitDisplay,
+    RouteProgressDisplayController? routeProgressDisplay,
     bool currentRideActive = false,
     DateTime? lastRelaySync,
     BuildIdentity? buildIdentity,
@@ -91,6 +95,7 @@ class UnitSettingsSheet extends StatelessWidget {
       mapStyleMode: mapStyleMode,
       riderProfile: riderProfile,
       speedLimitDisplay: speedLimitDisplay,
+      routeProgressDisplay: routeProgressDisplay,
       currentRideActive: currentRideActive,
       lastRelaySync: lastRelaySync,
       buildIdentity: buildIdentity,
@@ -102,7 +107,12 @@ class UnitSettingsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-    animation: Listenable.merge([controller, mapStyleMode, speedLimitDisplay]),
+    animation: Listenable.merge([
+      controller,
+      mapStyleMode,
+      speedLimitDisplay,
+      ?routeProgressDisplay,
+    ]),
     builder: (context, _) => SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
       child: Column(
@@ -263,6 +273,21 @@ class UnitSettingsSheet extends StatelessWidget {
               'signs always apply. Turning this off is remembered.',
             ),
           ),
+          if (routeProgressDisplay case final progressDisplay?) ...[
+            const SizedBox(height: 8),
+            SwitchListTile.adaptive(
+              key: const Key('route-progress-display-toggle'),
+              contentPadding: EdgeInsets.zero,
+              value: progressDisplay.enabled,
+              onChanged: progressDisplay.setEnabled,
+              title: const Text('Show route time and distance'),
+              subtitle: const Text(
+                'Shows the current time, total distance and estimated time '
+                'remaining, plus the next named stop and its ETA. Estimates '
+                'use your recent riding speed and stay blank until you move.',
+              ),
+            ),
+          ],
           const SizedBox(height: 22),
           Text(
             'MAP DATA',

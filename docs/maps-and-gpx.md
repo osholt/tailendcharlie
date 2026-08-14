@@ -161,23 +161,33 @@ shortest angular path, so crossing north rotates the short way.
 
 ### Overlay placement
 
-No persistent *status* surface is anchored to the top of the map: the upper band
-is where a rider on a mounted phone reads the road ahead. The old ride-actions
-hamburger has also been removed; setup actions now live on the labelled Ride
-destination. Only **two small glances live in the map corners**:
+The upper-middle of the map is where a rider on a mounted phone reads the road
+ahead, so persistent status stays against an edge and never grows into that
+space. The compact ride-actions hamburger is the only target in the upper band.
+The small glance surfaces have fixed homes:
 
 | corner | portrait | landscape |
 | --- | --- | --- |
-| top leading | — | — |
+| top leading | ride menu; route progress immediately below | ride menu |
+| top centre | — | current time |
 | top trailing | group overview | speed sign |
-| bottom trailing | — | group overview |
+| bottom trailing | — | route progress, recovery, junction card, group overview |
 
-Each is hard against a screen edge, neither is wider than 45% or taller than 40%
-of the viewport, and the centre and upper-middle stay empty. They are *glances*,
-never targets, which is why the corner furthest from the road ahead is the
-cheapest place on the screen for them. Moving the group overview out of the
-bottom band also stops the camera's forward bias paying for a surface nobody
+The portrait route-progress card is at most 210 logical pixels wide (and no more
+than 54% of the safe viewport); landscape reuses the existing 230-pixel right
+rail. The portrait card also carries the current time, while landscape keeps the
+clock in its small top-centre position. These are *glances*, never targets. The
+centre and upper-middle remain empty, and moving the group overview out of the
+portrait bottom band stops the camera's forward bias paying for a surface nobody
 acts on.
+
+Route progress is optional in Settings. Distance is projected along the same
+primary route geometry used by navigation. Time remaining and ETA use an
+exponentially smoothed recent moving speed: stopping at lights retains the last
+moving estimate, while a ride with no usable moving fix shows distance and a
+dash for time instead of inventing a speed. The next stop is the first deliberate
+GPX waypoint ahead along the route; shaping points are not presented as stops,
+and an unnamed final point is labelled Destination.
 
 Everything else is bottom-anchored. Portrait is one band: urgent alerts, the TEC
 gap, then the turn banner, then the targets. Landscape splits into a left rail
@@ -985,9 +995,15 @@ this is written down:
   cleanly afterwards, so the canvas starts as a plain black view and installs
   the map once Dart has named a style.
 
-CarPlay's own map buttons own the bottom-trailing corner, so MapLibre's logo and
-attribution are moved to the bottom-leading one. Attribution stays visible: it
-is a licence condition, not decoration.
+CarPlay keeps the same glance hierarchy as phone landscape: the ride menu at the
+leading edge, current time at the top centre, speed and TEC status at the
+trailing edge, and route progress grouped with the rider overview at the bottom
+trailing edge. The phone has enough height to stack that last pair; the shorter
+CarPlay canvas reflows it into one row, with progress immediately beside the
+overview. MapLibre attribution remains visible at bottom leading: it is a
+licence condition, not decoration. CarPlay's recenter, pan, report and SOS
+targets remain platform-managed `CPMapButton`s, so their trailing-edge placement
+is intentionally not replaced with app-drawn phone controls.
 
 ## MapLibre provider configuration
 

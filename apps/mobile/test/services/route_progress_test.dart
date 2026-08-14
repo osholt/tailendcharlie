@@ -3,6 +3,48 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/route_progress.dart';
 
 void main() {
+  test('loop waypoint progress puts a coincident finish at the route end', () {
+    final route = ImportedRoute(
+      id: 'loop',
+      name: 'Loop',
+      importedAt: DateTime.utc(2026, 8, 14),
+      sourceFileName: 'loop.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 0, longitude: 0),
+            GeoPoint(latitude: 0, longitude: 0.01),
+            GeoPoint(latitude: 0.01, longitude: 0.01),
+            GeoPoint(latitude: 0.01, longitude: 0),
+            GeoPoint(latitude: 0, longitude: 0),
+          ],
+        ),
+      ],
+      waypoints: const [
+        RouteWaypoint(
+          point: GeoPoint(latitude: 0, longitude: 0),
+          name: 'Start',
+        ),
+        RouteWaypoint(
+          point: GeoPoint(latitude: 0.01, longitude: 0.01),
+          name: 'Coffee',
+        ),
+        RouteWaypoint(
+          point: GeoPoint(latitude: 0, longitude: 0),
+          name: 'Finish',
+        ),
+      ],
+    );
+
+    final progress = routeWaypointProgressMeters(route);
+
+    expect(progress, hasLength(3));
+    expect(progress.first, 0);
+    expect(progress[1], greaterThan(2000));
+    expect(progress.last, greaterThan(4000));
+  });
+
   test('splits the route into solid ridden and remaining geometry', () {
     final tracker = RouteProgressTracker();
 

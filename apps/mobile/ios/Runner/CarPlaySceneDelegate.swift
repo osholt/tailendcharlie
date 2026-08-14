@@ -38,7 +38,7 @@ struct CarPlaySceneLifecycle {
 /// Owns the navigation-app CarPlay scene. Navigation apps must use the
 /// window-bearing delegate callback and place a `CPMapTemplate` at the root.
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate,
-  CPMapTemplateDelegate
+  CPMapTemplateDelegate, CPSearchTemplateDelegate
 {
   private var mapTemplate: CPMapTemplate?
   private var mapViewController: CarPlayNavigationViewController?
@@ -49,6 +49,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var activeManeuver: CPManeuver?
   private var rideStartPrompt: [String: Any]?
   private var isShowingPanningInterface = false
+  private var rideMenuButton: CPBarButton?
+  private var surfaceMode = "unavailable"
+  private var canPlanRoute = false
+  private var canFreeRoam = false
+  private var submittedSearchText = ""
   private weak var interfaceController: CPInterfaceController?
   private var sceneLifecycle = CarPlaySceneLifecycle()
 
@@ -71,6 +76,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     self.mapViewController = mapViewController
     self.statusTemplate = statusTemplate
     self.interfaceController = interfaceController
+    let rideMenuButton = statusButton(
+      interfaceController: interfaceController,
+      template: statusTemplate
+    )
+    self.rideMenuButton = rideMenuButton
 
     window.rootViewController = mapViewController
     mapTemplate.mapDelegate = self
@@ -80,12 +90,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapTemplate.mapButtons = [
       recenterButton(),
       panButton(mapTemplate: mapTemplate),
-      reportButton(),
-      emergencyButton(),
     ]
-    mapTemplate.trailingNavigationBarButtons = [
-      statusButton(interfaceController: interfaceController, template: statusTemplate),
-    ]
+    // Phone landscape puts its compact ride menu at the leading edge. Keep the
+    // same learned location in the car; CarPlay still owns the navigation bar
+    // and lays its manoeuvre card below it.
+    mapTemplate.leadingNavigationBarButtons = [rideMenuButton]
     // Apple's header explicitly says a failed presentation throws when no
     // completion is supplied. More importantly, a navigation session must not
     // start until this root has actually been accepted by the head unit. The
@@ -128,7 +137,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapTemplate = nil
     mapViewController = nil
     statusTemplate = nil
+    rideMenuButton = nil
     rideStartPrompt = nil
+    surfaceMode = "unavailable"
+    canPlanRoute = false
+    canFreeRoam = false
+    submittedSearchText = ""
     presentedTecRequestID = nil
     (UIApplication.shared.delegate as? AppDelegate)?.carPlayDidDisconnect(self)
   }
@@ -142,6 +156,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // but CarPlay template and navigation APIs cannot. AppDelegate retains the
     // same snapshot and replays it after the root completion above.
     guard sceneLifecycle.rootReady else { return }
+    updateSurfaceActions(snapshot)
     updateNavigationSession(snapshot: snapshot)
     updateTecRoleRequest(snapshot["tecRequest"] as? [String: Any])
     updateRideStart(snapshot["rideStart"] as? [String: Any])
@@ -457,6 +472,52 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     return button
   }
 
+  private func updateSurfaceActions(_ snapshot: [String: Any]) {
+    surfaceMode = nonEmptyString(snapshot["surfaceMode"]) ?? "unavailable"
+    canPlanRoute = (snapshot["canPlanRoute"] as? NSNumber)?.boolValue ?? false
+    canFreeRoam = (snapshot["canFreeRoam"] as? NSNumber)?.boolValue ?? false
+    guard let mapTemplate else { return }
+
+    var buttons = [recenterButton()]
+    if canPlanRoute { buttons.append(planRouteButton()) }
+    if canFreeRoam { buttons.append(freeRoamButton()) }
+    buttons.append(panButton(mapTemplate: mapTemplate))
+    if surfaceMode == "activeRide" {
+      buttons.append(reportButton())
+      buttons.append(emergencyButton())
+    }
+    // CarPlay displays at most four map controls. Home uses location, plan,
+    // free roam and pan; an active ride uses location, pan, report and SOS —
+    // the same actions and glyph language as the corresponding phone view.
+    mapTemplate.mapButtons = Array(buttons.prefix(4))
+  }
+
+  private func planRouteButton() -> CPMapButton {
+    let button = CPMapButton { [weak self] _ in
+      self?.presentDestinationSearch()
+    }
+    button.image = mapButtonImage(
+      named: "magnifyingglass",
+      color: CarPlayPalette.actionInk,
+      accessibilityLabel: "Plan a destination"
+    )
+    return button
+  }
+
+  private func freeRoamButton() -> CPMapButton {
+    let button = CPMapButton { [weak self] _ in
+      self?.presentFreeRoamConfirmation()
+    }
+    // `road.lanes` is the closest SF Symbol to Flutter's add-road icon on the
+    // phone home bar. It remains recognisable on iOS 16+ CarPlay displays.
+    button.image = mapButtonImage(
+      named: "road.lanes",
+      color: CarPlayPalette.routeAhead,
+      accessibilityLabel: "Start free roam"
+    )
+    return button
+  }
+
   private func panButton(mapTemplate: CPMapTemplate) -> CPMapButton {
     let button = CPMapButton { _ in
       mapTemplate.showPanningInterface(animated: true)
@@ -511,6 +572,221 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     return image
   }
 
+  private func presentDestinationSearch() {
+    guard
+      sceneLifecycle.rootReady,
+      canPlanRoute,
+      let interfaceController
+    else { return }
+    submittedSearchText = ""
+    let search = CPSearchTemplate()
+    search.delegate = self
+    interfaceController.pushTemplate(search, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay destination search was not presented: %@", error.localizedDescription)
+      }
+    }
+  }
+
+  func searchTemplate(
+    _ searchTemplate: CPSearchTemplate,
+    updatedSearchText searchText: String,
+    completionHandler: @escaping ([CPListItem]) -> Void
+  ) {
+    // The phone's public Nominatim integration explicitly forbids
+    // autocomplete. Keep the typed value locally and perform one request only
+    // when Search is submitted.
+    submittedSearchText = searchText
+    completionHandler([])
+  }
+
+  func searchTemplateSearchButtonPressed(_ searchTemplate: CPSearchTemplate) {
+    let query = submittedSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else {
+      presentCarPlayError("Enter a destination.")
+      return
+    }
+    (UIApplication.shared.delegate as? AppDelegate)?
+      .searchCarPlayDestinations(query: query) { [weak self, weak searchTemplate] response in
+        DispatchQueue.main.async {
+          guard let self, let searchTemplate else { return }
+          self.presentDestinationResults(response, from: searchTemplate)
+        }
+      }
+  }
+
+  func searchTemplate(
+    _ searchTemplate: CPSearchTemplate,
+    selectedResult item: CPListItem,
+    completionHandler: @escaping () -> Void
+  ) {
+    completionHandler()
+    guard let destination = item.userInfo as? [String: Any] else { return }
+    presentDestinationChoice(destination)
+  }
+
+  private func presentDestinationResults(
+    _ response: [String: Any],
+    from searchTemplate: CPSearchTemplate
+  ) {
+    guard
+      sceneLifecycle.rootReady,
+      let interfaceController,
+      interfaceController.topTemplate === searchTemplate
+    else { return }
+    if let error = nonEmptyString(response["error"]) {
+      presentCarPlayError(error)
+      return
+    }
+    let destinations = response["results"] as? [[String: Any]] ?? []
+    guard !destinations.isEmpty else {
+      presentCarPlayError("No destinations matched that search.")
+      return
+    }
+    let items = destinations.prefix(5).compactMap { destination -> CPListItem? in
+      guard let label = nonEmptyString(destination["label"]) else { return nil }
+      let title = label.split(separator: ",", maxSplits: 1)
+        .first.map(String.init) ?? label
+      let item = CPListItem(text: title, detailText: label)
+      item.userInfo = destination
+      item.handler = { [weak self] _, completion in
+        completion()
+        self?.presentDestinationChoice(destination)
+      }
+      return item
+    }
+    let results = CPListTemplate(
+      title: "Choose destination",
+      sections: [CPListSection(items: items)]
+    )
+    interfaceController.pushTemplate(results, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay destination results were not presented: %@", error.localizedDescription)
+      }
+    }
+  }
+
+  private func presentDestinationChoice(_ destination: [String: Any]) {
+    guard
+      sceneLifecycle.rootReady,
+      let interfaceController,
+      let label = nonEmptyString(destination["label"])
+    else { return }
+    let shortLabel = label.split(separator: ",", maxSplits: 1)
+      .first.map(String.init) ?? label
+    let actions: [CPAlertAction]
+    if surfaceMode == "home" {
+      actions = [
+        CPAlertAction(title: "Ride solo", style: .default) { [weak self] _ in
+          self?.requestDestinationPlan(destination, groupRide: false)
+        },
+        CPAlertAction(title: "Create group ride", style: .default) { [weak self] _ in
+          self?.requestDestinationPlan(destination, groupRide: true)
+        },
+        CPAlertAction(title: "Cancel", style: .cancel) { _ in
+          interfaceController.dismissTemplate(animated: true, completion: nil)
+        },
+      ]
+    } else {
+      actions = [
+        CPAlertAction(title: "Use this route", style: .default) { [weak self] _ in
+          self?.requestDestinationPlan(destination, groupRide: nil)
+        },
+        CPAlertAction(title: "Cancel", style: .cancel) { _ in
+          interfaceController.dismissTemplate(animated: true, completion: nil)
+        },
+      ]
+    }
+    let sheet = CPActionSheetTemplate(
+      title: "Ride to \(shortLabel)?",
+      message: label,
+      actions: actions
+    )
+    interfaceController.presentTemplate(sheet, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay destination choice was not presented: %@", error.localizedDescription)
+      }
+    }
+  }
+
+  private func requestDestinationPlan(
+    _ destination: [String: Any],
+    groupRide: Bool?
+  ) {
+    guard
+      let interfaceController,
+      let label = nonEmptyString(destination["label"]),
+      let latitude = (destination["latitude"] as? NSNumber)?.doubleValue,
+      let longitude = (destination["longitude"] as? NSNumber)?.doubleValue
+    else { return }
+    interfaceController.dismissTemplate(animated: true) { [weak self] _, _ in
+      guard let self else { return }
+      interfaceController.popToRootTemplate(animated: true) { _, _ in
+        (UIApplication.shared.delegate as? AppDelegate)?.planCarPlayDestination(
+          label: label,
+          latitude: latitude,
+          longitude: longitude,
+          groupRide: groupRide
+        ) { [weak self] success, error in
+          guard !success else { return }
+          DispatchQueue.main.async {
+            self?.presentCarPlayError(error ?? "Could not plan that route.")
+          }
+        }
+      }
+    }
+  }
+
+  private func presentFreeRoamConfirmation() {
+    guard
+      sceneLifecycle.rootReady,
+      canFreeRoam,
+      let interfaceController
+    else { return }
+    let sheet = CPActionSheetTemplate(
+      title: "Start free roam?",
+      message: "Starts a solo ride with no planned route. Your track is still recorded.",
+      actions: [
+        CPAlertAction(title: "Start free roam", style: .default) { [weak self] _ in
+          interfaceController.dismissTemplate(animated: true) { _, _ in
+            (UIApplication.shared.delegate as? AppDelegate)?
+              .startFreeRoamFromCarPlay { [weak self] success, error in
+                guard !success else { return }
+                DispatchQueue.main.async {
+                  self?.presentCarPlayError(error ?? "Could not start free roam.")
+                }
+              }
+          }
+        },
+        CPAlertAction(title: "Cancel", style: .cancel) { _ in
+          interfaceController.dismissTemplate(animated: true, completion: nil)
+        },
+      ]
+    )
+    interfaceController.presentTemplate(sheet, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay free-roam confirmation was not presented: %@", error.localizedDescription)
+      }
+    }
+  }
+
+  private func presentCarPlayError(_ message: String) {
+    guard sceneLifecycle.rootReady, let interfaceController else { return }
+    let alert = CPAlertTemplate(
+      titleVariants: [message, "Action unavailable"],
+      actions: [
+        CPAlertAction(title: "OK", style: .cancel) { _ in
+          interfaceController.dismissTemplate(animated: true, completion: nil)
+        },
+      ]
+    )
+    interfaceController.presentTemplate(alert, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay error alert was not presented: %@", error.localizedDescription)
+      }
+    }
+  }
+
   private func statusButton(
     interfaceController: CPInterfaceController,
     template: CPListTemplate
@@ -546,9 +822,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   private func updateLeadingNavigationButtons() {
-    guard let mapTemplate, !isShowingPanningInterface else { return }
+    guard
+      let mapTemplate,
+      let rideMenuButton,
+      !isShowingPanningInterface
+    else { return }
     let enabled = (rideStartPrompt?["enabled"] as? NSNumber)?.boolValue ?? false
-    mapTemplate.leadingNavigationBarButtons = enabled ? [startRideButton()] : []
+    mapTemplate.leadingNavigationBarButtons = enabled
+      ? [rideMenuButton, startRideButton()]
+      : [rideMenuButton]
   }
 
   private func startRideButton() -> CPBarButton {
@@ -780,6 +1062,7 @@ private final class CarPlayNavigationViewController: UIViewController,
   private let speedBadge = CarPlaySpeedLimitBadge()
   private let groupMiniMap = CarPlayGroupMiniMapView()
   private let clockLabel = CarPlayClockLabel()
+  private let routeProgressView = CarPlayRouteProgressView()
   private var routeSource: MLNShapeSource?
   private var travelledRouteAnnotation: MLNPolyline?
   private var travelledRouteCasingAnnotation: MLNPolyline?
@@ -793,6 +1076,7 @@ private final class CarPlayNavigationViewController: UIViewController,
   private var snapshotWantsRiderFollow = false
   private var panGestureStartCoordinate: CLLocationCoordinate2D?
   private var hasFramedFirstFix = false
+  private var surfaceMode = "unavailable"
 
   /// The styles Dart published, the exact style selected on the phone, and the
   /// one currently applied. CarPlay's trait remains a fallback until Dart has
@@ -854,7 +1138,10 @@ private final class CarPlayNavigationViewController: UIViewController,
     // explicitly: it carries its own styling and placement and would not sit with
     // the badges either side of it.
     clockLabel.translatesAutoresizingMaskIntoConstraints = false
+    clockLabel.isHidden = true
     view.addSubview(clockLabel)
+    routeProgressView.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(routeProgressView)
     NSLayoutConstraint.activate([
       // Speed pair top-trailing, and the TEC message *below* it rather than in
       // the leading corner (#442). CarPlay draws the manoeuvre card top-leading,
@@ -903,6 +1190,24 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 12
       ),
+      // The phone's landscape status rail ends with route progress above the
+      // group overview. A CarPlay canvas is much shorter, so the same pair
+      // reflows into one bottom-trailing row: progress immediately beside the
+      // overview, with the same 10pt rail gap. This keeps the upper-middle map
+      // clear while preserving the learned information grouping (#413, #442).
+      routeProgressView.bottomAnchor.constraint(
+        equalTo: groupMiniMap.bottomAnchor
+      ),
+      routeProgressView.trailingAnchor.constraint(
+        equalTo: groupMiniMap.leadingAnchor,
+        constant: -10
+      ),
+      routeProgressView.leadingAnchor.constraint(
+        greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor,
+        constant: 12
+      ),
+      routeProgressView.widthAnchor.constraint(greaterThanOrEqualToConstant: 190),
+      routeProgressView.widthAnchor.constraint(lessThanOrEqualToConstant: 230),
     ])
   }
 
@@ -918,6 +1223,14 @@ private final class CarPlayNavigationViewController: UIViewController,
     latestSnapshot = snapshot
     updateStyleURLs(snapshot["basemap"] as? [String: Any])
     guard let mapView else { return }
+    surfaceMode = snapshot["surfaceMode"] as? String ?? "activeRide"
+    if surfaceMode != "activeRide" {
+      // A viewport belongs to the moving ride that produced it. Replaying it
+      // over the home or pre-ride map is what reopened CarPlay miles away from
+      // the phone after ending a ride.
+      latestViewport = nil
+    }
+    clockLabel.isHidden = surfaceMode == "home"
     let incomingRouteID = snapshot["routeId"] as? String
     let progress = (snapshot["routeProgressMeters"] as? NSNumber)?.doubleValue ?? 0
     let routeKey = "\(incomingRouteID ?? "none"):\(Int(progress / 2))"
@@ -934,13 +1247,21 @@ private final class CarPlayNavigationViewController: UIViewController,
       routeProjectionKey = routeKey
     }
     updateRiders(snapshot)
-    groupMiniMap.apply(
-      snapshot: snapshot,
-      styleURL: preferredStyleURL,
-      styleJSON: phoneStyleJSON
-    )
+    if surfaceMode == "home" {
+      groupMiniMap.isHidden = true
+    } else {
+      groupMiniMap.apply(
+        snapshot: snapshot,
+        styleURL: preferredStyleURL,
+        styleJSON: phoneStyleJSON
+      )
+    }
     tecBadge.apply(snapshot["tec"] as? [String: Any])
     speedBadge.apply(snapshot["speed"] as? [String: Any])
+    routeProgressView.apply(
+      snapshot["journeyProgress"] as? [String: Any],
+      usesMiles: (snapshot["distanceUnit"] as? String) == "miles"
+    )
     let requestedRiderFollow =
       (snapshot["followRider"] as? NSNumber)?.boolValue ?? false
     let cameraModeChanged = requestedRiderFollow != snapshotWantsRiderFollow
@@ -976,7 +1297,11 @@ private final class CarPlayNavigationViewController: UIViewController,
       phoneStyleURL = styleURL
       applyPreferredStyle()
     }
-    guard snapshotWantsRiderFollow, followsLocalRider else { return }
+    guard
+      surfaceMode == "activeRide",
+      snapshotWantsRiderFollow,
+      followsLocalRider
+    else { return }
     applyPhoneViewport(animated: true)
   }
 
@@ -997,7 +1322,10 @@ private final class CarPlayNavigationViewController: UIViewController,
       phoneStyleURL = fallbackURL
     }
     applyPreferredStyle()
-    if let latestSnapshot {
+    if
+      let latestSnapshot,
+      latestSnapshot["surfaceMode"] as? String != "home"
+    {
       groupMiniMap.apply(
         snapshot: latestSnapshot,
         styleURL: preferredStyleURL,
@@ -1016,6 +1344,11 @@ private final class CarPlayNavigationViewController: UIViewController,
     guard let mapView else { return }
     guard let coordinate = localCoordinate else {
       showCompleteRoute()
+      return
+    }
+    if surfaceMode == "home" {
+      mapView.userTrackingMode = .none
+      mapView.setCenter(coordinate, zoomLevel: 14, animated: true)
       return
     }
     // Taking the camera back off MapLibre's follow mode, or it animates against
@@ -1143,6 +1476,14 @@ private final class CarPlayNavigationViewController: UIViewController,
     mapView.logoView.isHidden = true
     mapView.attributionButtonPosition = .bottomLeft
     mapView.compassViewPosition = .topRight
+    // Match the phone home map's no-fix fallback rather than MapLibre's
+    // world-sized default. As soon as the phone publishes an authorised fix,
+    // the saved rider marker and the same z14 home framing replace this.
+    mapView.setCenter(
+      CLLocationCoordinate2D(latitude: 54.5, longitude: -3.2),
+      zoomLevel: 5,
+      animated: false
+    )
     view.insertSubview(mapView, at: 0)
     self.mapView = mapView
     if let latestSnapshot { apply(snapshot: latestSnapshot) }
@@ -2253,6 +2594,114 @@ private final class CarPlayTecBadge: UIView {
     default:
       label.textColor = CarPlayPalette.cardTitle
     }
+  }
+}
+
+/// Compact route-wide timing beside the bottom-trailing group overview.
+///
+/// Dart owns the estimate and waypoint selection so the phone and car never
+/// disagree. Native only formats the rider's units and local clock convention.
+private final class CarPlayRouteProgressView: UIView {
+  private let routeLabel = UILabel()
+  private let waypointLabel = UILabel()
+  private let timeFormatter = DateFormatter()
+
+  init() {
+    super.init(frame: .zero)
+    isHidden = true
+    isUserInteractionEnabled = false
+    backgroundColor = CarPlayPalette.cardFill
+    layer.cornerRadius = 10
+    layer.cornerCurve = .continuous
+    layer.borderWidth = 1
+    layer.borderColor = UIColor.white.withAlphaComponent(0.18).cgColor
+    timeFormatter.setLocalizedDateFormatFromTemplate("j:mm")
+
+    routeLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+    routeLabel.textColor = CarPlayPalette.cardTitle
+    routeLabel.adjustsFontSizeToFitWidth = true
+    routeLabel.minimumScaleFactor = 0.78
+    waypointLabel.font = .systemFont(ofSize: 12, weight: .medium)
+    waypointLabel.textColor = CarPlayPalette.cardLabel
+    waypointLabel.adjustsFontSizeToFitWidth = true
+    waypointLabel.minimumScaleFactor = 0.78
+    for label in [routeLabel, waypointLabel] {
+      label.translatesAutoresizingMaskIntoConstraints = false
+      label.numberOfLines = 1
+      addSubview(label)
+    }
+    NSLayoutConstraint.activate([
+      routeLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      routeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      routeLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+      waypointLabel.leadingAnchor.constraint(equalTo: routeLabel.leadingAnchor),
+      waypointLabel.trailingAnchor.constraint(equalTo: routeLabel.trailingAnchor),
+      waypointLabel.topAnchor.constraint(equalTo: routeLabel.bottomAnchor, constant: 4),
+      waypointLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  func apply(_ progress: [String: Any]?, usesMiles: Bool) {
+    guard
+      let progress,
+      let remaining = (progress["remainingDistanceMeters"] as? NSNumber)?.doubleValue
+    else {
+      isHidden = true
+      return
+    }
+    isHidden = false
+    let duration = durationLabel(progress["remainingSeconds"] as? NSNumber)
+    let arrival = timeLabel(progress["arrivalTimeMillis"] as? NSNumber)
+    routeLabel.text =
+      "\(duration) · \(distanceLabel(remaining, usesMiles: usesMiles)) left · ETA \(arrival)"
+
+    let waypointName = (progress["nextWaypointName"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let waypointDistance =
+      (progress["nextWaypointDistanceMeters"] as? NSNumber)?.doubleValue
+    if let waypointName, !waypointName.isEmpty, let waypointDistance {
+      let waypointArrival = timeLabel(
+        progress["nextWaypointArrivalTimeMillis"] as? NSNumber
+      )
+      waypointLabel.isHidden = false
+      waypointLabel.text =
+        "⚑ \(waypointName) · \(distanceLabel(waypointDistance, usesMiles: usesMiles)) · \(waypointArrival)"
+    } else {
+      waypointLabel.isHidden = true
+      waypointLabel.text = nil
+    }
+    accessibilityLabel = [routeLabel.text, waypointLabel.text]
+      .compactMap { $0 }
+      .joined(separator: ". ")
+  }
+
+  private func durationLabel(_ seconds: NSNumber?) -> String {
+    guard let seconds else { return "Time —" }
+    let minutes = Int(ceil(seconds.doubleValue / 60))
+    guard minutes >= 60 else { return "\(minutes) min" }
+    let hours = minutes / 60
+    let remainder = minutes % 60
+    return remainder == 0 ? "\(hours) h" : "\(hours) h \(remainder) min"
+  }
+
+  private func timeLabel(_ milliseconds: NSNumber?) -> String {
+    guard let milliseconds else { return "—" }
+    return timeFormatter.string(
+      from: Date(timeIntervalSince1970: milliseconds.doubleValue / 1_000)
+    )
+  }
+
+  private func distanceLabel(_ metres: Double, usesMiles: Bool) -> String {
+    if usesMiles {
+      let miles = metres / 1_609.344
+      if miles < 0.1 { return "\(Int((metres * 1.093613).rounded())) yd" }
+      return String(format: "%.1f mi", miles)
+    }
+    if metres < 1_000 { return "\(Int(metres.rounded())) m" }
+    return String(format: "%.1f km", metres / 1_000)
   }
 }
 
