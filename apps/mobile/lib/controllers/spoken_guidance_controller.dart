@@ -40,19 +40,22 @@ class SpokenGuidanceController extends ChangeNotifier
   /// Creates the ride's engine. The production closure reads [voice] before
   /// every phrase, so a Settings change applies without restarting the ride.
   SpokenGuidanceEngine Function() get engine =>
-      _engineOverride ??
-      () {
-        final fallback = FlutterTtsSpokenGuidanceEngine(
-          voiceProvider: () => _voice,
-        );
-        return AdaptiveNeuralSpokenGuidanceEngine(
-          enabled: () =>
-              naturalVoicePack.enabled &&
-              naturalVoicePack.modelDirectory != null,
-          neuralFactory: _createNaturalEngine,
-          fallback: fallback,
-        );
-      };
+      () => createEngine();
+
+  SpokenGuidanceEngine createEngine({SpokenGuidanceOutputObserver? onOutput}) {
+    final override = _engineOverride;
+    if (override != null) return override();
+    final fallback = FlutterTtsSpokenGuidanceEngine(
+      voiceProvider: () => _voice,
+    );
+    return AdaptiveNeuralSpokenGuidanceEngine(
+      enabled: () =>
+          naturalVoicePack.enabled && naturalVoicePack.modelDirectory != null,
+      neuralFactory: _createNaturalEngine,
+      fallback: fallback,
+      onOutput: onOutput,
+    );
+  }
 
   static const preferenceKey = 'spoken_guidance_enabled';
 
