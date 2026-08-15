@@ -109,6 +109,7 @@ String _readableCarPlayError(Object error, {required String fallback}) =>
 class CarPlayBridge {
   CarPlayBridge({
     this.onEmergencyTriggered,
+    this.onLeaveRequested,
     this.onHazardReported,
     this.onTecRoleAnswered,
     this.onRideStartRequested,
@@ -137,6 +138,10 @@ class CarPlayBridge {
   final DateTime Function() _clock;
   final Duration _minimumPublishInterval;
   final Future<void> Function()? onEmergencyTriggered;
+
+  /// Leaves the current ride after CarPlay has shown its own confirmation.
+  /// The phone remains the lifecycle owner and publishes the durable departure.
+  final Future<void> Function()? onLeaveRequested;
 
   /// A first-hand road alert raised from the CarPlay report control. The
   /// native side sends only the type; the phone remains responsible for
@@ -194,6 +199,8 @@ class CarPlayBridge {
     switch (call.method) {
       case 'triggerEmergency':
         await onEmergencyTriggered?.call();
+      case 'leaveRide':
+        await onLeaveRequested?.call();
       case 'reportHazard':
         final arguments = call.arguments;
         if (arguments is! Map) return;
@@ -447,6 +454,7 @@ class CarPlayBridge {
                   ? basemap.styleUrl
                   : basemap.darkStyleUrl,
               'selectedStyleUrl': basemap.styleUrl,
+              'dark': basemap.dark,
               if (mapStyleJson != null && mapStyleJson.isNotEmpty)
                 'styleJson': mapStyleJson,
             },
@@ -541,6 +549,11 @@ class CarPlayBridge {
         'tilt': viewport.tilt,
         'bearing': viewport.bearing,
         'sourceViewportHeightPixels': viewport.sourceViewportHeightPixels,
+        'sourceViewportWidthPixels': viewport.sourceViewportWidthPixels,
+        'riderViewportFraction': viewport.riderViewportFraction,
+        'riderHorizontalViewportFraction':
+            viewport.riderHorizontalViewportFraction,
+        'leftHandTraffic': viewport.leftHandTraffic,
         'mapStyleUrl': viewport.mapStyleUrl,
       });
     } on Object catch (error) {

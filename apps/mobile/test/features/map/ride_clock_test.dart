@@ -84,6 +84,38 @@ void main() {
       );
       await tester.pumpWidget(const MaterialApp(home: Scaffold()));
     });
+
+    testWidgets('ink follows the map palette', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RideClock(
+              darkMap: false,
+              clock: () => DateTime(2026, 8, 12, 14, 30),
+            ),
+          ),
+        ),
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const Key('ride-clock'))).style!.color,
+        Colors.black,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RideClock(
+              darkMap: true,
+              clock: () => DateTime(2026, 8, 12, 14, 30),
+            ),
+          ),
+        ),
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const Key('ride-clock'))).style!.color,
+        Colors.white,
+      );
+    });
   });
 
   group('both surfaces draw it themselves', () {
@@ -93,7 +125,7 @@ void main() {
         'lib/features/map/ride_map_feature.dart',
       ).readAsStringSync();
 
-      expect(source, contains('RideClock()'));
+      expect(source, contains('RideClock(darkMap: _basemap.dark)'));
     });
 
     test('CarPlay draws its own label rather than using an Apple widget', () {
@@ -107,6 +139,7 @@ void main() {
       // `j`, not a hard-coded HH: it resolves to whichever of 12- or 24-hour the
       // head unit's locale uses.
       expect(source, contains('setLocalizedDateFormatFromTemplate("j:mm")'));
+      expect(source, contains('label.textColor = darkMap ? .white : .black'));
       // A hard 24-hour format would show 13:00 on a car set to a 12-hour clock.
       // Checked on the formatter call rather than the string, since the comment
       // above it names "HH:mm" as the thing not being used.

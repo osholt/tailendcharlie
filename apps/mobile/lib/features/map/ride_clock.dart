@@ -21,12 +21,15 @@ import 'package:flutter/material.dart';
 /// So it sleeps until the next minute boundary, redraws, and sleeps again. See
 /// [millisecondsUntilNextMinute].
 class RideClock extends StatefulWidget {
-  const RideClock({super.key, this.clock, this.style});
+  const RideClock({super.key, this.clock, this.style, this.darkMap = true});
 
   /// Overridden in tests. Production reads the device clock.
   final DateTime Function()? clock;
 
   final TextStyle? style;
+
+  /// The palette of the map under the label, independent of the app theme.
+  final bool darkMap;
 
   @override
   State<RideClock> createState() => _RideClockState();
@@ -78,11 +81,17 @@ class _RideClockState extends State<RideClock> {
       key: const Key('ride-clock'),
       style:
           widget.style ??
-          const TextStyle(
-            color: Colors.white,
+          TextStyle(
+            color: widget.darkMap ? Colors.white : Colors.black,
             fontSize: 18,
             fontWeight: FontWeight.w700,
             height: 1,
+            shadows: [
+              Shadow(
+                color: widget.darkMap ? Colors.black87 : Colors.white,
+                blurRadius: 4,
+              ),
+            ],
           ),
     );
   }

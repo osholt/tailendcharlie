@@ -20,10 +20,17 @@ const double navigationCameraFramingTopSpeedMetersPerSecond = 30;
 /// viewport height measured from the top edge. 0.5 is dead centre, which is
 /// what a plain map does; a navigation view puts the rider low so most of the
 /// screen shows the road ahead.
-const double navigationCameraRestRiderFractionPortrait = 0.56;
+const double navigationCameraRestRiderFractionPortrait = 0.62;
 const double navigationCameraFastRiderFractionPortrait = 0.70;
-const double navigationCameraRestRiderFractionLandscape = 0.58;
+const double navigationCameraRestRiderFractionLandscape = 0.64;
 const double navigationCameraFastRiderFractionLandscape = 0.72;
+
+/// Landscape puts the rider away from the screen centre so the road ahead has
+/// an unobstructed wide area. Left-hand traffic uses the right third, clear of
+/// the guidance/action rail shown in the supplied UK reference; right-hand
+/// traffic mirrors it. Portrait remains centred horizontally.
+const double navigationCameraLandscapeRiderFractionLeftTraffic = 2 / 3;
+const double navigationCameraLandscapeRiderFractionRightTraffic = 1 / 3;
 
 /// Space kept between the rider's marker and the top of the bottom chrome
 /// band, as a fraction of the viewport height. The marker is 38 logical
@@ -84,6 +91,10 @@ class NavigationCameraViewport {
     required this.tilt,
     required this.bearing,
     required this.sourceViewportHeightPixels,
+    required this.sourceViewportWidthPixels,
+    required this.riderViewportFraction,
+    required this.riderHorizontalViewportFraction,
+    required this.leftHandTraffic,
     required this.mapStyleUrl,
     required this.mapStyleJson,
   });
@@ -94,6 +105,16 @@ class NavigationCameraViewport {
   final double tilt;
   final double bearing;
   final double sourceViewportHeightPixels;
+  final double sourceViewportWidthPixels;
+
+  /// Exact phone anchors, projected so a differently shaped CarPlay screen can
+  /// place the rider deliberately instead of inheriting a coincidental offset.
+  final double riderViewportFraction;
+  final double riderHorizontalViewportFraction;
+
+  /// Route driving side independently of the phone's current orientation.
+  /// CarPlay is always landscape, even when its attached phone is portrait.
+  final bool leftHandTraffic;
 
   /// The exact day/night style selected for the phone map.
   final String mapStyleUrl;
@@ -113,7 +134,9 @@ class NavigationCameraPlan {
     required this.zoom,
     required this.tilt,
     required this.riderViewportFraction,
+    required this.riderHorizontalViewportFraction,
     required this.forwardBiasPixels,
+    required this.lateralBiasPixels,
     required this.lookAheadMeters,
   });
 
@@ -124,6 +147,10 @@ class NavigationCameraPlan {
   /// fraction of its height from the top edge. Always at or below the centre.
   final double riderViewportFraction;
 
+  /// Horizontal position of the rider from the left edge. Portrait is centred;
+  /// landscape uses the traffic-side third of the viewport.
+  final double riderHorizontalViewportFraction;
+
   /// Logical pixels between the viewport centre and the rider's marker.
   /// Negative when the marker sits above the centre.
   ///
@@ -133,6 +160,10 @@ class NavigationCameraPlan {
   /// target. See [lookAheadMeters] and
   /// [NavigationCameraPlanner.flatLookAheadMetersFor].
   final double forwardBiasPixels;
+
+  /// Logical horizontal pixels between the viewport centre and the rider.
+  /// Negative places the rider left of centre.
+  final double lateralBiasPixels;
 
   /// Ground distance from the rider to the point the camera is aimed at.
   ///
@@ -162,8 +193,10 @@ abstract final class NavigationCameraPlanner {
     required double? speedMetersPerSecond,
     required bool landscape,
     double viewportHeightPixels = 800,
+    double viewportWidthPixels = 400,
     double latitudeDegrees = 51.5,
     double bottomChromeFraction = 0,
+    bool leftHandTraffic = true,
   }) {
     final speed = (speedMetersPerSecond ?? 0).isFinite
         ? (speedMetersPerSecond ?? 0).clamp(
@@ -183,17 +216,28 @@ abstract final class NavigationCameraPlanner {
     final height = viewportHeightPixels.isFinite && viewportHeightPixels > 0
         ? viewportHeightPixels
         : 800.0;
+    final width = viewportWidthPixels.isFinite && viewportWidthPixels > 0
+        ? viewportWidthPixels
+        : 400.0;
     final riderFraction = _riderViewportFraction(
       landscape: landscape,
       speedFactor: speedFactor,
       bottomChromeFraction: bottomChromeFraction,
     );
     final forwardBiasPixels = (riderFraction - 0.5) * height;
+    final horizontalFraction = landscape
+        ? (leftHandTraffic
+              ? navigationCameraLandscapeRiderFractionLeftTraffic
+              : navigationCameraLandscapeRiderFractionRightTraffic)
+        : 0.5;
+    final lateralBiasPixels = (horizontalFraction - 0.5) * width;
     return NavigationCameraPlan(
       zoom: zoom,
       tilt: tilt,
       riderViewportFraction: riderFraction,
+      riderHorizontalViewportFraction: horizontalFraction,
       forwardBiasPixels: forwardBiasPixels,
+      lateralBiasPixels: lateralBiasPixels,
       lookAheadMeters: lookAheadMetersFor(
         tiltDegrees: tilt,
         zoom: zoom,
@@ -294,6 +338,28 @@ abstract final class NavigationCameraPlanner {
     final metres =
         forwardBiasPixels *
         _metersPerPixel(zoom, latitudeDegrees, tileSize: 256);
+    if (!metres.isFinite) return 0;
+    return metres.clamp(
+      -navigationCameraMaximumLookAheadMeters,
+      navigationCameraMaximumLookAheadMeters,
+    );
+  }
+
+  /// Lateral ground offset from the rider to the camera target.
+  ///
+  /// A rider left of centre needs the camera target to their right, hence the
+  /// inverted sign. [tileSize] keeps MapLibre (512) and FlutterMap (256) at the
+  /// same requested viewport fraction despite their different zoom schemes.
+  static double lateralTargetOffsetMetersFor({
+    required double zoom,
+    required double lateralBiasPixels,
+    required double latitudeDegrees,
+    required int tileSize,
+  }) {
+    if (lateralBiasPixels == 0 || !lateralBiasPixels.isFinite) return 0;
+    final metres =
+        -lateralBiasPixels *
+        _metersPerPixel(zoom, latitudeDegrees, tileSize: tileSize);
     if (!metres.isFinite) return 0;
     return metres.clamp(
       -navigationCameraMaximumLookAheadMeters,

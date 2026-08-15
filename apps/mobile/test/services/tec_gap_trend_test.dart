@@ -146,6 +146,10 @@ void main() {
   });
 
   group('what a rider reads', () {
+    test('the growing gap is stated without the ambiguous word opening', () {
+      expect(TecGapTrend.opening.label, 'Gap increasing');
+    });
+
     test('every trend has a word and a shape, not just a colour', () {
       for (final trend in TecGapTrend.values) {
         expect(trend.label, isNotEmpty, reason: '${trend.name} has no label');

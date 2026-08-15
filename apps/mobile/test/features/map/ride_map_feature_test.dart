@@ -40,6 +40,70 @@ import 'package:ride_relay/services/speed_limit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('navigation panels preserve map context and rider clearance', () {
+    expect(rideMapPrimaryPanelFill.toARGB32(), 0xD9252E39);
+    expect(
+      landscapeGuidancePanelWidth(
+        viewportWidth: 844,
+        safeRight: 0,
+        leftHandTraffic: true,
+      ),
+      closeTo(320, 0.1),
+    );
+    expect(
+      landscapeGuidancePanelWidth(
+        viewportWidth: 844,
+        safeRight: 59,
+        leftHandTraffic: true,
+      ),
+      closeTo(276.3, 0.1),
+      reason: 'a landscape notch keeps a wide but bounded guidance card',
+    );
+    expect(
+      landscapeGuidancePanelWidth(
+        viewportWidth: 667,
+        safeRight: 44,
+        leftHandTraffic: true,
+      ),
+      closeTo(232.3, 0.1),
+      reason: 'compact landscape keeps a readable but bounded guidance card',
+    );
+  });
+
+  test('the app compass replaces the fixed native control', () {
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+
+    expect(source, contains('compassEnabled: false'));
+    expect(source, contains("Key('speed-compass-cluster')"));
+    expect(source, contains("Key('ride-compass-position')"));
+  });
+
+  test('the group mini-map does not repeat the provider banner', () {
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+
+    expect(source, isNot(contains('OpenFreeMap · © OSM')));
+  });
+
+  test('completed planned geometry is absent from both map renderers', () {
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+
+    expect(source, isNot(contains('_riddenRouteSource')));
+    expect(source, isNot(contains('_progressGeometry.riddenPaths')));
+    expect(source, contains('_progressGeometry.remainingPaths'));
+    expect(source, contains('_trailPolylines(dashed: false)'));
+    expect(
+      source,
+      contains('tileSize: _basemap.usesMapLibre ? 512 : 256'),
+      reason: 'both renderer camera targets must carry the lateral intent',
+    );
+  });
+
   testWidgets('personal ride heatmap is optional and below the active route', (
     tester,
   ) async {
@@ -377,6 +441,7 @@ void main() {
       'report-sighting-button',
       'navigation-follow-button',
       'posted-speed-limit-position',
+      'ride-compass-position',
     ]) {
       expect(
         find.byKey(Key(key)),
@@ -1040,7 +1105,8 @@ void main() {
     expect(chip, findsOneWidget);
     expect(find.text('TEC GAP'), findsNothing);
     expect(find.text('TEC'), findsOneWidget);
-    expect(find.textContaining('Charlie · 2.0 mi · ~4 min'), findsOneWidget);
+    expect(find.textContaining('2.0 mi · ~4 min'), findsOneWidget);
+    expect(find.textContaining('Charlie ·'), findsNothing);
     expect(tester.getSize(chip).height, lessThanOrEqualTo(44));
     expect(tester.getSize(chip).width, lessThanOrEqualTo(360));
   });
@@ -1109,10 +1175,7 @@ void main() {
 
     final chip = find.byKey(const Key('leader-tec-gap'));
     expect(chip, findsOneWidget);
-    expect(
-      find.textContaining('Tail End Charlie · waiting for location'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Waiting for location'), findsOneWidget);
     expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
     // The status band now lives in the lower part of the screen so the road
     // ahead stays visible at the top.
@@ -2669,12 +2732,12 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('reserves the shell ride-menu corner on a portrait moving map', (
+  testWidgets('aligns portrait ETA with the mini-map header row', (
     tester,
   ) async {
     // ActiveRideShell owns the moving ride-menu button (#404), so the map does
-    // not receive onOpenRideMenu in production. It must still reserve that
-    // portrait corner or the button covers the first digits of route progress.
+    // not receive onOpenRideMenu in production. The ETA can therefore align
+    // with the mini-map while the shell puts its menu below that header (#533).
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -2735,7 +2798,7 @@ void main() {
     expect(find.byKey(const Key('ride-menu-button')), findsNothing);
     final progress = find.byKey(const Key('route-progress-panel-position'));
     expect(progress, findsOneWidget);
-    expect(tester.getRect(progress).top, closeTo(72, 1));
+    expect(tester.getRect(progress).top, closeTo(12, 1));
 
     await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox.shrink());
@@ -2810,9 +2873,10 @@ void main() {
       final overlayBounds = tester.getRect(
         find.byKey(const Key('junction-marker-overlay')),
       );
-      expect(overlayBounds.left, greaterThan(400));
-      expect(overlayBounds.top, greaterThan(100));
-      expect(overlayBounds.bottom, greaterThan(350));
+      final riderX = 844 * navigationCameraLandscapeRiderFractionLeftTraffic;
+      expect(overlayBounds.left, greaterThan(riderX + 19));
+      expect(overlayBounds.right, closeTo(844 - 10, 1));
+      expect(overlayBounds.bottom, greaterThan(330));
 
       marker.value = const MapJunctionMarkerOverlay(
         markerPoint: GeoPoint(latitude: 53, longitude: -1.01),
@@ -2992,13 +3056,15 @@ void main() {
       expect(find.byKey(const Key('group-mini-map')), findsOneWidget);
       expect(find.byKey(const Key('route-progress-panel')), findsOneWidget);
       final landscapeProgress = tester.getRect(
-        find.byKey(const Key('route-progress-panel')),
+        find.byKey(const Key('route-progress-panel-position')),
       );
       final landscapeMiniMap = tester.getRect(
         find.byKey(const Key('group-mini-map')),
       );
-      expect(landscapeProgress.right, closeTo(844 - 10, 1));
+      expect(landscapeProgress.left, closeTo(10, 1));
       expect(landscapeProgress.bottom, lessThan(landscapeMiniMap.top));
+      expect(landscapeMiniMap.left, closeTo(10, 1));
+      expect(landscapeMiniMap.bottom, closeTo(390 - 10, 1));
       expect(find.byKey(const Key('ride-clock')), findsOneWidget);
       expect(find.text('3 RIDERS'), findsOneWidget);
       expect(find.byKey(const Key('mini-map-you-legend')), findsOneWidget);
@@ -3007,6 +3073,17 @@ void main() {
       expect(
         find.byKey(const Key('navigation-guidance-banner')),
         findsOneWidget,
+      );
+      final landscapeGuidance = tester.getRect(
+        find.byKey(const Key('navigation-guidance-banner')),
+      );
+      expect(landscapeGuidance.right, closeTo(844 - 10, 1));
+      expect(landscapeGuidance.bottom, closeTo(390 - 10, 1));
+      expect(landscapeGuidance.width, greaterThanOrEqualTo(300));
+      expect(
+        landscapeGuidance.top,
+        greaterThan(390 * navigationCameraRestRiderFractionLandscape + 20),
+        reason: 'the wider card must remain below the rider and road ahead',
       );
       expect(find.textContaining('3rd exit, right'), findsOneWidget);
       // The symbol beside it is a drawn roundabout, so the visible wording does
@@ -3067,7 +3144,8 @@ void main() {
       expect(portraitMiniMap.top, lessThan(portraitSize.height / 3));
       expect(portraitMiniMap.right, closeTo(portraitSize.width - 12, 1));
       expect(portraitProgress.left, closeTo(12, 1));
-      expect(portraitProgress.top, closeTo(72, 1));
+      expect(portraitProgress.top, closeTo(12, 1));
+      expect(portraitProgress.top, closeTo(portraitMiniMap.top, 1));
       expect(portraitProgress.right, lessThanOrEqualTo(portraitMiniMap.left));
       // Portrait has one clock, folded into the compact route card.
       expect(find.byKey(const Key('ride-clock')), findsOneWidget);
@@ -3097,8 +3175,11 @@ void main() {
       expect(ahead.strokeWidth, RouteTrailStyle.routeAhead.widthPixels);
       expect(ahead.borderColor, RouteTrailStyle.casing);
       expect(ahead.color.a, 1.0);
-      final travelled = lineWithColor(RouteTrailStyle.travelled.color);
-      expect(travelled.pattern, const StrokePattern.solid());
+      expect(
+        layer.polylines.map((line) => line.color),
+        isNot(contains(RouteTrailStyle.travelled.color)),
+        reason: 'completed planned route must not be painted behind the rider',
+      );
       // The leader's trail is the widest line and is drawn under the plan; an
       // off-route trail is dashed and drawn over it.
       final leader = lineWithColor(RouteTrailStyle.leaderTrail.color);
@@ -3114,7 +3195,7 @@ void main() {
       );
       expect(
         layer.polylines.indexOf(offRoute),
-        greaterThan(layer.polylines.indexOf(travelled)),
+        greaterThan(layer.polylines.indexOf(ahead)),
       );
 
       await tester.drag(find.byType(FlutterMap), const Offset(80, 0));
@@ -3517,19 +3598,8 @@ void main() {
       httpClient: MockClient((_) async => http.Response('', 404)),
     );
 
-    // Alerts that may interrupt, versus chrome that is always on screen.
-    const urgentKeys = {'ride-paused-banner', 'leader-off-course-alert'};
-    // The corners. #104 keeps *status surfaces and popups* out of the band the
-    // rider reads the road in; a small thing hard against a screen edge is not
-    // one. #125 admitted the ride menu; #133 admits the group overview, and in
-    // landscape the speed sign. Each is asserted below to stay small, to stay
-    // against its edge, and to leave the centre alone.
-    Set<String> cornersFor({required bool landscape}) => {
-      'ride-menu-button',
-      'group-mini-map',
-      if (landscape) 'posted-speed-limit-position',
-    };
     final overlayKeys = <String>[
+      'route-progress-panel-position',
       'navigation-guidance-banner',
       'leader-off-course-alert',
       'leader-tec-gap',
@@ -3539,6 +3609,7 @@ void main() {
       'leave-ride-button',
       'report-sighting-button',
       'posted-speed-limit-position',
+      'ride-compass-position',
     ];
 
     Future<void> verifyLayout({required bool landscape}) async {
@@ -3562,76 +3633,18 @@ void main() {
         rects[key] = tester.getRect(finder);
       }
 
-      // No status surface is anchored to the top of the map: the upper band is
-      // where the rider reads the road ahead. The ride menu stays a corner
-      // control - small, and hard against the leading edge, so it obstructs
-      // nothing a rider needs to see.
-      final cornerKeys = cornersFor(landscape: landscape);
+      // The small menu remains glove-sized. Portrait deliberately moves it
+      // below the aligned ETA/mini-map row; landscape keeps it top-leading.
       final rideMenu = rects['ride-menu-button']!;
       expect(rideMenu.top, lessThan(size.height / 3));
       expect(rideMenu.width, lessThanOrEqualTo(48));
       expect(rideMenu.height, lessThanOrEqualTo(48));
       expect(rideMenu.left, lessThanOrEqualTo(size.width * 0.1));
 
-      // The corner exceptions earn the name: each touches a corner and is small
-      // enough that the middle of the screen is untouched. Anything that grew or
-      // drifted past this would be a status surface in the band #104 reserves for
-      // the road ahead.
-      for (final key in cornerKeys) {
-        final corner = rects[key]!;
-        expect(
-          corner.left <= size.width * 0.12 || corner.right >= size.width * 0.88,
-          isTrue,
-          reason: '$key is not against a side edge in $size',
-        );
-        expect(
-          corner.top <= size.height * 0.12 ||
-              corner.bottom >= size.height * 0.88,
-          isTrue,
-          reason: '$key is not against the top or bottom edge in $size',
-        );
-        expect(
-          corner.width,
-          lessThanOrEqualTo(size.width * 0.45),
-          reason: '$key is too wide to be a corner element in $size',
-        );
-        expect(
-          corner.height,
-          lessThanOrEqualTo(size.height * 0.40),
-          reason: '$key is too tall to be a corner element in $size',
-        );
-      }
-
       for (final entry in rects.entries) {
-        // Urgent alerts are #104's other exception: they interrupt by growing
-        // the band upwards, never by anchoring to the top.
-        if (!urgentKeys.contains(entry.key) &&
-            !cornerKeys.contains(entry.key)) {
-          expect(
-            entry.value.top,
-            greaterThanOrEqualTo(size.height / 3),
-            reason: '${entry.key} intrudes into the upper band in $size',
-          );
-        }
         expect(entry.value.left, greaterThanOrEqualTo(0));
         expect(entry.value.right, lessThanOrEqualTo(size.width));
         expect(entry.value.bottom, lessThanOrEqualTo(size.height));
-      }
-
-      final persistentTop = rects.entries
-          .where(
-            (entry) =>
-                !urgentKeys.contains(entry.key) &&
-                !cornerKeys.contains(entry.key),
-          )
-          .map((entry) => entry.value.top)
-          .reduce((a, b) => a < b ? a : b);
-      for (final key in urgentKeys) {
-        expect(
-          rects[key]!.bottom,
-          lessThanOrEqualTo(persistentTop),
-          reason: '$key must stack inside the band, not float over the map',
-        );
       }
 
       // "Follow me" is absent unless the rider has earned it by taking the
@@ -3654,39 +3667,85 @@ void main() {
       }
 
       if (landscape) {
-        // Landscape keeps the centre column clear so the rider's own marker
-        // and the road ahead are never behind chrome.
-        for (final entry in rects.entries) {
-          final clearsCentre =
-              entry.value.right <= size.width * 0.45 ||
-              entry.value.left >= size.width * 0.55;
+        // Landscape divides the screen around the traffic-side rider anchor:
+        // status and actions are left, guidance is bottom-right, and nothing
+        // crosses the rider or the road immediately ahead of it (#533).
+        final riderX =
+            size.width * navigationCameraLandscapeRiderFractionLeftTraffic;
+        for (final key in const [
+          'ride-paused-banner',
+          'route-progress-panel-position',
+          'leader-off-course-alert',
+          'leader-tec-gap',
+          'group-mini-map',
+          'ride-menu-button',
+          'emergency-alert-button',
+          'leave-ride-button',
+          'report-sighting-button',
+        ]) {
           expect(
-            clearsCentre,
-            isTrue,
-            reason: '${entry.key} crosses the centre column in $size',
+            rects[key]!.right,
+            lessThan(riderX - 19),
+            reason: '$key crosses the rider anchor in $size',
           );
         }
-        // The group overview goes to the bottom right and the speed sign to the
-        // top right (#133): the two right-hand corners, furthest from the road
-        // ahead, with the left rail keeping the targets.
+        for (final key in const [
+          'posted-speed-limit-position',
+          'ride-compass-position',
+        ]) {
+          expect(
+            rects[key]!.left,
+            greaterThan(riderX + 19),
+            reason: '$key crosses the rider anchor in $size',
+          );
+        }
+
+        // ETA stacks above the group overview in the bottom-left column, just
+        // as it does on CarPlay. Speed remains where it was at top-right.
+        final progress = rects['route-progress-panel-position']!;
         final miniMap = rects['group-mini-map']!;
         final speedLimit = rects['posted-speed-limit-position']!;
-        expect(miniMap.right, closeTo(size.width - 10, 1));
+        expect(progress.left, closeTo(10, 1));
+        expect(progress.bottom, lessThanOrEqualTo(miniMap.top));
+        expect(miniMap.left, closeTo(10, 1));
         expect(miniMap.bottom, closeTo(size.height - 10, 1));
         expect(speedLimit.right, closeTo(size.width - 10, 1));
         expect(speedLimit.top, closeTo(10, 1));
-        expect(speedLimit.bottom, lessThan(miniMap.top));
-        // The turn banner is still the last surface above the targets.
+        final compass = rects['ride-compass-position']!;
+        expect(compass.right, closeTo(speedLimit.left - 8, 1));
+        expect(compass.top, closeTo(speedLimit.top, 1));
+        expect(compass.width, closeTo(58, 0.1));
+
+        // The turn banner owns a wider bottom-right corner below the rider; the
+        // safety actions use a vertical stack beside the mini-map.
         final guidance = rects['navigation-guidance-banner']!;
-        expect(
-          guidance.bottom,
-          lessThanOrEqualTo(rects['leave-ride-button']!.top),
+        expect(guidance.right, closeTo(size.width - 10, 1));
+        expect(guidance.bottom, closeTo(size.height - 10, 1));
+        expect(guidance.width, greaterThanOrEqualTo(270));
+        final cameraPlan = NavigationCameraPlanner.plan(
+          speedMetersPerSecond: navigationCameraFramingTopSpeedMetersPerSecond,
+          landscape: true,
+          viewportHeightPixels: size.height,
+          viewportWidthPixels: size.width,
+          bottomChromeFraction: (guidance.height + 10) / size.height,
         );
         expect(
-          rects['leader-tec-gap']!.bottom,
+          cameraPlan.riderViewportFraction * size.height + 19,
           lessThanOrEqualTo(guidance.top),
-          reason: 'the TEC gap must sit above the turn banner in $size',
+          reason: 'the camera must lift the rider above the wider card',
         );
+        expect(rects['leader-tec-gap']!.bottom, lessThanOrEqualTo(miniMap.top));
+        expect(
+          rects['emergency-alert-button']!.left,
+          greaterThanOrEqualTo(miniMap.right + 10),
+        );
+        final sos = rects['emergency-alert-button']!;
+        final leave = rects['leave-ride-button']!;
+        final report = rects['report-sighting-button']!;
+        expect(sos.bottom, lessThanOrEqualTo(leave.top));
+        expect(leave.bottom, lessThanOrEqualTo(report.top));
+        expect(sos.left, closeTo(leave.left, 1));
+        expect(leave.left, closeTo(report.left, 1));
       } else {
         // SOS above LEAVE (#133), not shoulder to shoulder: a mis-hit reaching
         // for SOS used to land on LEAVE and drop the rider out of the ride.
@@ -3716,7 +3775,11 @@ void main() {
         // The speed sign shares that row instead of owning one below it, hard
         // right and clear of the hand reaching for the stack.
         final speedLimit = rects['posted-speed-limit-position']!;
+        final compass = rects['ride-compass-position']!;
         expect(speedLimit.right, closeTo(size.width - 12, 1));
+        expect(compass.right, closeTo(speedLimit.left - 8, 1));
+        expect(compass.top, closeTo(speedLimit.top, 1));
+        expect(compass.width, closeTo(58, 0.1));
         for (final target in [sos, leave, report]) {
           expect(
             speedLimit.left,
@@ -3739,9 +3802,12 @@ void main() {
           'leave-ride-button',
           'report-sighting-button',
           'posted-speed-limit-position',
+          'ride-compass-position',
         };
         for (final entry in rects.entries) {
-          if (cornerKeys.contains(entry.key) ||
+          if (entry.key == 'ride-menu-button' ||
+              entry.key == 'group-mini-map' ||
+              entry.key == 'route-progress-panel-position' ||
               targetKeys.contains(entry.key) ||
               entry.key == 'navigation-guidance-banner') {
             continue;
@@ -3754,6 +3820,16 @@ void main() {
                 'in $size',
           );
         }
+
+        // ETA and mini-map now read as one header, with the menu beneath them
+        // rather than forcing an unmatched indentation into the ETA card.
+        final progress = rects['route-progress-panel-position']!;
+        final miniMap = rects['group-mini-map']!;
+        expect(progress.left, closeTo(12, 1));
+        expect(progress.top, closeTo(12, 1));
+        expect(miniMap.right, closeTo(size.width - 12, 1));
+        expect(miniMap.top, closeTo(progress.top, 1));
+        expect(rideMenu.top, closeTo(portraitRideMenuTopOffset, 1));
 
         // Portrait chrome is one measured band whose height the camera reads to
         // clamp its forward bias (#105). This is the absolute worst case - every
@@ -4151,6 +4227,12 @@ void main() {
     expect(projectedViewport!.zoom, closeTo(plan.zoom, 0.01));
     expect(projectedViewport!.tilt, 0);
     expect(projectedViewport!.sourceViewportHeightPixels, size.height);
+    expect(projectedViewport!.sourceViewportWidthPixels, size.width);
+    expect(
+      projectedViewport!.riderViewportFraction,
+      inInclusiveRange(navigationCameraMinimumRiderFraction, 0.72),
+    );
+    expect(projectedViewport!.riderHorizontalViewportFraction, 0.5);
     expect(projectedViewport!.mapStyleUrl, isEmpty);
     expect(projectedViewport!.mapStyleJson, MapStyleRepository.fallbackStyle);
     // Each round of decluttering has to buy the camera real look-ahead, so both
@@ -4598,33 +4680,32 @@ void main() {
       // The arrangement itself, which is the property the `Wrap` gave up: one
       // shape per orientation, and the same shape in every state.
       //
-      // Portrait stacks SOS over LEAVE with REPORT alongside. Landscape puts all
-      // three across a single row, which is the maintainer's "two rows at most"
-      // with a row to spare and keeps the rail short enough for an urgent banner
-      // to stay out of the upper band.
+      // Portrait stacks SOS over LEAVE with REPORT alongside. Landscape stacks
+      // all three vertically to keep the map clear across its lower edge.
       void expectArrangement(Map<String, Rect> rects, String state) {
         final sos = rects['emergency-alert-button']!;
         final leave = rects['leave-ride-button']!;
         final report = rects['report-sighting-button']!;
         if (landscape) {
-          // One row means every target shares vertical space with every other,
-          // whatever their individual heights.
-          for (final other in [leave, report]) {
-            expect(
-              sos.top < other.bottom && other.top < sos.bottom,
-              isTrue,
-              reason: 'landscape must be one row in $state: $sos vs $other',
-            );
-          }
+          expect(
+            sos.bottom,
+            lessThanOrEqualTo(leave.top),
+            reason: 'ALERT must sit above LEAVE in landscape/$state',
+          );
+          expect(
+            leave.bottom,
+            lessThanOrEqualTo(report.top),
+            reason: 'LEAVE must sit above REPORT in landscape/$state',
+          );
           expect(
             leave.left,
-            greaterThanOrEqualTo(sos.right),
-            reason: 'LEAVE must sit beside SOS in landscape/$state',
+            closeTo(sos.left, 0.01),
+            reason: 'landscape controls must share one left edge in $state',
           );
           expect(
             report.left,
-            greaterThanOrEqualTo(leave.right),
-            reason: 'REPORT must sit beside LEAVE in landscape/$state',
+            closeTo(sos.left, 0.01),
+            reason: 'REPORT must stay in the landscape stack in $state',
           );
         } else {
           expect(

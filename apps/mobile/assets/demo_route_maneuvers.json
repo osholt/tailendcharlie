@@ -29,7 +29,20 @@
       "name": "Bath Road",
       "ref": "A46",
       "latitude": 51.501168,
-      "longitude": -2.350268
+      "longitude": -2.350268,
+      "exitNumber": 2,
+      "drivingSide": "left",
+      "bearingBeforeDegrees": 345
+    },
+    {
+      "type": "exit rotary",
+      "modifier": "slight right",
+      "name": "Bath Road",
+      "ref": "A46",
+      "latitude": 51.501971,
+      "longitude": -2.350703,
+      "drivingSide": "left",
+      "bearingAfterDegrees": 15
     }
   ]
 }

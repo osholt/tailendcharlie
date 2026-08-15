@@ -391,6 +391,12 @@ import UserNotifications
     carPlayChannel?.invokeMethod("triggerEmergency", arguments: nil)
   }
 
+  /// The head unit owns the confirmation sheet; Dart owns the actual departure
+  /// so journal, relay and restored-state handling remain identical to phone.
+  func leaveRideFromCarPlay() {
+    carPlayChannel?.invokeMethod("leaveRide", arguments: nil)
+  }
+
   /// Requests the final lifecycle transition for a ride already configured on
   /// the phone. Dart revalidates leadership, location readiness and lifecycle
   /// state because the native snapshot may have become stale before the tap.

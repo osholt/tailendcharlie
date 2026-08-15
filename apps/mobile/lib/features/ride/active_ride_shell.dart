@@ -134,6 +134,18 @@ bool shouldDeferRejoinNavigation({
   return since != null && since < guidanceJunctionClearanceMeters;
 }
 
+/// Junctions the virtual second bike may mark during Ride Lab.
+///
+/// Navigation keeps a roundabout's paired exit step so it can derive the road
+/// taken and draw the correct symbol. A marker belongs at the entry only, so
+/// the simulation's junction list deliberately keeps decision steps alone.
+@visibleForTesting
+List<RoadRouteManeuver> simulationMarkerManeuvers(
+  List<RoadRouteManeuver> maneuvers,
+) => maneuvers
+    .where((maneuver) => maneuver.requiresSecondBikeDrop)
+    .toList(growable: false);
+
 /// The only thing an observer link publishes.
 ///
 /// Its argument list is the privacy boundary: an observer is a separate
@@ -1250,10 +1262,14 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // nothing (#457).
     widget.rideDiagnostics?.addListener(_onRideDiagnosticsChanged);
     if (widget.enableNativeServices && widget.spokenGuidance != null) {
-      _spokenGuidance = SpokenGuidanceSpeaker(widget.spokenGuidance!.engine());
+      _spokenGuidance = SpokenGuidanceSpeaker(
+        widget.spokenGuidance!.createEngine(onOutput: _recordSpeechOutput),
+      );
+      widget.spokenGuidance!.addListener(_onSpokenGuidanceChanged);
     }
     _observedRideStarted =
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
+    if (_observedRideStarted) unawaited(_warmNaturalVoiceIfNeeded());
     _screenAwakeCoordinator = RideScreenAwakeCoordinator(
       wakeLock: widget.screenWakeLock,
       reassertInterval: widget.screenWakeReassertInterval,
@@ -1312,6 +1328,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(_initialize());
     _carPlayBridge = CarPlayBridge(
       onEmergencyTriggered: _sendEmergencyMapAlert,
+      onLeaveRequested: _leaveRide,
       onHazardReported: _reportHazardFromMap,
       onTecRoleAnswered: _answerTecRoleRequestFromCarPlay,
       onRideStartRequested: _startPreparedRideFromCarPlay,
@@ -2154,7 +2171,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   ) async {
     if (route?.sourceFileName == 'demo_route.gpx') {
       try {
-        return (await const BundledDemoRouteLoader().loadManeuvers())
+        return simulationMarkerManeuvers(
+              await const BundledDemoRouteLoader().loadManeuvers(),
+            )
             .map(
               (maneuver) => awareness_geo.GeoPoint(
                 latitude: maneuver.position.latitude,
@@ -2325,18 +2344,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       for (final presence in livePresence) presence.riderId: presence,
     };
     final visibleRiderLocations = _isSimulation
-        ? awareness.riderLocations
-              .where(
-                (location) =>
-                    participants[location.riderId]?.isEligibleForLivePosition ??
-                    false,
-              )
-              .toList(growable: false)
+        // Ride Lab has an authenticated in-memory roster rather than relay
+        // participants. Filtering its fixes through the empty real roster
+        // made every virtual rider disappear from TEC and CarPlay status.
+        ? List<RiderLocation>.unmodifiable(awareness.riderLocations)
         : liveView.renderedPositions;
-    final activeRiderIds = participants.values
-        .where((participant) => participant.isEligibleForRouteAlerts)
-        .map((participant) => participant.riderId)
-        .toSet();
+    final activeRiderIds = _isSimulation
+        ? visibleRiderLocations.map((location) => location.riderId).toSet()
+        : participants.values
+              .where((participant) => participant.isEligibleForRouteAlerts)
+              .map((participant) => participant.riderId)
+              .toSet();
     final localLocation = visibleRiderLocations
         .where(
           (location) =>
@@ -3508,6 +3526,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // after the start has nothing to be measured against and must report
     // whatever the rider has or has not moved since.
     if (rideJustStarted) _positionReportGate.reset();
+    if (rideJustStarted) unawaited(_warmNaturalVoiceIfNeeded());
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _observerAccessController?.updateSession(session);
@@ -3883,7 +3902,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                   // has always been.
                   Positioned(
                     left: 12,
-                    top: MediaQuery.paddingOf(context).top + 12,
+                    top:
+                        MediaQuery.paddingOf(context).top +
+                        (landscape ? 12 : portraitRideMenuTopOffset),
                     child: FloatingActionButton.small(
                       key: const Key('ride-menu-button'),
                       heroTag: 'ride-relay-shell-menu',
@@ -4174,6 +4195,39 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   SpokenAudioMode get _spokenAudioMode {
     final chosen = widget.spokenGuidance?.mode ?? SpokenAudioMode.silent;
     return _rejoinGuidance == null ? chosen : spokenAudioModeOffRoute(chosen);
+  }
+
+  void _onSpokenGuidanceChanged() {
+    unawaited(_warmNaturalVoiceIfNeeded());
+  }
+
+  /// Pulls the expensive model load out of the first camera or turn prompt.
+  /// Silent audio and a ride that has not started remain zero-work paths.
+  Future<void> _warmNaturalVoiceIfNeeded() async {
+    final controller = widget.spokenGuidance;
+    final speaker = _spokenGuidance;
+    if (controller == null || speaker == null) return;
+    final rideActive =
+        widget.rideController.rideStarted && !widget.rideController.rideEnded;
+    final naturalEnabled =
+        controller.naturalVoicePack.enabled &&
+        controller.naturalVoicePack.modelDirectory != null;
+    try {
+      await speaker.warmUp(
+        enabled: rideActive && controller.enabled && naturalEnabled,
+      );
+    } on Object catch (error, stackTrace) {
+      // OS speech remains configured as the fail-safe. A model-load problem is
+      // useful in diagnostics but must never block or end a ride.
+      _diagnostics?.recordNote('Natural voice warm-up failed: $error');
+      if (kDebugMode) {
+        debugPrint('Natural voice warm-up failed: $error\n$stackTrace');
+      }
+    }
+  }
+
+  void _recordSpeechOutput(String phrase, SpokenGuidanceOutput output) {
+    _diagnostics?.recordSpeechDelivery(phrase: phrase, output: output);
   }
 
   void _recordManoeuvreDiagnostics(NavigationGuidance? guidance) {
@@ -5604,6 +5658,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // copy of the log that was ever in memory (#456).
     unawaited(_diagnosticsWriter?.flush());
     widget.rideDiagnostics?.removeListener(_onRideDiagnosticsChanged);
+    widget.spokenGuidance?.removeListener(_onSpokenGuidanceChanged);
     unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);

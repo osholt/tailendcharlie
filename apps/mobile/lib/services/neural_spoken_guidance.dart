@@ -27,6 +27,10 @@ abstract interface class NeuralSpeechStarter {
 
   NeuralSpeechAttempt beginSpeak(String phrase);
 
+  /// Abandons one deadline-losing utterance without unloading the model that a
+  /// later prompt can still use.
+  Future<void> cancelCurrentAttempt();
+
   Future<void> stop();
 }
 
@@ -220,6 +224,12 @@ class NeuralSpokenGuidanceEngine
   }
 
   @override
+  Future<void> cancelCurrentAttempt() async {
+    _attemptGeneration += 1;
+    await _player.stop();
+  }
+
+  @override
   Future<void> stop() async {
     _attemptGeneration += 1;
     if (disposePlayerOnStop) {
@@ -251,16 +261,19 @@ class NeuralSpokenGuidanceEngine
 /// Gives a warmed neural voice a strict opportunity to start, then preserves
 /// the existing OS speech path. A slow model can improve a prompt; it can never
 /// delay or silence one.
-class FailSafeNeuralSpokenGuidanceEngine implements SpokenGuidanceEngine {
+class FailSafeNeuralSpokenGuidanceEngine
+    implements SpokenGuidanceEngine, WarmableSpokenGuidanceEngine {
   FailSafeNeuralSpokenGuidanceEngine({
     required this.neural,
     required this.fallback,
     this.startDeadline = const Duration(milliseconds: 800),
+    this.onOutput,
   });
 
   final NeuralSpeechStarter neural;
   final SpokenGuidanceEngine fallback;
   final Duration startDeadline;
+  final SpokenGuidanceOutputObserver? onOutput;
 
   @override
   Future<void> configure() async {
@@ -271,16 +284,29 @@ class FailSafeNeuralSpokenGuidanceEngine implements SpokenGuidanceEngine {
   }
 
   @override
+  Future<void> warmUp() => neural.prepare();
+
+  @override
   Future<void> speak(String phrase) async {
     final attempt = neural.beginSpeak(phrase);
     try {
       await attempt.started.timeout(startDeadline);
     } on Object {
-      await neural.stop();
+      await neural.cancelCurrentAttempt();
       await fallback.speak(phrase);
+      _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
       return;
     }
+    _reportOutput(phrase, SpokenGuidanceOutput.natural);
     await attempt.completed;
+  }
+
+  void _reportOutput(String phrase, SpokenGuidanceOutput output) {
+    try {
+      onOutput?.call(phrase, output);
+    } on Object {
+      // Diagnostics and telemetry must never interfere with a spoken warning.
+    }
   }
 
   @override
@@ -293,16 +319,19 @@ class FailSafeNeuralSpokenGuidanceEngine implements SpokenGuidanceEngine {
 /// Keeps the Settings switch live during a ride. The ride shell creates its
 /// speaker once, so choosing, disabling, or deleting a pack later must be read
 /// at the next utterance rather than requiring the whole ride UI to restart.
-class AdaptiveNeuralSpokenGuidanceEngine implements SpokenGuidanceEngine {
+class AdaptiveNeuralSpokenGuidanceEngine
+    implements SpokenGuidanceEngine, WarmableSpokenGuidanceEngine {
   AdaptiveNeuralSpokenGuidanceEngine({
     required this.enabled,
     required this.neuralFactory,
     required this.fallback,
+    this.onOutput,
   });
 
   final bool Function() enabled;
   final NeuralSpeechStarter Function() neuralFactory;
   final SpokenGuidanceEngine fallback;
+  final SpokenGuidanceOutputObserver? onOutput;
   FailSafeNeuralSpokenGuidanceEngine? _active;
   bool _fallbackConfigured = false;
 
@@ -321,10 +350,18 @@ class AdaptiveNeuralSpokenGuidanceEngine implements SpokenGuidanceEngine {
       await previous?.neural.stop();
       if (!_fallbackConfigured) await configure();
       await fallback.speak(phrase);
+      _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
       return;
     }
     await _ensureNatural();
     await _active!.speak(phrase);
+  }
+
+  @override
+  Future<void> warmUp() async {
+    if (!enabled()) return;
+    await _ensureNatural();
+    await _active!.warmUp();
   }
 
   Future<void> _ensureNatural() async {
@@ -332,10 +369,19 @@ class AdaptiveNeuralSpokenGuidanceEngine implements SpokenGuidanceEngine {
     final active = FailSafeNeuralSpokenGuidanceEngine(
       neural: neuralFactory(),
       fallback: fallback,
+      onOutput: onOutput,
     );
     _active = active;
     await active.configure();
     _fallbackConfigured = true;
+  }
+
+  void _reportOutput(String phrase, SpokenGuidanceOutput output) {
+    try {
+      onOutput?.call(phrase, output);
+    } on Object {
+      // Diagnostics and telemetry must never interfere with a spoken warning.
+    }
   }
 
   @override

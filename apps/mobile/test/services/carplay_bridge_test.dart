@@ -497,6 +497,10 @@ void main() {
           tilt: 42,
           bearing: 123,
           sourceViewportHeightPixels: 760,
+          sourceViewportWidthPixels: 390,
+          riderViewportFraction: 0.7,
+          riderHorizontalViewportFraction: 2 / 3,
+          leftHandTraffic: true,
           mapStyleUrl: 'https://tiles.example.com/day',
           mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
         ),
@@ -515,6 +519,10 @@ void main() {
         'tilt': 42,
         'bearing': 123,
         'sourceViewportHeightPixels': 760,
+        'sourceViewportWidthPixels': 390,
+        'riderViewportFraction': 0.7,
+        'riderHorizontalViewportFraction': 2 / 3,
+        'leftHandTraffic': true,
         'mapStyleUrl': 'https://tiles.example.com/day',
       });
     },
@@ -684,6 +692,10 @@ void main() {
         tilt: 30,
         bearing: 90,
         sourceViewportHeightPixels: 760,
+        sourceViewportWidthPixels: 390,
+        riderViewportFraction: 0.7,
+        riderHorizontalViewportFraction: 2 / 3,
+        leftHandTraffic: false,
         mapStyleUrl: 'https://tiles.example.com/day',
         mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
       ),
@@ -811,7 +823,7 @@ void main() {
 
     final tec = (received!.arguments as Map)['tec'] as Map;
     expect(tec['state'], 'tracking');
-    expect(tec['headline'], 'TEC · 1.2 mi ↓');
+    expect(tec['headline'], 'TEC · 1.2 mi · ~3 min ↓');
     expect(tec['detail'], 'Dave · 1.2 mi · about 3 min · ↓ Closing');
   });
 
@@ -896,6 +908,7 @@ void main() {
       'styleUrl': 'https://tiles.example.com/day',
       'darkStyleUrl': 'https://tiles.example.com/night',
       'selectedStyleUrl': 'https://tiles.example.com/day',
+      'dark': false,
     });
   });
 
@@ -926,6 +939,7 @@ void main() {
         'styleUrl': 'https://tiles.example.com/day',
         'darkStyleUrl': 'https://tiles.example.com/day',
         'selectedStyleUrl': 'https://tiles.example.com/day',
+        'dark': false,
       });
     },
   );
@@ -1015,6 +1029,25 @@ void main() {
     );
 
     expect(starts, 1);
+  });
+
+  test('relays a CarPlay-confirmed leave request to the ride owner', () async {
+    var leaves = 0;
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onLeaveRequested: () async {
+        leaves += 1;
+      },
+    );
+    addTearDown(bridge.dispose);
+
+    await messenger.handlePlatformMessage(
+      channel.name,
+      channel.codec.encodeMethodCall(const MethodCall('leaveRide')),
+      (_) {},
+    );
+
+    expect(leaves, 1);
   });
 
   test('searches only a submitted CarPlay destination query', () async {

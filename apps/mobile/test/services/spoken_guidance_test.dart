@@ -87,6 +87,31 @@ void main() {
     );
   });
 
+  test(
+    'natural voice warm-up is silent, explicit, and reused by first alert',
+    () async {
+      final warmable = _WarmableRecordingEngine();
+      final warmSpeaker = SpokenGuidanceSpeaker(warmable);
+
+      expect(await warmSpeaker.warmUp(enabled: false), isFalse);
+      expect(warmable.configureCalls, 0);
+      expect(warmable.warmCalls, 0);
+
+      expect(await warmSpeaker.warmUp(enabled: true), isTrue);
+      expect(warmable.configureCalls, 1);
+      expect(warmable.warmCalls, 1);
+
+      await warmSpeaker.speakAlert(
+        key: 'camera-1',
+        phrase: 'Speed camera, in 151 yd',
+        enabled: true,
+        rideActive: true,
+      );
+      expect(warmable.configureCalls, 1);
+      expect(warmable.spoken, ['Speed camera, in 151 yards']);
+    },
+  );
+
   test('a reset lets an identical manoeuvre be spoken again', () async {
     // Without this a new ride whose first manoeuvre happened to carry the same
     // identity as the last ride's final one would be silent for it.
@@ -235,6 +260,14 @@ class _RecordingEngine implements SpokenGuidanceEngine {
 
   @override
   Future<void> stop() async => stopped = true;
+}
+
+class _WarmableRecordingEngine extends _RecordingEngine
+    implements WarmableSpokenGuidanceEngine {
+  int warmCalls = 0;
+
+  @override
+  Future<void> warmUp() async => warmCalls += 1;
 }
 
 class _VoiceListTts extends FlutterTts {
