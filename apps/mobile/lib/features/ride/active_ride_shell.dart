@@ -2339,18 +2339,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       for (final presence in livePresence) presence.riderId: presence,
     };
     final visibleRiderLocations = _isSimulation
-        ? awareness.riderLocations
-              .where(
-                (location) =>
-                    participants[location.riderId]?.isEligibleForLivePosition ??
-                    false,
-              )
-              .toList(growable: false)
+        // Ride Lab has an authenticated in-memory roster rather than relay
+        // participants. Filtering its fixes through the empty real roster
+        // made every virtual rider disappear from TEC and CarPlay status.
+        ? List<RiderLocation>.unmodifiable(awareness.riderLocations)
         : liveView.renderedPositions;
-    final activeRiderIds = participants.values
-        .where((participant) => participant.isEligibleForRouteAlerts)
-        .map((participant) => participant.riderId)
-        .toSet();
+    final activeRiderIds = _isSimulation
+        ? visibleRiderLocations.map((location) => location.riderId).toSet()
+        : participants.values
+              .where((participant) => participant.isEligibleForRouteAlerts)
+              .map((participant) => participant.riderId)
+              .toSet();
     final localLocation = visibleRiderLocations
         .where(
           (location) =>
