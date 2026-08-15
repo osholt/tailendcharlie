@@ -1213,6 +1213,7 @@ class DestinationRoutePlanner {
       ],
       maneuvers: roadRoute.maneuvers,
       preferences: preferences,
+      plannedDuration: roadRoute.duration,
     );
     return DestinationRoutePlan(
       route: route,

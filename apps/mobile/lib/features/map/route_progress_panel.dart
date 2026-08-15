@@ -121,11 +121,16 @@ class RouteProgressPanel extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    '${formatter.distance(nextDistance)} · $nextArrival',
-                    style: const TextStyle(
-                      color: Color(0xFFD7DEE7),
-                      fontSize: 11,
+                  Flexible(
+                    child: Text(
+                      '${formatter.distance(nextDistance)} · $nextArrival',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                        color: Color(0xFFD7DEE7),
+                        fontSize: 11,
+                      ),
                     ),
                   ),
                 ],

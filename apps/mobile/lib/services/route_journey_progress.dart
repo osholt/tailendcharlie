@@ -34,11 +34,11 @@ class RouteJourneyProgress {
 
 /// Maintains a stable ETA without pretending that standing still means arrival.
 ///
-/// The route files do not retain the routing engine's planned duration. The
-/// only honest local estimate is therefore recent riding speed. Valid moving
-/// fixes are exponentially smoothed; a zero-speed fix at lights leaves the last
-/// estimate in place. Before the first useful fix the distances are still
-/// shown, while time and ETA remain unavailable rather than being invented.
+/// App-planned routes retain the routing engine's duration, which seeds an ETA
+/// before movement. Valid moving fixes then refine that expected average speed
+/// exponentially; a zero-speed fix at lights leaves the last estimate in place.
+/// Imported tracks with neither planned timing nor movement remain unavailable
+/// rather than receiving an invented estimate.
 class RouteJourneyProgressTracker {
   RouteJourneyProgressTracker({this.minimumEtaSpeedMetersPerSecond = 3});
 
@@ -67,7 +67,11 @@ class RouteJourneyProgressTracker {
         '${route.pathPointCount}';
     if (_routeFingerprint != fingerprint) {
       _routeFingerprint = fingerprint;
-      _estimatedSpeedMetersPerSecond = null;
+      final plannedSeconds = route.plannedDuration?.inMilliseconds;
+      _estimatedSpeedMetersPerSecond =
+          plannedSeconds == null || plannedSeconds <= 0
+          ? null
+          : geometry.totalMeters / (plannedSeconds / 1000);
     }
 
     if (speedMetersPerSecond != null &&
