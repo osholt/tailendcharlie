@@ -497,6 +497,9 @@ void main() {
           tilt: 42,
           bearing: 123,
           sourceViewportHeightPixels: 760,
+          sourceViewportWidthPixels: 390,
+          riderViewportFraction: 0.7,
+          riderHorizontalViewportFraction: 2 / 3,
           mapStyleUrl: 'https://tiles.example.com/day',
           mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
         ),
@@ -515,6 +518,9 @@ void main() {
         'tilt': 42,
         'bearing': 123,
         'sourceViewportHeightPixels': 760,
+        'sourceViewportWidthPixels': 390,
+        'riderViewportFraction': 0.7,
+        'riderHorizontalViewportFraction': 2 / 3,
         'mapStyleUrl': 'https://tiles.example.com/day',
       });
     },
@@ -684,6 +690,9 @@ void main() {
         tilt: 30,
         bearing: 90,
         sourceViewportHeightPixels: 760,
+        sourceViewportWidthPixels: 390,
+        riderViewportFraction: 0.7,
+        riderHorizontalViewportFraction: 2 / 3,
         mapStyleUrl: 'https://tiles.example.com/day',
         mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
       ),
@@ -811,7 +820,7 @@ void main() {
 
     final tec = (received!.arguments as Map)['tec'] as Map;
     expect(tec['state'], 'tracking');
-    expect(tec['headline'], 'TEC · 1.2 mi ↓');
+    expect(tec['headline'], 'TEC · 1.2 mi · ~3 min ↓');
     expect(tec['detail'], 'Dave · 1.2 mi · about 3 min · ↓ Closing');
   });
 
@@ -896,6 +905,7 @@ void main() {
       'styleUrl': 'https://tiles.example.com/day',
       'darkStyleUrl': 'https://tiles.example.com/night',
       'selectedStyleUrl': 'https://tiles.example.com/day',
+      'dark': false,
     });
   });
 
@@ -926,6 +936,7 @@ void main() {
         'styleUrl': 'https://tiles.example.com/day',
         'darkStyleUrl': 'https://tiles.example.com/day',
         'selectedStyleUrl': 'https://tiles.example.com/day',
+        'dark': false,
       });
     },
   );

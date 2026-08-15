@@ -124,9 +124,10 @@ class CarPlayTecStatus {
     final distance = distanceMeters;
     if (distance == null) return 'TEC · reporting';
     final gap = MeasurementFormatter(distanceUnit).distance(distance);
-    return trend == TecGapTrend.unknown
-        ? 'TEC · $gap'
-        : 'TEC · $gap ${trend.arrow}';
+    final time = estimatedTime;
+    final timeSuffix = time == null ? '' : ' · ~${_durationLabel(time)}';
+    final trendSuffix = trend == TecGapTrend.unknown ? '' : ' ${trend.arrow}';
+    return 'TEC · $gap$timeSuffix$trendSuffix';
   }
 
   String get _trackingDetail {

@@ -99,7 +99,7 @@ void main() {
       now: now,
     );
 
-    expect(status.headline, 'TEC · 1.2 mi ↑');
+    expect(status.headline, 'TEC · 1.2 mi · ~3 min ↑');
     expect(status.detail, 'Bill · 1.2 mi · about 3 min · ↑ Opening');
     expect(status.toSnapshot()['trendLabel'], 'Opening');
   });

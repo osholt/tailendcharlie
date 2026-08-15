@@ -70,16 +70,22 @@ void main() {
     );
   });
 
-  test('the native compass stays with the speed cluster', () {
+  test('the app compass replaces the fixed native control', () {
     final source = File(
       'lib/features/map/ride_map_feature.dart',
     ).readAsStringSync();
 
-    expect(source, contains('? ml.CompassViewPosition.topRight'));
-    expect(source, contains(': ml.CompassViewPosition.bottomRight'));
-    expect(source, contains('safeInsets.right + (landscape ? 12 : 84)'));
-    expect(source, contains('safeInsets.top + 88'));
-    expect(source, contains('safeInsets.bottom + 54'));
+    expect(source, contains('compassEnabled: false'));
+    expect(source, contains("Key('speed-compass-cluster')"));
+    expect(source, contains("Key('ride-compass-position')"));
+  });
+
+  test('the group mini-map does not repeat the provider banner', () {
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+
+    expect(source, isNot(contains('OpenFreeMap · © OSM')));
   });
 
   test('completed planned geometry is absent from both map renderers', () {
@@ -435,6 +441,7 @@ void main() {
       'report-sighting-button',
       'navigation-follow-button',
       'posted-speed-limit-position',
+      'ride-compass-position',
     ]) {
       expect(
         find.byKey(Key(key)),
@@ -1098,7 +1105,8 @@ void main() {
     expect(chip, findsOneWidget);
     expect(find.text('TEC GAP'), findsNothing);
     expect(find.text('TEC'), findsOneWidget);
-    expect(find.textContaining('Charlie · 2.0 mi · ~4 min'), findsOneWidget);
+    expect(find.textContaining('2.0 mi · ~4 min'), findsOneWidget);
+    expect(find.textContaining('Charlie ·'), findsNothing);
     expect(tester.getSize(chip).height, lessThanOrEqualTo(44));
     expect(tester.getSize(chip).width, lessThanOrEqualTo(360));
   });
@@ -1167,10 +1175,7 @@ void main() {
 
     final chip = find.byKey(const Key('leader-tec-gap'));
     expect(chip, findsOneWidget);
-    expect(
-      find.textContaining('Tail End Charlie · waiting for location'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Waiting for location'), findsOneWidget);
     expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
     // The status band now lives in the lower part of the screen so the road
     // ahead stays visible at the top.
@@ -3604,6 +3609,7 @@ void main() {
       'leave-ride-button',
       'report-sighting-button',
       'posted-speed-limit-position',
+      'ride-compass-position',
     ];
 
     Future<void> verifyLayout({required bool landscape}) async {
@@ -3683,7 +3689,10 @@ void main() {
             reason: '$key crosses the rider anchor in $size',
           );
         }
-        for (final key in const ['posted-speed-limit-position']) {
+        for (final key in const [
+          'posted-speed-limit-position',
+          'ride-compass-position',
+        ]) {
           expect(
             rects[key]!.left,
             greaterThan(riderX + 19),
@@ -3702,6 +3711,10 @@ void main() {
         expect(miniMap.bottom, closeTo(size.height - 10, 1));
         expect(speedLimit.right, closeTo(size.width - 10, 1));
         expect(speedLimit.top, closeTo(10, 1));
+        final compass = rects['ride-compass-position']!;
+        expect(compass.right, closeTo(speedLimit.left - 8, 1));
+        expect(compass.top, closeTo(speedLimit.top, 1));
+        expect(compass.width, closeTo(58, 0.1));
 
         // The turn banner owns a wider bottom-right corner below the rider; the
         // safety actions use a vertical stack beside the mini-map.
@@ -3762,7 +3775,11 @@ void main() {
         // The speed sign shares that row instead of owning one below it, hard
         // right and clear of the hand reaching for the stack.
         final speedLimit = rects['posted-speed-limit-position']!;
+        final compass = rects['ride-compass-position']!;
         expect(speedLimit.right, closeTo(size.width - 12, 1));
+        expect(compass.right, closeTo(speedLimit.left - 8, 1));
+        expect(compass.top, closeTo(speedLimit.top, 1));
+        expect(compass.width, closeTo(58, 0.1));
         for (final target in [sos, leave, report]) {
           expect(
             speedLimit.left,
@@ -3785,6 +3802,7 @@ void main() {
           'leave-ride-button',
           'report-sighting-button',
           'posted-speed-limit-position',
+          'ride-compass-position',
         };
         for (final entry in rects.entries) {
           if (entry.key == 'ride-menu-button' ||
@@ -4209,6 +4227,12 @@ void main() {
     expect(projectedViewport!.zoom, closeTo(plan.zoom, 0.01));
     expect(projectedViewport!.tilt, 0);
     expect(projectedViewport!.sourceViewportHeightPixels, size.height);
+    expect(projectedViewport!.sourceViewportWidthPixels, size.width);
+    expect(
+      projectedViewport!.riderViewportFraction,
+      inInclusiveRange(navigationCameraMinimumRiderFraction, 0.72),
+    );
+    expect(projectedViewport!.riderHorizontalViewportFraction, 0.5);
     expect(projectedViewport!.mapStyleUrl, isEmpty);
     expect(projectedViewport!.mapStyleJson, MapStyleRepository.fallbackStyle);
     // Each round of decluttering has to buy the camera real look-ahead, so both

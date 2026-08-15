@@ -128,7 +128,7 @@ const Key portraitBottomChromeKey = Key('map-portrait-bottom-chrome');
 
 /// The moving portrait menu sits below the aligned ETA/mini-map header (#533).
 /// Shared with [ActiveRideShell], which owns this button during a real ride.
-const double portraitRideMenuTopOffset = 152;
+const double portraitRideMenuTopOffset = 196;
 
 /// Turn and TEC panes retain strong contrast while allowing some map context
 /// through them. Progress, actions and the mini-map keep their denser fills.
@@ -1002,6 +1002,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// from a fresh one rather than being indistinguishable from it.
   final ValueNotifier<({double value, bool ageing})?> _riderSpeed =
       ValueNotifier(null);
+  final ValueNotifier<double> _mapBearing = ValueNotifier(0);
 
   /// Retires the speed readout when fixes stop arriving.
   ///
@@ -1368,6 +1369,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _basemapViewLoadWatchdog?.cancel();
     _basemapViewLoadWatchdog = null;
     _riderSpeed.dispose();
+    _mapBearing.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     _personalRideHeatmap?.removeListener(_onPersonalRideHeatmapChanged);
     if (_ownsPersonalRideHeatmap) _personalRideHeatmap?.dispose();
@@ -2050,9 +2052,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     : RouteProgressPanel(
                         progress: progress,
                         distanceUnit: widget.distanceUnit,
-                        // Landscape already has its app-drawn clock at the top
-                        // centre. Portrait folds it into this one small card.
-                        showClock: !landscape,
+                        // The time is now a consistent map label in both
+                        // orientations rather than changing hierarchy with the
+                        // ETA card.
+                        showClock: false,
                       );
               },
             );
@@ -2122,13 +2125,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // Landscape uses a compact vertical action stack. It keeps three adjacent
       // glove targets from stretching across the lower map and leaves the rider
       // and road ahead visually isolated (#533).
-      final actionPadding = landscape
-          ? const EdgeInsets.symmetric(horizontal: 8)
-          : null;
+      // Compact padding keeps the portrait safety stack plus the paired
+      // compass/sign inside narrow phones without shrinking any glove target.
+      final actionPadding = const EdgeInsets.symmetric(horizontal: 8);
       // Fixed label slots keep the vertical stack the same width through ALERT,
       // ALERT SENT and ALERT SEEN states.
-      final sosLabelSlot = landscape ? 62.0 : null;
-      final leaveLabelSlot = landscape ? 62.0 : null;
+      final sosLabelSlot = 62.0;
+      final leaveLabelSlot = 62.0;
       final actionTargetHeight = landscape ? 48.0 : null;
       // Safety and ride-lifecycle targets, all glove-sized: none of them is
       // derived from a planned route (#124), and REPORT belongs beside them
@@ -2305,6 +2308,28 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       ),
               ),
             );
+      final compass = speedLimit == null
+          ? null
+          : ValueListenableBuilder<double>(
+              valueListenable: _mapBearing,
+              builder: (context, bearing, _) => _RideCompass(
+                bearingDegrees: bearing,
+                diameter: 58,
+                darkMap: _basemap.dark,
+              ),
+            );
+      final speedCluster = speedLimit == null
+          ? null
+          : Row(
+              key: const Key('speed-compass-cluster'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ?compass,
+                if (compass != null) const SizedBox(width: 8),
+                speedLimit,
+              ],
+            );
       final followMe = showFollowMe
           ? FloatingActionButton.extended(
               key: const Key('navigation-follow-button'),
@@ -2344,11 +2369,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
             // belongs where the eye already is rather than at the bottom of a
             // rail beside the targets - and hard against the trailing edge, well
             // clear of the centre column.
-            if (speedLimit != null)
+            if (speedCluster != null)
               Positioned(
                 right: safeRight + 10,
                 top: safeTop + 10,
-                child: speedLimit,
+                child: speedCluster,
               ),
             // The clock (#452), landscape only, drawn by the app rather than by
             // Apple's widget. Top-centre because that is the one part of this
@@ -2356,12 +2381,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
             // and the speed sign the trailing one — and because it is where a car
             // puts its clock. A helmet and gloves make a wrist watch useless and
             // the phone is already in front of the rider.
-            Positioned(
-              left: safeLeft,
-              right: safeRight,
-              top: safeTop + 12,
-              child: const IgnorePointer(child: Center(child: RideClock())),
-            ),
+            if (widget.rideStarted)
+              Positioned(
+                left: safeLeft,
+                right: safeRight,
+                top: safeTop + 12,
+                child: IgnorePointer(
+                  child: Center(child: RideClock(darkMap: _basemap.dark)),
+                ),
+              ),
             Positioned(
               left: safeLeft + 10,
               bottom: leftRailBottom,
@@ -2460,7 +2488,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 ?safetyCluster,
                 const Spacer(),
                 // Hard right, out of the way of the thumb reaching the stack.
-                ?speedLimit,
+                ?speedCluster,
               ],
             );
       return Stack(
@@ -2494,6 +2522,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
               right: safeRight + 12,
               top: safeTop + 12,
               child: miniMap,
+            ),
+          if (widget.rideStarted)
+            Positioned(
+              left: safeLeft,
+              right: safeRight,
+              top: safeTop + 154,
+              child: IgnorePointer(
+                child: Center(child: RideClock(darkMap: _basemap.dark)),
+              ),
             ),
           Positioned(
             left: safeLeft + 12,
@@ -2950,9 +2987,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
             ),
             zoom: routePoints.length == 1 ? 14 : 11,
           );
-    final landscape =
-        MediaQuery.orientationOf(context) == Orientation.landscape;
-    final safeInsets = MediaQuery.paddingOf(context);
     return Stack(
       children: [
         Positioned.fill(
@@ -2985,18 +3019,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
             // the camera value was frozen.
             trackCameraPosition: true,
             logoEnabled: false,
-            compassEnabled: true,
-            compassViewPosition: landscape
-                ? ml.CompassViewPosition.topRight
-                : ml.CompassViewPosition.bottomRight,
-            // Treat the compass as part of the speed cluster instead of a
-            // third free-floating map ornament. Landscape puts it immediately
-            // below the top-right sign; portrait puts it immediately beside
-            // the bottom-right sign and keeps the overview's corner clear (#533).
-            compassViewMargins: math.Point(
-              safeInsets.right + (landscape ? 12 : 84),
-              landscape ? safeInsets.top + 88 : safeInsets.bottom + 54,
-            ),
+            // The platform compass has a fixed diameter and cannot be aligned
+            // with TEC's speed sign on every viewport. Ride chrome draws one
+            // from the same camera bearing instead.
+            compassEnabled: false,
             // Stated rather than inherited: these are ride-map capabilities,
             // and Android field testing specifically depends on both remaining
             // enabled while live overlays and follow mode are active (#248).
@@ -3027,6 +3053,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   void _onMapLibreCameraMove(ml.CameraPosition camera) {
+    if ((camera.bearing - _mapBearing.value).abs() >= 0.25) {
+      _mapBearing.value = camera.bearing;
+    }
     if (kDebugMode) {
       final commanded = _commandedViewport;
       final drift = commanded == null
@@ -3665,6 +3694,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _onFlutterMapEvent(MapEvent event) {
     if (event.source == MapEventSource.nonRotatedSizeChange) return;
+    if ((event.camera.rotation - _mapBearing.value).abs() >= 0.25) {
+      _mapBearing.value = event.camera.rotation;
+    }
     if (_navigationMode &&
         event.source != MapEventSource.mapController &&
         (event.source == MapEventSource.dragStart ||
@@ -4094,6 +4126,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         tilt: _basemap.usesMapLibre ? cameraPlan.tilt : 0,
         bearing: _cameraBearingDegrees,
         sourceViewportHeightPixels: _mapViewportHeightPixels,
+        sourceViewportWidthPixels: _mapViewportWidthPixels,
+        riderViewportFraction: cameraPlan.riderViewportFraction,
+        riderHorizontalViewportFraction:
+            cameraPlan.riderHorizontalViewportFraction,
         mapStyleUrl: _basemap.styleUrl,
         mapStyleJson: widget.mapStyleString,
       ),
@@ -7374,21 +7410,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                   ),
                 },
               ),
-              if (widget.renderer == GroupMiniMapRenderer.mapLibre)
-                const Positioned(
-                  right: 3,
-                  bottom: 2,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(color: Color(0xB3000000)),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                      child: Text(
-                        'OpenFreeMap · © OSM',
-                        style: TextStyle(color: Colors.white, fontSize: 6),
-                      ),
-                    ),
-                  ),
-                ),
+              // The primary map retains MapLibre's attribution control. The
+              // overview repeats the same licensed map inside that surface, so
+              // a second verbose provider banner only obscures group markers.
               if (widget.currentPosition != null)
                 const Positioned(
                   left: 6,
@@ -7582,20 +7606,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 ),
               ],
             ),
-            const Positioned(
-              right: 3,
-              bottom: 2,
-              child: DecoratedBox(
-                decoration: BoxDecoration(color: Color(0xB3000000)),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                  child: Text(
-                    'OpenFreeMap · © OSM',
-                    style: TextStyle(color: Colors.white, fontSize: 6),
-                  ),
-                ),
-              ),
-            ),
+            // The primary map retains the provider attribution control; do not
+            // obscure this compact overview with a duplicate banner.
           ],
         );
       },
@@ -9228,6 +9240,75 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
   }
 }
 
+/// A stable, app-owned compass paired with the posted-speed sign.
+///
+/// MapLibre's native compass has a platform-fixed footprint, so it could be
+/// close to the sign or the same size, but not both on every phone. Drawing the
+/// camera bearing here makes the two circles one deliberate cluster and keeps
+/// the contract identical on iOS, Android and the fallback renderer.
+class _RideCompass extends StatelessWidget {
+  const _RideCompass({
+    required this.bearingDegrees,
+    required this.diameter,
+    required this.darkMap,
+  });
+
+  final double bearingDegrees;
+  final double diameter;
+  final bool darkMap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    key: const Key('ride-compass-position'),
+    label: 'Map heading ${bearingDegrees.round()} degrees',
+    excludeSemantics: true,
+    child: Container(
+      width: diameter,
+      height: diameter,
+      decoration: BoxDecoration(
+        color: darkMap ? const Color(0xD9252E39) : const Color(0xE6FFFFFF),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: darkMap ? const Color(0xFF8993A0) : const Color(0xFF30343B),
+          width: 2,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 8,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Transform.rotate(
+        angle: -bearingDegrees * math.pi / 180,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned(
+              top: 6,
+              child: Text(
+                'N',
+                style: TextStyle(
+                  color: darkMap ? Colors.white : Colors.black,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  height: 1,
+                ),
+              ),
+            ),
+            Icon(
+              Icons.navigation,
+              size: diameter * 0.42,
+              color: const Color(0xFFD9304F),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _RouteStartBanner extends StatelessWidget {
   const _RouteStartBanner({
     required this.distanceMeters,
@@ -10084,10 +10165,11 @@ class _TecGapCard extends StatelessWidget {
     if (compact) {
       final compactDetail = switch (status.tecAvailability) {
         TecAvailability.tracking when distance != null && eta != null =>
-          '$name · ${formatter.distance(distance)} · ~${_durationLabel(eta)}'
+          '${formatter.distance(distance)} · ~${_durationLabel(eta)}'
               '${_trendSuffix(trend)}',
-        TecAvailability.stale when age != null => '$name · ${_ageLabel(age)}',
-        _ => '$name · waiting for location',
+        TecAvailability.stale when age != null =>
+          'Last update ${_ageLabel(age)}',
+        _ => 'Waiting for location',
       };
       return Align(
         alignment: Alignment.centerLeft,

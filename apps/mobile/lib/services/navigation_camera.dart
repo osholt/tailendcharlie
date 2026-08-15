@@ -91,6 +91,9 @@ class NavigationCameraViewport {
     required this.tilt,
     required this.bearing,
     required this.sourceViewportHeightPixels,
+    required this.sourceViewportWidthPixels,
+    required this.riderViewportFraction,
+    required this.riderHorizontalViewportFraction,
     required this.mapStyleUrl,
     required this.mapStyleJson,
   });
@@ -101,6 +104,12 @@ class NavigationCameraViewport {
   final double tilt;
   final double bearing;
   final double sourceViewportHeightPixels;
+  final double sourceViewportWidthPixels;
+
+  /// Exact phone anchors, projected so a differently shaped CarPlay screen can
+  /// place the rider deliberately instead of inheriting a coincidental offset.
+  final double riderViewportFraction;
+  final double riderHorizontalViewportFraction;
 
   /// The exact day/night style selected for the phone map.
   final String mapStyleUrl;

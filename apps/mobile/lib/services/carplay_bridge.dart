@@ -447,6 +447,7 @@ class CarPlayBridge {
                   ? basemap.styleUrl
                   : basemap.darkStyleUrl,
               'selectedStyleUrl': basemap.styleUrl,
+              'dark': basemap.dark,
               if (mapStyleJson != null && mapStyleJson.isNotEmpty)
                 'styleJson': mapStyleJson,
             },
@@ -541,6 +542,10 @@ class CarPlayBridge {
         'tilt': viewport.tilt,
         'bearing': viewport.bearing,
         'sourceViewportHeightPixels': viewport.sourceViewportHeightPixels,
+        'sourceViewportWidthPixels': viewport.sourceViewportWidthPixels,
+        'riderViewportFraction': viewport.riderViewportFraction,
+        'riderHorizontalViewportFraction':
+            viewport.riderHorizontalViewportFraction,
         'mapStyleUrl': viewport.mapStyleUrl,
       });
     } on Object catch (error) {

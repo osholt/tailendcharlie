@@ -20,7 +20,16 @@ void main() {
     final light = configuration.forBrightness(dark: false);
 
     expect(light.styleUrl, configuration.styleUrl);
+    expect(light.dark, isFalse);
     expect(identical(light, configuration), isTrue);
+  });
+
+  test('forBrightness can return a resolved dark style to daytime chrome', () {
+    final dark = configuration.forBrightness(dark: true);
+    final light = dark.forBrightness(dark: false);
+
+    expect(dark.dark, isTrue);
+    expect(light.dark, isFalse);
   });
 
   test('forBrightness can preserve the original daytime style', () {

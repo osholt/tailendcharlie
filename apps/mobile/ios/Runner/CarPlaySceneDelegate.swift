@@ -76,6 +76,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     self.mapViewController = mapViewController
     self.statusTemplate = statusTemplate
     self.interfaceController = interfaceController
+    mapViewController.onReport = { [weak self] in
+      self?.presentReportActions()
+    }
+    mapViewController.onEmergency = { [weak self] in
+      self?.presentEmergencyConfirmation()
+    }
     let rideMenuButton = statusButton(
       interfaceController: interfaceController,
       template: statusTemplate
@@ -87,10 +93,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapTemplate.automaticallyHidesNavigationBar = true
     mapTemplate.hidesButtonsWithNavigationBar = false
     mapTemplate.guidanceBackgroundColor = CarPlayPalette.primaryPanelFill
-    mapTemplate.mapButtons = [
-      recenterButton(),
-      panButton(mapTemplate: mapTemplate),
-    ]
+    mapTemplate.mapButtons = []
     // Phone landscape puts its compact ride menu at the leading edge. Keep the
     // same learned location in the car; CarPlay still owns the navigation bar
     // and lays its manoeuvre card below it.
@@ -295,6 +298,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
   private func updateNavigationSession(snapshot: [String: Any]) {
     guard sceneLifecycle.rootReady else { return }
+    // A CPNavigationSession always owns Apple's trip-estimate panel. There is
+    // no supported API to hide that panel while retaining the manoeuvre card,
+    // so the active ride now uses the app-owned guidance and ETA views together
+    // on the map canvas. Cancel a session left by an earlier build/connection.
+    navigationSession?.cancelTrip()
+    navigationSession = nil
+    activeRouteID = nil
+    activeManeuverKey = nil
+    activeManeuver = nil
+    return
+
+    // Retained temporarily below as reference for the dashboard projection;
+    // no execution reaches this Apple-template path.
     let marker = snapshot["marker"] as? [String: Any]
     let guidanceTitle = nonEmptyString(marker?["title"])
       ?? nonEmptyString(snapshot["guidanceTitle"])
@@ -478,18 +494,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     canFreeRoam = (snapshot["canFreeRoam"] as? NSNumber)?.boolValue ?? false
     guard let mapTemplate else { return }
 
-    var buttons = [recenterButton()]
-    if canPlanRoute { buttons.append(planRouteButton()) }
-    if canFreeRoam { buttons.append(freeRoamButton()) }
-    buttons.append(panButton(mapTemplate: mapTemplate))
-    if surfaceMode == "activeRide" {
-      buttons.append(reportButton())
-      buttons.append(emergencyButton())
+    // Active-ride actions are app-owned buttons on the map canvas, matching the
+    // phone's labelled ALERT/REPORT controls. The generic follow, browse and
+    // blue template buttons duplicated those actions and obscured the road.
+    // Route entry remains a template interaction on the stationary home map.
+    var buttons: [CPMapButton] = []
+    if surfaceMode != "activeRide" {
+      if canPlanRoute { buttons.append(planRouteButton()) }
+      if canFreeRoam { buttons.append(freeRoamButton()) }
     }
-    // CarPlay displays at most four map controls. Home uses location, plan,
-    // free roam and pan; an active ride uses location, pan, report and SOS —
-    // the same actions and glyph language as the corresponding phone view.
-    mapTemplate.mapButtons = Array(buttons.prefix(4))
+    mapTemplate.mapButtons = buttons
   }
 
   private func planRouteButton() -> CPMapButton {
@@ -1062,9 +1076,12 @@ private final class CarPlayNavigationViewController: UIViewController,
   private var mapView: MLNMapView?
   private let tecBadge = CarPlayTecBadge()
   private let speedBadge = CarPlaySpeedLimitBadge()
+  private let compassBadge = CarPlayCompassBadge()
   private let groupMiniMap = CarPlayGroupMiniMapView()
   private let clockLabel = CarPlayClockLabel()
   private let routeProgressView = CarPlayRouteProgressView()
+  private let guidanceView = CarPlayGuidanceView()
+  private let rideActionsView = CarPlayRideActionsView()
   private var routeSource: MLNShapeSource?
   private var routeCoordinates: [CLLocationCoordinate2D] = []
   private var routeID: String?
@@ -1077,6 +1094,9 @@ private final class CarPlayNavigationViewController: UIViewController,
   private var panGestureStartCoordinate: CLLocationCoordinate2D?
   private var hasFramedFirstFix = false
   private var surfaceMode = "unavailable"
+
+  var onReport: (() -> Void)?
+  var onEmergency: (() -> Void)?
 
   /// The styles Dart published, the exact style selected on the phone, and the
   /// one currently applied. CarPlay's trait remains a fallback until Dart has
@@ -1132,6 +1152,8 @@ private final class CarPlayNavigationViewController: UIViewController,
     view.addSubview(tecBadge)
     speedBadge.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(speedBadge)
+    compassBadge.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(compassBadge)
     groupMiniMap.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(groupMiniMap)
     // The clock (#452), drawn by the app. Apple's own widget was ruled out
@@ -1142,6 +1164,13 @@ private final class CarPlayNavigationViewController: UIViewController,
     view.addSubview(clockLabel)
     routeProgressView.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(routeProgressView)
+    guidanceView.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(guidanceView)
+    rideActionsView.translatesAutoresizingMaskIntoConstraints = false
+    rideActionsView.onFollow = { [weak self] in self?.recenter() }
+    rideActionsView.onReport = { [weak self] in self?.onReport?() }
+    rideActionsView.onEmergency = { [weak self] in self?.onEmergency?() }
+    view.addSubview(rideActionsView)
     NSLayoutConstraint.activate([
       // Keep the speed pair where riders already expect it.
       speedBadge.trailingAnchor.constraint(
@@ -1152,25 +1181,37 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 10
       ),
+      // One visual unit: the compass circle is exactly the sign's 34-point
+      // diameter and sits eight points immediately to its left.
+      compassBadge.widthAnchor.constraint(equalToConstant: 34),
+      compassBadge.heightAnchor.constraint(equalToConstant: 34),
+      compassBadge.trailingAnchor.constraint(
+        equalTo: speedBadge.leadingAnchor,
+        constant: -3
+      ),
+      compassBadge.topAnchor.constraint(equalTo: speedBadge.topAnchor),
       tecBadge.leadingAnchor.constraint(
-        equalTo: view.leadingAnchor,
-        // Apple's fixed CarPlay sidebar consumes the first 45 points. Start
-        // just beyond it so the phone-style TEC chip remains fully visible.
-        constant: 52
+        equalTo: groupMiniMap.leadingAnchor
       ),
       tecBadge.trailingAnchor.constraint(
-        lessThanOrEqualTo: groupMiniMap.leadingAnchor,
-        constant: -10
+        equalTo: groupMiniMap.trailingAnchor
       ),
-      tecBadge.widthAnchor.constraint(equalToConstant: 196),
-      tecBadge.topAnchor.constraint(
-        equalTo: groupMiniMap.topAnchor
+      tecBadge.bottomAnchor.constraint(
+        equalTo: groupMiniMap.topAnchor,
+        constant: -8
       ),
-      // The same glance-sized footprint as the phone in landscape. The old
-      // 110x70 card made rider initials and its distance scale needlessly tiny
-      // on the much wider CarPlay canvas.
-      groupMiniMap.widthAnchor.constraint(equalToConstant: 196),
-      groupMiniMap.heightAnchor.constraint(equalToConstant: 116),
+      // Scale with the head unit instead of assuming a phone-sized 196-point
+      // card. The overview can never escape the left 28% status rail.
+      groupMiniMap.widthAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.widthAnchor,
+        multiplier: 0.28
+      ),
+      groupMiniMap.widthAnchor.constraint(lessThanOrEqualToConstant: 196),
+      groupMiniMap.widthAnchor.constraint(greaterThanOrEqualToConstant: 132),
+      groupMiniMap.heightAnchor.constraint(
+        equalTo: groupMiniMap.widthAnchor,
+        multiplier: 116.0 / 196.0
+      ),
       groupMiniMap.leadingAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.leadingAnchor,
         constant: 12
@@ -1187,18 +1228,38 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 12
       ),
-      // Stack route progress directly above the group overview, matching the
-      // phone's left-side landscape rail and keeping the road ahead unobscured.
-      routeProgressView.bottomAnchor.constraint(
-        equalTo: groupMiniMap.topAnchor,
-        constant: -10
-      ),
-      routeProgressView.leadingAnchor.constraint(
-        equalTo: groupMiniMap.leadingAnchor
-      ),
+      // The app-owned ETA is the single journey estimate and stays in the
+      // phone landscape position at bottom-trailing.
       routeProgressView.trailingAnchor.constraint(
-        equalTo: groupMiniMap.trailingAnchor
+        equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+        constant: -12
       ),
+      routeProgressView.bottomAnchor.constraint(
+        equalTo: view.bottomAnchor,
+        constant: -12
+      ),
+      routeProgressView.widthAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.widthAnchor,
+        multiplier: 0.36
+      ),
+      routeProgressView.widthAnchor.constraint(lessThanOrEqualToConstant: 230),
+      guidanceView.trailingAnchor.constraint(
+        equalTo: routeProgressView.trailingAnchor
+      ),
+      guidanceView.bottomAnchor.constraint(
+        equalTo: routeProgressView.topAnchor,
+        constant: -8
+      ),
+      guidanceView.widthAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.widthAnchor,
+        multiplier: 0.44
+      ),
+      guidanceView.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
+      rideActionsView.leadingAnchor.constraint(
+        equalTo: groupMiniMap.trailingAnchor,
+        constant: 10
+      ),
+      rideActionsView.bottomAnchor.constraint(equalTo: groupMiniMap.bottomAnchor),
     ])
   }
 
@@ -1215,6 +1276,9 @@ private final class CarPlayNavigationViewController: UIViewController,
     updateStyleURLs(snapshot["basemap"] as? [String: Any])
     guard let mapView else { return }
     surfaceMode = snapshot["surfaceMode"] as? String ?? "activeRide"
+    let darkMap =
+      ((snapshot["basemap"] as? [String: Any])?["dark"] as? NSNumber)?.boolValue
+      ?? (traitCollection.userInterfaceStyle == .dark)
     if surfaceMode != "activeRide" {
       // A viewport belongs to the moving ride that produced it. Replaying it
       // over the home or pre-ride map is what reopened CarPlay miles away from
@@ -1222,6 +1286,11 @@ private final class CarPlayNavigationViewController: UIViewController,
       latestViewport = nil
     }
     clockLabel.isHidden = surfaceMode == "home"
+    clockLabel.apply(darkMap: darkMap)
+    compassBadge.apply(direction: mapView.direction, darkMap: darkMap)
+    rideActionsView.isHidden = surfaceMode != "activeRide"
+    rideActionsView.setFollowing(followsLocalRider)
+    guidanceView.apply(snapshot: snapshot)
     let incomingRouteID = snapshot["routeId"] as? String
     let progress = (snapshot["routeProgressMeters"] as? NSNumber)?.doubleValue ?? 0
     let routeKey = "\(incomingRouteID ?? "none"):\(Int(progress / 2))"
@@ -1263,6 +1332,7 @@ private final class CarPlayNavigationViewController: UIViewController,
       // phone map.
       followsLocalRider = requestedRiderFollow
     }
+    rideActionsView.setFollowing(followsLocalRider)
     // The ride's own marker carries the exact identity symbol and colour the
     // rider chose on the phone. Do not replace it with MapLibre's unrelated
     // blue location dot while snapshots settle.
@@ -1327,6 +1397,7 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func recenter() {
     followsLocalRider = true
+    rideActionsView.setFollowing(true)
     if snapshotWantsRiderFollow, latestViewport != nil {
       applyPhoneViewport(animated: true)
       return
@@ -1357,6 +1428,7 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func pan(direction: CPMapTemplate.PanDirection) {
     followsLocalRider = false
+    rideActionsView.setFollowing(false)
     guard let mapView else { return }
     mapView.userTrackingMode = .none
     var point = mapView.convert(mapView.centerCoordinate, toPointTo: mapView)
@@ -1373,6 +1445,7 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func beginPanGesture() {
     followsLocalRider = false
+    rideActionsView.setFollowing(false)
     mapView?.userTrackingMode = .none
     panGestureStartCoordinate = mapView?.centerCoordinate
   }
@@ -1466,8 +1539,7 @@ private final class CarPlayNavigationViewController: UIViewController,
     mapView.logoView.isHidden = true
     mapView.attributionButtonPosition = .bottomRight
     mapView.attributionButtonMargins = CGPoint(x: 52, y: 14)
-    mapView.compassViewPosition = .topRight
-    mapView.compassViewMargins = CGPoint(x: 52, y: 64)
+    mapView.compassView.isHidden = true
     // Match the phone home map's no-fix fallback rather than MapLibre's
     // world-sized default. As soon as the phone publishes an authorised fix,
     // the saved rider marker and the same z14 home framing replace this.
@@ -1491,7 +1563,9 @@ private final class CarPlayNavigationViewController: UIViewController,
       let longitude = (viewport["longitude"] as? NSNumber)?.doubleValue,
       let phoneZoom = (viewport["zoom"] as? NSNumber)?.doubleValue,
       let phoneHeight = (viewport["sourceViewportHeightPixels"] as? NSNumber)?.doubleValue,
+      let phoneWidth = (viewport["sourceViewportWidthPixels"] as? NSNumber)?.doubleValue,
       phoneHeight > 0,
+      phoneWidth > 0,
       latitude.isFinite,
       longitude.isFinite,
       phoneZoom.isFinite,
@@ -1505,6 +1579,18 @@ private final class CarPlayNavigationViewController: UIViewController,
     let rawTilt = (viewport["tilt"] as? NSNumber)?.doubleValue ?? 0
     let tilt = min(60, max(0, rawTilt))
     let bearing = (viewport["bearing"] as? NSNumber)?.doubleValue ?? 0
+    let riderVerticalFraction = min(
+      0.8,
+      max(0.35, (viewport["riderViewportFraction"] as? NSNumber)?.doubleValue ?? 0.64)
+    )
+    let riderHorizontalFraction = min(
+      0.8,
+      max(
+        0.2,
+        (viewport["riderHorizontalViewportFraction"] as? NSNumber)?.doubleValue
+          ?? (2.0 / 3.0)
+      )
+    )
     guard adjustedZoom.isFinite, tilt.isFinite, bearing.isFinite else { return }
 
     // MapLibre's zoom is the scale of 512 px Web Mercator tiles. Convert that
@@ -1526,7 +1612,77 @@ private final class CarPlayNavigationViewController: UIViewController,
       pitch: tilt,
       heading: bearing
     )
-    mapView.setCamera(camera, animated: animated)
+    // Establish scale and pitch first, then use MapLibre's own projection to
+    // put the local rider at the exact phone anchor on this wider screen. This
+    // avoids a fixed-offset approximation and also lifts the marker above the
+    // app-owned guidance/ETA rail when that rail is taller than the phone's.
+    mapView.setCamera(camera, animated: false)
+    view.layoutIfNeeded()
+    let frame = view.safeAreaLayoutGuide.layoutFrame
+    var desired = CGPoint(
+      x: frame.minX + frame.width * riderHorizontalFraction,
+      y: frame.minY + frame.height * riderVerticalFraction
+    )
+    // Keep the 18-point-radius rider marker, plus a ten-point visual gap,
+    // above the right-hand chrome. The iterative projection below now lands on
+    // this anchor exactly, so a larger safety offset would waste road-ahead map.
+    let riderChromeClearance: CGFloat = 28
+    if !guidanceView.isHidden {
+      desired.y = min(
+        desired.y,
+        guidanceView.frame.minY - riderChromeClearance
+      )
+    } else if !routeProgressView.isHidden {
+      desired.y = min(
+        desired.y,
+        routeProgressView.frame.minY - riderChromeClearance
+      )
+    }
+    if let localCoordinate {
+      var correctedCamera = camera
+      // A pitched Mercator projection is not linear in screen Y, so a single
+      // centre translation only moved part of the way to the requested anchor
+      // on the 1920×720 CarPlay canvas. Reproject after each correction; three
+      // small passes converge to the exact open-map point without guessing a
+      // latitude-dependent offset.
+      for _ in 0 ..< 3 {
+        mapView.setCamera(correctedCamera, animated: false)
+        let riderPoint = mapView.convert(localCoordinate, toPointTo: mapView)
+        let error = CGPoint(
+          x: riderPoint.x - desired.x,
+          y: riderPoint.y - desired.y
+        )
+        if hypot(error.x, error.y) < 1 { break }
+        let centrePoint = mapView.convert(
+          correctedCamera.centerCoordinate,
+          toPointTo: mapView
+        )
+        let correctedCentre = CGPoint(
+          x: centrePoint.x + error.x,
+          y: centrePoint.y + error.y
+        )
+        correctedCamera = MLNMapCamera(
+          lookingAtCenter: mapView.convert(
+            correctedCentre,
+            toCoordinateFrom: mapView
+          ),
+          altitude: altitude,
+          pitch: tilt,
+          heading: bearing
+        )
+      }
+      // The phone keeps publishing moving fixes, so these small deterministic
+      // steps are already continuous. A second UIKit animation here leaves the
+      // marker one animation behind and puts it back under the guidance card.
+      mapView.setCamera(correctedCamera, animated: false)
+    } else {
+      mapView.setCamera(camera, animated: animated)
+    }
+    compassBadge.apply(
+      direction: bearing,
+      darkMap: ((latestSnapshot?["basemap"] as? [String: Any])?["dark"] as? NSNumber)?
+        .boolValue ?? (traitCollection.userInterfaceStyle == .dark)
+    )
   }
 
   /// MapKit's follow mode picks an altitude for you; MapLibre's only recentres
@@ -1775,8 +1931,16 @@ private final class CarPlayNavigationViewController: UIViewController,
     ]
     if !reason.intersection(gestures).isEmpty {
       followsLocalRider = false
+      rideActionsView.setFollowing(false)
       mapView.userTrackingMode = .none
     }
+  }
+
+  func mapViewRegionIsChanging(_ mapView: MLNMapView) {
+    let darkMap =
+      ((latestSnapshot?["basemap"] as? [String: Any])?["dark"] as? NSNumber)?
+      .boolValue ?? (traitCollection.userInterfaceStyle == .dark)
+    compassBadge.apply(direction: mapView.direction, darkMap: darkMap)
   }
 }
 
@@ -2163,10 +2327,16 @@ private final class CarPlayGroupMiniMapView: UIView {
       pitch: 0,
       heading: 0
     )
+    // Render at the dynamically constrained rail size. A fixed 110x70 image
+    // stretched into a 196-point view was both blurry and made it easy to miss
+    // that the outer view had escaped the intended column.
+    let renderSize = self.bounds.width >= 100 && self.bounds.height >= 60
+      ? self.bounds.size
+      : CGSize(width: 160, height: 95)
     let options = MLNMapSnapshotOptions(
       styleURL: resolvedStyleURL,
       camera: camera,
-      size: CGSize(width: 110, height: 70)
+      size: renderSize
     )
     options.coordinateBounds = bounds
     options.showsLogo = false
@@ -2270,7 +2440,7 @@ private final class CarPlayGroupMiniMapView: UIView {
     let context = overlay.context
     context.saveGState()
     defer { context.restoreGState() }
-    context.clip(to: CGRect(x: 0, y: 0, width: 110, height: 70))
+    context.clip(to: overlay.context.boundingBoxOfClipPath)
 
     if route.count >= 2 {
       let points = route.map(overlay.point(for:))
@@ -2342,6 +2512,242 @@ private final class CarPlayGroupMiniMapView: UIView {
     default: return CarPlayPalette.rider
     }
   }
+}
+
+/// App-owned compass paired with the speed sign. Its footprint is deliberately
+/// the same 34-point circle as [CarPlaySpeedLimitBadge]'s sign.
+private final class CarPlayCompassBadge: UIView {
+  private let arrow = UIImageView()
+  private let north = UILabel()
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isUserInteractionEnabled = false
+    layer.cornerRadius = 17
+    layer.cornerCurve = .continuous
+    layer.borderWidth = 2
+    layer.shadowColor = UIColor.black.cgColor
+    layer.shadowOpacity = 0.4
+    layer.shadowRadius = 4
+    layer.shadowOffset = CGSize(width: 0, height: 2)
+
+    arrow.translatesAutoresizingMaskIntoConstraints = false
+    arrow.image = UIImage(systemName: "location.north.fill")
+    arrow.contentMode = .scaleAspectFit
+    arrow.tintColor = CarPlayPalette.emergencyFill
+    addSubview(arrow)
+    north.translatesAutoresizingMaskIntoConstraints = false
+    north.text = "N"
+    north.font = .systemFont(ofSize: 8, weight: .black)
+    north.textAlignment = .center
+    addSubview(north)
+    NSLayoutConstraint.activate([
+      arrow.centerXAnchor.constraint(equalTo: centerXAnchor),
+      arrow.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 2),
+      arrow.widthAnchor.constraint(equalToConstant: 16),
+      arrow.heightAnchor.constraint(equalToConstant: 16),
+      north.centerXAnchor.constraint(equalTo: centerXAnchor),
+      north.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  func apply(direction: CLLocationDirection, darkMap: Bool) {
+    backgroundColor = darkMap
+      ? CarPlayPalette.cardFill
+      : UIColor.white.withAlphaComponent(0.90)
+    layer.borderColor = (
+      darkMap ? UIColor(red: 0x89 / 255, green: 0x93 / 255, blue: 0xA0 / 255, alpha: 1)
+        : UIColor(red: 0x30 / 255, green: 0x34 / 255, blue: 0x3B / 255, alpha: 1)
+    ).cgColor
+    north.textColor = darkMap ? .white : .black
+    arrow.transform = CGAffineTransform(rotationAngle: -direction * .pi / 180)
+    accessibilityLabel = "Map heading \(Int(direction.rounded())) degrees"
+  }
+}
+
+/// Phone-style turn card used instead of starting a template navigation
+/// session. The latter always adds Apple's separate trip-estimate panel, which
+/// duplicated the app-owned ETA and could not be hidden independently.
+private final class CarPlayGuidanceView: UIView {
+  private let symbol = UIImageView()
+  private let title = UILabel()
+  private let detail = UILabel()
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isHidden = true
+    isUserInteractionEnabled = false
+    backgroundColor = CarPlayPalette.primaryPanelFill
+    layer.cornerRadius = 10
+    layer.cornerCurve = .continuous
+    layer.borderWidth = 1
+    layer.borderColor = UIColor.white.withAlphaComponent(0.18).cgColor
+
+    symbol.translatesAutoresizingMaskIntoConstraints = false
+    symbol.contentMode = .scaleAspectFit
+    symbol.tintColor = CarPlayPalette.routeAhead
+    addSubview(symbol)
+    title.translatesAutoresizingMaskIntoConstraints = false
+    title.font = .systemFont(ofSize: 17, weight: .bold)
+    title.textColor = CarPlayPalette.cardTitle
+    title.numberOfLines = 2
+    title.adjustsFontSizeToFitWidth = true
+    title.minimumScaleFactor = 0.76
+    addSubview(title)
+    detail.translatesAutoresizingMaskIntoConstraints = false
+    detail.font = .systemFont(ofSize: 12, weight: .semibold)
+    detail.textColor = CarPlayPalette.cardLabel
+    detail.numberOfLines = 1
+    detail.adjustsFontSizeToFitWidth = true
+    detail.minimumScaleFactor = 0.76
+    addSubview(detail)
+    NSLayoutConstraint.activate([
+      symbol.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      symbol.centerYAnchor.constraint(equalTo: centerYAnchor),
+      symbol.widthAnchor.constraint(equalToConstant: 30),
+      symbol.heightAnchor.constraint(equalToConstant: 30),
+      title.leadingAnchor.constraint(equalTo: symbol.trailingAnchor, constant: 9),
+      title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      title.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+      detail.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+      detail.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+      detail.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 2),
+      detail.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+    ])
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  func apply(snapshot: [String: Any]) {
+    let marker = snapshot["marker"] as? [String: Any]
+    let headline = Self.nonEmpty(marker?["title"])
+      ?? Self.nonEmpty(snapshot["guidanceTitle"])
+    guard
+      let headline,
+      marker != nil || !headline.lowercased().contains("no more turns")
+    else {
+      isHidden = true
+      return
+    }
+    isHidden = false
+    title.text = headline
+    detail.text = Self.nonEmpty(marker?["detail"])
+      ?? Self.nonEmpty(snapshot["guidanceDetail"])
+    symbol.image = UIImage(systemName: Self.symbolName(for: headline))
+    accessibilityLabel = [headline, detail.text].compactMap { $0 }.joined(separator: ". ")
+  }
+
+  private static func nonEmpty(_ raw: Any?) -> String? {
+    guard let value = raw as? String else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  private static func symbolName(for title: String) -> String {
+    let lower = title.lowercased()
+    if lower.contains("roundabout") { return "arrow.clockwise.circle" }
+    if lower.contains("left") { return "arrow.turn.up.left" }
+    if lower.contains("right") { return "arrow.turn.up.right" }
+    if lower.contains("arrive") || lower.contains("destination") {
+      return "flag.checkered"
+    }
+    return "arrow.up"
+  }
+}
+
+/// The active-ride controls use the same labelled action language as phone
+/// landscape. Generic template follow/browse buttons are intentionally absent;
+/// Follow appears only after a deliberate pan.
+private final class CarPlayRideActionsView: UIStackView {
+  private let follow = CarPlayRideActionButton(
+    title: "FOLLOW",
+    symbol: "location.north",
+    fill: CarPlayPalette.cardFill,
+    ink: CarPlayPalette.actionInk
+  )
+  private let alert = CarPlayRideActionButton(
+    title: "ALERT",
+    symbol: "sos",
+    fill: CarPlayPalette.emergencyFill,
+    ink: .white
+  )
+  private let report = CarPlayRideActionButton(
+    title: "REPORT",
+    symbol: "bell.badge.fill",
+    fill: CarPlayPalette.cardFill,
+    ink: CarPlayPalette.reportAccent
+  )
+
+  var onFollow: (() -> Void)?
+  var onReport: (() -> Void)?
+  var onEmergency: (() -> Void)?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    axis = .vertical
+    alignment = .fill
+    distribution = .fill
+    spacing = 6
+    for button in [follow, alert, report] {
+      button.heightAnchor.constraint(equalToConstant: 42).isActive = true
+      button.widthAnchor.constraint(equalToConstant: 104).isActive = true
+      addArrangedSubview(button)
+    }
+    follow.addAction(UIAction { [weak self] _ in self?.onFollow?() }, for: .primaryActionTriggered)
+    alert.addAction(UIAction { [weak self] _ in self?.onEmergency?() }, for: .primaryActionTriggered)
+    report.addAction(UIAction { [weak self] _ in self?.onReport?() }, for: .primaryActionTriggered)
+    setFollowing(true)
+  }
+
+  @available(*, unavailable)
+  required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  func setFollowing(_ following: Bool) {
+    follow.isHidden = following
+  }
+}
+
+private final class CarPlayRideActionButton: UIButton {
+  init(title: String, symbol: String, fill: UIColor, ink: UIColor) {
+    super.init(frame: .zero)
+    var configuration = UIButton.Configuration.filled()
+    configuration.title = title
+    configuration.image = UIImage(systemName: symbol)
+    configuration.imagePadding = 4
+    configuration.imagePlacement = .leading
+    configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+      pointSize: 16,
+      weight: .bold
+    )
+    configuration.contentInsets = NSDirectionalEdgeInsets(
+      top: 6,
+      leading: 6,
+      bottom: 6,
+      trailing: 6
+    )
+    configuration.titleLineBreakMode = .byClipping
+    configuration.baseBackgroundColor = fill
+    configuration.baseForegroundColor = ink
+    configuration.cornerStyle = .large
+    configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
+      incoming in
+      var outgoing = incoming
+      outgoing.font = .systemFont(ofSize: 12, weight: .black)
+      return outgoing
+    }
+    self.configuration = configuration
+    titleLabel?.numberOfLines = 1
+    titleLabel?.adjustsFontSizeToFitWidth = true
+    titleLabel?.minimumScaleFactor = 0.72
+    accessibilityLabel = title.capitalized
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 }
 
 /// The phone's landscape speed-limit sign and current-speed readout, scaled for
@@ -2493,6 +2899,9 @@ private final class CarPlayTecBadge: UIView {
     label.translatesAutoresizingMaskIntoConstraints = false
     label.font = .systemFont(ofSize: 15, weight: .semibold)
     label.textColor = CarPlayPalette.cardTitle
+    label.numberOfLines = 1
+    label.adjustsFontSizeToFitWidth = true
+    label.minimumScaleFactor = 0.72
     addSubview(label)
     NSLayoutConstraint.activate([
       label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -2684,6 +3093,11 @@ final class CarPlayClockLabel: UIView {
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
   deinit { tick?.invalidate() }
+
+  func apply(darkMap: Bool) {
+    label.textColor = darkMap ? .white : .black
+    label.layer.shadowColor = (darkMap ? UIColor.black : UIColor.white).cgColor
+  }
 
   override func didMoveToWindow() {
     super.didMoveToWindow()

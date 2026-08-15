@@ -13,6 +13,7 @@ class BasemapConfiguration {
     this.persistentCachingAllowed = true,
     this.maximumNativeZoom = 18,
     this.restrainedLightStyle = true,
+    this.dark = false,
   });
 
   factory BasemapConfiguration.fromEnvironment() => BasemapConfiguration(
@@ -68,6 +69,12 @@ class BasemapConfiguration {
   /// daytime palette. Custom styles are never repainted either way (#489).
   final bool restrainedLightStyle;
 
+  /// Whether [styleUrl] is the resolved night palette rather than the day
+  /// palette. The selected URLs alone cannot answer this for a provider that
+  /// deliberately uses one style in both modes, but projected chrome still
+  /// needs the choice so its clock ink remains legible.
+  final bool dark;
+
   /// Names the provider whose tiles are cached, so a build that changes provider
   /// cannot serve the previous one's tiles out of the old cache. Tied to the
   /// default style; override it alongside the style URL.
@@ -81,7 +88,9 @@ class BasemapConfiguration {
     bool restrainedLightStyle = true,
   }) {
     if (!dark) {
-      if (this.restrainedLightStyle == restrainedLightStyle) return this;
+      if (!this.dark && this.restrainedLightStyle == restrainedLightStyle) {
+        return this;
+      }
       return BasemapConfiguration(
         styleUrl: styleUrl,
         darkStyleUrl: darkStyleUrl,
@@ -91,6 +100,7 @@ class BasemapConfiguration {
         persistentCachingAllowed: persistentCachingAllowed,
         maximumNativeZoom: maximumNativeZoom,
         restrainedLightStyle: restrainedLightStyle,
+        dark: false,
       );
     }
     if (darkStyleUrl.trim().isEmpty) {
@@ -108,6 +118,7 @@ class BasemapConfiguration {
       persistentCachingAllowed: persistentCachingAllowed,
       maximumNativeZoom: maximumNativeZoom,
       restrainedLightStyle: restrainedLightStyle,
+      dark: true,
     );
   }
 
