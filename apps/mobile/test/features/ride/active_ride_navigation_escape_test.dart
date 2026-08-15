@@ -13,6 +13,7 @@ import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
+import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -126,6 +127,11 @@ void main() {
     // it and the rider had no way off the map at all.
     final rideMenu = find.byKey(const Key('ride-menu-button'));
     expect(rideMenu, findsOneWidget);
+    expect(
+      tester.getRect(rideMenu).top,
+      closeTo(portraitRideMenuTopOffset, 1),
+      reason: 'the menu should sit below the ETA/mini-map header',
+    );
 
     // Bounded pumps, not pumpAndSettle: a running simulation never settles.
     await tester.tap(rideMenu);

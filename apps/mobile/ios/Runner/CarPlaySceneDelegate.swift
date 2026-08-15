@@ -86,7 +86,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapTemplate.mapDelegate = self
     mapTemplate.automaticallyHidesNavigationBar = true
     mapTemplate.hidesButtonsWithNavigationBar = false
-    mapTemplate.guidanceBackgroundColor = CarPlayPalette.cardFill
+    mapTemplate.guidanceBackgroundColor = CarPlayPalette.primaryPanelFill
     mapTemplate.mapButtons = [
       recenterButton(),
       panButton(mapTemplate: mapTemplate),
@@ -373,7 +373,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         : maneuverSymbol(for: title)
       maneuver.symbolImage = symbol
       maneuver.dashboardSymbolImage = symbol
-      maneuver.cardBackgroundColor = CarPlayPalette.cardFill
+      maneuver.cardBackgroundColor = CarPlayPalette.primaryPanelFill
       if #available(iOS 17.4, *) {
         maneuver.maneuverType = isMarkerMode ? .noTurn : maneuverType(for: title)
         maneuver.roadFollowingManeuverVariants = roadName.map { [$0] }
@@ -1022,7 +1022,6 @@ private enum CarPlayPalette {
   static let casing = UIColor(red: 0x10 / 255, green: 0x15 / 255, blue: 0x1C / 255, alpha: 1)
   static let markerGlyph = casing
   static let routeAhead = UIColor(red: 0x3D / 255, green: 0xDC / 255, blue: 0x84 / 255, alpha: 1)
-  static let travelled = UIColor(red: 0xFF / 255, green: 0x7A / 255, blue: 0x1A / 255, alpha: 1)
   static let ownRider = UIColor(red: 0x2F / 255, green: 0x80 / 255, blue: 0xED / 255, alpha: 1)
   static let tailEndCharlie = UIColor(red: 0x68 / 255, green: 0xA9 / 255, blue: 0xFF / 255, alpha: 1)
   static let rider = UIColor(red: 0x6E / 255, green: 0xD8 / 255, blue: 0x9A / 255, alpha: 1)
@@ -1030,6 +1029,12 @@ private enum CarPlayPalette {
 
   /// The ride chrome's card fill and its label ink, from the phone's TEC card.
   static let cardFill = UIColor(red: 0x25 / 255, green: 0x2E / 255, blue: 0x39 / 255, alpha: 0.90)
+  static let primaryPanelFill = UIColor(
+    red: 0x25 / 255,
+    green: 0x2E / 255,
+    blue: 0x39 / 255,
+    alpha: 0.85
+  )
   static let cardLabel = UIColor(red: 0xB7 / 255, green: 0xC2 / 255, blue: 0xCF / 255, alpha: 1)
   static let cardTitle = UIColor.white
   static let actionInk = UIColor(red: 0xE4 / 255, green: 0xE9 / 255, blue: 0xEF / 255, alpha: 1)
@@ -1040,9 +1045,6 @@ private enum CarPlayPalette {
   static let routeWidth: CGFloat = 6
   static let routeCasingWidth: CGFloat = 10
 
-  /// `RouteLineStyle.travelled`: 5pt line on a 9pt casing.
-  static let travelledWidth: CGFloat = 5
-  static let travelledCasingWidth: CGFloat = 9
 }
 
 /// Draws app-owned route and group-location content behind the CarPlay
@@ -1064,8 +1066,6 @@ private final class CarPlayNavigationViewController: UIViewController,
   private let clockLabel = CarPlayClockLabel()
   private let routeProgressView = CarPlayRouteProgressView()
   private var routeSource: MLNShapeSource?
-  private var travelledRouteAnnotation: MLNPolyline?
-  private var travelledRouteCasingAnnotation: MLNPolyline?
   private var routeCoordinates: [CLLocationCoordinate2D] = []
   private var routeID: String?
   private var routeProjectionKey: String?
@@ -1125,9 +1125,9 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   override func viewDidLoad() {
     super.viewDidLoad()
-    // Top-leading inside the safe area: CarPlay's own templates own the
-    // navigation bar and the trailing map buttons, and the safe area is what
-    // keeps this clear of both.
+    // CarPlay keeps the same information hierarchy as the phone in landscape:
+    // route/status cards form a left column, the rider and road ahead stay
+    // clear through the middle, and the speed pair remains top-trailing.
     tecBadge.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(tecBadge)
     speedBadge.translatesAutoresizingMaskIntoConstraints = false
@@ -1143,11 +1143,7 @@ private final class CarPlayNavigationViewController: UIViewController,
     routeProgressView.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(routeProgressView)
     NSLayoutConstraint.activate([
-      // Speed pair top-trailing, and the TEC message *below* it rather than in
-      // the leading corner (#442). CarPlay draws the manoeuvre card top-leading,
-      // so the TEC badge was competing with the directions — which is the thing a
-      // rider reads first. "The no-TEC message goes below the speed limit, not
-      // competing with the directions."
+      // Keep the speed pair where riders already expect it.
       speedBadge.trailingAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.trailingAnchor,
         constant: -52
@@ -1156,33 +1152,34 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 10
       ),
-      tecBadge.trailingAnchor.constraint(
-        equalTo: speedBadge.trailingAnchor
-      ),
-      tecBadge.topAnchor.constraint(
-        equalTo: speedBadge.bottomAnchor,
-        constant: 8
-      ),
-      // Bounded so a long message cannot reach back across the screen into the
-      // directions it was just moved away from.
       tecBadge.leadingAnchor.constraint(
-        greaterThanOrEqualTo: view.safeAreaLayoutGuide.centerXAnchor
+        equalTo: view.leadingAnchor,
+        // Apple's fixed CarPlay sidebar consumes the first 45 points. Start
+        // just beyond it so the phone-style TEC chip remains fully visible.
+        constant: 52
+      ),
+      tecBadge.trailingAnchor.constraint(
+        lessThanOrEqualTo: groupMiniMap.leadingAnchor,
+        constant: -10
+      ),
+      tecBadge.widthAnchor.constraint(equalToConstant: 196),
+      tecBadge.topAnchor.constraint(
+        equalTo: groupMiniMap.topAnchor
       ),
       // The same glance-sized footprint as the phone in landscape. The old
       // 110x70 card made rider initials and its distance scale needlessly tiny
       // on the much wider CarPlay canvas.
       groupMiniMap.widthAnchor.constraint(equalToConstant: 196),
       groupMiniMap.heightAnchor.constraint(equalToConstant: 116),
-      groupMiniMap.trailingAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-        constant: -12
+      groupMiniMap.leadingAnchor.constraint(
+        equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+        constant: 12
       ),
       groupMiniMap.bottomAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-        constant: -14
+        equalTo: view.bottomAnchor,
+        constant: -12
       ),
-      // Match the phone's landscape clock at top-centre. This also keeps it off
-      // MapLibre's attribution control, which occupies the bottom-leading edge.
+      // Match the phone's landscape clock at top-centre.
       clockLabel.centerXAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.centerXAnchor
       ),
@@ -1190,24 +1187,18 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 12
       ),
-      // The phone's landscape status rail ends with route progress above the
-      // group overview. A CarPlay canvas is much shorter, so the same pair
-      // reflows into one bottom-trailing row: progress immediately beside the
-      // overview, with the same 10pt rail gap. This keeps the upper-middle map
-      // clear while preserving the learned information grouping (#413, #442).
+      // Stack route progress directly above the group overview, matching the
+      // phone's left-side landscape rail and keeping the road ahead unobscured.
       routeProgressView.bottomAnchor.constraint(
-        equalTo: groupMiniMap.bottomAnchor
-      ),
-      routeProgressView.trailingAnchor.constraint(
-        equalTo: groupMiniMap.leadingAnchor,
+        equalTo: groupMiniMap.topAnchor,
         constant: -10
       ),
       routeProgressView.leadingAnchor.constraint(
-        greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor,
-        constant: 12
+        equalTo: groupMiniMap.leadingAnchor
       ),
-      routeProgressView.widthAnchor.constraint(greaterThanOrEqualToConstant: 190),
-      routeProgressView.widthAnchor.constraint(lessThanOrEqualToConstant: 230),
+      routeProgressView.trailingAnchor.constraint(
+        equalTo: groupMiniMap.trailingAnchor
+      ),
     ])
   }
 
@@ -1240,8 +1231,7 @@ private final class CarPlayNavigationViewController: UIViewController,
     if routeChanged {
       updateRoute(
         snapshot["routePoints"],
-        remaining: snapshot["remainingRoutePoints"],
-        travelled: snapshot["riddenRoutePoints"]
+        remaining: snapshot["remainingRoutePoints"]
       )
       routeID = incomingRouteID
       routeProjectionKey = routeKey
@@ -1471,11 +1461,13 @@ private final class CarPlayNavigationViewController: UIViewController,
     mapView.userTrackingMode = .none
     // The logo goes, as it does on every phone surface (`logoEnabled: false`);
     // the attribution button stays, because that is a licence condition rather
-    // than decoration. CarPlay owns the bottom-trailing corner for its own map
-    // buttons, so what remains sits on the other side.
+    // than decoration. Keep both MapLibre controls on the right, clear of the
+    // app's left-hand status column and the top-trailing speed pair.
     mapView.logoView.isHidden = true
-    mapView.attributionButtonPosition = .bottomLeft
+    mapView.attributionButtonPosition = .bottomRight
+    mapView.attributionButtonMargins = CGPoint(x: 52, y: 14)
     mapView.compassViewPosition = .topRight
+    mapView.compassViewMargins = CGPoint(x: 52, y: 64)
     // Match the phone home map's no-fix fallback rather than MapLibre's
     // world-sized default. As soon as the phone publishes an authorised fix,
     // the saved rider marker and the same z14 home framing replace this.
@@ -1556,13 +1548,7 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
     // A style load takes the annotations with it. Put the ride back on.
-    var previousAnnotations = riderAnnotations.map { $0 as MLNAnnotation }
-    for annotation in [
-      travelledRouteCasingAnnotation,
-      travelledRouteAnnotation,
-    ].compactMap({ $0 }) {
-      previousAnnotations.append(annotation)
-    }
+    let previousAnnotations = riderAnnotations.map { $0 as MLNAnnotation }
     if !previousAnnotations.isEmpty {
       // MapLibre normally clears these during the style swap. Removing the
       // retained objects as well closes the short timing window where a
@@ -1571,8 +1557,6 @@ private final class CarPlayNavigationViewController: UIViewController,
       mapView.removeAnnotations(previousAnnotations)
     }
     routeSource = nil
-    travelledRouteAnnotation = nil
-    travelledRouteCasingAnnotation = nil
     riderAnnotations = []
     routeID = nil
     routeProjectionKey = nil
@@ -1582,57 +1566,28 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   // MARK: - Content
 
-  private func updateRoute(_ raw: Any?, remaining: Any?, travelled: Any?) {
-    guard let mapView else { return }
-    for existing in [
-      travelledRouteCasingAnnotation,
-      travelledRouteAnnotation,
-    ].compactMap({ $0 }) {
-      mapView.removeAnnotation(existing)
-    }
-    var allPoints = (raw as? [[String: Any]] ?? []).compactMap(coordinate(from:))
+  private func updateRoute(_ raw: Any?, remaining: Any?) {
+    let allPoints = (raw as? [[String: Any]] ?? []).compactMap(coordinate(from:))
     guard allPoints.count >= 2 else {
       routeCoordinates = []
       routeSource?.shape = nil
-      travelledRouteAnnotation = nil
-      travelledRouteCasingAnnotation = nil
       return
     }
     routeCoordinates = allPoints
     var remainingPoints =
       (remaining as? [[String: Any]] ?? []).compactMap(coordinate(from:))
-    var travelledPoints =
-      (travelled as? [[String: Any]] ?? []).compactMap(coordinate(from:))
-    if remainingPoints.count < 2 && travelledPoints.count < 2 {
+    if remainingPoints.count < 2 {
       remainingPoints = allPoints
     }
     updateRemainingRoute(remainingPoints)
-
-    var annotations: [MLNPolyline] = []
-    if travelledPoints.count >= 2 {
-      let casing = MLNPolyline(
-        coordinates: &travelledPoints,
-        count: UInt(travelledPoints.count)
-      )
-      let polyline = MLNPolyline(
-        coordinates: &travelledPoints,
-        count: UInt(travelledPoints.count)
-      )
-      travelledRouteCasingAnnotation = casing
-      travelledRouteAnnotation = polyline
-      annotations.append(contentsOf: [casing, polyline])
-    } else {
-      travelledRouteCasingAnnotation = nil
-      travelledRouteAnnotation = nil
-    }
-    if !annotations.isEmpty { mapView.addAnnotations(annotations) }
   }
 
   /// The phone's route ahead is a long dash, not a solid line. Shape
   /// annotations have no dash property, so this one part of the route uses two
   /// MapLibre style layers over a shared source: an aligned dashed casing and
-  /// the aligned green stroke above it. Travelled geometry remains a solid
-  /// annotation and therefore keeps the same draw order as the phone.
+  /// the aligned green stroke above it. Completed planned-route geometry is
+  /// intentionally omitted so the road immediately behind the rider is map,
+  /// matching the phone navigation surface.
   private func updateRemainingRoute(_ points: [CLLocationCoordinate2D]) {
     guard let mapView, let style = mapView.style else { return }
     let sourceIdentifier = "tailendcharlie-route-ahead-source"
@@ -1790,28 +1745,6 @@ private final class CarPlayNavigationViewController: UIViewController,
       (-180 ... 180).contains(longitude)
     else { return nil }
     return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-  }
-
-  // MARK: - MLNMapViewDelegate
-
-  func mapView(
-    _ mapView: MLNMapView,
-    strokeColorForShapeAnnotation annotation: MLNShape
-  ) -> UIColor {
-    if annotation === travelledRouteCasingAnnotation { return CarPlayPalette.casing }
-    if annotation === travelledRouteAnnotation { return CarPlayPalette.travelled }
-    return .clear
-  }
-
-  func mapView(
-    _ mapView: MLNMapView,
-    lineWidthForPolylineAnnotation annotation: MLNPolyline
-  ) -> CGFloat {
-    if annotation === travelledRouteCasingAnnotation {
-      return CarPlayPalette.travelledCasingWidth
-    }
-    if annotation === travelledRouteAnnotation { return CarPlayPalette.travelledWidth }
-    return CarPlayPalette.routeWidth
   }
 
   func mapView(
@@ -2092,7 +2025,7 @@ private final class CarPlayGroupMiniMapView: UIView {
     super.init(frame: frame)
     isHidden = true
     isUserInteractionEnabled = false
-    backgroundColor = CarPlayPalette.cardFill
+    backgroundColor = CarPlayPalette.primaryPanelFill
     layer.cornerRadius = 10
     layer.cornerCurve = .continuous
     // Thicker and brighter than the 1.5 px casing it had (#442): "it blends into

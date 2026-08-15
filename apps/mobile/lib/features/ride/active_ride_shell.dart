@@ -3883,7 +3883,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                   // has always been.
                   Positioned(
                     left: 12,
-                    top: MediaQuery.paddingOf(context).top + 12,
+                    top:
+                        MediaQuery.paddingOf(context).top +
+                        (landscape ? 12 : portraitRideMenuTopOffset),
                     child: FloatingActionButton.small(
                       key: const Key('ride-menu-button'),
                       heroTag: 'ride-relay-shell-menu',

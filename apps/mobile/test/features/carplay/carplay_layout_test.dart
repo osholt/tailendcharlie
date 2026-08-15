@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// #442's CarPlay layout faults, asserted where they live.
+/// #442 and #533's CarPlay layout faults, asserted where they live.
 ///
 /// A head unit is not reachable from a test here, so these read the Swift the
 /// same way the #439 reachability check reads Dart: what broke is *placement*,
@@ -12,33 +12,40 @@ void main() {
     'ios/Runner/CarPlaySceneDelegate.swift',
   ).readAsStringSync();
 
-  group('the speed pair owns the trailing corner (#442)', () {
-    test('the TEC message sits below the speed badge', () {
-      // "The no-TEC message goes below the speed limit, not competing with the
-      // directions." CarPlay draws the manoeuvre card top-leading, which is
-      // where the TEC badge used to be.
-      expect(source, contains('tecBadge.topAnchor.constraint('));
-      expect(source, contains('equalTo: speedBadge.bottomAnchor'));
-    });
-
-    test('the TEC badge no longer claims the leading corner', () {
-      expect(
-        source.contains(
-          'tecBadge.leadingAnchor.constraint(\n'
-          '        equalTo: view.safeAreaLayoutGuide.leadingAnchor',
-        ),
-        isFalse,
-        reason: 'that corner belongs to the directions',
-      );
-    });
-
-    test('a long message cannot reach back across the screen', () {
+  group('the speed pair stays trailing while status moves left (#533)', () {
+    test('the TEC message joins the left status column', () {
       expect(
         source,
         contains(
-          'greaterThanOrEqualTo: view.safeAreaLayoutGuide.centerXAnchor',
+          'tecBadge.leadingAnchor.constraint(\n'
+          '        equalTo: view.leadingAnchor,\n'
+          '        // Apple\'s fixed CarPlay sidebar consumes the first 45 points. Start\n'
+          '        // just beyond it so the phone-style TEC chip remains fully visible.\n'
+          '        constant: 52',
         ),
       );
+      expect(
+        source,
+        contains(
+          'tecBadge.trailingAnchor.constraint(\n'
+          '        lessThanOrEqualTo: groupMiniMap.leadingAnchor,\n'
+          '        constant: -10',
+        ),
+      );
+      expect(
+        source,
+        contains('tecBadge.widthAnchor.constraint(equalToConstant: 196)'),
+      );
+      expect(source, contains('equalTo: groupMiniMap.topAnchor'));
+      expect(source, isNot(contains('equalTo: speedBadge.bottomAnchor')));
+    });
+
+    test('the speed badge keeps its established top-trailing position', () {
+      expect(
+        source,
+        contains('equalTo: view.safeAreaLayoutGuide.trailingAnchor'),
+      );
+      expect(source, contains('speedBadge.topAnchor.constraint('));
     });
   });
 
@@ -113,35 +120,91 @@ void main() {
       expect(source, isNot(contains('clockLabel.bottomAnchor.constraint(')));
     });
 
-    test('route progress shares the bottom status cluster with the mini-map', () {
+    test('route progress stacks above the bottom-left mini-map', () {
       expect(source, contains('routeProgressView.leadingAnchor.constraint('));
       expect(source, contains('routeProgressView.bottomAnchor.constraint('));
       expect(
         source,
         contains(
-          'routeProgressView.trailingAnchor.constraint(\n'
-          '        equalTo: groupMiniMap.leadingAnchor,\n'
+          'groupMiniMap.leadingAnchor.constraint(\n'
+          '        equalTo: view.safeAreaLayoutGuide.leadingAnchor',
+        ),
+      );
+      expect(
+        source,
+        contains(
+          'groupMiniMap.bottomAnchor.constraint(\n'
+          '        equalTo: view.bottomAnchor,\n'
+          '        constant: -12',
+        ),
+        reason: 'the full left stack must clear CarPlay’s top navigation bar',
+      );
+      expect(
+        source,
+        contains(
+          'routeProgressView.bottomAnchor.constraint(\n'
+          '        equalTo: groupMiniMap.topAnchor,\n'
           '        constant: -10',
         ),
       );
       expect(
         source,
         contains(
-          'routeProgressView.bottomAnchor.constraint(\n'
-          '        equalTo: groupMiniMap.bottomAnchor',
+          'routeProgressView.leadingAnchor.constraint(\n'
+          '        equalTo: groupMiniMap.leadingAnchor',
         ),
       );
       expect(
         source,
         contains(
-          'routeProgressView.leadingAnchor.constraint(\n'
-          '        greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor',
+          'routeProgressView.trailingAnchor.constraint(\n'
+          '        equalTo: groupMiniMap.trailingAnchor',
         ),
       );
-      expect(source, contains('lessThanOrEqualToConstant: 230'));
       expect(source, contains('CarPlayRouteProgressView'));
       expect(source, contains(r'\(duration)'));
       expect(source, contains(r'\(waypointName)'));
+    });
+
+    test('MapLibre controls sit on the right clear of the status column', () {
+      expect(
+        source,
+        contains('mapView.attributionButtonPosition = .bottomRight'),
+      );
+      expect(
+        source,
+        contains('mapView.attributionButtonMargins = CGPoint(x: 52, y: 14)'),
+      );
+      expect(source, contains('mapView.compassViewPosition = .topRight'));
+      expect(
+        source,
+        contains('mapView.compassViewMargins = CGPoint(x: 52, y: 64)'),
+      );
+    });
+
+    test('primary guidance panes reveal some map context', () {
+      expect(source, contains('alpha: 0.85'));
+      expect(
+        source,
+        contains(
+          'mapTemplate.guidanceBackgroundColor = CarPlayPalette.primaryPanelFill',
+        ),
+      );
+      expect(
+        source,
+        contains(
+          'maneuver.cardBackgroundColor = CarPlayPalette.primaryPanelFill',
+        ),
+      );
+      expect(
+        source,
+        contains('backgroundColor = CarPlayPalette.primaryPanelFill'),
+      );
+    });
+
+    test('completed planned route is omitted behind the rider', () {
+      expect(source, isNot(contains('travelledRouteAnnotation')));
+      expect(source, isNot(contains('snapshot["riddenRoutePoints"]')));
     });
   });
 
