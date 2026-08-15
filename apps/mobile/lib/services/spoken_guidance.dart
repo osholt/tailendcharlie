@@ -207,6 +207,19 @@ abstract interface class SpokenGuidanceEngine {
   Future<void> stop();
 }
 
+/// Which renderer actually delivered a prompt. This is deliberately about the
+/// output path, not the rider's preference: a natural voice can miss its safety
+/// deadline and legitimately use the system fail-safe for that one prompt.
+enum SpokenGuidanceOutput { natural, systemFallback }
+
+typedef SpokenGuidanceOutputObserver =
+    void Function(String phrase, SpokenGuidanceOutput output);
+
+/// Optional work that can be brought forward from the first urgent prompt.
+abstract interface class WarmableSpokenGuidanceEngine {
+  Future<void> warmUp();
+}
+
 /// The real engine.
 ///
 /// Two platform settings matter more than the voice does:
@@ -325,6 +338,7 @@ class SpokenGuidanceSpeaker {
   String? _lastSpokenKey;
   final _spokenAlertKeys = <String>{};
   bool _configured = false;
+  Future<void>? _configuration;
 
   /// The instruction most recently spoken, for tests and for the caller to check
   /// it is not about to repeat itself.
@@ -354,12 +368,9 @@ class SpokenGuidanceSpeaker {
     if (phrase.trim().isEmpty) return false;
     if (key == _lastSpokenKey) return false;
 
-    if (!_configured) {
-      await _engine.configure();
-      _configured = true;
-    }
+    await _ensureConfigured();
     _lastSpokenKey = key;
-    await _engine.speak(phrase);
+    await _engine.speak(_expandSpokenAbbreviations(phrase));
     return true;
   }
 
@@ -384,15 +395,12 @@ class SpokenGuidanceSpeaker {
     if (phrase.trim().isEmpty) return false;
     if (_spokenAlertKeys.contains(key)) return false;
 
-    if (!_configured) {
-      await _engine.configure();
-      _configured = true;
-    }
+    await _ensureConfigured();
     // Alerts keep their own memory rather than sharing `_lastSpokenKey`: a turn
     // spoken between two sightings of the same camera would otherwise let the
     // camera be announced twice.
     _spokenAlertKeys.add(key);
-    await _engine.speak(phrase);
+    await _engine.speak(_expandSpokenAbbreviations(phrase));
     return true;
   }
 
@@ -403,6 +411,30 @@ class SpokenGuidanceSpeaker {
   void reset() {
     _lastSpokenKey = null;
     _spokenAlertKeys.clear();
+  }
+
+  /// Loads an optional natural voice before the first safety-critical phrase.
+  ///
+  /// [enabled] belongs here rather than at the call site alone so tests protect
+  /// the privacy rule: silent guidance does not even configure an audio engine.
+  Future<bool> warmUp({required bool enabled}) async {
+    if (!enabled) return false;
+    await _ensureConfigured();
+    if (_engine case final WarmableSpokenGuidanceEngine warmable) {
+      await warmable.warmUp();
+    }
+    return true;
+  }
+
+  Future<void> _ensureConfigured() async {
+    if (_configured) return;
+    final pending = _configuration ??= _engine.configure();
+    try {
+      await pending;
+      _configured = true;
+    } finally {
+      if (identical(_configuration, pending)) _configuration = null;
+    }
   }
 
   Future<void> stop() => _engine.stop();

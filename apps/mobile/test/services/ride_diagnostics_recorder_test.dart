@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/services/ride_diagnostics_configuration.dart';
 import 'package:ride_relay/services/ride_diagnostics_recorder.dart';
+import 'package:ride_relay/services/spoken_guidance.dart';
 
 void main() {
   // A synthetic track, so the pairing that answers #412 can be driven without
@@ -292,6 +293,24 @@ void main() {
       );
 
       expect(recorder.render(), contains('distance to junction unknown'));
+    });
+
+    test('records whether natural speech or the OS fail-safe delivered it', () {
+      final recorder = RideDiagnosticsRecorder(
+        clock: () => DateTime.utc(2026, 8, 15),
+      );
+
+      recorder.recordSpeechDelivery(
+        phrase: 'Speed camera, in 150 yards',
+        output: SpokenGuidanceOutput.natural,
+      );
+      recorder.recordSpeechDelivery(
+        phrase: 'Turn left',
+        output: SpokenGuidanceOutput.systemFallback,
+      );
+
+      expect(recorder.render(), contains('natural voice'));
+      expect(recorder.render(), contains('system fallback'));
     });
 
     test('an enforcement warning records arming and clearing (#418)', () {

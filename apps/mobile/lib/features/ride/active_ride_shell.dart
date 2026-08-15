@@ -1262,10 +1262,14 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // nothing (#457).
     widget.rideDiagnostics?.addListener(_onRideDiagnosticsChanged);
     if (widget.enableNativeServices && widget.spokenGuidance != null) {
-      _spokenGuidance = SpokenGuidanceSpeaker(widget.spokenGuidance!.engine());
+      _spokenGuidance = SpokenGuidanceSpeaker(
+        widget.spokenGuidance!.createEngine(onOutput: _recordSpeechOutput),
+      );
+      widget.spokenGuidance!.addListener(_onSpokenGuidanceChanged);
     }
     _observedRideStarted =
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
+    if (_observedRideStarted) unawaited(_warmNaturalVoiceIfNeeded());
     _screenAwakeCoordinator = RideScreenAwakeCoordinator(
       wakeLock: widget.screenWakeLock,
       reassertInterval: widget.screenWakeReassertInterval,
@@ -3522,6 +3526,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // after the start has nothing to be measured against and must report
     // whatever the rider has or has not moved since.
     if (rideJustStarted) _positionReportGate.reset();
+    if (rideJustStarted) unawaited(_warmNaturalVoiceIfNeeded());
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _observerAccessController?.updateSession(session);
@@ -4190,6 +4195,39 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   SpokenAudioMode get _spokenAudioMode {
     final chosen = widget.spokenGuidance?.mode ?? SpokenAudioMode.silent;
     return _rejoinGuidance == null ? chosen : spokenAudioModeOffRoute(chosen);
+  }
+
+  void _onSpokenGuidanceChanged() {
+    unawaited(_warmNaturalVoiceIfNeeded());
+  }
+
+  /// Pulls the expensive model load out of the first camera or turn prompt.
+  /// Silent audio and a ride that has not started remain zero-work paths.
+  Future<void> _warmNaturalVoiceIfNeeded() async {
+    final controller = widget.spokenGuidance;
+    final speaker = _spokenGuidance;
+    if (controller == null || speaker == null) return;
+    final rideActive =
+        widget.rideController.rideStarted && !widget.rideController.rideEnded;
+    final naturalEnabled =
+        controller.naturalVoicePack.enabled &&
+        controller.naturalVoicePack.modelDirectory != null;
+    try {
+      await speaker.warmUp(
+        enabled: rideActive && controller.enabled && naturalEnabled,
+      );
+    } on Object catch (error, stackTrace) {
+      // OS speech remains configured as the fail-safe. A model-load problem is
+      // useful in diagnostics but must never block or end a ride.
+      _diagnostics?.recordNote('Natural voice warm-up failed: $error');
+      if (kDebugMode) {
+        debugPrint('Natural voice warm-up failed: $error\n$stackTrace');
+      }
+    }
+  }
+
+  void _recordSpeechOutput(String phrase, SpokenGuidanceOutput output) {
+    _diagnostics?.recordSpeechDelivery(phrase: phrase, output: output);
   }
 
   void _recordManoeuvreDiagnostics(NavigationGuidance? guidance) {
@@ -5620,6 +5658,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // copy of the log that was ever in memory (#456).
     unawaited(_diagnosticsWriter?.flush());
     widget.rideDiagnostics?.removeListener(_onRideDiagnosticsChanged);
+    widget.spokenGuidance?.removeListener(_onSpokenGuidanceChanged);
     unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);

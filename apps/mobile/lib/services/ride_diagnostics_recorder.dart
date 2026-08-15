@@ -1,6 +1,7 @@
 import '../domain/geo_point.dart';
 import 'geo_calculations.dart';
 import 'ride_diagnostics_configuration.dart';
+import 'spoken_guidance.dart';
 
 /// What the app said, beside what the bike then did.
 ///
@@ -146,6 +147,20 @@ class RideDiagnosticsRecorder {
       'SPOKEN     "$phrase"  '
       '${distanceToManoeuvreMeters == null ? 'distance to junction unknown' : '${distanceToManoeuvreMeters.round()} m to the junction'}',
     );
+  }
+
+  /// Records which renderer actually delivered a phrase. A preference for the
+  /// natural pack is not evidence that it beat the safety deadline, so this is
+  /// intentionally separate from [recordSpokenPrompt].
+  void recordSpeechDelivery({
+    required String phrase,
+    required SpokenGuidanceOutput output,
+  }) {
+    final renderer = switch (output) {
+      SpokenGuidanceOutput.natural => 'natural voice',
+      SpokenGuidanceOutput.systemFallback => 'system fallback',
+    };
+    _add('VOICE      $renderer  "$phrase"');
   }
 
   /// An enforcement warning armed or cleared (#418).
