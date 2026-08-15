@@ -100,8 +100,8 @@ void main() {
     );
 
     expect(status.headline, 'TEC · 1.2 mi · ~3 min ↑');
-    expect(status.detail, 'Bill · 1.2 mi · about 3 min · ↑ Opening');
-    expect(status.toSnapshot()['trendLabel'], 'Opening');
+    expect(status.detail, 'Bill · 1.2 mi · about 3 min · ↑ Gap increasing');
+    expect(status.toSnapshot()['trendLabel'], 'Gap increasing');
   });
 
   // A rider who is not the leader has no gap to state. Reporting "0" or a dash

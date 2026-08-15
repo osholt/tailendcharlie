@@ -47,7 +47,7 @@ extension TecGapTrendLabel on TecGapTrend {
     TecGapTrend.stopped => 'TEC stopped',
     TecGapTrend.closing => 'Closing',
     TecGapTrend.holding => 'Holding',
-    TecGapTrend.opening => 'Opening',
+    TecGapTrend.opening => 'Gap increasing',
   };
 
   /// A shape as well as a word, so the meaning survives a glance.

@@ -82,6 +82,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapViewController.onEmergency = { [weak self] in
       self?.presentEmergencyConfirmation()
     }
+    mapViewController.onLeave = { [weak self] in
+      self?.presentLeaveConfirmation()
+    }
     let rideMenuButton = statusButton(
       interfaceController: interfaceController,
       template: statusTemplate
@@ -965,6 +968,36 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
   }
 
+  private func presentLeaveConfirmation() {
+    guard sceneLifecycle.rootReady, let interfaceController else { return }
+    let sheet = CPActionSheetTemplate(
+      title: "Leave this ride?",
+      message: "Stops sharing this rider's position and returns the phone and CarPlay to the home map.",
+      actions: [
+        CPAlertAction(title: "Leave ride", style: .destructive) { _ in
+          interfaceController.dismissTemplate(animated: true) { _, error in
+            if let error {
+              NSLog("CarPlay leave sheet could not be dismissed: %@", error.localizedDescription)
+            }
+          }
+          (UIApplication.shared.delegate as? AppDelegate)?.leaveRideFromCarPlay()
+        },
+        CPAlertAction(title: "Cancel", style: .cancel) { _ in
+          interfaceController.dismissTemplate(animated: true) { _, error in
+            if let error {
+              NSLog("CarPlay leave sheet could not be dismissed: %@", error.localizedDescription)
+            }
+          }
+        },
+      ]
+    )
+    interfaceController.presentTemplate(sheet, animated: true) { success, error in
+      if !success, let error {
+        NSLog("CarPlay leave sheet was not presented: %@", error.localizedDescription)
+      }
+    }
+  }
+
   private func coordinate(from raw: [String: Any]?) -> CLLocationCoordinate2D? {
     guard
       let raw,
@@ -1054,6 +1087,7 @@ private enum CarPlayPalette {
   static let actionInk = UIColor(red: 0xE4 / 255, green: 0xE9 / 255, blue: 0xEF / 255, alpha: 1)
   static let reportAccent = UIColor(red: 0xFF / 255, green: 0xD2 / 255, blue: 0x4A / 255, alpha: 1)
   static let emergencyFill = UIColor(red: 0xD9 / 255, green: 0x30 / 255, blue: 0x4F / 255, alpha: 1)
+  static let leaveFill = UIColor(red: 0x54 / 255, green: 0x5F / 255, blue: 0x6E / 255, alpha: 1)
 
   /// `RouteLineStyle.routeAhead`: 6pt line on a 10pt casing.
   static let routeWidth: CGFloat = 6
@@ -1097,6 +1131,7 @@ private final class CarPlayNavigationViewController: UIViewController,
 
   var onReport: (() -> Void)?
   var onEmergency: (() -> Void)?
+  var onLeave: (() -> Void)?
 
   /// The styles Dart published, the exact style selected on the phone, and the
   /// one currently applied. CarPlay's trait remains a fallback until Dart has
@@ -1170,6 +1205,7 @@ private final class CarPlayNavigationViewController: UIViewController,
     rideActionsView.onFollow = { [weak self] in self?.recenter() }
     rideActionsView.onReport = { [weak self] in self?.onReport?() }
     rideActionsView.onEmergency = { [weak self] in self?.onEmergency?() }
+    rideActionsView.onLeave = { [weak self] in self?.onLeave?() }
     view.addSubview(rideActionsView)
     NSLayoutConstraint.activate([
       // Keep the speed pair where riders already expect it.
@@ -1228,27 +1264,26 @@ private final class CarPlayNavigationViewController: UIViewController,
         equalTo: view.safeAreaLayoutGuide.topAnchor,
         constant: 12
       ),
-      // The app-owned ETA is the single journey estimate and stays in the
-      // phone landscape position at bottom-trailing.
+      // Keep all group-wide status in one left-hand reading column: journey
+      // ETA, TEC gap, then the group overview. The manoeuvre remains the only
+      // bottom-trailing card, leaving the rider and road ahead unobstructed.
+      routeProgressView.leadingAnchor.constraint(
+        equalTo: groupMiniMap.leadingAnchor
+      ),
       routeProgressView.trailingAnchor.constraint(
+        equalTo: groupMiniMap.trailingAnchor
+      ),
+      routeProgressView.bottomAnchor.constraint(
+        equalTo: tecBadge.topAnchor,
+        constant: -8
+      ),
+      guidanceView.trailingAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.trailingAnchor,
         constant: -12
       ),
-      routeProgressView.bottomAnchor.constraint(
+      guidanceView.bottomAnchor.constraint(
         equalTo: view.bottomAnchor,
         constant: -12
-      ),
-      routeProgressView.widthAnchor.constraint(
-        equalTo: view.safeAreaLayoutGuide.widthAnchor,
-        multiplier: 0.36
-      ),
-      routeProgressView.widthAnchor.constraint(lessThanOrEqualToConstant: 230),
-      guidanceView.trailingAnchor.constraint(
-        equalTo: routeProgressView.trailingAnchor
-      ),
-      guidanceView.bottomAnchor.constraint(
-        equalTo: routeProgressView.topAnchor,
-        constant: -8
       ),
       guidanceView.widthAnchor.constraint(
         equalTo: view.safeAreaLayoutGuide.widthAnchor,
@@ -1583,14 +1618,12 @@ private final class CarPlayNavigationViewController: UIViewController,
       0.8,
       max(0.35, (viewport["riderViewportFraction"] as? NSNumber)?.doubleValue ?? 0.64)
     )
-    let riderHorizontalFraction = min(
-      0.8,
-      max(
-        0.2,
-        (viewport["riderHorizontalViewportFraction"] as? NSNumber)?.doubleValue
-          ?? (2.0 / 3.0)
-      )
-    )
+    // CarPlay is always landscape even when its attached phone is portrait.
+    // A portrait phone publishes a centred phone anchor, so derive the car's
+    // traffic-side third from the route handedness instead of copying 0.5.
+    let leftHandTraffic =
+      (viewport["leftHandTraffic"] as? NSNumber)?.boolValue ?? true
+    let riderHorizontalFraction = leftHandTraffic ? (2.0 / 3.0) : (1.0 / 3.0)
     guard adjustedZoom.isFinite, tilt.isFinite, bearing.isFinite else { return }
 
     // MapLibre's zoom is the scale of 512 px Web Mercator tiles. Convert that
@@ -2675,6 +2708,12 @@ private final class CarPlayRideActionsView: UIStackView {
     fill: CarPlayPalette.emergencyFill,
     ink: .white
   )
+  private let leave = CarPlayRideActionButton(
+    title: "LEAVE",
+    symbol: "rectangle.portrait.and.arrow.right",
+    fill: CarPlayPalette.leaveFill,
+    ink: .white
+  )
   private let report = CarPlayRideActionButton(
     title: "REPORT",
     symbol: "bell.badge.fill",
@@ -2685,20 +2724,22 @@ private final class CarPlayRideActionsView: UIStackView {
   var onFollow: (() -> Void)?
   var onReport: (() -> Void)?
   var onEmergency: (() -> Void)?
+  var onLeave: (() -> Void)?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
     axis = .vertical
     alignment = .fill
     distribution = .fill
-    spacing = 6
-    for button in [follow, alert, report] {
-      button.heightAnchor.constraint(equalToConstant: 42).isActive = true
-      button.widthAnchor.constraint(equalToConstant: 104).isActive = true
+    spacing = 10
+    for button in [follow, alert, leave, report] {
+      button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+      button.widthAnchor.constraint(equalToConstant: 82).isActive = true
       addArrangedSubview(button)
     }
     follow.addAction(UIAction { [weak self] _ in self?.onFollow?() }, for: .primaryActionTriggered)
     alert.addAction(UIAction { [weak self] _ in self?.onEmergency?() }, for: .primaryActionTriggered)
+    leave.addAction(UIAction { [weak self] _ in self?.onLeave?() }, for: .primaryActionTriggered)
     report.addAction(UIAction { [weak self] _ in self?.onReport?() }, for: .primaryActionTriggered)
     setFollowing(true)
   }
@@ -2720,7 +2761,7 @@ private final class CarPlayRideActionButton: UIButton {
     configuration.imagePadding = 4
     configuration.imagePlacement = .leading
     configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
-      pointSize: 16,
+      pointSize: 10,
       weight: .bold
     )
     configuration.contentInsets = NSDirectionalEdgeInsets(
@@ -2736,7 +2777,7 @@ private final class CarPlayRideActionButton: UIButton {
     configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
       incoming in
       var outgoing = incoming
-      outgoing.font = .systemFont(ofSize: 12, weight: .black)
+      outgoing.font = .systemFont(ofSize: 7, weight: .black)
       return outgoing
     }
     self.configuration = configuration
@@ -2748,6 +2789,13 @@ private final class CarPlayRideActionButton: UIButton {
 
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  /// The visual button is deliberately compact, but the effective target keeps
+  /// CarPlay's 44-point minimum. Ten-point stack spacing means neighbouring
+  /// expanded targets meet without overlapping.
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    bounds.insetBy(dx: -5, dy: -5).contains(point)
+  }
 }
 
 /// The phone's landscape speed-limit sign and current-speed readout, scaled for
@@ -2939,7 +2987,7 @@ private final class CarPlayTecBadge: UIView {
   }
 }
 
-/// Compact route-wide timing beside the bottom-trailing group overview.
+/// Compact route-wide timing above TEC in the left status column.
 ///
 /// Dart owns the estimate and waypoint selection so the phone and car never
 /// disagree. Native only formats the rider's units and local clock convention.
@@ -2959,17 +3007,18 @@ private final class CarPlayRouteProgressView: UIView {
     layer.borderColor = UIColor.white.withAlphaComponent(0.18).cgColor
     timeFormatter.setLocalizedDateFormatFromTemplate("j:mm")
 
-    routeLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+    routeLabel.font = .systemFont(ofSize: 12, weight: .semibold)
     routeLabel.textColor = CarPlayPalette.cardTitle
     routeLabel.adjustsFontSizeToFitWidth = true
     routeLabel.minimumScaleFactor = 0.78
-    waypointLabel.font = .systemFont(ofSize: 12, weight: .medium)
+    waypointLabel.font = .systemFont(ofSize: 11, weight: .medium)
     waypointLabel.textColor = CarPlayPalette.cardLabel
     waypointLabel.adjustsFontSizeToFitWidth = true
     waypointLabel.minimumScaleFactor = 0.78
     for label in [routeLabel, waypointLabel] {
       label.translatesAutoresizingMaskIntoConstraints = false
-      label.numberOfLines = 1
+      label.numberOfLines = 2
+      label.lineBreakMode = .byWordWrapping
       addSubview(label)
     }
     NSLayoutConstraint.activate([

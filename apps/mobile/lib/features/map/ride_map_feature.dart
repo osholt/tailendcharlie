@@ -4130,6 +4130,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         riderViewportFraction: cameraPlan.riderViewportFraction,
         riderHorizontalViewportFraction:
             cameraPlan.riderHorizontalViewportFraction,
+        leftHandTraffic: _routeUsesLeftHandTraffic,
         mapStyleUrl: _basemap.styleUrl,
         mapStyleJson: widget.mapStyleString,
       ),

@@ -500,6 +500,7 @@ void main() {
           sourceViewportWidthPixels: 390,
           riderViewportFraction: 0.7,
           riderHorizontalViewportFraction: 2 / 3,
+          leftHandTraffic: true,
           mapStyleUrl: 'https://tiles.example.com/day',
           mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
         ),
@@ -521,6 +522,7 @@ void main() {
         'sourceViewportWidthPixels': 390,
         'riderViewportFraction': 0.7,
         'riderHorizontalViewportFraction': 2 / 3,
+        'leftHandTraffic': true,
         'mapStyleUrl': 'https://tiles.example.com/day',
       });
     },
@@ -693,6 +695,7 @@ void main() {
         sourceViewportWidthPixels: 390,
         riderViewportFraction: 0.7,
         riderHorizontalViewportFraction: 2 / 3,
+        leftHandTraffic: false,
         mapStyleUrl: 'https://tiles.example.com/day',
         mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
       ),
@@ -1026,6 +1029,25 @@ void main() {
     );
 
     expect(starts, 1);
+  });
+
+  test('relays a CarPlay-confirmed leave request to the ride owner', () async {
+    var leaves = 0;
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onLeaveRequested: () async {
+        leaves += 1;
+      },
+    );
+    addTearDown(bridge.dispose);
+
+    await messenger.handlePlatformMessage(
+      channel.name,
+      channel.codec.encodeMethodCall(const MethodCall('leaveRide')),
+      (_) {},
+    );
+
+    expect(leaves, 1);
   });
 
   test('searches only a submitted CarPlay destination query', () async {

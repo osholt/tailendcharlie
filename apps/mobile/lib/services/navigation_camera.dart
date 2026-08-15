@@ -94,6 +94,7 @@ class NavigationCameraViewport {
     required this.sourceViewportWidthPixels,
     required this.riderViewportFraction,
     required this.riderHorizontalViewportFraction,
+    required this.leftHandTraffic,
     required this.mapStyleUrl,
     required this.mapStyleJson,
   });
@@ -110,6 +111,10 @@ class NavigationCameraViewport {
   /// place the rider deliberately instead of inheriting a coincidental offset.
   final double riderViewportFraction;
   final double riderHorizontalViewportFraction;
+
+  /// Route driving side independently of the phone's current orientation.
+  /// CarPlay is always landscape, even when its attached phone is portrait.
+  final bool leftHandTraffic;
 
   /// The exact day/night style selected for the phone map.
   final String mapStyleUrl;

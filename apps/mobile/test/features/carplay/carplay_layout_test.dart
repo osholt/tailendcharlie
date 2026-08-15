@@ -102,7 +102,10 @@ void main() {
       () {
         expect(source, contains('private final class CarPlayRideActionsView'));
         expect(source, contains('title: "ALERT"'));
+        expect(source, contains('title: "LEAVE"'));
         expect(source, contains('title: "REPORT"'));
+        expect(source, contains('private func presentLeaveConfirmation()'));
+        expect(source, contains('.leaveRideFromCarPlay()'));
         expect(source, contains('mapTemplate.mapButtons = buttons'));
         expect(source, contains('if surfaceMode != "activeRide"'));
       },
@@ -114,7 +117,8 @@ void main() {
       expect(source, isNot(contains('clockLabel.bottomAnchor.constraint(')));
     });
 
-    test('route progress stays bottom-trailing beside the left mini-map', () {
+    test('route progress sits above TEC in the left status stack', () {
+      expect(source, contains('routeProgressView.leadingAnchor.constraint('));
       expect(source, contains('routeProgressView.trailingAnchor.constraint('));
       expect(source, contains('routeProgressView.bottomAnchor.constraint('));
       expect(
@@ -137,11 +141,24 @@ void main() {
         source,
         contains(
           'routeProgressView.trailingAnchor.constraint(\n'
-          '        equalTo: view.safeAreaLayoutGuide.trailingAnchor',
+          '        equalTo: groupMiniMap.trailingAnchor',
+        ),
+      );
+      expect(
+        source,
+        contains(
+          'routeProgressView.bottomAnchor.constraint(\n'
+          '        equalTo: tecBadge.topAnchor',
         ),
       );
       expect(source, contains('private final class CarPlayGuidanceView'));
-      expect(source, contains('equalTo: routeProgressView.topAnchor'));
+      expect(
+        source,
+        contains(
+          'guidanceView.bottomAnchor.constraint(\n'
+          '        equalTo: view.bottomAnchor',
+        ),
+      );
       expect(source, contains('CarPlayRouteProgressView'));
       expect(source, contains(r'\(duration)'));
       expect(source, contains(r'\(waypointName)'));
@@ -176,9 +193,15 @@ void main() {
       );
     });
 
-    test('phone anchors are projected onto the CarPlay canvas', () {
+    test('vertical phone framing and CarPlay traffic side are projected', () {
       expect(source, contains('riderViewportFraction'));
-      expect(source, contains('riderHorizontalViewportFraction'));
+      expect(source, contains('viewport["leftHandTraffic"]'));
+      expect(
+        source,
+        contains(
+          'let riderHorizontalFraction = leftHandTraffic ? (2.0 / 3.0) : (1.0 / 3.0)',
+        ),
+      );
       expect(source, contains('let riderChromeClearance: CGFloat = 28'));
       expect(
         source,
@@ -199,7 +222,26 @@ void main() {
       );
       expect(source, contains('titleLabel?.numberOfLines = 1'));
       expect(source, contains('titleLabel?.adjustsFontSizeToFitWidth = true'));
+      expect(
+        source,
+        contains('button.heightAnchor.constraint(equalToConstant: 34)'),
+      );
+      expect(
+        source,
+        contains('button.widthAnchor.constraint(equalToConstant: 82)'),
+      );
+      expect(source, contains('pointSize: 10'));
+      expect(source, contains('.systemFont(ofSize: 7, weight: .black)'));
+      expect(source, contains('bounds.insetBy(dx: -5, dy: -5)'));
     });
+
+    test(
+      'the narrow ETA card wraps instead of truncating timing and stops',
+      () {
+        expect(source, contains('label.numberOfLines = 2'));
+        expect(source, contains('label.lineBreakMode = .byWordWrapping'));
+      },
+    );
 
     test('Apple trip estimate is cancelled in favour of app-owned ETA', () {
       expect(

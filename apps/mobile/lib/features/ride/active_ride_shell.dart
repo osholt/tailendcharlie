@@ -1324,6 +1324,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(_initialize());
     _carPlayBridge = CarPlayBridge(
       onEmergencyTriggered: _sendEmergencyMapAlert,
+      onLeaveRequested: _leaveRide,
       onHazardReported: _reportHazardFromMap,
       onTecRoleAnswered: _answerTecRoleRequestFromCarPlay,
       onRideStartRequested: _startPreparedRideFromCarPlay,
