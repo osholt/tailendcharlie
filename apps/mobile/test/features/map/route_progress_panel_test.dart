@@ -64,4 +64,33 @@ void main() {
     expect(find.text('Route ETA —'), findsOneWidget);
     expect(find.textContaining('2.1 km · —'), findsOneWidget);
   });
+
+  testWidgets('next-stop ETA fits the narrow landscape rail', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 228,
+              child: RouteProgressPanel(
+                distanceUnit: DistanceUnit.miles,
+                progress: RouteJourneyProgress(
+                  remainingDistanceMeters: 27841,
+                  remainingTime: const Duration(minutes: 32),
+                  arrivalTime: DateTime(2026, 8, 15, 13, 13),
+                  nextWaypointName: 'A very long waypoint name',
+                  nextWaypointDistanceMeters: 27841,
+                  nextWaypointArrivalTime: DateTime(2026, 8, 15, 13, 13),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('17.3 mi'), findsWidgets);
+  });
 }

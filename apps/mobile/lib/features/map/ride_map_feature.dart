@@ -5601,6 +5601,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ],
         waypoints: const [],
         maneuvers: result.maneuvers,
+        plannedDuration: result.duration,
       );
       if (!mounted) return;
       setState(() {
@@ -5856,6 +5857,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ),
         ],
         preferences: existing?.preferences,
+        plannedDuration:
+            (existing?.plannedDuration ?? Duration.zero) + extension.duration,
       );
       await _reviewAndActivateRoute(route);
     } on Object catch (error) {

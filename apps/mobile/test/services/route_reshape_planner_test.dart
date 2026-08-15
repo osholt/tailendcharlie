@@ -68,6 +68,7 @@ void main() {
       expect(result.route.shapingPoints, shapes);
       expect(result.route.paths.single.points, routing.result.points);
       expect(result.route.maneuvers, routing.result.maneuvers);
+      expect(result.route.plannedDuration, routing.result.duration);
       expect(original.shapingPoints, isEmpty);
     },
   );

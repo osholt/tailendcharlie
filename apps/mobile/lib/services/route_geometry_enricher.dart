@@ -108,6 +108,7 @@ class RouteGeometryEnricher {
         // position a person already rejected for this route (#179).
         markerReview: route.markerReview,
         preferences: route.preferences,
+        plannedDuration: route.plannedDuration,
       ),
       attempted: attempted,
       snappedPathCount: snapped,
