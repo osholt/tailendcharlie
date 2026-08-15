@@ -30,6 +30,7 @@ void main() {
         name: 'Finish',
       ),
     ],
+    plannedDuration: const Duration(seconds: 200),
   );
 
   test('shows route remaining and the next deliberate stop', () {
@@ -92,7 +93,7 @@ void main() {
     );
   });
 
-  test('leaves ETA unavailable until there is a useful moving fix', () {
+  test('uses planned route timing before there is a useful moving fix', () {
     final progress = RouteJourneyProgressTracker().update(
       route: route,
       geometry: const RouteProgressGeometry(
@@ -106,9 +107,37 @@ void main() {
     )!;
 
     expect(progress.remainingDistanceMeters, greaterThan(0));
+    expect(progress.remainingTime, const Duration(seconds: 170));
+    expect(progress.arrivalTime, DateTime.utc(2026, 8, 14, 12, 2, 50));
+    expect(
+      progress.nextWaypointArrivalTime,
+      DateTime.utc(2026, 8, 14, 12, 1, 10),
+    );
+  });
+
+  test('keeps imported untimed routes honest until movement', () {
+    final untimed = ImportedRoute(
+      id: route.id,
+      name: route.name,
+      importedAt: route.importedAt,
+      sourceFileName: 'imported.gpx',
+      paths: route.paths,
+      waypoints: route.waypoints,
+    );
+    final progress = RouteJourneyProgressTracker().update(
+      route: untimed,
+      geometry: const RouteProgressGeometry(
+        riddenPaths: [],
+        remainingPaths: [],
+        progressMeters: 300,
+        totalMeters: 2001.5,
+      ),
+      speedMetersPerSecond: 1,
+      now: DateTime.utc(2026, 8, 14, 12),
+    )!;
+
     expect(progress.remainingTime, isNull);
     expect(progress.arrivalTime, isNull);
-    expect(progress.nextWaypointArrivalTime, isNull);
   });
 
   test('moves to the following stop after passing a waypoint', () {

@@ -260,6 +260,7 @@ class RelayTrafficRerouteProvider {
         ),
       ],
       maneuvers: alternative.maneuvers,
+      plannedDuration: Duration(seconds: alternative.durationSeconds),
     );
     final delaySavedSeconds = math.max(
       0,
