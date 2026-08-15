@@ -1845,7 +1845,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     left: 0,
                     right: 0,
                     top: 0,
-                    bottom: _safetyBandReservedHeight(landscape),
+                    bottom: _safetyBandReservedHeight(
+                      landscape,
+                      reserveLandscapeStack: true,
+                    ),
                     child: ValueListenableBuilder<List<RideQuickMessageAlert>>(
                       valueListenable: widget.quickMessageAlerts!,
                       builder: (context, alerts, _) {
@@ -3169,8 +3172,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// camera biases against - so there is one measurement rather than a constant
   /// that drifts from the layout. Landscape lays the actions out differently, so
   /// a floor clears them.
-  double _safetyBandReservedHeight(bool landscape) {
-    if (landscape) return _landscapeSafetyBandFloor;
+  double _safetyBandReservedHeight(
+    bool landscape, {
+    bool reserveLandscapeStack = false,
+  }) {
+    if (landscape) {
+      return reserveLandscapeStack
+          ? _landscapeActionStackReservedHeight
+          : _landscapeSafetyBandFloor;
+    }
     final measured = _measuredBottomChromeHeight;
     return measured > 0 ? measured : _portraitSafetyBandFallback;
   }
@@ -3181,12 +3191,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// reserving slightly too much.
   static const _portraitSafetyBandFallback = 132.0;
 
+  /// One extended FAB plus its map-edge clearance. This is enough before a
+  /// ride, when the route prompt and LEAVE are the only competing surfaces.
+  static const _landscapeSafetyBandFloor = 72.0;
+
   /// Three 48 px targets, two 8 px gaps, and the map-edge clearance.
   ///
   /// Landscape now stacks ALERT, LEAVE and REPORT vertically (#533). Keeping
   /// the old one-row reserve let an interrupt cover the lower two controls and
   /// absorb their taps.
-  static const _landscapeSafetyBandFloor = 184.0;
+  static const _landscapeActionStackReservedHeight = 184.0;
 
   /// The bottom band's height as last laid out.
   ///
