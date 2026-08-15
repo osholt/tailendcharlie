@@ -61,6 +61,7 @@ class RouteReshapePlanner {
       maneuvers: result.maneuvers,
       markerReview: route.markerReview,
       preferences: route.preferences,
+      plannedDuration: result.duration,
     );
     return RouteReshapeResult(
       route: reshaped,

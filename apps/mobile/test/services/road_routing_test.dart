@@ -884,6 +884,7 @@ void main() {
       );
       expect(plan.route.description, contains('motorways excluded'));
       expect(plan.route.description, contains('unsurfaced byways avoided'));
+      expect(plan.route.plannedDuration, plan.duration);
       expect(
         plan.warnings,
         contains(PreferenceAwareRoadRoutingService.motorcycleManeuverWarning),

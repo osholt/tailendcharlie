@@ -127,6 +127,7 @@ void main() {
       expect(preview.route.waypoints.last.name, 'Ferry');
       expect(preview.route.maneuvers.single.type, 'turn');
       expect(preview.route.maneuvers.single.drivingSide, 'left');
+      expect(preview.route.plannedDuration, const Duration(seconds: 140));
     },
   );
 

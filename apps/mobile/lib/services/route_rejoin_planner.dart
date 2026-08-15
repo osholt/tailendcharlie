@@ -481,6 +481,7 @@ route_domain.ImportedRoute? rejoinNavigationRoute(RouteRejoinPlan? plan) {
     ],
     waypoints: const [],
     maneuvers: plan.maneuvers,
+    plannedDuration: plan.duration,
   );
 }
 
