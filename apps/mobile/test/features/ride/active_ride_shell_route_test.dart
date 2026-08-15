@@ -1,14 +1,33 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/ride_simulation_controller.dart';
 import 'package:ride_relay/domain/geo_point.dart';
+import 'package:ride_relay/domain/imported_route.dart' as imported_route;
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/features/ride/active_ride_shell.dart';
 import 'package:ride_relay/services/ride_membership.dart';
+import 'package:ride_relay/services/road_routing.dart';
 
 void main() {
+  test('Ride Lab marks one point for a paired roundabout', () {
+    final entry = RoadRouteManeuver(
+      position: const imported_route.GeoPoint(latitude: 51.5, longitude: -2.35),
+      type: 'rotary',
+      exitNumber: 2,
+    );
+    final exit = RoadRouteManeuver(
+      position: const imported_route.GeoPoint(
+        latitude: 51.501,
+        longitude: -2.351,
+      ),
+      type: 'exit rotary',
+    );
+
+    expect(simulationMarkerManeuvers([entry, exit]), [entry]);
+  });
+
   group('reroute takeover around a junction', () {
     test('waits while approaching or clearing the current manoeuvre', () {
       expect(

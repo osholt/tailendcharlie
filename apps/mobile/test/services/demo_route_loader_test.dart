@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/services/demo_route_loader.dart';
+import 'package:ride_relay/services/navigation_guidance.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -12,7 +13,12 @@ void main() {
     expect(route.waypoints, hasLength(3));
     expect(route.waypoints.first.name, "King's Oak Academy car park");
     expect(route.waypoints.last.name, 'Cross Hands Hotel car park');
-    expect(route.maneuvers, hasLength(4));
+    expect(route.maneuvers, hasLength(5));
+    final instructions = collapseManeuvers(route.maneuvers);
+    expect(instructions, hasLength(4));
+    expect(instructions.last.direction, ManeuverDirection.straight);
+    expect(instructions.last.text, '2nd exit, straight on');
+    expect(instructions.last.exitNumber, 2);
 
     final points = route.paths.single.points;
     expect(points.first.latitude, closeTo(51.462674, 0.00001));
@@ -26,13 +32,14 @@ void main() {
     () async {
       final maneuvers = await const BundledDemoRouteLoader().loadManeuvers();
 
-      expect(maneuvers, hasLength(4));
+      expect(maneuvers, hasLength(5));
       expect(maneuvers.first.type, 'end of road');
       expect(
         maneuvers.map((maneuver) => maneuver.name),
         contains('Gorse Lane'),
       );
       expect(maneuvers.map((maneuver) => maneuver.type), contains('rotary'));
+      expect(maneuvers.last.type, 'exit rotary');
     },
   );
 }

@@ -48,7 +48,7 @@ class BundledDemoRouteLoader {
             (item) =>
                 RoadRouteManeuver.fromJson(Map<String, Object?>.from(item)),
           )
-          .where((maneuver) => maneuver.requiresSecondBikeDrop),
+          .toList(growable: false),
     );
   }
 }

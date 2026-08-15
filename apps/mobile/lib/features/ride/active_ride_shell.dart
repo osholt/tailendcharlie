@@ -134,6 +134,18 @@ bool shouldDeferRejoinNavigation({
   return since != null && since < guidanceJunctionClearanceMeters;
 }
 
+/// Junctions the virtual second bike may mark during Ride Lab.
+///
+/// Navigation keeps a roundabout's paired exit step so it can derive the road
+/// taken and draw the correct symbol. A marker belongs at the entry only, so
+/// the simulation's junction list deliberately keeps decision steps alone.
+@visibleForTesting
+List<RoadRouteManeuver> simulationMarkerManeuvers(
+  List<RoadRouteManeuver> maneuvers,
+) => maneuvers
+    .where((maneuver) => maneuver.requiresSecondBikeDrop)
+    .toList(growable: false);
+
 /// The only thing an observer link publishes.
 ///
 /// Its argument list is the privacy boundary: an observer is a separate
@@ -2154,7 +2166,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   ) async {
     if (route?.sourceFileName == 'demo_route.gpx') {
       try {
-        return (await const BundledDemoRouteLoader().loadManeuvers())
+        return simulationMarkerManeuvers(
+              await const BundledDemoRouteLoader().loadManeuvers(),
+            )
             .map(
               (maneuver) => awareness_geo.GeoPoint(
                 latitude: maneuver.position.latitude,
