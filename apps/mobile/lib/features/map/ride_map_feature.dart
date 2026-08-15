@@ -3181,8 +3181,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// reserving slightly too much.
   static const _portraitSafetyBandFallback = 132.0;
 
-  /// One row of extended FABs plus its margin.
-  static const _landscapeSafetyBandFloor = 72.0;
+  /// Three 48 px targets, two 8 px gaps, and the map-edge clearance.
+  ///
+  /// Landscape now stacks ALERT, LEAVE and REPORT vertically (#533). Keeping
+  /// the old one-row reserve let an interrupt cover the lower two controls and
+  /// absorb their taps.
+  static const _landscapeSafetyBandFloor = 184.0;
 
   /// The bottom band's height as last laid out.
   ///
