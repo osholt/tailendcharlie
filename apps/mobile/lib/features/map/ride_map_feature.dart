@@ -812,7 +812,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
   static const _personalHeatmapSource = 'ride-relay-personal-heatmap';
   static const _personalHeatmapLayer = 'ride-relay-personal-heatmap-layer';
   static const _remainingRouteSource = 'ride-relay-route-remaining';
-  static const _riddenRouteSource = 'ride-relay-route-ridden';
   static const _riderTrailSource = 'ride-relay-rider-trails';
   static const _casingHex = RouteTrailStyle.casingHex;
   static const _trailDirectionArrowSource = 'ride-relay-trail-direction-arrows';
@@ -910,7 +909,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   ///   offline-download and remove-route route actions;
   /// - "All turns" and the marker plan, which need manoeuvres;
   /// - the empty-route prompt, which exists to acquire a route;
-  /// - the planned-route geometry, its ridden/remaining split, waypoints, and
+  /// - the remaining planned-route geometry, waypoints, and
   ///   the guidance banner and off-course alerting derived from it.
   ///
   /// Trails, the group overview, presence, SOS, Leave, Report, pause, the ride
@@ -2681,18 +2680,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 )
                 .toList(growable: false),
           ),
-        // Travelled trails are drawn whether or not a route is loaded, and the
-        // leader's trail sits under the planned route so both stay readable
-        // where they coincide.
+        // Actual travelled trails are drawn whether or not a route is loaded,
+        // and the leader's trail sits under the remaining planned route so both
+        // stay readable where they coincide. Completed *planned* geometry is
+        // intentionally absent: the map behind the rider is basemap unless a
+        // real rider/group trail records where somebody actually went.
         if (route != null || _visibleRiderTrails.isNotEmpty)
           PolylineLayer(
             polylines: [
               ..._trailPolylines(dashed: false),
               ..._progressGeometry.remainingPaths.map(
                 (path) => _routePolyline(path, RouteTrailStyle.routeAhead),
-              ),
-              ..._progressGeometry.riddenPaths.map(
-                (path) => _routePolyline(path, RouteTrailStyle.travelled),
               ),
               ..._trailPolylines(dashed: true),
             ],
@@ -3067,6 +3065,31 @@ class _RideMapScreenState extends State<RideMapScreen> {
         : MediaQuery.sizeOf(context).height;
   }
 
+  /// Width of the laid-out map, with the screen as the first-frame fallback.
+  double get _mapViewportWidthPixels {
+    final width = _mapViewportKey.currentContext?.size?.width;
+    return width != null && width > 0
+        ? width
+        : MediaQuery.sizeOf(context).width;
+  }
+
+  /// The route engine states traffic side per manoeuvre. Taking the majority
+  /// makes one malformed step unable to mirror the whole ride; an unannotated
+  /// route keeps the product's UK left-traffic default.
+  bool get _routeUsesLeftHandTraffic {
+    var left = 0;
+    var right = 0;
+    for (final maneuver in _route?.maneuvers ?? const <RouteManeuver>[]) {
+      switch (maneuver.drivingSide?.trim().toLowerCase()) {
+        case 'left':
+          left += 1;
+        case 'right':
+          right += 1;
+      }
+    }
+    return left >= right;
+  }
+
   /// How much of the bottom of the screen an interrupting alert must leave
   /// alone, so SOS and LEAVE stay visible and hittable behind it (#177).
   ///
@@ -3125,16 +3148,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final landscape =
         MediaQuery.orientationOf(context) == Orientation.landscape;
     final viewportHeight = _mapViewportHeightPixels;
+    final viewportWidth = _mapViewportWidthPixels;
     final plan = NavigationCameraPlanner.plan(
       speedMetersPerSecond:
           _smoothedNavigationSpeedMetersPerSecond ??
           _navigationFix?.speedMetersPerSecond,
       landscape: landscape,
       viewportHeightPixels: viewportHeight,
+      viewportWidthPixels: viewportWidth,
       latitudeDegrees: position.latitude,
       bottomChromeFraction: landscape || viewportHeight <= 0
           ? 0
           : _bottomChromeHeightPixels / viewportHeight,
+      leftHandTraffic: _routeUsesLeftHandTraffic,
     );
     // MapLibre is tilted, so the bias is the perspective look-ahead the plan
     // solved. FlutterMap is flat, so it is a straight ground offset at that
@@ -3146,12 +3172,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
             forwardBiasPixels: plan.forwardBiasPixels,
             latitudeDegrees: position.latitude,
           );
-    return (
-      target: lookAhead == 0
-          ? position
-          : _pointAhead(position, _cameraBearingDegrees, lookAhead),
-      plan: plan,
+    final lateralOffset = NavigationCameraPlanner.lateralTargetOffsetMetersFor(
+      zoom: plan.zoom,
+      lateralBiasPixels: plan.lateralBiasPixels,
+      latitudeDegrees: position.latitude,
+      tileSize: _basemap.usesMapLibre ? 512 : 256,
     );
+    var target = lookAhead == 0
+        ? position
+        : _pointAhead(position, _cameraBearingDegrees, lookAhead);
+    if (lateralOffset != 0) {
+      target = _pointAhead(
+        target,
+        _cameraBearingDegrees + (lateralOffset > 0 ? 90 : -90),
+        lateralOffset.abs(),
+      );
+    }
+    return (target: target, plan: plan);
   }
 
   /// Whether the camera **is** the navigation viewport right now: follow mode
@@ -4260,32 +4297,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         ),
         enableInteraction: false,
       );
-      await controller.addGeoJsonSource(
-        _riddenRouteSource,
-        _riddenRouteGeoJson(),
-      );
-      await controller.addLineLayer(
-        _riddenRouteSource,
-        'ride-relay-route-ridden-border',
-        ml.LineLayerProperties(
-          lineColor: _casingHex,
-          lineWidth: RouteTrailStyle.travelled.casingWidthPixels,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      await controller.addLineLayer(
-        _riddenRouteSource,
-        'ride-relay-route-ridden',
-        ml.LineLayerProperties(
-          lineColor: _hexColor(RouteTrailStyle.travelled.color),
-          lineWidth: RouteTrailStyle.travelled.widthPixels,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
       // An off-route trail belongs on top of the plan: it is the deviation from
       // it.
       await _addTrailLayers(controller, RiderTrailKind.offRoute);
@@ -4512,10 +4523,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _remainingRouteGeoJson(),
       );
       await controller.setGeoJsonSource(
-        _riddenRouteSource,
-        _riddenRouteGeoJson(),
-      );
-      await controller.setGeoJsonSource(
         _riderTrailSource,
         _riderTrailGeoJson(),
       );
@@ -4575,10 +4582,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await controller.setGeoJsonSource(
           _remainingRouteSource,
           _remainingRouteGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _riddenRouteSource,
-          _riddenRouteGeoJson(),
         );
       }
       if (position) {
@@ -4707,14 +4710,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
             semanticLabel: 'Route direction',
           ),
         ),
-        TrailDirectionArrowSource(
-          paths: _progressGeometry.riddenPaths,
-          style: _TrailArrowStyle(
-            color: RouteTrailStyle.travelled.color,
-            idPrefix: 'ridden',
-            semanticLabel: 'Travel direction',
-          ),
-        ),
         for (final trace in byImportance)
           TrailDirectionArrowSource(
             paths: [trace.points],
@@ -4758,9 +4753,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
       ),
     ),
   );
-
-  Map<String, dynamic> _riddenRouteGeoJson() =>
-      MapGeoJson.lines(_progressGeometry.riddenPaths, idPrefix: 'ridden-route');
 
   List<MotorcycleDiscoveryFeature> get _visibleDiscoveryFeatures =>
       _discoveryCatalogue.visible(categories: _enabledDiscoveryCategories);

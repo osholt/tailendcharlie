@@ -40,6 +40,22 @@ import 'package:ride_relay/services/speed_limit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('completed planned geometry is absent from both map renderers', () {
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+
+    expect(source, isNot(contains('_riddenRouteSource')));
+    expect(source, isNot(contains('_progressGeometry.riddenPaths')));
+    expect(source, contains('_progressGeometry.remainingPaths'));
+    expect(source, contains('_trailPolylines(dashed: false)'));
+    expect(
+      source,
+      contains('tileSize: _basemap.usesMapLibre ? 512 : 256'),
+      reason: 'both renderer camera targets must carry the lateral intent',
+    );
+  });
+
   testWidgets('personal ride heatmap is optional and below the active route', (
     tester,
   ) async {
@@ -3097,8 +3113,11 @@ void main() {
       expect(ahead.strokeWidth, RouteTrailStyle.routeAhead.widthPixels);
       expect(ahead.borderColor, RouteTrailStyle.casing);
       expect(ahead.color.a, 1.0);
-      final travelled = lineWithColor(RouteTrailStyle.travelled.color);
-      expect(travelled.pattern, const StrokePattern.solid());
+      expect(
+        layer.polylines.map((line) => line.color),
+        isNot(contains(RouteTrailStyle.travelled.color)),
+        reason: 'completed planned route must not be painted behind the rider',
+      );
       // The leader's trail is the widest line and is drawn under the plan; an
       // off-route trail is dashed and drawn over it.
       final leader = lineWithColor(RouteTrailStyle.leaderTrail.color);
@@ -3114,7 +3133,7 @@ void main() {
       );
       expect(
         layer.polylines.indexOf(offRoute),
-        greaterThan(layer.polylines.indexOf(travelled)),
+        greaterThan(layer.polylines.indexOf(ahead)),
       );
 
       await tester.drag(find.byType(FlutterMap), const Offset(80, 0));

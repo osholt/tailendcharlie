@@ -138,14 +138,14 @@ void main() {
     final urbanPortrait = _plan(13, landscape: false);
     final roadPortrait = _plan(29, landscape: false);
 
-    expect(restPortrait.riderViewportFraction, closeTo(0.56, 0.001));
-    expect(urbanPortrait.riderViewportFraction, closeTo(0.616, 0.005));
+    expect(restPortrait.riderViewportFraction, closeTo(0.62, 0.001));
+    expect(urbanPortrait.riderViewportFraction, closeTo(0.652, 0.005));
     expect(roadPortrait.riderViewportFraction, closeTo(0.70, 0.005));
     expect(roadPortrait.forwardBiasPixels, closeTo(168, 2));
 
     final restLandscape = _plan(0, landscape: true);
     final roadLandscape = _plan(29, landscape: true);
-    expect(restLandscape.riderViewportFraction, closeTo(0.58, 0.001));
+    expect(restLandscape.riderViewportFraction, closeTo(0.64, 0.001));
     expect(roadLandscape.riderViewportFraction, closeTo(0.72, 0.005));
     // The landscape viewport is shorter, so the same fraction is fewer pixels.
     expect(
@@ -167,6 +167,43 @@ void main() {
       }
     }
   });
+
+  test(
+    'landscape uses mirrored traffic-side thirds and portrait stays centred',
+    () {
+      final leftTraffic = NavigationCameraPlanner.plan(
+        speedMetersPerSecond: 13,
+        landscape: true,
+        viewportHeightPixels: 390,
+        viewportWidthPixels: 840,
+        leftHandTraffic: true,
+      );
+      final rightTraffic = NavigationCameraPlanner.plan(
+        speedMetersPerSecond: 13,
+        landscape: true,
+        viewportHeightPixels: 390,
+        viewportWidthPixels: 840,
+        leftHandTraffic: false,
+      );
+      final portrait = NavigationCameraPlanner.plan(
+        speedMetersPerSecond: 13,
+        landscape: false,
+        viewportHeightPixels: 840,
+        viewportWidthPixels: 390,
+        leftHandTraffic: false,
+      );
+
+      expect(leftTraffic.riderHorizontalViewportFraction, closeTo(2 / 3, 1e-9));
+      expect(
+        rightTraffic.riderHorizontalViewportFraction,
+        closeTo(1 / 3, 1e-9),
+      );
+      expect(leftTraffic.lateralBiasPixels, closeTo(140, 0.01));
+      expect(rightTraffic.lateralBiasPixels, closeTo(-140, 0.01));
+      expect(portrait.riderHorizontalViewportFraction, 0.5);
+      expect(portrait.lateralBiasPixels, 0);
+    },
+  );
 
   test('look-ahead scales with speed and stays bounded', () {
     for (final landscape in [false, true]) {
@@ -318,6 +355,31 @@ void main() {
       ),
       navigationCameraMaximumLookAheadMeters,
     );
+  });
+
+  test('both renderer scales turn the same lateral anchor into a target', () {
+    final left = NavigationCameraPlanner.lateralTargetOffsetMetersFor(
+      zoom: 14,
+      lateralBiasPixels: -140,
+      latitudeDegrees: 53,
+      tileSize: 512,
+    );
+    final right = NavigationCameraPlanner.lateralTargetOffsetMetersFor(
+      zoom: 14,
+      lateralBiasPixels: 140,
+      latitudeDegrees: 53,
+      tileSize: 512,
+    );
+    final flutterMap = NavigationCameraPlanner.lateralTargetOffsetMetersFor(
+      zoom: 14,
+      lateralBiasPixels: -140,
+      latitudeDegrees: 53,
+      tileSize: 256,
+    );
+
+    expect(left, greaterThan(0), reason: 'target moves right of a left anchor');
+    expect(right, closeTo(-left, 1e-9));
+    expect(flutterMap, closeTo(left * 2, 1e-5));
   });
 
   group('settledOnViewport', () {
