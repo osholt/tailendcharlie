@@ -4,9 +4,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/services.dart';
+import 'package:crypto/crypto.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../controllers/distance_unit_controller.dart';
+import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
@@ -17,7 +19,7 @@ import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
-import '../../domain/imported_route.dart' show GeoPoint;
+import '../../domain/imported_route.dart' show GeoPoint, ImportedRoute;
 import '../../domain/map_style_mode.dart';
 import '../../services/road_routing.dart';
 import 'home_destination_search.dart';
@@ -33,6 +35,7 @@ import '../../services/build_identity.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/carplay_bridge.dart';
 import '../../services/gpx_import_source.dart';
+import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
 import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
@@ -40,6 +43,41 @@ import '../ride/route_recorder_screen.dart';
 import '../settings/about_build_sheet.dart';
 import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
+
+/// Runs the stateful half of a destination-search handoff in the only safe
+/// order: the route belongs to the ride that has just been created.
+///
+/// Kept small and public so the ordering regression from #546 can be tested
+/// without replacing the real home screen with a test-only implementation.
+Future<void> createRideThenStageDestinationRoute({
+  required Future<void> Function() createRide,
+  required VoidCallback stageRoute,
+}) async {
+  await createRide();
+  stageRoute();
+}
+
+/// Imports a web-planner/file handoff into the Ride Library without creating or
+/// starting a ride. The map can activate it later through the normal review.
+Future<ImportedRoute> saveSharedRouteToLibrary({
+  required PickedGpxFile file,
+  required RecordedRouteStore recordedRoutes,
+  RouteImporter? importer,
+}) async {
+  final imported =
+      (importer ?? RouteImporter(source: const SystemGpxImportSource()))
+          .importFromFile(file);
+  final stableId = 'shared-${sha256.convert(file.bytes)}';
+  final existing = (await recordedRoutes.list())
+      .where((route) => route.id == stableId)
+      .firstOrNull;
+  if (existing != null) return existing;
+
+  final json = imported.toJson()..['id'] = stableId;
+  final route = ImportedRoute.fromJson(json);
+  await recordedRoutes.save(route);
+  return route;
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -54,6 +92,7 @@ class HomeScreen extends StatefulWidget {
     this.routeProgressDisplay,
     required this.recordedRoutes,
     required this.completedRides,
+    this.globalRideHeatmap,
     this.planDirectory,
     this.testControl,
     this.spokenGuidance,
@@ -76,6 +115,7 @@ class HomeScreen extends StatefulWidget {
   final RouteProgressDisplayController? routeProgressDisplay;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
+  final GlobalRideHeatmapController? globalRideHeatmap;
   final PlanDirectory? planDirectory;
 
   /// Null unless this build carries the test-control define; only forwarded to
@@ -348,6 +388,7 @@ class _HomeScreenState extends State<HomeScreen> {
             speedLimitDisplay: widget.speedLimitDisplay,
             distanceUnit: widget.distanceUnits.value,
             completedRideStore: widget.completedRides,
+            globalRideHeatmap: widget.globalRideHeatmap,
             enableNativeServices: widget.enableNativeServices,
             // So the map's own "Show my location" control sits above the action
             // bar rather than under it.
@@ -413,6 +454,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           testControl: widget.testControl,
                           spokenGuidance: widget.spokenGuidance,
                           rideDiagnostics: widget.rideDiagnostics,
+                          globalRideHeatmap: widget.globalRideHeatmap,
                         ),
                         icon: const Icon(Icons.settings_outlined),
                       ),
@@ -462,6 +504,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (widget.sharedRoutes.pending case final file?)
       _PendingSharedRouteBanner(
         fileName: file.name,
+        onSave: () => unawaited(_savePendingSharedRoute(file)),
         onDismiss: widget.sharedRoutes.clearPending,
       ),
     if (widget.sharedRoutes.plannerLinkStatus != PlannerLinkStatus.idle)
@@ -474,6 +517,25 @@ class _HomeScreenState extends State<HomeScreen> {
         onDismiss: widget.sharedRoutes.clearPlannerLinkNotice,
       ),
   ];
+
+  Future<void> _savePendingSharedRoute(PickedGpxFile file) async {
+    try {
+      final route = await saveSharedRouteToLibrary(
+        file: file,
+        recordedRoutes: widget.recordedRoutes,
+      );
+      widget.sharedRoutes.clearPending();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${route.name} saved to Ride Library.')),
+      );
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
 
   /// The occasional actions, behind one button.
   ///
@@ -607,16 +669,22 @@ class _HomeScreenState extends State<HomeScreen> {
         distanceUnit: widget.distanceUnits.value,
       );
       if (!mounted) return;
-      widget.sharedRoutes.stagePendingInAppRoute(
-        plan.route,
-        reviewNotes: plan.warnings,
-      );
-      await widget.controller.createRide(
-        // Already known from onboarding. Asking for it again on every ride is
-        // exactly what #431 was raised about.
-        widget.riderProfile.displayName,
-        coordinationMode: start.coordinationMode,
-        rideName: choice.label,
+      await createRideThenStageDestinationRoute(
+        createRide: () => widget.controller.createRide(
+          // Already known from onboarding. Asking for it again on every ride is
+          // exactly what #431 was raised about.
+          widget.riderProfile.displayName,
+          coordinationMode: start.coordinationMode,
+          rideName: choice.label,
+        ),
+        // Stage only after creation succeeds. Staging first notified the
+        // app-level builder while Home was still the active surface; on the
+        // Solo path that notification could be consumed/cleared before the new
+        // ride map mounted, leaving Bath selected but no route on the map.
+        stageRoute: () => widget.sharedRoutes.stagePendingInAppRoute(
+          plan.route,
+          reviewNotes: plan.warnings,
+        ),
       );
     } on Object catch (error) {
       if (!mounted) return;
@@ -668,10 +736,11 @@ class _HomeScreenState extends State<HomeScreen> {
       launchContext,
       library: library,
       distanceUnit: widget.distanceUnits.value,
-      openPreviousRideArchive: (libraryContext) => PreviousRidesScreen.show(
+      openPreviousRide: (libraryContext, ride) => PreviousRideDetailScreen.show(
         libraryContext,
-        widget.completedRides,
-        widget.distanceUnits,
+        ride: ride,
+        completedRides: widget.completedRides,
+        distanceUnits: widget.distanceUnits,
       ),
     );
     if (selection == null || !mounted) return;
@@ -815,10 +884,12 @@ class _SetAsideRideBanner extends StatelessWidget {
 class _PendingSharedRouteBanner extends StatelessWidget {
   const _PendingSharedRouteBanner({
     required this.fileName,
+    required this.onSave,
     required this.onDismiss,
   });
 
   final String fileName;
+  final VoidCallback onSave;
   final VoidCallback onDismiss;
 
   @override
@@ -844,11 +915,16 @@ class _PendingSharedRouteBanner extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
               const Text(
-                'Start or join a ride, then reopen it to use this route.',
+                'Save it to Ride Library now, or start a ride to use it.',
                 style: TextStyle(color: Color(0xFFABB5C1), fontSize: 12),
               ),
             ],
           ),
+        ),
+        TextButton(
+          key: const Key('save-shared-route-to-library'),
+          onPressed: onSave,
+          child: const Text('Save'),
         ),
         IconButton(
           tooltip: 'Dismiss',
