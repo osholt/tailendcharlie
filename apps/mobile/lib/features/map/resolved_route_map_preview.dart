@@ -103,6 +103,8 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
   static const _pinSource = 'route-preview-pins';
   ml.MapLibreMapController? _controller;
   bool _styleReady = false;
+  bool _initialFitComplete = false;
+  bool _initialFitInProgress = false;
   bool _syncing = false;
   bool _syncAgain = false;
   bool _syncAgainShouldFit = false;
@@ -176,6 +178,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                   widget.onControllerReady?.call(controller);
                 },
                 onStyleLoadedCallback: () => unawaited(_prepareStyle()),
+                onMapIdle: () => unawaited(_fitInitialRoute()),
                 onMapClick: widget.onPointTap == null && widget.onPinTap == null
                     ? null
                     : (point, _) => unawaited(_handlePointTap(point)),
@@ -409,10 +412,13 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
         enableInteraction: false,
       );
       _styleReady = true;
-      await _syncAndFit();
-      // After the fit, so a snapshot taken on this signal frames the route
-      // rather than wherever the camera started (#157).
-      widget.onStyleReady?.call();
+      await _syncAndFit(fit: false);
+      // MapLibre can report the style before the native view has its final
+      // dimensions. Fitting in that instant leaves long routes at the initial
+      // point zoom. Give layout one frame, then keep onMapIdle as a second safe
+      // opportunity; the guard ensures this happens only once (#543).
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await _fitInitialRoute();
     } on Object catch (error) {
       if (kDebugMode) debugPrint('Could not prepare route preview map: $error');
     }
@@ -451,18 +457,18 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     }
   }
 
-  Future<void> _fit() async {
+  Future<bool> _fit() async {
     final controller = _controller;
     final points = _points;
-    if (controller == null || points.isEmpty) return;
+    if (controller == null || points.isEmpty) return false;
     if (points.length == 1) {
       final only = ml.LatLng(points.single.latitude, points.single.longitude);
-      if (!mapLibreCameraIsUsable(only, zoom: 15)) return;
+      if (!mapLibreCameraIsUsable(only, zoom: 15)) return false;
       await controller.animateCamera(ml.CameraUpdate.newLatLngZoom(only, 15));
-      return;
+      return true;
     }
     final bounds = routePreviewBounds(points);
-    if (!bounds.isUsableCamera) return;
+    if (!bounds.isUsableCamera) return false;
     await controller.animateCamera(
       ml.CameraUpdate.newLatLngBounds(
         bounds,
@@ -473,6 +479,35 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
       ),
       duration: const Duration(milliseconds: 350),
     );
+    return true;
+  }
+
+  Future<void> _fitInitialRoute() async {
+    if (!routePreviewNeedsInitialFit(
+          styleReady: _styleReady,
+          initialFitComplete: _initialFitComplete,
+        ) ||
+        _initialFitInProgress) {
+      return;
+    }
+    _initialFitInProgress = true;
+    try {
+      final fitSucceeded = await _fit();
+      if (!routePreviewShouldCompleteInitialFit(fitSucceeded: fitSucceeded)) {
+        return;
+      }
+      _initialFitComplete = true;
+      // After the fit, so a snapshot taken on this signal frames the route
+      // rather than wherever the camera started (#157).
+      widget.onStyleReady?.call();
+    } on Object catch (error) {
+      // A native view can report idle while it is still attaching. Keep the
+      // fit eligible for the next idle callback instead of surfacing an
+      // unhandled async error or freezing the initial camera too close.
+      if (kDebugMode) debugPrint('Could not fit initial route preview: $error');
+    } finally {
+      _initialFitInProgress = false;
+    }
   }
 
   Future<void> _zoomBy(double delta) async {
@@ -708,6 +743,14 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     };
   }
 }
+
+bool routePreviewNeedsInitialFit({
+  required bool styleReady,
+  required bool initialFitComplete,
+}) => styleReady && !initialFitComplete;
+
+bool routePreviewShouldCompleteInitialFit({required bool fitSucceeded}) =>
+    fitSucceeded;
 
 class _RouteComparisonLegend extends StatelessWidget {
   const _RouteComparisonLegend();

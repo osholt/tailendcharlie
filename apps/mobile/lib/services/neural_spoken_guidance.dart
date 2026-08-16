@@ -267,13 +267,17 @@ class FailSafeNeuralSpokenGuidanceEngine
     required this.neural,
     required this.fallback,
     this.startDeadline = const Duration(milliseconds: 800),
+    this.warmedStartDeadline = const Duration(milliseconds: 2500),
     this.onOutput,
   });
 
   final NeuralSpeechStarter neural;
   final SpokenGuidanceEngine fallback;
   final Duration startDeadline;
+  final Duration warmedStartDeadline;
   final SpokenGuidanceOutputObserver? onOutput;
+  bool _warmed = false;
+  Future<void>? _warming;
 
   @override
   Future<void> configure() async {
@@ -284,13 +288,23 @@ class FailSafeNeuralSpokenGuidanceEngine
   }
 
   @override
-  Future<void> warmUp() => neural.prepare();
+  Future<void> warmUp() async {
+    final pending = _warming ??= neural.prepare();
+    try {
+      await pending;
+      _warmed = true;
+    } finally {
+      if (identical(_warming, pending)) _warming = null;
+    }
+  }
 
   @override
   Future<void> speak(String phrase) async {
     final attempt = neural.beginSpeak(phrase);
     try {
-      await attempt.started.timeout(startDeadline);
+      await attempt.started.timeout(
+        _warmed || _warming != null ? warmedStartDeadline : startDeadline,
+      );
     } on Object {
       await neural.cancelCurrentAttempt();
       await fallback.speak(phrase);

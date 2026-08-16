@@ -15,6 +15,7 @@ import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/shared_route_controller.dart';
 import '../../controllers/personal_ride_heatmap_controller.dart';
+import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../data/json_file_completed_ride_store.dart';
 import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
@@ -30,7 +31,10 @@ import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/basemap_status.dart';
+import '../../services/biker_place_catalogue.dart';
+import '../../services/circular_ride_planner.dart';
 import '../../services/demo_route_loader.dart';
+import '../../services/discovery_layer_preferences.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
 import 'ride_clock.dart';
@@ -38,6 +42,7 @@ import '../../services/enforcement_alert_presentation.dart';
 import '../../services/fixed_speed_camera_catalogue.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/gpx_import_source.dart';
+import '../../services/global_ride_heatmap.dart';
 import '../../services/group_pip_bridge.dart';
 import '../../services/imported_track_matcher.dart';
 import '../../services/leader_ride_status.dart';
@@ -67,6 +72,7 @@ import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
+import 'circular_ride_sheet.dart';
 import 'discovery_road_sheet.dart';
 import 'hazard_map_symbol.dart';
 import 'map_camera_guard.dart';
@@ -223,6 +229,7 @@ class RideMapFeature extends StatefulWidget {
     this.mapStyleString,
     this.completedRideStore,
     this.personalRideHeatmap,
+    this.globalRideHeatmap,
     this.distanceUnit = DistanceUnit.kilometres,
     this.speedLimitDisplay,
     this.showRouteProgress = true,
@@ -284,6 +291,7 @@ class RideMapFeature extends StatefulWidget {
     RouteStore? routeStore,
     CompletedRideStore? completedRideStore,
     PersonalRideHeatmapController? personalRideHeatmap,
+    GlobalRideHeatmapController? globalRideHeatmap,
     bool canEditRoute = true,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     SpeedLimitDisplayController? speedLimitDisplay,
@@ -344,6 +352,7 @@ class RideMapFeature extends StatefulWidget {
     routeStore: routeStore,
     completedRideStore: completedRideStore,
     personalRideHeatmap: personalRideHeatmap,
+    globalRideHeatmap: globalRideHeatmap,
     canEditRoute: canEditRoute,
     distanceUnit: distanceUnit,
     speedLimitDisplay: speedLimitDisplay,
@@ -445,6 +454,7 @@ class RideMapFeature extends StatefulWidget {
   final String? mapStyleString;
   final CompletedRideStore? completedRideStore;
   final PersonalRideHeatmapController? personalRideHeatmap;
+  final GlobalRideHeatmapController? globalRideHeatmap;
   final DistanceUnit distanceUnit;
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool showRouteProgress;
@@ -559,6 +569,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         mapStyleOutcome: dependencies.mapStyleOutcome,
         completedRideStore: widget.completedRideStore,
         personalRideHeatmap: widget.personalRideHeatmap,
+        globalRideHeatmap: widget.globalRideHeatmap,
         disposeOfflineTileCache: widget.offlineTileCache == null,
         currentPosition: widget.currentPosition,
         navigationPosition: widget.navigationPosition,
@@ -704,7 +715,10 @@ class RideMapScreen extends StatefulWidget {
     this.recordedRouteStore,
     this.completedRideStore,
     this.personalRideHeatmap,
+    this.globalRideHeatmap,
     this.storedRouteLibrary,
+    this.discoveryCatalogueLoader,
+    this.bikerPlaceCatalogueLoader,
     this.distanceUnit = DistanceUnit.kilometres,
     this.speedLimitDisplay,
     this.showRouteProgress = true,
@@ -819,10 +833,14 @@ class RideMapScreen extends StatefulWidget {
   final RecordedRouteStore? recordedRouteStore;
   final CompletedRideStore? completedRideStore;
   final PersonalRideHeatmapController? personalRideHeatmap;
+  final GlobalRideHeatmapController? globalRideHeatmap;
 
   /// A fully assembled library, for tests that want to fix the identity and
   /// timestamp of the route it produces.
   final StoredRouteLibrary? storedRouteLibrary;
+  final Future<MotorcycleDiscoveryCatalogue> Function()?
+  discoveryCatalogueLoader;
+  final Future<BikerPlaceCatalogue> Function()? bikerPlaceCatalogueLoader;
 
   final DistanceUnit distanceUnit;
   final SpeedLimitDisplayController? speedLimitDisplay;
@@ -840,6 +858,8 @@ class RideMapScreen extends StatefulWidget {
 class _RideMapScreenState extends State<RideMapScreen> {
   static const _personalHeatmapSource = 'ride-relay-personal-heatmap';
   static const _personalHeatmapLayer = 'ride-relay-personal-heatmap-layer';
+  static const _globalHeatmapSource = 'ride-relay-global-heatmap';
+  static const _globalHeatmapLayer = 'ride-relay-global-heatmap-layer';
   static const _remainingRouteSource = 'ride-relay-route-remaining';
   static const _riderTrailSource = 'ride-relay-rider-trails';
   static const _casingHex = RouteTrailStyle.casingHex;
@@ -879,6 +899,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   late bool _ownsSpeedLimitDisplay;
   PersonalRideHeatmapController? _personalRideHeatmap;
   bool _ownsPersonalRideHeatmap = false;
+  Timer? _globalHeatmapDebounce;
+  double _lastViewportZoom = 12;
   late final GroupPipBridge _groupPipBridge;
   ml.MapLibreMapController? _mapLibreController;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
@@ -1074,7 +1096,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
   TileDownloadCancellationToken? _downloadCancellation;
   MotorcycleDiscoveryCatalogue _discoveryCatalogue =
       const MotorcycleDiscoveryCatalogue([]);
-  final Set<MotorcycleDiscoveryCategory> _enabledDiscoveryCategories = {};
+  final Set<MotorcycleDiscoveryCategory> _enabledDiscoveryCategories = {
+    MotorcycleDiscoveryCategory.twistyHighlight,
+  };
+  BikerPlaceCatalogue _bikerPlaceCatalogue = BikerPlaceCatalogue.empty;
+  DiscoveryLayerPreferences? _discoveryLayerPreferences;
+  bool _bikerCafesVisible = true;
+  List<GeoPoint>? _discoveryViewportCorners;
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
@@ -1249,6 +1277,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     widget.rejoinNavigationRoute?.addListener(_onRejoinNavigationRouteChanged);
     widget.leaderStatus?.addListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
+    widget.enforcementAlert?.addListener(_onEnforcementAlertChanged);
+    widget.globalRideHeatmap?.addListener(_onGlobalRideHeatmapChanged);
     _rejoinProgressGeometry = _rejoinProgressTracker.update(
       _rejoinRoute,
       _effectivePosition,
@@ -1273,6 +1303,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.changeRouteRequestToken != widget.changeRouteRequestToken) {
       _maybeHandleChangeRouteRequest();
+    }
+    if (oldWidget.globalRideHeatmap != widget.globalRideHeatmap) {
+      oldWidget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
+      widget.globalRideHeatmap?.addListener(_onGlobalRideHeatmapChanged);
+      _scheduleGlobalHeatmapRefresh();
     }
     if (oldWidget.currentPosition != widget.currentPosition) {
       oldWidget.currentPosition?.removeListener(_onPositionChanged);
@@ -1308,6 +1343,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
       oldWidget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
       widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
       _onJunctionMarkerChanged();
+    }
+    if (oldWidget.enforcementAlert != widget.enforcementAlert) {
+      oldWidget.enforcementAlert?.removeListener(_onEnforcementAlertChanged);
+      widget.enforcementAlert?.addListener(_onEnforcementAlertChanged);
+      _onEnforcementAlertChanged();
     }
     if (oldWidget.speedLimitDisplay != widget.speedLimitDisplay) {
       if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
@@ -1358,6 +1398,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
     widget.leaderStatus?.removeListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.removeListener(_onJunctionMarkerChanged);
+    widget.enforcementAlert?.removeListener(_onEnforcementAlertChanged);
     _mapLibreController?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     _mapLibreController?.removeListener(_scheduleCameraFramingRefresh);
     _mapController.dispose();
@@ -1373,10 +1414,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
     _personalRideHeatmap?.removeListener(_onPersonalRideHeatmapChanged);
     if (_ownsPersonalRideHeatmap) _personalRideHeatmap?.dispose();
+    widget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
+    _globalHeatmapDebounce?.cancel();
     unawaited(_groupPipBridge.dispose());
     _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
+  }
+
+  void _onEnforcementAlertChanged() {
+    // A dismissal lasts only for this uninterrupted approach. GPS/provider
+    // updates can briefly clear a camera and later arm the same catalogue ID;
+    // retaining the old dismissal hid the popup while the independent speech
+    // edge announced it again.
+    if (widget.enforcementAlert?.value == null &&
+        _dismissedEnforcementAlertId != null &&
+        mounted) {
+      setState(() => _dismissedEnforcementAlertId = null);
+    }
   }
 
   Future<void> _loadPersistedRoute() async {
@@ -1435,9 +1490,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   Future<void> _loadDiscoveryCatalogue() async {
     try {
-      final catalogue = await MotorcycleDiscoveryCatalogue.loadAsset();
+      final results = await Future.wait<Object>([
+        (widget.discoveryCatalogueLoader ??
+            MotorcycleDiscoveryCatalogue.loadAsset)(),
+        (widget.bikerPlaceCatalogueLoader ?? BikerPlaceCatalogue.loadAsset)(),
+        DiscoveryLayerPreferences.load(),
+      ]);
       if (!mounted) return;
-      setState(() => _discoveryCatalogue = catalogue);
+      final preferences = results[2] as DiscoveryLayerPreferences;
+      setState(() {
+        _discoveryCatalogue = results[0] as MotorcycleDiscoveryCatalogue;
+        _bikerPlaceCatalogue = results[1] as BikerPlaceCatalogue;
+        _discoveryLayerPreferences = preferences;
+        _enabledDiscoveryCategories
+          ..clear()
+          ..addAll(preferences.categories);
+        _bikerCafesVisible = preferences.bikerCafesVisible;
+      });
       _scheduleMapLibreSync(overlays: true);
     } on Object catch (error) {
       if (kDebugMode) debugPrint('Could not load discovery catalogue: $error');
@@ -1482,6 +1551,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
         : PersonalRideHeatmap.empty;
   }
 
+  GlobalHeatmapSnapshot get _visibleGlobalHeatmap {
+    final controller = widget.globalRideHeatmap;
+    return controller?.visible == true
+        ? controller!.snapshot
+        : GlobalHeatmapSnapshot.empty;
+  }
+
+  List<CircularRideHeatCell> get _personalCircularHeatCells => [
+    for (final cell in _personalRideHeatmap?.heatmap.cells ?? const [])
+      CircularRideHeatCell(point: cell.centre, weight: cell.weight),
+  ];
+
+  List<CircularRideHeatCell> get _globalCircularHeatCells => [
+    for (final cell in widget.globalRideHeatmap?.snapshot.cells ?? const [])
+      CircularRideHeatCell(point: cell.point, weight: cell.weight),
+  ];
+
   Future<void> _togglePersonalRideHeatmap() async {
     final controller = _personalRideHeatmap;
     if (controller == null) {
@@ -1501,6 +1587,54 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ? 'Personal rides is on. No travelled tracks are saved yet.'
           : 'Personal rides is on · $cells covered area${cells == 1 ? '' : 's'}.'
                 '${controller.heatmap.truncated ? ' The oldest coverage was capped for performance.' : ''}',
+    );
+  }
+
+  void _onGlobalRideHeatmapChanged() {
+    if (!mounted) return;
+    setState(() {});
+    _scheduleMapLibreSync(overlays: true);
+  }
+
+  Future<void> _toggleGlobalRideHeatmap() async {
+    final controller = widget.globalRideHeatmap;
+    if (controller == null) {
+      _showMessage('The global rides service is not configured in this build.');
+      return;
+    }
+    await controller.setVisible(!controller.visible);
+    if (!controller.visible) return;
+    _showMessage(
+      'Global rides shows thresholded public coverage. Viewing it does not share your rides.',
+    );
+    _scheduleGlobalHeatmapRefresh(immediate: true);
+  }
+
+  void _scheduleGlobalHeatmapRefresh({bool immediate = false}) {
+    _globalHeatmapDebounce?.cancel();
+    final controller = widget.globalRideHeatmap;
+    final corners = _discoveryViewportCorners;
+    if (controller?.visible != true || corners == null || corners.length < 2) {
+      return;
+    }
+    _globalHeatmapDebounce = Timer(
+      immediate ? Duration.zero : const Duration(milliseconds: 450),
+      () {
+        final west = math.min(corners[0].longitude, corners[1].longitude);
+        final east = math.max(corners[0].longitude, corners[1].longitude);
+        final south = math.min(corners[0].latitude, corners[1].latitude);
+        final north = math.max(corners[0].latitude, corners[1].latitude);
+        if (east - west > 8 || north - south > 8) return;
+        unawaited(
+          controller!.refresh(
+            west: west,
+            south: south,
+            east: east,
+            north: north,
+            zoom: _lastViewportZoom.round().clamp(6, 18),
+          ),
+        );
+      },
     );
   }
 
@@ -1627,6 +1761,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   onSelected: _handleMenuAction,
                   itemBuilder: (context) => [
                     if (widget.canEditRoute) ...[
+                      const PopupMenuItem(
+                        value: _MapAction.circularRide,
+                        child: Text('Create a circular ride'),
+                      ),
                       PopupMenuItem(
                         value: _MapAction.importGpx,
                         // Route-derived wording only: the action itself is
@@ -1658,6 +1796,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           ),
                           const SizedBox(width: 10),
                           const Expanded(child: Text('Personal rides heatmap')),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      key: const Key('global-rides-heatmap-toggle'),
+                      value: _MapAction.globalRideHeatmap,
+                      child: Row(
+                        children: [
+                          Icon(
+                            widget.globalRideHeatmap?.visible == true
+                                ? Icons.check_box
+                                : Icons.check_box_outline_blank,
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(child: Text('Global rides heatmap')),
                         ],
                       ),
                     ),
@@ -2563,15 +2716,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     ),
                   ...urgent,
                   ?tecGap,
-                  // The turn banner is the last thing above the targets, so
-                  // everything above it is map (#133). It used to have the TEC
-                  // gap and the group overview between it and them.
-                  ?guidance,
                   // Rare, and its own run: it appears only when the map is off
-                  // the rider, and the alternative was shrinking a target to fit
-                  // it beside three others.
+                  // the rider. It belongs immediately above the turn pane so
+                  // returning to follow mode is next to the viewport it affects.
                   if (followMe != null)
                     Align(alignment: Alignment.centerLeft, child: followMe),
+                  // The turn banner is the last pane above the permanent
+                  // targets, keeping the road ahead clear (#133).
+                  ?guidance,
                   ?actionCluster,
                   ?completionSuggestion,
                   ?junctionCard,
@@ -2727,8 +2879,25 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 ),
             ],
           ),
+        if (_visibleGlobalHeatmap.cells.isNotEmpty)
+          CircleLayer(
+            key: const Key('global-rides-heatmap-layer'),
+            circles: [
+              for (final cell in _visibleGlobalHeatmap.cells)
+                CircleMarker(
+                  point: _latLng(cell.point),
+                  radius: 7 + 5 * cell.weight,
+                  color: Color.lerp(
+                    const Color(0xFF0EA5E9),
+                    const Color(0xFFF59E0B),
+                    cell.weight,
+                  )!.withValues(alpha: 0.14 + 0.22 * cell.weight),
+                ),
+            ],
+          ),
         if (_visibleDiscoveryFeatures.any((feature) => !feature.isPoint))
           PolylineLayer(
+            key: const Key('free-roam-discovery-lines-layer'),
             polylines: _visibleDiscoveryFeatures
                 .where((feature) => !feature.isPoint)
                 .map(
@@ -2769,6 +2938,34 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           color: _discoveryColour(feature.category),
                           size: 30,
                           shadows: const [
+                            Shadow(color: Color(0xFF10151C), blurRadius: 4),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        if (_visibleBikerCafes.isNotEmpty)
+          MarkerLayer(
+            key: const Key('free-roam-biker-cafes-layer'),
+            markers: _visibleBikerCafes
+                .map(
+                  (place) => Marker(
+                    point: _latLng(place.point),
+                    width: 42,
+                    height: 42,
+                    child: Semantics(
+                      button: true,
+                      label: 'Biker café: ${place.name}',
+                      child: GestureDetector(
+                        onTap: () => _showBikerPlace(place),
+                        child: const Icon(
+                          Icons.local_cafe,
+                          color: Color(0xFFFFC857),
+                          size: 30,
+                          shadows: [
                             Shadow(color: Color(0xFF10151C), blurRadius: 4),
                           ],
                         ),
@@ -2939,6 +3136,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
 
     return Stack(
+      key: const Key('enforcement-alert-layer'),
       children: [
         Positioned.fill(
           child: ColoredBox(color: const Color(0xFF111820), child: map),
@@ -3003,6 +3201,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
               unawaited(_prepareMapLibreStyle());
             },
             onCameraMove: _onMapLibreCameraMove,
+            onCameraIdle: () => unawaited(_updateMapLibreDiscoveryViewport()),
             // Without this the platform never reports its camera, and
             // `MapLibreMapController.cameraPosition` keeps the value it was
             // constructed with for the whole ride: iOS returns early from
@@ -3053,6 +3252,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   void _onMapLibreCameraMove(ml.CameraPosition camera) {
+    _lastViewportZoom = camera.zoom;
     if ((camera.bearing - _mapBearing.value).abs() >= 0.25) {
       _mapBearing.value = camera.bearing;
     }
@@ -3694,6 +3894,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _onFlutterMapEvent(MapEvent event) {
     if (event.source == MapEventSource.nonRotatedSizeChange) return;
+    _lastViewportZoom = event.camera.zoom;
     if ((event.camera.rotation - _mapBearing.value).abs() >= 0.25) {
       _mapBearing.value = event.camera.rotation;
     }
@@ -3709,6 +3910,59 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // measured, so the button appears and disappears from where the map actually
     // is rather than from which gesture moved it (#133).
     _scheduleCameraFramingRefresh();
+    if (event is MapEventMoveEnd ||
+        event is MapEventFlingAnimationEnd ||
+        event is MapEventDoubleTapZoomEnd ||
+        event is MapEventScrollWheelZoom) {
+      final bounds = event.camera.visibleBounds;
+      _setDiscoveryViewportCorners([
+        GeoPoint(latitude: bounds.south, longitude: bounds.west),
+        GeoPoint(latitude: bounds.north, longitude: bounds.east),
+      ]);
+    }
+  }
+
+  Future<void> _updateMapLibreDiscoveryViewport() async {
+    final controller = _mapLibreController;
+    if (controller == null) return;
+    try {
+      final bounds = await controller.getVisibleRegion();
+      _setDiscoveryViewportCorners([
+        GeoPoint(
+          latitude: bounds.southwest.latitude,
+          longitude: bounds.southwest.longitude,
+        ),
+        GeoPoint(
+          latitude: bounds.northeast.latitude,
+          longitude: bounds.northeast.longitude,
+        ),
+      ]);
+    } on Object catch (error) {
+      if (kDebugMode) {
+        debugPrint('Could not update discovery viewport: $error');
+      }
+    }
+  }
+
+  void _setDiscoveryViewportCorners(List<GeoPoint> corners) {
+    final previous = _discoveryViewportCorners;
+    if (previous != null &&
+        previous.length == corners.length &&
+        List.generate(
+          corners.length,
+          (index) =>
+              (previous[index].latitude - corners[index].latitude).abs() <
+                  0.001 &&
+              (previous[index].longitude - corners[index].longitude).abs() <
+                  0.001,
+        ).every((same) => same)) {
+      _scheduleGlobalHeatmapRefresh();
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _discoveryViewportCorners = corners);
+    _scheduleMapLibreSync(overlays: true);
+    _scheduleGlobalHeatmapRefresh();
   }
 
   void _onMapPointerDown(PointerDownEvent event) {
@@ -4316,6 +4570,43 @@ class _RideMapScreenState extends State<RideMapScreen> {
     try {
       await _registerMarkerImages(controller);
       await controller.addGeoJsonSource(
+        _globalHeatmapSource,
+        _visibleGlobalHeatmap.toGeoJson(),
+      );
+      await controller.addHeatmapLayer(
+        _globalHeatmapSource,
+        _globalHeatmapLayer,
+        const ml.HeatmapLayerProperties(
+          heatmapRadius: [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            5,
+            4,
+            12,
+            10,
+            17,
+            18,
+          ],
+          heatmapWeight: ['get', 'weight'],
+          heatmapIntensity: 0.8,
+          heatmapColor: [
+            'interpolate',
+            ['linear'],
+            ['heatmap-density'],
+            0,
+            'rgba(14,165,233,0)',
+            0.25,
+            '#0EA5E9',
+            0.7,
+            '#F59E0B',
+            1,
+            '#EF4444',
+          ],
+          heatmapOpacity: 0.42,
+        ),
+      );
+      await controller.addGeoJsonSource(
         _personalHeatmapSource,
         _visiblePersonalHeatmap.toGeoJson(),
       );
@@ -4644,6 +4935,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
     try {
       await _ensureRiderSymbolImages(controller);
       await controller.setGeoJsonSource(
+        _globalHeatmapSource,
+        _visibleGlobalHeatmap.toGeoJson(),
+      );
+      await controller.setGeoJsonSource(
         _personalHeatmapSource,
         _visiblePersonalHeatmap.toGeoJson(),
       );
@@ -4725,6 +5020,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
       }
       if (overlays) {
+        await controller.setGeoJsonSource(
+          _globalHeatmapSource,
+          _visibleGlobalHeatmap.toGeoJson(),
+        );
         await controller.setGeoJsonSource(
           _personalHeatmapSource,
           _visiblePersonalHeatmap.toGeoJson(),
@@ -4891,8 +5190,46 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ),
   );
 
-  List<MotorcycleDiscoveryFeature> get _visibleDiscoveryFeatures =>
-      _discoveryCatalogue.visible(categories: _enabledDiscoveryCategories);
+  /// Discovery data is a national catalogue. Feeding every road and café into
+  /// Flutter's fallback renderer made opening the free-roam map build thousands
+  /// of off-screen widgets. Keep the layer local to the route/rider; MapLibre
+  /// receives the same bounded set, so both renderers behave consistently.
+  List<GeoPoint> get _discoveryAnchorPoints {
+    if (_discoveryViewportCorners case final viewport?) return viewport;
+    final routePoints = _route?.allPoints.toList(growable: false) ?? const [];
+    if (routePoints.isNotEmpty) return routePoints;
+    return [?_effectivePosition];
+  }
+
+  List<MotorcycleDiscoveryFeature> get _visibleDiscoveryFeatures {
+    final anchors = _discoveryAnchorPoints;
+    if (anchors.isEmpty || _enabledDiscoveryCategories.isEmpty) return const [];
+    var west = anchors.first.longitude;
+    var east = west;
+    var south = anchors.first.latitude;
+    var north = south;
+    for (final point in anchors.skip(1)) {
+      west = math.min(west, point.longitude);
+      east = math.max(east, point.longitude);
+      south = math.min(south, point.latitude);
+      north = math.max(north, point.latitude);
+    }
+    const paddingDegrees = 0.6;
+    return _discoveryCatalogue.visible(
+      categories: _enabledDiscoveryCategories,
+      west: west - paddingDegrees,
+      south: south - paddingDegrees,
+      east: east + paddingDegrees,
+      north: north + paddingDegrees,
+    );
+  }
+
+  List<BikerPlace> get _visibleBikerCafes => _bikerCafesVisible
+      ? _bikerPlaceCatalogue
+            .nearRoute(_discoveryAnchorPoints)
+            .where((place) => place.isCafe)
+            .toList(growable: false)
+      : const [];
 
   Map<String, dynamic> _discoveryLineGeoJson() => {
     'type': 'FeatureCollection',
@@ -4919,9 +5256,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ],
   };
 
-  Map<String, dynamic> _discoveryPointGeoJson() => MapGeoJson.points(
-    _visibleDiscoveryFeatures.map(
-      (feature) => MapGeoJsonPoint(
+  Map<String, dynamic> _discoveryPointGeoJson() => MapGeoJson.points([
+    for (final feature in _visibleDiscoveryFeatures)
+      MapGeoJsonPoint(
         id: feature.id,
         point: feature.anchor,
         properties: {
@@ -4930,8 +5267,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
           'color': _hexColor(_discoveryColour(feature.category)),
         },
       ),
-    ),
-  );
+    for (final place in _visibleBikerCafes)
+      MapGeoJsonPoint(
+        id: 'biker-cafe-${place.id}',
+        point: place.point,
+        properties: {
+          'name': place.name,
+          'category': 'biker_cafe',
+          'color': '#FFC857',
+        },
+      ),
+  ]);
 
   Map<String, dynamic> _riderTrailGeoJson() => {
     'type': 'FeatureCollection',
@@ -5085,6 +5431,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
   ) {
     if (layerId == 'ride-relay-discovery-lines' ||
         layerId == 'ride-relay-discovery-points') {
+      if (id.startsWith('biker-cafe-')) {
+        final placeId = id.substring('biker-cafe-'.length);
+        final place = _bikerPlaceCatalogue.places
+            .where((place) => place.id == placeId)
+            .firstOrNull;
+        if (place != null) unawaited(_showBikerPlace(place));
+        return;
+      }
       final feature = _discoveryCatalogue.features
           .where((feature) => feature.id == id)
           .firstOrNull;
@@ -5258,6 +5612,156 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  Future<void> _planCircularRide() async {
+    if (_routing) return;
+    var origin = _effectivePosition;
+    origin ??= await widget.acquireCurrentPosition?.call();
+    origin ??= _effectivePosition;
+    if (origin == null || !mounted) {
+      _showMessage(
+        'Enable location so the circular ride can start and finish here.',
+      );
+      return;
+    }
+    var request = await CircularRideSheet.show(
+      context,
+      start: origin,
+      distanceUnit: widget.distanceUnit,
+      personalHeatmapCells: _personalCircularHeatCells,
+      globalHeatmapCells: _globalCircularHeatCells,
+    );
+    while (request != null && mounted) {
+      setState(() => _routing = true);
+      try {
+        request = await _withSuggestedDayRideStops(request);
+        final plan = await CircularRidePlanner(
+          routingService: _roadRoutingService,
+        ).generate(request);
+        if (!mounted) return;
+        final review = await _reviewRoute(
+          plan.route,
+          distanceMeters: plan.actualDistanceMeters,
+          duration: plan.duration,
+          twistinessScore: plan.twistinessScore,
+          warnings: [
+            'The distance is approximate because the road network decides the final loop.',
+            if (request.dayLength != RideDayLength.custom)
+              'Fuel, bathroom/comfort and meal stops are suggestions. Edit each one and verify opening hours and facilities before accepting.',
+            if (request.heatmapPreference !=
+                    CircularRideHeatmapPreference.none &&
+                circularRideHeatmapBiasAvailable(
+                  request.heatmapCells,
+                  start: request.start,
+                ))
+              '${request.heatmapPreference.label} gently influenced the shaping controls; it did not require the route to use those roads.',
+          ],
+          canEditStops: true,
+          canGenerateAlternative: true,
+        );
+        if (!mounted) return;
+        if (review.action == RouteReviewAction.another) {
+          request = request.another();
+          continue;
+        }
+        if (review.action == RouteReviewAction.edit) {
+          request = await CircularRideSheet.show(
+            context,
+            start: origin,
+            distanceUnit: widget.distanceUnit,
+            personalHeatmapCells: _personalCircularHeatCells,
+            globalHeatmapCells: _globalCircularHeatCells,
+          );
+          continue;
+        }
+        if (review.action == RouteReviewAction.confirm) {
+          final library =
+              widget.recordedRouteStore ??
+              await JsonFileRecordedRouteStore.openDefault();
+          await saveCircularRideToLibrary(review.route, library);
+          final route = await _commitRoute(review.route);
+          _showMessage('${route.name} saved to the Ride Library.');
+        }
+        return;
+      } on FormatException catch (error) {
+        _showMessage(error.message);
+        return;
+      } on Object catch (error) {
+        _showMessage('Could not generate the circular ride: $error');
+        return;
+      } finally {
+        if (mounted) setState(() => _routing = false);
+      }
+    }
+  }
+
+  Future<CircularRideRequest> _withSuggestedDayRideStops(
+    CircularRideRequest request,
+  ) async {
+    final rideDuration = request.dayLength.duration;
+    if (rideDuration == null) return request.withPlannedStops(const []);
+    var catalogue = _bikerPlaceCatalogue;
+    if (catalogue.places.isEmpty) {
+      catalogue = await BikerPlaceCatalogue.loadAsset();
+    }
+    final schedule = circularRideItinerary(request);
+    final shapes = circularRideShapingPoints(request);
+    final used = <String>{};
+    final planned = <CircularRideStop>[];
+    for (final scheduled in schedule) {
+      final fraction = scheduled.after.inMinutes / rideDuration.inMinutes;
+      final target = shapes[math.min(2, (fraction * 3).floor())];
+      final needsMeal = scheduled.kinds.contains(CircularRideStopKind.meal);
+      BikerPlace? nearest;
+      if (needsMeal) {
+        final candidates =
+            catalogue.places
+                .where((place) => place.isCafe && !used.contains(place.id))
+                .map(
+                  (place) => (
+                    place: place,
+                    distance: _mapDistanceMeters(target, place.point),
+                  ),
+                )
+                .where((candidate) => candidate.distance <= 50000)
+                .toList()
+              ..sort(
+                (first, second) => first.distance.compareTo(second.distance),
+              );
+        nearest = candidates.firstOrNull?.place;
+        if (nearest != null) used.add(nearest.id);
+      }
+      final needs = _circularStopNeedsLabel(scheduled.kinds);
+      planned.add(
+        CircularRideStop(
+          fraction: fraction,
+          kinds: scheduled.kinds,
+          scheduledAfter: scheduled.after,
+          waypoint: RouteWaypoint(
+            point: nearest?.point ?? target,
+            name: nearest == null
+                ? 'Suggested $needs stop area'
+                : 'Suggested $needs · ${nearest.name}',
+            description:
+                nearest?.address ??
+                'No verified nearby facility was available. Choose a suitable open stop near this point before accepting the route.',
+            symbol: needsMeal
+                ? 'Restaurant'
+                : scheduled.kinds.contains(CircularRideStopKind.fuel)
+                ? 'Gas Station'
+                : 'Restroom',
+          ),
+        ),
+      );
+    }
+    return request.withPlannedStops(planned);
+  }
+
+  static String _circularStopNeedsLabel(Set<CircularRideStopKind> kinds) => [
+    if (kinds.contains(CircularRideStopKind.fuel)) 'fuel',
+    if (kinds.contains(CircularRideStopKind.comfort)) 'comfort',
+    if (kinds.contains(CircularRideStopKind.meal)) 'meal',
+  ].join(' + ');
+
   Future<void> _loadDemoRoute() async {
     try {
       final loader = widget.demoRouteLoader ?? _loadBundledDemoRoute;
@@ -5366,6 +5870,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     double? twistinessScore,
     List<String> warnings = const [],
     bool canEditStops = false,
+    bool canGenerateAlternative = false,
     ImportedRoute? previousRoute,
     ImportedRoute? comparisonRoute,
   }) async {
@@ -5404,6 +5909,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       previousRoute: previousRoute ?? _route,
       comparisonRoute: comparisonRoute,
       canEditStops: canEditStops,
+      canGenerateAlternative: canGenerateAlternative,
       showMarkerPlan: widget.markerFeaturesEnabled,
       onMarkerReviewChanged: (review) => markerReview = review,
       onReshapeRoute: (candidate, shapingPoints) => RouteReshapePlanner(
@@ -5713,7 +6219,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       showDragHandle: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -5725,11 +6231,32 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Optional reviewed highlights. Off by default and never a safety endorsement.',
+                  'Choose which optional café and road layers appear on the '
+                  'free-roam map. Choices are remembered on this phone.',
                 ),
                 const SizedBox(height: 8),
+                CheckboxListTile(
+                  key: const Key('biker-cafes-layer-toggle'),
+                  value: _bikerCafesVisible,
+                  secondary: const Icon(
+                    Icons.local_cafe,
+                    color: Color(0xFFFFC857),
+                  ),
+                  title: const Text('Biker cafés'),
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (enabled) {
+                    final visible = enabled ?? false;
+                    setState(() => _bikerCafesVisible = visible);
+                    setSheetState(() {});
+                    unawaited(
+                      _discoveryLayerPreferences?.setBikerCafesVisible(visible),
+                    );
+                    _scheduleMapLibreSync(overlays: true);
+                  },
+                ),
                 for (final category in MotorcycleDiscoveryCategory.values)
                   CheckboxListTile(
+                    key: Key('discovery-layer-${category.apiValue}'),
                     value: _enabledDiscoveryCategories.contains(category),
                     secondary: Icon(
                       category == MotorcycleDiscoveryCategory.mountainPass
@@ -5740,14 +6267,21 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     title: Text(category.label),
                     contentPadding: EdgeInsets.zero,
                     onChanged: (enabled) {
+                      final visible = enabled ?? false;
                       setState(() {
-                        if (enabled ?? false) {
+                        if (visible) {
                           _enabledDiscoveryCategories.add(category);
                         } else {
                           _enabledDiscoveryCategories.remove(category);
                         }
                       });
                       setSheetState(() {});
+                      unawaited(
+                        _discoveryLayerPreferences?.setCategory(
+                          category,
+                          visible,
+                        ),
+                      );
                       _scheduleMapLibreSync(overlays: true);
                     },
                   ),
@@ -5810,6 +6344,131 @@ class _RideMapScreenState extends State<RideMapScreen> {
         launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
       ),
     );
+  }
+
+  Future<void> _showBikerPlace(BikerPlace place) async {
+    final add = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 3, right: 12),
+                    child: Icon(Icons.local_cafe, color: Color(0xFFFFC857)),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          place.name,
+                          style: Theme.of(sheetContext).textTheme.titleLarge,
+                        ),
+                        if (place.address.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(place.address),
+                        ],
+                        const SizedBox(height: 4),
+                        Text(
+                          place.source,
+                          style: const TextStyle(
+                            color: Color(0xFF98A3B1),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                key: Key('route-via-biker-cafe-${place.id}'),
+                onPressed: _routing
+                    ? null
+                    : () => Navigator.of(sheetContext).pop(true),
+                icon: const Icon(Icons.add_road_outlined),
+                label: const Text('Route via this café'),
+              ),
+              if (place.sourceUrl case final url?) ...[
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  onPressed: () => unawaited(
+                    launchUrl(
+                      Uri.parse(url),
+                      mode: LaunchMode.externalApplication,
+                    ),
+                  ),
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Open café listing'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    if (add == true) await _addBikerPlaceToRoute(place);
+  }
+
+  Future<void> _addBikerPlaceToRoute(BikerPlace place) async {
+    if (_routing) return;
+    final existing = _route;
+    final start =
+        existing?.paths.lastOrNull?.points.lastOrNull ?? _effectivePosition;
+    if (start == null) {
+      _showMessage('Enable location before routing to this café.');
+      return;
+    }
+    setState(() => _routing = true);
+    try {
+      final extension = await _roadRoutingService.routeThrough([
+        start,
+        place.point,
+      ], preferences: existing?.preferences);
+      final route = ImportedRoute(
+        id:
+            existing?.id ??
+            'biker-cafe-${DateTime.now().microsecondsSinceEpoch}',
+        name: existing?.name ?? 'Route via ${place.name}',
+        description: existing?.description,
+        importedAt: existing?.importedAt ?? DateTime.now().toUtc(),
+        sourceFileName: existing?.sourceFileName ?? 'biker-cafe',
+        paths: [
+          ...?existing?.paths,
+          RoutePath(
+            kind: RoutePathKind.route,
+            name: place.name,
+            points: extension.points,
+          ),
+        ],
+        waypoints: [
+          ...?existing?.waypoints,
+          RouteWaypoint(
+            point: place.point,
+            name: place.name,
+            description: place.address,
+            symbol: 'Restaurant',
+          ),
+        ],
+        preferences: existing?.preferences,
+        plannedDuration:
+            (existing?.plannedDuration ?? Duration.zero) + extension.duration,
+      );
+      await _reviewAndActivateRoute(route);
+    } on Object catch (error) {
+      _showMessage('Could not route via ${place.name}: $error');
+    } finally {
+      if (mounted) setState(() => _routing = false);
+    }
   }
 
   Future<void> _addDiscoveryFeatureToRoute(
@@ -6038,10 +6697,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await _importGpx();
       case _MapAction.loadDemo:
         await _loadDemoRoute();
+      case _MapAction.circularRide:
+        await _planCircularRide();
       case _MapAction.discoveryLayers:
         await _showDiscoveryLayersSheet();
       case _MapAction.personalRideHeatmap:
         await _togglePersonalRideHeatmap();
+      case _MapAction.globalRideHeatmap:
+        await _toggleGlobalRideHeatmap();
       case _MapAction.speedLimitDisplay:
         if (_speedLimitDisplay.enabled) {
           await _speedLimitDisplay.setEnabled(false);
@@ -6476,8 +7139,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
 enum _MapAction {
   importGpx,
   loadDemo,
+  circularRide,
   discoveryLayers,
   personalRideHeatmap,
+  globalRideHeatmap,
   speedLimitDisplay,
   maneuverList,
   markerPlan,
@@ -8806,6 +9471,10 @@ class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
         // that swallowed a pan would be the full-screen problem again in a
         // thinner disguise.
         Positioned.fill(
+          left: enforcementBorderInset,
+          top: enforcementBorderInset,
+          right: enforcementBorderInset,
+          bottom: enforcementBorderInset,
           child: IgnorePointer(
             child: DecoratedBox(
               key: const Key('enforcement-alert-border'),

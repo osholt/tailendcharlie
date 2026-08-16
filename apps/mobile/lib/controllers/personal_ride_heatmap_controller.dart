@@ -89,6 +89,7 @@ class PersonalRideHeatmapBuilder {
     var inputPointCount = 0;
     var truncated = false;
     for (final ride in rides) {
+      if (ride.libraryStatus == RideLibraryStatus.deleted) continue;
       final route = ride.traveledRoute;
       if (route == null) continue;
       for (final path in route.paths) {
@@ -221,7 +222,9 @@ class PersonalRideHeatmapController extends ChangeNotifier {
       controller._listenableStore = listenable;
       listenable.addListener(controller._storeChanged);
     }
-    if (controller.visible) await controller.refresh();
+    // The derived cache also powers the independent circular-route preference;
+    // visibility controls rendering only, never whether local coverage exists.
+    await controller.refresh();
     return controller;
   }
 
@@ -255,7 +258,7 @@ class PersonalRideHeatmapController extends ChangeNotifier {
   }
 
   void _storeChanged() {
-    if (_visible) unawaited(_refreshAfterStoreChange());
+    unawaited(_refreshAfterStoreChange());
   }
 
   Future<void> _refreshAfterStoreChange() async {
