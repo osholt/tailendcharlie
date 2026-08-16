@@ -14,6 +14,7 @@ class BikerPlace {
     required this.point,
     required this.source,
     this.sourceUrl,
+    this.category = 'cafe',
   });
 
   final String id;
@@ -22,6 +23,9 @@ class BikerPlace {
   final GeoPoint point;
   final String source;
   final String? sourceUrl;
+  final String category;
+
+  bool get isCafe => category == 'cafe';
 
   factory BikerPlace.fromJson(Map<String, Object?> json) {
     final sourceId = json['sourceId'];
@@ -45,6 +49,7 @@ class BikerPlace {
       point: GeoPoint(latitude: latitude, longitude: longitude),
       source: _optionalString(json['source']) ?? 'Biker place catalogue',
       sourceUrl: _optionalString(json['sourceUrl']),
+      category: _optionalString(json['category']) ?? 'cafe',
     );
   }
 }
