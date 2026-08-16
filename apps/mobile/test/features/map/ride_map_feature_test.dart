@@ -5755,6 +5755,7 @@ void main() {
     Future<void> pumpWithChrome(
       WidgetTester tester, {
       required bool hosted,
+      bool started = false,
     }) async {
       SharedPreferences.setMockInitialValues({});
       final directory = Directory.systemTemp.createTempSync('chrome-owner');
@@ -5773,7 +5774,7 @@ void main() {
             routeImporter: RouteImporter(source: const _NoFileSource()),
             offlineTileCache: cache,
             routeAuthority: RouteAuthority.personal,
-            rideStarted: false,
+            rideStarted: started,
             discoveryCatalogueLoader: () async =>
                 const MotorcycleDiscoveryCatalogue([]),
             bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
@@ -5859,12 +5860,136 @@ void main() {
     testWidgets('a map with no host still owns its own title and actions', (
       tester,
     ) async {
-      await pumpWithChrome(tester, hosted: false);
+      // Asserted on a *started* ride since #579. The rule this protects — the
+      // host-chrome mechanism does not leak into a map that supplied none — is
+      // unchanged. What changed is what an unstarted editable map puts in the
+      // title: it now renders the same destination field free roam does,
+      // rather than a plain title plus an `add_road` button, which is the
+      // colocation #579 asked for. The unstarted case is asserted in "the way
+      // to a destination is in one place" below.
+      await pumpWithChrome(tester, hosted: false, started: true);
 
       expect(find.text('Navigation'), findsOneWidget);
-      expect(find.byTooltip('Plan a destination'), findsOneWidget);
+      expect(find.byKey(const Key('map-destination-search')), findsNothing);
       expect(find.byTooltip('Import GPX route'), findsOneWidget);
       expect(find.byTooltip('Fit route'), findsOneWidget);
+    });
+  });
+
+  // #579. Free roam asked for a destination through a search field on the map;
+  // a created ride asked through an `add_road` icon button in the app bar.
+  // Same intent, two affordances, two places.
+  group('the way to a destination is in one place', () {
+    Future<void> pumpMap(
+      WidgetTester tester, {
+      required bool started,
+      RouteAuthority authority = RouteAuthority.leader,
+      HostMapChrome? hostChrome,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('colocated');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: started,
+            routeAuthority: authority,
+            hostChrome: hostChrome,
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a created ride that has not started asks the same way free '
+        'roam does', (tester) async {
+      await pumpMap(tester, started: false);
+
+      expect(find.byKey(const Key('map-destination-search')), findsOneWidget);
+      expect(find.text('Where to?'), findsOneWidget);
+      // The icon button was the same control in a different place.
+      expect(find.byTooltip('Plan a destination'), findsNothing);
+    });
+
+    testWidgets('free roam keeps its own field rather than getting two', (
+      tester,
+    ) async {
+      await pumpMap(
+        tester,
+        started: false,
+        authority: RouteAuthority.personal,
+        hostChrome: HostMapChrome(title: const Text('Host field'), actions: []),
+      );
+
+      expect(find.text('Host field'), findsOneWidget);
+      expect(find.byKey(const Key('map-destination-search')), findsNothing);
+    });
+
+    testWidgets('a chosen route keeps its name in the title', (tester) async {
+      // The field replaces the title only while there is nothing to name.
+      // Once a route is loaded its name is the more useful thing to show, and
+      // this is the only place it appears on this surface.
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('named-route');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(
+              _testRoute(id: 'chosen', name: 'Sunday loop'),
+            ),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: false,
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sunday loop'), findsOneWidget);
+      expect(find.byKey(const Key('map-destination-search')), findsNothing);
+    });
+
+    testWidgets('a started ride shows the route, not a search field', (
+      tester,
+    ) async {
+      // The riding chrome is settled and is not what this changes.
+      await pumpMap(tester, started: true);
+
+      expect(find.byKey(const Key('map-destination-search')), findsNothing);
+      expect(find.text('Navigation'), findsOneWidget);
+    });
+
+    testWidgets('a follower is not offered a way to change the route', (
+      tester,
+    ) async {
+      await pumpMap(tester, started: false, authority: RouteAuthority.follower);
+
+      expect(find.byKey(const Key('map-destination-search')), findsNothing);
+      expect(find.byTooltip('Plan a destination'), findsNothing);
     });
   });
 
@@ -6015,7 +6140,11 @@ void main() {
         find.byKey(const Key('plan-destination-empty-button')),
         findsOneWidget,
       );
-      expect(find.byTooltip('Plan a destination'), findsOneWidget);
+      // Was `byTooltip('Plan a destination')` until #579. The intent is
+      // unchanged — this surface offers a way to a destination rather than
+      // telling a solo rider to wait for a leader — but the affordance moved
+      // into the title slot so it sits where free roam's does.
+      expect(find.byKey(const Key('map-destination-search')), findsOneWidget);
     });
 
     testWidgets('a follower is still told the leader owns the group route', (

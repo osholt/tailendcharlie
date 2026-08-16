@@ -30,6 +30,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../map/destination_search_field.dart';
+
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../domain/ride_coordination_mode.dart';
 import '../../services/road_routing.dart';
@@ -80,36 +82,11 @@ class HomeSearchBar extends StatelessWidget {
 
   final VoidCallback onTap;
 
+  /// Shares [DestinationSearchField] with the ride map rather than matching it
+  /// by eye, so the two surfaces cannot drift apart (#579).
   @override
-  Widget build(BuildContext context) => Material(
-    key: const Key('home-search-bar'),
-    color: const Color(0xF21A2029),
-    borderRadius: BorderRadius.circular(14),
-    elevation: 6,
-    child: InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: onTap,
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        child: Row(
-          children: [
-            Icon(Icons.search, color: Color(0xFFB7C0CC)),
-            SizedBox(width: 10),
-            // Words as well as the glass. A bare magnifying glass is the failure
-            // #306 was raised over.
-            Text(
-              'Where to?',
-              style: TextStyle(
-                color: Color(0xFFB7C0CC),
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
+  Widget build(BuildContext context) =>
+      DestinationSearchField(key: const Key('home-search-bar'), onTap: onTap);
 }
 
 /// What the search surface returned.
