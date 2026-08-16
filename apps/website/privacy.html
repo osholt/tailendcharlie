@@ -45,7 +45,7 @@
     <main class="wrap legal">
       <h1>Privacy Policy</h1>
       <p class="legal-meta">
-        Effective 30 July 2026 &middot; Tail End Charlie is operated by
+        Effective 16 August 2026 &middot; Tail End Charlie is operated by
         <strong>Holt Racing Limited</strong> ("we", "us")
       </p>
 
@@ -181,6 +181,50 @@
         <li>Your distance-unit and display preferences.</li>
         <li>Imported or recorded GPX route files you haven't shared.</li>
       </ul>
+
+      <h3 id="global-ride-heatmap">Personal and global ride heatmaps</h3>
+      <p>
+        The optional <strong>Personal rides</strong> map layer is calculated
+        entirely on your phone from travelled tracks in your Ride Library. It
+        is off by default and does not send those tracks to us. Deleting a ride
+        removes it from that local layer.
+      </p>
+      <p>
+        The separate <strong>Global rides</strong> layer displays a public,
+        thresholded aggregate. Viewing it is off by default and never opts you
+        into contribution. Contribution is also off by default; Settings lets
+        you choose Never, Ask after each ride, or Always after a ride, and hide
+        0, 500 m, 1 km (the default), or 2 km at both ends.
+      </p>
+      <p>
+        If you consent, your phone uses only the travelled recording, removes
+        the chosen distance from both ends, converts what remains into an
+        unordered, deduplicated set of roughly 170&ndash;210 m map cells, and
+        sends those cells using a separate random heatmap credential. It does
+        <strong>not</strong> send a GPX track, ordered route, ride or join code,
+        ride name, display name, installation identifier, speed, direction,
+        timestamps, or live-ride credential. The cells can still describe
+        places you visit and are not described as anonymous.
+      </p>
+      <p>
+        We merge cells by opaque contributor and calendar month and retain them
+        for up to 24 complete calendar months. The public map publishes only
+        daily snapshots and only where at least three distinct opaque
+        contributors covered a cell; it exposes broad contributor and intensity
+        bands, never identities or exact counts. That threshold reduces sparse
+        disclosure but does not prove three different people and does not stop
+        long-term comparison of public snapshots.
+      </p>
+      <p>
+        <strong>Stop contributing and remove my data</strong> deletes the
+        contributor credential, monthly cells and retry receipts from the
+        relay; the next daily public snapshot excludes them. The local ride
+        remains in your library. The removal credential is kept in your phone's
+        protected storage: after a lost phone or unrestored upgrade we may need
+        the opaque handle or other information you retained to help with an
+        exceptional deletion request. Contact
+        <a href="mailto:privacy@tailendcharlie.app">privacy@tailendcharlie.app</a>.
+      </p>
 
       <h3 id="website-planner-storage">Website ride planner</h3>
       <p>
