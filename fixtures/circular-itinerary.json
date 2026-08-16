@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "fuelMinutes": 120,
+  "comfortMinutes": 90,
+  "mealMinutes": 180,
+  "cases": [
+    {
+      "dayLength": "custom",
+      "stops": []
+    },
+    {
+      "dayLength": "half-day",
+      "stops": [
+        { "afterMinutes": 90, "kinds": ["comfort"] },
+        { "afterMinutes": 120, "kinds": ["fuel"] },
+        { "afterMinutes": 180, "kinds": ["comfort", "meal"] }
+      ]
+    },
+    {
+      "dayLength": "day",
+      "stops": [
+        { "afterMinutes": 90, "kinds": ["comfort"] },
+        { "afterMinutes": 120, "kinds": ["fuel"] },
+        { "afterMinutes": 180, "kinds": ["comfort", "meal"] },
+        { "afterMinutes": 240, "kinds": ["fuel"] },
+        { "afterMinutes": 270, "kinds": ["comfort"] },
+        { "afterMinutes": 360, "kinds": ["comfort", "fuel"] },
+        { "afterMinutes": 450, "kinds": ["comfort"] }
+      ]
+    }
+  ]
+}

@@ -42,11 +42,18 @@ const enforcementBubbleLife = Duration(seconds: 10);
 /// so it is not a decoration.
 const enforcementBorderWidth = 7.0;
 
+/// Keeps the complete stroke inside the drawable viewport.
+///
+/// A rounded display clips its extreme corners before Flutter's rectangular
+/// viewport does. Drawing against that rectangle made the red arc disappear
+/// under the physical mask even though the straight edges were visible.
+const enforcementBorderInset = 7.0;
+
 /// Curves the persistent alarm inside rounded phone screens.
 ///
 /// The stroke is painted inside the viewport, while this radius keeps its
 /// corners visible on phones whose display mask removes the square corners.
-const enforcementBorderRadius = 32.0;
+const enforcementBorderRadius = 40.0;
 
 /// The bubble never grows past this, whatever the screen.
 ///

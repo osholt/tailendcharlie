@@ -175,6 +175,45 @@ void main() {
     },
   );
 
+  testWidgets('a ride interrupted by app termination offers rejoin or end', (
+    tester,
+  ) async {
+    final eventStore = InMemoryEventStore();
+    final sessionStore = InMemorySessionStore();
+    final seed = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+      rideCodeDirectory: const _SuccessfulRideCodeDirectory(),
+    );
+    await seed.initialize();
+    await seed.createRide('Oliver', rideName: 'Bath loop');
+    await seed.startRide();
+    seed.dispose();
+    final controller = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(controller, initializeController: controller.initialize),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ride recovered'), findsOneWidget);
+    expect(find.textContaining('Bath loop was still running'), findsOneWidget);
+    expect(find.byKey(const Key('rejoin-recovered-ride')), findsOneWidget);
+    expect(find.byKey(const Key('end-recovered-ride')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('rejoin-recovered-ride')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Navigation map'), findsOneWidget);
+    expect(controller.rideStarted, isTrue);
+  });
+
   testWidgets('create ride accepts a web-planner route code', (tester) async {
     final controller = await _controller();
     addTearDown(controller.dispose);
@@ -808,9 +847,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Ride summary ready'), findsOneWidget);
-    // Renamed in #156: the button files the ride to Previous rides, and the old
-    // label said it was removed from the phone.
-    expect(find.text('Finish and file in Previous rides'), findsOneWidget);
+    expect(
+      find.textContaining('already saved in Previous rides'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('file-ended-ride-button')), findsNothing);
     expect(controller.rideEnded, isTrue);
     expect(controller.hasActiveRide, isTrue);
 

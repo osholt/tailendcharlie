@@ -2,6 +2,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/services/motorcycle_discovery.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('loads the packaged free-roam discovery catalogue', () async {
+    final catalogue = await MotorcycleDiscoveryCatalogue.loadAsset();
+
+    expect(catalogue.features, isNotEmpty);
+    expect(
+      catalogue.features.any(
+        (feature) =>
+            feature.category == MotorcycleDiscoveryCategory.twistyHighlight,
+      ),
+      isTrue,
+    );
+  });
+
   test('parses, attributes, and bounds discovery features', () {
     const source = '''{
       "type":"FeatureCollection",
