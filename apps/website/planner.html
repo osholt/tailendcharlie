@@ -28,7 +28,7 @@
       integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK"
       crossorigin="anonymous"
     />
-    <link rel="stylesheet" href="/planner.css?v=f1a3b0d1" />
+    <link rel="stylesheet" href="/planner.css?v=e1ee226c" />
     <title>Ride planner | Tail End Charlie</title>
   </head>
   <body class="planner-page">
@@ -80,6 +80,79 @@
             </button>
           </p>
         </div>
+
+        <details class="route-generator" id="circular-generator">
+          <summary>Create a circular or day ride</summary>
+          <p class="field-help">
+            Add or search for a start point first. The generated loop starts
+            and finishes there and remains fully editable.
+          </p>
+          <div class="generator-grid">
+            <label for="circular-length">Ride length</label>
+            <select id="circular-length">
+              <option value="custom">Custom distance</option>
+              <option value="half-day">Half day</option>
+              <option value="day">Full day</option>
+            </select>
+            <label for="circular-distance">Approximate total distance</label>
+            <div class="generator-distance">
+              <input id="circular-distance" type="number" min="5" max="497" value="80" />
+              <span>miles</span>
+            </div>
+            <label for="circular-direction">General direction</label>
+            <select id="circular-direction">
+              <option value="N">North</option>
+              <option value="NE">North-east</option>
+              <option value="E">East</option>
+              <option value="SE">South-east</option>
+              <option value="S">South</option>
+              <option value="SW">South-west</option>
+              <option value="W">West</option>
+              <option value="NW">North-west</option>
+            </select>
+            <label for="circular-fuel-frequency">Fuel interval</label>
+            <select id="circular-fuel-frequency">
+              <option value="60">Every hour</option>
+              <option value="90">Every 1½ hours</option>
+              <option value="120" selected>Every 2 hours</option>
+              <option value="180">Every 3 hours</option>
+            </select>
+            <label for="circular-comfort-frequency">Bathroom / comfort interval</label>
+            <select id="circular-comfort-frequency">
+              <option value="60">Every hour</option>
+              <option value="90" selected>Every 1½ hours</option>
+              <option value="120">Every 2 hours</option>
+              <option value="180">Every 3 hours</option>
+            </select>
+            <label for="circular-meal-time">Meal time</label>
+            <select id="circular-meal-time">
+              <option value="120">After 2 hours</option>
+              <option value="180" selected>After 3 hours</option>
+              <option value="240">After 4 hours</option>
+              <option value="300">After 5 hours</option>
+            </select>
+            <label for="circular-heatmap-preference">Road popularity preference</label>
+            <select id="circular-heatmap-preference">
+              <option value="none">Off</option>
+              <option value="global" disabled>Popular public roads · not enough coverage</option>
+            </select>
+          </div>
+          <p class="field-help">
+            Routing style and avoidances below also apply. Day rides prefer a
+            biker café for a meal; fuel and comfort points remain editable and
+            clearly say when no verified facility was available. Heatmap bias is
+            gentle, excludes the area near the start and never requires a road.
+          </p>
+          <div class="generator-actions">
+            <button class="icon-button" id="generate-circular" type="button">
+              Generate ride
+            </button>
+            <button class="text-button" id="generate-circular-another" type="button" disabled>
+              Try another
+            </button>
+          </div>
+          <p class="generator-status" id="circular-generator-status" aria-live="polite"></p>
+        </details>
 
         <fieldset class="route-preferences">
           <legend>Route preferences</legend>
@@ -218,6 +291,19 @@
           </label>
           <p class="discovery-layer-status" id="discovery-layer-status">
             Layers are off by default.
+          </p>
+          <hr />
+          <label class="checkbox-field" for="layer-global-rides">
+            <input id="layer-global-rides" type="checkbox" />
+            <i class="legend-discovery legend-global-rides"></i>
+            <span>Global rides heatmap</span>
+          </label>
+          <p class="discovery-layer-status" id="global-heatmap-status" aria-live="polite">
+            Global rides are off. Viewing never contributes your rides.
+          </p>
+          <p class="field-help">
+            Only thresholded public coverage is shown; sparse roads stay hidden.
+            <a href="/privacy.html#global-ride-heatmap">How this protects riders</a>
           </p>
           <button class="text-button" id="suggest-discovery" type="button">
             Suggest an addition or correction
@@ -469,6 +555,6 @@
       integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
       crossorigin="anonymous"
     ></script>
-    <script type="module" src="/planner.js?v=b4e53465"></script>
+    <script type="module" src="/planner.js?v=84259735"></script>
   </body>
 </html>
