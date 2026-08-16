@@ -89,8 +89,66 @@
 
 .field-group,
 .route-preferences,
+.route-generator,
 .place-search {
   margin-bottom: 24px;
+}
+
+.route-generator {
+  padding: 13px;
+  border: 1px solid rgba(84, 225, 196, 0.25);
+  border-radius: 13px;
+  background: rgba(84, 225, 196, 0.035);
+}
+
+.route-generator summary {
+  color: var(--teal);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.route-generator[open] summary {
+  margin-bottom: 12px;
+}
+
+.generator-grid {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.generator-grid > label {
+  color: #ddd4d9;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.generator-distance {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.generator-distance span,
+.generator-status {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.generator-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.generator-actions .icon-button {
+  min-height: 40px;
+}
+
+.generator-status {
+  min-height: 1em;
+  margin: 9px 0 0;
 }
 
 .field-group label,
@@ -1375,6 +1433,11 @@
 
 .legend-good-road {
   background: #2583e9;
+}
+
+.legend-global-rides {
+  height: 0.72rem;
+  background: linear-gradient(90deg, #0ea5e9, #f59e0b, #ef4444);
 }
 
 .discovery-layer-status {

@@ -1,11 +1,72 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart' show GeoPoint;
 import 'package:ride_relay/domain/ride_coordination_mode.dart';
+import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/features/home/home_destination_search.dart';
+import 'package:ride_relay/features/home/home_screen.dart';
 import 'package:ride_relay/services/road_routing.dart';
+import 'package:ride_relay/services/gpx_import_source.dart';
 
 void main() {
+  group('destination route handoff (#546)', () {
+    test('creates the solo ride before exposing its selected route', () async {
+      final events = <String>[];
+
+      await createRideThenStageDestinationRoute(
+        createRide: () async => events.add('ride-created'),
+        stageRoute: () => events.add('route-staged'),
+      );
+
+      expect(events, ['ride-created', 'route-staged']);
+    });
+
+    test('does not leave a stale route when ride creation fails', () async {
+      var staged = false;
+
+      await expectLater(
+        createRideThenStageDestinationRoute(
+          createRide: () => Future<void>.error(StateError('create failed')),
+          stageRoute: () => staged = true,
+        ),
+        throwsStateError,
+      );
+
+      expect(staged, isFalse);
+    });
+  });
+
+  test('a web plan can be saved without creating or starting a ride', () async {
+    final routes = InMemoryRecordedRouteStore();
+    final file = PickedGpxFile(
+      name: 'web-plan.gpx',
+      bytes: Uint8List.fromList(
+        utf8.encode(
+          '<gpx version="1.1"><trk><name>Web loop</name><trkseg>'
+          '<trkpt lat="51.46" lon="-2.51"/>'
+          '<trkpt lat="51.50" lon="-2.40"/>'
+          '</trkseg></trk></gpx>',
+        ),
+      ),
+    );
+
+    final saved = await saveSharedRouteToLibrary(
+      file: file,
+      recordedRoutes: routes,
+    );
+    final savedAgain = await saveSharedRouteToLibrary(
+      file: file,
+      recordedRoutes: routes,
+    );
+
+    expect(saved.name, 'Web loop');
+    expect(savedAgain.id, saved.id);
+    expect(await routes.list(), hasLength(1));
+  });
+
   group('search for a destination, then arrange the ride (#431)', () {
     testWidgets('a search finds places and picking one offers solo or group', (
       tester,
