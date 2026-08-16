@@ -1,11 +1,4 @@
-// Ties the end-of-ride copy to what the code actually does (#156).
-//
-// The button used to say "Remove ride from this phone" beside a delete icon,
-// while `clearEndedRide()` archives the ride to Previous rides and clears only
-// the live working copy. A tester read the label and believed the ride was being
-// deleted. Copy and behaviour drifted because nothing held them together, so the
-// assertions below do: the same test presses the button and then looks in the
-// archive.
+// Ties the end-of-ride copy to automatic Ride Library persistence (#542).
 
 import 'dart:math';
 
@@ -80,7 +73,11 @@ void main() {
       isEmpty,
       reason: 'the ride is archived, so nothing may describe it as destroyed',
     );
-    expect(find.text('Finish and file in Previous rides'), findsOneWidget);
+    expect(
+      find.textContaining('already saved in Previous rides'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('file-ended-ride-button')), findsNothing);
   });
 
   // #206/#207: the tester was stranded here by an automatic end she did not
@@ -145,52 +142,16 @@ void main() {
     }
   });
 
-  testWidgets('the confirmation says what is kept and what stops', (
-    tester,
-  ) async {
-    await pumpScreen(tester);
-    await tester.tap(find.byKey(const Key('file-ended-ride-button')));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('stays on this phone'), findsOneWidget);
-    expect(find.textContaining('Previous rides'), findsWidgets);
-    // The one real consequence, in rider language rather than "relay recovery".
-    expect(find.textContaining('stop waiting for them'), findsOneWidget);
-  });
-
-  testWidgets('filing the ride archives it and clears the working copy', (
+  testWidgets('ending automatically archives the ride without a save prompt', (
     tester,
   ) async {
     final rideId = controller.session!.rideId;
     await pumpScreen(tester);
 
-    await tester.tap(find.byKey(const Key('file-ended-ride-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('confirm-file-ended-ride-button')));
-    await tester.pumpAndSettle();
-
-    // This is the assertion the copy has to match: the ride is still here.
     final archived = await archive.list();
     expect(archived.map((ride) => ride.rideId), contains(rideId));
-    expect(
-      controller.session,
-      isNull,
-      reason: 'the live working copy is what gets cleared',
-    );
-  });
-
-  testWidgets('declining leaves the ride open and archives nothing new', (
-    tester,
-  ) async {
-    await pumpScreen(tester);
-
-    await tester.tap(find.byKey(const Key('file-ended-ride-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('keep-ended-ride-open-button')));
-    await tester.pumpAndSettle();
-
     expect(controller.session, isNotNull);
-    expect(find.text('Finish and file in Previous rides'), findsOneWidget);
+    expect(find.byKey(const Key('file-ended-ride-button')), findsNothing);
   });
 }
 

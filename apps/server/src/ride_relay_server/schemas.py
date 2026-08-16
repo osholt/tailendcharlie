@@ -191,6 +191,46 @@ class CompatibilityResponse(BaseModel):
     updateUrls: dict[str, str]
 
 
+class HeatmapContributorRegistrationRequest(BaseModel):
+    """A heatmap-only credential registration with no ride identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1]
+    clientHandle: str = Field(pattern=r"^hm1_[A-Za-z0-9_-]{43}$")
+    proof: str = Field(pattern=r"^hmp1_[A-Za-z0-9_-]{43}$")
+    consentVersion: str = Field(
+        min_length=1,
+        max_length=40,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+
+
+class HeatmapCellRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    z: Literal[17]
+    x: int = Field(ge=0, lt=1 << 17)
+    y: int = Field(ge=0, lt=1 << 17)
+
+
+class HeatmapContributionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: Literal[1]
+    uploadId: str = Field(pattern=r"^hmu1_[A-Za-z0-9_-]{22}$")
+    trimMetersAtEachEnd: Literal[0, 500, 1000, 2000]
+    cells: list[HeatmapCellRequest] = Field(min_length=1, max_length=20_000)
+
+    @field_validator("cells")
+    @classmethod
+    def cells_are_unique(cls, values: list[HeatmapCellRequest]) -> list[HeatmapCellRequest]:
+        keys = {(value.z, value.x, value.y) for value in values}
+        if len(keys) != len(values):
+            raise ValueError("Heatmap cells must be unique")
+        return values
+
+
 class TrafficRoutePoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

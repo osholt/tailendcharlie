@@ -49,6 +49,181 @@ export function formatRouteBendScore(score) {
   return `${rounded}°/km · ${label}`;
 }
 
+export const CIRCULAR_RIDE_DIRECTIONS = Object.freeze({
+  N: 0,
+  NE: 45,
+  E: 90,
+  SE: 135,
+  S: 180,
+  SW: 225,
+  W: 270,
+  NW: 315,
+});
+
+/// Returns three non-stopping controls for a broad road-routed loop.
+/// Coordinate order is GeoJSON/Web convention: longitude, latitude.
+export function circularRideShapingCoordinates({
+  start,
+  distanceMetres,
+  direction,
+  variant = 0,
+}) {
+  if (!validCoordinatePair(start)) throw new Error("Choose a valid start point.");
+  if (!Number.isFinite(distanceMetres) || distanceMetres < 8000 || distanceMetres > 800000) {
+    throw new Error("Circular rides must be between 8 km and 800 km.");
+  }
+  const baseBearing = CIRCULAR_RIDE_DIRECTIONS[String(direction).toUpperCase()];
+  if (!Number.isFinite(baseBearing)) throw new Error("Choose a compass direction.");
+  const normalizedVariant = Math.abs(Math.trunc(variant)) % 8;
+  const handedness = normalizedVariant % 2 === 0 ? 1 : -1;
+  const rotation = Math.trunc(normalizedVariant / 2) * 7.5 * handedness;
+  const heading = baseBearing + rotation;
+  const radius = distanceMetres / 4.25;
+  return [
+    offsetCoordinate(start, radius * 0.45, radius * 0.8 * -handedness, heading),
+    destinationCoordinate(start, heading, radius),
+    offsetCoordinate(start, radius * 0.45, radius * 0.8 * handedness, heading),
+  ];
+}
+
+export function dayRideDistanceMetres(dayLength, movingSpeedKph = 55) {
+  const hours = { "half-day": 4, day: 8 }[dayLength];
+  if (!hours) throw new Error("Choose half day or full day.");
+  return movingSpeedKph * hours * 1000;
+}
+
+export const CIRCULAR_HEATMAP_MINIMUM_CELLS = 20;
+export const CIRCULAR_DISTANCE_TOLERANCE = 0.3;
+
+export function circularRideDistanceWithinTolerance(requestedMetres, actualMetres) {
+  if (
+    !Number.isFinite(requestedMetres) ||
+    !Number.isFinite(actualMetres) ||
+    requestedMetres <= 0 ||
+    actualMetres <= 0
+  ) {
+    return false;
+  }
+  return Math.abs(actualMetres - requestedMetres) / requestedMetres <= CIRCULAR_DISTANCE_TOLERANCE;
+}
+
+export function circularRouteHasUTurn(maneuvers) {
+  return (Array.isArray(maneuvers) ? maneuvers : []).some((maneuver) => {
+    const modifier = String(maneuver?.modifier || "")
+      .trim()
+      .toLowerCase()
+      .replaceAll("-", " ");
+    return modifier === "uturn" || modifier === "u turn";
+  });
+}
+
+export function circularRideItinerary({
+  dayLength,
+  fuelMinutes = 120,
+  comfortMinutes = 90,
+  mealMinutes = 180,
+}) {
+  const durationMinutes = { "half-day": 240, day: 480 }[dayLength];
+  if (!durationMinutes) return [];
+  const schedule = new Map();
+  const add = (minute, kind) => {
+    if (minute <= 0 || minute >= durationMinutes) return;
+    if (!schedule.has(minute)) schedule.set(minute, new Set());
+    schedule.get(minute).add(kind);
+  };
+  for (let minute = fuelMinutes; minute < durationMinutes; minute += fuelMinutes) {
+    add(minute, "fuel");
+  }
+  for (
+    let minute = comfortMinutes;
+    minute < durationMinutes;
+    minute += comfortMinutes
+  ) {
+    add(minute, "comfort");
+  }
+  add(mealMinutes, "meal");
+  return Array.from(schedule, ([afterMinutes, kinds]) => ({
+    afterMinutes,
+    kinds: Array.from(kinds).sort(),
+  })).sort((left, right) => left.afterMinutes - right.afterMinutes);
+}
+
+export function circularHeatmapBiasAvailable(cells, start = null) {
+  return (
+    Array.isArray(cells) &&
+    cells.filter(
+      (cell) =>
+        validCoordinatePair(cell.coordinate) &&
+        Number(cell.weight) > 0 &&
+        (!start || coordinateDistance(start, cell.coordinate) >= 2000),
+    ).length >= CIRCULAR_HEATMAP_MINIMUM_CELLS
+  );
+}
+
+export function biasCircularRideCoordinates({
+  controls,
+  start,
+  cells,
+  enabled,
+  searchRadiusMetres,
+  strength = 0.2,
+}) {
+  if (!enabled || !circularHeatmapBiasAvailable(cells, start)) return controls;
+  const eligible = cells.filter(
+    (cell) =>
+      validCoordinatePair(cell.coordinate) &&
+      Number(cell.weight) > 0 &&
+      coordinateDistance(start, cell.coordinate) >= 2000,
+  );
+  if (eligible.length < CIRCULAR_HEATMAP_MINIMUM_CELLS) return controls;
+  const amount = Math.max(0, Math.min(0.35, Number(strength)));
+  return controls.map((control) => {
+    const nearby = eligible
+      .map((cell) => ({
+        cell,
+        distance: coordinateDistance(control, cell.coordinate),
+      }))
+      .filter((candidate) => candidate.distance <= searchRadiusMetres)
+      .sort(
+        (left, right) =>
+          left.distance / left.cell.weight - right.distance / right.cell.weight,
+      );
+    const target = nearby[0]?.cell.coordinate;
+    if (!target) return control;
+    return [
+      control[0] + (target[0] - control[0]) * amount,
+      control[1] + (target[1] - control[1]) * amount,
+    ];
+  });
+}
+
+function offsetCoordinate(origin, forwardMetres, rightMetres, headingDegrees) {
+  const distance = Math.hypot(forwardMetres, rightMetres);
+  const angle = (Math.atan2(rightMetres, forwardMetres) * 180) / Math.PI;
+  return destinationCoordinate(origin, headingDegrees + angle, distance);
+}
+
+function destinationCoordinate(origin, bearingDegrees, distanceMetres) {
+  const earthRadiusMetres = 6371008.8;
+  const radians = (value) => (value * Math.PI) / 180;
+  const degrees = (value) => (value * 180) / Math.PI;
+  const angularDistance = distanceMetres / earthRadiusMetres;
+  const bearing = radians(bearingDegrees);
+  const latitude = radians(origin[1]);
+  const longitude = radians(origin[0]);
+  const targetLatitude = Math.asin(
+    Math.sin(latitude) * Math.cos(angularDistance) +
+      Math.cos(latitude) * Math.sin(angularDistance) * Math.cos(bearing),
+  );
+  const targetLongitude =
+    longitude +
+    Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude),
+      Math.cos(angularDistance) - Math.sin(latitude) * Math.sin(targetLatitude),
+    );
+  return [((degrees(targetLongitude) + 540) % 360) - 180, degrees(targetLatitude)];
+}
+
 export function chooseRoadRoute(routes, preference = "quickest") {
   if (!Array.isArray(routes) || routes.length === 0) return null;
   if (preference === "quickest" || routes.length === 1) return routes[0];

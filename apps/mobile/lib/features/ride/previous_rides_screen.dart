@@ -176,6 +176,21 @@ class PreviousRideDetailScreen extends StatefulWidget {
   final DistanceUnitController distanceUnits;
   final CompletedRideSharer sharer;
 
+  static Future<StoredRouteSelection?> show(
+    BuildContext context, {
+    required CompletedRide ride,
+    required CompletedRidesController completedRides,
+    required DistanceUnitController distanceUnits,
+  }) => Navigator.of(context).push<StoredRouteSelection>(
+    MaterialPageRoute(
+      builder: (_) => PreviousRideDetailScreen(
+        ride: ride,
+        completedRides: completedRides,
+        distanceUnits: distanceUnits,
+      ),
+    ),
+  );
+
   @override
   State<PreviousRideDetailScreen> createState() =>
       _PreviousRideDetailScreenState();
@@ -183,19 +198,46 @@ class PreviousRideDetailScreen extends StatefulWidget {
 
 class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
   bool _sharing = false;
+  late CompletedRide _ride;
+
+  @override
+  void initState() {
+    super.initState();
+    _ride = widget.ride;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final ride = widget.ride;
+    final ride = _ride;
     final formatter = MeasurementFormatter(widget.distanceUnits.value);
     return Scaffold(
       appBar: AppBar(
         title: Text(ride.title),
         actions: [
-          IconButton(
-            tooltip: 'Delete ride',
-            onPressed: _confirmDelete,
-            icon: const Icon(Icons.delete_outline),
+          PopupMenuButton<_RideRecordAction>(
+            tooltip: 'Manage ride',
+            onSelected: _handleRecordAction,
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: _RideRecordAction.rename,
+                child: Text('Rename ride'),
+              ),
+              if (ride.libraryStatus == RideLibraryStatus.active)
+                const PopupMenuItem(
+                  value: _RideRecordAction.archive,
+                  child: Text('Archive ride'),
+                ),
+              if (ride.libraryStatus != RideLibraryStatus.active)
+                const PopupMenuItem(
+                  value: _RideRecordAction.restore,
+                  child: Text('Restore to Ride Library'),
+                ),
+              if (ride.libraryStatus != RideLibraryStatus.deleted)
+                const PopupMenuItem(
+                  value: _RideRecordAction.delete,
+                  child: Text('Move to Recently deleted'),
+                ),
+            ],
           ),
         ],
       ),
@@ -204,12 +246,33 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
         children: [
           SizedBox(
             height: 320,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: ArchivedRideMap(
-                plannedRoute: ride.plannedRoute,
-                traveledRoute: ride.traveledRoute,
-              ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: ArchivedRideMap(
+                      plannedRoute: ride.plannedRoute,
+                      traveledRoute: ride.traveledRoute,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Material(
+                    color: const Color(0xD9182029),
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      key: const Key('archived-ride-expand-map'),
+                      tooltip: 'Open full-screen map',
+                      color: Colors.white,
+                      onPressed: _openFullScreenMap,
+                      icon: const Icon(Icons.open_in_full),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           if (_legendKeys(ride) case final keys when keys.isNotEmpty) ...[
@@ -222,8 +285,17 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
               children: keys,
             ),
           ],
-          const SizedBox(height: 18),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            key: const Key('archived-ride-again'),
+            onPressed: ride.plannedRoute == null && ride.traveledRoute == null
+                ? null
+                : _rideAgain,
+            icon: const Icon(Icons.route_outlined),
+            label: const Text('Ride again'),
+          ),
           if (ride.hasRecordingGaps) ...[
+            const SizedBox(height: 10),
             Card(
               key: const Key('archived-ride-recording-gap'),
               color: const Color(0xFF342B17),
@@ -237,8 +309,69 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
           ],
+          const SizedBox(height: 10),
+          Card(
+            key: const Key('archived-ride-personal-details'),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Your ride notes',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      TextButton.icon(
+                        key: const Key('archived-ride-edit-notes'),
+                        onPressed: _editNotes,
+                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        label: const Text('Edit'),
+                      ),
+                    ],
+                  ),
+                  Wrap(
+                    key: const Key('archived-ride-rating'),
+                    spacing: 2,
+                    children: [
+                      for (var value = 1; value <= 5; value += 1)
+                        IconButton(
+                          tooltip: 'Rate $value star${value == 1 ? '' : 's'}',
+                          onPressed: () => _setRating(value),
+                          icon: Icon(
+                            value <= (ride.rating ?? 0)
+                                ? Icons.star_rounded
+                                : Icons.star_border_rounded,
+                            color: const Color(0xFFFFC857),
+                          ),
+                        ),
+                      if (ride.rating != null)
+                        TextButton(
+                          onPressed: () => _setRating(null),
+                          child: const Text('Clear'),
+                        ),
+                    ],
+                  ),
+                  Text(
+                    ride.notes?.trim().isNotEmpty == true
+                        ? ride.notes!.trim()
+                        : 'No notes yet.',
+                    style: TextStyle(
+                      color: ride.notes?.trim().isNotEmpty == true
+                          ? null
+                          : const Color(0xFF8994A2),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -260,15 +393,6 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
             ),
           ),
           const SizedBox(height: 18),
-          FilledButton.icon(
-            key: const Key('archived-ride-again'),
-            onPressed: ride.plannedRoute == null && ride.traveledRoute == null
-                ? null
-                : _rideAgain,
-            icon: const Icon(Icons.route_outlined),
-            label: const Text('Ride again'),
-          ),
-          const SizedBox(height: 10),
           FilledButton.icon(
             onPressed: _sharing ? null : () => _shareSummary(),
             icon: const Icon(Icons.ios_share),
@@ -307,14 +431,14 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
 
   Future<void> _shareSummary() => _runShare(
     () => widget.sharer.shareSummary(
-      widget.ride,
+      _ride,
       distanceUnit: widget.distanceUnits.value,
       sharePositionOrigin: _shareOrigin(),
     ),
   );
 
   Future<void> _rideAgain() async {
-    final ride = widget.ride;
+    final ride = _ride;
     final candidates = <StoredRouteCandidate>[
       if (ride.plannedRoute case final route?)
         StoredRouteCandidate(
@@ -391,10 +515,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
   }
 
   Future<void> _exportGpx() => _runShare(
-    () => widget.sharer.exportGpx(
-      widget.ride,
-      sharePositionOrigin: _shareOrigin(),
-    ),
+    () => widget.sharer.exportGpx(_ride, sharePositionOrigin: _shareOrigin()),
   );
 
   Future<void> _runShare(Future<void> Function() action) async {
@@ -420,7 +541,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
   }
 
   Future<void> _openRecap() async {
-    final ride = widget.ride;
+    final ride = _ride;
     final summary = RideSummary(
       rideId: ride.rideId,
       rideCode: ride.rideCode,
@@ -473,32 +594,175 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
     ];
   }
 
+  Future<void> _handleRecordAction(_RideRecordAction action) async {
+    switch (action) {
+      case _RideRecordAction.rename:
+        await _rename();
+      case _RideRecordAction.archive:
+        await widget.completedRides.archive(_ride.rideId);
+        if (mounted) {
+          setState(
+            () => _ride = _ride.copyWith(
+              libraryStatus: RideLibraryStatus.archived,
+              clearDeletedAt: true,
+            ),
+          );
+        }
+      case _RideRecordAction.restore:
+        await widget.completedRides.restore(_ride.rideId);
+        if (mounted) {
+          setState(
+            () => _ride = _ride.copyWith(
+              libraryStatus: RideLibraryStatus.active,
+              clearDeletedAt: true,
+            ),
+          );
+        }
+      case _RideRecordAction.delete:
+        await _confirmDelete();
+    }
+  }
+
+  Future<void> _rename() async {
+    final controller = TextEditingController(text: _ride.title);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename ride'),
+        content: TextField(
+          key: const Key('archived-ride-name-field'),
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          maxLength: 80,
+          decoration: const InputDecoration(labelText: 'Ride name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('save-archived-ride-name'),
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null) return;
+    await widget.completedRides.rename(_ride.rideId, name);
+    if (mounted) {
+      setState(
+        () => _ride = _ride.copyWith(
+          libraryName: name.trim(),
+          clearLibraryName: name.trim().isEmpty,
+        ),
+      );
+    }
+  }
+
+  Future<void> _editNotes() async {
+    final controller = TextEditingController(text: _ride.notes ?? '');
+    final notes = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Ride notes'),
+        content: TextField(
+          key: const Key('archived-ride-notes-field'),
+          controller: controller,
+          autofocus: true,
+          minLines: 4,
+          maxLines: 8,
+          maxLength: 2000,
+          decoration: const InputDecoration(
+            hintText: 'What made this ride memorable?',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('save-archived-ride-notes'),
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (notes == null) return;
+    await widget.completedRides.setNotes(_ride.rideId, notes);
+    if (mounted) {
+      setState(
+        () => _ride = _ride.copyWith(
+          notes: notes.trim(),
+          clearNotes: notes.trim().isEmpty,
+        ),
+      );
+    }
+  }
+
+  Future<void> _setRating(int? rating) async {
+    await widget.completedRides.rate(_ride.rideId, rating);
+    if (mounted) {
+      setState(
+        () =>
+            _ride = _ride.copyWith(rating: rating, clearRating: rating == null),
+      );
+    }
+  }
+
+  Future<void> _openFullScreenMap() => Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: Text(_ride.title)),
+        body: ArchivedRideMap(
+          plannedRoute: _ride.plannedRoute,
+          traveledRoute: _ride.traveledRoute,
+        ),
+      ),
+    ),
+  );
+
   Future<void> _confirmDelete() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete this ride?'),
+        title: const Text('Move this ride to Recently deleted?'),
         content: const Text(
-          'Its local summary and recorded geometry will be removed from this '
-          'phone. Files you previously exported are not affected.',
+          'The ride will be hidden from your active library and local heatmap, '
+          'but can be restored from Recently deleted.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Keep'),
+            child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Delete'),
+            child: const Text('Move'),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
-    await widget.completedRides.delete(widget.ride.rideId);
-    if (mounted) Navigator.of(context).pop();
+    await widget.completedRides.moveToTrash(_ride.rideId);
+    if (mounted) {
+      setState(
+        () => _ride = _ride.copyWith(
+          libraryStatus: RideLibraryStatus.deleted,
+          deletedAt: DateTime.now().toUtc(),
+        ),
+      );
+    }
   }
 }
+
+enum _RideRecordAction { rename, archive, restore, delete }
 
 class ArchivedRideMap extends StatefulWidget {
   const ArchivedRideMap({

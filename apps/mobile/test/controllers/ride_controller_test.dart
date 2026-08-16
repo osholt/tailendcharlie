@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/ride_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
+import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/marker_assistance.dart';
@@ -762,6 +763,107 @@ void main() {
     expect(archived.endedAt, DateTime.utc(2026, 7, 16, 12));
     expect(archived.toJson().toString(), isNot(contains(inviteSecret)));
     expect(archived.toJson().toString(), isNot(contains(joinToken)));
+  });
+
+  test(
+    'a failed archive is retried on restart without duplicating the ride',
+    () async {
+      final retryingStore = _FailFirstCompletedRideStore();
+      final first = RideController(
+        eventStore,
+        sessionStore,
+        const _FakeNearbyBridge(),
+        clock: () => DateTime.utc(2026, 7, 16, 12),
+        idFactory: () => 'retry-${(id++).toString().padLeft(3, '0')}',
+        random: Random(43),
+        rideCodeDirectory: rideCodes,
+        completedRideStore: retryingStore,
+      );
+      await first.initialize();
+      await first.createRide('Oliver', rideName: 'Recover me');
+      await first.startRide();
+      await first.endRide();
+
+      expect(first.rideArchiveError, RideController.rideArchiveFailedMessage);
+      expect(await retryingStore.list(), isEmpty);
+      expect(await sessionStore.load(), isNotNull);
+      first.dispose();
+
+      final restarted = RideController(
+        eventStore,
+        sessionStore,
+        const _FakeNearbyBridge(),
+        clock: () => DateTime.utc(2026, 7, 16, 12, 1),
+        completedRideStore: retryingStore,
+      );
+      addTearDown(restarted.dispose);
+      await restarted.initialize();
+      await restarted.initialize();
+
+      expect(restarted.rideArchiveError, isNull);
+      expect(await retryingStore.list(), hasLength(1));
+      expect((await retryingStore.list()).single.title, 'Recover me');
+      expect(retryingStore.successfulSaves, 2);
+    },
+  );
+
+  test('a recovered member can leave and archive their local ride', () async {
+    await controller.createRide('Lead', rideName: 'Group recovery');
+    final leader = controller.session!;
+    await controller.publishRideCode();
+
+    // The restored member sees the same durable group journal, but retains its
+    // own session and local completed-ride archive.
+    final memberEvents = eventStore;
+    final memberSession = InMemorySessionStore();
+    final memberArchive = InMemoryCompletedRideStore();
+    final joining = RideController(
+      memberEvents,
+      memberSession,
+      const _FakeNearbyBridge(),
+      clock: () => DateTime.utc(2026, 7, 16, 12, 1),
+      idFactory: () => 'member-${(id++).toString().padLeft(3, '0')}',
+      random: Random(44),
+      rideCodeDirectory: rideCodes,
+      completedRideStore: memberArchive,
+    );
+    await joining.initialize();
+    await joining.joinRide(leader.rideCode, 'Member');
+    await memberEvents.append(
+      _signedEvent(
+        session: leader,
+        id: 'leader-start-for-member',
+        type: RideEventType.rideStarted,
+        createdAt: DateTime.utc(2026, 7, 16, 12, 2),
+        payload: {
+          'leaderRiderId': leader.localRiderId,
+          'leaderDisplayName': leader.displayName,
+        },
+      ),
+    );
+    await joining.reloadEvents();
+    expect(joining.rideStarted, isTrue);
+    joining.dispose();
+
+    final recovered = RideController(
+      memberEvents,
+      memberSession,
+      const _FakeNearbyBridge(),
+      clock: () => DateTime.utc(2026, 7, 16, 12, 3),
+      completedRideStore: memberArchive,
+    );
+    addTearDown(recovered.dispose);
+    await recovered.initialize();
+
+    expect(recovered.session?.role, RideRole.rider);
+    expect(recovered.rideStarted, isTrue);
+    await recovered.leaveRide();
+
+    expect(recovered.hasActiveRide, isFalse);
+    expect(await memberSession.load(), isNull);
+    final archived = (await memberArchive.list()).single;
+    expect(archived.localRole, RideRole.rider);
+    expect(archived.rideCode, leader.rideCode);
   });
 
   test('ended ride is removed only after explicit clearing', () async {
@@ -1717,4 +1819,17 @@ class _InMemoryRideCodeDirectory implements RideCodeDirectory {
 
   @override
   void close() {}
+}
+
+class _FailFirstCompletedRideStore extends InMemoryCompletedRideStore {
+  var attempts = 0;
+  var successfulSaves = 0;
+
+  @override
+  Future<void> save(CompletedRide ride) async {
+    attempts += 1;
+    if (attempts == 1) throw StateError('disk temporarily unavailable');
+    successfulSaves += 1;
+    await super.save(ride);
+  }
 }

@@ -1,6 +1,8 @@
 import 'imported_route.dart';
 import 'ride_role.dart';
 
+enum RideLibraryStatus { active, archived, deleted }
+
 class CompletedMarkerSession {
   const CompletedMarkerSession({
     required this.startedAt,
@@ -49,9 +51,14 @@ class CompletedRide {
     required this.markerSessions,
     required this.plannedRoute,
     required this.traveledRoute,
+    this.libraryName,
+    this.rating,
+    this.notes,
+    this.libraryStatus = RideLibraryStatus.active,
+    this.deletedAt,
   });
 
-  static const schemaVersion = 1;
+  static const schemaVersion = 2;
 
   final String rideId;
   final String rideCode;
@@ -67,9 +74,18 @@ class CompletedRide {
   final List<CompletedMarkerSession> markerSessions;
   final ImportedRoute? plannedRoute;
   final ImportedRoute? traveledRoute;
+  final String? libraryName;
+  final int? rating;
+  final String? notes;
+  final RideLibraryStatus libraryStatus;
+  final DateTime? deletedAt;
 
-  String get title =>
-      rideName?.trim().isNotEmpty == true ? rideName!.trim() : 'Ride $rideCode';
+  String get title {
+    final renamed = libraryName?.trim();
+    if (renamed?.isNotEmpty == true) return renamed!;
+    final original = rideName?.trim();
+    return original?.isNotEmpty == true ? original! : 'Ride $rideCode';
+  }
 
   Duration get duration => endedAt.difference(startedAt).abs();
 
@@ -103,10 +119,16 @@ class CompletedRide {
     'markerSessions': markerSessions.map((value) => value.toJson()).toList(),
     if (plannedRoute != null) 'plannedRoute': plannedRoute!.toJson(),
     if (traveledRoute != null) 'traveledRoute': traveledRoute!.toJson(),
+    if (libraryName != null) 'libraryName': libraryName,
+    if (rating != null) 'rating': rating,
+    if (notes != null) 'notes': notes,
+    'libraryStatus': libraryStatus.name,
+    if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
   };
 
   factory CompletedRide.fromJson(Map<String, Object?> json) {
-    if (json['schemaVersion'] != schemaVersion) {
+    final version = (json['schemaVersion'] as num?)?.toInt();
+    if (version != 1 && version != schemaVersion) {
       throw FormatException(
         'Unsupported completed ride schema: ${json['schemaVersion']}',
       );
@@ -138,7 +160,61 @@ class CompletedRide {
       },
       plannedRoute: _optionalRoute(json['plannedRoute']),
       traveledRoute: _optionalRoute(json['traveledRoute']),
+      libraryName: json['libraryName'] as String?,
+      rating: _rating(json['rating']),
+      notes: json['notes'] as String?,
+      libraryStatus: _libraryStatus(json['libraryStatus']),
+      deletedAt: switch (json['deletedAt']) {
+        final String value => DateTime.tryParse(value)?.toUtc(),
+        _ => null,
+      },
     );
+  }
+
+  CompletedRide copyWith({
+    String? libraryName,
+    bool clearLibraryName = false,
+    int? rating,
+    bool clearRating = false,
+    String? notes,
+    bool clearNotes = false,
+    RideLibraryStatus? libraryStatus,
+    DateTime? deletedAt,
+    bool clearDeletedAt = false,
+  }) => CompletedRide(
+    rideId: rideId,
+    rideCode: rideCode,
+    rideName: rideName,
+    localDisplayName: localDisplayName,
+    localRole: localRole,
+    startedAt: startedAt,
+    endedAt: endedAt,
+    archivedAt: archivedAt,
+    riderCount: riderCount,
+    eventCount: eventCount,
+    totalDistanceMeters: totalDistanceMeters,
+    markerSessions: markerSessions,
+    plannedRoute: plannedRoute,
+    traveledRoute: traveledRoute,
+    libraryName: clearLibraryName ? null : libraryName ?? this.libraryName,
+    rating: clearRating ? null : rating ?? this.rating,
+    notes: clearNotes ? null : notes ?? this.notes,
+    libraryStatus: libraryStatus ?? this.libraryStatus,
+    deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
+  );
+
+  static RideLibraryStatus _libraryStatus(Object? value) {
+    if (value is String) {
+      for (final status in RideLibraryStatus.values) {
+        if (status.name == value) return status;
+      }
+    }
+    return RideLibraryStatus.active;
+  }
+
+  static int? _rating(Object? value) {
+    final rating = (value as num?)?.toInt();
+    return rating != null && rating >= 1 && rating <= 5 ? rating : null;
   }
 
   static ImportedRoute? _optionalRoute(Object? value) {
