@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -8,6 +9,8 @@ import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/biker_place_catalogue.dart';
+import '../../services/discovery_layer_preferences.dart';
+import '../../services/motorcycle_discovery.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/route_marker_plan.dart';
@@ -44,6 +47,8 @@ class RouteReviewScreen extends StatefulWidget {
     this.onReshapeRoute,
     this.onRouteChanged,
     this.pointOfInterestLoader,
+    this.discoveryLoader,
+    this.discoveryPreferencesLoader,
   });
 
   final ImportedRoute route;
@@ -75,6 +80,17 @@ class RouteReviewScreen extends StatefulWidget {
   final ValueChanged<ImportedRoute>? onRouteChanged;
   final Future<BikerPlaceCatalogue> Function()? pointOfInterestLoader;
 
+  /// The motorcycle discovery layers — twisty highlights and the rest — shown
+  /// on the review map for the same reason they are shown in free roam: this
+  /// is the moment a rider is looking at a whole route and deciding whether to
+  /// put something on it (#578).
+  final Future<MotorcycleDiscoveryCatalogue> Function()? discoveryLoader;
+
+  /// The rider's existing layer visibility, so the review map shows what free
+  /// roam shows rather than inventing a second set of preferences.
+  final Future<DiscoveryLayerPreferences> Function()?
+  discoveryPreferencesLoader;
+
   static Future<RouteReviewAction> show(
     BuildContext context, {
     required ImportedRoute route,
@@ -93,6 +109,8 @@ class RouteReviewScreen extends StatefulWidget {
     RouteReshapeCallback? onReshapeRoute,
     ValueChanged<ImportedRoute>? onRouteChanged,
     Future<BikerPlaceCatalogue> Function()? pointOfInterestLoader,
+    Future<MotorcycleDiscoveryCatalogue> Function()? discoveryLoader,
+    Future<DiscoveryLayerPreferences> Function()? discoveryPreferencesLoader,
   }) async =>
       await Navigator.of(context).push<RouteReviewAction>(
         MaterialPageRoute(
@@ -114,6 +132,8 @@ class RouteReviewScreen extends StatefulWidget {
             onReshapeRoute: onReshapeRoute,
             onRouteChanged: onRouteChanged,
             pointOfInterestLoader: pointOfInterestLoader,
+            discoveryLoader: discoveryLoader,
+            discoveryPreferencesLoader: discoveryPreferencesLoader,
           ),
         ),
       ) ??
@@ -143,6 +163,11 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   bool _reshaping = false;
   int _shapeSequence = 0;
   BikerPlaceCatalogue _pointOfInterests = BikerPlaceCatalogue.empty;
+  MotorcycleDiscoveryCatalogue _discoveries =
+      const MotorcycleDiscoveryCatalogue([]);
+  List<MotorcycleDiscoveryFeature> _nearbyDiscoveries = const [];
+  Set<MotorcycleDiscoveryCategory> _enabledDiscoveryCategories = const {};
+  bool _showDiscoveries = true;
   List<BikerPlace> _nearbyPointsOfInterest = const [];
   bool _showPointsOfInterest = true;
   bool _loadingPointsOfInterest = false;
@@ -188,6 +213,11 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
         _pointOfInterests = catalogue;
         _nearbyPointsOfInterest = catalogue.nearRoute(route.allPoints);
       });
+      // Loaded separately from the cafés on purpose. `_loadDiscoveryCatalogue`
+      // in the map feature puts three loads in one `Future.wait`, so a failed
+      // asset read takes the other two silently down with it; there is no
+      // reason to repeat that here.
+      await _loadDiscoveries();
     } on Object catch (error) {
       if (!mounted) return;
       setState(() {
@@ -329,6 +359,66 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     );
   }
 
+  /// The discovery layers, filtered to the rider's enabled categories and to
+  /// the corridor of the route being reviewed.
+  Future<void> _loadDiscoveries() async {
+    try {
+      final catalogue =
+          await (widget.discoveryLoader?.call() ??
+              MotorcycleDiscoveryCatalogue.loadAsset());
+      final preferences =
+          await (widget.discoveryPreferencesLoader?.call() ??
+              DiscoveryLayerPreferences.load());
+      if (!mounted) return;
+      setState(() {
+        _discoveries = catalogue;
+        _enabledDiscoveryCategories = {...preferences.categories};
+        _nearbyDiscoveries = _discoveriesNearRoute(
+          catalogue,
+          _enabledDiscoveryCategories,
+        );
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      // Said, not swallowed. The cafés and the route drawing are unaffected.
+      setState(() {
+        _pointOfInterestError =
+            'Discovery layers could not be loaded. Route drawing still works. '
+            '$error';
+      });
+    }
+  }
+
+  List<MotorcycleDiscoveryFeature> _discoveriesNearRoute(
+    MotorcycleDiscoveryCatalogue catalogue,
+    Set<MotorcycleDiscoveryCategory> categories,
+  ) {
+    final points = route.allPoints;
+    if (points.isEmpty || categories.isEmpty) {
+      return const <MotorcycleDiscoveryFeature>[];
+    }
+    var west = points.first.longitude;
+    var east = west;
+    var south = points.first.latitude;
+    var north = south;
+    for (final point in points.skip(1)) {
+      west = math.min(west, point.longitude);
+      east = math.max(east, point.longitude);
+      south = math.min(south, point.latitude);
+      north = math.max(north, point.latitude);
+    }
+    // The same padding free roam uses, so the two surfaces show the same
+    // features for the same route rather than differing at the edges.
+    const paddingDegrees = 0.6;
+    return catalogue.visible(
+      categories: categories,
+      west: west - paddingDegrees,
+      south: south - paddingDegrees,
+      east: east + paddingDegrees,
+      north: north + paddingDegrees,
+    );
+  }
+
   Future<void> _showPointOfInterest(BikerPlace place) async {
     if (_reshaping || _reshapeQueued || widget.onReshapeRoute == null) return;
     final alreadyAdded = route.waypoints.any(
@@ -413,6 +503,82 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     );
   }
 
+  /// Adds a discovery highlight as an ordered stop, the same way a café is
+  /// added — the point of showing the layers here is that this is where a stop
+  /// gets chosen (#578).
+  Future<void> _showDiscoveryFeature(MotorcycleDiscoveryFeature feature) async {
+    if (_reshaping || _reshapeQueued || widget.onReshapeRoute == null) return;
+    final add = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 3, right: 12),
+                    child: Icon(Icons.route, color: Color(0xFF8CD98C)),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          feature.name,
+                          style: Theme.of(sheetContext).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(feature.category.label),
+                        const SizedBox(height: 4),
+                        // Carried through rather than dropped: a highlight is
+                        // a suggestion with a caveat, and the caveat is the
+                        // half a rider needs before routing through it.
+                        Text(
+                          feature.warning,
+                          style: const TextStyle(
+                            color: Color(0xFF98A3B1),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                key: Key('review-add-discovery-${feature.id}'),
+                onPressed: () => Navigator.of(sheetContext).pop(true),
+                icon: const Icon(Icons.add_location_alt_outlined),
+                label: const Text('Add as a stop'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (add != true || !mounted) return;
+    final candidate = insertRouteWaypoint(
+      route,
+      RouteWaypoint(
+        point: feature.anchor,
+        name: feature.name,
+        description: '${feature.category.label} · ${feature.warning}',
+        symbol: 'Scenic Area',
+      ),
+    );
+    await _recalculateEditedRoute(
+      candidate,
+      failurePrefix: 'Could not route via ${feature.name}.',
+    );
+  }
+
   Future<void> _removeWaypoint(int index) async {
     if (_reshaping || _reshapeQueued || widget.onReshapeRoute == null) return;
     final waypoint = route.waypoints[index];
@@ -468,6 +634,14 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     if (id == null) return null;
     return _pointOfInterests.places
         .where((place) => 'poi-${place.id}' == id)
+        .firstOrNull;
+  }
+
+  MotorcycleDiscoveryFeature? _discoveryForPin(RoutePreviewPin pin) {
+    final id = pin.id;
+    if (id == null) return null;
+    return _discoveries.features
+        .where((feature) => 'discovery-${feature.id}' == id)
         .firstOrNull;
   }
 
@@ -558,6 +732,21 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
             label: place.name,
             point: place.point,
             kind: 'poi',
+            interactive: true,
+            includeInFraming: false,
+          ),
+        )
+        .toList(growable: false);
+    final visibleDiscoveries = canEditStops && _showDiscoveries
+        ? _nearbyDiscoveries
+        : const <MotorcycleDiscoveryFeature>[];
+    final discoveryPins = visibleDiscoveries
+        .map(
+          (feature) => RoutePreviewPin(
+            id: 'discovery-${feature.id}',
+            label: feature.name,
+            point: feature.anchor,
+            kind: 'discovery',
             interactive: true,
             includeInFraming: false,
           ),
@@ -665,6 +854,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                               ),
                             )
                             .followedBy(pointOfInterestPins)
+                            .followedBy(discoveryPins)
                             .toList(growable: false),
                         basemapConfiguration: basemapConfiguration,
                         reshapeEnabled: _reshapeEnabled,
@@ -672,6 +862,11 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                           final place = _pointOfInterestForPin(pin);
                           if (place != null) {
                             unawaited(_showPointOfInterest(place));
+                            return;
+                          }
+                          final feature = _discoveryForPin(pin);
+                          if (feature != null) {
+                            unawaited(_showDiscoveryFeature(feature));
                           }
                         },
                         onReshapeStart: _beginRouteReshape,
@@ -984,6 +1179,17 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                             avatar: const Icon(Icons.undo, size: 18),
                             label: const Text('Undo adjustment'),
                             onPressed: _undoReshape,
+                          ),
+                        if (canEditStops && _nearbyDiscoveries.isNotEmpty)
+                          FilterChip(
+                            key: const Key('toggle-route-discovery-layers'),
+                            selected: _showDiscoveries,
+                            avatar: const Icon(Icons.route, size: 18),
+                            label: Text(
+                              'Good roads (${visibleDiscoveries.length})',
+                            ),
+                            onSelected: (selected) =>
+                                setState(() => _showDiscoveries = selected),
                           ),
                         if (canEditStops)
                           FilterChip(

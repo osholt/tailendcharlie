@@ -6,6 +6,9 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/route_review_screen.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/biker_place_catalogue.dart';
+import 'package:ride_relay/services/discovery_layer_preferences.dart';
+import 'package:ride_relay/services/motorcycle_discovery.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ride_relay/services/route_reshape_planner.dart';
 
 void main() {
@@ -478,6 +481,128 @@ void main() {
       find.text('Added during review because the detector missed it.'),
       findsOneWidget,
     );
+  });
+  // #578. The review screen is where a rider looks at a whole route and
+  // decides whether it is the ride they want — and it was the one surface
+  // that could not show them a good road or a café next to it.
+  group('discovery layers on the review screen', () {
+    ImportedRoute reviewRoute() => ImportedRoute(
+      id: 'review',
+      name: 'Review route',
+      importedAt: DateTime.utc(2026, 8, 16),
+      sourceFileName: 'review.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.55),
+            GeoPoint(latitude: 51.48, longitude: -2.50),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    const nearbyTwisty = MotorcycleDiscoveryFeature(
+      id: 'twisty-1',
+      category: MotorcycleDiscoveryCategory.twistyHighlight,
+      name: 'Nearby twisty road',
+      points: [
+        GeoPoint(latitude: 51.46, longitude: -2.53),
+        GeoPoint(latitude: 51.47, longitude: -2.52),
+      ],
+      sourceName: 'Test',
+      sourceUrl: 'https://example.test/road',
+      confidence: 'test',
+      lastVerified: '2026-08-16',
+      warning: 'Unsurfaced in places',
+    );
+
+    Future<void> pumpReview(
+      WidgetTester tester, {
+      required Set<MotorcycleDiscoveryCategory> enabled,
+      List<MotorcycleDiscoveryFeature> features = const [nearbyTwisty],
+    }) async {
+      SharedPreferences.setMockInitialValues({
+        for (final category in MotorcycleDiscoveryCategory.values)
+          'map_layer_discovery_${category.apiValue}_visible': enabled.contains(
+            category,
+          ),
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RouteReviewScreen(
+            route: reviewRoute(),
+            distanceUnit: DistanceUnit.kilometres,
+            basemapConfiguration: const BasemapConfiguration(),
+            canEditStops: true,
+            onReshapeRoute: (route, _) async => RouteReshapeResult(
+              route: route,
+              distanceMeters: 5000,
+              duration: const Duration(minutes: 8),
+            ),
+            pointOfInterestLoader: () async => BikerPlaceCatalogue.empty,
+            discoveryLoader: () async => MotorcycleDiscoveryCatalogue(features),
+            discoveryPreferencesLoader: DiscoveryLayerPreferences.load,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a highlight the rider has switched on is offered', (
+      tester,
+    ) async {
+      await pumpReview(
+        tester,
+        enabled: {MotorcycleDiscoveryCategory.twistyHighlight},
+      );
+
+      expect(
+        find.byKey(const Key('toggle-route-discovery-layers')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Good roads (1)'), findsOneWidget);
+    });
+
+    testWidgets('a layer the rider switched off in free roam stays off here', (
+      tester,
+    ) async {
+      // The point is that this is the *same* preference, not a second one.
+      await pumpReview(tester, enabled: const {});
+
+      expect(
+        find.byKey(const Key('toggle-route-discovery-layers')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('a highlight far from the route is not offered', (
+      tester,
+    ) async {
+      await pumpReview(
+        tester,
+        enabled: {MotorcycleDiscoveryCategory.twistyHighlight},
+        features: const [
+          MotorcycleDiscoveryFeature(
+            id: 'far-away',
+            category: MotorcycleDiscoveryCategory.twistyHighlight,
+            name: 'Somewhere else entirely',
+            points: [GeoPoint(latitude: 57.0, longitude: -4.0)],
+            sourceName: 'Test',
+            sourceUrl: 'https://example.test/far',
+            confidence: 'test',
+            lastVerified: '2026-08-16',
+            warning: 'Test fixture',
+          ),
+        ],
+      );
+
+      expect(
+        find.byKey(const Key('toggle-route-discovery-layers')),
+        findsNothing,
+      );
+    });
   });
 }
 
