@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
+import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/stored_route_picker.dart';
 import 'package:ride_relay/services/approximate_place_index.dart';
 import 'package:ride_relay/services/stored_route_library.dart';
@@ -59,23 +61,51 @@ void main() {
     expect(find.text('Saved route 0'), findsOneWidget);
   });
 
-  testWidgets('ride details and exports remain reachable from the library', (
+  testWidgets('routes with the same title remain separate library entries', (
+    tester,
+  ) async {
+    final recorded = InMemoryRecordedRouteStore();
+    await recorded.save(_route(id: '10', name: 'Sunday loop'));
+    await recorded.save(_route(id: '11', name: 'Sunday loop'));
+
+    await _pump(tester, recorded: recorded, places: places);
+
+    expect(find.text('Sunday loop'), findsNWidgets(2));
+    expect(
+      find.byKey(const Key('stored-route-candidate-recorded:10')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('stored-route-candidate-recorded:11')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a previous ride opens its details directly from the library', (
     tester,
   ) async {
     final recorded = InMemoryRecordedRouteStore();
     await recorded.save(_route(id: '1', name: 'Saved route'));
+    final completed = InMemoryCompletedRideStore();
+    await completed.save(_completedRide());
     var opened = 0;
 
     await _pump(
       tester,
       recorded: recorded,
+      completed: completed,
       places: places,
-      openPreviousRideArchive: (_) async {
+      openPreviousRide: (_, ride) async {
         opened += 1;
+        expect(ride.rideId, 'ride-209271');
         return null;
       },
     );
-    await tester.tap(find.byKey(const Key('ride-library-details-and-exports')));
+    expect(
+      find.byKey(const Key('ride-library-details-and-exports')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const Key('ride-library-record-ride-209271')));
     await tester.pump();
 
     expect(opened, 1);
@@ -86,8 +116,9 @@ Future<void> _pump(
   WidgetTester tester, {
   required RecordedRouteStore recorded,
   required ApproximatePlaceIndex places,
-  Future<StoredRouteSelection?> Function(BuildContext context)?
-  openPreviousRideArchive,
+  CompletedRideStore? completed,
+  Future<StoredRouteSelection?> Function(BuildContext, CompletedRide)?
+  openPreviousRide,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -95,11 +126,11 @@ Future<void> _pump(
       home: StoredRoutePickerScreen(
         library: StoredRouteLibrary(
           recordedRoutes: recorded,
-          completedRides: InMemoryCompletedRideStore(),
+          completedRides: completed ?? InMemoryCompletedRideStore(),
           approximatePlaceIndex: places,
         ),
         distanceUnit: DistanceUnit.miles,
-        openPreviousRideArchive: openPreviousRideArchive,
+        openPreviousRide: openPreviousRide,
       ),
     ),
   );
@@ -127,3 +158,20 @@ ImportedRoute _route({required String id, required String name}) =>
       ],
       waypoints: const [],
     );
+
+CompletedRide _completedRide() => CompletedRide(
+  rideId: 'ride-209271',
+  rideCode: '209271',
+  rideName: 'Ride 209271',
+  localDisplayName: 'Oliver',
+  localRole: RideRole.lead,
+  startedAt: DateTime.utc(2026, 8, 15, 10),
+  endedAt: DateTime.utc(2026, 8, 15, 11),
+  archivedAt: DateTime.utc(2026, 8, 15, 11),
+  riderCount: 1,
+  eventCount: 100,
+  totalDistanceMeters: 17000,
+  markerSessions: const [],
+  plannedRoute: null,
+  traveledRoute: _route(id: '209271', name: 'Ride 209271'),
+);

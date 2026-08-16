@@ -15,6 +15,8 @@ class ApproximatePlaceIndex {
 
   static const assetKey = 'assets/route_places.json';
   static const maximumMatchDistanceMeters = 50 * 1000.0;
+  static const _coarseLocalityDistanceMeters = 8 * 1000.0;
+  static const _coarseLocalityProminence = 1;
   static const _latitudeSearchWindowE5 = 100000;
   static Future<ApproximatePlaceIndex>? _defaultIndex;
 
@@ -76,6 +78,8 @@ class ApproximatePlaceIndex {
     final end = _lowerBound(latitudeE5 + _latitudeSearchWindowE5 + 1);
     _ApproximatePlace? best;
     var bestDistance = double.infinity;
+    _ApproximatePlace? bestCoarse;
+    var bestCoarseDistance = double.infinity;
     for (var index = start; index < end; index += 1) {
       final candidate = _places[index];
       final distance = _distanceMeters(point, candidate);
@@ -85,7 +89,17 @@ class ApproximatePlaceIndex {
         best = candidate;
         bestDistance = distance;
       }
+      // Saved rides need a recognisable locality, not the nearest estate or
+      // hamlet. Prefer the closest town-level label when one is genuinely
+      // local, while retaining the nearest settlement in rural areas.
+      if (candidate.prominence <= _coarseLocalityProminence &&
+          distance <= _coarseLocalityDistanceMeters &&
+          distance < bestCoarseDistance) {
+        bestCoarse = candidate;
+        bestCoarseDistance = distance;
+      }
     }
+    if (bestCoarse != null) return bestCoarse.name;
     return bestDistance <= maximumMatchDistanceMeters ? best?.name : null;
   }
 

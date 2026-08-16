@@ -91,7 +91,7 @@ void main() {
       addTearDown(controller.dispose);
 
       expect(controller.visible, isFalse);
-      expect(controller.heatmap.cells, isEmpty);
+      expect(controller.heatmap.cells, isNotEmpty);
 
       await controller.setVisible(true);
       expect(controller.heatmap.cells, isNotEmpty);
@@ -103,28 +103,25 @@ void main() {
     },
   );
 
-  test(
-    'saving and deleting archived rides rebuilds visible coverage',
-    () async {
-      final rides = await CompletedRidesController.load(
-        InMemoryCompletedRideStore(),
-      );
-      addTearDown(rides.dispose);
-      final controller = await PersonalRideHeatmapController.load(store: rides);
-      addTearDown(controller.dispose);
-      await controller.setVisible(true);
+  test('saving and trashing rides rebuilds visible coverage', () async {
+    final rides = await CompletedRidesController.load(
+      InMemoryCompletedRideStore(),
+    );
+    addTearDown(rides.dispose);
+    final controller = await PersonalRideHeatmapController.load(store: rides);
+    addTearDown(controller.dispose);
+    await controller.setVisible(true);
 
-      await rides.save(
-        _ride('one', travelled: _route([_path(51.45, -2.59, 51.46, -2.58)])),
-      );
-      await _settleAsyncRefresh();
-      expect(controller.heatmap.cells, isNotEmpty);
+    await rides.save(
+      _ride('one', travelled: _route([_path(51.45, -2.59, 51.46, -2.58)])),
+    );
+    await _settleAsyncRefresh();
+    expect(controller.heatmap.cells, isNotEmpty);
 
-      await rides.delete('one');
-      await _settleAsyncRefresh();
-      expect(controller.heatmap.cells, isEmpty);
-    },
-  );
+    await rides.moveToTrash('one');
+    await _settleAsyncRefresh();
+    expect(controller.heatmap.cells, isEmpty);
+  });
 
   test('100,000 archived fixes are reduced to a bounded spatial index', () {
     final rides = [

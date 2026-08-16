@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/controllers/completed_rides_controller.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
+import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 
@@ -29,6 +31,43 @@ void main() {
     expect(restored.traveledRoute, isNull);
     expect(restored.riderCount, 4);
   });
+
+  test(
+    'Ride Library metadata persists and archive/trash remain recoverable',
+    () async {
+      final store = InMemoryCompletedRideStore();
+      await store.save(_ride());
+      final controller = await CompletedRidesController.load(store);
+
+      await controller.rename('ride-1', '  Mendip favourite  ');
+      await controller.rate('ride-1', 5);
+      await controller.setNotes('ride-1', '  Best before breakfast.  ');
+      await controller.archive('ride-1');
+
+      expect(controller.rides, isEmpty);
+      expect(controller.archivedRides.single.title, 'Mendip favourite');
+      expect(controller.archivedRides.single.rating, 5);
+      expect(controller.archivedRides.single.notes, 'Best before breakfast.');
+
+      await controller.moveToTrash(
+        'ride-1',
+        deletedAt: DateTime.utc(2026, 8, 16, 12),
+      );
+      expect(controller.archivedRides, isEmpty);
+      expect(controller.deletedRides.single.deletedAt, isNotNull);
+
+      await controller.restore('ride-1');
+      final restored = CompletedRide.fromJson(
+        (await store.list()).single.toJson(),
+      );
+      expect(controller.rides.single.rideId, 'ride-1');
+      expect(restored.libraryName, 'Mendip favourite');
+      expect(restored.rating, 5);
+      expect(restored.notes, 'Best before breakfast.');
+      expect(restored.libraryStatus, RideLibraryStatus.active);
+      expect(restored.deletedAt, isNull);
+    },
+  );
 }
 
 CompletedRide _ride() => CompletedRide(

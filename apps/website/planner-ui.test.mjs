@@ -19,6 +19,11 @@ const plannerCore = await readFile(
   new URL("./planner-core.mjs", import.meta.url),
   "utf8",
 );
+const globalHeatmap = await readFile(
+  new URL("./global-heatmap.mjs", import.meta.url),
+  "utf8",
+);
+const headers = await readFile(new URL("./_headers", import.meta.url), "utf8");
 
 test("the enabled app-code action is visually distinct from disabled actions", () => {
   const enabledRule = plannerCss.match(
@@ -52,6 +57,12 @@ test("planner asset versions match their content so deployed fixes replace cache
       `from "\\./planner-core\\.mjs\\?v=${version(plannerCore)}"`,
     ),
   );
+  assert.match(
+    plannerJs,
+    new RegExp(
+      `from "\\./global-heatmap\\.mjs\\?v=${version(globalHeatmap)}"`,
+    ),
+  );
 });
 
 test("email route is a visible route action rather than a hidden result", () => {
@@ -60,6 +71,40 @@ test("email route is a visible route action rather than a hidden result", () => 
     /<button class="button button-secondary" id="email-plan" disabled>/,
   );
   assert.match(plannerHtml, /Email route/);
+});
+
+test("circular and day ride generation is available in the editable planner", () => {
+  assert.match(plannerHtml, /id="circular-direction"/);
+  assert.match(plannerHtml, /id="circular-distance"/);
+  assert.match(plannerHtml, /id="circular-fuel-frequency"/);
+  assert.match(plannerHtml, /id="circular-comfort-frequency"/);
+  assert.match(plannerHtml, /id="circular-meal-time"/);
+  assert.match(plannerHtml, /id="circular-heatmap-preference"/);
+  assert.match(plannerHtml, /id="generate-circular-another"/);
+  assert.match(plannerJs, /circularRideShapingCoordinates/);
+  assert.match(plannerJs, /Suggested \$\{needs\}/);
+  assert.match(plannerJs, /routeStops\(true\)/);
+});
+
+test("global rides stay below the editable route and do not capture gestures", () => {
+  const heatmapLayer = plannerJs.indexOf('id: "global-rides-heatmap"');
+  const routeLayer = plannerJs.indexOf('id: "road-route-casing"');
+  assert.ok(heatmapLayer >= 0 && heatmapLayer < routeLayer);
+  assert.doesNotMatch(
+    plannerJs,
+    /map\.on\([^\n]+"global-rides-heatmap"/,
+  );
+  assert.match(plannerJs, /canvas\.addEventListener\("pointerdown"/);
+  assert.match(headers, /connect-src[^\n]+https:\/\/relay\.tailendcharlie\.app/);
+});
+
+test("global viewing is opt-in and never exposes a private mobile endpoint", () => {
+  assert.match(plannerHtml, /id="layer-global-rides" type="checkbox"/);
+  assert.match(plannerHtml, /Viewing never contributes your rides/);
+  assert.doesNotMatch(
+    `${plannerJs}\n${globalHeatmap}`,
+    /completed.?rides|ride.?archive|contributors\/current/i,
+  );
 });
 
 test("marker review is keyboard-accessible and explains its advisory status", () => {
