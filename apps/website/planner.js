@@ -1,8 +1,15 @@
 import {
   buildGpx,
+  biasCircularRideCoordinates,
   buildRouteMarkerPlan,
   chooseRoadRoute,
+  circularRideShapingCoordinates,
+  circularRideItinerary,
+  circularRideDistanceWithinTolerance,
+  circularRouteHasUTurn,
+  circularHeatmapBiasAvailable,
   decodePolyline,
+  dayRideDistanceMetres,
   formatDistance,
   formatDuration,
   formatRouteBendScore,
@@ -13,7 +20,7 @@ import {
   routeManeuvers,
   routeSelfCrossingArrows,
   StateHistory,
-} from "./planner-core.mjs?v=528fa175";
+} from "./planner-core.mjs?v=cb3fa189";
 import {
   BIKER_PLACES,
   bikerPlaceKey,
@@ -52,6 +59,10 @@ import {
   encodeSuggestionQueue,
   submissionPayload,
 } from "./discovery-suggestions.mjs";
+import {
+  GLOBAL_HEATMAP_VISIBLE_KEY,
+  GlobalHeatmapLoader,
+} from "./global-heatmap.mjs?v=ec9cf49f";
 
 const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 const ROUTING_URL = "https://router.project-osrm.org";
@@ -68,6 +79,16 @@ const DISCOVERY_API_URL = RELAY_API_URL;
 
 const elements = {
   clearRoute: document.querySelector("#clear-route"),
+  circularFuelFrequency: document.querySelector("#circular-fuel-frequency"),
+  circularComfortFrequency: document.querySelector("#circular-comfort-frequency"),
+  circularMealTime: document.querySelector("#circular-meal-time"),
+  circularHeatmapPreference: document.querySelector("#circular-heatmap-preference"),
+  circularDirection: document.querySelector("#circular-direction"),
+  circularDistance: document.querySelector("#circular-distance"),
+  circularGeneratorStatus: document.querySelector("#circular-generator-status"),
+  circularLength: document.querySelector("#circular-length"),
+  generateCircular: document.querySelector("#generate-circular"),
+  generateCircularAnother: document.querySelector("#generate-circular-another"),
   avoidFerries: document.querySelector("#avoid-ferries"),
   avoidMajorRoads: document.querySelector("#avoid-major-roads"),
   avoidMotorways: document.querySelector("#avoid-motorways"),
@@ -102,6 +123,8 @@ const elements = {
   layerGoodRoad: document.querySelector("#layer-good-road"),
   layerMountainPass: document.querySelector("#layer-mountain-pass"),
   layerTwisty: document.querySelector("#layer-twisty"),
+  layerGlobalRides: document.querySelector("#layer-global-rides"),
+  globalHeatmapStatus: document.querySelector("#global-heatmap-status"),
   markerCandidate: document.querySelector("#marker-candidate"),
   markerReview: document.querySelector("#marker-review"),
   markerReviewList: document.querySelector("#marker-review-list"),
@@ -177,6 +200,8 @@ let discoveryPopup = null;
 // clicked one stays put.
 let discoveryPopupFeatureId = null;
 let discoveryPopupIsHover = false;
+let circularRouteVariant = 0;
+let pendingCircularDistanceMetres = null;
 let suggestionCoordinate = null;
 let suggestionGeometry = null;
 let suggestionSegmentStart = null;
@@ -202,6 +227,12 @@ elements.browseBikerStops.textContent =
   `Browse ${BIKER_PLACES.length} biker cafés & start locations`;
 pruneSearchCache();
 updateSuggestionQueueStatus();
+try {
+  elements.layerGlobalRides.checked =
+    localStorage.getItem(GLOBAL_HEATMAP_VISIBLE_KEY) === "true";
+} catch {
+  elements.layerGlobalRides.checked = false;
+}
 
 const map = new maplibregl.Map({
   container: "map",
@@ -209,6 +240,17 @@ const map = new maplibregl.Map({
   center: [-2.5, 54.4],
   zoom: 5.1,
   attributionControl: false,
+});
+
+const globalHeatmapLoader = new GlobalHeatmapLoader({
+  apiBase: RELAY_API_URL,
+  onSnapshot: (snapshot) => {
+    map.getSource("global-rides")?.setData(snapshot);
+    updateHeatmapPreferenceAvailability();
+  },
+  onStatus: (status) => {
+    elements.globalHeatmapStatus.textContent = status;
+  },
 });
 
 map.addControl(
@@ -221,6 +263,37 @@ map.addControl(
 );
 
 map.on("load", () => {
+  map.addSource("global-rides", {
+    type: "geojson",
+    data: { type: "FeatureCollection", features: [] },
+  });
+  map.addLayer({
+    id: "global-rides-heatmap",
+    type: "heatmap",
+    source: "global-rides",
+    paint: {
+      "heatmap-weight": ["get", "weight"],
+      "heatmap-intensity": 0.8,
+      "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 5, 4, 12, 10, 17, 18],
+      "heatmap-color": [
+        "interpolate",
+        ["linear"],
+        ["heatmap-density"],
+        0,
+        "rgba(14,165,233,0)",
+        0.25,
+        "#0ea5e9",
+        0.7,
+        "#f59e0b",
+        1,
+        "#ef4444",
+      ],
+      "heatmap-opacity": 0.42,
+    },
+    layout: {
+      visibility: elements.layerGlobalRides.checked ? "visible" : "none",
+    },
+  });
   map.addImage("route-direction-arrow", createRouteArrowImage("#ffffff"), {
     pixelRatio: 2,
   });
@@ -384,6 +457,8 @@ map.on("load", () => {
   updateBikerLayerVisibility();
   updateMapLines();
   installRouteDragging();
+  globalHeatmapLoader.setEnabled(elements.layerGlobalRides.checked);
+  scheduleGlobalHeatmap(true);
   if (new URLSearchParams(window.location.search).has("code")) {
     void loadPlanFromUrl();
   } else {
@@ -453,7 +528,10 @@ map.on("error", (event) => {
     setStatus("The map tiles could not be loaded. Check your connection and try again.", true);
   }
 });
-map.on("moveend", updateDiscoveryViewport);
+map.on("moveend", () => {
+  updateDiscoveryViewport();
+  scheduleGlobalHeatmap();
+});
 
 // Hover is the natural interaction for these facts on a desktop (#160). It shows
 // the same content the click popup shows, so the two cannot disagree, and it
@@ -483,11 +561,15 @@ elements.bikerFilter.addEventListener("keydown", (event) => {
 elements.bikerSort.addEventListener("change", changeBikerSort);
 elements.bikerLayerVisible.addEventListener("change", changeBikerLayerVisibility);
 elements.bikerLayerVisibleMenu.addEventListener("change", changeBikerLayerVisibility);
+elements.layerGlobalRides.addEventListener("change", changeGlobalHeatmapVisibility);
 elements.stopList.addEventListener("input", editStop);
 elements.stopList.addEventListener("change", commitCoordinateEdit);
 elements.stopList.addEventListener("click", handleStopAction);
 elements.stopList.addEventListener("pointerdown", beginListDrag);
 elements.clearRoute.addEventListener("click", clearRoute);
+elements.circularLength.addEventListener("change", changeCircularLength);
+elements.generateCircular.addEventListener("click", () => generateCircularRide(false));
+elements.generateCircularAnother.addEventListener("click", () => generateCircularRide(true));
 elements.resetAdjustments.addEventListener("click", resetRouteAdjustments);
 elements.undoRoute.addEventListener("click", undoRouteChange);
 elements.redoRoute.addEventListener("click", redoRouteChange);
@@ -557,6 +639,72 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+function changeGlobalHeatmapVisibility() {
+  const visible = elements.layerGlobalRides.checked;
+  try {
+    localStorage.setItem(GLOBAL_HEATMAP_VISIBLE_KEY, String(visible));
+  } catch {
+    // The layer still works for this page when storage is unavailable.
+  }
+  globalHeatmapLoader.setEnabled(visible);
+  if (map.getLayer("global-rides-heatmap")) {
+    map.setLayoutProperty(
+      "global-rides-heatmap",
+      "visibility",
+      visible ? "visible" : "none",
+    );
+  }
+  if (visible) scheduleGlobalHeatmap(true);
+}
+
+function scheduleGlobalHeatmap(immediate = false) {
+  if (!map.loaded()) return;
+  const bounds = map.getBounds();
+  globalHeatmapLoader.schedule(
+    {
+      west: bounds.getWest(),
+      south: bounds.getSouth(),
+      east: bounds.getEast(),
+      north: bounds.getNorth(),
+      zoom: map.getZoom(),
+    },
+    { immediate },
+  );
+}
+
+function globalHeatmapCells() {
+  return (globalHeatmapLoader.lastSnapshot?.features || [])
+    .map((feature) => ({
+      coordinate: feature?.geometry?.coordinates,
+      weight: Number(feature?.properties?.weight),
+    }))
+    .filter(
+      (cell) =>
+        Array.isArray(cell.coordinate) &&
+        cell.coordinate.length === 2 &&
+        Number.isFinite(cell.coordinate[0]) &&
+        Number.isFinite(cell.coordinate[1]) &&
+        Number.isFinite(cell.weight),
+    );
+}
+
+function updateHeatmapPreferenceAvailability() {
+  const option = elements.circularHeatmapPreference.querySelector(
+    'option[value="global"]',
+  );
+  const start = stops.length
+    ? [stops[0].longitude, stops[0].latitude]
+    : null;
+  const available = circularHeatmapBiasAvailable(globalHeatmapCells(), start);
+  option.disabled = !available;
+  option.textContent = available
+    ? "Prefer popular public roads"
+    : "Popular public roads · not enough coverage";
+  if (!available && elements.circularHeatmapPreference.value === "global") {
+    elements.circularHeatmapPreference.value = "none";
+  }
+}
+
 function addStop(
   { id: requestedId, longitude, latitude, name },
   insertIndex = stops.length,
@@ -608,6 +756,7 @@ function addStop(
     name: cleanPlaceName(name),
     marker,
   });
+  updateHeatmapPreferenceAvailability();
   renderStops();
   if (shouldRoute) routeStops();
   if (shouldRoute && stops.length === 1) {
@@ -837,6 +986,201 @@ function clearRoute() {
   setStatus("Add at least two stops to generate a route.");
 }
 
+function changeCircularLength() {
+  const preset = elements.circularLength.value;
+  if (preset === "custom") return;
+  elements.circularDistance.value = String(
+    Math.round(dayRideDistanceMetres(preset) / 1609.344),
+  );
+}
+
+function generateCircularRide(alternative) {
+  if (stops.length === 0) {
+    setCircularGeneratorStatus(
+      "Add or search for the start point first, then generate the loop.",
+      true,
+    );
+    return;
+  }
+  const distanceMiles = Number(elements.circularDistance.value);
+  const distanceMetres = distanceMiles * 1609.344;
+  const start = stops[0];
+  try {
+    if (alternative) circularRouteVariant += 1;
+    else circularRouteVariant = 0;
+    const baseShapeCoordinates = circularRideShapingCoordinates({
+      start: [start.longitude, start.latitude],
+      distanceMetres,
+      direction: elements.circularDirection.value,
+      variant: circularRouteVariant,
+    });
+    const shapeCoordinates = biasCircularRideCoordinates({
+      controls: baseShapeCoordinates,
+      start: [start.longitude, start.latitude],
+      cells: globalHeatmapCells(),
+      enabled: elements.circularHeatmapPreference.value === "global",
+      searchRadiusMetres: (distanceMetres / 4.25) * 0.75,
+    });
+    replaceWithCircularRide({
+      start,
+      shapeCoordinates,
+      distanceMiles,
+      direction: elements.circularDirection.value,
+      dayLength: elements.circularLength.value,
+      fuelMinutes: Number(elements.circularFuelFrequency.value),
+      comfortMinutes: Number(elements.circularComfortFrequency.value),
+      mealMinutes: Number(elements.circularMealTime.value),
+      heatmapPreference: elements.circularHeatmapPreference.value,
+    });
+    elements.generateCircularAnother.disabled = false;
+  } catch (error) {
+    setCircularGeneratorStatus(error.message || "The circular ride could not be generated.", true);
+  }
+}
+
+function replaceWithCircularRide({
+  start,
+  shapeCoordinates,
+  distanceMiles,
+  direction,
+  dayLength,
+  fuelMinutes,
+  comfortMinutes,
+  mealMinutes,
+  heatmapPreference,
+}) {
+  recordRouteChange();
+  routeRequest?.abort();
+  cancelRoutePreview();
+  stops.forEach((stop) => stop.marker.remove());
+  stops = [];
+  clearShapingPoints();
+  routeCoordinates = [];
+  routeLegGeometries = [];
+  routedControls = [];
+  routeManeuverList = [];
+  markerReview = { rejected: [], added: [] };
+  pendingCircularDistanceMetres = distanceMiles * 1609.344;
+
+  addStop(
+    {
+      longitude: start.longitude,
+      latitude: start.latitude,
+      name: start.name || "Start",
+    },
+    0,
+    false,
+    false,
+  );
+  let segmentStartId = stops[0].id;
+  const controls = shapeCoordinates.map((coordinate, index) => ({
+    kind: "shape",
+    fraction: (index + 1) / 4,
+    coordinate,
+  }));
+  const dayHours = { "half-day": 4, day: 8 }[dayLength] || 0;
+  const itinerary = circularRideItinerary({
+    dayLength,
+    fuelMinutes,
+    comfortMinutes,
+    mealMinutes,
+  });
+  const usedCafes = new Set();
+  for (const scheduled of itinerary) {
+    const fraction = scheduled.afterMinutes / (dayHours * 60);
+    const target = shapeCoordinates[Math.min(2, Math.floor(fraction * 3))];
+    const needsMeal = scheduled.kinds.includes("meal");
+    let cafe = needsMeal ? nearestUnusedBikerCafe(target, usedCafes) : null;
+    if (
+      cafe &&
+      distanceBetweenPlaces(
+        { longitude: target[0], latitude: target[1] },
+        cafe,
+      ) > 50000
+    ) {
+      cafe = null;
+    }
+    if (cafe) usedCafes.add(bikerPlaceKey(cafe));
+    const needs = scheduled.kinds.join(" + ");
+    controls.push({
+      kind: "stop",
+      fraction,
+      stop: cafe
+        ? {
+            longitude: cafe.longitude,
+            latitude: cafe.latitude,
+            name: `Suggested ${needs} · ${cafe.name}`,
+          }
+        : {
+            longitude: target[0],
+            latitude: target[1],
+            name: `Suggested ${needs} stop area · verify facilities`,
+          },
+    });
+  }
+  controls.sort((left, right) => left.fraction - right.fraction || (left.kind === "stop" ? -1 : 1));
+  for (const control of controls) {
+    if (control.kind === "stop") {
+      addStop(control.stop, stops.length, false, false);
+      segmentStartId = stops.at(-1).id;
+      continue;
+    }
+    createShapingPoint(
+      {
+        segmentStartId,
+        longitude: control.coordinate[0],
+        latitude: control.coordinate[1],
+      },
+      shapingPoints.length,
+    );
+  }
+  addStop(
+    {
+      longitude: start.longitude,
+      latitude: start.latitude,
+      name: "Finish",
+    },
+    stops.length,
+    false,
+    false,
+  );
+  if (!elements.rideName.value.trim() || elements.rideName.value === "Sunday group ride") {
+    elements.rideName.value = `${Math.round(distanceMiles)} mi ${direction} loop`;
+  }
+  renderStops();
+  scheduleDraftSave();
+  const breaks = itinerary.length;
+  setCircularGeneratorStatus(
+    `Generating a ${Math.round(distanceMiles)} mile ${direction} loop` +
+      (dayHours ? ` with ${breaks} editable fuel, comfort or meal stop${breaks === 1 ? "" : "s"}.` : ".") +
+      (heatmapPreference === "global" &&
+      circularHeatmapBiasAvailable(globalHeatmapCells(), [start.longitude, start.latitude])
+        ? " Popular public roads gently influenced the loop."
+        : ""),
+  );
+  routeStops(true);
+}
+
+function nearestUnusedBikerCafe(coordinate, usedCafes) {
+  const target = { longitude: coordinate[0], latitude: coordinate[1] };
+  let nearest = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const place of BIKER_PLACES) {
+    if (place.category !== "cafe" || usedCafes.has(bikerPlaceKey(place))) continue;
+    const distance = distanceBetweenPlaces(target, place);
+    if (distance < nearestDistance) {
+      nearest = place;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function setCircularGeneratorStatus(message, error = false) {
+  elements.circularGeneratorStatus.textContent = message;
+  elements.circularGeneratorStatus.classList.toggle("is-error", error);
+}
+
 function resetRouteAdjustments() {
   if (shapingPoints.length === 0) return;
   recordRouteChange();
@@ -986,12 +1330,27 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
   routeRequest = new AbortController();
   setStatus("Joining your stops by road…");
   const controls = routingControls();
+  const circularDistanceMetres = pendingCircularDistanceMetres;
+  pendingCircularDistanceMetres = null;
 
   try {
     const route = await requestRoadRoute(controls, routeRequest.signal);
     if (requestSequence !== routeRequestSequence) return;
+    const maneuvers = routeManeuvers(route);
+    if (circularDistanceMetres !== null) {
+      if (!circularRideDistanceWithinTolerance(circularDistanceMetres, Number(route.distance))) {
+        throw new Error(
+          "The road network could not make a loop close enough to that distance. Generate another route or adjust the distance.",
+        );
+      }
+      if (circularRouteHasUTurn(maneuvers)) {
+        throw new Error(
+          "That loop contains a U-turn. Generate another route or move a shaping point.",
+        );
+      }
+    }
     routeCoordinates = route.geometry.coordinates;
-    routeManeuverList = routeManeuvers(route);
+    routeManeuverList = maneuvers;
     routedControls = controls;
     routeLegGeometries =
       route.legGeometries ||
@@ -1026,7 +1385,8 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
       setStatus("Your saved route is restored. It could not be refreshed from the road router yet.");
     } else {
       setStatus(
-        "The road route could not be generated. Move a stop nearer a road or turn off one of the avoidances and try again.",
+        error.message ||
+          "The road route could not be generated. Move a stop nearer a road or turn off one of the avoidances and try again.",
         true,
       );
     }
