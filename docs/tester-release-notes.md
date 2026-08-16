@@ -36,6 +36,68 @@ permissions by design.
 - ...
 ```
 
+## iOS build 63 / Android build 63 — 16 August 2026
+
+The fixes from the ride of 16 August. The controls above the map no longer sit
+on top of each other, a rider alone on the map can add a café or a good road to
+their own route, a large GPX no longer buries its own track, and free roam can
+find you again without restarting the app.
+
+> Builds 57 to 62 went out without an entry here. This one covers the 16 August
+> fixes only, not everything since build 56.
+
+### What to test
+
+1. **The controls above the map.** Open the app and look at the top of the
+   screen. There should be one row — the search field, a **⋯** menu, emergency
+   info and settings — with nothing overlapping. Tap **⋯** several times from a
+   cold start and confirm **Motorcycle discovery layers** opens *every* time.
+   Before, it sat underneath the settings button and only opened if you happened
+   to hit the few pixels that were not covered.
+2. **Add a café or a twisty road to your own route, with no ride started.** Tap
+   a café or highlight marker on the map and choose to route via it. It should
+   plan a route. It used to refuse with "Only the ride leader can replace the
+   group route" even though there was no ride and no leader.
+3. **Import a large GPX.** Use one of the Mid-Wales day-run files. The track
+   should be a line you can follow when zoomed out rather than a solid mass of
+   yellow dots, and the distance should match the ride rather than roughly
+   double it. Check the waypoint count on the review screen looks like the stops
+   actually placed, not thousands.
+4. **Losing your location in free roam.** Leave the app on the map, switch to
+   another app for a few minutes, then come back. Your position should return
+   without quitting, and destination search should work. If the position does
+   not come back, a **Show my location** button should now be there — previously
+   there was nothing at all.
+5. **A GPX another app sent you** (iOS). If a `.gpx` file was previously greyed
+   out and unselectable in the file picker, try it again.
+
+### Fixed
+
+- The discovery-layer menu was underneath the settings button and could only be
+  opened by accident.
+- The icons above the map overlapped each other.
+- Adding a destination from the discovery layers in free roam failed with a
+  leadership rule that did not apply, and showed a raw error type to the rider.
+- A GPX from MyRoute-app turned the calculated shape of the road into thousands
+  of yellow waypoint markers, and drew the same ride twice.
+- Free roam could lose your location with no way back except restarting.
+- iOS now recognises a `.gpx` file that arrived without a file type.
+
+### Known limitations
+
+- **Turning an imported GPX into turn-by-turn directions still fails.** The
+  routing service accepts far fewer trace points than the app sends, so
+  **Generate navigable route** returns an error. Following the imported line
+  itself works normally. You may now *see* that error where the option was
+  previously not offered at all — that is expected, and the underlying fault is
+  tracked as #575.
+- The discovery layers still do not appear on the route review screen (#578).
+- Choosing a route inside a created ride still differs from choosing one in free
+  roam, and leaving a ride before it starts still needs the ride menu (#579).
+- The location recovery and the iOS file-type change could not be reproduced in
+  a simulator; both need judging on a real phone, which is what this build is
+  for.
+
 ## iOS build 56 / Android build 56 — 13 August 2026
 
 This build makes it easier to join a group after preparing a solo ride and
