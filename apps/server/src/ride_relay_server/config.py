@@ -116,6 +116,10 @@ class Settings(BaseSettings):
             # its leader back on the map while every other rider still sees a
             # finished ride.
             "ride-reopen-v1",
+            # Public, thresholded ride coverage plus a separate post-ride
+            # contribution credential. This is intentionally unrelated to a
+            # live ride bearer or installation identifier.
+            "global-ride-heatmap-v1",
         ]
     )
     required_capabilities: list[str] = Field(default_factory=list)
@@ -156,6 +160,18 @@ class Settings(BaseSettings):
         default=512 * 1024,
         ge=64 * 1024,
         le=2 * 1024 * 1024,
+    )
+    heatmap_contributions_enabled: bool = True
+    heatmap_public_enabled: bool = True
+    heatmap_registration_rate_limit_requests: int = Field(default=10, ge=1, le=1000)
+    heatmap_contribution_rate_limit_requests: int = Field(default=30, ge=1, le=1000)
+    heatmap_public_rate_limit_requests: int = Field(default=120, ge=10, le=10_000)
+    heatmap_rate_limit_window_seconds: int = Field(default=3600, ge=60, le=86_400)
+    heatmap_maximum_uploads_per_day: int = Field(default=20, ge=1, le=100)
+    heatmap_maximum_payload_bytes: int = Field(
+        default=256 * 1024,
+        ge=16 * 1024,
+        le=1024 * 1024,
     )
     apns_team_id: str = Field(default="", max_length=32)
     apns_key_id: str = Field(default="", max_length=32)

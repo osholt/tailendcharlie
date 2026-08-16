@@ -408,3 +408,73 @@ class DiscoveryRoadRating(Base):
     rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     first_rated_on: Mapped[date] = mapped_column(Date, nullable=False)
     last_rated_on: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class HeatmapContributor(Base):
+    """Opaque heatmap identity, deliberately unrelated to rides or devices."""
+
+    __tablename__ = "heatmap_contributors"
+
+    handle_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    proof_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    consent_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_on: Mapped[date] = mapped_column(Date, nullable=False)
+    last_seen_on: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class HeatmapContributorCell(Base):
+    __tablename__ = "heatmap_contributor_cells"
+    __table_args__ = (
+        Index("ix_heatmap_contributor_cells_cell", "z", "x", "y"),
+        Index("ix_heatmap_contributor_cells_month", "receipt_month"),
+    )
+
+    handle_hash: Mapped[bytes] = mapped_column(
+        LargeBinary(32),
+        ForeignKey("heatmap_contributors.handle_hash", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    receipt_month: Mapped[date] = mapped_column(Date, primary_key=True)
+    z: Mapped[int] = mapped_column(Integer, primary_key=True)
+    x: Mapped[int] = mapped_column(Integer, primary_key=True)
+    y: Mapped[int] = mapped_column(Integer, primary_key=True)
+    visit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class HeatmapUploadReceipt(Base):
+    __tablename__ = "heatmap_upload_receipts"
+    __table_args__ = (Index("ix_heatmap_upload_receipts_expiry", "delete_after"),)
+
+    handle_hash: Mapped[bytes] = mapped_column(
+        LargeBinary(32),
+        ForeignKey("heatmap_contributors.handle_hash", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    upload_id_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    received_on: Mapped[date] = mapped_column(Date, nullable=False)
+    delete_after: Mapped[date] = mapped_column(Date, nullable=False)
+
+
+class HeatmapSnapshot(Base):
+    __tablename__ = "heatmap_snapshots"
+    __table_args__ = (Index("ix_heatmap_snapshots_active", "active", "published_on"),)
+
+    version: Mapped[str] = mapped_column(String(40), primary_key=True)
+    published_on: Mapped[date] = mapped_column(Date, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class HeatmapPublicCell(Base):
+    __tablename__ = "heatmap_public_cells"
+    __table_args__ = (Index("ix_heatmap_public_cells_view", "snapshot_version", "z", "x", "y"),)
+
+    snapshot_version: Mapped[str] = mapped_column(
+        String(40),
+        ForeignKey("heatmap_snapshots.version", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    z: Mapped[int] = mapped_column(Integer, primary_key=True)
+    x: Mapped[int] = mapped_column(Integer, primary_key=True)
+    y: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contributor_bucket: Mapped[str] = mapped_column(String(8), nullable=False)
+    intensity_bucket: Mapped[str] = mapped_column(String(16), nullable=False)

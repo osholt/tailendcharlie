@@ -41,6 +41,13 @@ from .discovery import (
     road_rating_report,
     suggestion_json,
 )
+from .heatmap import (
+    accept_contribution,
+    authenticate_contributor,
+    public_cells,
+    register_contributor,
+    revoke_contributor,
+)
 from .observer import (
     create_observer_grant,
     get_managed_observer_grant,
@@ -60,6 +67,8 @@ from .schemas import (
     DiscoveryModerationRequest,
     DiscoverySuggestionRequest,
     GetPlanResponse,
+    HeatmapContributionRequest,
+    HeatmapContributorRegistrationRequest,
     JoinCodeResponse,
     ObserverGrantResponse,
     ObserverSnapshotResponse,
@@ -161,6 +170,18 @@ def create_app(
         maximum_requests=max(5, settings.traffic_incident_rate_limit_requests // 6),
         window_seconds=settings.traffic_incident_rate_limit_window_seconds,
     )
+    heatmap_registration_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.heatmap_registration_rate_limit_requests,
+        window_seconds=settings.heatmap_rate_limit_window_seconds,
+    )
+    heatmap_contribution_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.heatmap_contribution_rate_limit_requests,
+        window_seconds=settings.heatmap_rate_limit_window_seconds,
+    )
+    heatmap_public_limiter = SlidingWindowRateLimiter(
+        maximum_requests=settings.heatmap_public_rate_limit_requests,
+        window_seconds=settings.heatmap_rate_limit_window_seconds,
+    )
     registry = CollectorRegistry()
     sync_requests = Counter(
         "ride_relay_sync_requests_total",
@@ -191,6 +212,18 @@ def create_app(
         ("outcome",),
         registry=registry,
     )
+    heatmap_requests = Counter(
+        "ride_relay_heatmap_requests_total",
+        "Privacy-safe heatmap operations without geographic or contributor labels",
+        ("operation", "outcome"),
+        registry=registry,
+    )
+    heatmap_public_responses = Counter(
+        "ride_relay_heatmap_public_responses_total",
+        "Public heatmap response-size buckets without viewport labels",
+        ("size",),
+        registry=registry,
+    )
     push_dispatcher = PushDispatcher.from_settings(settings, cipher)
     traffic_provider = traffic_provider or TomTomOrbisTrafficProvider(settings)
 
@@ -215,7 +248,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.discovery_allowed_origins,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["authorization", "content-type"],
     )
     app.state.settings = settings
@@ -230,9 +263,34 @@ def create_app(
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable):
+        if request.method == "POST" and request.url.path == "/api/v1/heatmap/contributions":
+            content_length = request.headers.get("content-length")
+            try:
+                declared_length = int(content_length) if content_length is not None else None
+            except ValueError:
+                declared_length = settings.heatmap_maximum_payload_bytes + 1
+            if (
+                declared_length is not None
+                and declared_length > settings.heatmap_maximum_payload_bytes
+            ):
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": "Heatmap contribution is too large"},
+                )
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > settings.heatmap_maximum_payload_bytes:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"error": "Heatmap contribution is too large"},
+                    )
+                body.extend(chunk)
+            request._body = bytes(body)
         response = await call_next(request)
         response.headers["cache-control"] = (
-            "public, max-age=300, stale-while-revalidate=900"
+            "public, max-age=86400, stale-while-revalidate=86400"
+            if request.method == "GET" and request.url.path == "/api/v1/heatmap/cells"
+            else "public, max-age=300, stale-while-revalidate=900"
             if request.method == "GET" and request.url.path == "/api/v1/discovery/features"
             else "no-store"
         )
@@ -242,7 +300,21 @@ def create_app(
         return response
 
     @app.exception_handler(RelayServiceError)
-    async def relay_error_handler(_: Request, error: RelayServiceError) -> JSONResponse:
+    async def relay_error_handler(request: Request, error: RelayServiceError) -> JSONResponse:
+        if request.url.path.startswith("/api/v1/heatmap/"):
+            operation = (
+                "view"
+                if request.method == "GET"
+                else "revoke"
+                if request.method == "DELETE"
+                else "contribute"
+                if request.url.path.endswith("/contributions")
+                else "register"
+            )
+            heatmap_requests.labels(
+                operation=operation,
+                outcome=f"http_{error.status_code}",
+            ).inc()
         sync_requests.labels(outcome=f"http_{error.status_code}").inc()
         return JSONResponse(
             status_code=error.status_code,
@@ -282,6 +354,98 @@ def create_app(
                 "android": settings.android_update_url,
             },
         )
+
+    def _heatmap_rate_limit(
+        limiter: SlidingWindowRateLimiter,
+        request: Request,
+        prefix: str,
+    ) -> None:
+        client_ip = request.client.host if request.client is not None else "unknown"
+        retry_after = limiter.check(f"{prefix}:{client_ip}")
+        if retry_after is not None:
+            raise RelayServiceError(429, "Heatmap request rate limit exceeded")
+
+    @app.post("/api/v1/heatmap/contributors", include_in_schema=False)
+    def create_heatmap_contributor(
+        payload: HeatmapContributorRegistrationRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        if not settings.heatmap_contributions_enabled:
+            raise RelayServiceError(503, "Heatmap contributions are disabled")
+        _heatmap_rate_limit(heatmap_registration_limiter, request, "heatmap-register")
+        result = register_contributor(session, payload)
+        heatmap_requests.labels(operation="register", outcome="accepted").inc()
+        return JSONResponse(status_code=201, content=result)
+
+    @app.post("/api/v1/heatmap/contributions", include_in_schema=False)
+    def create_heatmap_contribution(
+        payload: HeatmapContributionRequest,
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        if not settings.heatmap_contributions_enabled:
+            raise RelayServiceError(503, "Heatmap contributions are disabled")
+        if int(request.headers.get("content-length", "0") or 0) > (
+            settings.heatmap_maximum_payload_bytes
+        ):
+            raise RelayServiceError(413, "Heatmap contribution is too large")
+        _heatmap_rate_limit(heatmap_contribution_limiter, request, "heatmap-contribute")
+        contributor = authenticate_contributor(
+            session,
+            request.headers.get("authorization", ""),
+        )
+        result = accept_contribution(
+            session,
+            contributor,
+            payload,
+            maximum_uploads_per_day=settings.heatmap_maximum_uploads_per_day,
+        )
+        heatmap_requests.labels(
+            operation="contribute",
+            outcome="duplicate" if result["duplicate"] else "accepted",
+        ).inc()
+        return JSONResponse(content=result)
+
+    @app.delete("/api/v1/heatmap/contributors/current", include_in_schema=False)
+    def delete_heatmap_contributor(
+        request: Request,
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        contributor = authenticate_contributor(
+            session,
+            request.headers.get("authorization", ""),
+        )
+        result = revoke_contributor(session, contributor)
+        heatmap_requests.labels(operation="revoke", outcome="accepted").inc()
+        return JSONResponse(content=result)
+
+    @app.get("/api/v1/heatmap/cells", include_in_schema=False)
+    def get_heatmap_cells(
+        request: Request,
+        west: float = Query(ge=-180, le=180),
+        south: float = Query(ge=-90, le=90),
+        east: float = Query(ge=-180, le=180),
+        north: float = Query(ge=-90, le=90),
+        zoom: int = Query(ge=0, le=24),
+        session: Session = Depends(database_session),
+    ) -> JSONResponse:
+        if not settings.heatmap_public_enabled:
+            raise RelayServiceError(503, "Global heatmap viewing is disabled")
+        _heatmap_rate_limit(heatmap_public_limiter, request, "heatmap-view")
+        result = public_cells(
+            session,
+            west=west,
+            south=south,
+            east=east,
+            north=north,
+            zoom=zoom,
+        )
+        feature_count = len(result["features"])
+        size = "empty" if feature_count == 0 else "1-99" if feature_count < 100 else "100+"
+        heatmap_requests.labels(operation="view", outcome="accepted").inc()
+        heatmap_public_responses.labels(size=size).inc()
+        return JSONResponse(content=result, media_type="application/geo+json")
 
     @app.get("/api/v1/traffic/incidents", include_in_schema=False)
     async def traffic_incidents(
