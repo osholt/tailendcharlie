@@ -261,7 +261,7 @@ void main() {
     expect(find.text('Back to the map'), findsOneWidget);
   });
 
-  testWidgets('the rating card does not gate sharing, the recap or filing', (
+  testWidgets('the rating card does not gate sharing, the recap or map exit', (
     tester,
   ) async {
     final ratings = await _ratings(roads: 3);
@@ -285,7 +285,8 @@ void main() {
       find.byKey(const Key('share-recap-image-entry-button')),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('file-ended-ride-button')), findsOneWidget);
+    expect(find.byKey(const Key('leave-ended-ride-button')), findsOneWidget);
+    expect(find.byKey(const Key('file-ended-ride-button')), findsNothing);
   });
 
   testWidgets('an answer survives the ride being filed and removed', (

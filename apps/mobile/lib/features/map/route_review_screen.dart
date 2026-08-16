@@ -17,7 +17,7 @@ import '../../services/route_waypoint_editor.dart';
 import 'maneuver_list_screen.dart';
 import 'resolved_route_map_preview.dart';
 
-enum RouteReviewAction { cancel, edit, confirm }
+enum RouteReviewAction { cancel, edit, another, confirm }
 
 typedef RouteReshapeCallback =
     Future<RouteReshapeResult> Function(
@@ -38,6 +38,7 @@ class RouteReviewScreen extends StatefulWidget {
     this.previousRoute,
     this.comparisonRoute,
     this.canEditStops = false,
+    this.canGenerateAlternative = false,
     this.showMarkerPlan = true,
     this.onMarkerReviewChanged,
     this.onReshapeRoute,
@@ -63,6 +64,7 @@ class RouteReviewScreen extends StatefulWidget {
   /// length-change warning and is used by ordinary route editing flows.
   final ImportedRoute? comparisonRoute;
   final bool canEditStops;
+  final bool canGenerateAlternative;
   final bool showMarkerPlan;
 
   /// Reports each change to the route's marker review so the caller can store
@@ -85,6 +87,7 @@ class RouteReviewScreen extends StatefulWidget {
     ImportedRoute? previousRoute,
     ImportedRoute? comparisonRoute,
     bool canEditStops = false,
+    bool canGenerateAlternative = false,
     bool showMarkerPlan = true,
     ValueChanged<MarkerPlanReview>? onMarkerReviewChanged,
     RouteReshapeCallback? onReshapeRoute,
@@ -105,6 +108,7 @@ class RouteReviewScreen extends StatefulWidget {
             previousRoute: previousRoute,
             comparisonRoute: comparisonRoute,
             canEditStops: canEditStops,
+            canGenerateAlternative: canGenerateAlternative,
             showMarkerPlan: showMarkerPlan,
             onMarkerReviewChanged: onMarkerReviewChanged,
             onReshapeRoute: onReshapeRoute,
@@ -588,6 +592,15 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
           icon: const Icon(Icons.close),
         ),
         actions: [
+          if (widget.canGenerateAlternative)
+            TextButton.icon(
+              key: const Key('generate-another-route'),
+              onPressed: _reshapeQueued || _reshaping
+                  ? null
+                  : () => Navigator.of(context).pop(RouteReviewAction.another),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Another'),
+            ),
           if (canEditStops)
             IconButton(
               key: const Key('edit-reviewed-route'),
