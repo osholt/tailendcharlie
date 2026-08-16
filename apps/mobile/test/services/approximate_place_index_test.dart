@@ -12,7 +12,7 @@ void main() {
       'schemaVersion': 1,
       'attribution': 'Test places',
       'places': [
-        [5145000, -210000, 'Kingswood', 2],
+        [5145000, -210000, 'Kingswood', 1],
         [5146000, -205000, 'Small hamlet', 5],
         [5146000, -204900, 'Larger town', 1],
         [5145800, -150000, 'Chippenham', 1],
@@ -27,7 +27,7 @@ void main() {
     );
   });
 
-  test('uses prominence only to break a close-distance tie', () {
+  test('prefers a nearby town-level name over an estate or hamlet', () {
     expect(
       index.nearestName(const GeoPoint(latitude: 51.46, longitude: -2.0495)),
       'Larger town',
@@ -69,6 +69,12 @@ void main() {
   test('the bundled Great Britain index is packaged and readable', () async {
     final bundled = await ApproximatePlaceIndex.load();
 
+    expect(
+      bundled.nearestName(
+        const GeoPoint(latitude: 51.467606, longitude: -2.5067324),
+      ),
+      'Kingswood',
+    );
     expect(
       bundled.nearestName(
         const GeoPoint(latitude: 51.44797, longitude: -2.52850),

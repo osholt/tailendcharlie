@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../../controllers/distance_unit_controller.dart';
+import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/road_rating_controller.dart';
+import '../../domain/completed_ride.dart';
+import '../../domain/completed_ride_store.dart';
+import '../../services/global_ride_heatmap.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
@@ -25,6 +29,8 @@ class EndedRideScreen extends StatefulWidget {
     this.onSetAside,
     this.relayCanCarryReopen = true,
     this.diagnostics,
+    this.completedRideStore,
+    this.globalRideHeatmap,
   });
 
   final RideController controller;
@@ -58,6 +64,8 @@ class EndedRideScreen extends StatefulWidget {
   /// summary** — the obvious button once a ride is over — the one door that
   /// silently dropped the evidence.
   final Future<String?> Function()? diagnostics;
+  final CompletedRideStore? completedRideStore;
+  final GlobalRideHeatmapController? globalRideHeatmap;
 
   @override
   State<EndedRideScreen> createState() => _EndedRideScreenState();
@@ -70,7 +78,53 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     // After the first frame, never during it. Matching a track against the
     // catalogue means loading and scanning it, and #165 was about exactly this
     // screen taking too long to appear.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _prepareRatings());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _prepareRatings();
+      _prepareHeatmapContribution();
+    });
+  }
+
+  CompletedRide? _completedRide;
+  bool _heatmapSharing = false;
+  bool _heatmapShared = false;
+  String? _heatmapError;
+
+  Future<void> _prepareHeatmapContribution() async {
+    final store = widget.completedRideStore;
+    final heatmap = widget.globalRideHeatmap;
+    final rideId = widget.controller.session?.rideId;
+    if (store == null || heatmap == null || rideId == null) return;
+    final ride = (await store.list())
+        .where((item) => item.rideId == rideId)
+        .firstOrNull;
+    if (!mounted || ride == null) return;
+    setState(() => _completedRide = ride);
+    if (heatmap.consent == HeatmapContributionConsent.always) {
+      await _shareHeatmapRide();
+    }
+  }
+
+  Future<void> _shareHeatmapRide() async {
+    final ride = _completedRide;
+    final controller = widget.globalRideHeatmap;
+    if (ride == null || controller == null || _heatmapSharing) return;
+    setState(() {
+      _heatmapSharing = true;
+      _heatmapError = null;
+    });
+    try {
+      final shared = await controller.contribute(ride);
+      if (!mounted) return;
+      setState(() => _heatmapShared = shared);
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _heatmapError =
+            'Could not contribute coverage. Your ride is still saved locally.';
+      });
+    } finally {
+      if (mounted) setState(() => _heatmapSharing = false);
+    }
   }
 
   Future<void> _prepareRatings() async {
@@ -164,6 +218,54 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     body: ListView(
       padding: const EdgeInsets.all(18),
       children: [
+        if (widget.globalRideHeatmap?.consent ==
+                HeatmapContributionConsent.askAfterEachRide &&
+            _completedRide != null)
+          Card(
+            key: const Key('post-ride-heatmap-card'),
+            margin: const EdgeInsets.only(bottom: 16),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _heatmapShared
+                        ? 'Coverage contributed'
+                        : 'Contribute road coverage?',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _heatmapShared
+                        ? 'Thank you. Only thresholded public coverage can appear.'
+                        : 'The first and last ${_heatmapTrimLabel(widget.globalRideHeatmap!.trimMeters)} are removed on this phone before unordered cells are sent.',
+                  ),
+                  if (_heatmapError case final error?) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      error,
+                      style: const TextStyle(color: Color(0xFFFFA76B)),
+                    ),
+                  ],
+                  if (!_heatmapShared) ...[
+                    const SizedBox(height: 10),
+                    FilledButton.icon(
+                      key: const Key('contribute-completed-ride'),
+                      onPressed: _heatmapSharing ? null : _shareHeatmapRide,
+                      icon: _heatmapSharing
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.local_fire_department_outlined),
+                      label: const Text('Contribute this ride'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
         // Above everything, including who ended the ride. Recording the ride is
         // the premise of the app; a rider who has lost one needs to know before
         // they read its summary, not after (#299).
@@ -317,7 +419,7 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
           icon: const Icon(Icons.image_outlined),
           label: const Text('Share ride recap image'),
         ),
-        // Above the shares and the filing, because a leader who is here by
+        // Above the shares, because a leader who is here by
         // mistake is mid-ride and has a group waiting (#206).
         if (_canOfferReopen) ...[
           const SizedBox(height: 12),
@@ -328,15 +430,6 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
             label: const Text("This ride hasn't finished — resume it"),
           ),
         ],
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          key: const Key('file-ended-ride-button'),
-          onPressed: () => _confirmFile(context),
-          // Not a delete icon: this files the ride, and the icon is read before
-          // the label (#156).
-          icon: const Icon(Icons.inventory_2_outlined),
-          label: const Text('Finish and file in Previous rides'),
-        ),
       ],
     ),
   );
@@ -389,42 +482,11 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     );
   }
 
-  /// The confirmation is kept, but it no longer describes a deletion.
-  ///
-  /// Filing a ride is harmless - it is archived to Previous rides first and only
-  /// the live working copy is cleared - so a scary modal is not warranted. What
-  /// is warranted is one sentence, because the single real consequence cannot be
-  /// undone: a phone that has not yet received another rider's last few events
-  /// stops trying for them. A rider who presses this thirty seconds after the
-  /// ride ends can lose the TEC's final marker count. That is small, and it is
-  /// still a loss, and it is invisible unless said.
-  Future<void> _confirmFile(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('File this ride in Previous rides?'),
-        content: const Text(
-          'The ride stays on this phone, in Previous rides, with its summary '
-          'and recorded route.\n\n'
-          'One thing stops: if another rider\'s last few events have not '
-          'reached this phone yet, it will stop waiting for them.',
-        ),
-        actions: [
-          TextButton(
-            key: const Key('keep-ended-ride-open-button'),
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Not yet'),
-          ),
-          FilledButton(
-            key: const Key('confirm-file-ended-ride-button'),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('File ride'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed ?? false) {
-      await (widget.onRemoveRide?.call() ?? widget.controller.clearEndedRide());
-    }
-  }
+  static String _heatmapTrimLabel(int meters) => switch (meters) {
+    0 => '0 m',
+    500 => '500 m',
+    1000 => '1 km',
+    2000 => '2 km',
+    _ => '$meters m',
+  };
 }

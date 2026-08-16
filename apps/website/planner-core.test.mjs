@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
   buildGpx,
   buildRouteMarkerPlan,
   chooseRoadRoute,
+  biasCircularRideCoordinates,
+  circularHeatmapBiasAvailable,
+  circularRideDistanceWithinTolerance,
+  circularRideItinerary,
+  circularRideShapingCoordinates,
+  circularRouteHasUTurn,
   decodePolyline,
+  dayRideDistanceMetres,
   escapeXml,
   formatDistance,
   formatDuration,
@@ -19,6 +27,83 @@ import {
   routeSelfCrossingArrows,
   StateHistory,
 } from "./planner-core.mjs";
+
+test("circular ride controls honour direction and alternatives", () => {
+  const start = [-2.51, 51.46];
+  const north = circularRideShapingCoordinates({
+    start,
+    distanceMetres: 100000,
+    direction: "N",
+  });
+  const southWest = circularRideShapingCoordinates({
+    start,
+    distanceMetres: 100000,
+    direction: "SW",
+  });
+  const alternative = circularRideShapingCoordinates({
+    start,
+    distanceMetres: 100000,
+    direction: "N",
+    variant: 1,
+  });
+
+  assert.ok(north[1][1] > start[1]);
+  assert.ok(southWest[1][0] < start[0]);
+  assert.ok(southWest[1][1] < start[1]);
+  assert.notDeepEqual(alternative, north);
+  assert.equal(dayRideDistanceMetres("half-day"), 220000);
+  assert.equal(dayRideDistanceMetres("day"), 440000);
+  assert.equal(circularRideDistanceWithinTolerance(100000, 130000), true);
+  assert.equal(circularRideDistanceWithinTolerance(100000, 130001), false);
+  assert.equal(circularRideDistanceWithinTolerance(100000, 0), false);
+  assert.equal(circularRouteHasUTurn([{ modifier: "u-turn" }]), true);
+  assert.equal(circularRouteHasUTurn([{ modifier: "left" }]), false);
+});
+
+test("web itinerary matches the shared mobile fixture", async () => {
+  const fixture = JSON.parse(
+    await readFile(new URL("../../fixtures/circular-itinerary.json", import.meta.url)),
+  );
+  for (const item of fixture.cases) {
+    assert.deepEqual(
+      circularRideItinerary({
+        dayLength: item.dayLength,
+        fuelMinutes: fixture.fuelMinutes,
+        comfortMinutes: fixture.comfortMinutes,
+        mealMinutes: fixture.mealMinutes,
+      }),
+      item.stops,
+    );
+  }
+});
+
+test("heatmap bias is unavailable when sparse and remains a soft nudge", () => {
+  const start = [-2.51, 51.46];
+  const controls = circularRideShapingCoordinates({
+    start,
+    distanceMetres: 80000,
+    direction: "N",
+  });
+  const cells = Array.from({ length: 20 }, (_value, index) => ({
+    coordinate: [controls[0][0] + 0.01, controls[0][1] + index * 0.00001],
+    weight: 1,
+  }));
+  assert.equal(circularHeatmapBiasAvailable(cells.slice(0, 19)), false);
+  const nearStart = Array.from({ length: 20 }, (_value, index) => ({
+    coordinate: [start[0], start[1] + index * 0.00001],
+    weight: 1,
+  }));
+  assert.equal(circularHeatmapBiasAvailable(nearStart, start), false);
+  const biased = biasCircularRideCoordinates({
+    controls,
+    start,
+    cells,
+    enabled: true,
+    searchRadiusMetres: 20000,
+  });
+  assert.notDeepEqual(biased[0], controls[0]);
+  assert.notDeepEqual(biased[0], cells[0].coordinate);
+});
 
 /// A deterministic sinusoidal lane. Byte-for-byte the coordinates the mobile
 /// twistiness test uses, so both implementations of the score are pinned to one

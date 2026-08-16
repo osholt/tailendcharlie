@@ -162,6 +162,7 @@ class StoredRouteLibrary {
       );
     }
     for (final ride in await completedRides.list()) {
+      if (ride.libraryStatus != RideLibraryStatus.active) continue;
       // The plan first: where a ride had one it is a better route than the
       // recording of riding it.
       if (ride.plannedRoute case final plan? when _hasRidableGeometry(plan)) {

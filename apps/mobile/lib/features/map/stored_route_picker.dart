@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../domain/completed_ride.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/measurement_formatter.dart';
 import '../../services/approximate_place_index.dart';
+import '../../services/ride_library_backup.dart';
 import '../../services/stored_route_library.dart';
 import '../ride/route_sketch.dart';
 import 'route_review_screen.dart' show routeLengthMeters;
@@ -21,27 +23,33 @@ class StoredRoutePickerScreen extends StatefulWidget {
     super.key,
     required this.library,
     required this.distanceUnit,
-    this.openPreviousRideArchive,
+    this.openPreviousRide,
   });
 
   final StoredRouteLibrary library;
   final DistanceUnit distanceUnit;
-  final Future<StoredRouteSelection?> Function(BuildContext context)?
-  openPreviousRideArchive;
+  final Future<StoredRouteSelection?> Function(
+    BuildContext context,
+    CompletedRide ride,
+  )?
+  openPreviousRide;
 
   static Future<StoredRouteSelection?> show(
     BuildContext context, {
     required StoredRouteLibrary library,
     required DistanceUnit distanceUnit,
-    Future<StoredRouteSelection?> Function(BuildContext context)?
-    openPreviousRideArchive,
+    Future<StoredRouteSelection?> Function(
+      BuildContext context,
+      CompletedRide ride,
+    )?
+    openPreviousRide,
   }) => Navigator.of(context).push<StoredRouteSelection>(
     MaterialPageRoute(
       fullscreenDialog: true,
       builder: (_) => StoredRoutePickerScreen(
         library: library,
         distanceUnit: distanceUnit,
-        openPreviousRideArchive: openPreviousRideArchive,
+        openPreviousRide: openPreviousRide,
       ),
     ),
   );
@@ -52,15 +60,24 @@ class StoredRoutePickerScreen extends StatefulWidget {
 }
 
 class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
-  late final Future<_StoredRoutePickerData> _data = _load();
+  late Future<_StoredRoutePickerData> _data = _load();
+  bool _backupBusy = false;
 
   Future<_StoredRoutePickerData> _load() async {
     final candidates = await widget.library.list();
-    if (candidates.isEmpty) {
-      return _StoredRoutePickerData(candidates: candidates, places: null);
+    final rides = widget.openPreviousRide == null
+        ? const <CompletedRide>[]
+        : await widget.library.completedRides.list();
+    if (candidates.isEmpty && rides.isEmpty) {
+      return _StoredRoutePickerData(
+        candidates: candidates,
+        rides: rides,
+        places: null,
+      );
     }
     return _StoredRoutePickerData(
       candidates: candidates,
+      rides: rides,
       places:
           widget.library.approximatePlaceIndex ??
           await ApproximatePlaceIndex.load(),
@@ -69,7 +86,27 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Ride library')),
+    appBar: AppBar(
+      title: const Text('Ride library'),
+      actions: [
+        if (widget.openPreviousRide != null)
+          PopupMenuButton<_RideLibraryAction>(
+            tooltip: 'Back up or restore Ride Library',
+            enabled: !_backupBusy,
+            onSelected: _handleLibraryAction,
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: _RideLibraryAction.backup,
+                child: Text('Back up Ride Library'),
+              ),
+              PopupMenuItem(
+                value: _RideLibraryAction.restore,
+                child: Text('Restore from backup'),
+              ),
+            ],
+          ),
+      ],
+    ),
     body: FutureBuilder<_StoredRoutePickerData>(
       future: _data,
       builder: (context, snapshot) {
@@ -84,12 +121,8 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         final candidates = data.candidates;
-        if (candidates.isEmpty) {
-          return _EmptyLibrary(
-            onOpenPreviousRideArchive: widget.openPreviousRideArchive == null
-                ? null
-                : _openPreviousRideArchive,
-          );
+        if (candidates.isEmpty && data.rides.isEmpty) {
+          return const _EmptyLibrary();
         }
         final places = data.places!;
         final recordings = candidates
@@ -98,11 +131,20 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
                   candidate.origin == StoredRouteOrigin.recordedRoute,
             )
             .toList(growable: false);
-        final rides = candidates
+        final routeCandidatesFromRides = candidates
             .where(
               (candidate) =>
                   candidate.origin != StoredRouteOrigin.recordedRoute,
             )
+            .toList(growable: false);
+        final rides = data.rides
+            .where((ride) => ride.libraryStatus == RideLibraryStatus.active)
+            .toList(growable: false);
+        final archived = data.rides
+            .where((ride) => ride.libraryStatus == RideLibraryStatus.archived)
+            .toList(growable: false);
+        final deleted = data.rides
+            .where((ride) => ride.libraryStatus == RideLibraryStatus.deleted)
             .toList(growable: false);
         return ListView(
           padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
@@ -113,24 +155,29 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
               'come from the offline index.',
               style: TextStyle(color: Color(0xFFABB5C1), height: 1.4),
             ),
-            if (widget.openPreviousRideArchive != null) ...[
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                key: const Key('ride-library-details-and-exports'),
-                onPressed: _openPreviousRideArchive,
-                icon: const Icon(Icons.receipt_long_outlined),
-                label: const Text('Ride details and exports'),
-              ),
-            ],
             if (recordings.isNotEmpty) ...[
               const _SectionHeading('Recorded routes'),
               for (final candidate in recordings) _tile(candidate, places),
             ],
-            if (rides.isNotEmpty) ...[
+            if (widget.openPreviousRide == null &&
+                routeCandidatesFromRides.isNotEmpty) ...[
               const _SectionHeading('Previous rides'),
-              for (final candidate in rides) _tile(candidate, places),
+              for (final candidate in routeCandidatesFromRides)
+                _tile(candidate, places),
             ],
-            if (candidates.isNotEmpty) ...[
+            if (widget.openPreviousRide != null && rides.isNotEmpty) ...[
+              const _SectionHeading('Previous rides'),
+              for (final ride in rides) _rideTile(ride, places),
+            ],
+            if (widget.openPreviousRide != null && archived.isNotEmpty) ...[
+              const _SectionHeading('Archived'),
+              for (final ride in archived) _rideTile(ride, places),
+            ],
+            if (widget.openPreviousRide != null && deleted.isNotEmpty) ...[
+              const _SectionHeading('Recently deleted'),
+              for (final ride in deleted) _rideTile(ride, places),
+            ],
+            if (candidates.isNotEmpty || data.rides.isNotEmpty) ...[
               const SizedBox(height: 10),
               Text(
                 places.attribution,
@@ -158,6 +205,54 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
         ),
       );
 
+  Widget _rideTile(CompletedRide ride, ApproximatePlaceIndex places) {
+    final geometry = ride.traveledRoute ?? ride.plannedRoute;
+    final candidate = geometry == null
+        ? null
+        : StoredRouteCandidate(
+            id: 'ride-record:${ride.rideId}',
+            origin: ride.traveledRoute != null
+                ? StoredRouteOrigin.previousRideTrack
+                : StoredRouteOrigin.previousRidePlan,
+            title: ride.title,
+            storedAt: ride.startedAt,
+            geometry: geometry,
+            rideCode: ride.rideCode,
+          );
+    final endpointLabel = candidate == null
+        ? 'No route geometry recorded'
+        : approximateEndpointLabel(
+            index: places,
+            start: candidate.startPoint,
+            end: candidate.endPoint,
+          );
+    final rating = ride.rating == null ? '' : ' · ${'★' * ride.rating!}';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Card(
+        child: ListTile(
+          key: Key('ride-library-record-${ride.rideId}'),
+          contentPadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          leading: SizedBox.square(
+            dimension: 52,
+            child: candidate == null
+                ? const Icon(Icons.two_wheeler)
+                : StoredRouteShapePreview(candidate: candidate),
+          ),
+          title: Text(ride.title),
+          subtitle: Text(
+            '$endpointLabel\n${_date(ride.startedAt)} · '
+            '${MeasurementFormatter(widget.distanceUnit).distance(ride.totalDistanceMeters)} · '
+            '${ride.riderCount} rider${ride.riderCount == 1 ? '' : 's'}$rating',
+          ),
+          isThreeLine: true,
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _openRide(ride),
+        ),
+      ),
+    );
+  }
+
   Future<void> _chooseOptions(StoredRouteCandidate candidate) async {
     final selection = await showModalBottomSheet<StoredRouteSelection>(
       context: context,
@@ -172,12 +267,64 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     Navigator.of(context).pop(selection);
   }
 
-  Future<void> _openPreviousRideArchive() async {
-    final selection = await widget.openPreviousRideArchive!(context);
-    if (selection == null || !mounted) return;
-    Navigator.of(context).pop(selection);
+  Future<void> _openRide(CompletedRide ride) async {
+    final selection = await widget.openPreviousRide!(context, ride);
+    if (!mounted) return;
+    if (selection != null) {
+      Navigator.of(context).pop(selection);
+      return;
+    }
+    await _reload();
+  }
+
+  Future<void> _reload() async {
+    setState(() {
+      _data = _load();
+    });
+    await _data;
+  }
+
+  Future<void> _handleLibraryAction(_RideLibraryAction action) async {
+    final backup = RideLibraryBackupService(
+      completedRides: widget.library.completedRides,
+      recordedRoutes: widget.library.recordedRoutes,
+    );
+    setState(() => _backupBusy = true);
+    try {
+      switch (action) {
+        case _RideLibraryAction.backup:
+          final box = context.findRenderObject();
+          final origin = box is RenderBox && box.hasSize
+              ? box.localToGlobal(Offset.zero) & box.size
+              : null;
+          await backup.share(sharePositionOrigin: origin);
+        case _RideLibraryAction.restore:
+          final result = await backup.restoreFromPicker();
+          if (result == null || !mounted) return;
+          await _reload();
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Restored ${result.completedRideCount} rides and '
+                '${result.recordedRouteCount} recorded routes.',
+              ),
+            ),
+          );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update Ride Library: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _backupBusy = false);
+    }
   }
 }
+
+enum _RideLibraryAction { backup, restore }
 
 /// One choosable stored route: its shape, what it is, when it was ridden and
 /// how far it goes. A list of dates is not choosable.
@@ -223,10 +370,12 @@ class StoredRouteCandidateTile extends StatelessWidget {
 class _StoredRoutePickerData {
   const _StoredRoutePickerData({
     required this.candidates,
+    required this.rides,
     required this.places,
   });
 
   final List<StoredRouteCandidate> candidates;
+  final List<CompletedRide> rides;
   final ApproximatePlaceIndex? places;
 }
 
@@ -404,9 +553,7 @@ class _SectionHeading extends StatelessWidget {
 }
 
 class _EmptyLibrary extends StatelessWidget {
-  const _EmptyLibrary({this.onOpenPreviousRideArchive});
-
-  final VoidCallback? onOpenPreviousRideArchive;
+  const _EmptyLibrary();
 
   @override
   Widget build(BuildContext context) => _Message(
@@ -415,23 +562,14 @@ class _EmptyLibrary extends StatelessWidget {
         'Record one with "Record a route" on the home screen, or finish a ride '
         'and it will appear here. A ride whose geometry has been deleted is '
         'not listed, because there is nothing left to ride.',
-    action: onOpenPreviousRideArchive == null
-        ? null
-        : OutlinedButton.icon(
-            key: const Key('ride-library-details-and-exports'),
-            onPressed: onOpenPreviousRideArchive,
-            icon: const Icon(Icons.receipt_long_outlined),
-            label: const Text('Ride details and exports'),
-          ),
   );
 }
 
 class _Message extends StatelessWidget {
-  const _Message({required this.title, required this.body, this.action});
+  const _Message({required this.title, required this.body});
 
   final String title;
   final String body;
-  final Widget? action;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -452,7 +590,6 @@ class _Message extends StatelessWidget {
             textAlign: TextAlign.center,
             style: const TextStyle(color: Color(0xFFABB5C1), height: 1.4),
           ),
-          if (action != null) ...[const SizedBox(height: 16), action!],
         ],
       ),
     ),

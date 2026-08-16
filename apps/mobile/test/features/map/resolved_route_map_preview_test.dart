@@ -4,6 +4,47 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/resolved_route_map_preview.dart';
 
 void main() {
+  test('the whole route is fitted once after the native map becomes ready', () {
+    expect(
+      routePreviewNeedsInitialFit(styleReady: false, initialFitComplete: false),
+      isFalse,
+    );
+    expect(
+      routePreviewNeedsInitialFit(styleReady: true, initialFitComplete: false),
+      isTrue,
+    );
+    expect(
+      routePreviewNeedsInitialFit(styleReady: true, initialFitComplete: true),
+      isFalse,
+    );
+  });
+
+  test('an unsuccessful early fit remains eligible for the idle retry', () {
+    final complete = routePreviewShouldCompleteInitialFit(fitSucceeded: false);
+    expect(complete, isFalse);
+    expect(
+      routePreviewNeedsInitialFit(
+        styleReady: true,
+        initialFitComplete: complete,
+      ),
+      isTrue,
+    );
+    // An unusable native controller leaves completion false, so a later idle
+    // callback still gets a chance to fit the route.
+    expect(
+      routePreviewNeedsInitialFit(
+        styleReady: true,
+        initialFitComplete: complete,
+      ),
+      isTrue,
+    );
+  });
+
+  test('only a completed native camera update finishes the initial fit', () {
+    expect(routePreviewShouldCompleteInitialFit(fitSucceeded: false), isFalse);
+    expect(routePreviewShouldCompleteInitialFit(fitSucceeded: true), isTrue);
+  });
+
   test('route preview bounds include every route segment', () {
     final bounds = routePreviewBounds(const [
       GeoPoint(latitude: 54.1, longitude: -2.3),
