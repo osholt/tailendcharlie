@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
+import 'package:ride_relay/controllers/global_ride_heatmap_controller.dart';
 import 'package:ride_relay/controllers/personal_ride_heatmap_controller.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
@@ -24,13 +26,16 @@ import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/hazard_map_symbol.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
+import 'package:ride_relay/services/biker_place_catalogue.dart';
 import 'package:ride_relay/services/enforcement_alert_detector.dart';
 import 'package:ride_relay/services/enforcement_alert_presentation.dart';
 import 'package:ride_relay/services/ride_completion_detector.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
+import 'package:ride_relay/services/global_ride_heatmap.dart';
 import 'package:ride_relay/services/imported_track_matcher.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/map_style_repository.dart';
+import 'package:ride_relay/services/motorcycle_discovery.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
 import 'package:ride_relay/services/received_quick_message.dart';
@@ -150,6 +155,9 @@ void main() {
         ),
       ),
     );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
     await tester.pumpAndSettle();
 
     expect(
@@ -180,6 +188,185 @@ void main() {
     final map = RideMapFeature.fromEnvironment(restrainedLightMapStyle: false);
 
     expect(map.basemapConfiguration.restrainedLightStyle, isFalse);
+  });
+
+  testWidgets('global heatmap is a separate optional layer below the route', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      GlobalRideHeatmapController.visibleKey: true,
+      GlobalRideHeatmapController.cacheKey: jsonEncode({
+        'type': 'FeatureCollection',
+        'snapshotVersion': 'test',
+        'snapshotDate': '2026-08-16',
+        'features': [
+          {
+            'type': 'Feature',
+            'properties': {'weight': 0.5},
+            'geometry': {
+              'type': 'Point',
+              'coordinates': [-2.58, 51.46],
+            },
+          },
+        ],
+      }),
+    });
+    final global = await GlobalRideHeatmapController.load(
+      client: GlobalHeatmapClient(
+        baseUri: Uri.parse('https://relay.example/api/'),
+        client: MockClient((_) async => throw Exception('offline')),
+      ),
+    );
+    addTearDown(global.dispose);
+    final directory = Directory.systemTemp.createTempSync('global-heatmap');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final route = ImportedRoute(
+      id: 'route',
+      name: 'Route',
+      importedAt: DateTime.utc(2026, 8, 16),
+      sourceFileName: 'route.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.route,
+          points: [
+            GeoPoint(latitude: 51.45, longitude: -2.59),
+            GeoPoint(latitude: 51.47, longitude: -2.57),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(route),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          globalRideHeatmap: global,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('global-rides-heatmap-layer')), findsOneWidget);
+    final map = tester.widget<FlutterMap>(find.byType(FlutterMap));
+    final globalIndex = map.children.indexWhere(
+      (child) => child.key == const Key('global-rides-heatmap-layer'),
+    );
+    final routeIndex = map.children.indexWhere(
+      (child) => child is PolylineLayer,
+    );
+    expect(routeIndex, greaterThan(globalIndex));
+
+    await tester.tap(find.byKey(const Key('map-layer-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('global-rides-heatmap-toggle')));
+    await tester.pumpAndSettle();
+    expect(global.visible, isFalse);
+    expect(find.byKey(const Key('global-rides-heatmap-layer')), findsNothing);
+  });
+
+  testWidgets('free roam shows persisted café and twisty map layers', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final directory = Directory.systemTemp.createTempSync('discovery-layers');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final currentPosition = ValueNotifier<GeoPoint?>(null);
+    addTearDown(currentPosition.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          currentPosition: currentPosition,
+          discoveryCatalogueLoader: () async =>
+              const MotorcycleDiscoveryCatalogue([
+                MotorcycleDiscoveryFeature(
+                  id: 'twisty-nearby',
+                  category: MotorcycleDiscoveryCategory.twistyHighlight,
+                  name: 'Nearby twisty road',
+                  points: [
+                    GeoPoint(latitude: 51.45, longitude: -2.55),
+                    GeoPoint(latitude: 51.48, longitude: -2.50),
+                  ],
+                  sourceName: 'Test',
+                  sourceUrl: 'https://example.test/road',
+                  confidence: 'test',
+                  lastVerified: '2026-08-16',
+                  warning: 'Test fixture',
+                ),
+              ]),
+          bikerPlaceCatalogueLoader: () async => const BikerPlaceCatalogue(
+            places: [
+              BikerPlace(
+                id: 'cafe-nearby',
+                name: 'Nearby biker café',
+                address: 'Bristol',
+                point: GeoPoint(latitude: 51.46, longitude: -2.52),
+                source: 'Test',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('map-layer-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Motorcycle discovery layers'));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<CheckboxListTile>(
+            find.byKey(const Key('biker-cafes-layer-toggle')),
+          )
+          .value,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<CheckboxListTile>(
+            find.byKey(const Key('discovery-layer-twisty_highlight')),
+          )
+          .value,
+      isTrue,
+    );
+
+    Navigator.of(
+      tester.element(find.byKey(const Key('biker-cafes-layer-toggle'))),
+    ).pop();
+    currentPosition.value = const GeoPoint(
+      latitude: 51.4676,
+      longitude: -2.5067,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('free-roam-discovery-lines-layer')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('free-roam-biker-cafes-layer')),
+      findsOneWidget,
+    );
   });
 
   test('group mini-map avoids a second MapLibre surface on Android', () {
@@ -1918,6 +2105,35 @@ void main() {
     await tester.tap(find.byKey(const Key('enforcement-alert-overlay')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('enforcement-alert-overlay')), findsNothing);
+
+    // A provider/GPS gap ends this approach. If the same catalogue camera then
+    // re-arms, its transient popup must not inherit the previous dismissal.
+    alert.value = null;
+    await tester.pump();
+    alert.value = EnforcementAlert(
+      hazard:
+          alert.value?.hazard ??
+          HazardReport(
+            id: 'tomtom-camera-1',
+            rideId: 'ride-1',
+            type: HazardType.speedCamera,
+            severity: HazardSeverity.serious,
+            position: const awareness_geo.GeoPoint(
+              latitude: 51.5,
+              longitude: -3.18,
+            ),
+            reportedAt: now,
+            updatedAt: now,
+            expiresAt: now.add(const Duration(minutes: 10)),
+            reporterId: 'relay-traffic',
+            source: HazardSource.externalProvider,
+            providerId: 'relay-traffic',
+            details: 'Mobile speed camera · TomTom · updated just now',
+          ),
+      distanceMeters: 700,
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('enforcement-alert-overlay')), findsOneWidget);
   });
 
   testWidgets('the camera warning is a top bubble clear of the rider marker, '
@@ -2004,6 +2220,23 @@ void main() {
     // decoration left the keyed box in place and the test passed. Found by
     // mutation, which is the whole reason for running them.
     expectRedBorder(tester);
+    final border = tester.getRect(
+      find.byKey(const Key('enforcement-alert-border')),
+    );
+    final alertLayer = tester.getRect(
+      find.byKey(const Key('enforcement-alert-layer')),
+    );
+    expect(border.left, closeTo(alertLayer.left + enforcementBorderInset, 0.1));
+    expect(border.top, closeTo(alertLayer.top + enforcementBorderInset, 0.1));
+    expect(
+      border.right,
+      closeTo(alertLayer.right - enforcementBorderInset, 0.1),
+    );
+    expect(
+      border.bottom,
+      closeTo(alertLayer.bottom - enforcementBorderInset, 0.1),
+      reason: 'the stroke must follow the visible rounded screen contour',
+    );
 
     // Ten seconds, fixed. Distance keeps changing on an approach; the life does
     // not depend on it.
@@ -3864,6 +4097,25 @@ void main() {
     );
 
     await verifyLayout(landscape: false);
+
+    // Once a manual pan earns the portrait Follow me control, it belongs above
+    // the turn pane rather than covering the rider marker or road ahead.
+    await tester.dragFrom(const Offset(190, 280), const Offset(0, 90));
+    await tester.pumpAndSettle();
+    final follow = tester.getRect(
+      find.byKey(const Key('navigation-follow-button')),
+    );
+    final guidance = tester.getRect(
+      find.byKey(const Key('navigation-guidance-banner')),
+    );
+    expect(
+      follow.bottom,
+      lessThanOrEqualTo(guidance.top),
+      reason: 'Follow me must be directly above the turn directions pane',
+    );
+    await tester.tap(find.byKey(const Key('navigation-follow-button')));
+    await tester.pumpAndSettle();
+
     await verifyLayout(landscape: true);
 
     await tester.pumpWidget(const SizedBox.shrink());

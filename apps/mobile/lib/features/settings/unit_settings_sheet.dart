@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/distance_unit_controller.dart';
+import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
@@ -18,6 +19,7 @@ import '../../services/basemap_configuration.dart';
 import '../../services/build_identity.dart';
 import '../../services/natural_voice_pack.dart';
 import '../../services/spoken_guidance.dart';
+import '../../services/global_ride_heatmap.dart';
 import 'about_build_sheet.dart';
 import 'rider_profile_sheet.dart';
 import 'ride_diagnostics_section.dart';
@@ -37,6 +39,7 @@ class UnitSettingsSheet extends StatelessWidget {
     this.testControl,
     this.spokenGuidance,
     this.rideDiagnostics,
+    this.globalRideHeatmap,
     this.embedded = false,
   });
 
@@ -59,6 +62,7 @@ class UnitSettingsSheet extends StatelessWidget {
 
   /// Off, and absent from an ordinary build (#419).
   final RideDiagnosticsController? rideDiagnostics;
+  final GlobalRideHeatmapController? globalRideHeatmap;
 
   /// Present only in a build carrying the test-control define. Null everywhere
   /// else, and [TestControlSection] renders nothing when the define is absent,
@@ -86,6 +90,7 @@ class UnitSettingsSheet extends StatelessWidget {
     TestControlController? testControl,
     SpokenGuidanceController? spokenGuidance,
     RideDiagnosticsController? rideDiagnostics,
+    GlobalRideHeatmapController? globalRideHeatmap,
   }) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -102,6 +107,7 @@ class UnitSettingsSheet extends StatelessWidget {
       testControl: testControl,
       spokenGuidance: spokenGuidance,
       rideDiagnostics: rideDiagnostics,
+      globalRideHeatmap: globalRideHeatmap,
     ),
   );
 
@@ -112,6 +118,7 @@ class UnitSettingsSheet extends StatelessWidget {
       mapStyleMode,
       speedLimitDisplay,
       ?routeProgressDisplay,
+      ?globalRideHeatmap,
     ]),
     builder: (context, _) => SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
@@ -302,6 +309,90 @@ class UnitSettingsSheet extends StatelessWidget {
             style: const TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
           ),
           const SizedBox(height: 22),
+          if (globalRideHeatmap case final heatmap?) ...[
+            Text(
+              'GLOBAL RIDES',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: const Color(0xFF8D98A7),
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<HeatmapContributionConsent>(
+              key: const Key('global-heatmap-consent'),
+              initialValue: heatmap.consent,
+              decoration: const InputDecoration(
+                labelText: 'Contribute completed rides',
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: HeatmapContributionConsent.never,
+                  child: Text('Never'),
+                ),
+                DropdownMenuItem(
+                  value: HeatmapContributionConsent.askAfterEachRide,
+                  child: Text('Ask after each ride'),
+                ),
+                DropdownMenuItem(
+                  value: HeatmapContributionConsent.always,
+                  child: Text('Always after a ride'),
+                ),
+              ],
+              onChanged: (value) async {
+                if (value == null || value == heatmap.consent) return;
+                if (value != HeatmapContributionConsent.never &&
+                    !await _confirmHeatmapContribution(context, heatmap)) {
+                  return;
+                }
+                await heatmap.setConsent(value);
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              key: const Key('global-heatmap-trim'),
+              initialValue: heatmap.trimMeters,
+              decoration: const InputDecoration(labelText: 'Hide at each end'),
+              items: const [
+                DropdownMenuItem(value: 0, child: Text('Nothing')),
+                DropdownMenuItem(value: 500, child: Text('500 m')),
+                DropdownMenuItem(
+                  value: 1000,
+                  child: Text('1 km (recommended)'),
+                ),
+                DropdownMenuItem(value: 2000, child: Text('2 km')),
+              ],
+              onChanged: heatmap.consent == HeatmapContributionConsent.never
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        unawaited(heatmap.setTrimMeters(value));
+                      }
+                    },
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'The phone removes both ends, converts the travelled track to an '
+              'unordered set of coarse cells, and sends no ride name, route '
+              'order, time, speed, rider identity or ride code. Public cells '
+              'appear only after at least three contributors. Viewing the map '
+              'layer never opts you in.',
+              style: TextStyle(color: Color(0xFF98A3B1), height: 1.4),
+            ),
+            if (heatmap.consent != HeatmapContributionConsent.never) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const Key('global-heatmap-remove-data'),
+                  onPressed: () =>
+                      unawaited(_removeHeatmapContributions(context, heatmap)),
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                  label: const Text('Stop contributing and remove my data'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 22),
+          ],
           Text(
             'GUIDANCE',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -387,6 +478,70 @@ class UnitSettingsSheet extends StatelessWidget {
       ),
     ),
   );
+
+  static Future<bool> _confirmHeatmapContribution(
+    BuildContext context,
+    GlobalRideHeatmapController controller,
+  ) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Contribute road coverage?'),
+          content: Text(
+            'Only travelled coverage cells are sent after a ride. The first '
+            'and last ${_trimLabel(controller.trimMeters)} are removed on this '
+            'phone. A monthly opaque contributor record is retained for up to '
+            '24 months; it is not anonymous and can still describe familiar '
+            'areas. You can remove all of it here while this phone retains its '
+            'heatmap credential.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Not now'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('I understand'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  static Future<void> _removeHeatmapContributions(
+    BuildContext context,
+    GlobalRideHeatmapController controller,
+  ) async {
+    try {
+      await controller.stopAndRemoveContributions();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Contribution stopped. Public removal updates with the next daily snapshot.',
+          ),
+        ),
+      );
+    } on Object {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not remove heatmap data. Try again when online.',
+          ),
+        ),
+      );
+    }
+  }
+
+  static String _trimLabel(int meters) => switch (meters) {
+    0 => '0 m',
+    500 => '500 m',
+    1000 => '1 km',
+    2000 => '2 km',
+    _ => '$meters m',
+  };
 }
 
 class _SpokenVoiceSetting extends StatefulWidget {
@@ -672,8 +827,8 @@ class _NaturalVoicePackSetting extends StatelessWidget {
                   onChanged: pack.setEnabled,
                   title: const Text('Use natural voice'),
                   subtitle: const Text(
-                    'If it cannot start within 0.8 seconds, the phone voice '
-                    'speaks the complete prompt instead.',
+                    'A prepared voice gets up to 2.5 seconds to generate a new '
+                    'road or rider name. The phone voice remains the fail-safe.',
                   ),
                 ),
                 DropdownButtonFormField<NaturalNavigationVoice>(
