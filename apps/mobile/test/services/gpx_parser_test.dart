@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/services/gpx_parser.dart';
 
 void main() {
@@ -177,7 +178,8 @@ void main() {
     );
   });
 
-  test('expands Garmin RoutePoint extension shaping points in order', () {
+  test('Garmin RoutePoint extension points shape the line without becoming '
+      'waypoints', () {
     final route = parser.parse(
       _bytes('''
         <gpx version="1.1"
@@ -199,16 +201,101 @@ void main() {
       importedAt: DateTime.utc(2026, 7, 24),
     );
 
+    // Unchanged, and the half that was always right: the extension points are
+    // the decoded shape of the leg and belong in the line, in order.
     expect(route.paths.single.points.map((point) => point.latitude), [
       51.0,
       51.1,
       51.2,
       51.3,
     ]);
-    expect(
-      route.waypoints.where((waypoint) => waypoint.symbol == 'Shaping point'),
-      hasLength(2),
+    // Changed deliberately (#574). This used to expect two "Shaping point"
+    // waypoints, which is what the parser did and what the defect was.
+    // `<gpxx:rpt>` is Garmin's calculated road geometry, not a place anybody
+    // chose, and rendering every vertex as a marker put 6960 yellow badges
+    // over a 296 km import. A rider's real via and shaping points carry
+    // `<trp:ViaPoint>`/`<trp:ShapingPoint>` and are still read — see the two
+    // tests above and the MyRoute-app fixture suite, which assert exactly that
+    // and are untouched by this change.
+    expect(route.waypoints, isEmpty);
+  });
+
+  group('a dense Garmin export stays one readable line (#574)', () {
+    // The shape of the MyRouteApp day run that was reported: one <rte> whose
+    // rtept legs carry their decoded geometry inline, and one <trk> of the
+    // same journey at very nearly the same density. Small enough to read here;
+    // the relationships between the two are what matter.
+    String denseGarminGpx({required int rptPerLeg, required int trackPoints}) {
+      final rpt = List.generate(
+        rptPerLeg,
+        (i) => '<gpxx:rpt lat="${51.0 + i * 0.0001}" lon="-2.0"/>',
+      ).join();
+      final track = List.generate(
+        trackPoints,
+        (i) => '<trkpt lat="${51.0 + i * 0.0001}" lon="-2.0"/>',
+      ).join();
+      return '<gpx version="1.1" creator="MyRouteApp" '
+          'xmlns="http://www.topografix.com/GPX/1/1" '
+          'xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3" '
+          'xmlns:trp="http://www.garmin.com/xmlschemas/TripExtensions/v1">'
+          '<rte><name>Day run</name>'
+          '<rtept lat="51.0" lon="-2.0"><extensions><trp:ViaPoint/>'
+          '<gpxx:RoutePointExtension>$rpt</gpxx:RoutePointExtension>'
+          '</extensions></rtept>'
+          '<rtept lat="51.04" lon="-2.0"><extensions><trp:ViaPoint/>'
+          '</extensions></rtept>'
+          '</rte>'
+          '<trk><name>Day run track</name><trkseg>$track</trkseg></trk>'
+          '</gpx>';
+    }
+
+    ImportedRoute parse(String gpx) => parser.parse(
+      _bytes(gpx),
+      routeId: 'dense',
+      sourceFileName: 'dense.gpx',
+      importedAt: DateTime.utc(2026, 8, 16),
     );
+
+    test('leg geometry does not become a carpet of waypoints', () {
+      final route = parse(denseGarminGpx(rptPerLeg: 400, trackPoints: 400));
+
+      // Two, because the file names two via points. Before this fix it was
+      // 402: every decoded vertex arrived as a rendered, listed marker.
+      expect(route.waypoints, hasLength(2));
+      expect(
+        route.waypoints.every((point) => point.symbol == 'Via point'),
+        isTrue,
+      );
+    });
+
+    test('two encodings of one journey draw one line', () {
+      final route = parse(denseGarminGpx(rptPerLeg: 400, trackPoints: 400));
+
+      expect(
+        route.paths,
+        hasLength(1),
+        reason: 'the <rte> and the <trk> are the same ride',
+      );
+      expect(route.paths.single.kind, RoutePathKind.track);
+    });
+
+    test('a route marginally denser than the track is still the duplicate', () {
+      // The exact miss in #180's guard, which required the track be strictly
+      // denser: decoding the legs inline puts the route representation
+      // slightly ahead, so both were kept and the ride was measured twice.
+      final route = parse(denseGarminGpx(rptPerLeg: 420, trackPoints: 400));
+
+      expect(route.paths, hasLength(1));
+      expect(route.paths.single.kind, RoutePathKind.track);
+    });
+
+    test('a genuinely sparser track does not swallow a detailed route', () {
+      // The protection #180 was reaching for, kept: an order-of-magnitude gap
+      // is two different representations, not two encodings of one.
+      final route = parse(denseGarminGpx(rptPerLeg: 400, trackPoints: 3));
+
+      expect(route.paths, hasLength(2));
+    });
   });
 
   test('bundled demo is valid GPX geometry', () {

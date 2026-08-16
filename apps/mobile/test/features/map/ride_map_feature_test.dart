@@ -370,6 +370,34 @@ void main() {
     );
   });
 
+  // #574. A handful of chosen stops are places; several hundred are the shape
+  // of the line, and drawn at badge size they cover the road they describe.
+  group('waypoint density decides how waypoints are drawn', () {
+    test('a handful of chosen stops keep a badge worth hitting', () {
+      expect(waypointCircleStyle(0).radius, 7);
+      expect(waypointCircleStyle(1).radius, 7);
+      expect(waypointCircleStyle(denseWaypointThreshold).radius, 7);
+      expect(waypointCircleStyle(denseWaypointThreshold).opacity, 1);
+    });
+
+    test('past the threshold they become geometry, not markers', () {
+      final dense = waypointCircleStyle(denseWaypointThreshold + 1);
+      expect(dense.radius, lessThan(7));
+      expect(dense.opacity, lessThan(1));
+      // The 296 km import that was reported. Whatever the count, the style
+      // must not grow back towards a badge.
+      expect(waypointCircleStyle(6962).radius, dense.radius);
+    });
+
+    test('the change is big enough to see', () {
+      // A dot that is only slightly smaller is still a carpet.
+      expect(
+        waypointCircleStyle(denseWaypointThreshold + 1).radius,
+        lessThan(waypointCircleStyle(denseWaypointThreshold).radius / 1.5),
+      );
+    });
+  });
+
   test('group mini-map avoids a second MapLibre surface on Android', () {
     expect(
       groupMiniMapRenderer(
