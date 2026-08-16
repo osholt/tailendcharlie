@@ -5,7 +5,9 @@ import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/rider_location.dart';
+import 'package:ride_relay/domain/route_authority.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
+import 'package:ride_relay/features/map/ride_map_feature.dart';
 import 'package:ride_relay/services/device_location_source.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -92,6 +94,44 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(platform.permissionRequests, 0);
+  });
+
+  testWidgets('the free-roam map is the rider\'s own, not a follower\'s (#576)', (
+    tester,
+  ) async {
+    // This backdrop used to pass `canEditRoute: false` — the flag that means
+    // "somebody else leads this ride". There is no ride here and no leader, so
+    // every route action inherited a refusal with no group behind it: adding a
+    // café in free roam failed with "Only the ride leader can replace the group
+    // route". The authority is the assertion because it is the thing that was
+    // wrong; what it permits is covered in ride_map_feature_test.dart.
+    final platform = _RecordingLocationPlatform();
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HomeMapBackdrop(
+            mapStyleMode: mapStyleMode,
+            speedLimitDisplay: speedLimitDisplay,
+            distanceUnit: DistanceUnit.kilometres,
+            locationController: location,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+          .routeAuthority,
+      RouteAuthority.personal,
+    );
   });
 }
 

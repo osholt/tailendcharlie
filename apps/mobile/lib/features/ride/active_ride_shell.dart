@@ -43,6 +43,7 @@ import '../../domain/ride_session.dart';
 import '../../domain/rider_location.dart';
 import '../../domain/rider_color.dart';
 import '../../domain/route_alert.dart';
+import '../../domain/route_authority.dart';
 import '../../domain/route_store.dart';
 import '../../internet/internet_relay_client.dart';
 import '../../internet/internet_relay_worker.dart';
@@ -1315,7 +1316,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         _changeRouteRequestToken = Object();
         _pendingSharedGpxFile = file;
       } else {
-        _warnings.add('Only the ride leader can replace the group route.');
+        _warnings.add(RouteAuthority.groupRouteRefusal);
       }
       _clearSharedRoutePending();
     } else if (widget.sharedRoutes.pendingInAppRoute case final route?) {
@@ -1324,7 +1325,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         _changeRouteRequestToken = Object();
         _pendingInAppRoute = route;
       } else {
-        _warnings.add('Only the ride leader can replace the group route.');
+        _warnings.add(RouteAuthority.groupRouteRefusal);
       }
       _clearSharedRoutePending();
     }
@@ -1358,7 +1359,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     if (!widget.rideController.isLocalRideLeader) {
-      _warnings.add('Only the ride leader can replace the group route.');
+      _warnings.add(RouteAuthority.groupRouteRefusal);
       _clearSharedRoutePending();
       setState(() {});
       return;
@@ -4091,7 +4092,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           ? () async => _mapPosition.value
           : _acquireCurrentPosition,
       routeStore: routeStore,
-      canEditRoute: _isSimulation || widget.rideController.isLocalRideLeader,
+      // A real ride, so the leadership rule genuinely applies here — unlike
+      // free roam, which has no group and no leader (#576).
+      routeAuthority: RouteAuthority.forRide(
+        isSimulation: _isSimulation,
+        isLocalRideLeader: widget.rideController.isLocalRideLeader,
+      ),
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
       showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,

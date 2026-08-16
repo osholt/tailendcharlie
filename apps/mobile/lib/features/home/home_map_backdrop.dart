@@ -8,6 +8,7 @@ import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/map_style_mode.dart';
+import '../../domain/route_authority.dart';
 import '../../services/device_location_source.dart';
 import '../map/ride_map_feature.dart';
 
@@ -147,9 +148,12 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
             speedLimitDisplay: widget.speedLimitDisplay,
             distanceUnit: widget.distanceUnit,
             onMapStyleResolved: widget.onMapStyleResolved,
-            // No ride yet, so nothing may edit a ride's route from here and no
-            // ride surface has anything to say.
-            canEditRoute: false,
+            // No ride, so no group route and no leader to defer to: a route
+            // built here is this rider's own. This used to pass
+            // `canEditRoute: false`, borrowing the flag that means "not the
+            // leader", which refused a rider their own café stop in the name
+            // of a group that did not exist (#576).
+            routeAuthority: RouteAuthority.personal,
             markerFeaturesEnabled: false,
           )
         else

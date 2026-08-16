@@ -27,6 +27,7 @@ import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/rider_color.dart';
+import '../../domain/route_authority.dart';
 import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/basemap_configuration.dart';
@@ -223,7 +224,7 @@ class RideMapFeature extends StatefulWidget {
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
-    this.canEditRoute = true,
+    this.routeAuthority = RouteAuthority.leader,
     this.offlineTileCache,
     this.mapLibreOfflineManager,
     this.mapStyleString,
@@ -292,7 +293,7 @@ class RideMapFeature extends StatefulWidget {
     CompletedRideStore? completedRideStore,
     PersonalRideHeatmapController? personalRideHeatmap,
     GlobalRideHeatmapController? globalRideHeatmap,
-    bool canEditRoute = true,
+    RouteAuthority routeAuthority = RouteAuthority.leader,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     SpeedLimitDisplayController? speedLimitDisplay,
     bool showRouteProgress = true,
@@ -353,7 +354,7 @@ class RideMapFeature extends StatefulWidget {
     completedRideStore: completedRideStore,
     personalRideHeatmap: personalRideHeatmap,
     globalRideHeatmap: globalRideHeatmap,
-    canEditRoute: canEditRoute,
+    routeAuthority: routeAuthority,
     distanceUnit: distanceUnit,
     speedLimitDisplay: speedLimitDisplay,
     showRouteProgress: showRouteProgress,
@@ -448,7 +449,13 @@ class RideMapFeature extends StatefulWidget {
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
-  final bool canEditRoute;
+
+  /// Whose route this surface is showing. See [RouteAuthority] — free roam is
+  /// [RouteAuthority.personal] and has no leader to defer to (#576).
+  final RouteAuthority routeAuthority;
+
+  /// Whether this surface may build or replace the route it shows.
+  bool get canEditRoute => routeAuthority.canEditRoute;
   final OfflineTileCache? offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String? mapStyleString;
@@ -607,7 +614,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         markerFeaturesEnabled: widget.markerFeaturesEnabled,
         onLeaveRide: widget.onLeaveRide,
         onOpenRideMenu: widget.onOpenRideMenu,
-        canEditRoute: widget.canEditRoute,
+        routeAuthority: widget.routeAuthority,
         onRouteChanged: widget.onRouteChanged,
         onRouteCommitted: widget.onRouteCommitted,
         onNavigationGuidanceChanged: widget.onNavigationGuidanceChanged,
@@ -696,7 +703,7 @@ class RideMapScreen extends StatefulWidget {
     this.markerFeaturesEnabled = true,
     this.onLeaveRide,
     this.onOpenRideMenu,
-    this.canEditRoute = true,
+    this.routeAuthority = RouteAuthority.leader,
     this.onRouteChanged,
     this.onRouteCommitted,
     this.onNavigationGuidanceChanged,
@@ -805,7 +812,12 @@ class RideMapScreen extends StatefulWidget {
   final bool markerFeaturesEnabled;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
-  final bool canEditRoute;
+
+  /// Whose route this surface is showing. See [RouteAuthority].
+  final RouteAuthority routeAuthority;
+
+  /// Whether this surface may build or replace the route it shows.
+  bool get canEditRoute => routeAuthority.canEditRoute;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final ValueChanged<ImportedRoute?>? onRouteCommitted;
   final ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged;
@@ -5822,10 +5834,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     Duration? duration,
     List<String> warnings = const [],
   }) async {
-    if (!widget.canEditRoute) {
-      throw const FormatException(
-        'Only the ride leader can replace the group route.',
-      );
+    // A backstop, not the rider-facing path: every caller that a rider can
+    // reach checks the authority first and says so plainly. Reaching this
+    // means a caller was added without that check.
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      throw FormatException(refusal);
     }
     ImportedRoute? comparisonRoute;
     if (_canGenerateNavigableRoute(route)) {
@@ -5874,10 +5887,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ImportedRoute? previousRoute,
     ImportedRoute? comparisonRoute,
   }) async {
-    if (!widget.canEditRoute) {
-      throw const FormatException(
-        'Only the ride leader can replace the group route.',
-      );
+    // As above: a backstop behind the rider-facing checks, not one of them.
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      throw FormatException(refusal);
     }
     final enrichment = await _routeGeometryEnricher.enrich(route);
     final activeRoute = enrichment.route;
@@ -6421,6 +6433,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   Future<void> _addBikerPlaceToRoute(BikerPlace place) async {
     if (_routing) return;
+    // Checked here rather than left to the backstop inside
+    // _reviewAndActivateRoute: the catch below prefixes whatever it is given
+    // with "Could not route via ...", which turned a leadership rule into a
+    // routing failure with the exception class printed at the rider (#576).
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
+    }
     final existing = _route;
     final start =
         existing?.paths.lastOrNull?.points.lastOrNull ?? _effectivePosition;
@@ -6475,6 +6495,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     MotorcycleDiscoveryFeature feature,
   ) async {
     if (_routing) return;
+    // See _addBikerPlaceToRoute: the same prefixing catch is below (#576).
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
+    }
     final existing = _route;
     final start =
         existing?.paths.lastOrNull?.points.lastOrNull ?? _effectivePosition;
@@ -7003,8 +7028,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.onChangeRouteRequestHandled?.call();
       if (!mounted) return;
-      if (!widget.canEditRoute) {
-        _showMessage('Only the ride leader can replace the group route.');
+      if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+        _showMessage(refusal);
         return;
       }
       if (sharedFile != null) {
@@ -7037,8 +7062,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<void> _showChangeRouteSheet() async {
-    if (!widget.canEditRoute) {
-      _showMessage('Only the ride leader can replace the group route.');
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
       return;
     }
     await showModalBottomSheet<void>(
