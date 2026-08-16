@@ -118,6 +118,27 @@ enum GroupMiniMapRenderer {
 
 enum _ImportedTrackChoice { cancel, followOriginal, generateNavigable }
 
+/// Whether to offer to turn an import into a navigable route.
+///
+/// This required **every** drawable path to be a track, so a file carrying a
+/// `<trk>` alongside a `<rte>` was silently offered nothing at all — no dialog,
+/// no explanation, just a raw line. That is the quiet half of #575, and #574
+/// only fixed it for the one export whose duplicate `<rte>` is now dropped; a
+/// file with a genuinely different route beside its track still hit it.
+///
+/// The matcher matches track paths and leaves the rest alone, so the honest
+/// question is whether there is a track to match, not whether the file contains
+/// nothing else.
+///
+/// Top-level so the decision can be asserted without standing up the map — the
+/// widget-test route into this screen cannot reach the import dialog.
+@visibleForTesting
+bool canGenerateNavigableRoute(ImportedRoute route) =>
+    route.maneuvers.isEmpty &&
+    route.paths.any(
+      (path) => path.kind == RoutePathKind.track && path.points.length >= 2,
+    );
+
 /// Top-band chrome a host screen hands to the map instead of drawing itself.
 ///
 /// The free-roam home screen used to paint its own search field and its own
@@ -1347,9 +1368,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _defaultRouteGeometryEnricher = RouteGeometryEnricher(
       routingService: _roadRoutingService,
     );
-    _defaultImportedTrackMatcher = OsrmImportedTrackMatcher(
+    // Valhalla, not OSRM: the configured OSRM demo server caps `/match` at ten
+    // trace coordinates, so this path returned 400 for every import ever
+    // attempted (#575). Valhalla's limit is 200 km of path, which a long track
+    // is split to fit, and it already serves speed limits and motorcycle
+    // routing here.
+    _defaultImportedTrackMatcher = ValhallaImportedTrackMatcher(
       client: _routingClient,
-      baseUrl: routingConfiguration.routingBaseUrl,
+      traceUrl: routingConfiguration.trackMatchingUrl,
     );
     _ownsSpeedLimitDisplay = widget.speedLimitDisplay == null;
     _speedLimitDisplay =
@@ -6062,12 +6088,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
-  bool _canGenerateNavigableRoute(ImportedRoute route) {
-    final drawablePaths = route.paths.where((path) => path.points.length >= 2);
-    return route.maneuvers.isEmpty &&
-        drawablePaths.isNotEmpty &&
-        drawablePaths.every((path) => path.kind == RoutePathKind.track);
-  }
+  bool _canGenerateNavigableRoute(ImportedRoute route) =>
+      canGenerateNavigableRoute(route);
 
   Future<_ImportedTrackChoice> _chooseImportedTrackTreatment(
     ImportedRoute route,
