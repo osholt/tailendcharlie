@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../controllers/foreground_location_controller.dart';
@@ -8,6 +10,7 @@ import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/map_style_mode.dart';
+import '../../domain/route_authority.dart';
 import '../../services/device_location_source.dart';
 import '../map/ride_map_feature.dart';
 
@@ -36,6 +39,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.completedRideStore,
     this.globalRideHeatmap,
     this.onMapStyleResolved,
+    this.hostChrome,
   });
 
   /// Height kept clear at the bottom for whatever stands on the map.
@@ -58,6 +62,11 @@ class HomeMapBackdrop extends StatefulWidget {
   final GlobalRideHeatmapController? globalRideHeatmap;
   final ValueChanged<String>? onMapStyleResolved;
 
+  /// The home screen's own top-band chrome, handed to the map to draw rather
+  /// than painted over it. See [HostMapChrome] — this is what stopped the
+  /// discovery-layer menu being buried under the settings button (#572, #573).
+  final HostMapChrome? hostChrome;
+
   /// False in widget tests and on any build without the platform plugins, where
   /// the map would be a spinner and the location plugin is not answering.
   final bool enableNativeServices;
@@ -69,7 +78,8 @@ class HomeMapBackdrop extends StatefulWidget {
   State<HomeMapBackdrop> createState() => _HomeMapBackdropState();
 }
 
-class _HomeMapBackdropState extends State<HomeMapBackdrop> {
+class _HomeMapBackdropState extends State<HomeMapBackdrop>
+    with WidgetsBindingObserver {
   /// The caller's notifier when it supplied one, otherwise this widget's own.
   late final ValueNotifier<route_domain.GeoPoint?> _position =
       widget.position ?? ValueNotifier<route_domain.GeoPoint?>(null);
@@ -81,6 +91,12 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
   @override
   void initState() {
     super.initState();
+    // Free roam had no lifecycle observer at all, so the recovery that exists
+    // inside a ride did not exist outside one (#577).
+    WidgetsBinding.instance.addObserver(this);
+    // The recovery control is offered on whether this map can show the rider,
+    // so it has to rebuild when that changes.
+    _position.addListener(_handleLocationChanged);
     _location = widget.locationController;
     if (_location == null && widget.enableNativeServices) {
       _ownsLocationController = true;
@@ -117,8 +133,24 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
     }
   }
 
+  /// Restarts the sampler the way `ActiveRideShell` already does.
+  ///
+  /// iOS stops delivering foreground fixes across a background trip and does
+  /// not say so; the subscription survives while the fixes do not. The ride
+  /// shell has called this since #205. Free roam never did, which is why a
+  /// rider who had been in and out of the app for a while came back to a map
+  /// that no longer knew where they were (#577).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_location?.restartAfterForegroundResume());
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _position.removeListener(_handleLocationChanged);
     _location?.removeListener(_handleLocationChanged);
     if (_ownsLocationController) _location?.dispose();
     // Not ours to dispose when the screen above owns it.
@@ -128,8 +160,26 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
 
   bool get _sharing => _location?.sharing ?? false;
 
+  /// Whether to offer the rider a way to be found.
+  ///
+  /// It used to be `!_sharing` alone, which asks whether sampling was
+  /// *requested* rather than whether it produced anything. A sampler that is
+  /// running but has delivered no fix leaves the map with no rider on it and
+  /// destination search refusing to start — and the one control that would
+  /// have fixed it hidden, because `sharing` was true. Quitting and reopening
+  /// the app was the only way back (#577).
+  ///
+  /// Deliberately *not* a staleness rule. The platform stream carries a 10 m
+  /// distance filter, so a parked bike and a dead receiver produce the same
+  /// silence — `device_location_source.dart` says so where the filter is set.
+  /// Judging on whether there is a position to show needs no such guess: if
+  /// the rider is on the map they are found, and if they are not they are
+  /// offered the way to be.
+  bool get _offerLocation => !_sharing || _position.value == null;
+
   @override
   Widget build(BuildContext context) {
+    final chrome = widget.hostChrome;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -147,19 +197,41 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
             speedLimitDisplay: widget.speedLimitDisplay,
             distanceUnit: widget.distanceUnit,
             onMapStyleResolved: widget.onMapStyleResolved,
-            // No ride yet, so nothing may edit a ride's route from here and no
-            // ride surface has anything to say.
-            canEditRoute: false,
+            hostChrome: chrome,
+            // No ride, so no group route and no leader to defer to: a route
+            // built here is this rider's own. This used to pass
+            // `canEditRoute: false`, borrowing the flag that means "not the
+            // leader", which refused a rider their own café stop in the name
+            // of a group that did not exist (#576).
+            routeAuthority: RouteAuthority.personal,
             markerFeaturesEnabled: false,
           )
         else
           // Widget tests and plugin-less builds. Named so a test can assert the
           // home screen is map-first without standing up a platform map.
-          const ColoredBox(
-            key: Key('home-map-unavailable'),
-            color: Color(0xFF141A22),
+          //
+          // The chrome is drawn here too. It reaches riders through the map's
+          // AppBar now, and a build with no platform map must not therefore
+          // lose its search field and its way into Settings.
+          Scaffold(
+            appBar: chrome == null
+                ? null
+                : AppBar(
+                    toolbarHeight: rideMapToolbarHeight(
+                      landscape:
+                          MediaQuery.orientationOf(context) ==
+                          Orientation.landscape,
+                    ),
+                    titleSpacing: 12,
+                    title: chrome.title,
+                    actions: chrome.actions,
+                  ),
+            body: const ColoredBox(
+              key: Key('home-map-unavailable'),
+              color: Color(0xFF141A22),
+            ),
           ),
-        if (!_sharing)
+        if (_offerLocation)
           Positioned(
             right: 12,
             bottom: 12 + widget.bottomInset,

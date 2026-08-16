@@ -20,6 +20,7 @@ import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
+import 'package:ride_relay/domain/route_authority.dart';
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
@@ -367,6 +368,34 @@ void main() {
       find.byKey(const Key('free-roam-biker-cafes-layer')),
       findsOneWidget,
     );
+  });
+
+  // #574. A handful of chosen stops are places; several hundred are the shape
+  // of the line, and drawn at badge size they cover the road they describe.
+  group('waypoint density decides how waypoints are drawn', () {
+    test('a handful of chosen stops keep a badge worth hitting', () {
+      expect(waypointCircleStyle(0).radius, 7);
+      expect(waypointCircleStyle(1).radius, 7);
+      expect(waypointCircleStyle(denseWaypointThreshold).radius, 7);
+      expect(waypointCircleStyle(denseWaypointThreshold).opacity, 1);
+    });
+
+    test('past the threshold they become geometry, not markers', () {
+      final dense = waypointCircleStyle(denseWaypointThreshold + 1);
+      expect(dense.radius, lessThan(7));
+      expect(dense.opacity, lessThan(1));
+      // The 296 km import that was reported. Whatever the count, the style
+      // must not grow back towards a badge.
+      expect(waypointCircleStyle(6962).radius, dense.radius);
+    });
+
+    test('the change is big enough to see', () {
+      // A dot that is only slightly smaller is still a carpet.
+      expect(
+        waypointCircleStyle(denseWaypointThreshold + 1).radius,
+        lessThan(waypointCircleStyle(denseWaypointThreshold).radius / 1.5),
+      );
+    });
   });
 
   test('group mini-map avoids a second MapLibre surface on Android', () {
@@ -874,7 +903,7 @@ void main() {
             routeStore: InMemoryRouteStore(),
             routeImporter: RouteImporter(source: const _NoFileSource()),
             offlineTileCache: cache,
-            canEditRoute: false,
+            routeAuthority: RouteAuthority.follower,
             rideStarted: false,
           ),
         ),
@@ -918,7 +947,7 @@ void main() {
           routeStore: InMemoryRouteStore(),
           routeImporter: RouteImporter(source: const _NoFileSource()),
           offlineTileCache: cache,
-          canEditRoute: false,
+          routeAuthority: RouteAuthority.follower,
           rideStarted: true,
         ),
       ),
@@ -5703,6 +5732,452 @@ void main() {
 
     await verify(landscape: false);
     await verify(landscape: true);
+  });
+
+  // #572, #573. The home screen used to paint its search field and its two
+  // actions on top of this AppBar, in the same corner of the same safe area,
+  // from a different widget tree. Both were drawn; only the later one could be
+  // tapped, so the layer menu sat under the settings button.
+  group('the top band has one owner', () {
+    Future<void> pumpWithChrome(
+      WidgetTester tester, {
+      required bool hosted,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('chrome-owner');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            routeAuthority: RouteAuthority.personal,
+            rideStarted: false,
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+            hostChrome: hosted
+                ? HostMapChrome(
+                    title: const Text('Where to?'),
+                    actions: [
+                      IconButton(
+                        key: const Key('host-emergency'),
+                        tooltip: 'Emergency info',
+                        onPressed: () {},
+                        icon: const Icon(Icons.medical_information_outlined),
+                      ),
+                      IconButton(
+                        key: const Key('host-settings'),
+                        tooltip: 'Settings',
+                        onPressed: () {},
+                        icon: const Icon(Icons.settings_outlined),
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('every control in the corner is separately hittable', (
+      tester,
+    ) async {
+      await pumpWithChrome(tester, hosted: true);
+
+      final rects = <String, Rect>{
+        'layer menu': tester.getRect(
+          find.byKey(const Key('map-layer-actions')),
+        ),
+        'emergency info': tester.getRect(
+          find.byKey(const Key('host-emergency')),
+        ),
+        'settings': tester.getRect(find.byKey(const Key('host-settings'))),
+        'search field': tester.getRect(find.text('Where to?')),
+      };
+      for (final a in rects.entries) {
+        for (final b in rects.entries) {
+          if (a.key == b.key) continue;
+          expect(
+            a.value.overlaps(b.value),
+            isFalse,
+            reason: '${a.key} ${a.value} overlaps ${b.key} ${b.value}',
+          );
+        }
+      }
+    });
+
+    testWidgets('the layer menu opens, every time', (tester) async {
+      await pumpWithChrome(tester, hosted: true);
+
+      // The reported symptom was that this could not be reached at all: the
+      // settings button was over it and won the hit test.
+      await tester.tap(find.byKey(const Key('map-layer-actions')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Motorcycle discovery layers'), findsOneWidget);
+    });
+
+    testWidgets('a host that brought a title does not get a second way to a '
+        'destination beside it', (tester) async {
+      await pumpWithChrome(tester, hosted: true);
+
+      expect(find.text('Where to?'), findsOneWidget);
+      expect(find.byTooltip('Plan a destination'), findsNothing);
+      expect(find.byTooltip('Import GPX route'), findsNothing);
+      // Nothing to fit without a route, and a permanently greyed button is
+      // width the search field needs.
+      expect(find.byTooltip('Fit route'), findsNothing);
+      // Both remain reachable where they always were.
+      await tester.tap(find.byKey(const Key('map-layer-actions')));
+      await tester.pumpAndSettle();
+      expect(find.text('Import GPX route'), findsOneWidget);
+    });
+
+    testWidgets('a map with no host still owns its own title and actions', (
+      tester,
+    ) async {
+      await pumpWithChrome(tester, hosted: false);
+
+      expect(find.text('Navigation'), findsOneWidget);
+      expect(find.byTooltip('Plan a destination'), findsOneWidget);
+      expect(find.byTooltip('Import GPX route'), findsOneWidget);
+      expect(find.byTooltip('Fit route'), findsOneWidget);
+    });
+  });
+
+  // #576. Free roam used to be given `canEditRoute: false` — the flag that
+  // means "somebody else leads this ride" — so a rider alone on the map was
+  // refused their own café stop by a leadership rule with no group behind it,
+  // and the refusal arrived stringified through the routing catch as
+  // "Could not route via ...: FormatException: Only the ride leader ...".
+  group('route authority', () {
+    test('only a follower is refused, and the refusal is a plain sentence', () {
+      expect(RouteAuthority.personal.canEditRoute, isTrue);
+      expect(RouteAuthority.personal.routeChangeRefusal, isNull);
+      expect(RouteAuthority.leader.canEditRoute, isTrue);
+      expect(RouteAuthority.leader.routeChangeRefusal, isNull);
+
+      expect(RouteAuthority.follower.canEditRoute, isFalse);
+      expect(
+        RouteAuthority.follower.routeChangeRefusal,
+        'Only the ride leader can replace the group route.',
+      );
+      // Whatever it says, it must not read as a fault in the rider's input.
+      expect(
+        RouteAuthority.follower.routeChangeRefusal,
+        isNot(contains('Exception')),
+      );
+    });
+
+    test('a ride maps its own state onto an authority', () {
+      expect(
+        RouteAuthority.forRide(isSimulation: false, isLocalRideLeader: true),
+        RouteAuthority.leader,
+      );
+      expect(
+        RouteAuthority.forRide(isSimulation: false, isLocalRideLeader: false),
+        RouteAuthority.follower,
+      );
+      // The simulator relays nothing, so it is not answerable to a leader even
+      // when it is playing a follower.
+      expect(
+        RouteAuthority.forRide(isSimulation: true, isLocalRideLeader: false),
+        RouteAuthority.personal,
+      );
+    });
+
+    Future<void> pumpMap(
+      WidgetTester tester, {
+      required RouteAuthority authority,
+      Object? changeRouteRequestToken,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('route-authority');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            roadRoutingService: _StraightRoadRoutingService(),
+            routeAuthority: authority,
+            rideStarted: false,
+            changeRouteRequestToken: changeRouteRequestToken,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('free roam is offered the route controls, not told to wait '
+        'for a leader who does not exist', (tester) async {
+      await pumpMap(tester, authority: RouteAuthority.personal);
+
+      expect(find.text('Waiting for the leader’s route'), findsNothing);
+      expect(
+        find.byKey(const Key('plan-destination-empty-button')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('Plan a destination'), findsOneWidget);
+    });
+
+    testWidgets('a follower is still told the leader owns the group route', (
+      tester,
+    ) async {
+      await pumpMap(tester, authority: RouteAuthority.follower);
+
+      expect(find.text('Waiting for the leader’s route'), findsOneWidget);
+      expect(
+        find.byKey(const Key('plan-destination-empty-button')),
+        findsNothing,
+      );
+      expect(find.byTooltip('Plan a destination'), findsNothing);
+    });
+
+    // The reported symptom itself: tapping a café on the free-roam map and
+    // asking to route via it.
+    Future<_RouteStartRoutingService> tapCafe(
+      WidgetTester tester, {
+      required RouteAuthority authority,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('cafe-authority');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final routing = _RouteStartRoutingService();
+      final currentPosition = ValueNotifier<GeoPoint?>(null);
+      addTearDown(currentPosition.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            currentPosition: currentPosition,
+            roadRoutingService: routing,
+            routeAuthority: authority,
+            rideStarted: false,
+            // Both loaders are supplied: they share one Future.wait with the
+            // layer preferences, so an asset read that fails in a widget test
+            // takes the café visibility down with it.
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => const BikerPlaceCatalogue(
+              places: [
+                BikerPlace(
+                  id: 'nearby',
+                  name: 'Nearby biker café',
+                  address: 'Bristol',
+                  point: GeoPoint(latitude: 51.46, longitude: -2.52),
+                  source: 'Test',
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      currentPosition.value = const GeoPoint(
+        latitude: 51.4676,
+        longitude: -2.5067,
+      );
+      await tester.pumpAndSettle();
+
+      // Invoked rather than tapped: flutter_map's own gesture arena claims
+      // pointer events over the map, so a synthetic tap never reaches the
+      // marker's detector in a widget test. This is the handler that marker
+      // wires up, and the hit test is not what this fix changed.
+      tester
+          .widget<GestureDetector>(
+            find.descendant(
+              of: find.byKey(const Key('free-roam-biker-cafes-layer')),
+              matching: find.byType(GestureDetector),
+            ),
+          )
+          .onTap!();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('route-via-biker-cafe-nearby')));
+      await tester.pumpAndSettle();
+      return routing;
+    }
+
+    testWidgets('a rider alone on the map may route via a café', (
+      tester,
+    ) async {
+      final routing = await tapCafe(tester, authority: RouteAuthority.personal);
+
+      expect(
+        routing.calls,
+        isNotEmpty,
+        reason: 'free roam has no leader, so nothing may refuse this',
+      );
+      expect(find.textContaining('ride leader'), findsNothing);
+      expect(find.textContaining('Could not route via'), findsNothing);
+    });
+
+    testWidgets('a follower tapping a café is refused without a stringified '
+        'exception', (tester) async {
+      final routing = await tapCafe(tester, authority: RouteAuthority.follower);
+
+      expect(routing.calls, isEmpty);
+      expect(
+        find.text('Only the ride leader can replace the group route.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('FormatException'), findsNothing);
+      expect(find.textContaining('Could not route via'), findsNothing);
+    });
+
+    // The other half of the reported symptom: a twisty-road highlight rather
+    // than a café. It is a separate guard on a separate handler, so it needs
+    // its own coverage — deleting it passed every café test.
+    Future<_RouteStartRoutingService> tapHighlight(
+      WidgetTester tester, {
+      required RouteAuthority authority,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('discovery-auth');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final routing = _RouteStartRoutingService();
+      final currentPosition = ValueNotifier<GeoPoint?>(null);
+      addTearDown(currentPosition.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            currentPosition: currentPosition,
+            roadRoutingService: routing,
+            routeAuthority: authority,
+            rideStarted: false,
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([
+                  MotorcycleDiscoveryFeature(
+                    id: 'twisty-nearby',
+                    category: MotorcycleDiscoveryCategory.twistyHighlight,
+                    name: 'Nearby twisty road',
+                    points: [GeoPoint(latitude: 51.46, longitude: -2.52)],
+                    sourceName: 'Test',
+                    sourceUrl: 'https://example.test/road',
+                    confidence: 'test',
+                    lastVerified: '2026-08-16',
+                    warning: 'Test fixture',
+                  ),
+                ]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      currentPosition.value = const GeoPoint(
+        latitude: 51.4676,
+        longitude: -2.5067,
+      );
+      await tester.pumpAndSettle();
+
+      // See tapCafe: flutter_map owns the hit test, so the marker's own
+      // handler is invoked instead of synthesising a pointer event.
+      tester
+          .widget<GestureDetector>(
+            find
+                .ancestor(
+                  of: find.byIcon(Icons.route),
+                  matching: find.byType(GestureDetector),
+                )
+                .first,
+          )
+          .onTap!();
+      await tester.pumpAndSettle();
+      final addToRoute = find.byKey(const Key('discovery-add-to-route'));
+      await tester.ensureVisible(addToRoute);
+      await tester.pumpAndSettle();
+      await tester.tap(addToRoute);
+      await tester.pumpAndSettle();
+      return routing;
+    }
+
+    testWidgets('a rider alone on the map may route via a highlight', (
+      tester,
+    ) async {
+      final routing = await tapHighlight(
+        tester,
+        authority: RouteAuthority.personal,
+      );
+
+      expect(routing.calls, isNotEmpty);
+      expect(find.textContaining('ride leader'), findsNothing);
+    });
+
+    testWidgets('a follower tapping a highlight is refused in plain words', (
+      tester,
+    ) async {
+      final routing = await tapHighlight(
+        tester,
+        authority: RouteAuthority.follower,
+      );
+
+      expect(routing.calls, isEmpty);
+      expect(
+        find.text('Only the ride leader can replace the group route.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('FormatException'), findsNothing);
+      expect(find.textContaining('Could not route via'), findsNothing);
+    });
+
+    testWidgets('a follower asked to change the route is refused in words a '
+        'rider can read', (tester) async {
+      await pumpMap(
+        tester,
+        authority: RouteAuthority.follower,
+        changeRouteRequestToken: Object(),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Only the ride leader can replace the group route.'),
+        findsOneWidget,
+      );
+      // The defect was never the refusal itself, it was how it reached a rider.
+      expect(find.textContaining('FormatException'), findsNothing);
+      expect(find.textContaining('Could not route via'), findsNothing);
+    });
   });
 }
 
