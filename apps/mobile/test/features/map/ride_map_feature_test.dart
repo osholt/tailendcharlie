@@ -653,7 +653,6 @@ void main() {
       'navigation-guidance-status-banner',
       'route-start-guidance-banner',
       'emergency-alert-button',
-      'leave-ride-button',
       'report-sighting-button',
       'navigation-follow-button',
       'posted-speed-limit-position',
@@ -665,6 +664,20 @@ void main() {
         reason: '$key belongs to an active ride, not the pre-start map',
       );
     }
+
+    // `leave-ride-button` was in that list until #579, and is deliberately no
+    // longer. The rule this test protects — the pre-start map is not a riding
+    // surface — is unchanged, and every other control above still obeys it.
+    // Leaving is not a riding control though: it is a *lifecycle* one, and the
+    // moment it is most wanted is exactly the moment before a ride starts,
+    // when somebody has created one by mistake or changed their mind about a
+    // solo run. It cost a dig through the ride menu, which is what was
+    // reported on the 16 August ride.
+    expect(
+      find.byKey(const Key('leave-ride-button')),
+      findsOneWidget,
+      reason: 'leaving is a lifecycle control, not a riding one (#579)',
+    );
   });
 
   testWidgets('a distant planned route offers directions to its start', (
@@ -5852,6 +5865,72 @@ void main() {
       expect(find.byTooltip('Plan a destination'), findsOneWidget);
       expect(find.byTooltip('Import GPX route'), findsOneWidget);
       expect(find.byTooltip('Fit route'), findsOneWidget);
+    });
+  });
+
+  // #579. LEAVE appeared only once the ride was under way, so a rider who had
+  // created a ride by mistake — or changed their mind about a solo one — had
+  // to dig through the ride menu to get out of it.
+  group('leaving a ride that has not started', () {
+    Future<void> pumpRideMap(
+      WidgetTester tester, {
+      required bool started,
+      Future<void> Function()? onLeave,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('leave-pre-start');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: started,
+            onLeaveRide: onLeave,
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a created ride can be left before it starts', (tester) async {
+      var left = false;
+      await pumpRideMap(
+        tester,
+        started: false,
+        onLeave: () async => left = true,
+      );
+
+      final leave = find.byKey(const Key('leave-ride-button'));
+      expect(leave, findsOneWidget);
+      await tester.tap(leave);
+      await tester.pumpAndSettle();
+      expect(left, isTrue);
+    });
+
+    testWidgets('a started ride keeps it, as before', (tester) async {
+      await pumpRideMap(tester, started: true, onLeave: () async {});
+
+      expect(find.byKey(const Key('leave-ride-button')), findsOneWidget);
+    });
+
+    testWidgets('free roam has no ride to leave', (tester) async {
+      // No ride, so nothing to offer — the control must not appear just
+      // because the gate moved.
+      await pumpRideMap(tester, started: false);
+
+      expect(find.byKey(const Key('leave-ride-button')), findsNothing);
     });
   });
 

@@ -1772,7 +1772,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
         widget.rideStarted &&
         _navigationGuidance.value.isVisible;
     // Leaving a ride is a ride-lifecycle action, not a route action (#124).
-    final showLeaveRide = widget.rideStarted && widget.onLeaveRide != null;
+    // Not gated on the ride having started (#579). Creating a ride by mistake,
+    // or changing your mind about a solo one, is an ordinary thing to do, and
+    // it used to cost a dig through the ride menu because LEAVE only appeared
+    // once the ride was under way. Free roam is unaffected: there is no ride
+    // there, so `onLeaveRide` is null and nothing is offered.
+    final showLeaveRide = widget.onLeaveRide != null;
     // "Follow me" is the way into the navigation viewport, and it is on screen
     // whenever the camera is not locked into it (#141). The junction overview owns
     // the whole screen while it is up, so nothing is offered underneath it.
