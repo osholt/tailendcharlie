@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../controllers/distance_unit_controller.dart';
+import '../controllers/global_ride_heatmap_controller.dart';
 import '../controllers/completed_rides_controller.dart';
 import '../controllers/map_style_mode_controller.dart';
 import '../controllers/ride_code_preference_controller.dart';
@@ -37,6 +38,7 @@ class RideRelayApp extends StatelessWidget {
     this.routeProgressDisplay,
     required this.recordedRoutes,
     required this.completedRides,
+    this.globalRideHeatmap,
     this.rideInvitationLinks,
     this.planDirectory,
     this.roadRatings,
@@ -59,6 +61,7 @@ class RideRelayApp extends StatelessWidget {
   final RouteProgressDisplayController? routeProgressDisplay;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
+  final GlobalRideHeatmapController? globalRideHeatmap;
   final RideInvitationLinkController? rideInvitationLinks;
   final PlanDirectory? planDirectory;
 
@@ -101,6 +104,9 @@ class RideRelayApp extends StatelessWidget {
     required bool openJoinGroup,
     required VoidCallback requestJoinGroup,
     required VoidCallback consumeJoinGroupRequest,
+    required bool showRecoveredRideChoice,
+    required VoidCallback rejoinRecoveredRide,
+    required Future<void> Function() endRecoveredRide,
   }) {
     const background = Color(0xFF0D1117);
     const surface = Color(0xFF171D25);
@@ -133,6 +139,7 @@ class RideRelayApp extends StatelessWidget {
             routeProgressDisplay: routeProgressDisplay,
             recordedRoutes: recordedRoutes,
             completedRides: completedRides,
+            globalRideHeatmap: globalRideHeatmap,
             planDirectory: planDirectory,
             testControl: testControl,
             spokenGuidance: spokenGuidance,
@@ -143,6 +150,14 @@ class RideRelayApp extends StatelessWidget {
             openJoinGroup: openJoinGroup,
             onJoinGroupOpened: consumeJoinGroupRequest,
             enableNativeServices: enableNativeServices,
+          );
+        }
+        if (showRecoveredRideChoice) {
+          return _RecoveredRideChoiceScreen(
+            rideName: controller.session?.rideName,
+            rideCode: controller.session?.rideCode,
+            onRejoin: rejoinRecoveredRide,
+            onEnd: endRecoveredRide,
           );
         }
         // An ended ride the rider has stepped away from stays on the phone and
@@ -160,6 +175,7 @@ class RideRelayApp extends StatelessWidget {
             speedLimitDisplay: speedLimitDisplay,
             routeProgressDisplay: routeProgressDisplay,
             completedRideStore: completedRides,
+            globalRideHeatmap: globalRideHeatmap,
             roadRatings: roadRatings,
             testControl: testControl,
             testControlRegistry: testControlRegistry,
@@ -182,6 +198,7 @@ class RideRelayApp extends StatelessWidget {
           routeProgressDisplay: routeProgressDisplay,
           recordedRoutes: recordedRoutes,
           completedRides: completedRides,
+          globalRideHeatmap: globalRideHeatmap,
           planDirectory: planDirectory,
           testControl: testControl,
           spokenGuidance: spokenGuidance,
@@ -291,6 +308,7 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
   Object? _restorationError;
   int _attempt = 0;
   bool _openJoinGroup = false;
+  bool _showRecoveredRideChoice = false;
 
   @override
   void initState() {
@@ -330,6 +348,10 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
         setState(() {
           _restorationComplete = true;
           _showRestorationFallback = false;
+          _showRecoveredRideChoice =
+              widget.app.controller.hasActiveRide &&
+              widget.app.controller.rideStarted &&
+              !widget.app.controller.rideEnded;
         });
       },
       onError: (Object error, StackTrace _) {
@@ -351,6 +373,20 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
     if (mounted && _openJoinGroup) setState(() => _openJoinGroup = false);
   }
 
+  void _rejoinRecoveredRide() {
+    if (mounted) setState(() => _showRecoveredRideChoice = false);
+  }
+
+  Future<void> _endRecoveredRide() async {
+    final controller = widget.app.controller;
+    if (controller.isLocalRideLeader) {
+      await controller.endRide();
+    } else {
+      await controller.leaveRide();
+    }
+    if (mounted) setState(() => _showRecoveredRideChoice = false);
+  }
+
   @override
   Widget build(BuildContext context) => widget.app._buildApp(
     restorationComplete: _restorationComplete,
@@ -360,7 +396,101 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
     openJoinGroup: _openJoinGroup,
     requestJoinGroup: _requestJoinGroup,
     consumeJoinGroupRequest: _consumeJoinGroupRequest,
+    showRecoveredRideChoice: _showRecoveredRideChoice,
+    rejoinRecoveredRide: _rejoinRecoveredRide,
+    endRecoveredRide: _endRecoveredRide,
   );
+}
+
+class _RecoveredRideChoiceScreen extends StatefulWidget {
+  const _RecoveredRideChoiceScreen({
+    required this.rideName,
+    required this.rideCode,
+    required this.onRejoin,
+    required this.onEnd,
+  });
+
+  final String? rideName;
+  final String? rideCode;
+  final VoidCallback onRejoin;
+  final Future<void> Function() onEnd;
+
+  @override
+  State<_RecoveredRideChoiceScreen> createState() =>
+      _RecoveredRideChoiceScreenState();
+}
+
+class _RecoveredRideChoiceScreenState
+    extends State<_RecoveredRideChoiceScreen> {
+  bool _ending = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.rideName?.trim();
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Icon(Icons.restore, size: 54, color: Color(0xFFFF7A1A)),
+                  const SizedBox(height: 18),
+                  Text(
+                    'Ride recovered',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '${title?.isNotEmpty == true ? title : 'Ride ${widget.rideCode ?? ''}'} was still running when the app closed. '
+                    'Rejoin it, or end it and keep the recorded ride in your Ride Library.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFFABB5C1),
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    key: const Key('rejoin-recovered-ride'),
+                    onPressed: _ending ? null : widget.onRejoin,
+                    icon: const Icon(Icons.navigation_outlined),
+                    label: const Text('Rejoin ride'),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    key: const Key('end-recovered-ride'),
+                    onPressed: _ending
+                        ? null
+                        : () async {
+                            setState(() => _ending = true);
+                            try {
+                              await widget.onEnd();
+                            } finally {
+                              if (mounted) setState(() => _ending = false);
+                            }
+                          },
+                    icon: _ending
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.stop_circle_outlined),
+                    label: const Text('End and save ride'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _RideRestoreScreen extends StatelessWidget {

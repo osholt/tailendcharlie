@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../controllers/foreground_location_controller.dart';
+import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../domain/distance_unit.dart';
@@ -33,6 +34,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.bottomInset = 0,
     this.position,
     this.completedRideStore,
+    this.globalRideHeatmap,
     this.onMapStyleResolved,
   });
 
@@ -53,6 +55,7 @@ class HomeMapBackdrop extends StatefulWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final DistanceUnit distanceUnit;
   final CompletedRideStore? completedRideStore;
+  final GlobalRideHeatmapController? globalRideHeatmap;
   final ValueChanged<String>? onMapStyleResolved;
 
   /// False in widget tests and on any build without the platform plugins, where
@@ -135,6 +138,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
             key: const Key('home-map'),
             currentPosition: _position,
             completedRideStore: widget.completedRideStore,
+            globalRideHeatmap: widget.globalRideHeatmap,
             darkMapStyle: widget.mapStyleMode.resolveDark(
               MediaQuery.platformBrightnessOf(context),
             ),
