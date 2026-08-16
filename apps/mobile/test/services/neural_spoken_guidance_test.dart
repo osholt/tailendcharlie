@@ -66,6 +66,59 @@ void main() {
   );
 
   test(
+    'a warmed on-device voice gets its generation window for a safety alert',
+    () async {
+      final neural = _FakeNeuralStarter(
+        startDelay: const Duration(milliseconds: 30),
+      );
+      final fallback = _RecordingEngine();
+      final outputs = <SpokenGuidanceOutput>[];
+      final engine = FailSafeNeuralSpokenGuidanceEngine(
+        neural: neural,
+        fallback: fallback,
+        startDeadline: const Duration(milliseconds: 5),
+        warmedStartDeadline: const Duration(milliseconds: 60),
+        onOutput: (_, output) => outputs.add(output),
+      );
+
+      await engine.configure();
+      await engine.warmUp();
+      await engine.speak('Speed camera, in 150 yards.');
+
+      expect(fallback.spoken, isEmpty);
+      expect(outputs, [SpokenGuidanceOutput.natural]);
+    },
+  );
+
+  test(
+    'the first alert keeps the natural voice while warm-up is in flight',
+    () async {
+      final neural = _FakeNeuralStarter(
+        prepareDelay: const Duration(milliseconds: 40),
+        startDelay: const Duration(milliseconds: 30),
+      );
+      final fallback = _RecordingEngine();
+      final outputs = <SpokenGuidanceOutput>[];
+      final engine = FailSafeNeuralSpokenGuidanceEngine(
+        neural: neural,
+        fallback: fallback,
+        startDeadline: const Duration(milliseconds: 5),
+        warmedStartDeadline: const Duration(milliseconds: 60),
+        onOutput: (_, output) => outputs.add(output),
+      );
+
+      await engine.configure();
+      final warming = engine.warmUp();
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+      await engine.speak('Speed camera, in 150 yards.');
+      await warming;
+
+      expect(fallback.spoken, isEmpty);
+      expect(outputs, [SpokenGuidanceOutput.natural]);
+    },
+  );
+
+  test(
     'disabling natural speech during a ride immediately uses fallback',
     () async {
       var enabled = true;
@@ -89,9 +142,15 @@ void main() {
 }
 
 class _FakeNeuralStarter implements NeuralSpeechStarter {
-  _FakeNeuralStarter({this.neverStarts = false});
+  _FakeNeuralStarter({
+    this.neverStarts = false,
+    this.startDelay,
+    this.prepareDelay,
+  });
 
   final bool neverStarts;
+  final Duration? startDelay;
+  final Duration? prepareDelay;
   final phrases = <String>[];
   int prepareCalls = 0;
   int cancelCalls = 0;
@@ -102,6 +161,7 @@ class _FakeNeuralStarter implements NeuralSpeechStarter {
   @override
   Future<void> prepare() async {
     prepareCalls += 1;
+    if (prepareDelay case final delay?) await Future<void>.delayed(delay);
     prepared = true;
   }
 
@@ -110,7 +170,11 @@ class _FakeNeuralStarter implements NeuralSpeechStarter {
     preparedBeforeFirstPhrase ??= prepared;
     phrases.add(phrase);
     return NeuralSpeechAttempt(
-      neverStarts ? Completer<void>().future : Future<void>.value(),
+      neverStarts
+          ? Completer<void>().future
+          : startDelay == null
+          ? Future<void>.value()
+          : Future<void>.delayed(startDelay!),
       Future<void>.value(),
     );
   }
