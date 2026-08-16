@@ -5,6 +5,7 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'app/ride_relay_app.dart';
 import 'controllers/distance_unit_controller.dart';
+import 'controllers/global_ride_heatmap_controller.dart';
 import 'controllers/completed_rides_controller.dart';
 import 'controllers/map_style_mode_controller.dart';
 import 'controllers/ride_code_preference_controller.dart';
@@ -23,6 +24,8 @@ import 'data/json_file_completed_ride_store.dart';
 import 'data/shared_preferences_session_store.dart';
 import 'data/sqlite_event_store.dart';
 import 'services/nearby_bridge.dart';
+import 'services/global_ride_heatmap.dart';
+import 'internet/internet_relay_client.dart';
 import 'services/test_control_registry.dart';
 import 'services/test_control_session.dart';
 import 'services/test_control_server.dart';
@@ -88,6 +91,11 @@ Future<void> main() async {
   final completedRides = await CompletedRidesController.load(
     completedRideStore,
   );
+  final globalRideHeatmap = await GlobalRideHeatmapController.load(
+    client: GlobalHeatmapClient(
+      baseUri: InternetRelayConfiguration.fromEnvironment().baseUri,
+    ),
+  );
   // Loaded after the parallel batch rather than inside it, for the same reason
   // the #209 note gives for test control: the batch is already at its limit, and
   // this returns without touching storage in a build with no diagnostics define,
@@ -128,6 +136,7 @@ Future<void> main() async {
       routeProgressDisplay: routeProgressDisplay,
       recordedRoutes: recordedRoutes,
       completedRides: completedRides,
+      globalRideHeatmap: globalRideHeatmap,
       rideInvitationLinks: rideInvitationLinks,
       roadRatings: roadRatings,
       testControl: testControl,
