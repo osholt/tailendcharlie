@@ -16,6 +16,7 @@ class RoutingConfiguration {
     required this.routingBaseUrl,
     required this.geocodingBaseUrl,
     required this.motorcycleRoutingUrl,
+    required this.trackMatchingUrl,
   });
 
   factory RoutingConfiguration.fromEnvironment() => RoutingConfiguration(
@@ -40,11 +41,27 @@ class RoutingConfiguration {
         defaultValue: 'https://valhalla1.openstreetmap.de/route',
       ),
     ),
+    // Map matching for imported tracks, on the same Valhalla deployment. It is
+    // *not* the OSRM service above: that one's `/match` accepts ten trace
+    // coordinates, so every import ever attempted returned 400 (#575).
+    // Derived from the motorcycle route URL rather than configured separately,
+    // so a self-hosted deployment cannot end up matching on one host and
+    // routing on another.
+    trackMatchingUrl: Uri.parse(
+      const String.fromEnvironment(
+        'RIDE_RELAY_TRACK_MATCHING_URL',
+        defaultValue: 'https://valhalla1.openstreetmap.de/trace_route',
+      ),
+    ),
   );
 
   final Uri routingBaseUrl;
   final Uri geocodingBaseUrl;
   final Uri motorcycleRoutingUrl;
+
+  /// Valhalla `trace_route`, used to turn an imported GPX track into road
+  /// geometry with real manoeuvres. See [ValhallaImportedTrackMatcher].
+  final Uri trackMatchingUrl;
 }
 
 class RoadRouteResult {
