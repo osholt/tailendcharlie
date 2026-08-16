@@ -133,6 +133,93 @@ void main() {
       RouteAuthority.personal,
     );
   });
+
+  // #572, #573.
+  group(
+    'the host hands its top band to the map rather than painting over it',
+    () {
+      HostMapChrome chrome() => HostMapChrome(
+        title: const Text('Where to?'),
+        actions: [
+          IconButton(
+            key: const Key('host-settings'),
+            tooltip: 'Settings',
+            onPressed: () {},
+            icon: const Icon(Icons.settings_outlined),
+          ),
+        ],
+      );
+
+      testWidgets('the map is given the chrome, not covered by it', (
+        tester,
+      ) async {
+        final platform = _RecordingLocationPlatform();
+        final location = ForegroundLocationController(
+          DeviceLocationSource(platform),
+          (_) async {},
+        );
+        addTearDown(location.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: HomeMapBackdrop(
+                mapStyleMode: mapStyleMode,
+                speedLimitDisplay: speedLimitDisplay,
+                distanceUnit: DistanceUnit.kilometres,
+                locationController: location,
+                hostChrome: chrome(),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(
+          tester
+              .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+              .hostChrome,
+          isNotNull,
+          reason: 'painting it over the map is what buried the layer menu',
+        );
+      });
+
+      testWidgets('a build with no platform map keeps its search field and its '
+          'way into Settings', (tester) async {
+        // The chrome reaches riders through the map's AppBar now. A build
+        // without the platform plugins must not therefore lose it entirely.
+        final platform = _RecordingLocationPlatform();
+        final location = ForegroundLocationController(
+          DeviceLocationSource(platform),
+          (_) async {},
+        );
+        addTearDown(location.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: HomeMapBackdrop(
+              mapStyleMode: mapStyleMode,
+              speedLimitDisplay: speedLimitDisplay,
+              distanceUnit: DistanceUnit.kilometres,
+              enableNativeServices: false,
+              locationController: location,
+              hostChrome: chrome(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Where to?'), findsOneWidget);
+        expect(find.byKey(const Key('host-settings')), findsOneWidget);
+        expect(
+          tester
+              .getRect(find.text('Where to?'))
+              .overlaps(tester.getRect(find.byKey(const Key('host-settings')))),
+          isFalse,
+        );
+      });
+    },
+  );
 }
 
 /// Counts prompts. The test is about *when* a prompt happens, so the count is

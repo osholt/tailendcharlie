@@ -5706,6 +5706,127 @@ void main() {
     await verify(landscape: true);
   });
 
+  // #572, #573. The home screen used to paint its search field and its two
+  // actions on top of this AppBar, in the same corner of the same safe area,
+  // from a different widget tree. Both were drawn; only the later one could be
+  // tapped, so the layer menu sat under the settings button.
+  group('the top band has one owner', () {
+    Future<void> pumpWithChrome(
+      WidgetTester tester, {
+      required bool hosted,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('chrome-owner');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            routeAuthority: RouteAuthority.personal,
+            rideStarted: false,
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+            hostChrome: hosted
+                ? HostMapChrome(
+                    title: const Text('Where to?'),
+                    actions: [
+                      IconButton(
+                        key: const Key('host-emergency'),
+                        tooltip: 'Emergency info',
+                        onPressed: () {},
+                        icon: const Icon(Icons.medical_information_outlined),
+                      ),
+                      IconButton(
+                        key: const Key('host-settings'),
+                        tooltip: 'Settings',
+                        onPressed: () {},
+                        icon: const Icon(Icons.settings_outlined),
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('every control in the corner is separately hittable', (
+      tester,
+    ) async {
+      await pumpWithChrome(tester, hosted: true);
+
+      final rects = <String, Rect>{
+        'layer menu': tester.getRect(
+          find.byKey(const Key('map-layer-actions')),
+        ),
+        'emergency info': tester.getRect(
+          find.byKey(const Key('host-emergency')),
+        ),
+        'settings': tester.getRect(find.byKey(const Key('host-settings'))),
+        'search field': tester.getRect(find.text('Where to?')),
+      };
+      for (final a in rects.entries) {
+        for (final b in rects.entries) {
+          if (a.key == b.key) continue;
+          expect(
+            a.value.overlaps(b.value),
+            isFalse,
+            reason: '${a.key} ${a.value} overlaps ${b.key} ${b.value}',
+          );
+        }
+      }
+    });
+
+    testWidgets('the layer menu opens, every time', (tester) async {
+      await pumpWithChrome(tester, hosted: true);
+
+      // The reported symptom was that this could not be reached at all: the
+      // settings button was over it and won the hit test.
+      await tester.tap(find.byKey(const Key('map-layer-actions')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Motorcycle discovery layers'), findsOneWidget);
+    });
+
+    testWidgets('a host that brought a title does not get a second way to a '
+        'destination beside it', (tester) async {
+      await pumpWithChrome(tester, hosted: true);
+
+      expect(find.text('Where to?'), findsOneWidget);
+      expect(find.byTooltip('Plan a destination'), findsNothing);
+      expect(find.byTooltip('Import GPX route'), findsNothing);
+      // Nothing to fit without a route, and a permanently greyed button is
+      // width the search field needs.
+      expect(find.byTooltip('Fit route'), findsNothing);
+      // Both remain reachable where they always were.
+      await tester.tap(find.byKey(const Key('map-layer-actions')));
+      await tester.pumpAndSettle();
+      expect(find.text('Import GPX route'), findsOneWidget);
+    });
+
+    testWidgets('a map with no host still owns its own title and actions', (
+      tester,
+    ) async {
+      await pumpWithChrome(tester, hosted: false);
+
+      expect(find.text('Navigation'), findsOneWidget);
+      expect(find.byTooltip('Plan a destination'), findsOneWidget);
+      expect(find.byTooltip('Import GPX route'), findsOneWidget);
+      expect(find.byTooltip('Fit route'), findsOneWidget);
+    });
+  });
+
   // #576. Free roam used to be given `canEditRoute: false` — the flag that
   // means "somebody else leads this ride" — so a rider alone on the map was
   // refused their own café stop by a leadership rule with no group behind it,
