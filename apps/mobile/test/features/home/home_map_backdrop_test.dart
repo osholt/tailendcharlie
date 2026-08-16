@@ -9,6 +9,8 @@ import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/imported_route.dart' show GeoPoint;
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
+import 'package:ride_relay/features/map/ride_map_feature.dart';
+import 'package:ride_relay/domain/route_authority.dart';
 import 'package:ride_relay/services/device_location_source.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -97,6 +99,131 @@ void main() {
 
     expect(platform.permissionRequests, 0);
   });
+  testWidgets('the free-roam map is the rider\'s own, not a follower\'s (#576)', (
+    tester,
+  ) async {
+    // This backdrop used to pass `canEditRoute: false` — the flag that means
+    // "somebody else leads this ride". There is no ride here and no leader, so
+    // every route action inherited a refusal with no group behind it: adding a
+    // café in free roam failed with "Only the ride leader can replace the group
+    // route". The authority is the assertion because it is the thing that was
+    // wrong; what it permits is covered in ride_map_feature_test.dart.
+    final platform = _RecordingLocationPlatform();
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HomeMapBackdrop(
+            mapStyleMode: mapStyleMode,
+            speedLimitDisplay: speedLimitDisplay,
+            distanceUnit: DistanceUnit.kilometres,
+            locationController: location,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+          .routeAuthority,
+      RouteAuthority.personal,
+    );
+  });
+
+  // #572, #573.
+  group(
+    'the host hands its top band to the map rather than painting over it',
+    () {
+      HostMapChrome chrome() => HostMapChrome(
+        title: const Text('Where to?'),
+        actions: [
+          IconButton(
+            key: const Key('host-settings'),
+            tooltip: 'Settings',
+            onPressed: () {},
+            icon: const Icon(Icons.settings_outlined),
+          ),
+        ],
+      );
+
+      testWidgets('the map is given the chrome, not covered by it', (
+        tester,
+      ) async {
+        final platform = _RecordingLocationPlatform();
+        final location = ForegroundLocationController(
+          DeviceLocationSource(platform),
+          (_) async {},
+        );
+        addTearDown(location.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: HomeMapBackdrop(
+                mapStyleMode: mapStyleMode,
+                speedLimitDisplay: speedLimitDisplay,
+                distanceUnit: DistanceUnit.kilometres,
+                locationController: location,
+                hostChrome: chrome(),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(
+          tester
+              .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+              .hostChrome,
+          isNotNull,
+          reason: 'painting it over the map is what buried the layer menu',
+        );
+      });
+
+      testWidgets('a build with no platform map keeps its search field and its '
+          'way into Settings', (tester) async {
+        // The chrome reaches riders through the map's AppBar now. A build
+        // without the platform plugins must not therefore lose it entirely.
+        final platform = _RecordingLocationPlatform();
+        final location = ForegroundLocationController(
+          DeviceLocationSource(platform),
+          (_) async {},
+        );
+        addTearDown(location.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: HomeMapBackdrop(
+              mapStyleMode: mapStyleMode,
+              speedLimitDisplay: speedLimitDisplay,
+              distanceUnit: DistanceUnit.kilometres,
+              enableNativeServices: false,
+              locationController: location,
+              hostChrome: chrome(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Where to?'), findsOneWidget);
+        expect(find.byKey(const Key('host-settings')), findsOneWidget);
+        expect(
+          tester
+              .getRect(find.text('Where to?'))
+              .overlaps(tester.getRect(find.byKey(const Key('host-settings')))),
+          isFalse,
+        );
+      });
+    },
+  );
+
   // #577. Free roam lost the rider's position and offered no way back: the
   // recovery control was hidden on `sharing`, which says only that sampling
   // was requested, and nothing restarted the sampler after a background trip.
