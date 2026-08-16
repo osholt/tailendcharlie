@@ -5,6 +5,7 @@ export 'ride_map_feature.dart'
         MapJunctionMarkerStage,
         MapEmergencyContact,
         GroupMiniMapRenderer,
+        HostMapChrome,
         MapOverlayMarker,
         MapOverlayTrace,
         RideMapFeature,
@@ -18,6 +19,7 @@ export 'ride_map_feature.dart'
         portraitRideMenuTopOffset,
         portraitBottomChromeKey,
         rideMapPrimaryPanelFill,
+        rideMapToolbarHeight,
         waypointCircleStyle,
         quickMessageIcon;
 export 'route_trail_style.dart'

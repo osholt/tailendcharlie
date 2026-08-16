@@ -27,6 +27,7 @@ import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/rider_color.dart';
+import '../../domain/route_authority.dart';
 import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/basemap_configuration.dart';
@@ -116,6 +117,40 @@ enum GroupMiniMapRenderer {
 }
 
 enum _ImportedTrackChoice { cancel, followOriginal, generateNavigable }
+
+/// Top-band chrome a host screen hands to the map instead of drawing itself.
+///
+/// The free-roam home screen used to paint its own search field and its own
+/// action row *on top of* this map's `AppBar`, in the same corner of the same
+/// safe area, from a different widget tree. Both were rendered and only the
+/// later one could be tapped, so the discovery-layer menu sat under the
+/// settings button and was reachable by an uncovered sliver or not at all
+/// (#572), and the icons read as overlapping junk (#573).
+///
+/// Supplying them here gives the top band exactly one owner. Nothing about the
+/// host's arrangement is inferred: it says what it wants shown, and the map
+/// composes it with its own actions in one row.
+class HostMapChrome {
+  const HostMapChrome({required this.title, this.actions = const []});
+
+  /// Stands in for the map's own title — a search field, in free roam.
+  ///
+  /// A host that supplies this is also supplying the rider's way to a
+  /// destination, so the map drops its own `Plan a destination` and
+  /// `Import GPX` buttons rather than crowding a second entry in beside it.
+  /// Both remain in the overflow menu.
+  final Widget title;
+
+  /// Appended after the map's own actions, in the order given.
+  final List<Widget> actions;
+}
+
+/// Height of the map's own toolbar, by orientation.
+///
+/// Public because a host that stands content clear of the AppBar has to
+/// measure the band the map actually drew. Two copies of `52` in two files
+/// is how content ends up half under a toolbar.
+double rideMapToolbarHeight({required bool landscape}) => landscape ? 42 : 52;
 
 /// Above this many waypoints on one route, they are the shape of the line
 /// rather than a list of places somebody chose.
@@ -253,7 +288,8 @@ class RideMapFeature extends StatefulWidget {
     this.acquireCurrentPosition,
     this.navigationExportCoordinator,
     this.routeStore,
-    this.canEditRoute = true,
+    this.routeAuthority = RouteAuthority.leader,
+    this.hostChrome,
     this.offlineTileCache,
     this.mapLibreOfflineManager,
     this.mapStyleString,
@@ -322,7 +358,8 @@ class RideMapFeature extends StatefulWidget {
     CompletedRideStore? completedRideStore,
     PersonalRideHeatmapController? personalRideHeatmap,
     GlobalRideHeatmapController? globalRideHeatmap,
-    bool canEditRoute = true,
+    RouteAuthority routeAuthority = RouteAuthority.leader,
+    HostMapChrome? hostChrome,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     SpeedLimitDisplayController? speedLimitDisplay,
     bool showRouteProgress = true,
@@ -383,7 +420,8 @@ class RideMapFeature extends StatefulWidget {
     completedRideStore: completedRideStore,
     personalRideHeatmap: personalRideHeatmap,
     globalRideHeatmap: globalRideHeatmap,
-    canEditRoute: canEditRoute,
+    routeAuthority: routeAuthority,
+    hostChrome: hostChrome,
     distanceUnit: distanceUnit,
     speedLimitDisplay: speedLimitDisplay,
     showRouteProgress: showRouteProgress,
@@ -478,7 +516,17 @@ class RideMapFeature extends StatefulWidget {
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
   final NavigationExportCoordinator? navigationExportCoordinator;
   final RouteStore? routeStore;
-  final bool canEditRoute;
+
+  /// Whose route this surface is showing. See [RouteAuthority] — free roam is
+  /// [RouteAuthority.personal] and has no leader to defer to (#576).
+  final RouteAuthority routeAuthority;
+
+  /// Whether this surface may build or replace the route it shows.
+  bool get canEditRoute => routeAuthority.canEditRoute;
+
+  /// Top-band chrome the host draws through this map rather than over it.
+  /// See [HostMapChrome] — null means the map owns its own title and actions.
+  final HostMapChrome? hostChrome;
   final OfflineTileCache? offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
   final String? mapStyleString;
@@ -637,7 +685,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         markerFeaturesEnabled: widget.markerFeaturesEnabled,
         onLeaveRide: widget.onLeaveRide,
         onOpenRideMenu: widget.onOpenRideMenu,
-        canEditRoute: widget.canEditRoute,
+        routeAuthority: widget.routeAuthority,
+        hostChrome: widget.hostChrome,
         onRouteChanged: widget.onRouteChanged,
         onRouteCommitted: widget.onRouteCommitted,
         onNavigationGuidanceChanged: widget.onNavigationGuidanceChanged,
@@ -726,7 +775,8 @@ class RideMapScreen extends StatefulWidget {
     this.markerFeaturesEnabled = true,
     this.onLeaveRide,
     this.onOpenRideMenu,
-    this.canEditRoute = true,
+    this.routeAuthority = RouteAuthority.leader,
+    this.hostChrome,
     this.onRouteChanged,
     this.onRouteCommitted,
     this.onNavigationGuidanceChanged,
@@ -835,7 +885,15 @@ class RideMapScreen extends StatefulWidget {
   final bool markerFeaturesEnabled;
   final Future<void> Function()? onLeaveRide;
   final Future<void> Function()? onOpenRideMenu;
-  final bool canEditRoute;
+
+  /// Whose route this surface is showing. See [RouteAuthority].
+  final RouteAuthority routeAuthority;
+
+  /// Whether this surface may build or replace the route it shows.
+  bool get canEditRoute => routeAuthority.canEditRoute;
+
+  /// Top-band chrome the host draws through this map. See [HostMapChrome].
+  final HostMapChrome? hostChrome;
   final ValueChanged<ImportedRoute?>? onRouteChanged;
   final ValueChanged<ImportedRoute?>? onRouteCommitted;
   final ValueChanged<NavigationGuidance?>? onNavigationGuidanceChanged;
@@ -1694,6 +1752,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // notch and the status bar their space.
     final overlayTop = safeInsets.top;
     final compactDensity = landscape ? VisualDensity.compact : null;
+    // Read once: it decides the title, three of the actions, and the tail of
+    // the row, and reading it in four places invites them to disagree.
+    final hostChrome = widget.hostChrome;
     // The group mini-map owns its own ValueListenableBuilder below. This
     // avoids relying on a parent platform-map rebuild to notice rider updates,
     // which left the portrait mini-map absent in the live simulator.
@@ -1723,18 +1784,25 @@ class _RideMapScreenState extends State<RideMapScreen> {
       appBar: hideChrome
           ? null
           : AppBar(
-              toolbarHeight: landscape ? 42 : 52,
+              toolbarHeight: rideMapToolbarHeight(landscape: landscape),
               titleSpacing: 12,
-              title: Text(
-                _route?.name ?? 'Navigation',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: landscape
-                    ? Theme.of(context).textTheme.titleMedium
-                    : null,
-              ),
+              title:
+                  hostChrome?.title ??
+                  Text(
+                    _route?.name ?? 'Navigation',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: landscape
+                        ? Theme.of(context).textTheme.titleMedium
+                        : null,
+                  ),
               actions: [
-                if (widget.canEditRoute)
+                // A host that brought its own title brought its own way to a
+                // destination with it — free roam's search field. A second
+                // entry beside it would crowd the field down to nothing on a
+                // phone and say the same thing twice. Both actions stay in the
+                // overflow menu below.
+                if (widget.canEditRoute && hostChrome == null)
                   IconButton(
                     tooltip: 'Plan a destination',
                     visualDensity: compactDensity,
@@ -1748,7 +1816,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   ),
                 // Route-derived: importing is the action that creates a
                 // route, so it is offered only while there is none.
-                if (widget.canEditRoute && _route == null)
+                if (widget.canEditRoute && _route == null && hostChrome == null)
                   IconButton(
                     tooltip: 'Import GPX route',
                     visualDensity: compactDensity,
@@ -1774,14 +1842,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           )
                         : const Icon(Icons.alt_route),
                   ),
-                IconButton(
-                  tooltip: 'Fit route',
-                  visualDensity: compactDensity,
-                  // Route-derived: fitting the whole plan needs a plan. The
-                  // rider's own framing is the follow camera's job.
-                  onPressed: _route == null ? null : _showWholeRoute,
-                  icon: const Icon(Icons.fit_screen),
-                ),
+                // Route-derived: fitting the whole plan needs a plan. The
+                // rider's own framing is the follow camera's job. A host
+                // sharing this row gets the button dropped rather than
+                // greyed — a permanently disabled control is width the
+                // search field needs (#573).
+                if (_route != null || hostChrome == null)
+                  IconButton(
+                    tooltip: 'Fit route',
+                    visualDensity: compactDensity,
+                    onPressed: _route == null ? null : _showWholeRoute,
+                    icon: const Icon(Icons.fit_screen),
+                  ),
                 PopupMenuButton<_MapAction>(
                   key: const Key('map-layer-actions'),
                   iconSize: landscape ? 22 : 24,
@@ -1910,6 +1982,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       ),
                   ],
                 ),
+                // Last, so the map's own controls keep their position as the
+                // host's set changes. One row, one widget tree, one hit test.
+                ...?hostChrome?.actions,
               ],
             ),
       body: _loading
@@ -5886,10 +5961,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     Duration? duration,
     List<String> warnings = const [],
   }) async {
-    if (!widget.canEditRoute) {
-      throw const FormatException(
-        'Only the ride leader can replace the group route.',
-      );
+    // A backstop, not the rider-facing path: every caller that a rider can
+    // reach checks the authority first and says so plainly. Reaching this
+    // means a caller was added without that check.
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      throw FormatException(refusal);
     }
     ImportedRoute? comparisonRoute;
     if (_canGenerateNavigableRoute(route)) {
@@ -5938,10 +6014,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ImportedRoute? previousRoute,
     ImportedRoute? comparisonRoute,
   }) async {
-    if (!widget.canEditRoute) {
-      throw const FormatException(
-        'Only the ride leader can replace the group route.',
-      );
+    // As above: a backstop behind the rider-facing checks, not one of them.
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      throw FormatException(refusal);
     }
     final enrichment = await _routeGeometryEnricher.enrich(route);
     final activeRoute = enrichment.route;
@@ -6485,6 +6560,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   Future<void> _addBikerPlaceToRoute(BikerPlace place) async {
     if (_routing) return;
+    // Checked here rather than left to the backstop inside
+    // _reviewAndActivateRoute: the catch below prefixes whatever it is given
+    // with "Could not route via ...", which turned a leadership rule into a
+    // routing failure with the exception class printed at the rider (#576).
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
+    }
     final existing = _route;
     final start =
         existing?.paths.lastOrNull?.points.lastOrNull ?? _effectivePosition;
@@ -6539,6 +6622,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     MotorcycleDiscoveryFeature feature,
   ) async {
     if (_routing) return;
+    // See _addBikerPlaceToRoute: the same prefixing catch is below (#576).
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
+    }
     final existing = _route;
     final start =
         existing?.paths.lastOrNull?.points.lastOrNull ?? _effectivePosition;
@@ -7067,8 +7155,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       widget.onChangeRouteRequestHandled?.call();
       if (!mounted) return;
-      if (!widget.canEditRoute) {
-        _showMessage('Only the ride leader can replace the group route.');
+      if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+        _showMessage(refusal);
         return;
       }
       if (sharedFile != null) {
@@ -7101,8 +7189,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<void> _showChangeRouteSheet() async {
-    if (!widget.canEditRoute) {
-      _showMessage('Only the ride leader can replace the group route.');
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
       return;
     }
     await showModalBottomSheet<void>(

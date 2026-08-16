@@ -37,6 +37,7 @@ import '../../services/carplay_bridge.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
+import '../map/ride_map_feature.dart' show HostMapChrome, rideMapToolbarHeight;
 import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
@@ -394,6 +395,42 @@ class _HomeScreenState extends State<HomeScreen> {
             // bar rather than under it.
             bottomInset: HomeRideActions.reservedHeight,
             position: _position,
+            // The search field and these two actions used to be painted on
+            // top of the map's own AppBar, in the same corner of the same
+            // safe area, from this widget tree rather than the map's. Both
+            // were drawn and only these could be tapped, so the map's layer
+            // menu was buried under the settings button (#572) and the icons
+            // read as overlapping junk (#573). The map draws them now, in one
+            // row, with one hit test.
+            hostChrome: HostMapChrome(
+              title: HomeSearchBar(
+                onTap: () => unawaited(_searchDestination()),
+              ),
+              actions: [
+                IconButton(
+                  tooltip: 'Emergency info',
+                  onPressed: () =>
+                      EmergencyInfoSheet.show(context, widget.riderProfile),
+                  icon: const Icon(Icons.medical_information_outlined),
+                ),
+                IconButton(
+                  tooltip: 'Settings',
+                  onPressed: () => UnitSettingsSheet.show(
+                    context,
+                    widget.distanceUnits,
+                    widget.mapStyleMode,
+                    widget.riderProfile,
+                    speedLimitDisplay: widget.speedLimitDisplay,
+                    routeProgressDisplay: widget.routeProgressDisplay,
+                    testControl: widget.testControl,
+                    spokenGuidance: widget.spokenGuidance,
+                    rideDiagnostics: widget.rideDiagnostics,
+                    globalRideHeatmap: widget.globalRideHeatmap,
+                  ),
+                  icon: const Icon(Icons.settings_outlined),
+                ),
+              ],
+            ),
             onMapStyleResolved: (styleJson) {
               _carPlayMapStyleJson = styleJson;
               final basemap = _homeBasemap;
@@ -406,62 +443,33 @@ class _HomeScreenState extends State<HomeScreen> {
               _publishHomeCarPlayState();
             },
           ),
+          // Notices, and nothing when there are none. Each of these used to sit
+          // in the scrolling column of a full-screen panel, which is why the
+          // panel existed at all; they are now cards on the map that appear and
+          // go. The search field and the two actions that used to stand here
+          // are now in the map's own AppBar — see `hostChrome` above — so this
+          // layer holds nothing that competes for the top band.
+          //
+          // Clear of the AppBar rather than over it: the map's Scaffold has
+          // already consumed the status bar, so this offset is measured from
+          // the bottom of the toolbar.
           SafeArea(
-            child: Stack(
-              children: [
-                // Notices, and nothing when there are none. Each of these used
-                // to sit in the scrolling column of a full-screen panel, which
-                // is why the panel existed at all; they are now cards on the map
-                // that appear and go.
-                // The way in that #431 asked for: a magnifying glass and a
-                // field, on the map, before any decision about the ride.
-                Positioned(
-                  top: 6,
-                  left: 12,
-                  right: 104,
-                  child: HomeSearchBar(
-                    onTap: () => unawaited(_searchDestination()),
-                  ),
-                ),
-                Positioned(
-                  top: 60,
-                  left: 12,
-                  right: 12,
-                  child: _HomeNotices(children: _notices(context)),
-                ),
-                Positioned(
-                  top: 4,
-                  right: 8,
-                  child: Row(
-                    children: [
-                      IconButton(
-                        tooltip: 'Emergency info',
-                        onPressed: () => EmergencyInfoSheet.show(
-                          context,
-                          widget.riderProfile,
-                        ),
-                        icon: const Icon(Icons.medical_information_outlined),
-                      ),
-                      IconButton(
-                        tooltip: 'Settings',
-                        onPressed: () => UnitSettingsSheet.show(
-                          context,
-                          widget.distanceUnits,
-                          widget.mapStyleMode,
-                          widget.riderProfile,
-                          speedLimitDisplay: widget.speedLimitDisplay,
-                          routeProgressDisplay: widget.routeProgressDisplay,
-                          testControl: widget.testControl,
-                          spokenGuidance: widget.spokenGuidance,
-                          rideDiagnostics: widget.rideDiagnostics,
-                          globalRideHeatmap: widget.globalRideHeatmap,
-                        ),
-                        icon: const Icon(Icons.settings_outlined),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            child: Padding(
+              padding: EdgeInsets.only(
+                top:
+                    rideMapToolbarHeight(
+                      landscape:
+                          MediaQuery.orientationOf(context) ==
+                          Orientation.landscape,
+                    ) +
+                    8,
+                left: 12,
+                right: 12,
+              ),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: _HomeNotices(children: _notices(context)),
+              ),
             ),
           ),
           Positioned(
