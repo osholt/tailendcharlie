@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../controllers/distance_unit_controller.dart';
+import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/internet_relay_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
@@ -300,6 +301,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
     this.completedRideStore,
+    this.globalRideHeatmap,
     this.screenWakeLock = const WakelockPlusScreenWakeLock(),
     this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.pushTokenSource,
@@ -343,6 +345,7 @@ class ActiveRideShell extends StatefulWidget {
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
   final CompletedRideStore? completedRideStore;
+  final GlobalRideHeatmapController? globalRideHeatmap;
   final ScreenWakeLock screenWakeLock;
   final Duration screenWakeReassertInterval;
   final PushTokenSource? pushTokenSource;
@@ -2562,6 +2565,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       previous: previousEnforcementAlert,
       current: _enforcementAlert.value,
     );
+    if (_enforcementAlert.value == null) {
+      // Dismissal is scoped to one continuous approach. If the detector clears,
+      // a later approach to the same fixed-camera ID is a new warning and must
+      // show as well as speak.
+      _dismissedEnforcementAlertId = null;
+    }
     _speakEnforcementWarning(previousEnforcementAlert, _enforcementAlert.value);
     if (updateDerivedState && widget.rideController.rideStarted) {
       final session = widget.rideController.session;
@@ -3815,6 +3824,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         internetRelayController: _internetRelayController,
         onRemoveRide: _removeEndedRide,
         roadRatings: widget.roadRatings,
+        completedRideStore: widget.completedRideStore,
+        globalRideHeatmap: widget.globalRideHeatmap,
         relayCanCarryReopen: _relayCanCarryReopen,
         // The share on this screen omitted the recorded log entirely, so a rider
         // who ended the ride and pressed the obvious button lost it (#456).
@@ -4007,6 +4018,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       ),
       currentPosition: _mapPosition,
       completedRideStore: widget.completedRideStore,
+      globalRideHeatmap: widget.globalRideHeatmap,
       navigationPosition: _mapNavigationPosition,
       overlayMarkers: _mapOverlays,
       riderTrails: _riderTrails,
@@ -5526,6 +5538,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       testControl: widget.testControl,
       spokenGuidance: widget.spokenGuidance,
       rideDiagnostics: widget.rideDiagnostics,
+      globalRideHeatmap: widget.globalRideHeatmap,
       embedded: true,
     ),
   );
