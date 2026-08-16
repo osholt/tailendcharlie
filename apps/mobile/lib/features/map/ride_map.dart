@@ -9,6 +9,7 @@ export 'ride_map_feature.dart'
         MapOverlayTrace,
         RideMapFeature,
         RideMapScreen,
+        denseWaypointThreshold,
         describeQuickMessageOrigin,
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
@@ -17,6 +18,7 @@ export 'ride_map_feature.dart'
         portraitRideMenuTopOffset,
         portraitBottomChromeKey,
         rideMapPrimaryPanelFill,
+        waypointCircleStyle,
         quickMessageIcon;
 export 'route_trail_style.dart'
     show RouteLineStyle, RouteTrailStyle, contrastRatio, relativeLuminance;

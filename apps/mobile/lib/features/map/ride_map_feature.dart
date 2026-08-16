@@ -117,6 +117,36 @@ enum GroupMiniMapRenderer {
 
 enum _ImportedTrackChoice { cancel, followOriginal, generateNavigable }
 
+/// Above this many waypoints on one route, they are the shape of the line
+/// rather than a list of places somebody chose.
+@visibleForTesting
+const denseWaypointThreshold = 60;
+
+/// How a route's waypoints are drawn, given how many of them there are.
+///
+/// A handful of chosen stops are places, and a place deserves a badge big
+/// enough to read and to hit. Several hundred are geometry, and at badge size
+/// they cover the very road they describe — which is how a 296 km import
+/// became an unreadable carpet of yellow when zoomed out (#574).
+///
+/// This is the general case, and it holds for a file from any tool. The
+/// specific fault behind that import — Garmin leg geometry read as waypoints —
+/// is fixed in `GpxParser`; a file that genuinely carries hundreds of chosen
+/// stops still has to stay legible, and this is what keeps it so.
+@visibleForTesting
+({double radius, double opacity}) waypointCircleStyle(int count) =>
+    count > denseWaypointThreshold
+    ? (radius: 3.5, opacity: 0.7)
+    : (radius: 7, opacity: 1);
+
+/// Hard ceiling on waypoints handed to either renderer in one frame.
+///
+/// Not a judgement about legibility — [waypointCircleStyle] makes that one —
+/// but a bound on how much geometry a single frame pushes. It was already here
+/// as a bare `.take(500)` in two places; naming it keeps the two renderers
+/// agreeing about what they dropped.
+const _renderedWaypointLimit = 500;
+
 @visibleForTesting
 Color groupMiniMapBackgroundColor(Brightness brightness) =>
     brightness == Brightness.dark
@@ -3020,24 +3050,47 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ),
         if (route != null && route.waypoints.isNotEmpty)
           MarkerLayer(
-            markers: route.waypoints
-                .take(500)
-                .map(
-                  (waypoint) => Marker(
-                    point: _latLng(waypoint.point),
-                    width: 42,
-                    height: 42,
-                    child: Tooltip(
-                      message: waypoint.name ?? 'GPX waypoint',
-                      child: const Icon(
-                        Icons.location_on,
-                        color: Color(0xFFFFC857),
-                        size: 36,
-                      ),
+            key: const Key('ride-route-waypoint-layer'),
+            markers: () {
+              // The same decision the MapLibre layer makes, from the same
+              // function, so the two renderers cannot drift apart (#574).
+              final style = waypointCircleStyle(route.waypoints.length);
+              final dense = style.radius < 7;
+              return route.waypoints
+                  .take(_renderedWaypointLimit)
+                  .map(
+                    (waypoint) => Marker(
+                      point: _latLng(waypoint.point),
+                      width: dense ? 14 : 42,
+                      height: dense ? 14 : 42,
+                      child: dense
+                          // A dot, not a pin with a tooltip: at this density
+                          // the pins overlap into a solid band and the label
+                          // belongs to whichever happens to be on top.
+                          ? Opacity(
+                              opacity: style.opacity,
+                              child: const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Color(0xFFFFC857),
+                                  border: Border.fromBorderSide(
+                                    BorderSide(color: Color(0xFF10151C)),
+                                  ),
+                                ),
+                              ),
+                            )
+                          : Tooltip(
+                              message: waypoint.name ?? 'GPX waypoint',
+                              child: const Icon(
+                                Icons.location_on,
+                                color: Color(0xFFFFC857),
+                                size: 36,
+                              ),
+                            ),
                     ),
-                  ),
-                )
-                .toList(growable: false),
+                  )
+                  .toList(growable: false);
+            }(),
           ),
         if (_markerPlanVisible && _markerPlan.points.isNotEmpty)
           MarkerLayer(
@@ -4757,10 +4810,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _waypointSource,
         'ride-relay-waypoint-circles',
         const ml.CircleLayerProperties(
-          circleRadius: 7,
+          // Read off each feature so a route that gains or loses waypoints
+          // restyles with its source, without rebuilding the layer (#574).
+          circleRadius: ['get', 'radius'],
+          circleOpacity: ['get', 'opacity'],
           circleColor: '#FFC857',
           circleStrokeWidth: 2,
           circleStrokeColor: '#10151C',
+          circleStrokeOpacity: ['get', 'opacity'],
         ),
       );
       await controller.addGeoJsonSource(
@@ -5299,19 +5356,26 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ],
   };
 
-  Map<String, dynamic> _waypointGeoJson() => MapGeoJson.points(
-    _route?.waypoints
-            .take(500)
-            .indexed
-            .map(
-              (entry) => MapGeoJsonPoint(
-                id: 'waypoint-${entry.$1}',
-                point: entry.$2.point,
-                properties: {'label': entry.$2.name ?? 'GPX waypoint'},
-              ),
-            ) ??
-        const <MapGeoJsonPoint>[],
-  );
+  Map<String, dynamic> _waypointGeoJson() {
+    final waypoints = _route?.waypoints ?? const <RouteWaypoint>[];
+    final style = waypointCircleStyle(waypoints.length);
+    return MapGeoJson.points(
+      waypoints
+          .take(_renderedWaypointLimit)
+          .indexed
+          .map(
+            (entry) => MapGeoJsonPoint(
+              id: 'waypoint-${entry.$1}',
+              point: entry.$2.point,
+              properties: {
+                'label': entry.$2.name ?? 'GPX waypoint',
+                'radius': style.radius,
+                'opacity': style.opacity,
+              },
+            ),
+          ),
+    );
+  }
 
   Map<String, dynamic> _markerPlanGeoJson() => MapGeoJson.points(
     _markerPlanVisible

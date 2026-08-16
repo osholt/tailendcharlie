@@ -128,17 +128,21 @@ class GpxParser {
             ),
           );
         }
+        // Geometry, not waypoints (#574).
+        //
+        // `<gpxx:rpt>` is Garmin's decoded shape of the leg between two
+        // `<rtept>`s — the calculated road the receiving device would
+        // otherwise have to work out again. Every vertex of it used to be
+        // promoted to a rendered, listed, tappable "Shaping point": one
+        // MyRouteApp export of a 296 km day run produced **6960** of them,
+        // which is the carpet of yellow markers that made the track
+        // impossible to see zoomed out.
+        //
+        // The points still shape the line. What they stop doing is pretending
+        // to be places somebody chose. A rider's actual via and shaping points
+        // carry `<trp:ViaPoint>`/`<gpxx:ShapingPoint>` and are read above.
         for (final shapingPoint in _routePointExtensionPoints(routePoint)) {
-          final shapingPosition = parsePoint(shapingPoint);
-          points.add(shapingPosition);
-          routeWaypoints.add(
-            RouteWaypoint(
-              point: shapingPosition,
-              name: 'Shaping point ${routeWaypoints.length + 1}',
-              description: 'Soft route shaping point',
-              symbol: 'Shaping point',
-            ),
-          );
+          points.add(parsePoint(shapingPoint));
         }
       }
       if (points.isEmpty) continue;
@@ -301,10 +305,8 @@ List<RoutePath> _withoutDuplicateRepresentations(List<RoutePath> paths) {
         path.kind == RoutePathKind.route &&
         path.points.length >= 2 &&
         tracks.any(
-          // A sparser line only: a route carrying more detail than the track is
-          // not the representation to throw away.
           (track) =>
-              track.points.length > path.points.length &&
+              _comparablyDense(track: track.points, route: path.points) &&
               path.points.every(
                 (point) =>
                     _metresFromPath(point, track.points) <=
@@ -315,6 +317,25 @@ List<RoutePath> _withoutDuplicateRepresentations(List<RoutePath> paths) {
   }
   return List.unmodifiable(kept);
 }
+
+/// Whether a track is a fair substitute for a route, by point count.
+///
+/// #180 required the track be strictly *denser* before the route was dropped,
+/// to protect a route carrying detail the track lacked. That reading is right
+/// but the test was one-sided, and it missed the export it was written for: a
+/// MyRouteApp file carries its `<gpxx:rpt>` leg geometry inline, so the route
+/// representation comes out marginally **denser** than the track — 7204 points
+/// against 7000 over the same 296 km — and both were kept. The ride was drawn
+/// twice and measured twice (#574).
+///
+/// Ten per cent is the width of that gap and nothing like the gap between two
+/// genuinely different representations: a sparse recording alongside a detailed
+/// plan differs by an order of magnitude, not by the handful of `<rtept>`
+/// anchors between the decoded legs.
+bool _comparablyDense({
+  required List<GeoPoint> track,
+  required List<GeoPoint> route,
+}) => track.length * 1.1 >= route.length;
 
 /// How far a route point may sit from the track and still be the same journey.
 ///
