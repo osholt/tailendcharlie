@@ -37,6 +37,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.completedRideStore,
     this.globalRideHeatmap,
     this.onMapStyleResolved,
+    this.hostChrome,
   });
 
   /// Height kept clear at the bottom for whatever stands on the map.
@@ -58,6 +59,11 @@ class HomeMapBackdrop extends StatefulWidget {
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final ValueChanged<String>? onMapStyleResolved;
+
+  /// The home screen's own top-band chrome, handed to the map to draw rather
+  /// than painted over it. See [HostMapChrome] — this is what stopped the
+  /// discovery-layer menu being buried under the settings button (#572, #573).
+  final HostMapChrome? hostChrome;
 
   /// False in widget tests and on any build without the platform plugins, where
   /// the map would be a spinner and the location plugin is not answering.
@@ -131,6 +137,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
 
   @override
   Widget build(BuildContext context) {
+    final chrome = widget.hostChrome;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -148,6 +155,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
             speedLimitDisplay: widget.speedLimitDisplay,
             distanceUnit: widget.distanceUnit,
             onMapStyleResolved: widget.onMapStyleResolved,
+            hostChrome: chrome,
             // No ride, so no group route and no leader to defer to: a route
             // built here is this rider's own. This used to pass
             // `canEditRoute: false`, borrowing the flag that means "not the
@@ -159,9 +167,27 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop> {
         else
           // Widget tests and plugin-less builds. Named so a test can assert the
           // home screen is map-first without standing up a platform map.
-          const ColoredBox(
-            key: Key('home-map-unavailable'),
-            color: Color(0xFF141A22),
+          //
+          // The chrome is drawn here too. It reaches riders through the map's
+          // AppBar now, and a build with no platform map must not therefore
+          // lose its search field and its way into Settings.
+          Scaffold(
+            appBar: chrome == null
+                ? null
+                : AppBar(
+                    toolbarHeight: rideMapToolbarHeight(
+                      landscape:
+                          MediaQuery.orientationOf(context) ==
+                          Orientation.landscape,
+                    ),
+                    titleSpacing: 12,
+                    title: chrome.title,
+                    actions: chrome.actions,
+                  ),
+            body: const ColoredBox(
+              key: Key('home-map-unavailable'),
+              color: Color(0xFF141A22),
+            ),
           ),
         if (!_sharing)
           Positioned(
