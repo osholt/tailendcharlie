@@ -361,6 +361,12 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
             [
               '==',
               ['get', 'kind'],
+              'discovery',
+            ],
+            7,
+            [
+              '==',
+              ['get', 'kind'],
               'safety',
             ],
             8,
@@ -404,6 +410,14 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
               'poi',
             ],
             '#F97316',
+            [
+              '==',
+              ['get', 'kind'],
+              'discovery',
+            ],
+            // The twisty-highlight colour free roam already uses, so the same
+            // road reads as the same thing on both surfaces (#578).
+            '#8CD98C',
             '#FFC857',
           ],
           circleStrokeColor: '#10151C',
