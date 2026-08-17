@@ -36,6 +36,71 @@ permissions by design.
 - ...
 ```
 
+## iOS build 66 / Android build 66 — 17 August 2026
+
+**You no longer need a ride to go somewhere.** Open the app, tap **Where to?**,
+pick a place, and you are navigating — turn-by-turn, on your own, with no code
+and nobody to wait for. Riding with other people is a button you press
+afterwards, and it brings your route with it.
+
+This build also fixes the reason the **⋯** menu kept vanishing.
+
+### What to test
+
+1. **Search and go.** Tap **Where to?**, type somewhere, pick it, confirm the
+   route. You should be navigating: turn instructions, distance to the next one,
+   an ETA, and **Follow me** to lock the camera on the bike. Count the taps that
+   mention a *ride* on the way — there should be none. Nothing asks whether you
+   are solo.
+2. **The ⋯ menu, standing still.** This is the one to check first. Open the app
+   and let it find you. The top bar — **Where to?**, **⋯**, **Join**, emergency
+   info, settings — should stay put. It used to disappear the moment the app
+   knew where you were, which is why the layer menu behind **⋯** "never
+   appeared". Confirm **⋯** is there before a ride, with a route loaded, and
+   after a restart.
+3. **Riding with others, from a route you already have.** While navigating
+   somewhere, the bottom bar reads **Ride this with others**. Press it. You
+   should get a ride code and the *same* route, already loaded — check the
+   distance and the destination match what you were following. It should also
+   put drop-off marker positions on it, which a solo route does not have.
+4. **Your bike, your colour.** After **Ride this with others**, check the map
+   marker is the motorcycle, symbol and colour you chose in setup. Searching for
+   a destination used to quietly give you the default rider.
+5. **Free roam is a map.** No **Choose a route** card over it on opening. If you
+   have not granted location yet, **Show my location** is bottom-right as before.
+6. **Settings, by name.** **More → Settings**, as well as the gear in the top
+   bar. In a ride it is a tab; it should be a word you can read in both.
+7. **Nothing hidden under the bottom bar.** The compass and the zoom controls
+   should sit fully above **Ride with others**, not half-clipped behind it.
+
+### Fixed
+
+- The **⋯** menu, the search field, **Join** and the settings gear all vanished
+  as soon as the app had your location, standing still. This is the cause of the
+  layer menu being reported missing twice, and of there being no way to anything
+  else from the map.
+- Searching for a destination created a ride — with a coordination mode it had
+  to ask about — before it would show you a route.
+- Searching for a destination lost the motorcycle, symbol and colour you picked
+  in setup.
+- Free roam opened behind a **Choose a route** card written for a group ride.
+- With a route loaded, the top bar ran off the side of a phone. **Fit route** and
+  **Navigate or export route** are in the **⋯** menu when that happens.
+- The map's compass and zoom controls were drawn behind the bottom bar.
+
+### Known limitations
+
+- **Not ridden.** Checked end to end in the simulator, which stands still — so
+  nobody has seen what the screen does when you actually start moving in free
+  roam with a route. That is the main thing to watch.
+- **The café and good-road markers look wrong at some zoom levels** — stretched
+  blobs a county or two out, and thousands of them covering the map when you
+  zoom out to the whole country. Known, being fixed separately; ignore it for
+  now unless it stops you testing something.
+- The bottom bar still says **Ride with others** rather than offering a ride
+  with no destination at all. If you want to set off with the group and no plan,
+  that is what it does — it just does not say so.
+
 ## iOS build 65 / Android build 65 — 17 August 2026
 
 The rest of the 17 August feedback: sheets you can back out of, layer controls
