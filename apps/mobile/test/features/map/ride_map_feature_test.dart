@@ -5993,6 +5993,122 @@ void main() {
     });
   });
 
+  // #600. `rideStarted` was doing two jobs: "a ride is running" and "the rider
+  // is following a route". Everything a navigating rider needs was therefore
+  // reachable only inside a ride, which is why searching a destination in free
+  // roam had to create one first — the ride was carrying the navigation.
+  group('navigating is not the same as being in a ride', () {
+    Future<void> pumpMap(
+      WidgetTester tester, {
+      required bool started,
+      bool? navigating,
+      ImportedRoute? route,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('navigating');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(route),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: started,
+            navigating: navigating,
+            routeAuthority: RouteAuthority.personal,
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('free roam can navigate without a ride', (tester) async {
+      // The whole point. None of this was reachable outside a ride before.
+      await pumpMap(
+        tester,
+        started: false,
+        navigating: true,
+        route: _testRoute(id: 'to-the-cafe', name: 'To the café'),
+      );
+
+      expect(find.byKey(const Key('ride-clock-position')), findsOneWidget);
+      // The destination field gives way to the route once you are going.
+      expect(find.byKey(const Key('map-destination-search')), findsNothing);
+      expect(find.text('Choose a route'), findsNothing);
+    });
+
+    testWidgets('a map that is not navigating stays a map', (tester) async {
+      await pumpMap(tester, started: false, navigating: false);
+
+      expect(find.byKey(const Key('ride-clock-position')), findsNothing);
+      expect(find.byKey(const Key('map-destination-search')), findsOneWidget);
+    });
+
+    testWidgets('omitting it follows the ride, as every caller meant before', (
+      tester,
+    ) async {
+      // The compatibility guarantee. `navigating` is nullable so that the
+      // split changed nothing until a surface opted in.
+      await pumpMap(
+        tester,
+        started: true,
+        route: _testRoute(id: 'ride-route', name: 'Ride route'),
+      );
+
+      expect(find.byKey(const Key('ride-clock-position')), findsOneWidget);
+    });
+
+    testWidgets('SOS and reporting still need a group, not just a route', (
+      tester,
+    ) async {
+      // These relay to other riders and mean nothing alone, so they stay on
+      // `rideStarted` while everything else moved.
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('nav-solo-safety');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(
+              _testRoute(id: 'solo', name: 'Solo run'),
+            ),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: false,
+            navigating: true,
+            routeAuthority: RouteAuthority.personal,
+            onEmergencyAlert: () async {},
+            onReportHazard: (_) async {},
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('emergency-alert-button')), findsNothing);
+      expect(find.byKey(const Key('report-sighting-button')), findsNothing);
+    });
+  });
+
   // #579. LEAVE appeared only once the ride was under way, so a rider who had
   // created a ride by mistake — or changed their mind about a solo one — had
   // to dig through the ride menu to get out of it.

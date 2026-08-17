@@ -312,6 +312,7 @@ class RideMapFeature extends StatefulWidget {
     this.navigationExportCoordinator,
     this.routeStore,
     this.routeAuthority = RouteAuthority.leader,
+    this.navigating,
     this.hostChrome,
     this.offlineTileCache,
     this.mapLibreOfflineManager,
@@ -382,6 +383,7 @@ class RideMapFeature extends StatefulWidget {
     PersonalRideHeatmapController? personalRideHeatmap,
     GlobalRideHeatmapController? globalRideHeatmap,
     RouteAuthority routeAuthority = RouteAuthority.leader,
+    bool? navigating,
     HostMapChrome? hostChrome,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
     SpeedLimitDisplayController? speedLimitDisplay,
@@ -444,6 +446,7 @@ class RideMapFeature extends StatefulWidget {
     personalRideHeatmap: personalRideHeatmap,
     globalRideHeatmap: globalRideHeatmap,
     routeAuthority: routeAuthority,
+    navigating: navigating,
     hostChrome: hostChrome,
     distanceUnit: distanceUnit,
     speedLimitDisplay: speedLimitDisplay,
@@ -546,6 +549,10 @@ class RideMapFeature extends StatefulWidget {
 
   /// Whether this surface may build or replace the route it shows.
   bool get canEditRoute => routeAuthority.canEditRoute;
+
+  /// Whether the rider is following a route right now. See the field of the
+  /// same name on [RideMapScreen] — null means "whatever the ride is doing".
+  final bool? navigating;
 
   /// Top-band chrome the host draws through this map rather than over it.
   /// See [HostMapChrome] — null means the map owns its own title and actions.
@@ -709,6 +716,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onLeaveRide: widget.onLeaveRide,
         onOpenRideMenu: widget.onOpenRideMenu,
         routeAuthority: widget.routeAuthority,
+        navigating: widget.navigating,
         hostChrome: widget.hostChrome,
         onRouteChanged: widget.onRouteChanged,
         onRouteCommitted: widget.onRouteCommitted,
@@ -799,6 +807,7 @@ class RideMapScreen extends StatefulWidget {
     this.onLeaveRide,
     this.onOpenRideMenu,
     this.routeAuthority = RouteAuthority.leader,
+    this.navigating,
     this.hostChrome,
     this.onRouteChanged,
     this.onRouteCommitted,
@@ -914,6 +923,27 @@ class RideMapScreen extends StatefulWidget {
 
   /// Whether this surface may build or replace the route it shows.
   bool get canEditRoute => routeAuthority.canEditRoute;
+
+  /// Whether the rider is following a route right now.
+  ///
+  /// **Distinct from [rideStarted], and that distinction is the point (#600).**
+  /// The two were one flag, so everything a navigating rider needs — turn
+  /// guidance, the follow camera, the posted speed limit, the clock, directions
+  /// to a distant route start — was reachable only inside a ride. Free roam
+  /// could hold a route and draw it, and do nothing else with it. That is why
+  /// searching a destination had to create a ride first: the ride was carrying
+  /// the navigation, not the route.
+  ///
+  /// What stays on [rideStarted] is what genuinely needs a group: SOS and
+  /// hazard reporting both relay to other riders, and mean nothing alone.
+  ///
+  /// Null means "whatever the ride is doing", which is what every caller meant
+  /// before free roam could navigate at all — so this changes nothing until a
+  /// surface opts in.
+  final bool? navigating;
+
+  /// Resolved: following a route, whether or not a ride is running.
+  bool get isNavigating => navigating ?? rideStarted;
 
   /// Top-band chrome the host draws through this map. See [HostMapChrome].
   final HostMapChrome? hostChrome;
@@ -1233,7 +1263,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       .first;
 
   double? get _routeStartOfferDistance {
-    if (!widget.rideStarted ||
+    if (!widget.isNavigating ||
         _routeStartConnector != null ||
         _externalRejoinRoute != null) {
       return null;
@@ -1835,7 +1865,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // redundant: it creates or plans a ride around a destination.
     final showDestinationSearch =
         hostChrome == null &&
-        !widget.rideStarted &&
+        !widget.isNavigating &&
         widget.canEditRoute &&
         _route == null;
     // The group mini-map owns its own ValueListenableBuilder below. This
@@ -1852,7 +1882,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     final routeStartOfferDistance = _routeStartOfferDistance;
     final hasGuidance =
         routeStartOfferDistance == null &&
-        widget.rideStarted &&
+        widget.isNavigating &&
         _navigationGuidance.value.isVisible;
     // Leaving a ride is a ride-lifecycle action, not a route action (#124).
     // Not gated on the ride having started (#579). Creating a ride by mistake,
@@ -1865,7 +1895,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // whenever the camera is not locked into it (#141). The junction overview owns
     // the whole screen while it is up, so nothing is offered underneath it.
     final showFollowMe =
-        widget.rideStarted &&
+        widget.isNavigating &&
         !markerOverviewActive &&
         !_navigationViewportLocked;
     return Scaffold(
@@ -2140,7 +2170,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 // is showing.
                 if (_route == null &&
                     !hideChrome &&
-                    !widget.rideStarted &&
+                    !widget.isNavigating &&
                     !_waitingRoutePromptDismissed)
                   Positioned(
                     left: 0,
@@ -2645,7 +2675,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // The speed sign owns its own slot at the edge of the band, clear of the
       // action row: portrait puts it under the actions and hard right, landscape
       // in the right-hand rail away from the centre column (#125).
-      final speedLimit = markerOverviewActive || !widget.rideStarted
+      final speedLimit = markerOverviewActive || !widget.isNavigating
           ? null
           : KeyedSubtree(
               key: const Key('posted-speed-limit-position'),
@@ -2746,8 +2776,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
             // and the speed sign the trailing one — and because it is where a car
             // puts its clock. A helmet and gloves make a wrist watch useless and
             // the phone is already in front of the rider.
-            if (widget.rideStarted)
+            if (widget.isNavigating)
               Positioned(
+                key: const Key('ride-clock-position'),
                 left: safeLeft,
                 right: safeRight,
                 top: safeTop + 12,
@@ -2888,8 +2919,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
               top: safeTop + 12,
               child: miniMap,
             ),
-          if (widget.rideStarted)
+          if (widget.isNavigating)
             Positioned(
+              key: const Key('ride-clock-position'),
               left: safeLeft,
               right: safeRight,
               top: safeTop + 154,
