@@ -38,6 +38,7 @@ import '../../services/demo_route_loader.dart';
 import '../../services/discovery_layer_preferences.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
+import 'destination_search_field.dart';
 import 'ride_clock.dart';
 import '../../services/enforcement_alert_presentation.dart';
 import '../../services/fixed_speed_camera_catalogue.dart';
@@ -1781,6 +1782,19 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // Read once: it decides the title, three of the actions, and the tail of
     // the row, and reading it in four places invites them to disagree.
     final hostChrome = widget.hostChrome;
+    // Only before the ride starts, only where a route may be built, only when
+    // the host has not brought its own — and only while there is no route yet.
+    //
+    // That last one matters: once a route is loaded its name is the more
+    // useful thing to show, and it is the only place the name appears on this
+    // surface. Free roam is the exception and keeps its field either way,
+    // because the home search does something a loaded route does not make
+    // redundant: it creates or plans a ride around a destination.
+    final showDestinationSearch =
+        hostChrome == null &&
+        !widget.rideStarted &&
+        widget.canEditRoute &&
+        _route == null;
     // The group mini-map owns its own ValueListenableBuilder below. This
     // avoids relying on a parent platform-map rebuild to notice rider updates,
     // which left the portrait mini-map absent in the live simulator.
@@ -1798,7 +1812,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
         widget.rideStarted &&
         _navigationGuidance.value.isVisible;
     // Leaving a ride is a ride-lifecycle action, not a route action (#124).
-    final showLeaveRide = widget.rideStarted && widget.onLeaveRide != null;
+    // Not gated on the ride having started (#579). Creating a ride by mistake,
+    // or changing your mind about a solo one, is an ordinary thing to do, and
+    // it used to cost a dig through the ride menu because LEAVE only appeared
+    // once the ride was under way. Free roam is unaffected: there is no ride
+    // there, so `onLeaveRide` is null and nothing is offered.
+    final showLeaveRide = widget.onLeaveRide != null;
     // "Follow me" is the way into the navigation viewport, and it is on screen
     // whenever the camera is not locked into it (#141). The junction overview owns
     // the whole screen while it is up, so nothing is offered underneath it.
@@ -1812,23 +1831,42 @@ class _RideMapScreenState extends State<RideMapScreen> {
           : AppBar(
               toolbarHeight: rideMapToolbarHeight(landscape: landscape),
               titleSpacing: 12,
+              // Free roam supplies its own search field through `hostChrome`.
+              // A created ride that has not started supplies none, and used to
+              // get a plain title plus an `add_road` icon button — the same
+              // intent as free roam's field, in a different place and a
+              // different shape (#579). It renders the same field here, in the
+              // same slot. What the two do still differs, deliberately: this
+              // one adds a destination to the route in hand, free roam's
+              // creates or plans a ride around one.
+              //
+              // Once the ride starts this reverts to the route name. A search
+              // field is not something to put in front of a moving rider, and
+              // the riding chrome is settled (#533, #125, #133).
               title:
                   hostChrome?.title ??
-                  Text(
-                    _route?.name ?? 'Navigation',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: landscape
-                        ? Theme.of(context).textTheme.titleMedium
-                        : null,
-                  ),
+                  (showDestinationSearch
+                      ? DestinationSearchField(
+                          key: const Key('map-destination-search'),
+                          onTap: _routing ? () {} : _planDestination,
+                        )
+                      : Text(
+                          _route?.name ?? 'Navigation',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: landscape
+                              ? Theme.of(context).textTheme.titleMedium
+                              : null,
+                        )),
               actions: [
                 // A host that brought its own title brought its own way to a
                 // destination with it — free roam's search field. A second
                 // entry beside it would crowd the field down to nothing on a
                 // phone and say the same thing twice. Both actions stay in the
                 // overflow menu below.
-                if (widget.canEditRoute && hostChrome == null)
+                if (widget.canEditRoute &&
+                    hostChrome == null &&
+                    !showDestinationSearch)
                   IconButton(
                     tooltip: 'Plan a destination',
                     visualDensity: compactDensity,
