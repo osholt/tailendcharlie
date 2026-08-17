@@ -12,6 +12,7 @@ import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
+import '../map/discovery_layer_toggles.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
 import '../../domain/rider_color.dart';
@@ -128,6 +129,35 @@ class UnitSettingsSheet extends StatelessWidget {
         children: [
           Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 20),
+          // Near the top, and here rather than only on the map's overflow
+          // menu, because that menu does not exist during a ride: `hideChrome`
+          // removes the whole app bar once the navigation canvas is up, so
+          // there was no way to change a layer mid-ride at all (#593).
+          Text(
+            'MAP LAYERS',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF8D98A7),
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ListTile(
+            key: const Key('open-discovery-layers'),
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.layers_outlined),
+            title: const Text('Café and road layers'),
+            subtitle: const Text('Which optional layers appear on the map'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              final appContext = Navigator.of(
+                context,
+                rootNavigator: true,
+              ).context;
+              if (!embedded) Navigator.of(context).pop();
+              unawaited(DiscoveryLayersScreen.show(appContext));
+            },
+          ),
+          const SizedBox(height: 16),
           Text(
             'RIDER PROFILE',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(

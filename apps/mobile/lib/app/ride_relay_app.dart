@@ -429,61 +429,72 @@ class _RecoveredRideChoiceScreenState
     final title = widget.rideName?.trim();
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 480),
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Icon(Icons.restore, size: 54, color: Color(0xFFFF7A1A)),
-                  const SizedBox(height: 18),
-                  Text(
-                    'Ride recovered',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    '${title?.isNotEmpty == true ? title : 'Ride ${widget.rideCode ?? ''}'} was still running when the app closed. '
-                    'Rejoin it, or end it and keep the recorded ride in your Ride Library.',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Color(0xFFABB5C1),
-                      height: 1.45,
+        // Top-aligned, not centred (#594). A panel floating in the middle of an
+        // otherwise empty screen reads as a modal that has gone wrong, and it
+        // put the two actions where a thumb is least likely to be. Scrollable
+        // with it, so the actions stay reachable at large text sizes.
+        child: SingleChildScrollView(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(
+                      Icons.restore,
+                      size: 54,
+                      color: Color(0xFFFF7A1A),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  FilledButton.icon(
-                    key: const Key('rejoin-recovered-ride'),
-                    onPressed: _ending ? null : widget.onRejoin,
-                    icon: const Icon(Icons.navigation_outlined),
-                    label: const Text('Rejoin ride'),
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    key: const Key('end-recovered-ride'),
-                    onPressed: _ending
-                        ? null
-                        : () async {
-                            setState(() => _ending = true);
-                            try {
-                              await widget.onEnd();
-                            } finally {
-                              if (mounted) setState(() => _ending = false);
-                            }
-                          },
-                    icon: _ending
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.stop_circle_outlined),
-                    label: const Text('End and save ride'),
-                  ),
-                ],
+                    const SizedBox(height: 18),
+                    Text(
+                      'Ride recovered',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '${title?.isNotEmpty == true ? title : 'Ride ${widget.rideCode ?? ''}'} was still running when the app closed. '
+                      'Rejoin it, or end it and keep the recorded ride in your Ride Library.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFFABB5C1),
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton.icon(
+                      key: const Key('rejoin-recovered-ride'),
+                      onPressed: _ending ? null : widget.onRejoin,
+                      icon: const Icon(Icons.navigation_outlined),
+                      label: const Text('Rejoin ride'),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      key: const Key('end-recovered-ride'),
+                      onPressed: _ending
+                          ? null
+                          : () async {
+                              setState(() => _ending = true);
+                              try {
+                                await widget.onEnd();
+                              } finally {
+                                if (mounted) setState(() => _ending = false);
+                              }
+                            },
+                      icon: _ending
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.stop_circle_outlined),
+                      label: const Text('End and save ride'),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

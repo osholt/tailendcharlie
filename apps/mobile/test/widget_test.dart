@@ -490,6 +490,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('DISTANCE UNITS'), findsOneWidget);
 
+    // Settings gained a MAP LAYERS section above this one (#593), so the unit
+    // chips are below the fold on this viewport. The sheet scrolls; the tap
+    // has to reach them rather than land on whatever is at those coordinates.
+    await tester.ensureVisible(find.text('Miles'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Miles'));
     await tester.pumpAndSettle();
     expect(distanceUnits.value, DistanceUnit.miles);
@@ -883,6 +888,17 @@ void main() {
     expect(find.text('Create a ride'), findsOneWidget);
     expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
     expect(find.text('Ride $rideCode has ended'), findsOneWidget);
+    // #594 measured the set-aside banner here before assuming it was the
+    // subject of the report; it was already at the top, and it was not.
+    final bannerRect = tester.getRect(
+      find.byKey(const Key('set-aside-ride-banner')),
+    );
+    final screen = tester.getSize(find.byType(MaterialApp));
+    expect(
+      bannerRect.top,
+      lessThan(screen.height / 4),
+      reason: 'the set-aside banner belongs at the top, at $bannerRect',
+    );
     // Nothing was given up to get here.
     expect(controller.hasActiveRide, isTrue);
     expect(controller.rideEnded, isTrue);

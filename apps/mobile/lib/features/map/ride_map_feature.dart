@@ -39,6 +39,7 @@ import '../../services/discovery_layer_preferences.dart';
 import '../../services/discovery_suggestion_queue.dart';
 import '../../services/enforcement_alert_detector.dart';
 import 'destination_search_field.dart';
+import 'sheet_close_button.dart';
 import 'ride_clock.dart';
 import '../../services/enforcement_alert_presentation.dart';
 import '../../services/fixed_speed_camera_catalogue.dart';
@@ -1211,6 +1212,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   };
   BikerPlaceCatalogue _bikerPlaceCatalogue = BikerPlaceCatalogue.empty;
   DiscoveryLayerPreferences? _discoveryLayerPreferences;
+
+  /// What could not be loaded, named. Empty when everything came up.
+  List<String> _discoveryLayerFailures = const [];
   bool _bikerCafesVisible = true;
   List<GeoPoint>? _discoveryViewportCorners;
 
@@ -1603,29 +1607,68 @@ class _RideMapScreenState extends State<RideMapScreen> {
     }
   }
 
+  /// Loads the three things the map's optional layers need.
+  ///
+  /// **Each independently.** This was one `Future.wait` behind a swallowing
+  /// `catch`, and `Future.wait` fails the moment any single future does — so a
+  /// failed discovery-catalogue read applied *none* of the three results. The
+  /// cafés vanished, the discovery layers vanished, and
+  /// `_discoveryLayerPreferences` stayed null, which turned every toggle in the
+  /// layer sheet into a `?.` no-op that neither persisted nor redrew. Nothing
+  /// was logged and nothing was said, so it read as "the menu does nothing"
+  /// (#596, and half of #593).
+  ///
+  /// They have no dependency on one another. A discovery read that fails must
+  /// not cost a rider their cafés, and must certainly not cost them the layer
+  /// preferences they already set.
   Future<void> _loadDiscoveryCatalogue() async {
-    try {
-      final results = await Future.wait<Object>([
-        (widget.discoveryCatalogueLoader ??
-            MotorcycleDiscoveryCatalogue.loadAsset)(),
-        (widget.bikerPlaceCatalogueLoader ?? BikerPlaceCatalogue.loadAsset)(),
-        DiscoveryLayerPreferences.load(),
-      ]);
-      if (!mounted) return;
-      final preferences = results[2] as DiscoveryLayerPreferences;
-      setState(() {
-        _discoveryCatalogue = results[0] as MotorcycleDiscoveryCatalogue;
-        _bikerPlaceCatalogue = results[1] as BikerPlaceCatalogue;
-        _discoveryLayerPreferences = preferences;
-        _enabledDiscoveryCategories
-          ..clear()
-          ..addAll(preferences.categories);
-        _bikerCafesVisible = preferences.bikerCafesVisible;
-      });
-      _scheduleMapLibreSync(overlays: true);
-    } on Object catch (error) {
-      if (kDebugMode) debugPrint('Could not load discovery catalogue: $error');
+    final failures = <String>[];
+
+    Future<void> load(String what, Future<void> Function() body) async {
+      try {
+        await body();
+      } on Object catch (error) {
+        failures.add(what);
+        if (kDebugMode) debugPrint('Could not load $what: $error');
+      }
     }
+
+    await Future.wait([
+      load('the discovery layers', () async {
+        final catalogue =
+            await (widget.discoveryCatalogueLoader ??
+                MotorcycleDiscoveryCatalogue.loadAsset)();
+        if (!mounted) return;
+        setState(() => _discoveryCatalogue = catalogue);
+      }),
+      load('the biker café layer', () async {
+        final catalogue =
+            await (widget.bikerPlaceCatalogueLoader ??
+                BikerPlaceCatalogue.loadAsset)();
+        if (!mounted) return;
+        setState(() => _bikerPlaceCatalogue = catalogue);
+      }),
+      load('the saved layer choices', () async {
+        final preferences = await DiscoveryLayerPreferences.load();
+        if (!mounted) return;
+        setState(() {
+          _discoveryLayerPreferences = preferences;
+          _enabledDiscoveryCategories
+            ..clear()
+            ..addAll(preferences.categories);
+          _bikerCafesVisible = preferences.bikerCafesVisible;
+        });
+      }),
+    ]);
+
+    if (!mounted) return;
+    // Said rather than swallowed. A layer that cannot be drawn, or a choice
+    // that cannot be saved, is something the rider is entitled to know about
+    // rather than discover by a toggle doing nothing.
+    if (failures.isNotEmpty) {
+      setState(() => _discoveryLayerFailures = List.unmodifiable(failures));
+    }
+    _scheduleMapLibreSync(overlays: true);
   }
 
   Future<void> _openPersonalRideHeatmap() async {
@@ -6433,6 +6476,28 @@ class _RideMapScreenState extends State<RideMapScreen> {
                   'Choose which optional café and road layers appear on the '
                   'free-roam map. Choices are remembered on this phone.',
                 ),
+                // A toggle that cannot work says so, rather than doing
+                // nothing and leaving the rider to conclude the menu is
+                // broken (#596).
+                if (_discoveryLayerFailures.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    key: const Key('discovery-layer-load-failure'),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3A2A22),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      _discoveryLayerFailures.length == 1
+                          ? 'Could not load ${_discoveryLayerFailures.single}. '
+                                'Everything else here still works.'
+                          : 'Could not load '
+                                '${_discoveryLayerFailures.join(', ')}.',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 CheckboxListTile(
                   key: const Key('biker-cafes-layer-toggle'),
@@ -6586,6 +6651,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       ],
                     ),
                   ),
+                  // A way out that is not "act on it" (#592).
+                  const SheetCloseButton(),
                 ],
               ),
               const SizedBox(height: 18),
