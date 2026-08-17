@@ -241,6 +241,28 @@ class _HomeScreenState extends State<HomeScreen> {
   /// cannot start a second ride on top of the one being arranged.
   bool _planningDestination = false;
 
+  /// A planned route waiting for the free-roam map to review and take it.
+  ///
+  /// Free roam answers a searched destination itself now. It used to create a
+  /// ride first — a code, a coordination mode, a lobby — for a rider who had
+  /// only said where they wanted to go, which is the mandatory ceremony #600
+  /// was raised about. The route goes to the map through the same
+  /// [PendingInAppRoute] handoff an imported GPX uses, so free roam and a ride
+  /// review a new route identically.
+  PendingInAppRoute? _freeRoamRoute;
+
+  /// Bumped with [_freeRoamRoute]; the map takes the route when this changes.
+  Object? _freeRoamRouteToken;
+
+  /// The route the free-roam map is following, if any.
+  ///
+  /// There is no lobby out here, so a route *is* the navigation: no start
+  /// button, no waiting for anyone. Read from the map's own `onRouteChanged`
+  /// rather than from whether a search just succeeded, so a route restored
+  /// from the last session counts too — and so the group upgrade below knows
+  /// what it is bringing along.
+  ImportedRoute? _routeOnMap;
+
   /// Built once, and deliberately one instance: `NominatimDestinationSearchService`
   /// caches by query, so planning a route to a result the rider just searched for
   /// is a cache hit rather than a second call to a public geocoder that asks for
@@ -410,6 +432,17 @@ class _HomeScreenState extends State<HomeScreen> {
             // bar rather than under it.
             bottomInset: HomeRideActions.reservedHeight,
             position: _position,
+            // The searched destination, reviewed and activated by the map
+            // itself. Free roam navigates; it does not hold a ride to do it
+            // (#600).
+            pendingInAppRoute: _freeRoamRoute,
+            changeRouteRequestToken: _freeRoamRouteToken,
+            onChangeRouteRequestHandled: () => setState(() {
+              _freeRoamRoute = null;
+              _freeRoamRouteToken = null;
+            }),
+            navigating: _routeOnMap != null,
+            onRouteChanged: (route) => setState(() => _routeOnMap = route),
             // The search field and these two actions used to be painted on
             // top of the map's own AppBar, in the same corner of the same
             // safe area, from this widget tree rather than the map's. Both
@@ -521,7 +554,8 @@ class _HomeScreenState extends State<HomeScreen> {
             bottom: 0,
             child: HomeRideActions(
               enabled: _rideEntryEnabled,
-              onCreate: () => _showRideSheet(context, creating: true),
+              hasRoute: _routeOnMap != null,
+              onCreate: () => unawaited(_rideWithOthers()),
               onMore: () => unawaited(_showMoreActions(context)),
             ),
           ),
@@ -604,6 +638,39 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Settings by name, at the top, because a ride reaches it by
+              // name from a named list — the "Settings" tab, and the same word
+              // in the ride menu behind it. Free roam offered only the gear in
+              // the top band, so the way to it changed the moment a ride
+              // existed and changed back when it ended (#600).
+              //
+              // The gear stays for riders who have learned it. That is the
+              // same call as the QR icon in `home_reachability_test.dart`:
+              // adding the words is the fix, removing the icon is a second,
+              // unrelated change to a control people already use.
+              ListTile(
+                key: const Key('home-more-settings'),
+                leading: const Icon(Icons.settings_outlined),
+                title: const Text('Settings'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(
+                    UnitSettingsSheet.show(
+                      context,
+                      widget.distanceUnits,
+                      widget.mapStyleMode,
+                      widget.riderProfile,
+                      speedLimitDisplay: widget.speedLimitDisplay,
+                      routeProgressDisplay: widget.routeProgressDisplay,
+                      testControl: widget.testControl,
+                      spokenGuidance: widget.spokenGuidance,
+                      rideDiagnostics: widget.rideDiagnostics,
+                      globalRideHeatmap: widget.globalRideHeatmap,
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1),
               ListTile(
                 key: const Key('start-ride-simulator'),
                 leading: const Icon(Icons.science_outlined),
@@ -713,8 +780,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (outcome == null || !mounted) return;
     switch (outcome) {
-      case HomeSearchDestination(:final choice, :final start):
-        await _startRideTo(choice, start);
+      case HomeSearchDestination(:final choice):
+        await _navigateTo(choice);
       case HomeSearchHandoff(:final kind):
         switch (kind) {
           // Both of these are the existing form, which already knows how to take
@@ -730,16 +797,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Plans the route, then creates the ride with it staged.
+  /// Plans a route to the chosen place and hands it to the map.
   ///
-  /// Planned **before** the ride is created, so a routing failure leaves the rider
-  /// on the map with a message rather than inside a ride with no route. That order
-  /// costs a spinner and saves the one state that is genuinely awkward to get out
-  /// of.
-  Future<void> _startRideTo(
-    DestinationChoice choice,
-    RideStartChoice start,
-  ) async {
+  /// No ride is created. A rider who searched for somewhere to go said nothing
+  /// about riding with anybody, and the app used to answer that by making a
+  /// ride — with a coordination mode it had to ask for — before it would show
+  /// a route (#600). Riding with others is offered from the map afterwards,
+  /// once there is a route to bring along, which keeps the #546 ordering:
+  /// the route exists before the ride that carries it.
+  Future<void> _navigateTo(DestinationChoice choice) async {
     final origin = _position.value;
     if (origin == null) return;
     setState(() => _planningDestination = true);
@@ -757,23 +823,13 @@ class _HomeScreenState extends State<HomeScreen> {
         distanceUnit: widget.distanceUnits.value,
       );
       if (!mounted) return;
-      await createRideThenStageDestinationRoute(
-        createRide: () => widget.controller.createRide(
-          // Already known from onboarding. Asking for it again on every ride is
-          // exactly what #431 was raised about.
-          widget.riderProfile.displayName,
-          coordinationMode: start.coordinationMode,
-          rideName: choice.label,
-        ),
-        // Stage only after creation succeeds. Staging first notified the
-        // app-level builder while Home was still the active surface; on the
-        // Solo path that notification could be consumed/cleared before the new
-        // ride map mounted, leaving Bath selected but no route on the map.
-        stageRoute: () => widget.sharedRoutes.stagePendingInAppRoute(
-          plan.route,
+      setState(() {
+        _freeRoamRoute = PendingInAppRoute(
+          route: plan.route,
           reviewNotes: plan.warnings,
-        ),
-      );
+        );
+        _freeRoamRouteToken = Object();
+      });
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -788,6 +844,63 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     } finally {
       if (mounted) setState(() => _planningDestination = false);
+    }
+  }
+
+  /// Turns what is already happening into a group ride (#600).
+  ///
+  /// This is the only place free roam mentions a ride, and it is an offer
+  /// rather than a toll gate: a rider gets to the map, searches, and rides,
+  /// and asks for company only if they want it. It used to be the way *in* —
+  /// a form asking for a coordination mode and a name before anything could
+  /// happen at all.
+  ///
+  /// Nothing is asked for here either. The name is known from onboarding, the
+  /// coordination mode is the drop-off system the app is for, and the ride is
+  /// named after the route when there is one. All three are changeable inside
+  /// the ride; none is worth a form in front of a rider who has already said
+  /// what they want.
+  Future<void> _rideWithOthers() async {
+    final route = _routeOnMap;
+    final profile = widget.riderProfile;
+    final controller = widget.controller;
+    await createRideThenStageDestinationRoute(
+      createRide: () => controller.createRide(
+        profile.displayName,
+        // `createRide` defaults these rather than reading the profile, so a
+        // caller that leaves them out quietly puts a stranger on the map. The
+        // ride form has always passed them; the destination-search path never
+        // did, so a rider who picked a fox and cyan in onboarding turned up as
+        // the default rider every time they searched for somewhere to go.
+        motorcycleStyle: profile.motorcycleStyle,
+        riderSymbol: profile.riderSymbol,
+        riderColor: profile.riderColor,
+        coordinationMode: RideCoordinationMode.secondBikeDropOff,
+        rideName: route?.name,
+      ),
+      // The ride keeps its route in a store of its own, so a route followed in
+      // free roam does not simply appear inside the ride — it has to be handed
+      // over. Staged only after creation succeeds, which is the ordering #546
+      // was raised about: staging first notified the app-level builder while
+      // Home still owned the screen, and the notification could be consumed
+      // before the ride map mounted.
+      stageRoute: () {
+        // `createRide` reports failure through `errorMessage` rather than by
+        // throwing, so "it returned" is not "it worked". A route staged for a
+        // ride that was never created sits waiting for a shell that will never
+        // mount, and turns up on the next one instead.
+        if (route == null || controller.errorMessage != null) return;
+        widget.sharedRoutes.stagePendingInAppRoute(route);
+      },
+    );
+    if (!mounted) return;
+    // The ride form used to display this message; there is no form on this
+    // path any more. Without saying it, a refused creation is a button that
+    // does nothing at all — which is worse than the ceremony it replaced.
+    if (controller.errorMessage case final message?) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 

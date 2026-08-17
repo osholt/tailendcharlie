@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart' show GeoPoint;
-import 'package:ride_relay/domain/ride_coordination_mode.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/features/home/home_destination_search.dart';
 import 'package:ride_relay/features/home/home_screen.dart';
@@ -68,7 +67,7 @@ void main() {
   });
 
   group('search for a destination, then arrange the ride (#431)', () {
-    testWidgets('a search finds places and picking one offers solo or group', (
+    testWidgets('a search finds places and picking one is the whole answer', (
       tester,
     ) async {
       final search = _FakeSearch({
@@ -108,26 +107,16 @@ void main() {
       await tester.tap(find.text('Bath, Somerset'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Ride solo'), findsOneWidget);
-      expect(find.text('Ride as a group'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('ride-start-group')));
-      await tester.pumpAndSettle();
+      // Straight back out with the place. Picking one used to open a second
+      // sheet asking solo or group before a rider could see any route at all;
+      // solo is assumed and riding with others is offered later, from the map
+      // (#600).
+      expect(find.text('Ride solo'), findsNothing);
+      expect(find.text('Ride as a group'), findsNothing);
 
       final destination = outcome as HomeSearchDestination;
       expect(destination.choice.label, 'Bath, Somerset');
-      expect(destination.start, RideStartChoice.group);
-    });
-
-    testWidgets('solo and group mean different coordination modes', (
-      tester,
-    ) async {
-      // The whole point of the two buttons: they are not cosmetic.
-      expect(RideStartChoice.solo.coordinationMode, RideCoordinationMode.solo);
-      expect(
-        RideStartChoice.group.coordinationMode,
-        RideCoordinationMode.secondBikeDropOff,
-      );
+      expect(destination.choice.point.latitude, 51.38);
     });
 
     testWidgets('nothing found is said, not shown as an empty list', (

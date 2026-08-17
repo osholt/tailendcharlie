@@ -14,9 +14,12 @@ import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
+import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_session.dart';
+import 'package:ride_relay/features/home/home_map_backdrop.dart';
+import 'package:ride_relay/features/home/home_ride_actions.dart';
 import 'package:ride_relay/features/home/home_screen.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
@@ -114,16 +117,32 @@ void main() {
     // every way in is still offered *in words*, which is what #306 was raised
     // over. What changed is which words.
     //
-    // Creating a ride now starts from the search field — the operator asked
-    // for that twice — so the bottom bar no longer carries a louder, older
-    // path to the same thing. What it keeps is the case the search cannot
-    // express: setting off with no destination at all.
-    expect(find.text('Start without a destination'), findsOneWidget);
+    // Going somewhere starts from the search field — the operator asked for
+    // that twice — and free roam no longer creates a ride to do it (#600). The
+    // bottom bar carries the one thing the field does not say: ride with other
+    // people, offered as an upgrade rather than demanded as an entrance.
+    expect(find.text('Ride with others'), findsOneWidget);
     // Joining takes a six-digit code rather than a destination, so it sits
     // beside the field instead of folding into it. Shortened to fit the bar
     // next to the field; still a word, never a bare icon.
     expect(find.text('Join'), findsOneWidget);
     expect(find.text('Where to?'), findsOneWidget);
+  });
+
+  testWidgets('the upgrade says the route comes with it', (tester) async {
+    // A rider halfway through planning a route to Bath should not have to
+    // guess whether asking for company throws it away. The bar is pumped
+    // directly because the route only reaches it from a live platform map.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HomeRideActions(hasRoute: true, onCreate: () {}, onMore: () {}),
+        ),
+      ),
+    );
+
+    expect(find.text('Ride this with others'), findsOneWidget);
+    expect(find.text('Ride with others'), findsNothing);
   });
 
   testWidgets('ride setup uses the saved symbol and colour without repicking', (
@@ -137,45 +156,109 @@ void main() {
     );
     await pumpHome(tester);
 
-    // By key: #595 relabelled this to "Start without a destination" — creating
-    // a ride around a place now starts from the search field. What this test
-    // is about is the setup sheet behind the button, not its wording.
+    // By key: the wording moves around, the rule does not. #600 turned this
+    // button from "Start without a destination" — which opened the ride form —
+    // into the group upgrade, which asks for nothing at all.
     await tester.tap(find.byKey(const Key('home-create-ride')));
     await tester.pumpAndSettle();
 
+    // Nothing to fill in. There is no form to re-pick a symbol or a colour in,
+    // which is the strongest form of "without repicking".
+    expect(find.byKey(const Key('ride-form-scroll-view')), findsNothing);
     expect(find.text('Your colour'), findsNothing);
-    expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget.key is ValueKey<String> &&
-            (widget.key! as ValueKey<String>).value.startsWith('ride-symbol-'),
-      ),
-      findsNothing,
-    );
-    expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget.key is ValueKey<String> &&
-            (widget.key! as ValueKey<String>).value.startsWith('rider-colour-'),
-      ),
-      findsNothing,
-    );
 
-    await tester.scrollUntilVisible(
-      find.widgetWithText(FilledButton, 'Create ride'),
-      180,
-      scrollable: find
-          .descendant(
-            of: find.byKey(const Key('ride-form-scroll-view')),
-            matching: find.byType(Scrollable),
-          )
-          .first,
-    );
-    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
-    await tester.pumpAndSettle();
-
+    // And the ride carries what onboarding already knew. `createRide` defaults
+    // these rather than reading the profile, so a path that forgets to pass
+    // them puts the default rider on the map — which is what the old
+    // destination search did.
     expect(rideController.session?.riderSymbol, const RiderSymbol.emoji('🦊'));
     expect(rideController.session?.riderColor, RiderColor.cyan);
+    expect(
+      rideController.session?.motorcycleStyle,
+      MotorcycleIconStyle.scrambler,
+    );
+  });
+
+  testWidgets('Settings is reachable by the same words with no ride (#600)', (
+    tester,
+  ) async {
+    await pumpHome(tester);
+
+    // A ride reaches Settings from a named list — the tab, and the same word
+    // in the ride menu behind it. Free roam had only the gear, so the way to
+    // Settings changed the moment a ride existed. Both are a named list now.
+    await tester.tap(find.byKey(const Key('home-more-actions')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('home-more-settings')), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
+  });
+
+  testWidgets('a route followed in free roam comes with you (#600)', (
+    tester,
+  ) async {
+    // Onboarding always leaves a name behind; the group upgrade asks for
+    // nothing and so relies on it.
+    await riderProfile.save(
+      displayName: 'Oliver',
+      motorcycleStyle: MotorcycleIconStyle.scrambler,
+      riderSymbol: const RiderSymbol.emoji('🦊'),
+      riderColor: RiderColor.cyan,
+    );
+    await pumpHome(tester);
+
+    // The map reports its route through `onRouteChanged` — including one
+    // restored from the last session. Invoked directly because the callback
+    // only fires from a live platform map, which a widget test does not have;
+    // this is the same call the map makes.
+    final backdrop = tester.widget<HomeMapBackdrop>(
+      find.byType(HomeMapBackdrop),
+    );
+    backdrop.onRouteChanged!(_bathRoute());
+    await tester.pumpAndSettle();
+
+    // Navigating, with no ride in existence.
+    expect(
+      tester.widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop)).navigating,
+      isTrue,
+    );
+    expect(rideController.hasActiveRide, isFalse);
+    expect(find.text('Ride this with others'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('home-create-ride')));
+    await tester.pumpAndSettle();
+
+    // The ride exists now, it is a group one, and it is carrying the route the
+    // rider was already following. The ride keeps its route in a store of its
+    // own, so without the handoff the group would start with a blank map.
+    expect(rideController.hasActiveRide, isTrue);
+    expect(rideController.session?.rideName, 'Bath, Somerset');
+    expect(sharedRoutes.pendingInAppRoute?.route.name, 'Bath, Somerset');
+  });
+
+  testWidgets('an upgrade that cannot be made says so', (tester) async {
+    // The upgrade asks for nothing, which means nothing on screen reports a
+    // refusal either — `createRide` catches its own failures into
+    // `errorMessage` rather than throwing, and the ride form that used to
+    // display that message is no longer on this path. A button that silently
+    // does nothing is worse than the ceremony it replaced.
+    await pumpHome(tester);
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .onRouteChanged!(_bathRoute());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('home-create-ride')));
+    await tester.pumpAndSettle();
+
+    expect(rideController.hasActiveRide, isFalse);
+    expect(
+      find.widgetWithText(SnackBar, 'Enter a rider name.'),
+      findsOneWidget,
+    );
+    // And the route is not handed to a ride that does not exist. It would sit
+    // there waiting for a shell that never mounts, and turn up on the next one.
+    expect(sharedRoutes.pendingInAppRoute, isNull);
   });
 
   testWidgets('a past ride is reachable by words alone', (tester) async {
@@ -304,3 +387,20 @@ class _EmptyCompletedRideStore implements CompletedRideStore {
   @override
   Future<void> delete(String rideId) async {}
 }
+
+ImportedRoute _bathRoute() => ImportedRoute(
+  id: 'bath',
+  name: 'Bath, Somerset',
+  importedAt: DateTime.utc(2026, 8, 17, 9),
+  sourceFileName: 'search',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.route,
+      points: [
+        GeoPoint(latitude: 51.44, longitude: -2.58),
+        GeoPoint(latitude: 51.38, longitude: -2.36),
+      ],
+    ),
+  ],
+  waypoints: const [],
+);

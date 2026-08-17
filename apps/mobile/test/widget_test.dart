@@ -60,7 +60,7 @@ void main() {
     await tester.pumpWidget(_app(controller));
 
     expect(find.byType(HomeMapBackdrop), findsOneWidget);
-    expect(find.text('Start without a destination'), findsOneWidget);
+    expect(find.text('Ride with others'), findsOneWidget);
     expect(find.text('Join'), findsOneWidget);
   });
 
@@ -68,7 +68,7 @@ void main() {
     final controller = await _controller();
     await tester.pumpWidget(_app(controller));
 
-    expect(find.text('Start without a destination'), findsOneWidget);
+    expect(find.text('Ride with others'), findsOneWidget);
     expect(find.text('Join'), findsOneWidget);
     // The simulator is behind "More" now, and there is no heading or paragraph
     // at all: #426 removed the start panel rather than shrinking it, because
@@ -289,8 +289,7 @@ void main() {
     final plans = _FakePlanDirectory();
 
     await tester.pumpWidget(_app(controller, planDirectory: plans));
-    await tester.tap(find.byKey(const Key('home-create-ride')));
-    await tester.pumpAndSettle();
+    await _openRideForm(tester);
 
     expect(find.byKey(const Key('planned-route-code-field')), findsOneWidget);
     expect(find.text('Planned route code (optional)'), findsOneWidget);
@@ -318,8 +317,7 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller));
-    await tester.tap(find.byKey(const Key('home-create-ride')));
-    await tester.pumpAndSettle();
+    await _openRideForm(tester);
 
     expect(find.byKey(const Key('ride-scope-selector')), findsOneWidget);
     expect(find.text('Second-bike drop-off'), findsOneWidget);
@@ -854,7 +852,7 @@ void main() {
     await tester.tap(find.text('Leave only'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Start without a destination'), findsOneWidget);
+    expect(find.text('Ride with others'), findsOneWidget);
     expect(find.text('Join'), findsOneWidget);
     expect(controller.hasActiveRide, isFalse);
 
@@ -952,7 +950,7 @@ void main() {
     await tester.tap(find.byKey(const Key('leave-ended-ride-button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Start without a destination'), findsOneWidget);
+    expect(find.text('Ride with others'), findsOneWidget);
     expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
     expect(find.text('Ride $rideCode has ended'), findsOneWidget);
     // #594 measured the set-aside banner here before assuming it was the
@@ -997,8 +995,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('home-create-ride')));
-    await tester.pumpAndSettle();
+    await _openRideForm(tester);
     await tester.scrollUntilVisible(
       find.widgetWithText(FilledButton, 'Create ride'),
       180,
@@ -1025,6 +1022,21 @@ late MapStyleModeController _mapStyleMode;
 late RideCodePreferenceController _rideCodePreference;
 late CompletedRidesController _completedRides;
 final _recordedRoutes = InMemoryRecordedRouteStore();
+
+/// Opens the ride form the way a rider reaches it now.
+///
+/// #600 took it off the bottom bar: free roam does not create a ride in order
+/// to go somewhere, so the bar's button is the group upgrade and asks for
+/// nothing. The form itself is unchanged and still holds the ride scope, the
+/// coordination mode and the planner route code, and it is reached from the
+/// search — the surface #431 put every code-driven way in on.
+Future<void> _openRideForm(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('home-search-bar')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('home-search-planned-code')));
+  await tester.pumpAndSettle();
+}
+
 final _rideFormScrollable = find
     .descendant(
       of: find.byKey(const Key('ride-form-scroll-view')),

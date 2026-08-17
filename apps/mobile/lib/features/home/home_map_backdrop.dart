@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
+import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
@@ -40,6 +41,11 @@ class HomeMapBackdrop extends StatefulWidget {
     this.globalRideHeatmap,
     this.onMapStyleResolved,
     this.hostChrome,
+    this.pendingInAppRoute,
+    this.changeRouteRequestToken,
+    this.onChangeRouteRequestHandled,
+    this.onRouteChanged,
+    this.navigating = false,
   });
 
   /// Height kept clear at the bottom for whatever stands on the map.
@@ -66,6 +72,30 @@ class HomeMapBackdrop extends StatefulWidget {
   /// than painted over it. See [HostMapChrome] — this is what stopped the
   /// discovery-layer menu being buried under the settings button (#572, #573).
   final HostMapChrome? hostChrome;
+
+  /// A route the home screen has planned, for the map to review and follow.
+  ///
+  /// Free roam plans its own destinations now rather than creating a ride to
+  /// hold one (#600). The route arrives by the same handoff a shared GPX uses,
+  /// so it lands in the same review the ride map gives an imported route
+  /// instead of a second, free-roam-shaped one.
+  final PendingInAppRoute? pendingInAppRoute;
+
+  /// Changes when [pendingInAppRoute] is a new request. The map ignores a
+  /// route it has already taken, so this is what says "again".
+  final Object? changeRouteRequestToken;
+  final VoidCallback? onChangeRouteRequestHandled;
+
+  /// Fires with the route the map is following, or null when there is none —
+  /// including the one restored from the last session.
+  final ValueChanged<route_domain.ImportedRoute?>? onRouteChanged;
+
+  /// Whether this map is following a route.
+  ///
+  /// Free roam has no ride to start, so the guidance chrome cannot key off one
+  /// (#600). The home screen answers from what the map reports through
+  /// [onRouteChanged], which is the only thing out here that means "under way".
+  final bool navigating;
 
   /// False in widget tests and on any build without the platform plugins, where
   /// the map would be a spinner and the location plugin is not answering.
@@ -204,6 +234,11 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             // leader", which refused a rider their own café stop in the name
             // of a group that did not exist (#576).
             routeAuthority: RouteAuthority.personal,
+            pendingInAppRoute: widget.pendingInAppRoute,
+            changeRouteRequestToken: widget.changeRouteRequestToken,
+            onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
+            onRouteChanged: widget.onRouteChanged,
+            navigating: widget.navigating,
             markerFeaturesEnabled: false,
           )
         else
