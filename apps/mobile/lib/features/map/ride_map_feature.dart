@@ -154,7 +154,18 @@ bool canGenerateNavigableRoute(ImportedRoute route) =>
 /// host's arrangement is inferred: it says what it wants shown, and the map
 /// composes it with its own actions in one row.
 class HostMapChrome {
-  const HostMapChrome({required this.title, this.actions = const []});
+  const HostMapChrome({
+    required this.title,
+    this.actions = const [],
+    this.bottomInset = 0,
+  });
+
+  /// Height the host's own chrome occupies at the bottom of this map.
+  ///
+  /// Free roam stands a bar of actions there (#426). Without this the map
+  /// anchors its bottom rail to the system inset alone and draws its compass
+  /// and controls behind that bar.
+  final double bottomInset;
 
   /// Stands in for the map's own title — a search field, in free roam.
   ///
@@ -1608,7 +1619,17 @@ class _RideMapScreenState extends State<RideMapScreen> {
         // Once we have a position, keep the map canvas at its navigation size.
         // Tying this to the instantaneous speed made the AppBar appear briefly
         // whenever a GPS update arrived while stopped.
-        _navigationCanvasActive = _effectivePosition != null;
+        //
+        // Only for a rider who is actually going somewhere, though. This
+        // canvas takes the whole screen and the AppBar with it — the search
+        // field, the layer menu, Settings — and it used to do that anywhere the
+        // app knew where the rider was. Free roam therefore lost its entire top
+        // band the moment location was granted, which is why the
+        // discovery-layer menu "does not appear most of the time" (#572, #593)
+        // and why there was no way to anything else from there (#600). A rider
+        // standing still on a map with no route is not navigating.
+        _navigationCanvasActive =
+            _effectivePosition != null && (widget.isNavigating || _isMoving);
         _initialCameraPositioned = false;
         _loading = false;
       });
@@ -1845,16 +1866,23 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // orientation, with or without the AppBar. Scaffold already removes the
     // padding it consumed itself, so what is left is what the overlays owe.
     final safeInsets = MediaQuery.paddingOf(context);
+    // Read once: it decides the title, three of the actions, the tail of the
+    // row and the bottom band, and reading it in five places invites them to
+    // disagree.
+    final hostChrome = widget.hostChrome;
     final overlayLeft = safeInsets.left;
     final overlayRight = safeInsets.right;
-    final overlayBottom = safeInsets.bottom;
+    // The host's own bar, if it stands on this map, is not the map's space. Free
+    // roam keeps a bar of actions at the bottom (#426); the map's bottom rail
+    // was anchored to the system inset alone and so drew its compass and its
+    // controls underneath it (#573, #600). One inset rather than a per-control
+    // offset, because the camera's bottom-chrome fraction (#105) measures this
+    // band too and has to agree with what is drawn in it.
+    final overlayBottom = safeInsets.bottom + (hostChrome?.bottomInset ?? 0);
     // Only the ride menu reaches the upper band (#125), and it still owes the
     // notch and the status bar their space.
     final overlayTop = safeInsets.top;
     final compactDensity = landscape ? VisualDensity.compact : null;
-    // Read once: it decides the title, three of the actions, and the tail of
-    // the row, and reading it in four places invites them to disagree.
-    final hostChrome = widget.hostChrome;
     // Only before the ride starts, only where a route may be built, only when
     // the host has not brought its own — and only while there is no route yet.
     //
@@ -1966,8 +1994,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         : const Icon(Icons.upload_file),
                   ),
                 // Route-derived: there is nothing to hand to another
-                // navigation app or write to a GPX without one.
-                if (_route != null)
+                // navigation app or write to a GPX without one. Dropped when a
+                // host is sharing the row, on the same reasoning as Fit route
+                // below — it moves into the overflow menu instead.
+                if (_route != null && hostChrome == null)
                   IconButton(
                     tooltip: 'Navigate or export route',
                     visualDensity: compactDensity,
@@ -1984,7 +2014,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 // sharing this row gets the button dropped rather than
                 // greyed — a permanently disabled control is width the
                 // search field needs (#573).
-                if (_route != null || hostChrome == null)
+                //
+                // Dropped outright when a host shares the row, rather than only
+                // while there is no route. Free roam can hold a route of its own
+                // now (#600), and this button plus the export one beside it
+                // pushed the row past the width of a phone — the host's search
+                // field and labelled Join have already spent it. Both are in
+                // the overflow menu below.
+                if (hostChrome == null)
                   IconButton(
                     tooltip: 'Fit route',
                     visualDensity: compactDensity,
@@ -2071,6 +2108,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         ],
                       ),
                     ),
+                    // What the app bar dropped to make room for a host's own
+                    // controls. Offered here rather than nowhere (#600).
+                    if (_route != null && hostChrome != null) ...[
+                      const PopupMenuItem(
+                        key: Key('fit-route-menu-item'),
+                        value: _MapAction.fitRoute,
+                        child: Text('Fit route on screen'),
+                      ),
+                      const PopupMenuItem(
+                        key: Key('export-route-menu-item'),
+                        value: _MapAction.exportRoute,
+                        child: Text('Navigate or export route'),
+                      ),
+                    ],
                     // Route-derived: both read manoeuvres off the plan.
                     if (_route?.maneuvers.isNotEmpty ?? false) ...[
                       const PopupMenuItem(
@@ -2168,7 +2219,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 // it gives way. Route entry stays reachable from the ride
                 // menu's "Change route" and from the app bar whenever this card
                 // is showing.
+                //
+                // Never in free roam. This card was written for a ride that has
+                // been created and has no route yet — it says so, offering to
+                // "continue to the live group map" — and free roam has no group
+                // and no ride to continue to. It also covers the map, which is
+                // the one thing free roam is: opening the app to a card asking
+                // for a route is the ceremony #600 is about, and the search
+                // field the host brought is directly above it.
                 if (_route == null &&
+                    hostChrome == null &&
                     !hideChrome &&
                     !widget.isNavigating &&
                     !_waitingRoutePromptDismissed)
@@ -3996,8 +4056,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // Both are driven by the bike, not by whether a route was imported (#124).
     final autoFollow = _isMoving && !_autoFollowSuppressed;
     final enableNavigationMode = autoFollow && !_navigationMode;
+    // As in `_loadPersistedRoute`: a position is not a reason to take the whole
+    // screen away from the chrome. Navigating or moving is (#600).
     final activateNavigationCanvas =
-        position != null && !_navigationCanvasActive;
+        position != null &&
+        (widget.isNavigating || _isMoving) &&
+        !_navigationCanvasActive;
     if (refreshProgress) {
       _progressGeometry = _routeProgressTracker.update(_route, position);
       _rejoinProgressGeometry = _rejoinProgressTracker.update(
@@ -7024,6 +7088,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         }
       case _MapAction.maneuverList:
         await _showManeuverList();
+      case _MapAction.fitRoute:
+        _showWholeRoute();
+      case _MapAction.exportRoute:
+        await _openNavigationExport();
       case _MapAction.markerPlan:
         setState(() => _markerPlanVisible = !_markerPlanVisible);
         _scheduleMapLibreSync(overlays: true);
@@ -7457,6 +7525,11 @@ enum _MapAction {
   speedLimitDisplay,
   maneuverList,
   markerPlan,
+
+  /// Both only reach the menu when a host is sharing the app bar and the icon
+  /// buttons for them were dropped to make room (#600).
+  fitRoute,
+  exportRoute,
   groupPip,
   downloadOffline,
   removeRoute,

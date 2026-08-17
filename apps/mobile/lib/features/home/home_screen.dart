@@ -451,6 +451,9 @@ class _HomeScreenState extends State<HomeScreen> {
             // read as overlapping junk (#573). The map draws them now, in one
             // row, with one hit test.
             hostChrome: HostMapChrome(
+              // The action bar below stands on this map, so the map's own
+              // bottom rail has to clear it rather than draw behind it (#573).
+              bottomInset: HomeRideActions.reservedHeight,
               title: HomeSearchBar(
                 onTap: () => unawaited(_searchDestination()),
                 expanded: _searching,
