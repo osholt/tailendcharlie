@@ -77,6 +77,14 @@ jobs:
             --dart-define=RIDE_RELAY_APP_BUILD="$RIDE_RELAY_APP_BUILD" \
             --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK="$RIDE_RELAY_DISTRIBUTION_TRACK" \
             --dart-define=RIDE_RELAY_BUILD_TIMESTAMP="$RIDE_RELAY_BUILD_TIMESTAMP"
+      # The Kotlin tests have existed since #94 and have never run anywhere:
+      # nothing in CI invoked Gradle's test task, so `AndroidAutoCompanionTest`
+      # was decorative. Run here rather than in the quality job because
+      # `android/gradlew` is gitignored by Flutter's own .gitignore and only
+      # exists once a build has generated it (#602).
+      - name: Run Android unit tests
+        working-directory: ${{ env.MOBILE_DIR }}/android
+        run: ./gradlew --console=plain :app:testDebugUnitTest
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ride-relay-android-debug
