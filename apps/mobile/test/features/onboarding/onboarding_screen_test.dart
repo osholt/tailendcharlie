@@ -109,6 +109,43 @@ void main() {
     expect(find.byKey(const Key('onboarding-continue')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('setup can end on the map rather than in a ride (#598)', (
+    tester,
+  ) async {
+    // #405 and #426 made the map the surface a rider lands on before any
+    // decision — "I don't want the start screen at all". Setup was still
+    // holding the old gate at the end, insisting on Create or Join before it
+    // would let anybody through.
+    final profile = await RiderProfileController.load();
+    await tester.pumpWidget(_app(profile));
+
+    await tester.tap(find.byKey(const Key('onboarding-continue')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('onboarding-name-field')),
+      'Oliver',
+    );
+    await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
+    await tester.pumpAndSettle();
+    expect(find.text('You are ready to ride'), findsOneWidget);
+
+    final toMap = find.byKey(const Key('onboarding-free-roam'));
+    expect(toMap, findsOneWidget);
+    await tester.ensureVisible(toMap);
+    await tester.pumpAndSettle();
+    await tester.tap(toMap);
+    await tester.pumpAndSettle();
+
+    expect(profile.needsOnboarding, isFalse);
+    expect(
+      profile.takePendingRideChoice(),
+      isNull,
+      reason: 'no ride was chosen, so nothing should be staged',
+    );
+  });
 }
 
 Widget _app(

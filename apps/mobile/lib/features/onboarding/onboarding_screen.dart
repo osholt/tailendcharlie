@@ -386,11 +386,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       ),
       const SizedBox(height: 12),
       Text(
-        '${_nameController.text.trim()}, choose how you want to begin. You can edit your profile or replay this guide from Settings.',
+        '${_nameController.text.trim()}, you are set up. Go straight to the map, or start a ride now. You can edit your profile or replay this guide from Settings.',
         style: const TextStyle(color: Color(0xFFBCC5D0), height: 1.5),
       ),
       const SizedBox(height: 28),
+      // The primary way out, because it is the one that commits to nothing.
+      // #405 and #426 made the map the surface a rider lands on before any
+      // decision — "I don't want the start screen at all" — and this screen
+      // was still holding the old gate at the end of setup, insisting on a
+      // ride before it would let anybody through (#598).
       FilledButton.icon(
+        key: const Key('onboarding-free-roam'),
+        onPressed: _saving ? null : () => _complete(null),
+        icon: const Icon(Icons.map_outlined),
+        label: const Text('Take me to the map'),
+      ),
+      const SizedBox(height: 12),
+      OutlinedButton.icon(
         key: const Key('onboarding-create-ride'),
         onPressed: _saving
             ? null
@@ -465,7 +477,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return false;
   }
 
-  Future<void> _complete(OnboardingRideChoice choice) async {
+  Future<void> _complete(OnboardingRideChoice? choice) async {
     if (!_validateName()) return;
     setState(() => _saving = true);
     await widget.riderProfile.completeOnboarding(

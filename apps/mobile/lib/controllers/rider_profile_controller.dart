@@ -157,7 +157,12 @@ class RiderProfileController extends ChangeNotifier {
     RiderSymbol? riderSymbol,
     required RiderColor riderColor,
     required bool educationSkipped,
-    required OnboardingRideChoice rideChoice,
+
+    /// Null when the rider chose neither — they are dropped on the map and
+    /// pick a way in from there. Onboarding used to insist on one of the two
+    /// before it would let anybody through, which is the gate #405 and #426
+    /// removed from the *home* screen and left standing here (#598).
+    OnboardingRideChoice? rideChoice,
   }) async {
     final normalizedName = displayName.trim();
     if (normalizedName.isEmpty) {
