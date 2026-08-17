@@ -36,6 +36,62 @@ permissions by design.
 - ...
 ```
 
+## iOS build 64 / Android build 64 — 17 August 2026
+
+Turning an imported GPX into turn-by-turn directions now works. It never has
+before — the app was asking a routing service for far more than it would accept,
+and every attempt failed. This build also puts the good-roads and café layers on
+the route review screen, and tidies up how you choose a destination and leave a
+ride you have not started.
+
+### What to test
+
+1. **Import a GPX and generate a navigable route.** Import one of the Mid-Wales
+   day-run files and choose **Generate navigable route** when asked. It should
+   produce a route with turn instructions along the roads the recording actually
+   used — around 130 turns for a 300 km day — rather than the error you got in
+   build 63. Ride or simulate part of it and check the turns come in the right
+   places.
+2. **The review screen's layers.** When reviewing a route, look for a
+   **Good roads** chip beside **Nearby places**. Switching a layer off in the
+   map's ⋯ menu should switch it off here too — it is the same setting, not a
+   second one. Tap a highlight and add it as a stop; the route should
+   recalculate through it.
+3. **Leaving a ride you have not started.** Create a ride and do not start it.
+   **LEAVE** should be on the map, without opening a menu. Check the
+   confirmation says the right thing for a solo ride, as a leader, and as
+   someone who joined.
+4. **Asking for a destination.** In free roam and in a created-but-unstarted
+   ride, the **Where to?** field should be in the same place and look the same.
+   They still do different things — free roam's plans a ride around somewhere,
+   the ride's adds a stop to the route in hand — but you should not have to hunt
+   for a different control. Once a route is loaded its name replaces the field,
+   and once the ride starts nothing about the riding screen changes.
+
+### Fixed
+
+- **Generate navigable route** failed every time. The app now matches imported
+  tracks against a service that can take them, splitting long rides up and
+  picking up again wherever the matcher stops.
+- A failed match now says what the service actually objected to, instead of
+  showing a bare error number.
+- A file containing both a recorded track and a planned route was silently given
+  no option to add turn directions at all.
+- The route review screen could not show the discovery layers, which is the
+  moment a stop usually gets chosen.
+- Leaving a ride before it started meant digging through the ride menu.
+
+### Known limitations
+
+- The road matching is judged against the imported line, and a route that comes
+  out too far from it is refused rather than shown. If a file is rejected,
+  please send it — the numbers in the message are useful.
+- Nothing on this list has been on a physical phone. It is covered by automated
+  tests and by running the real files against the live routing service, which is
+  not the same as riding it.
+- Choosing a route inside a created ride and in free roam now offer the same
+  control in the same place, but they still do different things by design.
+
 ## iOS build 63 / Android build 63 — 16 August 2026
 
 The fixes from the ride of 16 August. The controls above the map no longer sit
