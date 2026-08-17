@@ -5885,6 +5885,8 @@ void main() {
       required bool started,
       RouteAuthority authority = RouteAuthority.leader,
       HostMapChrome? hostChrome,
+      ValueListenable<GeoPoint?>? currentPosition,
+      RouteStore? routeStore,
     }) async {
       SharedPreferences.setMockInitialValues({});
       final directory = Directory.systemTemp.createTempSync('colocated');
@@ -5899,12 +5901,13 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RideMapScreen(
-            routeStore: InMemoryRouteStore(),
+            routeStore: routeStore ?? InMemoryRouteStore(),
             routeImporter: RouteImporter(source: const _NoFileSource()),
             offlineTileCache: cache,
             rideStarted: started,
             routeAuthority: authority,
             hostChrome: hostChrome,
+            currentPosition: currentPosition,
             discoveryCatalogueLoader: () async =>
                 const MotorcycleDiscoveryCatalogue([]),
             bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
@@ -5936,6 +5939,182 @@ void main() {
 
       expect(find.text('Host field'), findsOneWidget);
       expect(find.byKey(const Key('map-destination-search')), findsNothing);
+    });
+
+    testWidgets('free roam is a map, not a card asking for a route (#600)', (
+      tester,
+    ) async {
+      // The empty-route card was written for a ride that has been created and
+      // has no route yet — it offers to "continue to the live group map",
+      // which free roam has no group and no ride to continue to. It also
+      // covers the map, which is the one thing free roam is for. Opening the
+      // app to a card demanding a route is the ceremony #600 removes, and the
+      // host's search field is directly above where the card would be.
+      await pumpMap(
+        tester,
+        started: false,
+        authority: RouteAuthority.personal,
+        hostChrome: HostMapChrome(title: const Text('Host field'), actions: []),
+      );
+
+      expect(find.text('Choose a route'), findsNothing);
+      expect(find.textContaining('A route is optional'), findsNothing);
+      // Still a route-less map with the way to a route on it.
+      expect(find.text('Host field'), findsOneWidget);
+    });
+
+    testWidgets('a created ride with no route still asks for one', (
+      tester,
+    ) async {
+      // The card is not being deleted: a ride that has been created and has no
+      // route is exactly what it is for, and it stays there.
+      await pumpMap(tester, started: false);
+
+      expect(find.text('Choose a route'), findsOneWidget);
+    });
+
+    testWidgets('knowing where a rider is does not take their chrome (#600)', (
+      tester,
+    ) async {
+      // The navigation canvas takes the whole screen and the AppBar with it —
+      // the search field, the layer menu, Settings. It used to switch on for
+      // any position at all, so free roam lost its entire top band the moment
+      // location was granted, and a rider standing on a map with no route had
+      // no way to anything. That is why the discovery-layer menu "does not
+      // appear most of the time" (#572, #593) survived two attempts at it.
+      final position = ValueNotifier<GeoPoint?>(null);
+      addTearDown(position.dispose);
+      await pumpMap(
+        tester,
+        started: false,
+        authority: RouteAuthority.personal,
+        hostChrome: HostMapChrome(title: const Text('Host field'), actions: []),
+        currentPosition: position,
+      );
+
+      expect(find.text('Host field'), findsOneWidget);
+
+      position.value = const GeoPoint(latitude: 51.45, longitude: -2.58);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Host field'), findsOneWidget);
+      expect(find.byKey(const Key('map-layer-actions')), findsOneWidget);
+    });
+
+    testWidgets('a stored route reopened in free roam keeps its chrome too', (
+      tester,
+    ) async {
+      // The same gate, on the other path. A map that mounts with a route
+      // already in the store restores it before anything has said whether the
+      // rider is navigating, and free roam is not — it reports that back
+      // afterwards. Taking the chrome on the strength of a stored route and a
+      // position would open the app straight into a screen with no way out.
+      final store = InMemoryRouteStore(
+        _testRoute(id: 'stored', name: 'Stored route'),
+      );
+      final position = ValueNotifier<GeoPoint?>(
+        const GeoPoint(latitude: 51.45, longitude: -2.58),
+      );
+      addTearDown(position.dispose);
+
+      await pumpMap(
+        tester,
+        started: false,
+        authority: RouteAuthority.personal,
+        hostChrome: HostMapChrome(title: const Text('Host field'), actions: []),
+        currentPosition: position,
+        routeStore: store,
+      );
+
+      expect(find.text('Host field'), findsOneWidget);
+      expect(find.byKey(const Key('map-layer-actions')), findsOneWidget);
+    });
+
+    testWidgets('a hosted app bar fits on a phone with a route (#600)', (
+      tester,
+    ) async {
+      // Free roam can hold a route of its own now, and a route adds two icon
+      // buttons — Fit route and Navigate/export — to a row the host has already
+      // spent on a search field and a labelled Join. On a phone that overflowed
+      // the AppBar. The buttons are dropped and offered in the overflow menu
+      // instead, which is what #573 settled for this row.
+      //
+      // At phone width, not the 800 px test default: the row fits at 800 and
+      // the overflow only appears on the device it matters on.
+      tester.view.physicalSize = const Size(393, 852);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final store = InMemoryRouteStore(
+        _testRoute(id: 'stored', name: 'Stored route'),
+      );
+
+      await pumpMap(
+        tester,
+        started: false,
+        authority: RouteAuthority.personal,
+        hostChrome: HostMapChrome(
+          title: const Text('Where to?'),
+          actions: [
+            TextButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.group_add_outlined, size: 18),
+              label: const Text('Join'),
+            ),
+            IconButton(
+              onPressed: () {},
+              icon: const Icon(Icons.medical_information_outlined),
+            ),
+            IconButton(
+              onPressed: () {},
+              icon: const Icon(Icons.settings_outlined),
+            ),
+          ],
+        ),
+        routeStore: store,
+      );
+
+      expect(tester.takeException(), isNull);
+      expect(find.byTooltip('Fit route'), findsNothing);
+      expect(find.byTooltip('Navigate or export route'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('map-layer-actions')));
+      await tester.pumpAndSettle();
+
+      // Nothing was lost by dropping them.
+      expect(find.byKey(const Key('fit-route-menu-item')), findsOneWidget);
+      expect(find.byKey(const Key('export-route-menu-item')), findsOneWidget);
+    });
+
+    testWidgets("the map's bottom rail clears the host's own bar (#573)", (
+      tester,
+    ) async {
+      // Free roam stands a bar of actions on this map (#426). The map anchored
+      // its bottom rail to the system inset alone, so its compass and controls
+      // were drawn behind that bar — visible as clipped half-circles under it.
+      tester.view.physicalSize = const Size(393, 852);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await pumpMap(
+        tester,
+        started: false,
+        authority: RouteAuthority.personal,
+        hostChrome: HostMapChrome(
+          title: const Text('Where to?'),
+          actions: const [],
+          bottomInset: 84,
+        ),
+      );
+
+      final rail = tester.getRect(find.byKey(portraitBottomChromeKey));
+      final screen = tester.getSize(find.byType(MaterialApp));
+      expect(
+        rail.bottom,
+        lessThanOrEqualTo(screen.height - 84),
+        reason: "the rail runs into the host's bar at $rail",
+      );
     });
 
     testWidgets('a chosen route keeps its name in the title', (tester) async {
@@ -5990,6 +6169,122 @@ void main() {
 
       expect(find.byKey(const Key('map-destination-search')), findsNothing);
       expect(find.byTooltip('Plan a destination'), findsNothing);
+    });
+  });
+
+  // #600. `rideStarted` was doing two jobs: "a ride is running" and "the rider
+  // is following a route". Everything a navigating rider needs was therefore
+  // reachable only inside a ride, which is why searching a destination in free
+  // roam had to create one first — the ride was carrying the navigation.
+  group('navigating is not the same as being in a ride', () {
+    Future<void> pumpMap(
+      WidgetTester tester, {
+      required bool started,
+      bool? navigating,
+      ImportedRoute? route,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('navigating');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(route),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: started,
+            navigating: navigating,
+            routeAuthority: RouteAuthority.personal,
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('free roam can navigate without a ride', (tester) async {
+      // The whole point. None of this was reachable outside a ride before.
+      await pumpMap(
+        tester,
+        started: false,
+        navigating: true,
+        route: _testRoute(id: 'to-the-cafe', name: 'To the café'),
+      );
+
+      expect(find.byKey(const Key('ride-clock-position')), findsOneWidget);
+      // The destination field gives way to the route once you are going.
+      expect(find.byKey(const Key('map-destination-search')), findsNothing);
+      expect(find.text('Choose a route'), findsNothing);
+    });
+
+    testWidgets('a map that is not navigating stays a map', (tester) async {
+      await pumpMap(tester, started: false, navigating: false);
+
+      expect(find.byKey(const Key('ride-clock-position')), findsNothing);
+      expect(find.byKey(const Key('map-destination-search')), findsOneWidget);
+    });
+
+    testWidgets('omitting it follows the ride, as every caller meant before', (
+      tester,
+    ) async {
+      // The compatibility guarantee. `navigating` is nullable so that the
+      // split changed nothing until a surface opted in.
+      await pumpMap(
+        tester,
+        started: true,
+        route: _testRoute(id: 'ride-route', name: 'Ride route'),
+      );
+
+      expect(find.byKey(const Key('ride-clock-position')), findsOneWidget);
+    });
+
+    testWidgets('SOS and reporting still need a group, not just a route', (
+      tester,
+    ) async {
+      // These relay to other riders and mean nothing alone, so they stay on
+      // `rideStarted` while everything else moved.
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('nav-solo-safety');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(
+              _testRoute(id: 'solo', name: 'Solo run'),
+            ),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: false,
+            navigating: true,
+            routeAuthority: RouteAuthority.personal,
+            onEmergencyAlert: () async {},
+            onReportHazard: (_) async {},
+            discoveryCatalogueLoader: () async =>
+                const MotorcycleDiscoveryCatalogue([]),
+            bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('emergency-alert-button')), findsNothing);
+      expect(find.byKey(const Key('report-sighting-button')), findsNothing);
     });
   });
 

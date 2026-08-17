@@ -36,10 +36,18 @@ class HomeRideActions extends StatelessWidget {
     super.key,
     required this.onCreate,
     required this.onMore,
+    this.hasRoute = false,
     this.enabled = true,
   });
 
   final VoidCallback? onCreate;
+
+  /// Whether the map behind this bar is already following a route.
+  ///
+  /// Only changes what the button says. A rider mid-route needs to know the
+  /// route comes with them — the fear that asking for company means starting
+  /// again is exactly why free roam used to be a dead end (#600).
+  final bool hasRoute;
   final VoidCallback onMore;
 
   /// False while the controller is busy or a restoration is still being retried,
@@ -74,20 +82,25 @@ class HomeRideActions extends StatelessWidget {
       top: false,
       child: Row(
         children: [
-          // Creating a ride starts from the search field now, and joining sits
-          // beside it and again underneath it once the search is open (#595).
-          // This bar used to carry both, so the older, louder path competed
-          // with the one the rider was meant to use.
+          // Going somewhere starts from the search field, and joining somebody
+          // else's ride sits beside it and again underneath it once the search
+          // is open (#595). What is left here is the one thing neither of those
+          // says: ride with other people.
           //
-          // What is kept here is the ride with no destination at all, which
-          // the search cannot express: a rider setting off with the group and
-          // no plan still needs a way in.
+          // It is an upgrade, not an entrance. This button used to read "Start
+          // without a destination" and open the ride form, which made a ride
+          // the thing you had to create before the app would do anything —
+          // "in free roam you shouldn't need the idea of a ride" (#600). Now
+          // the map is already yours, and this brings company to it, with
+          // whatever route is on screen.
           Expanded(
             child: OutlinedButton.icon(
               key: const Key('home-create-ride'),
               onPressed: enabled ? onCreate : null,
-              icon: const Icon(Icons.play_circle_outline),
-              label: const Text('Start without a destination'),
+              icon: const Icon(Icons.group_outlined),
+              label: Text(
+                hasRoute ? 'Ride this with others' : 'Ride with others',
+              ),
             ),
           ),
           const SizedBox(width: 4),

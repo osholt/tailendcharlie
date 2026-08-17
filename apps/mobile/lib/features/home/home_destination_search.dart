@@ -33,7 +33,6 @@ import 'package:flutter/material.dart';
 import '../map/destination_search_field.dart';
 
 import '../../domain/imported_route.dart' show GeoPoint;
-import '../../domain/ride_coordination_mode.dart';
 import '../../services/road_routing.dart';
 
 /// What a rider picked out of the search.
@@ -42,34 +41,6 @@ class DestinationChoice {
 
   final String label;
   final GeoPoint point;
-}
-
-/// How the ride around a chosen destination is arranged.
-enum RideStartChoice {
-  solo,
-  group;
-
-  /// The coordination mode this implies.
-  ///
-  /// Group means the drop-off system, which is what `createRide` has always
-  /// defaulted to and what the app is *for*; a rider who wants keep-together can
-  /// change it once the ride is running, which is the trade #431 asked for —
-  /// sensible defaults now, adjustable later, rather than four questions first.
-  RideCoordinationMode get coordinationMode => switch (this) {
-    RideStartChoice.solo => RideCoordinationMode.solo,
-    RideStartChoice.group => RideCoordinationMode.secondBikeDropOff,
-  };
-
-  String get label => switch (this) {
-    RideStartChoice.solo => 'Ride solo',
-    RideStartChoice.group => 'Ride as a group',
-  };
-
-  String get detail => switch (this) {
-    RideStartChoice.solo => 'Just you. No code and nobody to wait for.',
-    RideStartChoice.group =>
-      'Gives you a code to share. Junction drop-off prompts on.',
-  };
 }
 
 /// The search control standing on the home map.
@@ -100,12 +71,12 @@ sealed class HomeSearchOutcome {
   const HomeSearchOutcome();
 }
 
-/// A place was chosen, and how the ride around it should be arranged.
+/// A place was chosen. That is the whole answer — there is no ride to arrange
+/// around it until a rider asks for one (#600).
 class HomeSearchDestination extends HomeSearchOutcome {
-  const HomeSearchDestination({required this.choice, required this.start});
+  const HomeSearchDestination({required this.choice});
 
   final DestinationChoice choice;
-  final RideStartChoice start;
 }
 
 /// The rider wants one of the code-driven ways in instead.
@@ -203,57 +174,17 @@ class _HomeDestinationSearchSheetState
       ? error.message
       : 'Could not search just now. Check your connection and try again.';
 
-  Future<void> _choose(DestinationMatch match) async {
-    final start = await showModalBottomSheet<RideStartChoice>(
-      context: context,
-      backgroundColor: const Color(0xFF171D25),
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 6),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Ride to',
-                    style: TextStyle(color: Color(0xFF8993A0), fontSize: 13),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    match.label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      height: 1.3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            for (final choice in RideStartChoice.values)
-              ListTile(
-                key: Key('ride-start-${choice.name}'),
-                leading: Icon(
-                  choice == RideStartChoice.solo
-                      ? Icons.person_outline
-                      : Icons.group_outlined,
-                ),
-                title: Text(choice.label),
-                subtitle: Text(choice.detail),
-                onTap: () => Navigator.of(sheetContext).pop(choice),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (start == null || !mounted) return;
+  /// Picking a place is the whole decision.
+  ///
+  /// This used to open a second sheet asking solo or group before it would let
+  /// a rider anywhere near a route. Solo is the assumption now — a rider who
+  /// wants to get somewhere on their own should never be asked about a ride —
+  /// and riding with others is offered afterwards, once there is a route to
+  /// bring along (#600).
+  void _choose(DestinationMatch match) {
     Navigator.of(context).pop(
       HomeSearchDestination(
         choice: DestinationChoice(label: match.label, point: match.point),
-        start: start,
       ),
     );
   }

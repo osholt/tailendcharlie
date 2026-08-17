@@ -6,7 +6,10 @@ import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
-import 'package:ride_relay/domain/imported_route.dart' show GeoPoint;
+import 'package:ride_relay/controllers/shared_route_controller.dart'
+    show PendingInAppRoute;
+import 'package:ride_relay/domain/imported_route.dart'
+    show GeoPoint, ImportedRoute, RoutePath, RoutePathKind;
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
 import 'package:ride_relay/features/map/ride_map_feature.dart';
@@ -135,6 +138,71 @@ void main() {
           .routeAuthority,
       RouteAuthority.personal,
     );
+  });
+
+  testWidgets('free roam follows a route without a ride to hold it (#600)', (
+    tester,
+  ) async {
+    // The whole of #600 in one assertion. Free roam used to answer "where do
+    // you want to go" by creating a ride — a coordination mode, a code, a
+    // lobby — because the map only turned its guidance on for a ride that had
+    // started. The route arrives here on its own now, and the map is told it
+    // is navigating without any ride being true.
+    final platform = _RecordingLocationPlatform();
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+    final token = Object();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HomeMapBackdrop(
+            mapStyleMode: mapStyleMode,
+            speedLimitDisplay: speedLimitDisplay,
+            distanceUnit: DistanceUnit.kilometres,
+            locationController: location,
+            pendingInAppRoute: PendingInAppRoute(
+              route: ImportedRoute(
+                id: 'bath',
+                name: 'Bath, Somerset',
+                importedAt: DateTime.utc(2026, 8, 17, 9),
+                sourceFileName: 'search',
+                paths: const [
+                  RoutePath(
+                    kind: RoutePathKind.route,
+                    points: [
+                      GeoPoint(latitude: 51.44, longitude: -2.58),
+                      GeoPoint(latitude: 51.38, longitude: -2.36),
+                    ],
+                  ),
+                ],
+                waypoints: const [],
+              ),
+              reviewNotes: const ['Toll road avoided.'],
+            ),
+            changeRouteRequestToken: token,
+            navigating: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final map = tester.widget<RideMapFeature>(
+      find.byKey(const Key('home-map')),
+    );
+    expect(map.pendingInAppRoute?.route.name, 'Bath, Somerset');
+    expect(map.pendingInAppRoute?.reviewNotes, ['Toll road avoided.']);
+    // Without the token the map treats the route as one it has already taken
+    // and never opens the review.
+    expect(map.changeRouteRequestToken, same(token));
+    // Navigating, and no ride: the two used to be the same flag, so guidance
+    // out here was only reachable by creating one.
+    expect(map.navigating, isTrue);
+    expect(map.rideStarted, isFalse);
   });
 
   // #572, #573.
