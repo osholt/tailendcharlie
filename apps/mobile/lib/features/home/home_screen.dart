@@ -152,6 +152,21 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _buildIdentity = BuildIdentity.fromEnvironment();
   bool _joinGroupOpenScheduled = false;
+
+  /// True while the destination search is open, so the field can grow into it
+  /// and the other actions can step aside (#595).
+  bool _searching = false;
+
+  /// Whether a ride may be started or joined right now.
+  ///
+  /// One getter for both ways in. They used to share a single `enabled` on the
+  /// bottom bar; #595 moved joining into the app bar, and gating only one of
+  /// them would let a rider join a ride while a restoration was still in
+  /// flight.
+  bool get _rideEntryEnabled =>
+      !widget.controller.busy &&
+      !_planningDestination &&
+      widget.onRetryRestoration == null;
   late final CarPlayBridge _carPlayBridge;
   String? _carPlayMapStyleJson;
 
@@ -405,31 +420,59 @@ class _HomeScreenState extends State<HomeScreen> {
             hostChrome: HostMapChrome(
               title: HomeSearchBar(
                 onTap: () => unawaited(_searchDestination()),
+                expanded: _searching,
               ),
-              actions: [
-                IconButton(
-                  tooltip: 'Emergency info',
-                  onPressed: () =>
-                      EmergencyInfoSheet.show(context, widget.riderProfile),
-                  icon: const Icon(Icons.medical_information_outlined),
-                ),
-                IconButton(
-                  tooltip: 'Settings',
-                  onPressed: () => UnitSettingsSheet.show(
-                    context,
-                    widget.distanceUnits,
-                    widget.mapStyleMode,
-                    widget.riderProfile,
-                    speedLimitDisplay: widget.speedLimitDisplay,
-                    routeProgressDisplay: widget.routeProgressDisplay,
-                    testControl: widget.testControl,
-                    spokenGuidance: widget.spokenGuidance,
-                    rideDiagnostics: widget.rideDiagnostics,
-                    globalRideHeatmap: widget.globalRideHeatmap,
-                  ),
-                  icon: const Icon(Icons.settings_outlined),
-                ),
-              ],
+              // While a search is open the field takes the whole bar. The
+              // rest step aside rather than competing with it, which is what
+              // makes the search read as the way in rather than one control
+              // among four (#595).
+              actions: _searching
+                  ? const []
+                  : [
+                      // Joining takes a six-digit code, not a destination, so
+                      // it cannot fold into the field the way creating does.
+                      // It sits beside it, and is offered again underneath the
+                      // field once the search is open.
+                      // A word, not a bare icon. #306 was raised because the
+                      // only way to find a feature was an unlabelled glyph,
+                      // and `home_reachability_test.dart` guards it — an
+                      // icon-only version of this failed that suite, which is
+                      // exactly what the suite is for.
+                      TextButton.icon(
+                        key: const Key('home-join-ride'),
+                        onPressed: _rideEntryEnabled
+                            ? () => unawaited(
+                                _showRideSheet(context, creating: false),
+                              )
+                            : null,
+                        icon: const Icon(Icons.group_add_outlined, size: 18),
+                        label: const Text('Join'),
+                      ),
+                      IconButton(
+                        tooltip: 'Emergency info',
+                        onPressed: () => EmergencyInfoSheet.show(
+                          context,
+                          widget.riderProfile,
+                        ),
+                        icon: const Icon(Icons.medical_information_outlined),
+                      ),
+                      IconButton(
+                        tooltip: 'Settings',
+                        onPressed: () => UnitSettingsSheet.show(
+                          context,
+                          widget.distanceUnits,
+                          widget.mapStyleMode,
+                          widget.riderProfile,
+                          speedLimitDisplay: widget.speedLimitDisplay,
+                          routeProgressDisplay: widget.routeProgressDisplay,
+                          testControl: widget.testControl,
+                          spokenGuidance: widget.spokenGuidance,
+                          rideDiagnostics: widget.rideDiagnostics,
+                          globalRideHeatmap: widget.globalRideHeatmap,
+                        ),
+                        icon: const Icon(Icons.settings_outlined),
+                      ),
+                    ],
             ),
             onMapStyleResolved: (styleJson) {
               _carPlayMapStyleJson = styleJson;
@@ -477,12 +520,8 @@ class _HomeScreenState extends State<HomeScreen> {
             right: 0,
             bottom: 0,
             child: HomeRideActions(
-              enabled:
-                  !widget.controller.busy &&
-                  !_planningDestination &&
-                  widget.onRetryRestoration == null,
+              enabled: _rideEntryEnabled,
               onCreate: () => _showRideSheet(context, creating: true),
-              onJoin: () => _showRideSheet(context, creating: false),
               onMore: () => unawaited(_showMoreActions(context)),
             ),
           ),
@@ -626,6 +665,17 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Takes no context: it uses the State's own, so the `mounted` check after
   /// each await is guarding the thing actually being used.
   Future<void> _searchDestination() async {
+    // The field grows into the search and the other actions step aside while
+    // it is open (#595).
+    setState(() => _searching = true);
+    try {
+      await _runDestinationSearch();
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  Future<void> _runDestinationSearch() async {
     final outcome = await HomeDestinationSearchSheet.show(
       context,
       searchService: _destinationPlanner.searchService,

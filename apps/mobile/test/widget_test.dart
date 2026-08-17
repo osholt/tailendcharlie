@@ -60,16 +60,16 @@ void main() {
     await tester.pumpWidget(_app(controller));
 
     expect(find.byType(HomeMapBackdrop), findsOneWidget);
-    expect(find.text('Create a ride'), findsOneWidget);
-    expect(find.text('Join a ride'), findsOneWidget);
+    expect(find.text('Start without a destination'), findsOneWidget);
+    expect(find.text('Join'), findsOneWidget);
   });
 
   testWidgets('home screen exposes the two ride entry points', (tester) async {
     final controller = await _controller();
     await tester.pumpWidget(_app(controller));
 
-    expect(find.text('Create a ride'), findsOneWidget);
-    expect(find.text('Join a ride'), findsOneWidget);
+    expect(find.text('Start without a destination'), findsOneWidget);
+    expect(find.text('Join'), findsOneWidget);
     // The simulator is behind "More" now, and there is no heading or paragraph
     // at all: #426 removed the start panel rather than shrinking it, because
     // "I don't want the start screen at all" leaves no room for a smaller one.
@@ -147,19 +147,23 @@ void main() {
       expect(find.byKey(const Key('ride-restoration-banner')), findsOneWidget);
       expect(find.text('Still restoring ride 994954'), findsOneWidget);
       expect(find.byTooltip('Settings'), findsOneWidget);
+      // By key and by the base Button type: #595 changed both the wording and
+      // the widget — creating is an OutlinedButton in the bar now, joining a
+      // TextButton beside the search. What this test protects is unchanged and
+      // is worth keeping: **neither way in works while a restoration is still
+      // in flight.** Joining was not gated at all when it moved, which this
+      // caught.
       expect(
         tester
-            .widget<FilledButton>(
-              find.widgetWithText(FilledButton, 'Create a ride'),
+            .widget<ButtonStyleButton>(
+              find.byKey(const Key('home-create-ride')),
             )
             .onPressed,
         isNull,
       );
       expect(
         tester
-            .widget<OutlinedButton>(
-              find.widgetWithText(OutlinedButton, 'Join a ride'),
-            )
+            .widget<ButtonStyleButton>(find.byKey(const Key('home-join-ride')))
             .onPressed,
         isNull,
       );
@@ -222,7 +226,7 @@ void main() {
     final plans = _FakePlanDirectory();
 
     await tester.pumpWidget(_app(controller, planDirectory: plans));
-    await tester.tap(find.text('Create a ride'));
+    await tester.tap(find.byKey(const Key('home-create-ride')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('planned-route-code-field')), findsOneWidget);
@@ -251,7 +255,7 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller));
-    await tester.tap(find.text('Create a ride'));
+    await tester.tap(find.byKey(const Key('home-create-ride')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('ride-scope-selector')), findsOneWidget);
@@ -328,7 +332,7 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller));
-    await tester.tap(find.text('Join a ride'));
+    await tester.tap(find.byKey(const Key('home-join-ride')));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byKey(const Key('ride-code-field')),
@@ -363,7 +367,7 @@ void main() {
     addTearDown(preference.dispose);
 
     await tester.pumpWidget(_app(controller, rideCodePreference: preference));
-    await tester.tap(find.text('Join a ride'));
+    await tester.tap(find.byKey(const Key('home-join-ride')));
     await tester.pumpAndSettle();
 
     final codeField = tester.widget<TextField>(
@@ -396,7 +400,7 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller, rideCodePreference: preference));
-    await tester.tap(find.text('Join a ride'));
+    await tester.tap(find.byKey(const Key('home-join-ride')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('rider-name-field')), 'Oliver');
     await tester.enterText(find.byKey(const Key('ride-code-field')), '123');
@@ -433,7 +437,7 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller));
-    await tester.tap(find.text('Join a ride'));
+    await tester.tap(find.byKey(const Key('home-join-ride')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('rider-name-field')), 'Oliver');
 
@@ -787,8 +791,8 @@ void main() {
     await tester.tap(find.text('Leave only'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Create a ride'), findsOneWidget);
-    expect(find.text('Join a ride'), findsOneWidget);
+    expect(find.text('Start without a destination'), findsOneWidget);
+    expect(find.text('Join'), findsOneWidget);
     expect(controller.hasActiveRide, isFalse);
 
     controller.dispose();
@@ -885,7 +889,7 @@ void main() {
     await tester.tap(find.byKey(const Key('leave-ended-ride-button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Create a ride'), findsOneWidget);
+    expect(find.text('Start without a destination'), findsOneWidget);
     expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
     expect(find.text('Ride $rideCode has ended'), findsOneWidget);
     // #594 measured the set-aside banner here before assuming it was the
@@ -930,7 +934,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
 
-    await tester.tap(find.text('Create a ride'));
+    await tester.tap(find.byKey(const Key('home-create-ride')));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.widgetWithText(FilledButton, 'Create ride'),
