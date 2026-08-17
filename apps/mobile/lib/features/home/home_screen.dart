@@ -594,64 +594,94 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       useSafeArea: true,
       backgroundColor: const Color(0xFF171D25),
+      // Scrollable, and `isScrollControlled` so it may exceed half the screen.
+      // This was a bare Column: it fitted until #594 added the way back to a
+      // set-aside ride, and then overflowed by 35 pixels on a short viewport.
+      // A menu that grows by one entry should not start clipping.
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              key: const Key('start-ride-simulator'),
-              leading: const Icon(Icons.science_outlined),
-              title: const Text('Try a simulated ride'),
-              subtitle: const Text('Never shares your location'),
-              enabled:
-                  !widget.controller.busy && widget.onRetryRestoration == null,
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                widget.controller.createSimulationRide();
-              },
-            ),
-            ListTile(
-              key: const Key('record-a-route-button'),
-              leading: const Icon(Icons.fiber_manual_record_outlined),
-              title: const Text('Record a route'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                unawaited(
-                  RouteRecorderScreen.show(context, widget.recordedRoutes),
-                );
-              },
-            ),
-            ListTile(
-              key: const Key('ride-library-button'),
-              leading: const Icon(Icons.route_outlined),
-              title: const Text('Ride library'),
-              subtitle: Text(
-                widget.completedRides.rides.isEmpty
-                    ? 'Recorded routes and previous rides'
-                    : 'Recorded routes and ${widget.completedRides.rides.length} previous ride${widget.completedRides.rides.length == 1 ? '' : 's'}',
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                key: const Key('start-ride-simulator'),
+                leading: const Icon(Icons.science_outlined),
+                title: const Text('Try a simulated ride'),
+                subtitle: const Text('Never shares your location'),
+                enabled:
+                    !widget.controller.busy &&
+                    widget.onRetryRestoration == null,
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  widget.controller.createSimulationRide();
+                },
               ),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                unawaited(_openRideLibrary(context));
-              },
-            ),
-            const Divider(height: 8),
-            ListTile(
-              key: const Key('home-build-identity'),
-              leading: const Icon(Icons.info_outline),
-              title: Text(
-                '${_buildIdentity.versionLabel} · '
-                '${_buildIdentity.track.label}',
+              ListTile(
+                key: const Key('record-a-route-button'),
+                leading: const Icon(Icons.fiber_manual_record_outlined),
+                title: const Text('Record a route'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(
+                    RouteRecorderScreen.show(context, widget.recordedRoutes),
+                  );
+                },
               ),
-              subtitle: const Text('No account required'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                unawaited(
-                  AboutBuildSheet.show(context, identity: _buildIdentity),
-                );
-              },
-            ),
-          ],
+              // The way back from a set-aside ride (#594). Stepping away from a
+              // recovered ride keeps it and its journal intact but takes the
+              // rider off it entirely — no banner, nothing on the map — so the
+              // route back has to be somewhere they can find it.
+              if (widget.controller.rideSetAside &&
+                  widget.controller.session != null)
+                ListTile(
+                  key: const Key('home-rejoin-set-aside-ride'),
+                  leading: const Icon(Icons.restore),
+                  title: Text(
+                    'Rejoin ride ${widget.controller.session!.rideCode}',
+                  ),
+                  subtitle: Text(
+                    widget.controller.rideEnded
+                        ? 'Its summary and recap are still here'
+                        : 'Still running, and set aside on this phone',
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    widget.controller.reopenEndedRide();
+                  },
+                ),
+              ListTile(
+                key: const Key('ride-library-button'),
+                leading: const Icon(Icons.route_outlined),
+                title: const Text('Ride library'),
+                subtitle: Text(
+                  widget.completedRides.rides.isEmpty
+                      ? 'Recorded routes and previous rides'
+                      : 'Recorded routes and ${widget.completedRides.rides.length} previous ride${widget.completedRides.rides.length == 1 ? '' : 's'}',
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_openRideLibrary(context));
+                },
+              ),
+              const Divider(height: 8),
+              ListTile(
+                key: const Key('home-build-identity'),
+                leading: const Icon(Icons.info_outline),
+                title: Text(
+                  '${_buildIdentity.versionLabel} · '
+                  '${_buildIdentity.track.label}',
+                ),
+                subtitle: const Text('No account required'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(
+                    AboutBuildSheet.show(context, identity: _buildIdentity),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );

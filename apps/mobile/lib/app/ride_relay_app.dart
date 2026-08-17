@@ -106,6 +106,7 @@ class RideRelayApp extends StatelessWidget {
     required VoidCallback consumeJoinGroupRequest,
     required bool showRecoveredRideChoice,
     required VoidCallback rejoinRecoveredRide,
+    required VoidCallback setRecoveredRideAside,
     required Future<void> Function() endRecoveredRide,
   }) {
     const background = Color(0xFF0D1117);
@@ -157,12 +158,17 @@ class RideRelayApp extends StatelessWidget {
             rideName: controller.session?.rideName,
             rideCode: controller.session?.rideCode,
             onRejoin: rejoinRecoveredRide,
+            onSetAside: setRecoveredRideAside,
             onEnd: endRecoveredRide,
           );
         }
         // An ended ride the rider has stepped away from stays on the phone and
         // stays archived; it just stops owning the whole screen (#207).
-        if (controller.hasActiveRide && !controller.endedRideSetAside) {
+        // `rideSetAside`, not `endedRideSetAside`: since #594 a rider can step
+        // away from a ride that is still *running*, and the narrower flag is
+        // false for those, so they were sent straight back into the shell they
+        // had just left. Identical for the ended case it replaces.
+        if (controller.hasActiveRide && !controller.rideSetAside) {
           return ActiveRideShell(
             key: ValueKey(controller.session!.rideId),
             rideController: controller,
@@ -377,6 +383,12 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
     if (mounted) setState(() => _showRecoveredRideChoice = false);
   }
 
+  /// Steps away from a recovered ride without ending it (#594).
+  void _setRecoveredRideAside() {
+    widget.app.controller.setRunningRideAside();
+    if (mounted) setState(() => _showRecoveredRideChoice = false);
+  }
+
   Future<void> _endRecoveredRide() async {
     final controller = widget.app.controller;
     if (controller.isLocalRideLeader) {
@@ -398,6 +410,7 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
     consumeJoinGroupRequest: _consumeJoinGroupRequest,
     showRecoveredRideChoice: _showRecoveredRideChoice,
     rejoinRecoveredRide: _rejoinRecoveredRide,
+    setRecoveredRideAside: _setRecoveredRideAside,
     endRecoveredRide: _endRecoveredRide,
   );
 }
@@ -407,12 +420,16 @@ class _RecoveredRideChoiceScreen extends StatefulWidget {
     required this.rideName,
     required this.rideCode,
     required this.onRejoin,
+    required this.onSetAside,
     required this.onEnd,
   });
 
   final String? rideName;
   final String? rideCode;
   final VoidCallback onRejoin;
+
+  /// Steps away without ending it (#594).
+  final VoidCallback onSetAside;
   final Future<void> Function() onEnd;
 
   @override
@@ -433,9 +450,17 @@ class _RecoveredRideChoiceScreenState
         // otherwise empty screen reads as a modal that has gone wrong, and it
         // put the two actions where a thumb is least likely to be. Scrollable
         // with it, so the actions stay reachable at large text sizes.
+        // A vertical scroll view already starts at the top, so no Align is
+        // needed for #594's top-alignment — and one here gave the column a
+        // bounded height it then overflowed once a third action was added.
         child: SingleChildScrollView(
+          // `heightFactor: 1` so this shrink-wraps its child instead of taking
+          // the viewport height. Without it the column below is handed a
+          // bounded height and overflows once a third action is added — which
+          // is what #594 does.
           child: Align(
             alignment: Alignment.topCenter,
+            heightFactor: 1,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 480),
               child: Padding(
@@ -492,6 +517,19 @@ class _RecoveredRideChoiceScreenState
                             )
                           : const Icon(Icons.stop_circle_outlined),
                       label: const Text('End and save ride'),
+                    ),
+                    const SizedBox(height: 10),
+                    // Fully clearable (#594). Neither rejoining nor ending is
+                    // what a rider always wants on launch, and this panel used
+                    // to insist on one of them. Stepping away keeps the ride
+                    // and its journal exactly as they are and puts the rider on
+                    // the map; nothing is relayed while it is set aside,
+                    // because the ride shell is not on screen to relay it.
+                    // More → "Rejoin ride" is the way back.
+                    TextButton(
+                      key: const Key('set-recovered-ride-aside'),
+                      onPressed: _ending ? null : widget.onSetAside,
+                      child: const Text('Not now — take me to the map'),
                     ),
                   ],
                 ),

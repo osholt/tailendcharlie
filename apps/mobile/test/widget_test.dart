@@ -179,6 +179,69 @@ void main() {
     },
   );
 
+  testWidgets('a recovered ride can be set aside and rejoined later', (
+    tester,
+  ) async {
+    // #594. The panel offered only Rejoin or End, so a rider who wanted
+    // neither on launch had no way past it. Stepping away keeps the ride and
+    // its journal intact and puts them on the map; More carries the way back.
+    // Seeded through a disposed controller and reloaded, the way the app meets
+    // a ride that outlived its process — creating one in place does not put
+    // the recovery choice on screen.
+    final eventStore = InMemoryEventStore();
+    final sessionStore = InMemorySessionStore();
+    final seed = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+      rideCodeDirectory: const _SuccessfulRideCodeDirectory(),
+    );
+    await seed.initialize();
+    await seed.createRide('Oliver', rideName: 'Bath loop');
+    await seed.startRide();
+    seed.dispose();
+    final controller = RideController(
+      eventStore,
+      sessionStore,
+      const _FakeNearbyBridge(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(controller, initializeController: controller.initialize),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ride recovered'), findsOneWidget);
+    final rideCode = controller.session!.rideCode;
+
+    // The panel scrolls since #594 top-aligned it, so on a short viewport the
+    // third action is below the fold.
+    final setAside = find.byKey(const Key('set-recovered-ride-aside'));
+    await tester.ensureVisible(setAside);
+    await tester.pumpAndSettle();
+    await tester.tap(setAside);
+    await tester.pumpAndSettle();
+
+    // Fully cleared: on the map, with no panel and no banner nagging.
+    expect(find.text('Ride recovered'), findsNothing);
+    expect(find.byKey(const Key('set-aside-ride-banner')), findsNothing);
+    expect(find.byKey(const Key('home-ride-actions')), findsOneWidget);
+    // Nothing was given up to get here.
+    expect(controller.hasActiveRide, isTrue);
+    expect(controller.rideEnded, isFalse);
+    expect(controller.rideSetAside, isTrue);
+
+    // And there is a way back, which is the half that makes clearing safe.
+    await tester.tap(find.byKey(const Key('home-more-actions')));
+    await tester.pumpAndSettle();
+    expect(find.text('Rejoin ride $rideCode'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('home-rejoin-set-aside-ride')));
+    await tester.pumpAndSettle();
+    expect(controller.rideSetAside, isFalse);
+  });
+
   testWidgets('a ride interrupted by app termination offers rejoin or end', (
     tester,
   ) async {
