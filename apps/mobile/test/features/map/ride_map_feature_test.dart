@@ -2507,8 +2507,8 @@ void main() {
       final matcher = _StubImportedTrackMatcher(
         ImportedTrackMatch(
           route: candidate,
-          confidence: 0.93,
-          traceCoverage: 1,
+          matchedLengthMeters: 1000,
+          originalLengthMeters: 1000,
           meanDeviationMeters: 4,
           maximumDeviationMeters: 11,
         ),
@@ -2578,8 +2578,8 @@ void main() {
     final matcher = _StubImportedTrackMatcher(
       ImportedTrackMatch(
         route: original,
-        confidence: 1,
-        traceCoverage: 1,
+        matchedLengthMeters: 1000,
+        originalLengthMeters: 1000,
         meanDeviationMeters: 0,
         maximumDeviationMeters: 0,
       ),
@@ -6056,6 +6056,76 @@ void main() {
       await pumpRideMap(tester, started: false);
 
       expect(find.byKey(const Key('leave-ride-button')), findsNothing);
+    });
+  });
+
+  // #575, the quiet half. The dialog was offered only when *every* drawable
+  // path was a track, so a file carrying a <trk> beside a <rte> was silently
+  // given a raw line and no explanation.
+  group('offering to make an import navigable', () {
+    ImportedRoute routeWith(
+      List<RoutePath> paths, {
+      List<RouteManeuver> turns = const [],
+    }) => ImportedRoute(
+      id: 'r',
+      name: 'r',
+      importedAt: DateTime.utc(2026, 8, 16),
+      sourceFileName: 'r.gpx',
+      paths: paths,
+      waypoints: const [],
+      maneuvers: turns,
+    );
+
+    const track = RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 51, longitude: -2),
+        GeoPoint(latitude: 51.01, longitude: -2.01),
+      ],
+    );
+    const plannedRoute = RoutePath(
+      kind: RoutePathKind.route,
+      points: [
+        GeoPoint(latitude: 52, longitude: -3),
+        GeoPoint(latitude: 52.01, longitude: -3.01),
+      ],
+    );
+
+    test('a track alone is offered', () {
+      expect(canGenerateNavigableRoute(routeWith(const [track])), isTrue);
+    });
+
+    test('a track beside a different route is still offered', () {
+      // This returned false, which is why the MyRouteApp import landed with no
+      // turn instructions and nothing said about it.
+      expect(
+        canGenerateNavigableRoute(routeWith(const [track, plannedRoute])),
+        isTrue,
+      );
+    });
+
+    test('a file with no track is not offered', () {
+      expect(
+        canGenerateNavigableRoute(routeWith(const [plannedRoute])),
+        isFalse,
+      );
+    });
+
+    test('a route that already has turns is not offered', () {
+      expect(
+        canGenerateNavigableRoute(
+          routeWith(
+            const [track],
+            turns: const [
+              RouteManeuver(
+                position: GeoPoint(latitude: 51, longitude: -2),
+                type: 'turn',
+              ),
+            ],
+          ),
+        ),
+        isFalse,
+      );
     });
   });
 

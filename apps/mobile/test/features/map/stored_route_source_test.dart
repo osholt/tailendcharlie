@@ -470,8 +470,8 @@ class _RecordingTrackMatcher implements ImportedTrackMatcher {
           ),
         ],
       ),
-      confidence: 0.95,
-      traceCoverage: 1,
+      matchedLengthMeters: 1000,
+      originalLengthMeters: 1000,
       meanDeviationMeters: 2,
       maximumDeviationMeters: 5,
     );
