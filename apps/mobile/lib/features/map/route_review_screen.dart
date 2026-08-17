@@ -19,6 +19,7 @@ import '../../services/route_twistiness.dart';
 import '../../services/route_waypoint_editor.dart';
 import 'maneuver_list_screen.dart';
 import 'resolved_route_map_preview.dart';
+import 'sheet_close_button.dart';
 
 enum RouteReviewAction { cancel, edit, another, confirm }
 
@@ -464,6 +465,8 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                       ],
                     ),
                   ),
+                  // A way out that is not "act on it" (#592).
+                  const SheetCloseButton(),
                 ],
               ),
               const SizedBox(height: 18),
@@ -549,6 +552,8 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                       ],
                     ),
                   ),
+                  // A way out that is not "act on it" (#592).
+                  const SheetCloseButton(),
                 ],
               ),
               const SizedBox(height: 18),

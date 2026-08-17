@@ -35,13 +35,11 @@ class HomeRideActions extends StatelessWidget {
   const HomeRideActions({
     super.key,
     required this.onCreate,
-    required this.onJoin,
     required this.onMore,
     this.enabled = true,
   });
 
   final VoidCallback? onCreate;
-  final VoidCallback? onJoin;
   final VoidCallback onMore;
 
   /// False while the controller is busy or a restoration is still being retried,
@@ -76,23 +74,20 @@ class HomeRideActions extends StatelessWidget {
       top: false,
       child: Row(
         children: [
+          // Creating a ride starts from the search field now, and joining sits
+          // beside it and again underneath it once the search is open (#595).
+          // This bar used to carry both, so the older, louder path competed
+          // with the one the rider was meant to use.
+          //
+          // What is kept here is the ride with no destination at all, which
+          // the search cannot express: a rider setting off with the group and
+          // no plan still needs a way in.
           Expanded(
-            flex: 3,
-            child: FilledButton.icon(
+            child: OutlinedButton.icon(
               key: const Key('home-create-ride'),
               onPressed: enabled ? onCreate : null,
-              icon: const Icon(Icons.add_road),
-              label: const Text('Create a ride'),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            flex: 2,
-            child: OutlinedButton.icon(
-              key: const Key('home-join-ride'),
-              onPressed: enabled ? onJoin : null,
-              icon: const Icon(Icons.group_add_outlined),
-              label: const Text('Join a ride'),
+              icon: const Icon(Icons.play_circle_outline),
+              label: const Text('Start without a destination'),
             ),
           ),
           const SizedBox(width: 4),

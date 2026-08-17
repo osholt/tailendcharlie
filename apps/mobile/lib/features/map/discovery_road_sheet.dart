@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/discovery_road_facts.dart';
 import '../../services/motorcycle_discovery.dart';
+import 'sheet_close_button.dart';
 
 /// What a rider sees when they select a discovery road.
 ///
@@ -51,121 +52,137 @@ class DiscoveryRoadSheet extends StatelessWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      feature.category.label,
-                      style: theme.textTheme.labelLarge,
-                    ),
+        // The header is outside the scroll view on purpose. This sheet is
+        // opened `isScrollControlled`, so a feature with a lot of research
+        // behind it fills the screen; a close button inside the scroll view
+        // would scroll away exactly when it is needed (#592).
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    feature.category.label,
+                    style: theme.textTheme.labelLarge,
                   ),
-                  // A pending candidate must not look like a verified one.
-                  DiscoveryResearchBadge(facts: facts),
-                ],
-              ),
-              Text(feature.name, style: theme.textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              Text(
-                [
-                  if (feature.score case final score?) 'Score $score/100',
-                  '${feature.confidence} confidence',
-                  'checked ${feature.lastVerified}',
-                ].join(' · '),
-              ),
-              if (facts.description case final description?) ...[
-                const SizedBox(height: 10),
-                Text(description, key: const Key('discovery-description')),
+                ),
+                // A pending candidate must not look like a verified one.
+                DiscoveryResearchBadge(facts: facts),
+                const SheetCloseButton(),
               ],
-              const SizedBox(height: 12),
-              // A mapped limit and an unknown one must not read the same, so the
-              // known case gets the sign-like emphasis and the unknown one is
-              // deliberately quieter and italic (#145, #160).
-              DiscoveryFactRow(
-                key: const Key('discovery-speed-limit'),
-                icon: facts.speedLimitIsKnown
-                    ? Icons.speed
-                    : Icons.help_outline,
-                headline: facts.speedLimit,
-                headlineStyle: facts.speedLimitIsKnown
-                    ? theme.textTheme.titleMedium
-                    : theme.textTheme.titleMedium?.copyWith(
-                        fontStyle: FontStyle.italic,
-                        color: const Color(0xFF98A3B1),
-                      ),
-                detail: facts.speedLimitProvenance,
-              ),
-              const SizedBox(height: 10),
-              DiscoveryFactRow(
-                key: const Key('discovery-enforcement'),
-                icon: Icons.local_police_outlined,
-                headline: 'Enforcement',
-                detail: facts.enforcementLines.join('\n'),
-              ),
-              const SizedBox(height: 10),
-              DiscoveryFactRow(
-                key: const Key('discovery-busy-periods'),
-                icon: Icons.groups_outlined,
-                headline: 'Busy periods',
-                detail: facts.busyPeriods,
-              ),
-              const SizedBox(height: 10),
-              DiscoveryFactRow(
-                key: const Key('discovery-research-status'),
-                icon: facts.isVerified
-                    ? Icons.verified_outlined
-                    : Icons.pending_outlined,
-                headline: facts.researchLabel,
-                detail: facts.researchDetail,
-              ),
-              const SizedBox(height: 10),
-              DiscoveryFactRow(
-                key: const Key('discovery-source-verification'),
-                icon: facts.sourceIsFetched
-                    ? Icons.fact_check_outlined
-                    : Icons.info_outline,
-                headline: facts.sourceVerificationLabel,
-                detail: facts.sourceVerificationDetail,
-              ),
-              const SizedBox(height: 10),
-              Text(feature.warning),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => onOpenLink?.call(feature.sourceUrl),
-                  icon: const Icon(Icons.open_in_new),
-                  label: Text('Source: ${feature.sourceName}'),
-                ),
-              ),
-              for (final source in facts.evidenceSources)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => onOpenLink?.call(source),
-                    icon: const Icon(Icons.link, size: 18),
-                    label: Text(
-                      Uri.tryParse(source)?.host ?? source,
-                      style: const TextStyle(fontSize: 12),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(feature.name, style: theme.textTheme.headlineSmall),
+                    const SizedBox(height: 8),
+                    Text(
+                      [
+                        if (feature.score case final score?) 'Score $score/100',
+                        '${feature.confidence} confidence',
+                        'checked ${feature.lastVerified}',
+                      ].join(' · '),
                     ),
-                  ),
+                    if (facts.description case final description?) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        description,
+                        key: const Key('discovery-description'),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    // A mapped limit and an unknown one must not read the same, so the
+                    // known case gets the sign-like emphasis and the unknown one is
+                    // deliberately quieter and italic (#145, #160).
+                    DiscoveryFactRow(
+                      key: const Key('discovery-speed-limit'),
+                      icon: facts.speedLimitIsKnown
+                          ? Icons.speed
+                          : Icons.help_outline,
+                      headline: facts.speedLimit,
+                      headlineStyle: facts.speedLimitIsKnown
+                          ? theme.textTheme.titleMedium
+                          : theme.textTheme.titleMedium?.copyWith(
+                              fontStyle: FontStyle.italic,
+                              color: const Color(0xFF98A3B1),
+                            ),
+                      detail: facts.speedLimitProvenance,
+                    ),
+                    const SizedBox(height: 10),
+                    DiscoveryFactRow(
+                      key: const Key('discovery-enforcement'),
+                      icon: Icons.local_police_outlined,
+                      headline: 'Enforcement',
+                      detail: facts.enforcementLines.join('\n'),
+                    ),
+                    const SizedBox(height: 10),
+                    DiscoveryFactRow(
+                      key: const Key('discovery-busy-periods'),
+                      icon: Icons.groups_outlined,
+                      headline: 'Busy periods',
+                      detail: facts.busyPeriods,
+                    ),
+                    const SizedBox(height: 10),
+                    DiscoveryFactRow(
+                      key: const Key('discovery-research-status'),
+                      icon: facts.isVerified
+                          ? Icons.verified_outlined
+                          : Icons.pending_outlined,
+                      headline: facts.researchLabel,
+                      detail: facts.researchDetail,
+                    ),
+                    const SizedBox(height: 10),
+                    DiscoveryFactRow(
+                      key: const Key('discovery-source-verification'),
+                      icon: facts.sourceIsFetched
+                          ? Icons.fact_check_outlined
+                          : Icons.info_outline,
+                      headline: facts.sourceVerificationLabel,
+                      detail: facts.sourceVerificationDetail,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(feature.warning),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () => onOpenLink?.call(feature.sourceUrl),
+                        icon: const Icon(Icons.open_in_new),
+                        label: Text('Source: ${feature.sourceName}'),
+                      ),
+                    ),
+                    for (final source in facts.evidenceSources)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () => onOpenLink?.call(source),
+                          icon: const Icon(Icons.link, size: 18),
+                          label: Text(
+                            Uri.tryParse(source)?.host ?? source,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ),
+                    FilledButton.icon(
+                      key: const Key('discovery-add-to-route'),
+                      onPressed: onAddToRoute,
+                      icon: const Icon(Icons.add_road),
+                      label: const Text('Add to route via here'),
+                    ),
+                    TextButton.icon(
+                      onPressed: onSuggestCorrection,
+                      icon: const Icon(Icons.edit_location_alt_outlined),
+                      label: const Text('Suggest a correction or removal'),
+                    ),
+                  ],
                 ),
-              FilledButton.icon(
-                key: const Key('discovery-add-to-route'),
-                onPressed: onAddToRoute,
-                icon: const Icon(Icons.add_road),
-                label: const Text('Add to route via here'),
               ),
-              TextButton.icon(
-                onPressed: onSuggestCorrection,
-                icon: const Icon(Icons.edit_location_alt_outlined),
-                label: const Text('Suggest a correction or removal'),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

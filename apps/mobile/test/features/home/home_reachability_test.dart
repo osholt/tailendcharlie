@@ -110,8 +110,20 @@ void main() {
   ) async {
     await pumpHome(tester);
 
-    expect(find.text('Create a ride'), findsOneWidget);
-    expect(find.text('Join a ride'), findsOneWidget);
+    // Both changed deliberately in #595, and the rule they protect is intact:
+    // every way in is still offered *in words*, which is what #306 was raised
+    // over. What changed is which words.
+    //
+    // Creating a ride now starts from the search field — the operator asked
+    // for that twice — so the bottom bar no longer carries a louder, older
+    // path to the same thing. What it keeps is the case the search cannot
+    // express: setting off with no destination at all.
+    expect(find.text('Start without a destination'), findsOneWidget);
+    // Joining takes a six-digit code rather than a destination, so it sits
+    // beside the field instead of folding into it. Shortened to fit the bar
+    // next to the field; still a word, never a bare icon.
+    expect(find.text('Join'), findsOneWidget);
+    expect(find.text('Where to?'), findsOneWidget);
   });
 
   testWidgets('ride setup uses the saved symbol and colour without repicking', (
@@ -125,7 +137,10 @@ void main() {
     );
     await pumpHome(tester);
 
-    await tester.tap(find.text('Create a ride'));
+    // By key: #595 relabelled this to "Start without a destination" — creating
+    // a ride around a place now starts from the search field. What this test
+    // is about is the setup sheet behind the button, not its wording.
+    await tester.tap(find.byKey(const Key('home-create-ride')));
     await tester.pumpAndSettle();
 
     expect(find.text('Your colour'), findsNothing);
@@ -198,6 +213,26 @@ void main() {
     expect(find.text('Record a route'), findsOneWidget);
   });
 
+  testWidgets('the field takes the bar while a search is open', (tester) async {
+    // #595: "tapping on search expands the search box horizontally". The other
+    // actions step aside so the field is the whole bar rather than one control
+    // among four, and joining is offered again underneath it.
+    await pumpHome(tester);
+    expect(find.byKey(const Key('home-join-ride')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('home-join-ride')),
+      findsNothing,
+      reason: 'the bar belongs to the field while a search is open',
+    );
+    // The way in it displaced, offered underneath the field instead.
+    expect(find.byKey(const Key('home-search-join-code')), findsOneWidget);
+    expect(find.text('Join a ride with a code'), findsOneWidget);
+  });
+
   testWidgets('joining by QR is offered in words, not only as an icon', (
     tester,
   ) async {
@@ -205,7 +240,10 @@ void main() {
     // then concluded to be missing, because the only way to find it was an
     // unlabelled camera icon inside a text field's suffix.
     await pumpHome(tester);
-    await tester.tap(find.text('Join a ride'));
+    // By key rather than by label: #595 shortened the wording to fit
+    // beside the search field, and what these tests are about is the sheet
+    // behind it, not what the button is called.
+    await tester.tap(find.byKey(const Key('home-join-ride')));
     await tester.pumpAndSettle();
 
     expect(
@@ -220,7 +258,10 @@ void main() {
   ) async {
     // Adding the label must not have quietly replaced the compact affordance.
     await pumpHome(tester);
-    await tester.tap(find.text('Join a ride'));
+    // By key rather than by label: #595 shortened the wording to fit
+    // beside the search field, and what these tests are about is the sheet
+    // behind it, not what the button is called.
+    await tester.tap(find.byKey(const Key('home-join-ride')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('scan-invitation-button')), findsOneWidget);

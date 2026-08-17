@@ -78,15 +78,21 @@ enum RideStartChoice {
 /// surface rather than raising a keyboard under the map. The map is the thing
 /// behind it and pushing it around with a keyboard would undo #426.
 class HomeSearchBar extends StatelessWidget {
-  const HomeSearchBar({super.key, required this.onTap});
+  const HomeSearchBar({super.key, required this.onTap, this.expanded = false});
 
   final VoidCallback onTap;
+
+  /// True while the search is open, so the field grows into it (#595).
+  final bool expanded;
 
   /// Shares [DestinationSearchField] with the ride map rather than matching it
   /// by eye, so the two surfaces cannot drift apart (#579).
   @override
-  Widget build(BuildContext context) =>
-      DestinationSearchField(key: const Key('home-search-bar'), onTap: onTap);
+  Widget build(BuildContext context) => DestinationSearchField(
+    key: const Key('home-search-bar'),
+    onTap: onTap,
+    expanded: expanded,
+  );
 }
 
 /// What the search surface returned.

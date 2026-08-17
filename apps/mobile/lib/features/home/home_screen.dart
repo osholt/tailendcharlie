@@ -152,6 +152,21 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _buildIdentity = BuildIdentity.fromEnvironment();
   bool _joinGroupOpenScheduled = false;
+
+  /// True while the destination search is open, so the field can grow into it
+  /// and the other actions can step aside (#595).
+  bool _searching = false;
+
+  /// Whether a ride may be started or joined right now.
+  ///
+  /// One getter for both ways in. They used to share a single `enabled` on the
+  /// bottom bar; #595 moved joining into the app bar, and gating only one of
+  /// them would let a rider join a ride while a restoration was still in
+  /// flight.
+  bool get _rideEntryEnabled =>
+      !widget.controller.busy &&
+      !_planningDestination &&
+      widget.onRetryRestoration == null;
   late final CarPlayBridge _carPlayBridge;
   String? _carPlayMapStyleJson;
 
@@ -405,31 +420,59 @@ class _HomeScreenState extends State<HomeScreen> {
             hostChrome: HostMapChrome(
               title: HomeSearchBar(
                 onTap: () => unawaited(_searchDestination()),
+                expanded: _searching,
               ),
-              actions: [
-                IconButton(
-                  tooltip: 'Emergency info',
-                  onPressed: () =>
-                      EmergencyInfoSheet.show(context, widget.riderProfile),
-                  icon: const Icon(Icons.medical_information_outlined),
-                ),
-                IconButton(
-                  tooltip: 'Settings',
-                  onPressed: () => UnitSettingsSheet.show(
-                    context,
-                    widget.distanceUnits,
-                    widget.mapStyleMode,
-                    widget.riderProfile,
-                    speedLimitDisplay: widget.speedLimitDisplay,
-                    routeProgressDisplay: widget.routeProgressDisplay,
-                    testControl: widget.testControl,
-                    spokenGuidance: widget.spokenGuidance,
-                    rideDiagnostics: widget.rideDiagnostics,
-                    globalRideHeatmap: widget.globalRideHeatmap,
-                  ),
-                  icon: const Icon(Icons.settings_outlined),
-                ),
-              ],
+              // While a search is open the field takes the whole bar. The
+              // rest step aside rather than competing with it, which is what
+              // makes the search read as the way in rather than one control
+              // among four (#595).
+              actions: _searching
+                  ? const []
+                  : [
+                      // Joining takes a six-digit code, not a destination, so
+                      // it cannot fold into the field the way creating does.
+                      // It sits beside it, and is offered again underneath the
+                      // field once the search is open.
+                      // A word, not a bare icon. #306 was raised because the
+                      // only way to find a feature was an unlabelled glyph,
+                      // and `home_reachability_test.dart` guards it — an
+                      // icon-only version of this failed that suite, which is
+                      // exactly what the suite is for.
+                      TextButton.icon(
+                        key: const Key('home-join-ride'),
+                        onPressed: _rideEntryEnabled
+                            ? () => unawaited(
+                                _showRideSheet(context, creating: false),
+                              )
+                            : null,
+                        icon: const Icon(Icons.group_add_outlined, size: 18),
+                        label: const Text('Join'),
+                      ),
+                      IconButton(
+                        tooltip: 'Emergency info',
+                        onPressed: () => EmergencyInfoSheet.show(
+                          context,
+                          widget.riderProfile,
+                        ),
+                        icon: const Icon(Icons.medical_information_outlined),
+                      ),
+                      IconButton(
+                        tooltip: 'Settings',
+                        onPressed: () => UnitSettingsSheet.show(
+                          context,
+                          widget.distanceUnits,
+                          widget.mapStyleMode,
+                          widget.riderProfile,
+                          speedLimitDisplay: widget.speedLimitDisplay,
+                          routeProgressDisplay: widget.routeProgressDisplay,
+                          testControl: widget.testControl,
+                          spokenGuidance: widget.spokenGuidance,
+                          rideDiagnostics: widget.rideDiagnostics,
+                          globalRideHeatmap: widget.globalRideHeatmap,
+                        ),
+                        icon: const Icon(Icons.settings_outlined),
+                      ),
+                    ],
             ),
             onMapStyleResolved: (styleJson) {
               _carPlayMapStyleJson = styleJson;
@@ -477,12 +520,8 @@ class _HomeScreenState extends State<HomeScreen> {
             right: 0,
             bottom: 0,
             child: HomeRideActions(
-              enabled:
-                  !widget.controller.busy &&
-                  !_planningDestination &&
-                  widget.onRetryRestoration == null,
+              enabled: _rideEntryEnabled,
               onCreate: () => _showRideSheet(context, creating: true),
-              onJoin: () => _showRideSheet(context, creating: false),
               onMore: () => unawaited(_showMoreActions(context)),
             ),
           ),
@@ -555,64 +594,94 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       useSafeArea: true,
       backgroundColor: const Color(0xFF171D25),
+      // Scrollable, and `isScrollControlled` so it may exceed half the screen.
+      // This was a bare Column: it fitted until #594 added the way back to a
+      // set-aside ride, and then overflowed by 35 pixels on a short viewport.
+      // A menu that grows by one entry should not start clipping.
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              key: const Key('start-ride-simulator'),
-              leading: const Icon(Icons.science_outlined),
-              title: const Text('Try a simulated ride'),
-              subtitle: const Text('Never shares your location'),
-              enabled:
-                  !widget.controller.busy && widget.onRetryRestoration == null,
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                widget.controller.createSimulationRide();
-              },
-            ),
-            ListTile(
-              key: const Key('record-a-route-button'),
-              leading: const Icon(Icons.fiber_manual_record_outlined),
-              title: const Text('Record a route'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                unawaited(
-                  RouteRecorderScreen.show(context, widget.recordedRoutes),
-                );
-              },
-            ),
-            ListTile(
-              key: const Key('ride-library-button'),
-              leading: const Icon(Icons.route_outlined),
-              title: const Text('Ride library'),
-              subtitle: Text(
-                widget.completedRides.rides.isEmpty
-                    ? 'Recorded routes and previous rides'
-                    : 'Recorded routes and ${widget.completedRides.rides.length} previous ride${widget.completedRides.rides.length == 1 ? '' : 's'}',
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                key: const Key('start-ride-simulator'),
+                leading: const Icon(Icons.science_outlined),
+                title: const Text('Try a simulated ride'),
+                subtitle: const Text('Never shares your location'),
+                enabled:
+                    !widget.controller.busy &&
+                    widget.onRetryRestoration == null,
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  widget.controller.createSimulationRide();
+                },
               ),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                unawaited(_openRideLibrary(context));
-              },
-            ),
-            const Divider(height: 8),
-            ListTile(
-              key: const Key('home-build-identity'),
-              leading: const Icon(Icons.info_outline),
-              title: Text(
-                '${_buildIdentity.versionLabel} · '
-                '${_buildIdentity.track.label}',
+              ListTile(
+                key: const Key('record-a-route-button'),
+                leading: const Icon(Icons.fiber_manual_record_outlined),
+                title: const Text('Record a route'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(
+                    RouteRecorderScreen.show(context, widget.recordedRoutes),
+                  );
+                },
               ),
-              subtitle: const Text('No account required'),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                unawaited(
-                  AboutBuildSheet.show(context, identity: _buildIdentity),
-                );
-              },
-            ),
-          ],
+              // The way back from a set-aside ride (#594). Stepping away from a
+              // recovered ride keeps it and its journal intact but takes the
+              // rider off it entirely — no banner, nothing on the map — so the
+              // route back has to be somewhere they can find it.
+              if (widget.controller.rideSetAside &&
+                  widget.controller.session != null)
+                ListTile(
+                  key: const Key('home-rejoin-set-aside-ride'),
+                  leading: const Icon(Icons.restore),
+                  title: Text(
+                    'Rejoin ride ${widget.controller.session!.rideCode}',
+                  ),
+                  subtitle: Text(
+                    widget.controller.rideEnded
+                        ? 'Its summary and recap are still here'
+                        : 'Still running, and set aside on this phone',
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    widget.controller.reopenEndedRide();
+                  },
+                ),
+              ListTile(
+                key: const Key('ride-library-button'),
+                leading: const Icon(Icons.route_outlined),
+                title: const Text('Ride library'),
+                subtitle: Text(
+                  widget.completedRides.rides.isEmpty
+                      ? 'Recorded routes and previous rides'
+                      : 'Recorded routes and ${widget.completedRides.rides.length} previous ride${widget.completedRides.rides.length == 1 ? '' : 's'}',
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_openRideLibrary(context));
+                },
+              ),
+              const Divider(height: 8),
+              ListTile(
+                key: const Key('home-build-identity'),
+                leading: const Icon(Icons.info_outline),
+                title: Text(
+                  '${_buildIdentity.versionLabel} · '
+                  '${_buildIdentity.track.label}',
+                ),
+                subtitle: const Text('No account required'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(
+                    AboutBuildSheet.show(context, identity: _buildIdentity),
+                  );
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -626,6 +695,17 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Takes no context: it uses the State's own, so the `mounted` check after
   /// each await is guarding the thing actually being used.
   Future<void> _searchDestination() async {
+    // The field grows into the search and the other actions step aside while
+    // it is open (#595).
+    setState(() => _searching = true);
+    try {
+      await _runDestinationSearch();
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  Future<void> _runDestinationSearch() async {
     final outcome = await HomeDestinationSearchSheet.show(
       context,
       searchService: _destinationPlanner.searchService,

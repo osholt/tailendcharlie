@@ -16,15 +16,27 @@ import 'package:flutter/material.dart';
 ///
 /// One widget rather than two matching ones, because two matching ones drift.
 class DestinationSearchField extends StatelessWidget {
-  const DestinationSearchField({super.key, required this.onTap});
+  const DestinationSearchField({
+    super.key,
+    required this.onTap,
+    this.expanded = false,
+  });
 
   final VoidCallback onTap;
+
+  /// Grows to the full width of the bar while a search is open.
+  ///
+  /// The field is the way in, so opening one should look like the field
+  /// growing into it rather than an unrelated sheet appearing over the top
+  /// (#595). The host collapses its other actions at the same time; this only
+  /// says how the field itself should read.
+  final bool expanded;
 
   @override
   Widget build(BuildContext context) => Material(
     color: const Color(0xF21A2029),
-    borderRadius: BorderRadius.circular(14),
-    elevation: 6,
+    borderRadius: BorderRadius.circular(expanded ? 10 : 14),
+    elevation: expanded ? 2 : 6,
     child: InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: onTap,

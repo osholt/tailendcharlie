@@ -198,9 +198,32 @@ class RideController extends ChangeNotifier {
   /// ride clears `rideEnded`, and the flag with it.
   bool get endedRideSetAside => _endedRideSetAside && rideEnded;
 
+  /// A ride of any state the rider has stepped away from.
+  ///
+  /// `endedRideSetAside` above is the narrower, older question and is what the
+  /// ended-ride banner is keyed on. This one also covers a ride that is still
+  /// running, which a rider can now step away from when the app recovers one on
+  /// launch and they want neither to rejoin it nor to end it (#594).
+  ///
+  /// **Stepping away is not the same as sharing.** A set-aside ride is not on
+  /// screen, so `ActiveRideShell` is not mounted and its foreground location
+  /// controller is not running — nothing is relayed while a rider is on the
+  /// map. The ride and its journal are untouched and it can be reopened.
+  bool get rideSetAside => _endedRideSetAside && hasActiveRide;
+
   /// Steps away from an ended ride, keeping it and all of its data intact.
   void setEndedRideAside() {
     if (!rideEnded || _endedRideSetAside) return;
+    _endedRideSetAside = true;
+    notifyListeners();
+  }
+
+  /// Steps away from a ride that is still running, keeping it intact.
+  ///
+  /// Separate from [setEndedRideAside] so the narrower rule that one enforces
+  /// — only an *ended* ride — stays enforced for its own callers.
+  void setRunningRideAside() {
+    if (!hasActiveRide || rideEnded || _endedRideSetAside) return;
     _endedRideSetAside = true;
     notifyListeners();
   }
