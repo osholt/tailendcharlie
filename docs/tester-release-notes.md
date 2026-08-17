@@ -36,6 +36,56 @@ permissions by design.
 - ...
 ```
 
+## iOS build 65 / Android build 65 — 17 August 2026
+
+The rest of the 17 August feedback: sheets you can back out of, layer controls
+that are actually somewhere, a recovered-ride prompt you can dismiss, and setup
+that lets you go straight to the map.
+
+### What to test
+
+1. **Backing out of a place.** Tap a café or a good-road highlight on the map.
+   There is a **✕** at the top of the sheet now. Close it and confirm your route
+   is untouched. Try it on a road with a lot of detail — the ✕ should stay put
+   while you scroll rather than disappearing off the top.
+2. **Choosing which layers show.** **Settings → Map layers**, near the top.
+   Turn the cafés or a road type off and confirm the map changes and the choice
+   sticks after a restart. This works during a ride too, which the old ⋯ menu
+   could not: there is no top bar once navigation is running.
+3. **The "ride recovered" prompt.** If the app finds a ride still running when
+   it opens, the prompt now sits at the top and has a third option: **Not now —
+   take me to the map**. Take it. You should land on the map with nothing
+   nagging you. Then **More → Rejoin ride NNNNNN** to go back into it. Nothing
+   is shared while it is set aside.
+4. **Starting a ride from the search.** The **Where to?** field is the way in.
+   Tap it and it takes the whole bar; **Join a ride with a code** is underneath.
+   **Join** sits beside the field for when you have a code and no destination.
+   The bottom bar now only offers **Start without a destination**.
+5. **First-run setup** (needs a fresh install, or Settings → replay the guide).
+   The last step offers **Take me to the map** as well as the two ride options.
+   Take it and you should land on the map having committed to nothing.
+
+### Fixed
+
+- A café or highlight sheet could only be escaped by adding it to your route.
+- The layer controls were not reachable during a ride at all, and could silently
+  do nothing when they were.
+- One failed file read used to remove every map layer *and* your saved layer
+  choices, with nothing said.
+- The recovered-ride prompt sat in the middle of the screen and offered no way
+  out but rejoining or ending.
+- Setup insisted on creating or joining a ride before it would let you through.
+- The More menu clipped its last entry on shorter screens.
+
+### Known limitations
+
+- Nothing here has been on a physical phone. It is covered by automated tests
+  only; the simulator was not available for this round.
+- **Turning an imported GPX into turn-by-turn directions was fixed in build 64**
+  and still wants a real ride to judge it — the turns are counted, not followed.
+- The set-aside ride is reached from **More**, not from a banner. If that turns
+  out to be too well hidden, say so.
+
 ## iOS build 64 / Android build 64 — 17 August 2026
 
 Turning an imported GPX into turn-by-turn directions now works. It never has
