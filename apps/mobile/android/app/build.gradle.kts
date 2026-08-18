@@ -144,4 +144,17 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging")
     testImplementation("androidx.car.app:app-testing:1.7.0")
     testImplementation("junit:junit:4.13.2")
+    // The car surface is `Canvas` code, and the head unit is hard to reach: the
+    // Desktop Head Unit needs a real Android Auto host and the emulator image
+    // ships only `AndroidAutoStubPrebuilt`. These let the surface be drawn at
+    // head-unit sizes on real Android graphics and the pixels looked at (#602).
+    // Real android.graphics on the JVM, so the car surface can be drawn and
+    // looked at without a head unit. The Desktop Head Unit needs a real Android
+    // Auto host and the emulator image ships only `AndroidAutoStubPrebuilt`, so
+    // there is otherwise no way to see these pixels at all (#602).
+    //
+    // Robolectric rather than an instrumentation test: a Flutter plugin pins
+    // androidx.test:runner to strictly 1.3.0, whose 2020-era manifest will not
+    // merge against this app's minSdk.
+    testImplementation("org.robolectric:robolectric:4.13")
 }

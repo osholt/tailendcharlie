@@ -258,6 +258,71 @@ Behaviour that the unit tests in `tools/tester_notify/tests/` pin down:
    in this repository can compare them - check both by hand whenever either
    changes.
 
+### How the sending identity is actually wired, as of 18 August 2026
+
+Both silent failures above are now closed, and the arrangement is worth writing
+down because **most of what Mail-in-a-Box says about it looks broken and is not**.
+
+The sender is `testing@tailendcharlie.app`:
+
+- a **mail user on `box.holt.racing`** (Mail-in-a-Box), which is what the SMTP
+  secrets authenticate as. The box only ever *sends* for this domain.
+- **DNS stays on Cloudflare.** SPF is
+  `v=spf1 a:box.holt.racing include:_spf.mx.cloudflare.net ~all` — the `a:`
+  authorises the box, the `include:` keeps Cloudflare Email Routing working.
+  There is exactly one SPF record; a second one starting `v=spf1` is a permerror
+  that breaks all mail for the domain, so this record is **edited, never added
+  to**. DKIM is the box's key on selector `mail`; Cloudflare's own `cf2024-1`
+  selector is separate and untouched.
+- **MX stays on Cloudflare Email Routing.** Inbound never reaches the box.
+  `testing@` forwards to `oliver@holt.racing` so replies and Google's own
+  administrative mail are readable.
+- a **member of the tester group with Posting: Allowed and Subscription: No
+  email**. Posting matters: every other member of that group is "Not allowed",
+  so without it the release mail is held for moderation for ever.
+
+#### Mail-in-a-Box will email you that this domain is misconfigured. It is not.
+
+MiaB assumes that adding a mail domain means it owns the whole domain — DNS, web
+and mail. This domain is send-only, so its status checks report failures that are
+the intended configuration. **Do not act on these:**
+
+| MiaB complains | Why it is correct as-is |
+| --- | --- |
+| Nameservers should be `ns1/ns2.box.holt.racing` | Cloudflare serves the Pages site and Email Routing. Repointing these takes the website down and stops inbound mail. |
+| MX should be `10 box.holt.racing`; "mail will not be delivered to this box" | Intended. Inbound belongs to Cloudflare Email Routing. |
+| Domain should resolve to `77.68.35.237` | It resolves to Cloudflare's proxy IPs, which is where the website is. |
+| `www` / `autoconfig` / `autodiscover` should be the box's IP | The box serves nothing on this domain. |
+| DNSSEC DS record is not set | Optional, and the DS values MiaB prints are its *own* signing keys. The box is not authoritative for this zone, so they are useless here. Enable DNSSEC in Cloudflare and use Cloudflare's DS if you ever want it. |
+
+MiaB also creates `postmaster@tailendcharlie.app ↦ administrator@box.holt.racing`
+on its side. Since MX is Cloudflare, nothing ever reaches it. Harmless and dead.
+
+#### Postgrey and forwarded mail
+
+`/etc/postgrey/whitelist_clients.local` on the box whitelists `104.30.0.0/19` and
+`2405:8100:c000::/38`, Cloudflare Email Routing's published egress. The packaged
+whitelist has `cloudflare.net`, which does **not** match: Email Routing sends
+from `cloudflare-email.net`, and some of those IPs have no reverse DNS at all, so
+postfix logs them as `unknown` and no hostname-suffix rule can match. Greylisting
+a rotating pool with no PTR never clears.
+
+This affects mail *into* `oliver@holt.racing` via the forward, not the release
+mail, which travels from the box to Google and never meets postgrey.
+
+#### If a tester mail does not arrive, check in this order
+
+The mail log on the box is the only place that answers this honestly:
+
+```bash
+ssh holt-mail 'sudo sh -c "grep -iE \"googlegroups|tailendcharlie|104\\.30\\.\" /var/log/mail.log | tail -30"'
+```
+
+A Cloudflare connection showing `ehlo=1 starttls=1 quit=1` with no `mail=` or
+`rcpt=` is Cloudflare's periodic destination heartbeat, **not** a delivery
+attempt — do not mistake it for one. A real forward looks like
+`ehlo=2 starttls=1 mail=1 rcpt=1 data=1` followed by `status=sent`.
+
 To see the mail without configuring anything, run the tool directly:
 
 ```bash

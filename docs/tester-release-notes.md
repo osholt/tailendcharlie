@@ -36,6 +36,72 @@ permissions by design.
 - ...
 ```
 
+## iOS build 67 / Android build 67 — 18 August 2026
+
+**Android Auto, for the first time.** Keith reported it not working while CarPlay
+does, and he was right — three separate reasons, two of them in the app and one in
+Google Play. All three are fixed. **Keith, this build is mostly for you.**
+
+iOS is unchanged apart from the free-roam work already in build 66.
+
+### What to test — Android Auto
+
+1. **Does it appear at all?** Plug into your head unit. Tail End Charlie should be
+   in the Android Auto app list. Until today the app was never offered to Android
+   Auto by Play, whatever the phone did, so this is the first question and
+   everything else depends on it.
+2. **Open it from the car with the phone app closed.** Do not open the app on the
+   phone first. It used to say *"Waiting for ride status — open Tail End Charlie
+   on the phone"*, because the phone app owned the only running copy of the app's
+   brain and nobody had started it. It should now come up on its own.
+3. **A long ride with the phone in a pocket.** It used to go to *"Phone status is
+   stale"* about two minutes in, for the same reason. It should stay live for the
+   whole ride now. This is the one that most needs a real ride rather than a
+   driveway.
+4. **The map.** You should see the route, the part you have ridden in grey, the
+   part still to come in orange, the rest of the group in their own colours, and
+   your own bike with a nose showing which way you are pointing. **There are no
+   roads or place names behind it** — see Known limitations.
+5. **The turn card and the arrival strip.** Distance to the next instruction, the
+   road name, and an ETA. The ETA comes from the phone, so it should match the
+   phone exactly rather than being a second opinion.
+6. **Where to?** Search for somewhere from the car at a standstill. The phone does
+   the searching and the routing, so results and any error messages should read
+   the same as on the phone.
+7. **Ride / Start ride.** With no ride, **Ride** starts free roam. With a ride set
+   up but not started, **Start ride** starts it — and if the phone will not let
+   you, it should tell you why in the phone's own words.
+8. **Group.** One press from the map. Whoever needs attention is at the top.
+
+### Fixed
+
+- The app was never offered to Android Auto by Google Play at all. Nothing in the
+  app could have fixed that.
+- Android Auto only ever showed a list of text rows — no map, no turn card. It had
+  been that way since the feature was first added and never grew with CarPlay.
+- The app's brain stopped whenever Android reclaimed the phone screen, which took
+  the car surface stale with it.
+- Your bike was drawn as a plain dot with no heading, on a north-up map, so there
+  was no way to tell whether the line ahead of the dot was in front of you or
+  behind.
+
+### Known limitations
+
+- **No roads or place names on the Android Auto map.** The route, the group and
+  your bike are drawn on a plain background. CarPlay gets to reuse the phone's map
+  directly; Android Auto hands over a bare canvas and the map has to be rebuilt on
+  it, which is a bigger job and is being done separately. Tell me whether the
+  route-and-group view is enough to ride with, because that genuinely changes how
+  much the tiles matter.
+- **None of the Android Auto work has run on real hardware.** The Android emulator
+  ships a placeholder version of Android Auto with nothing behind it, so this is
+  the first time this code meets a real head unit. Expect rough edges and please
+  report them rather than assuming they are known.
+- **No SOS, leave-ride or hazard reporting on the car screen.** Deliberate. Those
+  are safety-critical on a bike and I would not add them without being able to
+  test them first. Use the phone.
+- The **iOS** side of this build is unchanged from 66.
+
 ## iOS build 66 / Android build 66 — 17 August 2026
 
 **You no longer need a ride to go somewhere.** Open the app, tap **Where to?**,

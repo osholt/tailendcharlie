@@ -35,13 +35,26 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    /**
+     * Attach to the process-wide engine rather than creating a private one.
+     *
+     * `FlutterActivity` destroys an engine it created when the activity goes,
+     * which took Dart — the ride journal, the relay, the projection bridge —
+     * with it. On the phone that is invisible; on a head unit it is the whole
+     * of #602. `shouldDestroyEngineWithHost` is false for a cached engine, so
+     * Dart now outlives the screen.
+     */
+    override fun getCachedEngineId(): String {
+        RideRelayEngine.ensure(applicationContext)
+        return RideRelayEngine.ENGINE_ID
+    }
+
     companion object {
         private const val METHOD_CHANNEL = "me.osholt.ride_relay/nearby"
         private const val EVENT_CHANNEL = "me.osholt.ride_relay/nearby_events"
         private const val GPX_METHOD_CHANNEL = "me.osholt.ride_relay/gpx_import"
         private const val PLANNER_LINK_METHOD_CHANNEL = "me.osholt.ride_relay/planner_link"
         private const val PUSH_METHOD_CHANNEL = "me.osholt.ride_relay/push"
-        private const val PROJECTED_RIDE_METHOD_CHANNEL = "me.osholt.ride_relay/carplay"
         private const val GROUP_PIP_METHOD_CHANNEL = "me.osholt.ride_relay/group_pip"
         private const val PERMISSION_REQUEST = 7102
         private const val PUSH_PERMISSION_REQUEST = 7103
@@ -170,30 +183,9 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            PROJECTED_RIDE_METHOD_CHANNEL,
-        ).setMethodCallHandler { call, result ->
-            if (call.method == "updateViewport" || call.method == "updateMapStyle") {
-                // Android Auto does not render an app-owned map canvas yet.
-                // Accept the shared bridge update so the phone map can publish
-                // at its normal cadence without logging a platform error.
-                result.success(null)
-                return@setMethodCallHandler
-            }
-            if (call.method != "updateSnapshot") {
-                result.notImplemented()
-                return@setMethodCallHandler
-            }
-            @Suppress("UNCHECKED_CAST")
-            val snapshot = call.arguments as? Map<String, Any?>
-            if (snapshot == null) {
-                result.error("invalid_arguments", "Snapshot must be a map", null)
-            } else {
-                AndroidAutoSnapshotStore.update(snapshot)
-                result.success(null)
-            }
-        }
+        // The projected-ride channel is registered on the engine itself, in
+        // `ProjectedRideChannel`, so the head unit keeps receiving ride state
+        // when this activity is gone (#602).
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             GROUP_PIP_METHOD_CHANNEL,

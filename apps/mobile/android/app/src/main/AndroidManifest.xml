@@ -55,7 +55,7 @@
 
     <application
         android:label="Tail End Charlie"
-        android:name="${applicationName}"
+        android:name=".RideRelayApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher">
         <meta-data
