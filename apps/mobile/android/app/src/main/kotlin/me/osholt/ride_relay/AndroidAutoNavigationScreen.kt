@@ -2,6 +2,7 @@ package me.osholt.ride_relay
 
 import android.graphics.Rect
 import androidx.car.app.CarContext
+import androidx.car.app.CarToast
 import androidx.car.app.Screen
 import androidx.car.app.SurfaceCallback
 import androidx.car.app.SurfaceContainer
@@ -168,6 +169,55 @@ internal class AndroidAutoNavigationScreen(
      */
     private fun actionStrip(snapshot: ProjectedRideSnapshot?): ActionStrip {
         val builder = ActionStrip.Builder()
+        // Where to? first, because going somewhere is what a rider reaches for.
+        if (snapshot?.canPlanRoute == true) {
+            builder.addAction(
+                Action.Builder()
+                    .setTitle("Where to?")
+                    .setOnClickListener {
+                        screenManager.push(AndroidAutoDestinationScreen(carContext))
+                    }
+                    .build(),
+            )
+        }
+        // Starting the prepared ride, only while the phone says it may be
+        // started, and carrying the phone's own refusal when it may not.
+        val rideStart = snapshot?.rideStart
+        if (rideStart != null) {
+            builder.addAction(
+                Action.Builder()
+                    .setTitle("Start ride")
+                    .setOnClickListener {
+                        val refusal = rideStart.unavailableReason
+                        if (!rideStart.enabled && refusal != null) {
+                            CarToast.makeText(carContext, refusal, CarToast.LENGTH_LONG).show()
+                        } else {
+                            ProjectedRideChannel.startPreparedRide {}
+                        }
+                    }
+                    .build(),
+            )
+        } else if (snapshot?.canFreeRoam == true) {
+            // No ride to start, so the way onto the map is free roam. Offered
+            // only when the phone says it is available — location has to be
+            // granted on the handset first and the phone knows whether it was.
+            builder.addAction(
+                Action.Builder()
+                    .setTitle("Ride")
+                    .setOnClickListener {
+                        ProjectedRideChannel.startFreeRoam { error ->
+                            if (error != null) {
+                                CarToast.makeText(
+                                    carContext,
+                                    error,
+                                    CarToast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
+                    }
+                    .build(),
+            )
+        }
         builder.addAction(
             Action.Builder()
                 .setTitle(groupSummary(snapshot))

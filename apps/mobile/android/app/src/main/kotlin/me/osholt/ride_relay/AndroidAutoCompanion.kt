@@ -52,6 +52,20 @@ internal data class ProjectedJourney(
     val arrivalAtMillis: Long?,
 )
 
+/**
+ * Whether the phone will let the rider start the ride it has prepared.
+ *
+ * `detail` and the two refusals are worded by the phone, so the car repeats them
+ * rather than inventing its own. Two surfaces explaining the same refusal
+ * differently is how they drift apart.
+ */
+internal data class ProjectedRideStart(
+    val enabled: Boolean,
+    val detail: String?,
+    val warning: String?,
+    val unavailableReason: String?,
+)
+
 internal data class ProjectedRideSnapshot(
     val routeName: String?,
     val rideState: String,
@@ -76,6 +90,17 @@ internal data class ProjectedRideSnapshot(
     val followRider: Boolean,
     val metric: Boolean,
     val darkMap: Boolean,
+    /**
+     * What the phone is showing: `home`, `preRide`, `activeRide`, `endedRide`.
+     *
+     * The car offers different actions on each, and it cannot infer the state
+     * from the presence of a route — free roam with a route and a started ride
+     * with a route look identical otherwise.
+     */
+    val surfaceMode: String?,
+    val canPlanRoute: Boolean,
+    val canFreeRoam: Boolean,
+    val rideStart: ProjectedRideStart?,
     val updatedAtMillis: Long,
 ) {
     /** True while the phone is publishing often enough to be believed. */
@@ -118,6 +143,10 @@ internal data class ProjectedRideSnapshot(
                 // has not chosen sees kilometres rather than a wrong unit.
                 metric = raw.boundedString("distanceUnit") != "miles",
                 darkMap = (raw["basemap"] as? Map<*, *>)?.get("dark") == true,
+                surfaceMode = raw.boundedString("surfaceMode"),
+                canPlanRoute = raw["canPlanRoute"] == true,
+                canFreeRoam = raw["canFreeRoam"] == true,
+                rideStart = rideStart(raw["rideStart"] as? Map<*, *>),
                 updatedAtMillis = (raw["updatedAtMillis"] as? Number)?.toLong()
                     ?: System.currentTimeMillis(),
             )
@@ -148,6 +177,16 @@ internal data class ProjectedRideSnapshot(
                 remainingMeters = meters,
                 remainingSeconds = seconds,
                 arrivalAtMillis = arrival,
+            )
+        }
+
+        private fun rideStart(raw: Map<*, *>?): ProjectedRideStart? {
+            if (raw == null) return null
+            return ProjectedRideStart(
+                enabled = raw["enabled"] == true,
+                detail = raw.boundedString("detail"),
+                warning = raw.boundedString("warning"),
+                unavailableReason = raw.boundedString("unavailableReason"),
             )
         }
 

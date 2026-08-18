@@ -155,6 +155,49 @@ class AndroidAutoCompanionTest {
     }
 
     @Test
+    fun `the surface state that decides which actions to offer is read`() {
+        // The car cannot infer these. Free roam with a route and a started ride
+        // with a route look identical from geometry alone, and whether the phone
+        // will accept "start the ride" is the phone's judgement, not the car's.
+        val snapshot = ProjectedRideSnapshot.from(
+            mapOf(
+                "surfaceMode" to "preRide",
+                "canPlanRoute" to true,
+                "canFreeRoam" to false,
+                "rideStart" to mapOf(
+                    "enabled" to false,
+                    "detail" to "1 rider ready",
+                    "warning" to "Nobody is covering the back",
+                    "unavailableReason" to "Allow location access on the phone first.",
+                ),
+            ),
+        )
+
+        assertEquals("preRide", snapshot.surfaceMode)
+        assertTrue(snapshot.canPlanRoute)
+        assertFalse(snapshot.canFreeRoam)
+        val rideStart = snapshot.rideStart!!
+        assertFalse(rideStart.enabled)
+        assertEquals("1 rider ready", rideStart.detail)
+        assertEquals("Nobody is covering the back", rideStart.warning)
+        // Repeated verbatim rather than reworded: two projected surfaces
+        // explaining the same refusal differently is how they drift.
+        assertEquals(
+            "Allow location access on the phone first.",
+            rideStart.unavailableReason,
+        )
+    }
+
+    @Test
+    fun `no ride to start is absent rather than a disabled card`() {
+        val snapshot = ProjectedRideSnapshot.from(mapOf("canFreeRoam" to true))
+
+        assertNull(snapshot.rideStart)
+        assertTrue(snapshot.canFreeRoam)
+        assertFalse(snapshot.canPlanRoute)
+    }
+
+    @Test
     fun `snapshot store updates listeners and retains latest in process`() {
         var notified = 0
         val listener = AndroidAutoSnapshotStore.Listener { notified++ }
