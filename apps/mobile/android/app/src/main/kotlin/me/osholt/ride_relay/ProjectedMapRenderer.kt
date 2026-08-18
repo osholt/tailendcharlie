@@ -71,7 +71,12 @@ internal class ProjectedMapRenderer {
         // marker that must not be underneath somebody else.
         snapshot.localPoint?.let { point ->
             if (camera.contains(point)) {
-                drawLocalRider(canvas, camera.x(point), camera.y(point))
+                drawLocalRider(
+                    canvas,
+                    camera.x(point),
+                    camera.y(point),
+                    snapshot.localHeadingDegrees,
+                )
             }
         }
         return true
@@ -138,7 +143,40 @@ internal class ProjectedMapRenderer {
         }
     }
 
-    private fun drawLocalRider(canvas: Canvas, x: Float, y: Float) {
+    /**
+     * The rider, and which way the bike is pointing.
+     *
+     * The heading is drawn because the map is north-up: without it a rider has
+     * no way to tell whether the line ahead of the dot is in front of them or
+     * behind. The phone and CarPlay both show it and the phone has always sent
+     * it — this used to parse the field and then draw a plain circle (#602).
+     *
+     * A null heading is a stationary bike or a fix with no course, which is
+     * honest as a plain dot: an arrow pointing at the last known heading is a
+     * claim about a direction nobody is travelling in.
+     */
+    private fun drawLocalRider(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        headingDegrees: Double?,
+    ) {
+        if (headingDegrees != null) {
+            canvas.save()
+            // Screen degrees, not compass: the canvas rotates clockwise from
+            // the positive x axis and a heading is clockwise from north.
+            canvas.rotate(headingDegrees.toFloat() - 90f, x, y)
+            val nose = Path().apply {
+                moveTo(x + LOCAL_RADIUS_PX + 14f, y)
+                lineTo(x + LOCAL_RADIUS_PX - 1f, y - 9f)
+                lineTo(x + LOCAL_RADIUS_PX - 1f, y + 9f)
+                close()
+            }
+            marker.style = Paint.Style.FILL
+            marker.color = Color.WHITE
+            canvas.drawPath(nose, marker)
+            canvas.restore()
+        }
         marker.style = Paint.Style.FILL
         marker.color = Color.WHITE
         canvas.drawCircle(x, y, LOCAL_RADIUS_PX + 4f, marker)
