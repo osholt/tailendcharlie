@@ -4,6 +4,7 @@ import io
 import sys
 import tempfile
 import unittest
+from email.utils import getaddresses
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -322,6 +323,33 @@ class MainTest(unittest.TestCase):
         self.assertNotIn(RECIPIENT, markdown)
         self.assertIn("t***@example.invalid", markdown)
         self.assertIn("Sent to", markdown)
+
+    def test_a_display_name_reaches_the_header_but_not_the_envelope(self) -> None:
+        """The From may carry a friendly name; the envelope may not.
+
+        Testers see "Tail End Charlie" rather than a bare address, which is what
+        `RIDE_RELAY_TESTER_NOTIFY_FROM` is set to in this repository.
+
+        The envelope sender has to stay the bare address, because the sending box
+        enforces Postfix's `reject_authenticated_sender_login_mismatch`: an
+        envelope of `Tail End Charlie <testing@...>` would not match the SASL
+        login and every release mail would be rejected. `send_message` derives
+        the envelope from this header, so the two are one string in the code and
+        two different strings on the wire — exactly the kind of thing a later
+        refactor breaks silently.
+        """
+        message = build_message(
+            render_email(context()),
+            "Tail End Charlie <releases@example.invalid>",
+            RECIPIENT,
+        )
+
+        self.assertEqual(
+            message["From"], "Tail End Charlie <releases@example.invalid>"
+        )
+        # Precisely what smtplib.send_message does to pick MAIL FROM.
+        envelope = getaddresses([message["From"]])[0][1]
+        self.assertEqual(envelope, "releases@example.invalid")
 
     def test_builds_a_plain_text_message(self) -> None:
         message = build_message(render_email(context()), "releases@example.invalid", RECIPIENT)
