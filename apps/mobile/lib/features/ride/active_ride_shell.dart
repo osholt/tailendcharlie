@@ -79,7 +79,6 @@ import '../../services/ride_completion_detector.dart';
 import '../../services/route_progress.dart';
 import '../../services/route_journey_progress.dart';
 import '../../services/ride_membership.dart';
-import '../../services/ride_screen_awake.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../services/ride_diagnostics_log_writer.dart';
 import '../../services/ride_diagnostics_recorder.dart';
@@ -303,8 +302,6 @@ class ActiveRideShell extends StatefulWidget {
     this.routeProgressDisplay,
     this.completedRideStore,
     this.globalRideHeatmap,
-    this.screenWakeLock = const WakelockPlusScreenWakeLock(),
-    this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.pushTokenSource,
     this.pushRegistrationApi,
     this.roadRatings,
@@ -347,8 +344,6 @@ class ActiveRideShell extends StatefulWidget {
   final RouteProgressDisplayController? routeProgressDisplay;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
-  final ScreenWakeLock screenWakeLock;
-  final Duration screenWakeReassertInterval;
   final PushTokenSource? pushTokenSource;
   final PushRegistrationApi? pushRegistrationApi;
 
@@ -1174,8 +1169,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _promptedTecRequestIds = <String>{};
   bool _tecRequestPromptOpen = false;
 
-  late final RideScreenAwakeCoordinator _screenAwakeCoordinator;
-
   SituationalAwarenessController? _awarenessController;
 
   /// The bundled fixed-camera layer, read once and kept for the life of the
@@ -1274,13 +1267,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _observedRideStarted =
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
     if (_observedRideStarted) unawaited(_warmNaturalVoiceIfNeeded());
-    _screenAwakeCoordinator = RideScreenAwakeCoordinator(
-      wakeLock: widget.screenWakeLock,
-      reassertInterval: widget.screenWakeReassertInterval,
-      onError: (error, _) {
-        if (kDebugMode) debugPrint('Could not enforce ride wake lock: $error');
-      },
-    )..start();
     // Issue #102: advisory off-route rejoin routing. Uses the same documented
     // OSRM configuration as the rest of the app; when it is unreachable the
     // planner degrades to the plain "you are off route by X" message.
@@ -5678,7 +5664,6 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(_diagnosticsWriter?.flush());
     widget.rideDiagnostics?.removeListener(_onRideDiagnosticsChanged);
     widget.spokenGuidance?.removeListener(_onSpokenGuidanceChanged);
-    unawaited(_screenAwakeCoordinator.stop());
     widget.rideController.removeListener(_onRideControllerChanged);
     widget.sharedRoutes.removeListener(_onSharedRoutesChanged);
     _simulationController?.removeListener(_onSimulationVisualChanged);

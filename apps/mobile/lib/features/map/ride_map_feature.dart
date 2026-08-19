@@ -2028,6 +2028,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     onPressed: _route == null ? null : _showWholeRoute,
                     icon: const Icon(Icons.fit_screen),
                   ),
+                // The host's actions before the overflow menu, so the map's
+                // own controls keep their position as the host's set changes.
+                // One row, one widget tree, one hit test.
+                ...?hostChrome?.actions,
+                // The overflow menu last, which on a host-chromed map means
+                // after the host's actions too. It used to come first, and on
+                // Home — where every icon above it is gated off — that left it a
+                // bare `...` between the search field and Join. Nothing covered
+                // it and it worked; it was simply not where a menu is looked for,
+                // which is #306's complaint arriving by a new route (#606).
                 PopupMenuButton<_MapAction>(
                   key: const Key('map-layer-actions'),
                   iconSize: landscape ? 22 : 24,
@@ -2170,9 +2180,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       ),
                   ],
                 ),
-                // Last, so the map's own controls keep their position as the
-                // host's set changes. One row, one widget tree, one hit test.
-                ...?hostChrome?.actions,
               ],
             ),
       body: _loading
