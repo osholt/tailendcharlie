@@ -3095,7 +3095,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ],
   );
 
-  Widget _buildGroupMiniMap({
+  /// Null when there is nothing to draw — a solo ride, or no riders yet.
+  ///
+  /// Null and not `SizedBox.shrink()`: the landscape layout decides where the
+  /// SOS/LEAVE/REPORT cluster goes by asking whether a mini-map exists, and an
+  /// invisible widget answers yes. On every solo ride that reserved 240pt of
+  /// corner for nothing and exiled the safety cluster to the middle of the
+  /// screen (#619) — reported from ride 723888 as "the sos and other buttons
+  /// somehow end up aligned to the middle".
+  Widget? _buildGroupMiniMap({
     required List<MapOverlayMarker> overlays,
     required double width,
     required double height,
@@ -3109,7 +3117,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // rider overlays are live. Taking only the snapshot left the iOS mini-map
     // hidden when it still said "1" after remote positions arrived.
     final groupSize = math.max(widget.groupRiderCount ?? 0, inferredGroupSize);
-    if (groupSize <= 1) return const SizedBox.shrink();
+    if (groupSize <= 1) return null;
     return _GroupMiniMap(
       width: width,
       height: height,
