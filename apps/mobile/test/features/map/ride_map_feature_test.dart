@@ -4552,6 +4552,110 @@ void main() {
     await tester.pump();
   });
 
+  // #608. `build` anchors the bottom rail at `overlayBottom` — the system inset
+  // plus a host's bar — and says of it that the camera's bottom-chrome fraction
+  // "measures this band too and has to agree with what is drawn in it". It did
+  // not: the two measurements the camera was given report how tall the rail is
+  // and not how far above the display's bottom edge it starts, so the camera
+  // aimed as though the band ran to the very bottom of the map.
+  testWidgets('the follow camera counts the host bar the rail is drawn above', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('host-band');
+    addTearDown(() => directory.deleteSync(recursive: true));
+
+    final route = ImportedRoute(
+      id: 'band',
+      name: 'Band route',
+      importedAt: DateTime.utc(2026, 8, 19),
+      sourceFileName: 'band.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [],
+    );
+
+    Future<double> riderFractionWith({required double hostBottomInset}) async {
+      SharedPreferences.setMockInitialValues({});
+      final navigation = ValueNotifier<MapNavigationPosition?>(
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 53, longitude: -1.015),
+          recordedAt: DateTime.utc(2026, 8, 19, 12),
+          speedMetersPerSecond: 13,
+          headingDegrees: 90,
+          accuracyMeters: 5,
+        ),
+      );
+      addTearDown(navigation.dispose);
+      final speedLimitDisplay = SpeedLimitDisplayController.inMemory();
+      addTearDown(speedLimitDisplay.dispose);
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      NavigationCameraViewport? viewport;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(route),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            navigationPosition: navigation,
+            distanceUnit: DistanceUnit.miles,
+            speedLimitDisplay: speedLimitDisplay,
+            routeAuthority: RouteAuthority.personal,
+            hostChrome: HostMapChrome(
+              title: const Text('Where to?'),
+              actions: const [],
+              bottomInset: hostBottomInset,
+            ),
+            onNavigationViewportChanged: (value) => viewport = value,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+
+      expect(viewport, isNotNull);
+      final fraction = viewport!.riderViewportFraction;
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      return fraction;
+    }
+
+    // The bar Home stands on this map (`HomeRideActions.reservedHeight`).
+    final withBar = await riderFractionWith(hostBottomInset: 84);
+    final withoutBar = await riderFractionWith(hostBottomInset: 0);
+
+    expect(
+      withBar,
+      lessThan(withoutBar),
+      reason:
+          'a bar standing on the map is 84 pixels the camera may not aim into, '
+          'so the rider has to come up the frame, not stay where it was',
+    );
+    // And the rider-facing claim: clear of the bar, not merely higher than
+    // before.
+    final size = tester.view.physicalSize / tester.view.devicePixelRatio;
+    expect(
+      withBar * size.height,
+      lessThan(size.height - 84),
+      reason: 'the marker is behind the bar at this fraction',
+    );
+  });
+
   testWidgets('a ride with no route keeps SOS, Leave and the ride menu', (
     tester,
   ) async {
