@@ -560,6 +560,18 @@ class _HomeScreenState extends State<HomeScreen> {
               hasRoute: _routeOnMap != null,
               onCreate: () => unawaited(_rideWithOthers()),
               onMore: () => unawaited(_showMoreActions(context)),
+              // A ride that is still *running* and has been stepped away from
+              // (#594). `rideSetAside` alone would be too broad: it is also
+              // true of an ended ride kept for its summary (#207), and there
+              // starting another is exactly right — the ride is over, and
+              // `_SetAsideRideBanner` above already offers the way back to it.
+              // A running ride has no banner at all, which is what left the bar
+              // as the only thing speaking, saying the wrong thing.
+              activeRideCode:
+                  widget.controller.rideSetAside && !widget.controller.rideEnded
+                  ? widget.controller.session?.rideCode
+                  : null,
+              onReopen: widget.controller.reopenEndedRide,
             ),
           ),
         ],
