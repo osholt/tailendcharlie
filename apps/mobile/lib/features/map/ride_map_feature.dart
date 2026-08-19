@@ -3788,6 +3788,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
     return height == null ? 0 : height + 12;
   }
 
+  /// The offset the bottom rail is drawn at, which the rail's own height is
+  /// measured on top of.
+  ///
+  /// This is `overlayBottom` in [build], and deliberately the same expression:
+  /// the system inset plus the host's bar, if a host stands one on this map.
+  /// The comment there says the camera's bottom-chrome fraction "measures this
+  /// band too and has to agree with what is drawn in it" — and it did not. The
+  /// two measurements below report only how tall the rail is, so the camera was
+  /// told a band that started at the bottom of the display while the rail
+  /// actually starts this far above it (#608).
+  ///
+  /// Counted in both orientations, unlike the two below: the system inset and a
+  /// host's bar are both full width, so there is no orientation in which the
+  /// marker escapes them.
+  double get _overlayBottomInsetPixels =>
+      MediaQuery.paddingOf(context).bottom +
+      (widget.hostChrome?.bottomInset ?? 0);
+
   /// Height of the wider bottom-right landscape guidance rail, including its
   /// margin from the display edge. The camera uses this exactly as portrait
   /// uses its bottom band whenever the card extends beneath the rider anchor.
@@ -3819,9 +3837,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
       latitudeDegrees: position.latitude,
       bottomChromeFraction: viewportHeight <= 0
           ? 0
-          : (landscape
-                    ? _landscapeGuidanceHeightPixels
-                    : _bottomChromeHeightPixels) /
+          : ((landscape
+                        ? _landscapeGuidanceHeightPixels
+                        : _bottomChromeHeightPixels) +
+                    _overlayBottomInsetPixels) /
                 viewportHeight,
       leftHandTraffic: _routeUsesLeftHandTraffic,
     );

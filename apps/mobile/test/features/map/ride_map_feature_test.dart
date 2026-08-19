@@ -4552,6 +4552,135 @@ void main() {
     await tester.pump();
   });
 
+  // #608. `build` anchors the bottom rail at `overlayBottom` — the system inset
+  // plus a host's bar — and says of it that the camera's bottom-chrome fraction
+  // "measures this band too and has to agree with what is drawn in it". It did
+  // not: the two measurements the camera was given report how tall the rail is
+  // and not how far above the display's bottom edge it starts, so the camera
+  // aimed as though the band ran to the very bottom of the map.
+  testWidgets('the follow camera counts the host bar the rail is drawn above', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('host-band');
+    addTearDown(() => directory.deleteSync(recursive: true));
+
+    final route = ImportedRoute(
+      id: 'band',
+      name: 'Band route',
+      importedAt: DateTime.utc(2026, 8, 19),
+      sourceFileName: 'band.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            GeoPoint(latitude: 53, longitude: -1.02),
+            GeoPoint(latitude: 53, longitude: -1),
+          ],
+        ),
+      ],
+      waypoints: const [],
+      maneuvers: const [],
+    );
+
+    Future<double> riderFractionWith({
+      required double hostBottomInset,
+      required bool landscape,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      // Landscape matters more than portrait here, and is where the report
+      // came from: the viewport is less than half as tall, so the same bar is a
+      // far larger share of it and the rest fraction is higher to begin with.
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = landscape
+          ? const Size(874 * 3, 402 * 3)
+          : const Size(402 * 3, 874 * 3);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final navigation = ValueNotifier<MapNavigationPosition?>(
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 53, longitude: -1.015),
+          recordedAt: DateTime.utc(2026, 8, 19, 12),
+          speedMetersPerSecond: 13,
+          headingDegrees: 90,
+          accuracyMeters: 5,
+        ),
+      );
+      addTearDown(navigation.dispose);
+      final speedLimitDisplay = SpeedLimitDisplayController.inMemory();
+      addTearDown(speedLimitDisplay.dispose);
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      NavigationCameraViewport? viewport;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(route),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            navigationPosition: navigation,
+            distanceUnit: DistanceUnit.miles,
+            speedLimitDisplay: speedLimitDisplay,
+            routeAuthority: RouteAuthority.personal,
+            hostChrome: HostMapChrome(
+              title: const Text('Where to?'),
+              actions: const [],
+              bottomInset: hostBottomInset,
+            ),
+            onNavigationViewportChanged: (value) => viewport = value,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+
+      expect(viewport, isNotNull);
+      final fraction = viewport!.riderViewportFraction;
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      return fraction;
+    }
+
+    // The bar Home stands on this map (`HomeRideActions.reservedHeight`).
+    for (final landscape in [false, true]) {
+      final where = landscape ? 'landscape' : 'portrait';
+      final withBar = await riderFractionWith(
+        hostBottomInset: 84,
+        landscape: landscape,
+      );
+      final withoutBar = await riderFractionWith(
+        hostBottomInset: 0,
+        landscape: landscape,
+      );
+
+      expect(
+        withBar,
+        lessThan(withoutBar),
+        reason:
+            'in $where a bar standing on the map is 84 pixels the camera may '
+            'not aim into, so the rider comes up the frame rather than staying '
+            'where it was',
+      );
+
+      // And the rider-facing claim: the marker, not its centre, clear of the
+      // bar. The reported symptom was in landscape, where the viewport is 402
+      // points tall and the bar plus its safe inset is a quarter of it.
+      final height = landscape ? 402.0 : 874.0;
+      const markerRadius = 22.0;
+      expect(
+        withBar * height + markerRadius,
+        lessThan(height - 84),
+        reason: 'the marker is still behind the bar in $where',
+      );
+    }
+  });
+
   testWidgets('a ride with no route keeps SOS, Leave and the ride menu', (
     tester,
   ) async {
