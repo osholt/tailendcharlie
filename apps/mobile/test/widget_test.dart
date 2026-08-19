@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/app/ride_relay_app.dart';
+import 'package:ride_relay/services/ride_screen_awake.dart';
 import 'package:ride_relay/controllers/distance_unit_controller.dart';
 import 'package:ride_relay/controllers/completed_rides_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
@@ -525,6 +526,38 @@ void main() {
 
     expect(controller.hasActiveRide, isTrue);
     expect(directory.attempts, 2);
+  });
+
+  testWidgets('the screen is held awake with no ride at all (#607)', (
+    tester,
+  ) async {
+    // The coordinator was built by the active-ride shell, so the display stayed
+    // on inside a started ride and nowhere else — not on the home map, not in
+    // the pre-ride shell, and not in free roam, which since #600 is a full
+    // navigation surface with no ride behind it. A rider following a route out
+    // there watched the screen time out.
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    final wakeLock = _RecordingWakeLock();
+
+    await tester.pumpWidget(_app(controller, screenWakeLock: wakeLock));
+    await tester.pumpAndSettle();
+
+    expect(
+      controller.hasActiveRide,
+      isFalse,
+      reason: 'the whole point is that this holds with no ride',
+    );
+    expect(wakeLock.calls, [true]);
+
+    // And it is re-asserted on resume, because both platforms drop a lock they
+    // previously granted across a lifecycle change.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(wakeLock.calls, [true, true]);
   });
 
   testWidgets('settings can override locale-based distance units', (
@@ -1050,6 +1083,7 @@ RideRelayApp _app(
   PlanDirectory? planDirectory,
   Future<void> Function()? initializeController,
   Duration startupFallbackAfter = const Duration(seconds: 2),
+  ScreenWakeLock? screenWakeLock,
 }) => RideRelayApp(
   controller: controller,
   distanceUnits: DistanceUnitController.forLocale(const Locale('en', 'GB')),
@@ -1064,6 +1098,7 @@ RideRelayApp _app(
   enableNativeServices: false,
   initializeController: initializeController,
   startupFallbackAfter: startupFallbackAfter,
+  screenWakeLock: screenWakeLock ?? const WakelockPlusScreenWakeLock(),
 );
 
 Future<RideController> _controller({
@@ -1185,4 +1220,13 @@ class _FakeNearbyBridge extends NearbyBridge {
     nearbyApiLinked: false,
     status: 'phase0',
   );
+}
+
+/// Records what the app asked of the display, so a test can tell "held awake"
+/// from "asked once and dropped".
+class _RecordingWakeLock implements ScreenWakeLock {
+  final List<bool> calls = [];
+
+  @override
+  Future<void> setEnabled(bool enabled) async => calls.add(enabled);
 }
