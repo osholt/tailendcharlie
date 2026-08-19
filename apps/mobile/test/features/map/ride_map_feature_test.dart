@@ -5830,6 +5830,27 @@ void main() {
       }
     });
 
+    testWidgets('the layer menu is the last thing in the row (#606)', (
+      tester,
+    ) async {
+      await pumpWithChrome(tester, hosted: true);
+
+      // Not whether it is there — #572 settled that. Where it is. With a host
+      // sharing the row every one of the map's own icons is gated off, so a
+      // menu built before the host's actions comes out *first*: an unlabelled
+      // `...` between the search field and Join. That was reported from build
+      // 67 as the menu having been removed, which is what an unfindable
+      // control is (#306).
+      final menu = tester.getCenter(find.byKey(const Key('map-layer-actions')));
+      for (final host in ['host-emergency', 'host-settings']) {
+        expect(
+          menu.dx,
+          greaterThan(tester.getCenter(find.byKey(Key(host))).dx),
+          reason: 'the menu belongs after $host, at the end of the row',
+        );
+      }
+    });
+
     testWidgets('the layer menu opens, every time', (tester) async {
       await pumpWithChrome(tester, hosted: true);
 
