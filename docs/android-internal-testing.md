@@ -222,7 +222,7 @@ Configuration, all optional - with none of it set the step renders and skips:
 | Kind | Name | Purpose |
 | --- | --- | --- |
 | Variable | `RIDE_RELAY_ANDROID_TESTER_GROUP` | The closed-tester group address - `tail-end-charlie-testers@googlegroups.com`. **Unset means dry run** - the mail is rendered into the summary and nothing is sent. The tool never guesses a recipient, and refuses anything that is not one plain address. |
-| Variable | `RIDE_RELAY_TESTER_NOTIFY_FROM` | The From address. |
+| Variable | `RIDE_RELAY_TESTER_NOTIFY_FROM` | The From address. May carry a display name — it is `Tail End Charlie <testing@tailendcharlie.app>` here, so testers see a name rather than a bare address. The **envelope** sender must stay the bare address: the box enforces `reject_authenticated_sender_login_mismatch`, and an envelope carrying the display name would not match the SASL login. `send_message` derives the envelope from this header and strips the name; a test pins that. |
 | Variable | `RIDE_RELAY_TESTER_NOTIFY_SMTP_HOST` | SMTP host. |
 | Variable | `RIDE_RELAY_TESTER_NOTIFY_SMTP_PORT` | SMTP port; defaults to 587 (STARTTLS). 465 uses implicit TLS. Plaintext SMTP is never attempted. |
 | Secret | `RIDE_RELAY_TESTER_NOTIFY_SMTP_USERNAME` | SMTP username. |
