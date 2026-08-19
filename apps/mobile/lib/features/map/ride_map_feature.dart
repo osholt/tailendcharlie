@@ -3711,21 +3711,37 @@ class _RideMapScreenState extends State<RideMapScreen> {
         : MediaQuery.sizeOf(context).width;
   }
 
-  /// The route engine states traffic side per manoeuvre. Taking the majority
-  /// makes one malformed step unable to mirror the whole ride; an unannotated
-  /// route keeps the product's UK left-traffic default.
+  /// Whether this route is ridden on the left.
+  ///
+  /// Landscape places the rider two thirds across the frame on the left and one
+  /// third across on the right, so getting this wrong does not degrade the view
+  /// — it mirrors it. Ride 723888, 17 miles around Bristol, came back with 46
+  /// manoeuvres annotated `right` and 23 `left`, so the majority vote this used
+  /// to take concluded right-hand traffic and put the bike in the left third of
+  /// the screen (#613).
+  ///
+  /// The asymmetry below is deliberate, and reads the field as the engine seems
+  /// to mean it: `left` is only ever emitted where the data says so, while
+  /// `right` also arrives where the engine simply has nothing — which is why two
+  /// thirds of a British ride came back `right`. So one explicit `left`
+  /// outweighs any number of `right`s, and only a route with no `left` anywhere
+  /// is treated as right-hand traffic. An unannotated route keeps the product's
+  /// UK default, as before.
+  ///
+  /// The cost of this asymmetry is a genuinely right-hand-traffic route carrying
+  /// one spurious `left` step, which would be framed for the UK. That is the
+  /// same failure as having no annotation at all, and a mirrored ride is worse.
   bool get _routeUsesLeftHandTraffic {
-    var left = 0;
     var right = 0;
     for (final maneuver in _route?.maneuvers ?? const <RouteManeuver>[]) {
       switch (maneuver.drivingSide?.trim().toLowerCase()) {
         case 'left':
-          left += 1;
+          return true;
         case 'right':
           right += 1;
       }
     }
-    return left >= right;
+    return right == 0;
   }
 
   /// How much of the bottom of the screen an interrupting alert must leave
