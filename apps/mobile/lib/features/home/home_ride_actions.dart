@@ -38,9 +38,29 @@ class HomeRideActions extends StatelessWidget {
     required this.onMore,
     this.hasRoute = false,
     this.enabled = true,
+    this.activeRideCode,
+    this.onReopen,
   });
 
   final VoidCallback? onCreate;
+
+  /// A ride that is still running which the rider has stepped away from (#594).
+  ///
+  /// When there is one, going back to it is the primary action and creating a
+  /// second is not offered at all. It used to be: this bar asked only whether
+  /// the controller was busy, so it went on saying "Ride with others" over a
+  /// live ride, and pressing it called `createRide` again and stranded the
+  /// first. The way back existed but was a `ListTile` inside More, while the
+  /// bar above it advertised the wrong thing louder (#605).
+  ///
+  /// Deliberately not set for an *ended* ride kept for its summary (#207).
+  /// There, starting another ride is right — the ride is over — and the
+  /// set-aside banner already carries the way back to it. A running ride has no
+  /// banner, which is why the bar was the only thing speaking.
+  final String? activeRideCode;
+
+  /// Reopens [activeRideCode]. Required in practice whenever that is set.
+  final VoidCallback? onReopen;
 
   /// Whether the map behind this bar is already following a route.
   ///
@@ -94,14 +114,23 @@ class HomeRideActions extends StatelessWidget {
           // the map is already yours, and this brings company to it, with
           // whatever route is on screen.
           Expanded(
-            child: OutlinedButton.icon(
-              key: const Key('home-create-ride'),
-              onPressed: enabled ? onCreate : null,
-              icon: const Icon(Icons.group_outlined),
-              label: Text(
-                hasRoute ? 'Ride this with others' : 'Ride with others',
-              ),
-            ),
+            child: activeRideCode != null
+                ? OutlinedButton.icon(
+                    key: const Key('home-back-to-ride'),
+                    onPressed: onReopen,
+                    // The same icon as the More sheet's way back, because it is
+                    // the same action.
+                    icon: const Icon(Icons.restore),
+                    label: Text('Back to ride $activeRideCode'),
+                  )
+                : OutlinedButton.icon(
+                    key: const Key('home-create-ride'),
+                    onPressed: enabled ? onCreate : null,
+                    icon: const Icon(Icons.group_outlined),
+                    label: Text(
+                      hasRoute ? 'Ride this with others' : 'Ride with others',
+                    ),
+                  ),
           ),
           const SizedBox(width: 4),
           // A word, not a bare icon. #306 was raised because the only way to

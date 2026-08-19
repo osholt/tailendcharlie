@@ -108,6 +108,50 @@ void main() {
     await tester.pump();
   }
 
+  // #605. Reported from build 67: "the bar at the bottom to ride with others
+  // doesn't disappear when a ride is created". It does on the create path — the
+  // shell takes the screen — but not in the state below, and there the bar went
+  // on offering to create a *second* ride over a live one.
+  testWidgets('the bar offers the ride the rider already has', (tester) async {
+    await pumpHome(tester);
+    expect(find.text('Ride with others'), findsOneWidget);
+
+    // Stepping away from a running ride is the one state where Home is on
+    // screen while a ride exists (#594): the app-level builder hands every
+    // other live ride to the shell.
+    await rideController.createRide('Oliver');
+    rideController.setRunningRideAside();
+    expect(rideController.rideSetAside, isTrue);
+    // Pumped again rather than settled: `HomeScreen` does not listen to the
+    // controller. In production the app root's `AnimatedBuilder` merges it and
+    // rebuilds this screen, and pumping it afresh is that rebuild.
+    await pumpHome(tester);
+
+    final code = rideController.session!.rideCode;
+    expect(
+      find.text('Back to ride $code'),
+      findsOneWidget,
+      reason: 'in words on the bar, not a ListTile buried inside More',
+    );
+    expect(
+      find.text('Ride with others'),
+      findsNothing,
+      reason: 'pressing that called createRide again and stranded the first',
+    );
+
+    // And it goes back rather than merely saying so.
+    await tester.tap(find.text('Back to ride $code'));
+    await tester.pump();
+    expect(rideController.rideSetAside, isFalse);
+
+    // The other side of the boundary — an *ended* ride kept for its summary is
+    // set aside too (#207), and there starting another ride is right — is
+    // asserted by 'ended ride can be closed and reopened without filing it' in
+    // widget_test.dart, which expects 'Ride with others' in exactly that state.
+    // Not repeated here: `endRide` leaves a timer pending that this harness has
+    // no shell to dispose, and two tests asserting it is one too many anyway.
+  });
+
   testWidgets('starting a ride is offered in words on the first screen', (
     tester,
   ) async {
