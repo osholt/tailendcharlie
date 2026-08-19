@@ -344,9 +344,7 @@ class MainTest(unittest.TestCase):
             RECIPIENT,
         )
 
-        self.assertEqual(
-            message["From"], "Tail End Charlie <releases@example.invalid>"
-        )
+        self.assertEqual(message["From"], "Tail End Charlie <releases@example.invalid>")
         # Precisely what smtplib.send_message does to pick MAIL FROM.
         envelope = getaddresses([message["From"]])[0][1]
         self.assertEqual(envelope, "releases@example.invalid")
