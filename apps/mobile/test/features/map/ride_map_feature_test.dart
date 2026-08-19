@@ -4582,8 +4582,20 @@ void main() {
       maneuvers: const [],
     );
 
-    Future<double> riderFractionWith({required double hostBottomInset}) async {
+    Future<double> riderFractionWith({
+      required double hostBottomInset,
+      required bool landscape,
+    }) async {
       SharedPreferences.setMockInitialValues({});
+      // Landscape matters more than portrait here, and is where the report
+      // came from: the viewport is less than half as tall, so the same bar is a
+      // far larger share of it and the rest fraction is higher to begin with.
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = landscape
+          ? const Size(874 * 3, 402 * 3)
+          : const Size(402 * 3, 874 * 3);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final navigation = ValueNotifier<MapNavigationPosition?>(
         MapNavigationPosition(
           point: const GeoPoint(latitude: 53, longitude: -1.015),
@@ -4636,24 +4648,37 @@ void main() {
     }
 
     // The bar Home stands on this map (`HomeRideActions.reservedHeight`).
-    final withBar = await riderFractionWith(hostBottomInset: 84);
-    final withoutBar = await riderFractionWith(hostBottomInset: 0);
+    for (final landscape in [false, true]) {
+      final where = landscape ? 'landscape' : 'portrait';
+      final withBar = await riderFractionWith(
+        hostBottomInset: 84,
+        landscape: landscape,
+      );
+      final withoutBar = await riderFractionWith(
+        hostBottomInset: 0,
+        landscape: landscape,
+      );
 
-    expect(
-      withBar,
-      lessThan(withoutBar),
-      reason:
-          'a bar standing on the map is 84 pixels the camera may not aim into, '
-          'so the rider has to come up the frame, not stay where it was',
-    );
-    // And the rider-facing claim: clear of the bar, not merely higher than
-    // before.
-    final size = tester.view.physicalSize / tester.view.devicePixelRatio;
-    expect(
-      withBar * size.height,
-      lessThan(size.height - 84),
-      reason: 'the marker is behind the bar at this fraction',
-    );
+      expect(
+        withBar,
+        lessThan(withoutBar),
+        reason:
+            'in $where a bar standing on the map is 84 pixels the camera may '
+            'not aim into, so the rider comes up the frame rather than staying '
+            'where it was',
+      );
+
+      // And the rider-facing claim: the marker, not its centre, clear of the
+      // bar. The reported symptom was in landscape, where the viewport is 402
+      // points tall and the bar plus its safe inset is a quarter of it.
+      final height = landscape ? 402.0 : 874.0;
+      const markerRadius = 22.0;
+      expect(
+        withBar * height + markerRadius,
+        lessThan(height - 84),
+        reason: 'the marker is still behind the bar in $where',
+      );
+    }
   });
 
   testWidgets('a ride with no route keeps SOS, Leave and the ride menu', (
