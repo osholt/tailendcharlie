@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../controllers/distance_unit_controller.dart';
@@ -23,6 +24,7 @@ import 'ride_invitation_link_gate.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/ride/active_ride_shell.dart';
 import '../internet/plan_directory.dart';
+import '../services/ride_screen_awake.dart';
 import '../services/test_control_registry.dart';
 
 class RideRelayApp extends StatelessWidget {
@@ -46,6 +48,8 @@ class RideRelayApp extends StatelessWidget {
     this.testControlRegistry,
     this.spokenGuidance,
     this.rideDiagnostics,
+    this.screenWakeLock = const WakelockPlusScreenWakeLock(),
+    this.screenWakeReassertInterval = const Duration(seconds: 15),
     this.enableNativeServices = true,
     this.initializeController,
     this.startupFallbackAfter = const Duration(seconds: 2),
@@ -92,6 +96,23 @@ class RideRelayApp extends StatelessWidget {
   /// How long the dedicated restore screen may own the app before the normal
   /// home screen is exposed with the persisted ride named there.
   final Duration startupFallbackAfter;
+
+  /// Holds the display awake for as long as the app is in the foreground.
+  ///
+  /// This used to live in the active-ride shell, so the screen stayed on inside
+  /// a started ride and nowhere else — not on the home map, not in the pre-ride
+  /// shell, and not in free roam, which since #600 is a full navigation surface
+  /// with no ride behind it at all. A rider following a route out here watched
+  /// the display time out (#607).
+  ///
+  /// One owner, deliberately. With a coordinator here *and* one in the shell,
+  /// the shell's `stop()` on dispose would call `setEnabled(false)` and put the
+  /// app-wide lock out every time a rider ended a ride.
+  final ScreenWakeLock screenWakeLock;
+
+  /// How often the lock is re-asserted. Both platforms drop a previously
+  /// acquired lock across lifecycle and window changes.
+  final Duration screenWakeReassertInterval;
 
   @override
   Widget build(BuildContext context) => _RideRestoreGate(app: this);
@@ -308,6 +329,7 @@ class _RideRestoreGate extends StatefulWidget {
 }
 
 class _RideRestoreGateState extends State<_RideRestoreGate> {
+  late final RideScreenAwakeCoordinator _screenAwake;
   Timer? _fallbackTimer;
   bool _restorationComplete = false;
   bool _showRestorationFallback = false;
@@ -319,6 +341,16 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
   @override
   void initState() {
     super.initState();
+    // Started here rather than in the ride shell so the display stays on
+    // wherever the app is: the home map, the pre-ride shell, free roam and the
+    // sheets, not only inside a started ride (#607).
+    _screenAwake = RideScreenAwakeCoordinator(
+      wakeLock: widget.app.screenWakeLock,
+      reassertInterval: widget.app.screenWakeReassertInterval,
+      onError: (error, _) {
+        if (kDebugMode) debugPrint('Could not hold the screen awake: $error');
+      },
+    )..start();
     _restorationComplete = widget.app.initializeController == null;
     if (!_restorationComplete) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -330,6 +362,7 @@ class _RideRestoreGateState extends State<_RideRestoreGate> {
   @override
   void dispose() {
     _fallbackTimer?.cancel();
+    unawaited(_screenAwake.stop());
     super.dispose();
   }
 
