@@ -2518,6 +2518,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
                         // orientations rather than changing hierarchy with the
                         // ETA card.
                         showClock: false,
+                        // Free roam only. A ride's route belongs to the group
+                        // and leaves through LEAVE / the ride menu; out here
+                        // the route is the rider's own and the card that says
+                        // "you are navigating" carries the way to stop (#615).
+                        onStop: widget.hostChrome != null && widget.canEditRoute
+                            ? () => unawaited(_stopFreeRoamNavigation())
+                            : null,
                       );
               },
             );
@@ -3095,7 +3102,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
     ],
   );
 
-  Widget _buildGroupMiniMap({
+  /// Null when there is nothing to draw — a solo ride, or no riders yet.
+  ///
+  /// Null and not `SizedBox.shrink()`: the landscape layout decides where the
+  /// SOS/LEAVE/REPORT cluster goes by asking whether a mini-map exists, and an
+  /// invisible widget answers yes. On every solo ride that reserved 240pt of
+  /// corner for nothing and exiled the safety cluster to the middle of the
+  /// screen (#619) — reported from ride 723888 as "the sos and other buttons
+  /// somehow end up aligned to the middle".
+  Widget? _buildGroupMiniMap({
     required List<MapOverlayMarker> overlays,
     required double width,
     required double height,
@@ -3109,7 +3124,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // rider overlays are live. Taking only the snapshot left the iOS mini-map
     // hidden when it still said "1" after remote positions arrived.
     final groupSize = math.max(widget.groupRiderCount ?? 0, inferredGroupSize);
-    if (groupSize <= 1) return const SizedBox.shrink();
+    if (groupSize <= 1) return null;
     return _GroupMiniMap(
       width: width,
       height: height,
@@ -7143,31 +7158,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await _downloadOfflineMap();
       case _MapAction.removeRoute:
         if (!widget.canEditRoute || !await _confirmRemoveRoute()) return;
-        await widget.routeStore.clearActiveRoute();
-        if (mounted) {
-          _routeProgressTracker.reset();
-          setState(() {
-            _route = null;
-            _setRouteStartConnector(null);
-            _rejoinProgressTracker.reset();
-            _rejoinProgressGeometry = _rejoinProgressTracker.update(
-              _externalRejoinRoute,
-              _effectivePosition,
-            );
-            _progressGeometry = const RouteProgressGeometry.empty();
-            _navigationMode = false;
-            _navigationCanvasActive = false;
-            _markerPlanVisible = false;
-            _initialCameraPositioned = false;
-            _releaseNavigationViewport();
-          });
-          _navigationGuidance.value =
-              const NavigationGuidanceAssessment.noRoute();
-          widget.onNavigationGuidanceChanged?.call(null);
-          await _syncMapLibreSources();
-          widget.onRouteChanged?.call(null);
-          widget.onRouteCommitted?.call(null);
-        }
+        await _clearActiveRouteAndState();
       case _MapAction.clearOfflineTiles:
         await _mapLibreOfflineManager.clearAll();
         await widget.offlineTileCache.clearAll();
@@ -7369,6 +7360,69 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (!mounted || confirmed != true) return;
     await _speedLimitDisplay.setEnabled(true);
     _observeSpeedLimit(_navigationFix);
+  }
+
+  /// Clears the active route and every piece of state that follows from it.
+  ///
+  /// Shared by the overflow menu's "Remove route" and by the ETA card's
+  /// "Stop navigating" (#615), so the two exits cannot drift apart.
+  Future<void> _clearActiveRouteAndState() async {
+    await widget.routeStore.clearActiveRoute();
+    if (!mounted) return;
+    _routeProgressTracker.reset();
+    setState(() {
+      _route = null;
+      _setRouteStartConnector(null);
+      _rejoinProgressTracker.reset();
+      _rejoinProgressGeometry = _rejoinProgressTracker.update(
+        _externalRejoinRoute,
+        _effectivePosition,
+      );
+      _progressGeometry = const RouteProgressGeometry.empty();
+      _navigationMode = false;
+      _navigationCanvasActive = false;
+      _markerPlanVisible = false;
+      _initialCameraPositioned = false;
+      _releaseNavigationViewport();
+    });
+    _navigationGuidance.value = const NavigationGuidanceAssessment.noRoute();
+    widget.onNavigationGuidanceChanged?.call(null);
+    await _syncMapLibreSources();
+    widget.onRouteChanged?.call(null);
+    widget.onRouteCommitted?.call(null);
+  }
+
+  /// The way out of navigating in free roam (#615).
+  ///
+  /// Ride 723888's rider followed a route for 48 minutes and could not find how
+  /// to stop: the only exit was the overflow menu's "Remove route", an
+  /// unlabelled ellipsis and a scroll away. This sits on the ETA card — the
+  /// surface that says "you are navigating" — and asks in free roam's own
+  /// words. `_confirmRemoveRoute` is deliberately not reused: it speaks of the
+  /// group route being removed for every rider, and free roam has no group.
+  Future<void> _stopFreeRoamNavigation() async {
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Stop navigating?'),
+            content: const Text('The route is removed from the map.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Keep going'),
+              ),
+              FilledButton(
+                key: const Key('confirm-stop-navigating'),
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Stop navigating'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+    await _clearActiveRouteAndState();
   }
 
   Future<bool> _confirmRemoveRoute() async =>

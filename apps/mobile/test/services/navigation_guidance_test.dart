@@ -1070,4 +1070,130 @@ void _guidanceStateTests() {
       expect(assessment.message, contains('no path to follow'));
     });
   });
+
+  // #614. Ride 723888 crossed a rotary on Bristol's inner ring road and was
+  // told "Roundabout, 2nd exit, right". The rider's own trail says otherwise,
+  // twice: approach 273.3 degrees and departure 253.1 on one pass, 273.6 and
+  // 297.1 on the other, so -20.2 and +23.5 across the two roads. Both are
+  // inside the 38 degree straight band, and the engine's own modifier for the
+  // step said `straight` as well.
+  //
+  // The app said right because it compared the engine's per-step bearings, 222
+  // in and 302 out, for +80. Those are measured on the ring: 222 is 51 degrees
+  // away from the road the rider was actually on. The arithmetic was right and
+  // its inputs were not.
+  test('a rotary crossing is read from its roads, not from its ring', () {
+    const path = <GeoPoint>[
+      // Generated from ride 723888's own trail: the approach road on
+      // 273.6 degrees, a ring arc, then the exit road on 297.1.
+      GeoPoint(latitude: 51.459657, longitude: -2.478672),
+      GeoPoint(latitude: 51.459668, longitude: -2.478960),
+      GeoPoint(latitude: 51.459679, longitude: -2.479248),
+      GeoPoint(latitude: 51.459691, longitude: -2.479536),
+      GeoPoint(latitude: 51.459702, longitude: -2.479824),
+      GeoPoint(latitude: 51.459713, longitude: -2.480111),
+      GeoPoint(latitude: 51.459725, longitude: -2.480399),
+      GeoPoint(latitude: 51.459736, longitude: -2.480687),
+      GeoPoint(latitude: 51.459747, longitude: -2.480975),
+      GeoPoint(latitude: 51.459758, longitude: -2.481262),
+      GeoPoint(latitude: 51.459770, longitude: -2.481550),
+      GeoPoint(latitude: 51.459781, longitude: -2.481838),
+      GeoPoint(latitude: 51.459907, longitude: -2.481921),
+      GeoPoint(latitude: 51.459987, longitude: -2.482041),
+      GeoPoint(latitude: 51.460001, longitude: -2.482216),
+      GeoPoint(latitude: 51.459969, longitude: -2.482428),
+      GeoPoint(latitude: 51.460051, longitude: -2.482685),
+      GeoPoint(latitude: 51.460133, longitude: -2.482942),
+      GeoPoint(latitude: 51.460215, longitude: -2.483198),
+      GeoPoint(latitude: 51.460297, longitude: -2.483455),
+      GeoPoint(latitude: 51.460378, longitude: -2.483712),
+      GeoPoint(latitude: 51.460460, longitude: -2.483969),
+      GeoPoint(latitude: 51.460542, longitude: -2.484225),
+      GeoPoint(latitude: 51.460624, longitude: -2.484482),
+      GeoPoint(latitude: 51.460706, longitude: -2.484739),
+      GeoPoint(latitude: 51.460788, longitude: -2.484995),
+      GeoPoint(latitude: 51.460870, longitude: -2.485252),
+    ];
+    // The manoeuvres as the engine gave them, misleading bearings included.
+    const entry = RouteManeuver(
+      position: GeoPoint(latitude: 51.459781, longitude: -2.481838),
+      type: 'rotary',
+      modifier: 'straight',
+      name: 'Deanery Road',
+      ref: 'A420',
+      exitNumber: 2,
+      bearingBeforeDegrees: 222,
+      bearingAfterDegrees: 250,
+      drivingSide: 'right',
+    );
+    const exit = RouteManeuver(
+      position: GeoPoint(latitude: 51.459969, longitude: -2.482428),
+      type: 'exit rotary',
+      name: 'Deanery Road',
+      ref: 'A420',
+      bearingBeforeDegrees: 281,
+      bearingAfterDegrees: 302,
+      drivingSide: 'right',
+    );
+
+    final fromRing = collapseManeuvers(const [entry, exit]).single;
+    final fromRoads = collapseManeuvers(const [entry, exit], path: path).single;
+
+    // What the rider was told, and why the report was raised.
+    expect(fromRing.direction, ManeuverDirection.right);
+    expect(fromRing.standaloneText, contains('right'));
+
+    // What the roads say.
+    expect(
+      fromRoads.direction,
+      ManeuverDirection.straight,
+      reason: 'the two roads differ by 23.5 degrees, well inside the band',
+    );
+    expect(fromRoads.standaloneText, contains('straight on'));
+    // The exit number is untouched: it was never the part that was wrong.
+    expect(fromRoads.exitNumber, 2);
+    // And the number a captured turn detail reports is the one the direction
+    // came from, so a future capture cannot explain the wrong pair (#360).
+    expect(fromRoads.departureBearingDegrees, closeTo(297.1, 2.0));
+  });
+
+  test('a genuine turn through a ring is still a turn', () {
+    // The other seven roundabouts on that ride were labelled correctly, and a
+    // fix that called everything straight on would have passed the test above
+    // while making guidance useless.
+    const join = GeoPoint(latitude: 51.4700, longitude: -2.5000);
+    // Approach due north, leave due east: a real right turn of 90 degrees.
+    final path = <GeoPoint>[
+      for (var d = 220.0; d > 0; d -= 20)
+        GeoPoint(latitude: 51.4700 - d / 111320.0, longitude: -2.5000),
+      join,
+      const GeoPoint(latitude: 51.47004, longitude: -2.49994),
+      for (var d = 20.0; d < 240; d += 20)
+        GeoPoint(
+          latitude: 51.47004,
+          longitude: -2.49994 + d / (111320.0 * 0.6234),
+        ),
+    ];
+    const entry = RouteManeuver(
+      position: join,
+      type: 'roundabout',
+      modifier: 'straight',
+      exitNumber: 3,
+      bearingBeforeDegrees: 0,
+      drivingSide: 'left',
+    );
+    const exit = RouteManeuver(
+      position: GeoPoint(latitude: 51.47004, longitude: -2.49994),
+      type: 'exit roundabout',
+      bearingAfterDegrees: 90,
+      drivingSide: 'left',
+    );
+
+    final instruction = collapseManeuvers(const [
+      entry,
+      exit,
+    ], path: path).single;
+    expect(instruction.direction, ManeuverDirection.right);
+    expect(instruction.exitNumber, 3);
+  });
 }
