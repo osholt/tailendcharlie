@@ -28,7 +28,7 @@ have landed.
 
 ### Personal layer
 
-The map layer menu offers **Personal rides**. It is off by default and the
+The map layer menu offers **Personal rides**. It is on by default and the
 choice is remembered. The derived cache is rebuilt when a completed ride is
 saved or deleted. Deleting a completed ride removes it from the personal layer.
 
@@ -367,4 +367,3 @@ archive, heatmap credential, consent mode or endpoint-trim preference.
 - #493 — contribution, storage, suppression, revocation and public aggregate API
 - #494 — mobile global overlay and contribution UX
 - #495 — web planner global overlay
-

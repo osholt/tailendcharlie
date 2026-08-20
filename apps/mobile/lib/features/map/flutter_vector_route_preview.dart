@@ -19,12 +19,14 @@ class FlutterVectorRoutePreview extends StatefulWidget {
     super.key,
     required this.paths,
     required this.basemapConfiguration,
+    this.interactive = true,
     this.onReady,
     this.onFailure,
   });
 
   final List<List<GeoPoint>> paths;
   final BasemapConfiguration basemapConfiguration;
+  final bool interactive;
   final VoidCallback? onReady;
   final ValueChanged<Object>? onFailure;
 
@@ -34,6 +36,7 @@ class FlutterVectorRoutePreview extends StatefulWidget {
 }
 
 class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
+  static final Map<String, Future<vmt.Style>> _styleCache = {};
   late Future<vmt.Style> _style = _loadStyle();
   Timer? _paintSettledTimer;
   bool _reportedReady = false;
@@ -62,10 +65,22 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
     super.dispose();
   }
 
-  Future<vmt.Style> _loadStyle() => vmt.StyleReader(
-    uri: widget.basemapConfiguration.styleUrl,
-    httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-  ).read().timeout(const Duration(seconds: 7));
+  Future<vmt.Style> _loadStyle() {
+    final url = widget.basemapConfiguration.styleUrl;
+    return _styleCache[url] ??= _readStyle(url);
+  }
+
+  static Future<vmt.Style> _readStyle(String url) async {
+    try {
+      return await vmt.StyleReader(
+        uri: url,
+        httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
+      ).read().timeout(const Duration(seconds: 7));
+    } on Object {
+      _styleCache.remove(url);
+      rethrow;
+    }
+  }
 
   void _mapReady() {
     if (_reportedReady) return;
@@ -119,8 +134,10 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
           initialZoom: 12,
           minZoom: 3,
           maxZoom: 18,
-          interactionOptions: const InteractionOptions(
-            flags: InteractiveFlag.all,
+          interactionOptions: InteractionOptions(
+            flags: widget.interactive
+                ? InteractiveFlag.all
+                : InteractiveFlag.none,
           ),
           onMapReady: _mapReady,
         ),

@@ -277,6 +277,7 @@ class FailSafeNeuralSpokenGuidanceEngine
   final Duration warmedStartDeadline;
   final SpokenGuidanceOutputObserver? onOutput;
   bool _warmed = false;
+  bool _fallbackOnly = false;
   Future<void>? _warming;
 
   @override
@@ -300,6 +301,11 @@ class FailSafeNeuralSpokenGuidanceEngine
 
   @override
   Future<void> speak(String phrase) async {
+    if (_fallbackOnly) {
+      await fallback.speak(phrase);
+      _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
+      return;
+    }
     final attempt = neural.beginSpeak(phrase);
     try {
       await attempt.started.timeout(
@@ -307,6 +313,11 @@ class FailSafeNeuralSpokenGuidanceEngine
       );
     } on Object {
       await neural.cancelCurrentAttempt();
+      // A different voice on alternating prompts is harder to follow through a
+      // helmet than one consistent system voice. Once the natural path misses
+      // its safety deadline, keep this ride on the fail-safe until the engine is
+      // recreated (for example after the rider toggles the voice setting).
+      _fallbackOnly = true;
       await fallback.speak(phrase);
       _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
       return;

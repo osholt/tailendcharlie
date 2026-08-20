@@ -24,7 +24,6 @@ import '../../domain/map_style_mode.dart';
 import '../../services/road_routing.dart';
 import 'home_destination_search.dart';
 import 'home_map_backdrop.dart';
-import 'home_ride_actions.dart';
 import 'scan_invitation_screen.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
@@ -42,7 +41,6 @@ import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
 import '../settings/about_build_sheet.dart';
-import '../settings/emergency_info_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
 
 /// Runs the stateful half of a destination-search handoff in the only safe
@@ -254,6 +252,11 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Bumped with [_freeRoamRoute]; the map takes the route when this changes.
   Object? _freeRoamRouteToken;
 
+  /// Bumped when the destination sheet hands circular-route planning to the
+  /// map. The map owns that planner and its review flow, so Home requests the
+  /// existing flow rather than growing a second implementation of it.
+  Object? _circularRideRequestToken;
+
   /// The route the free-roam map is following, if any.
   ///
   /// There is no lobby out here, so a route *is* the navigation: no start
@@ -415,9 +418,8 @@ class _HomeScreenState extends State<HomeScreen> {
       // the ride: "I don't want the start screen at all. I want the selection of
       // starting a ride to happen from the map view."
       //
-      // So there is no panel and no scrim. What is left standing on the map is
-      // one bar of actions at the bottom, the two controls at the top right, and
-      // notices only when there is something to say.
+      // So there is no panel and no scrim. The map has one top bar, plus notices
+      // only when there is something to say.
       body: Stack(
         fit: StackFit.expand,
         children: [
@@ -428,9 +430,7 @@ class _HomeScreenState extends State<HomeScreen> {
             completedRideStore: widget.completedRides,
             globalRideHeatmap: widget.globalRideHeatmap,
             enableNativeServices: widget.enableNativeServices,
-            // So the map's own "Show my location" control sits above the action
-            // bar rather than under it.
-            bottomInset: HomeRideActions.reservedHeight,
+            bottomInset: 0,
             position: _position,
             // The searched destination, reviewed and activated by the map
             // itself. Free roam navigates; it does not hold a ride to do it
@@ -440,6 +440,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onChangeRouteRequestHandled: () => setState(() {
               _freeRoamRoute = null;
               _freeRoamRouteToken = null;
+            }),
+            circularRideRequestToken: _circularRideRequestToken,
+            onCircularRideRequestHandled: () => setState(() {
+              _circularRideRequestToken = null;
             }),
             navigating: _routeOnMap != null,
             onRouteChanged: (route) => setState(() => _routeOnMap = route),
@@ -451,9 +455,8 @@ class _HomeScreenState extends State<HomeScreen> {
             // read as overlapping junk (#573). The map draws them now, in one
             // row, with one hit test.
             hostChrome: HostMapChrome(
-              // The action bar below stands on this map, so the map's own
-              // bottom rail has to clear it rather than draw behind it (#573).
-              bottomInset: HomeRideActions.reservedHeight,
+              bottomInset: 0,
+              onMore: () => unawaited(_showMoreActions(context)),
               title: HomeSearchBar(
                 onTap: () => unawaited(_searchDestination()),
                 expanded: _searching,
@@ -476,21 +479,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       // exactly what the suite is for.
                       TextButton.icon(
                         key: const Key('home-join-ride'),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          visualDensity: VisualDensity.compact,
+                          textStyle: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         onPressed: _rideEntryEnabled
                             ? () => unawaited(
                                 _showRideSheet(context, creating: false),
                               )
                             : null,
-                        icon: const Icon(Icons.group_add_outlined, size: 18),
+                        icon: const Icon(Icons.group_add_outlined, size: 16),
                         label: const Text('Join'),
-                      ),
-                      IconButton(
-                        tooltip: 'Emergency info',
-                        onPressed: () => EmergencyInfoSheet.show(
-                          context,
-                          widget.riderProfile,
-                        ),
-                        icon: const Icon(Icons.medical_information_outlined),
                       ),
                       IconButton(
                         tooltip: 'Settings',
@@ -551,29 +554,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: HomeRideActions(
-              enabled: _rideEntryEnabled,
-              hasRoute: _routeOnMap != null,
-              onCreate: () => unawaited(_rideWithOthers()),
-              onMore: () => unawaited(_showMoreActions(context)),
-              // A ride that is still *running* and has been stepped away from
-              // (#594). `rideSetAside` alone would be too broad: it is also
-              // true of an ended ride kept for its summary (#207), and there
-              // starting another is exactly right — the ride is over, and
-              // `_SetAsideRideBanner` above already offers the way back to it.
-              // A running ride has no banner at all, which is what left the bar
-              // as the only thing speaking, saying the wrong thing.
-              activeRideCode:
-                  widget.controller.rideSetAside && !widget.controller.rideEnded
-                  ? widget.controller.session?.rideCode
-                  : null,
-              onReopen: widget.controller.reopenEndedRide,
-            ),
-          ),
         ],
       ),
     );
@@ -596,6 +576,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _SetAsideRideBanner(
         rideCode: widget.controller.session!.rideCode,
         onReopen: widget.controller.reopenEndedRide,
+        onDismiss: () => unawaited(widget.controller.clearEndedRide()),
       ),
     if (widget.sharedRoutes.pending case final file?)
       _PendingSharedRouteBanner(
@@ -686,6 +667,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
               const Divider(height: 1),
+              ListTile(
+                key: const Key('home-create-ride'),
+                leading: const Icon(Icons.groups_2_outlined),
+                title: const Text('Create a group ride'),
+                enabled: _rideEntryEnabled,
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  unawaited(_showRideSheet(context, creating: true));
+                },
+              ),
               ListTile(
                 key: const Key('start-ride-simulator'),
                 leading: const Icon(Icons.science_outlined),
@@ -808,6 +799,8 @@ class _HomeScreenState extends State<HomeScreen> {
             await _showRideSheet(context, creating: true);
           case HomeSearchHandoffKind.storedRoute:
             await _openRideLibrary(context);
+          case HomeSearchHandoffKind.circularRide:
+            setState(() => _circularRideRequestToken = Object());
         }
     }
   }
@@ -862,63 +855,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Turns what is already happening into a group ride (#600).
-  ///
-  /// This is the only place free roam mentions a ride, and it is an offer
-  /// rather than a toll gate: a rider gets to the map, searches, and rides,
-  /// and asks for company only if they want it. It used to be the way *in* —
-  /// a form asking for a coordination mode and a name before anything could
-  /// happen at all.
-  ///
-  /// Nothing is asked for here either. The name is known from onboarding, the
-  /// coordination mode is the drop-off system the app is for, and the ride is
-  /// named after the route when there is one. All three are changeable inside
-  /// the ride; none is worth a form in front of a rider who has already said
-  /// what they want.
-  Future<void> _rideWithOthers() async {
-    final route = _routeOnMap;
-    final profile = widget.riderProfile;
-    final controller = widget.controller;
-    await createRideThenStageDestinationRoute(
-      createRide: () => controller.createRide(
-        profile.displayName,
-        // `createRide` defaults these rather than reading the profile, so a
-        // caller that leaves them out quietly puts a stranger on the map. The
-        // ride form has always passed them; the destination-search path never
-        // did, so a rider who picked a fox and cyan in onboarding turned up as
-        // the default rider every time they searched for somewhere to go.
-        motorcycleStyle: profile.motorcycleStyle,
-        riderSymbol: profile.riderSymbol,
-        riderColor: profile.riderColor,
-        coordinationMode: RideCoordinationMode.secondBikeDropOff,
-        rideName: route?.name,
-      ),
-      // The ride keeps its route in a store of its own, so a route followed in
-      // free roam does not simply appear inside the ride — it has to be handed
-      // over. Staged only after creation succeeds, which is the ordering #546
-      // was raised about: staging first notified the app-level builder while
-      // Home still owned the screen, and the notification could be consumed
-      // before the ride map mounted.
-      stageRoute: () {
-        // `createRide` reports failure through `errorMessage` rather than by
-        // throwing, so "it returned" is not "it worked". A route staged for a
-        // ride that was never created sits waiting for a shell that will never
-        // mount, and turns up on the next one instead.
-        if (route == null || controller.errorMessage != null) return;
-        widget.sharedRoutes.stagePendingInAppRoute(route);
-      },
-    );
-    if (!mounted) return;
-    // The ride form used to display this message; there is no form on this
-    // path any more. Without saying it, a refused creation is a button that
-    // does nothing at all — which is worse than the ceremony it replaced.
-    if (controller.errorMessage case final message?) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
-  }
-
   Future<void> _showRideSheet(
     BuildContext context, {
     required bool creating,
@@ -952,6 +888,7 @@ class _HomeScreenState extends State<HomeScreen> {
       launchContext,
       library: library,
       distanceUnit: widget.distanceUnits.value,
+      basemapConfiguration: _homeBasemap,
       openPreviousRide: (libraryContext, ride) => PreviousRideDetailScreen.show(
         libraryContext,
         ride: ride,
@@ -1048,10 +985,15 @@ class _RideRestorationBanner extends StatelessWidget {
 }
 
 class _SetAsideRideBanner extends StatelessWidget {
-  const _SetAsideRideBanner({required this.rideCode, required this.onReopen});
+  const _SetAsideRideBanner({
+    required this.rideCode,
+    required this.onReopen,
+    required this.onDismiss,
+  });
 
   final String rideCode;
   final VoidCallback onReopen;
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -1088,6 +1030,12 @@ class _SetAsideRideBanner extends StatelessWidget {
           key: const Key('reopen-set-aside-ride'),
           onPressed: onReopen,
           child: const Text('Open'),
+        ),
+        IconButton(
+          key: const Key('dismiss-set-aside-ride'),
+          tooltip: 'Clear ended ride notice',
+          onPressed: onDismiss,
+          icon: const Icon(Icons.close),
         ),
       ],
     ),

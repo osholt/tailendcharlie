@@ -44,14 +44,16 @@ class HomeMapBackdrop extends StatefulWidget {
     this.pendingInAppRoute,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
+    this.circularRideRequestToken,
+    this.onCircularRideRequestHandled,
     this.onRouteChanged,
     this.navigating = false,
   });
 
   /// Height kept clear at the bottom for whatever stands on the map.
   ///
-  /// The home actions are a bar there now (#426), and the map's own location
-  /// control has to sit above it rather than behind it.
+  /// Usually zero on Home. Kept as an embedding contract so a host that adds
+  /// bottom chrome can keep the map's location control above it.
   final double bottomInset;
 
   /// Where the rider is, published for the screen above to use.
@@ -85,6 +87,11 @@ class HomeMapBackdrop extends StatefulWidget {
   /// route it has already taken, so this is what says "again".
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
+
+  /// Requests the map's existing circular-route planner from Home's search
+  /// sheet. A token is consumed once, like the route-change handoff above.
+  final Object? circularRideRequestToken;
+  final VoidCallback? onCircularRideRequestHandled;
 
   /// Fires with the route the map is following, or null when there is none —
   /// including the one restored from the last session.
@@ -237,6 +244,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             pendingInAppRoute: widget.pendingInAppRoute,
             changeRouteRequestToken: widget.changeRouteRequestToken,
             onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
+            circularRideRequestToken: widget.circularRideRequestToken,
+            onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
             onRouteChanged: widget.onRouteChanged,
             navigating: widget.navigating,
             markerFeaturesEnabled: false,
@@ -259,7 +268,16 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
                     ),
                     titleSpacing: 12,
                     title: chrome.title,
-                    actions: chrome.actions,
+                    actions: [
+                      ...chrome.actions,
+                      if (chrome.onMore != null)
+                        IconButton(
+                          key: const Key('home-more-actions'),
+                          tooltip: 'More',
+                          onPressed: chrome.onMore,
+                          icon: const Icon(Icons.more_horiz),
+                        ),
+                    ],
                   ),
             body: const ColoredBox(
               key: Key('home-map-unavailable'),

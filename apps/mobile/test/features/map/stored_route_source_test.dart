@@ -132,6 +132,8 @@ void main() {
       find.byKey(const Key('stored-route-candidate-ride:ride-1:track')),
     );
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('stored-route-reverse')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('stored-route-reverse')));
     await tester.pumpAndSettle();
 
@@ -179,6 +181,8 @@ void main() {
       await tester.tap(
         find.byKey(const Key('stored-route-candidate-ride:ride-392725:track')),
       );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('stored-route-reverse')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('stored-route-reverse')));
       await tester.tap(find.byKey(const Key('use-stored-route')));

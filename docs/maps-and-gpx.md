@@ -7,7 +7,7 @@ not bulk-download from the public OpenStreetMap tile servers.
 
 ## Personal ride heatmap stays on the phone
 
-The map layer menu can show **Personal rides heatmap**. It is off by default
+The map layer menu can show **Personal rides heatmap**. It is on by default
 and derives its coverage only from travelled track segments in the completed
 ride archive—never planned routes. It quantises those tracks into a bounded
 z17 spatial index, so a large archive does not become one map object per GPS

@@ -19,7 +19,6 @@ import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
-import 'package:ride_relay/features/home/home_ride_actions.dart';
 import 'package:ride_relay/features/home/home_screen.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
@@ -108,13 +107,11 @@ void main() {
     await tester.pump();
   }
 
-  // #605. Reported from build 67: "the bar at the bottom to ride with others
-  // doesn't disappear when a ride is created". It does on the create path — the
-  // shell takes the screen — but not in the state below, and there the bar went
-  // on offering to create a *second* ride over a live one.
-  testWidgets('the bar offers the ride the rider already has', (tester) async {
+  testWidgets('a set-aside running ride remains reachable from the top bar', (
+    tester,
+  ) async {
     await pumpHome(tester);
-    expect(find.text('Ride with others'), findsOneWidget);
+    expect(find.text('Ride with others'), findsNothing);
 
     // Stepping away from a running ride is the one state where Home is on
     // screen while a ride exists (#594): the app-level builder hands every
@@ -128,28 +125,14 @@ void main() {
     await pumpHome(tester);
 
     final code = rideController.session!.rideCode;
-    expect(
-      find.text('Back to ride $code'),
-      findsOneWidget,
-      reason: 'in words on the bar, not a ListTile buried inside More',
-    );
-    expect(
-      find.text('Ride with others'),
-      findsNothing,
-      reason: 'pressing that called createRide again and stranded the first',
-    );
+    await tester.tap(find.byKey(const Key('home-more-actions')));
+    await tester.pumpAndSettle();
+    expect(find.text('Rejoin ride $code'), findsOneWidget);
 
     // And it goes back rather than merely saying so.
-    await tester.tap(find.text('Back to ride $code'));
+    await tester.tap(find.text('Rejoin ride $code'));
     await tester.pump();
     expect(rideController.rideSetAside, isFalse);
-
-    // The other side of the boundary — an *ended* ride kept for its summary is
-    // set aside too (#207), and there starting another ride is right — is
-    // asserted by 'ended ride can be closed and reopened without filing it' in
-    // widget_test.dart, which expects 'Ride with others' in exactly that state.
-    // Not repeated here: `endRide` leaves a timer pending that this harness has
-    // no shell to dispose, and two tests asserting it is one too many anyway.
   });
 
   testWidgets('starting a ride is offered in words on the first screen', (
@@ -161,11 +144,10 @@ void main() {
     // every way in is still offered *in words*, which is what #306 was raised
     // over. What changed is which words.
     //
-    // Going somewhere starts from the search field — the operator asked for
-    // that twice — and free roam no longer creates a ride to do it (#600). The
-    // bottom bar carries the one thing the field does not say: ride with other
-    // people, offered as an upgrade rather than demanded as an entrance.
-    expect(find.text('Ride with others'), findsOneWidget);
+    // Group creation remains in the readable More sheet, without occupying a
+    // permanent strip of map.
+    expect(find.text('Ride with others'), findsNothing);
+    expect(find.byKey(const Key('home-more-actions')), findsOneWidget);
     // Joining takes a six-digit code rather than a destination, so it sits
     // beside the field instead of folding into it. Shortened to fit the bar
     // next to the field; still a word, never a bare icon.
@@ -173,20 +155,23 @@ void main() {
     expect(find.text('Where to?'), findsOneWidget);
   });
 
-  testWidgets('the upgrade says the route comes with it', (tester) async {
-    // A rider halfway through planning a route to Bath should not have to
-    // guess whether asking for company throws it away. The bar is pumped
-    // directly because the route only reaches it from a live platform map.
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: HomeRideActions(hasRoute: true, onCreate: () {}, onMore: () {}),
-        ),
-      ),
-    );
+  testWidgets('the compact top bar leaves Where to readable on a small phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 667);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-    expect(find.text('Ride this with others'), findsOneWidget);
-    expect(find.text('Ride with others'), findsNothing);
+    await pumpHome(tester);
+
+    expect(find.byTooltip('Emergency info'), findsNothing);
+    expect(find.text('Where to?'), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const Key('home-search-bar'))).width,
+      greaterThanOrEqualTo(132),
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('ride setup uses the saved symbol and colour without repicking', (
@@ -200,16 +185,20 @@ void main() {
     );
     await pumpHome(tester);
 
-    // By key: the wording moves around, the rule does not. #600 turned this
-    // button from "Start without a destination" — which opened the ride form —
-    // into the group upgrade, which asks for nothing at all.
+    await tester.tap(find.byKey(const Key('home-more-actions')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('home-create-ride')));
     await tester.pumpAndSettle();
 
-    // Nothing to fill in. There is no form to re-pick a symbol or a colour in,
-    // which is the strongest form of "without repicking".
-    expect(find.byKey(const Key('ride-form-scroll-view')), findsNothing);
+    // The form never asks the rider to repick their identity.
+    expect(find.byKey(const Key('ride-form-scroll-view')), findsOneWidget);
     expect(find.text('Your colour'), findsNothing);
+
+    await tester.ensureVisible(
+      find.widgetWithText(FilledButton, 'Create ride'),
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await tester.pumpAndSettle();
 
     // And the ride carries what onboarding already knew. `createRide` defaults
     // these rather than reading the profile, so a path that forgets to pass
@@ -238,17 +227,9 @@ void main() {
     expect(find.text('Settings'), findsOneWidget);
   });
 
-  testWidgets('a route followed in free roam comes with you (#600)', (
+  testWidgets('a free-roam route does not restore the redundant bottom bar', (
     tester,
   ) async {
-    // Onboarding always leaves a name behind; the group upgrade asks for
-    // nothing and so relies on it.
-    await riderProfile.save(
-      displayName: 'Oliver',
-      motorcycleStyle: MotorcycleIconStyle.scrambler,
-      riderSymbol: const RiderSymbol.emoji('🦊'),
-      riderColor: RiderColor.cyan,
-    );
     await pumpHome(tester);
 
     // The map reports its route through `onRouteChanged` — including one
@@ -267,42 +248,8 @@ void main() {
       isTrue,
     );
     expect(rideController.hasActiveRide, isFalse);
-    expect(find.text('Ride this with others'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('home-create-ride')));
-    await tester.pumpAndSettle();
-
-    // The ride exists now, it is a group one, and it is carrying the route the
-    // rider was already following. The ride keeps its route in a store of its
-    // own, so without the handoff the group would start with a blank map.
-    expect(rideController.hasActiveRide, isTrue);
-    expect(rideController.session?.rideName, 'Bath, Somerset');
-    expect(sharedRoutes.pendingInAppRoute?.route.name, 'Bath, Somerset');
-  });
-
-  testWidgets('an upgrade that cannot be made says so', (tester) async {
-    // The upgrade asks for nothing, which means nothing on screen reports a
-    // refusal either — `createRide` catches its own failures into
-    // `errorMessage` rather than throwing, and the ride form that used to
-    // display that message is no longer on this path. A button that silently
-    // does nothing is worse than the ceremony it replaced.
-    await pumpHome(tester);
-    tester
-        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
-        .onRouteChanged!(_bathRoute());
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('home-create-ride')));
-    await tester.pumpAndSettle();
-
-    expect(rideController.hasActiveRide, isFalse);
-    expect(
-      find.widgetWithText(SnackBar, 'Enter a rider name.'),
-      findsOneWidget,
-    );
-    // And the route is not handed to a ride that does not exist. It would sit
-    // there waiting for a shell that never mounts, and turn up on the next one.
-    expect(sharedRoutes.pendingInAppRoute, isNull);
+    expect(find.text('Ride this with others'), findsNothing);
+    expect(find.text('Ride with others'), findsNothing);
   });
 
   testWidgets('a past ride is reachable by words alone', (tester) async {
@@ -313,8 +260,7 @@ void main() {
     // reachable, which is why the control is a word rather than `more_horiz`.
     await pumpHome(tester);
 
-    expect(find.text('More'), findsOneWidget);
-    await tester.tap(find.text('More'));
+    await tester.tap(find.byKey(const Key('home-more-actions')));
     await tester.pumpAndSettle();
 
     expect(find.text('Ride library'), findsOneWidget);
@@ -333,7 +279,7 @@ void main() {
     tester,
   ) async {
     await pumpHome(tester);
-    await tester.tap(find.text('More'));
+    await tester.tap(find.byKey(const Key('home-more-actions')));
     await tester.pumpAndSettle();
 
     expect(find.text('Try a simulated ride'), findsOneWidget);
@@ -358,6 +304,33 @@ void main() {
     // The way in it displaced, offered underneath the field instead.
     expect(find.byKey(const Key('home-search-join-code')), findsOneWidget);
     expect(find.text('Join a ride with a code'), findsOneWidget);
+  });
+
+  testWidgets('circular planning hands off from Where to into the map', (
+    tester,
+  ) async {
+    await pumpHome(tester);
+
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .position!
+        .value = const GeoPoint(
+      latitude: 51.45,
+      longitude: -2.59,
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-search-circular-ride')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester
+          .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+          .circularRideRequestToken,
+      isNotNull,
+    );
   });
 
   testWidgets('joining by QR is offered in words, not only as an icon', (

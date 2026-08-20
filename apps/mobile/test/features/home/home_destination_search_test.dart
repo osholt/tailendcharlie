@@ -195,13 +195,14 @@ void main() {
   });
 
   group('the other ways in are on the same surface', () {
-    testWidgets('a planned-route code, a ride code and a stored route', (
+    testWidgets('circular, planned-code, join-code and stored-route options', (
       tester,
     ) async {
       // #431 named these specifically: "entering a code to recall a planned ride
       // etc." They sit beside the search rather than behind it.
       final outcomes = <HomeSearchOutcome?>[];
       for (final key in [
+        'home-search-circular-ride',
         'home-search-planned-code',
         'home-search-join-code',
         'home-search-stored-route',
@@ -213,6 +214,7 @@ void main() {
       }
 
       expect(outcomes.map((outcome) => (outcome as HomeSearchHandoff).kind), [
+        HomeSearchHandoffKind.circularRide,
         HomeSearchHandoffKind.plannedRouteCode,
         HomeSearchHandoffKind.joinWithCode,
         HomeSearchHandoffKind.storedRoute,

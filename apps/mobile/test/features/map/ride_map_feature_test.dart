@@ -46,6 +46,17 @@ import 'package:ride_relay/services/speed_limit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('motorcycle discovery hides on wide-area views', () {
+    expect(
+      motorcycleDiscoveryVisibleAtZoom(motorcycleDiscoveryMinimumZoom - 0.01),
+      isFalse,
+    );
+    expect(
+      motorcycleDiscoveryVisibleAtZoom(motorcycleDiscoveryMinimumZoom),
+      isTrue,
+    );
+  });
+
   test('navigation panels preserve map context and rider clearance', () {
     expect(rideMapPrimaryPanelFill.toARGB32(), 0xD9252E39);
     expect(
@@ -6196,6 +6207,7 @@ void main() {
       WidgetTester tester, {
       required bool hosted,
       bool started = false,
+      VoidCallback? onMore,
     }) async {
       SharedPreferences.setMockInitialValues({});
       final directory = Directory.systemTemp.createTempSync('chrome-owner');
@@ -6221,6 +6233,7 @@ void main() {
             hostChrome: hosted
                 ? HostMapChrome(
                     title: const Text('Where to?'),
+                    onMore: onMore,
                     actions: [
                       IconButton(
                         key: const Key('host-emergency'),
@@ -6302,6 +6315,20 @@ void main() {
       expect(find.text('Motorcycle discovery layers'), findsOneWidget);
     });
 
+    testWidgets('host secondary actions use the existing top overflow', (
+      tester,
+    ) async {
+      var opened = 0;
+      await pumpWithChrome(tester, hosted: true, onMore: () => opened += 1);
+
+      await tester.tap(find.byKey(const Key('map-layer-actions')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-more-actions')));
+      await tester.pumpAndSettle();
+
+      expect(opened, 1);
+    });
+
     testWidgets('a host that brought a title does not get a second way to a '
         'destination beside it', (tester) async {
       await pumpWithChrome(tester, hosted: true);
@@ -6348,6 +6375,8 @@ void main() {
       HostMapChrome? hostChrome,
       ValueListenable<GeoPoint?>? currentPosition,
       RouteStore? routeStore,
+      Object? circularRideRequestToken,
+      VoidCallback? onCircularRideRequestHandled,
     }) async {
       SharedPreferences.setMockInitialValues({});
       final directory = Directory.systemTemp.createTempSync('colocated');
@@ -6369,6 +6398,8 @@ void main() {
             routeAuthority: authority,
             hostChrome: hostChrome,
             currentPosition: currentPosition,
+            circularRideRequestToken: circularRideRequestToken,
+            onCircularRideRequestHandled: onCircularRideRequestHandled,
             discoveryCatalogueLoader: () async =>
                 const MotorcycleDiscoveryCatalogue([]),
             bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
@@ -6400,6 +6431,28 @@ void main() {
 
       expect(find.text('Host field'), findsOneWidget);
       expect(find.byKey(const Key('map-destination-search')), findsNothing);
+    });
+
+    testWidgets('a circular-route request opens the map planner once', (
+      tester,
+    ) async {
+      var handled = 0;
+      final position = ValueNotifier(
+        const GeoPoint(latitude: 51.45, longitude: -2.59),
+      );
+      addTearDown(position.dispose);
+      await pumpMap(
+        tester,
+        started: false,
+        authority: RouteAuthority.personal,
+        currentPosition: position,
+        circularRideRequestToken: Object(),
+        onCircularRideRequestHandled: () => handled += 1,
+      );
+
+      expect(find.text('Create a circular ride'), findsOneWidget);
+      expect(find.byKey(const Key('generate-circular-ride')), findsOneWidget);
+      expect(handled, 1);
     });
 
     testWidgets('free roam is a map, not a card asking for a route (#600)', (

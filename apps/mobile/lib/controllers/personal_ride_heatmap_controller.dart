@@ -197,6 +197,7 @@ class PersonalRideHeatmapController extends ChangeNotifier {
   );
 
   static const preferenceKey = 'personal_ride_heatmap_visible';
+  static const defaultVisible = true;
 
   final CompletedRideStore _store;
   final SharedPreferences _preferences;
@@ -216,7 +217,7 @@ class PersonalRideHeatmapController extends ChangeNotifier {
       store,
       preferences,
       builder,
-      preferences.getBool(preferenceKey) ?? false,
+      preferences.getBool(preferenceKey) ?? defaultVisible,
     );
     if (store case final Listenable listenable) {
       controller._listenableStore = listenable;
