@@ -114,6 +114,29 @@ void main() {
     });
   });
 
+  group('arrival sounds like a person giving directions', () {
+    test('advance prompts say the rider will arrive', () {
+      final said = ride(
+        fromMeters: 6000,
+        speedMetersPerSecond: 31.3,
+        instruction: 'Arrive at the destination',
+      );
+
+      expect(said.first.phrase, contains("you'll arrive at your destination"));
+      expect(said.first.phrase, isNot(contains('reach the destination')));
+    });
+
+    test('the final arrival prompt says the destination is ahead', () {
+      final said = ride(
+        fromMeters: 6000,
+        speedMetersPerSecond: 31.3,
+        instruction: 'Arrive at the destination',
+      );
+
+      expect(said.last.phrase, 'Your destination is just ahead');
+    });
+  });
+
   group('nothing is said until the rider is clear of the junction (#429)', () {
     test('still on the roundabout, the next turn waits', () {
       // The reported case: on a large roundabout the next instruction arrived

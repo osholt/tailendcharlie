@@ -87,6 +87,9 @@ class HomeSearchHandoff extends HomeSearchOutcome {
 }
 
 enum HomeSearchHandoffKind {
+  /// Build a loop from the rider's current position.
+  circularRide,
+
   /// Join somebody else's ride with their six-digit code.
   joinWithCode,
 
@@ -256,6 +259,18 @@ class _HomeDestinationSearchSheetState
                       onTap: () => _choose(match),
                     ),
                 const Divider(height: 12),
+                ListTile(
+                  key: const Key('home-search-circular-ride'),
+                  leading: const Icon(Icons.roundabout_right_outlined),
+                  title: const Text('Create a circular ride'),
+                  subtitle: const Text(
+                    'Choose distance, direction, stops and road preferences',
+                  ),
+                  enabled: widget.hasPosition,
+                  onTap: () => Navigator.of(context).pop(
+                    const HomeSearchHandoff(HomeSearchHandoffKind.circularRide),
+                  ),
+                ),
                 // The code-driven ways in, named in words beside the search
                 // rather than behind it. #431 asked for these specifically.
                 ListTile(

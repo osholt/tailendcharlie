@@ -9,7 +9,9 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/stored_route_picker.dart';
+import 'package:ride_relay/features/map/flutter_vector_route_preview.dart';
 import 'package:ride_relay/services/approximate_place_index.dart';
+import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/stored_route_library.dart';
 
 void main() {
@@ -81,6 +83,33 @@ void main() {
     );
   });
 
+  testWidgets('configured basemap tiles appear in thumbnails and preview', (
+    tester,
+  ) async {
+    final recorded = InMemoryRecordedRouteStore();
+    await recorded.save(_route(id: '12', name: 'Tile preview route'));
+    const basemap = BasemapConfiguration(
+      styleUrl: 'https://example.test/style.json',
+      attribution: 'Test tiles',
+    );
+
+    await _pump(
+      tester,
+      recorded: recorded,
+      places: places,
+      basemapConfiguration: basemap,
+    );
+
+    expect(find.byType(FlutterVectorRoutePreview), findsOneWidget);
+    await tester.tap(
+      find.byKey(const Key('stored-route-candidate-recorded:12')),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const Key('stored-route-map-preview')), findsOneWidget);
+    expect(find.byType(FlutterVectorRoutePreview), findsNWidgets(2));
+  });
+
   testWidgets('a previous ride opens its details directly from the library', (
     tester,
   ) async {
@@ -117,6 +146,7 @@ Future<void> _pump(
   required RecordedRouteStore recorded,
   required ApproximatePlaceIndex places,
   CompletedRideStore? completed,
+  BasemapConfiguration basemapConfiguration = const BasemapConfiguration(),
   Future<StoredRouteSelection?> Function(BuildContext, CompletedRide)?
   openPreviousRide,
 }) async {
@@ -130,6 +160,7 @@ Future<void> _pump(
           approximatePlaceIndex: places,
         ),
         distanceUnit: DistanceUnit.miles,
+        basemapConfiguration: basemapConfiguration,
         openPreviousRide: openPreviousRide,
       ),
     ),

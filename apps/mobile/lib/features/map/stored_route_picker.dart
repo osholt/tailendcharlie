@@ -5,9 +5,11 @@ import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/measurement_formatter.dart';
 import '../../services/approximate_place_index.dart';
+import '../../services/basemap_configuration.dart';
 import '../../services/ride_library_backup.dart';
 import '../../services/stored_route_library.dart';
 import '../ride/route_sketch.dart';
+import 'flutter_vector_route_preview.dart';
 import 'route_review_screen.dart' show routeLengthMeters;
 
 /// Picks a route out of the geometry already on this phone.
@@ -23,11 +25,13 @@ class StoredRoutePickerScreen extends StatefulWidget {
     super.key,
     required this.library,
     required this.distanceUnit,
+    this.basemapConfiguration = const BasemapConfiguration(),
     this.openPreviousRide,
   });
 
   final StoredRouteLibrary library;
   final DistanceUnit distanceUnit;
+  final BasemapConfiguration basemapConfiguration;
   final Future<StoredRouteSelection?> Function(
     BuildContext context,
     CompletedRide ride,
@@ -38,21 +42,30 @@ class StoredRoutePickerScreen extends StatefulWidget {
     BuildContext context, {
     required StoredRouteLibrary library,
     required DistanceUnit distanceUnit,
+    BasemapConfiguration? basemapConfiguration,
     Future<StoredRouteSelection?> Function(
       BuildContext context,
       CompletedRide ride,
     )?
     openPreviousRide,
-  }) => Navigator.of(context).push<StoredRouteSelection>(
-    MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (_) => StoredRoutePickerScreen(
-        library: library,
-        distanceUnit: distanceUnit,
-        openPreviousRide: openPreviousRide,
+  }) {
+    final resolvedBasemap =
+        basemapConfiguration ??
+        BasemapConfiguration.fromEnvironment().forBrightness(
+          dark: MediaQuery.platformBrightnessOf(context) == Brightness.dark,
+        );
+    return Navigator.of(context).push<StoredRouteSelection>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoredRoutePickerScreen(
+          library: library,
+          distanceUnit: distanceUnit,
+          basemapConfiguration: resolvedBasemap,
+          openPreviousRide: openPreviousRide,
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   @override
   State<StoredRoutePickerScreen> createState() =>
@@ -201,6 +214,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
             end: candidate.endPoint,
           ),
           distanceUnit: widget.distanceUnit,
+          basemapConfiguration: widget.basemapConfiguration,
           onTap: () => _chooseOptions(candidate),
         ),
       );
@@ -237,7 +251,11 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
             dimension: 52,
             child: candidate == null
                 ? const Icon(Icons.two_wheeler)
-                : StoredRouteShapePreview(candidate: candidate),
+                : StoredRouteMapPreview(
+                    candidate: candidate,
+                    basemapConfiguration: widget.basemapConfiguration,
+                    interactive: false,
+                  ),
           ),
           title: Text(ride.title),
           subtitle: Text(
@@ -261,6 +279,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
       builder: (_) => StoredRouteOptionsSheet(
         candidate: candidate,
         distanceUnit: widget.distanceUnit,
+        basemapConfiguration: widget.basemapConfiguration,
       ),
     );
     if (selection == null || !mounted) return;
@@ -334,12 +353,14 @@ class StoredRouteCandidateTile extends StatelessWidget {
     required this.candidate,
     this.endpointLabel,
     required this.distanceUnit,
+    this.basemapConfiguration = const BasemapConfiguration(),
     required this.onTap,
   });
 
   final StoredRouteCandidate candidate;
   final String? endpointLabel;
   final DistanceUnit distanceUnit;
+  final BasemapConfiguration basemapConfiguration;
   final VoidCallback onTap;
 
   @override
@@ -349,7 +370,11 @@ class StoredRouteCandidateTile extends StatelessWidget {
       contentPadding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       leading: SizedBox.square(
         dimension: 52,
-        child: StoredRouteShapePreview(candidate: candidate),
+        child: StoredRouteMapPreview(
+          candidate: candidate,
+          basemapConfiguration: basemapConfiguration,
+          interactive: false,
+        ),
       ),
       title: Text(candidate.title),
       subtitle: Text(
@@ -377,6 +402,53 @@ class _StoredRoutePickerData {
   final List<StoredRouteCandidate> candidates;
   final List<CompletedRide> rides;
   final ApproximatePlaceIndex? places;
+}
+
+/// Uses real vector tiles when this build has a basemap, with the old local
+/// route sketch as an offline/unconfigured fallback.
+class StoredRouteMapPreview extends StatelessWidget {
+  const StoredRouteMapPreview({
+    super.key,
+    required this.candidate,
+    required this.basemapConfiguration,
+    this.interactive = true,
+    this.reversed = false,
+  });
+
+  final StoredRouteCandidate candidate;
+  final BasemapConfiguration basemapConfiguration;
+  final bool interactive;
+  final bool reversed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!basemapConfiguration.usesMapLibre) {
+      return StoredRouteShapePreview(candidate: candidate);
+    }
+    final sourcePaths = candidate.geometry.paths
+        .where((path) => path.points.length >= 2)
+        .toList(growable: false);
+    final orderedPaths = reversed ? sourcePaths.reversed : sourcePaths;
+    final paths = [
+      for (final path in orderedPaths)
+        reversed ? path.points.reversed.toList(growable: false) : path.points,
+    ];
+    final map = Stack(
+      fit: StackFit.expand,
+      children: [
+        StoredRouteShapePreview(candidate: candidate),
+        FlutterVectorRoutePreview(
+          paths: paths,
+          basemapConfiguration: basemapConfiguration,
+          interactive: interactive,
+        ),
+      ],
+    );
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: interactive ? map : IgnorePointer(child: map),
+    );
+  }
 }
 
 /// A map-free thumbnail of the route's shape, drawn from the geometry already
@@ -421,10 +493,12 @@ class StoredRouteOptionsSheet extends StatefulWidget {
     super.key,
     required this.candidate,
     required this.distanceUnit,
+    this.basemapConfiguration = const BasemapConfiguration(),
   });
 
   final StoredRouteCandidate candidate;
   final DistanceUnit distanceUnit;
+  final BasemapConfiguration basemapConfiguration;
 
   @override
   State<StoredRouteOptionsSheet> createState() =>
@@ -439,85 +513,111 @@ class _StoredRouteOptionsSheetState extends State<StoredRouteOptionsSheet> {
   Widget build(BuildContext context) {
     final candidate = widget.candidate;
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.88,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              candidate.title,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${storedRouteKindLabel(candidate.origin)} · '
-              '${_date(candidate.storedAt)} · '
-              '${MeasurementFormatter(widget.distanceUnit).distance(routeLengthMeters(candidate.geometry))}',
-              style: const TextStyle(color: Color(0xFF98A3B1)),
-            ),
-            const SizedBox(height: 16),
-            if (candidate.isRecording) ...[
-              SegmentedButton<StoredRouteVariant>(
-                key: const Key('stored-route-variant'),
-                segments: const [
-                  ButtonSegment(
-                    value: StoredRouteVariant.tidied,
-                    label: Text('Tidied'),
-                  ),
-                  ButtonSegment(
-                    value: StoredRouteVariant.raw,
-                    label: Text('Raw track'),
-                  ),
-                ],
-                selected: {_variant},
-                onSelectionChanged: (selection) =>
-                    setState(() => _variant = selection.single),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                _variant == StoredRouteVariant.tidied
-                    ? 'Tidied: a recording, not a planned route. Stops and GPS '
-                          'wander are removed. Every road the bike actually '
-                          'took is kept, including any wrong turns and car '
-                          'park loops.'
-                    : 'Raw track: every fix exactly as recorded, including '
-                          'stops, GPS wander and any wrong turns.',
-                style: const TextStyle(color: Color(0xFF98A3B1), height: 1.4),
-              ),
-            ] else
-              const Text(
-                'This is the route that ride was planned with, so it is used '
-                'exactly as it was planned.',
-                style: TextStyle(color: Color(0xFF98A3B1), height: 1.4),
-              ),
-            const SizedBox(height: 6),
-            SwitchListTile(
-              key: const Key('stored-route-reverse'),
-              contentPadding: EdgeInsets.zero,
-              value: _reversed,
-              onChanged: (value) => setState(() => _reversed = value),
-              title: const Text('Ride it in reverse'),
-              subtitle: Text(
-                _reversed
-                    ? 'Runs from the original finish to the original start. '
-                          'Turn instructions from the original direction are '
-                          'dropped.'
-                    : 'Runs in the direction it was ridden.',
-              ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              key: const Key('use-stored-route'),
-              onPressed: () => Navigator.of(context).pop(
-                StoredRouteSelection(
-                  candidate: candidate,
-                  variant: _variant,
-                  reversed: _reversed,
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      candidate.title,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${storedRouteKindLabel(candidate.origin)} · '
+                      '${_date(candidate.storedAt)} · '
+                      '${MeasurementFormatter(widget.distanceUnit).distance(routeLengthMeters(candidate.geometry))}',
+                      style: const TextStyle(color: Color(0xFF98A3B1)),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      key: const Key('stored-route-map-preview'),
+                      height: 220,
+                      child: StoredRouteMapPreview(
+                        candidate: candidate,
+                        basemapConfiguration: widget.basemapConfiguration,
+                        reversed: _reversed,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (candidate.isRecording) ...[
+                      SegmentedButton<StoredRouteVariant>(
+                        key: const Key('stored-route-variant'),
+                        segments: const [
+                          ButtonSegment(
+                            value: StoredRouteVariant.tidied,
+                            label: Text('Tidied'),
+                          ),
+                          ButtonSegment(
+                            value: StoredRouteVariant.raw,
+                            label: Text('Raw track'),
+                          ),
+                        ],
+                        selected: {_variant},
+                        onSelectionChanged: (selection) =>
+                            setState(() => _variant = selection.single),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _variant == StoredRouteVariant.tidied
+                            ? 'Tidied: a recording, not a planned route. Stops and GPS '
+                                  'wander are removed. Every road the bike actually '
+                                  'took is kept, including any wrong turns and car '
+                                  'park loops.'
+                            : 'Raw track: every fix exactly as recorded, including '
+                                  'stops, GPS wander and any wrong turns.',
+                        style: const TextStyle(
+                          color: Color(0xFF98A3B1),
+                          height: 1.4,
+                        ),
+                      ),
+                    ] else
+                      const Text(
+                        'This is the route that ride was planned with, so it is used '
+                        'exactly as it was planned.',
+                        style: TextStyle(color: Color(0xFF98A3B1), height: 1.4),
+                      ),
+                    const SizedBox(height: 6),
+                    SwitchListTile(
+                      key: const Key('stored-route-reverse'),
+                      contentPadding: EdgeInsets.zero,
+                      value: _reversed,
+                      onChanged: (value) => setState(() => _reversed = value),
+                      title: const Text('Ride it in reverse'),
+                      subtitle: Text(
+                        _reversed
+                            ? 'Runs from the original finish to the original start. '
+                                  'Turn instructions from the original direction are '
+                                  'dropped.'
+                            : 'Runs in the direction it was ridden.',
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              icon: const Icon(Icons.route_outlined),
-              label: const Text('Use this route'),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  key: const Key('use-stored-route'),
+                  onPressed: () => Navigator.of(context).pop(
+                    StoredRouteSelection(
+                      candidate: candidate,
+                      variant: _variant,
+                      reversed: _reversed,
+                    ),
+                  ),
+                  icon: const Icon(Icons.route_outlined),
+                  label: const Text('Use this route'),
+                ),
+              ),
             ),
           ],
         ),

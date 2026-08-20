@@ -141,6 +141,16 @@ bool canGenerateNavigableRoute(ImportedRoute route) =>
       (path) => path.kind == RoutePathKind.track && path.points.length >= 2,
     );
 
+/// Discovery roads and cafés are useful at local riding scale and turn into a
+/// dense national overlay when the map is zoomed out. Hide them below this
+/// threshold while preserving every saved layer choice.
+@visibleForTesting
+const motorcycleDiscoveryMinimumZoom = 12.5;
+
+@visibleForTesting
+bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
+    zoom >= motorcycleDiscoveryMinimumZoom;
+
 /// Top-band chrome a host screen hands to the map instead of drawing itself.
 ///
 /// The free-roam home screen used to paint its own search field and its own
@@ -158,13 +168,13 @@ class HostMapChrome {
     required this.title,
     this.actions = const [],
     this.bottomInset = 0,
+    this.onMore,
   });
 
   /// Height the host's own chrome occupies at the bottom of this map.
   ///
-  /// Free roam stands a bar of actions there (#426). Without this the map
-  /// anchors its bottom rail to the system inset alone and draws its compass
-  /// and controls behind that bar.
+  /// Home leaves this at zero. Other hosts can reserve space here so the map
+  /// keeps its compass and controls clear of their bottom chrome.
   final double bottomInset;
 
   /// Stands in for the map's own title — a search field, in free roam.
@@ -177,6 +187,9 @@ class HostMapChrome {
 
   /// Appended after the map's own actions, in the order given.
   final List<Widget> actions;
+
+  /// Opens host-owned secondary actions from the map's existing overflow.
+  final VoidCallback? onMore;
 }
 
 /// Height of the map's own toolbar, by orientation.
@@ -317,6 +330,8 @@ class RideMapFeature extends StatefulWidget {
     this.onMapStyleResolved,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
+    this.circularRideRequestToken,
+    this.onCircularRideRequestHandled,
     this.pendingSharedGpxFile,
     this.pendingInAppRoute,
     this.acquireCurrentPosition,
@@ -386,6 +401,8 @@ class RideMapFeature extends StatefulWidget {
     ValueChanged<String>? onMapStyleResolved,
     Object? changeRouteRequestToken,
     VoidCallback? onChangeRouteRequestHandled,
+    Object? circularRideRequestToken,
+    VoidCallback? onCircularRideRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
     PendingInAppRoute? pendingInAppRoute,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
@@ -449,6 +466,8 @@ class RideMapFeature extends StatefulWidget {
     onMapStyleResolved: onMapStyleResolved,
     changeRouteRequestToken: changeRouteRequestToken,
     onChangeRouteRequestHandled: onChangeRouteRequestHandled,
+    circularRideRequestToken: circularRideRequestToken,
+    onCircularRideRequestHandled: onCircularRideRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
     pendingInAppRoute: pendingInAppRoute,
     acquireCurrentPosition: acquireCurrentPosition,
@@ -548,6 +567,8 @@ class RideMapFeature extends StatefulWidget {
   final ValueChanged<String>? onMapStyleResolved;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
+  final Object? circularRideRequestToken;
+  final VoidCallback? onCircularRideRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
   final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -735,6 +756,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onNavigationViewportChanged: widget.onNavigationViewportChanged,
         changeRouteRequestToken: widget.changeRouteRequestToken,
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
+        circularRideRequestToken: widget.circularRideRequestToken,
+        onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
         pendingSharedGpxFile: widget.pendingSharedGpxFile,
         pendingInAppRoute: widget.pendingInAppRoute,
         acquireCurrentPosition: widget.acquireCurrentPosition,
@@ -826,6 +849,8 @@ class RideMapScreen extends StatefulWidget {
     this.onNavigationViewportChanged,
     this.changeRouteRequestToken,
     this.onChangeRouteRequestHandled,
+    this.circularRideRequestToken,
+    this.onCircularRideRequestHandled,
     this.pendingSharedGpxFile,
     this.pendingInAppRoute,
     this.acquireCurrentPosition,
@@ -964,6 +989,8 @@ class RideMapScreen extends StatefulWidget {
   final ValueChanged<NavigationCameraViewport>? onNavigationViewportChanged;
   final Object? changeRouteRequestToken;
   final VoidCallback? onChangeRouteRequestHandled;
+  final Object? circularRideRequestToken;
+  final VoidCallback? onCircularRideRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
   final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -1052,7 +1079,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   PersonalRideHeatmapController? _personalRideHeatmap;
   bool _ownsPersonalRideHeatmap = false;
   Timer? _globalHeatmapDebounce;
-  double _lastViewportZoom = 12;
+  // The tracked rider camera starts at street level. MapLibre reports the real
+  // value on its first camera callback; beginning here keeps plugin-less/test
+  // maps faithful to that initial view without weakening the wide-area cutoff.
+  double _lastViewportZoom = 14;
   late final GroupPipBridge _groupPipBridge;
   ml.MapLibreMapController? _mapLibreController;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
@@ -1138,6 +1168,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _emergencyActionsOpen = false;
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
+  Object? _handledCircularRideRequestToken;
   double _lastHeadingDegrees = 0;
   // Dismissal is per hazard, so passing this one and approaching the next
   // still raises a fresh warning.
@@ -1456,6 +1487,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     unawaited(_openPersonalRideHeatmap());
     unawaited(_loadDiscoveryCatalogue());
     _maybeHandleChangeRouteRequest();
+    _maybeHandleCircularRideRequest();
   }
 
   @override
@@ -1463,6 +1495,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.changeRouteRequestToken != widget.changeRouteRequestToken) {
       _maybeHandleChangeRouteRequest();
+    }
+    if (oldWidget.circularRideRequestToken != widget.circularRideRequestToken) {
+      _maybeHandleCircularRideRequest();
     }
     if (oldWidget.globalRideHeatmap != widget.globalRideHeatmap) {
       oldWidget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
@@ -2046,6 +2081,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
                       : const EdgeInsets.all(8),
                   onSelected: _handleMenuAction,
                   itemBuilder: (context) => [
+                    if (hostChrome?.onMore != null) ...[
+                      const PopupMenuItem(
+                        key: Key('home-more-actions'),
+                        value: _MapAction.hostMore,
+                        child: Text('More actions'),
+                      ),
+                      const PopupMenuDivider(),
+                    ],
                     if (widget.canEditRoute) ...[
                       const PopupMenuItem(
                         value: _MapAction.circularRide,
@@ -3601,7 +3644,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   void _onMapLibreCameraMove(ml.CameraPosition camera) {
-    _lastViewportZoom = camera.zoom;
+    _updateViewportZoom(camera.zoom);
     if ((camera.bearing - _mapBearing.value).abs() >= 0.25) {
       _mapBearing.value = camera.bearing;
     }
@@ -4282,7 +4325,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _onFlutterMapEvent(MapEvent event) {
     if (event.source == MapEventSource.nonRotatedSizeChange) return;
-    _lastViewportZoom = event.camera.zoom;
+    _updateViewportZoom(event.camera.zoom);
     if ((event.camera.rotation - _mapBearing.value).abs() >= 0.25) {
       _mapBearing.value = event.camera.rotation;
     }
@@ -4351,6 +4394,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
     setState(() => _discoveryViewportCorners = corners);
     _scheduleMapLibreSync(overlays: true);
     _scheduleGlobalHeatmapRefresh();
+  }
+
+  void _updateViewportZoom(double zoom) {
+    final wasVisible = motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom);
+    _lastViewportZoom = zoom;
+    final isVisible = motorcycleDiscoveryVisibleAtZoom(zoom);
+    if (!mounted || wasVisible == isVisible) return;
+    setState(() {});
+    _scheduleMapLibreSync(overlays: true);
   }
 
   void _onMapPointerDown(PointerDownEvent event) {
@@ -5594,6 +5646,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   List<MotorcycleDiscoveryFeature> get _visibleDiscoveryFeatures {
+    if (!motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom)) return const [];
     final anchors = _discoveryAnchorPoints;
     if (anchors.isEmpty || _enabledDiscoveryCategories.isEmpty) return const [];
     var west = anchors.first.longitude;
@@ -5616,7 +5669,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
   }
 
-  List<BikerPlace> get _visibleBikerCafes => _bikerCafesVisible
+  List<BikerPlace> get _visibleBikerCafes =>
+      _bikerCafesVisible && motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom)
       ? _bikerPlaceCatalogue
             .nearRoute(_discoveryAnchorPoints)
             .where((place) => place.isCafe)
@@ -6193,6 +6247,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         context,
         library: library,
         distanceUnit: widget.distanceUnit,
+        basemapConfiguration: _basemap,
       );
       if (selection == null || !mounted) return;
       final prepared = library.prepare(selection);
@@ -6627,7 +6682,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 const SizedBox(height: 4),
                 const Text(
                   'Choose which optional café and road layers appear on the '
-                  'free-roam map. Choices are remembered on this phone.',
+                  'free-roam map. Choices are remembered on this phone. The '
+                  'layers hide automatically on wide-area views and return '
+                  'when you zoom back in.',
                 ),
                 // A toggle that cannot work says so, rather than doing
                 // nothing and leaving the rider to conclude the menu is
@@ -7125,6 +7182,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   Future<void> _handleMenuAction(_MapAction action) async {
     switch (action) {
+      case _MapAction.hostMore:
+        widget.hostChrome?.onMore?.call();
       case _MapAction.importGpx:
         await _importGpx();
       case _MapAction.loadDemo:
@@ -7497,6 +7556,26 @@ class _RideMapScreenState extends State<RideMapScreen> {
     });
   }
 
+  /// Opens the same circular-route planner as the map overflow when Home's
+  /// destination sheet requests it. The token prevents a rebuild or tab return
+  /// from reopening the sheet.
+  void _maybeHandleCircularRideRequest() {
+    final token = widget.circularRideRequestToken;
+    if (token == null || identical(token, _handledCircularRideRequestToken)) {
+      return;
+    }
+    _handledCircularRideRequestToken = token;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onCircularRideRequestHandled?.call();
+      if (!mounted) return;
+      if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+        _showMessage(refusal);
+        return;
+      }
+      unawaited(_planCircularRide());
+    });
+  }
+
   /// A file the platform already handed us (Open in..., a share sheet)
   /// skips the picker sheet entirely and goes straight through the same
   /// parse-and-activate pipeline a manual import uses.
@@ -7612,6 +7691,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 }
 
 enum _MapAction {
+  hostMore,
   importGpx,
   loadDemo,
   circularRide,

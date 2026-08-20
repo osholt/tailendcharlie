@@ -81,7 +81,7 @@ void main() {
   });
 
   test(
-    'visibility is off by default and persists without a network client',
+    'visibility is on by default and an explicit off choice persists',
     () async {
       final store = InMemoryCompletedRideStore();
       await store.save(
@@ -90,15 +90,15 @@ void main() {
       final controller = await PersonalRideHeatmapController.load(store: store);
       addTearDown(controller.dispose);
 
-      expect(controller.visible, isFalse);
+      expect(controller.visible, isTrue);
       expect(controller.heatmap.cells, isNotEmpty);
 
-      await controller.setVisible(true);
+      await controller.setVisible(false);
       expect(controller.heatmap.cells, isNotEmpty);
 
       final reloaded = await PersonalRideHeatmapController.load(store: store);
       addTearDown(reloaded.dispose);
-      expect(reloaded.visible, isTrue);
+      expect(reloaded.visible, isFalse);
       expect(reloaded.heatmap.cells, isNotEmpty);
     },
   );

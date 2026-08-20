@@ -47,6 +47,30 @@ void main() {
     },
   );
 
+  test('one missed deadline keeps the rest of the ride on one voice', () async {
+    final neural = _FakeNeuralStarter(neverStarts: true);
+    final fallback = _RecordingEngine();
+    final outputs = <SpokenGuidanceOutput>[];
+    final engine = FailSafeNeuralSpokenGuidanceEngine(
+      neural: neural,
+      fallback: fallback,
+      startDeadline: const Duration(milliseconds: 5),
+      onOutput: (_, output) => outputs.add(output),
+    );
+
+    await engine.configure();
+    await engine.speak('First prompt');
+    await engine.speak('Second prompt');
+
+    expect(neural.phrases, ['First prompt']);
+    expect(neural.cancelCalls, 1);
+    expect(fallback.spoken, ['First prompt', 'Second prompt']);
+    expect(outputs, [
+      SpokenGuidanceOutput.systemFallback,
+      SpokenGuidanceOutput.systemFallback,
+    ]);
+  });
+
   test(
     'explicit warm-up completes model preparation before an alert',
     () async {

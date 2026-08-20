@@ -141,16 +141,33 @@ GuidanceAnnouncement? nextGuidanceAnnouncement({
     instructionText: instructionText,
     followingInstructionText: followingInstructionText,
   );
+  final spokenSubject = _naturaliseArrival(
+    subject,
+    immediate: stage == GuidanceStage.immediate,
+  );
   return GuidanceAnnouncement(
     key: '$maneuverIdentity|${stage.name}',
     // The immediate prompt carries no distance: at eight seconds out, "in 90
     // yards" is a number the rider has no use for and a syllable they have no
     // time for.
     phrase: stage == GuidanceStage.immediate
-        ? subject
-        : 'In ${distanceFormatter(distanceToManeuverMeters)}, $subject',
+        ? spokenSubject
+        : 'In ${distanceFormatter(distanceToManeuverMeters)}, $spokenSubject',
     stage: stage,
   );
+}
+
+String _naturaliseArrival(String subject, {required bool immediate}) {
+  final arrival = RegExp(r'Arrive at the destination', caseSensitive: false);
+  final match = arrival.firstMatch(subject);
+  if (match == null) return subject;
+  final atStart = match.start == 0;
+  final replacement = immediate
+      ? atStart
+            ? 'Your destination is just ahead'
+            : 'your destination is just ahead'
+      : "you'll arrive at your destination";
+  return subject.replaceFirst(arrival, replacement);
 }
 
 /// What the prompt is *about* — one junction, or a close pair named together.

@@ -17,6 +17,8 @@ export 'ride_map_feature.dart'
         groupMiniMapGridColor,
         groupMiniMapRenderer,
         landscapeGuidancePanelWidth,
+        motorcycleDiscoveryMinimumZoom,
+        motorcycleDiscoveryVisibleAtZoom,
         portraitRideMenuTopOffset,
         portraitBottomChromeKey,
         rideMapPrimaryPanelFill,

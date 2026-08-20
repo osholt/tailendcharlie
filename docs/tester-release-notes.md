@@ -36,6 +36,54 @@ permissions by design.
 - ...
 ```
 
+## iOS build 69 / Android build 69 — 20 August 2026
+
+This build declutters the phone map and makes saved routes and spoken guidance
+feel more like finished navigation features.
+
+### What to test
+
+1. **Open the home map on a small phone.** There should be one top bar: Where
+   to remains readable, Join is compact, and there is no emergency-info button
+   or permanent Ride with others bar at the bottom. Group-ride creation remains
+   under `…` → **More actions**.
+2. **End a ride, then leave its summary.** The ended-ride banner now has a close
+   button. Closing it must remove the banner without losing the ride from Ride
+   Library.
+3. **Open map layers and zoom out.** Personal ride heatmap is on by default for
+   anyone who has not previously chosen a setting. Motorcycle roads and biker
+   cafés disappear on wide-area views and return when you zoom back in.
+4. **Tap Where to.** **Create a circular ride** is now presented with the other
+   route-creation choices and opens the existing circular-route planner.
+5. **Open Ride Library.** Saved-route thumbnails and the tapped preview should
+   show real map tiles behind the route. The large preview can be panned and
+   zoomed; **Use this route** stays reachable at the bottom.
+6. **Navigate with voice enabled.** Arrival should sound like “you'll arrive at
+   your destination” or “your destination is just ahead”, not “you will reach
+   the destination”. If the natural voice misses its deadline, the rest of that
+   ride should stay on the same system voice instead of alternating.
+
+### Fixed
+
+- The home map repeated ride creation in a large permanent bottom bar and
+  squeezed Where to between too many top-bar controls.
+- An ended-ride banner could be reopened but not cleared.
+- Personal heatmap started off, while discovery overlays stayed dense at every
+  zoom level.
+- Circular rides lived in a separate map menu instead of the Where to flow.
+- Ride Library previews showed route geometry on a blank background.
+- Arrival wording sounded mechanical, and a slow natural voice could alternate
+  with the system voice from one instruction to the next.
+
+### Known limitations
+
+- The public global heatmap still publishes a cell only after at least three
+  contributing riders overlap there. Until enough riders opt in, an empty
+  global layer is expected and protects individual ride privacy.
+- Build 68's roundabout and landscape fixes are unchanged. The automated
+  regressions pass, but the reported roads and an on-bike landscape ride still
+  need physical confirmation.
+
 ## iOS build 68 / Android build 68 — 20 August 2026
 
 Everything in this build comes from one 48-minute ride around Bristol on build

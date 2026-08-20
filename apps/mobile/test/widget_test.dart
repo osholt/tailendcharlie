@@ -49,7 +49,7 @@ void main() {
     );
   });
 
-  testWidgets('the app opens on the map, with the ride actions on it (#405)', (
+  testWidgets('the app opens on the map with one top bar (#405)', (
     tester,
   ) async {
     // It used to open on this form alone, so the one surface that is useful
@@ -61,15 +61,19 @@ void main() {
     await tester.pumpWidget(_app(controller));
 
     expect(find.byType(HomeMapBackdrop), findsOneWidget);
-    expect(find.text('Ride with others'), findsOneWidget);
+    expect(find.text('Ride with others'), findsNothing);
+    expect(find.byKey(const Key('home-ride-actions')), findsNothing);
+    expect(find.byKey(const Key('home-more-actions')), findsOneWidget);
     expect(find.text('Join'), findsOneWidget);
   });
 
-  testWidgets('home screen exposes the two ride entry points', (tester) async {
+  testWidgets('group creation remains behind the top-bar More action', (
+    tester,
+  ) async {
     final controller = await _controller();
     await tester.pumpWidget(_app(controller));
 
-    expect(find.text('Ride with others'), findsOneWidget);
+    expect(find.text('Ride with others'), findsNothing);
     expect(find.text('Join'), findsOneWidget);
     // The simulator is behind "More" now, and there is no heading or paragraph
     // at all: #426 removed the start panel rather than shrinking it, because
@@ -77,8 +81,9 @@ void main() {
     expect(find.text('Ready to ride?'), findsNothing);
     expect(find.text('Try a simulated ride'), findsNothing);
 
-    await tester.tap(find.text('More'));
+    await tester.tap(find.byKey(const Key('home-more-actions')));
     await tester.pumpAndSettle();
+    expect(find.text('Create a group ride'), findsOneWidget);
     expect(find.text('Try a simulated ride'), findsOneWidget);
 
     controller.dispose();
@@ -93,19 +98,9 @@ void main() {
 
     await tester.pumpWidget(_app(controller));
 
-    final screen = tester.getRect(find.byType(HomeMapBackdrop));
-    final actions = tester.getRect(find.byKey(const Key('home-ride-actions')));
-
-    expect(
-      actions.height,
-      lessThan(screen.height * 0.25),
-      reason: 'the actions are a bar on the map, not a screen in front of it',
-    );
-    expect(
-      actions.top,
-      greaterThan(screen.center.dy),
-      reason: 'and they are at the bottom, leaving the map itself alone',
-    );
+    expect(find.byKey(const Key('home-ride-actions')), findsNothing);
+    expect(find.byType(HomeMapBackdrop), findsOneWidget);
+    expect(find.byKey(const Key('home-search-bar')), findsOneWidget);
   });
 
   testWidgets(
@@ -156,18 +151,23 @@ void main() {
       // caught.
       expect(
         tester
-            .widget<ButtonStyleButton>(
-              find.byKey(const Key('home-create-ride')),
-            )
-            .onPressed,
-        isNull,
-      );
-      expect(
-        tester
             .widget<ButtonStyleButton>(find.byKey(const Key('home-join-ride')))
             .onPressed,
         isNull,
       );
+
+      await tester.tap(find.byKey(const Key('home-more-actions')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+        tester
+            .widget<ListTile>(find.byKey(const Key('home-create-ride')))
+            .enabled,
+        isFalse,
+      );
+      await tester.tapAt(const Offset(4, 4));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       eventStore.completeFirstRestore(const []);
       await tester.pumpAndSettle();
@@ -227,7 +227,7 @@ void main() {
     // Fully cleared: on the map, with no panel and no banner nagging.
     expect(find.text('Ride recovered'), findsNothing);
     expect(find.byKey(const Key('set-aside-ride-banner')), findsNothing);
-    expect(find.byKey(const Key('home-ride-actions')), findsOneWidget);
+    expect(find.byKey(const Key('home-ride-actions')), findsNothing);
     // Nothing was given up to get here.
     expect(controller.hasActiveRide, isTrue);
     expect(controller.rideEnded, isFalse);
@@ -885,7 +885,8 @@ void main() {
     await tester.tap(find.text('Leave only'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ride with others'), findsOneWidget);
+    expect(find.text('Ride with others'), findsNothing);
+    expect(find.byKey(const Key('home-more-actions')), findsOneWidget);
     expect(find.text('Join'), findsOneWidget);
     expect(controller.hasActiveRide, isFalse);
 
@@ -983,7 +984,7 @@ void main() {
     await tester.tap(find.byKey(const Key('leave-ended-ride-button')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ride with others'), findsOneWidget);
+    expect(find.text('Ride with others'), findsNothing);
     expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
     expect(find.text('Ride $rideCode has ended'), findsOneWidget);
     // #594 measured the set-aside banner here before assuming it was the
@@ -1010,6 +1011,11 @@ void main() {
     await tester.tap(find.byKey(const Key('leave-ended-ride-screen-button')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('dismiss-set-aside-ride')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('set-aside-ride-banner')), findsNothing);
+    expect(controller.hasActiveRide, isFalse);
 
     controller.dispose();
   });
