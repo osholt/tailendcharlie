@@ -142,8 +142,8 @@ void main() {
     expect(rideMenu, findsOneWidget);
     expect(
       tester.getRect(rideMenu).top,
-      closeTo(portraitRideMenuTopOffset, 1),
-      reason: 'the menu should sit below the ETA/mini-map header',
+      closeTo(12, 1),
+      reason: 'the way to Ride and Settings belongs at the top of the map',
     );
 
     // Bounded pumps, not pumpAndSettle: a running simulation never settles.

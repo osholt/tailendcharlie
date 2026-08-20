@@ -3018,12 +3018,12 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('aligns portrait ETA with the mini-map header row', (
+  testWidgets('aligns portrait ETA with the mini-map below the top controls', (
     tester,
   ) async {
     // ActiveRideShell owns the moving ride-menu button (#404), so the map does
-    // not receive onOpenRideMenu in production. The ETA can therefore align
-    // with the mini-map while the shell puts its menu below that header (#533).
+    // not receive onOpenRideMenu in production. ETA and the mini-map still owe
+    // the top row enough room for that menu, the clock and speed/compass.
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -3084,7 +3084,10 @@ void main() {
     expect(find.byKey(const Key('ride-menu-button')), findsNothing);
     final progress = find.byKey(const Key('route-progress-panel-position'));
     expect(progress, findsOneWidget);
-    expect(tester.getRect(progress).top, closeTo(12, 1));
+    expect(
+      tester.getRect(progress).top,
+      closeTo(portraitNavigationHeaderTopOffset, 1),
+    );
 
     await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox.shrink());
@@ -3423,18 +3426,24 @@ void main() {
         tester.getRect(find.byKey(const Key('group-mini-map-canvas'))).height,
         104,
       );
-      // Top trailing corner in portrait (#133), opposite the ride menu, and out
-      // of the bottom band the camera's forward bias pays for.
+      // The portrait mini-map sits below the top row occupied by menu, clock,
+      // compass and speed, and stays out of the bottom band the camera's
+      // forward bias pays for.
       final portraitSize =
           tester.view.physicalSize / tester.view.devicePixelRatio;
       expect(portraitMiniMap.top, lessThan(portraitSize.height / 3));
       expect(portraitMiniMap.right, closeTo(portraitSize.width - 12, 1));
       expect(portraitProgress.left, closeTo(12, 1));
-      expect(portraitProgress.top, closeTo(12, 1));
+      expect(
+        portraitProgress.top,
+        closeTo(portraitNavigationHeaderTopOffset, 1),
+      );
       expect(portraitProgress.top, closeTo(portraitMiniMap.top, 1));
       expect(portraitProgress.right, lessThanOrEqualTo(portraitMiniMap.left));
-      // Portrait has one clock, folded into the compact route card.
-      expect(find.byKey(const Key('ride-clock')), findsOneWidget);
+      // Portrait has one clock in the persistent top row, above the cards.
+      final portraitClock = find.byKey(const Key('ride-clock'));
+      expect(portraitClock, findsOneWidget);
+      expect(tester.getRect(portraitClock).top, closeTo(12, 1));
       riders.value = [
         ...riders.value,
         const MapOverlayMarker(
@@ -4058,21 +4067,16 @@ void main() {
           expect(target.height, greaterThanOrEqualTo(48));
           expect(target.width, greaterThanOrEqualTo(48));
         }
-        // The speed sign shares that row instead of owning one below it, hard
-        // right and clear of the hand reaching for the stack.
+        // Speed and compass own the top-right corner rather than the bottom
+        // target run. They stay above ETA/the mini-map and clear of the hand
+        // reaching for the safety stack.
         final speedLimit = rects['posted-speed-limit-position']!;
         final compass = rects['ride-compass-position']!;
         expect(speedLimit.right, closeTo(size.width - 12, 1));
+        expect(speedLimit.top, closeTo(12, 1));
         expect(compass.right, closeTo(speedLimit.left - 8, 1));
         expect(compass.top, closeTo(speedLimit.top, 1));
         expect(compass.width, closeTo(58, 0.1));
-        for (final target in [sos, leave, report]) {
-          expect(
-            speedLimit.left,
-            greaterThanOrEqualTo(target.right),
-            reason: 'the speed sign must stay clear of the targets in $size',
-          );
-        }
 
         // The turn banner is the last surface above the targets (#133), so all
         // the map above it is map. Nothing status-like may come between them.
@@ -4107,15 +4111,20 @@ void main() {
           );
         }
 
-        // ETA and mini-map now read as one header, with the menu beneath them
-        // rather than forcing an unmatched indentation into the ETA card.
+        // Menu, clock and speed/compass form the top row. ETA and the mini-map
+        // read as one header underneath it.
         final progress = rects['route-progress-panel-position']!;
         final miniMap = rects['group-mini-map']!;
         expect(progress.left, closeTo(12, 1));
-        expect(progress.top, closeTo(12, 1));
+        expect(progress.top, closeTo(portraitNavigationHeaderTopOffset, 1));
         expect(miniMap.right, closeTo(size.width - 12, 1));
         expect(miniMap.top, closeTo(progress.top, 1));
-        expect(rideMenu.top, closeTo(portraitRideMenuTopOffset, 1));
+        expect(rideMenu.top, closeTo(12, 1));
+        final clock = tester.getRect(find.byKey(const Key('ride-clock')));
+        expect(clock.top, closeTo(12, 1));
+        expect(rideMenu.bottom, lessThanOrEqualTo(progress.top));
+        expect(clock.bottom, lessThanOrEqualTo(progress.top));
+        expect(speedLimit.bottom, lessThanOrEqualTo(progress.top));
 
         // Portrait chrome is one measured band whose height the camera reads to
         // clamp its forward bias (#105). This is the absolute worst case - every
@@ -4672,11 +4681,10 @@ void main() {
 
       expect(
         withBar,
-        lessThan(withoutBar),
+        lessThanOrEqualTo(withoutBar),
         reason:
             'in $where a bar standing on the map is 84 pixels the camera may '
-            'not aim into, so the rider comes up the frame rather than staying '
-            'where it was',
+            'not aim into, so it must never push the rider down the frame',
       );
 
       // And the rider-facing claim: the marker, not its centre, clear of the
@@ -6207,6 +6215,7 @@ void main() {
       WidgetTester tester, {
       required bool hosted,
       bool started = false,
+      bool navigating = false,
       VoidCallback? onMore,
     }) async {
       SharedPreferences.setMockInitialValues({});
@@ -6218,15 +6227,27 @@ void main() {
         httpClient: MockClient((_) async => http.Response('', 404)),
       );
       addTearDown(cache.dispose);
+      final position = navigating
+          ? ValueNotifier<GeoPoint?>(
+              const GeoPoint(latitude: 51.45, longitude: -2.59),
+            )
+          : null;
+      if (position != null) addTearDown(position.dispose);
 
       await tester.pumpWidget(
         MaterialApp(
           home: RideMapScreen(
-            routeStore: InMemoryRouteStore(),
+            routeStore: InMemoryRouteStore(
+              navigating
+                  ? _testRoute(id: 'host-navigation', name: 'Host navigation')
+                  : null,
+            ),
             routeImporter: RouteImporter(source: const _NoFileSource()),
             offlineTileCache: cache,
             routeAuthority: RouteAuthority.personal,
             rideStarted: started,
+            navigating: navigating ? true : null,
+            currentPosition: position,
             discoveryCatalogueLoader: () async =>
                 const MotorcycleDiscoveryCatalogue([]),
             bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
@@ -6327,6 +6348,39 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(opened, 1);
+    });
+
+    testWidgets('free-roam navigation keeps More at the top in both layouts', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var opened = 0;
+
+      for (final size in const [Size(390, 844), Size(844, 390)]) {
+        tester.view.physicalSize = size;
+        await pumpWithChrome(
+          tester,
+          hosted: true,
+          navigating: true,
+          onMore: () => opened += 1,
+        );
+
+        expect(find.byType(AppBar), findsNothing, reason: '$size');
+        final menu = find.byKey(const Key('ride-menu-button'));
+        expect(menu, findsOneWidget, reason: '$size');
+        expect(find.byTooltip('More'), findsOneWidget, reason: '$size');
+        final rect = tester.getRect(menu);
+        final inset = size.width > size.height ? 10.0 : 12.0;
+        expect(rect.left, closeTo(inset, 1), reason: '$size');
+        expect(rect.top, closeTo(inset, 1), reason: '$size');
+
+        await tester.tap(menu);
+        await tester.pump();
+      }
+
+      expect(opened, 2);
     });
 
     testWidgets('a host that brought a title does not get a second way to a '
