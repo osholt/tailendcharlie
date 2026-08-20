@@ -264,7 +264,7 @@ class NavigationGuidancePlanner {
     final path = _primaryPath(route.paths);
     if (path.length < 2) return const [];
     final steps = <RouteInstructionStep>[];
-    for (final instruction in collapseManeuvers(route.maneuvers)) {
+    for (final instruction in collapseManeuvers(route.maneuvers, path: path)) {
       if (!instruction.isGuidance) continue;
       final projection = _project(instruction.position, path);
       steps.add(
@@ -457,13 +457,39 @@ const _gyratoryMergeMeters = 25.0;
 /// belonging to a later roundabout be absorbed into an earlier one.
 const _ringExitMeters = 400.0;
 
+/// How far clear of a ring to start measuring the road, and how far along it to
+/// finish.
+///
+/// The engine's own `bearing_before` and `bearing_after` on a roundabout step
+/// are measured on the ring, not on the roads either side of it, which is what
+/// made a straight-through crossing read as a right turn (#614). These sample
+/// the route's own line instead: 45 m is outside all but the largest gyratory,
+/// and 145 m is far enough to have the road's heading while staying on the same
+/// road.
+const _ringRoadBearingInnerMeters = 45.0;
+const _ringRoadBearingOuterMeters = 145.0;
+
+/// How many of the route's own vertices must fall in the sampled window before
+/// its line is treated as describing the junction.
+///
+/// Four is enough to rule out a coarse track — a route persisted as two distant
+/// points has none — while any real road geometry through a roundabout has far
+/// more.
+const _ringRoadBearingMinimumVertices = 4;
+
 /// Collapses routing-engine steps into rider-facing instructions.
 ///
 /// A roundabout or rotary is reported as joining the ring and then leaving it.
 /// Announcing both produces two instructions for one junction, each with a
 /// direction that describes part of the ring rather than the exit taken, so the
 /// sequence is merged into a single instruction here.
-List<ManeuverInstruction> collapseManeuvers(List<RouteManeuver> maneuvers) {
+/// [path] is the route's own line. Roundabouts are read from it where it is
+/// supplied, because the engine's per-step bearings on a ring are measured on
+/// the ring (#614). Callers without a line still get the engine's bearings.
+List<ManeuverInstruction> collapseManeuvers(
+  List<RouteManeuver> maneuvers, {
+  List<GeoPoint> path = const [],
+}) {
   final instructions = <ManeuverInstruction>[];
   var index = 0;
   while (index < maneuvers.length) {
@@ -485,6 +511,7 @@ List<ManeuverInstruction> collapseManeuvers(List<RouteManeuver> maneuvers) {
       _roundaboutInstruction(
         group: maneuvers.sublist(index, last + 1),
         follower: follower,
+        path: path,
       ),
     );
     index = last + 1;
@@ -520,19 +547,28 @@ bool _absorbsIntoRing(RouteManeuver entry, RouteManeuver candidate) {
 ManeuverInstruction _roundaboutInstruction({
   required List<RouteManeuver> group,
   required RouteManeuver? follower,
+  List<GeoPoint> path = const [],
 }) {
   final entry = group.first;
   final last = group.last;
   final exit = _isRingExit(last.type) ? last : null;
-  final departure = _ringDepartureBearing(
-    entry: entry,
-    exit: exit,
-    follower: follower,
-  );
+  // Read once and shared, so the direction and the number a captured turn
+  // detail reports cannot come from different places (#360).
+  final roads = path.length < 2
+      ? null
+      : _ringRoadBearings(
+          joinPosition: entry.position,
+          leavePosition: (exit ?? follower ?? last).position,
+          path: path,
+        );
+  final departure =
+      roads?.departure ??
+      _ringDepartureBearing(entry: entry, exit: exit, follower: follower);
   final direction = _ringExitDirection(
     entry: entry,
     exit: exit,
     follower: follower,
+    roads: roads,
   );
   // Exit counts belong to one ring. Where adjacent rings were merged, neither
   // count describes the collapsed instruction, so no number is claimed.
@@ -598,6 +634,7 @@ double? _ringDepartureBearing({
 ManeuverDirection _ringExitDirection({
   required RouteManeuver entry,
   required RouteManeuver? exit,
+  ({double approach, double departure})? roads,
   required RouteManeuver? follower,
 }) {
   // A small roundabout the engine reports as a plain turn does carry the turn
@@ -605,6 +642,17 @@ ManeuverDirection _ringExitDirection({
   if (entry.type.trim().toLowerCase() == 'roundabout turn') {
     final modifier = _directionFromModifier(entry.modifier);
     if (modifier.isStated) return modifier;
+  }
+  // The two roads, where the route's line could be read. Ride 723888 crossed a
+  // Bristol rotary whose engine bearings were 222 degrees in and 302 out - an
+  // 80 degree right - while the rider's own track approached on 273 and left on
+  // 297. The roads say straight on, twice, and so did the engine's modifier;
+  // only the ring-measured pair said right (#614).
+  if (roads != null) {
+    return _directionFromTurnDegrees(
+      _signedBearingDelta(roads.approach, roads.departure),
+      straightBandDegrees: _roundaboutStraightBandDegrees,
+    );
   }
   final approach = entry.bearingBeforeDegrees;
   if (approach == null) return ManeuverDirection.unstated;
@@ -997,6 +1045,92 @@ String _ordinal(int value) {
     3 => '${value}rd',
     _ => '${value}th',
   };
+}
+
+/// The point [metres] along [path] from its start, or null if the path is
+/// shorter than that.
+///
+/// Null rather than clamped on purpose: a junction too near either end of the
+/// route has no road to measure, and a clamped answer would be the endpoint's
+/// bearing dressed up as the road's.
+GeoPoint? _pointAlong(List<GeoPoint> path, double metres) {
+  if (metres < 0 || path.length < 2) return null;
+  var travelled = 0.0;
+  for (var index = 0; index < path.length - 1; index += 1) {
+    final start = path[index];
+    final end = path[index + 1];
+    final length = _distance(start, end);
+    if (length <= 0) continue;
+    if (travelled + length >= metres) {
+      final fraction = (metres - travelled) / length;
+      return GeoPoint(
+        latitude: start.latitude + (end.latitude - start.latitude) * fraction,
+        longitude:
+            start.longitude + (end.longitude - start.longitude) * fraction,
+      );
+    }
+    travelled += length;
+  }
+  return null;
+}
+
+double _bearingDegrees(GeoPoint from, GeoPoint to) {
+  final lat1 = from.latitude * math.pi / 180;
+  final lat2 = to.latitude * math.pi / 180;
+  final deltaLon = (to.longitude - from.longitude) * math.pi / 180;
+  final y = math.sin(deltaLon) * math.cos(lat2);
+  final x =
+      math.cos(lat1) * math.sin(lat2) -
+      math.sin(lat1) * math.cos(lat2) * math.cos(deltaLon);
+  return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+}
+
+/// The headings of the two roads a ring joins, measured on the route's own line.
+///
+/// [joinPosition] is where the rider meets the ring and [leavePosition] where
+/// they leave it, so a gyratory of any size is measured from its own ends rather
+/// than from one point plus a guess at its radius.
+///
+/// Returns null unless both roads are there to measure. The caller then falls
+/// back to the engine's bearings, which is what the app did everywhere before.
+({double approach, double departure})? _ringRoadBearings({
+  required GeoPoint joinPosition,
+  required GeoPoint leavePosition,
+  required List<GeoPoint> path,
+}) {
+  final join = _project(joinPosition, path).progressMeters;
+  final leave = _project(leavePosition, path).progressMeters;
+  // A ring whose exit projects before its entry is not a ring this can read.
+  if (leave < join) return null;
+  // And neither is a line that does not describe the junction. A route stored
+  // as two distant points interpolates straight through everything between
+  // them, so sampling it returns the heading of the interpolation and calls
+  // every roundabout on it straight on — a direction claimed from nothing.
+  // Real road geometry has vertices through a junction; require some.
+  var vertices = 0;
+  var travelled = 0.0;
+  for (var index = 0; index < path.length - 1; index += 1) {
+    travelled += _distance(path[index], path[index + 1]);
+    if (travelled > join - _ringRoadBearingOuterMeters &&
+        travelled < leave + _ringRoadBearingOuterMeters) {
+      vertices += 1;
+    }
+  }
+  if (vertices < _ringRoadBearingMinimumVertices) return null;
+  final approachFrom = _pointAlong(path, join - _ringRoadBearingOuterMeters);
+  final approachTo = _pointAlong(path, join - _ringRoadBearingInnerMeters);
+  final departFrom = _pointAlong(path, leave + _ringRoadBearingInnerMeters);
+  final departTo = _pointAlong(path, leave + _ringRoadBearingOuterMeters);
+  if (approachFrom == null ||
+      approachTo == null ||
+      departFrom == null ||
+      departTo == null) {
+    return null;
+  }
+  return (
+    approach: _bearingDegrees(approachFrom, approachTo),
+    departure: _bearingDegrees(departFrom, departTo),
+  );
 }
 
 List<GeoPoint> _primaryPath(List<RoutePath> paths) {
