@@ -192,11 +192,16 @@ class CircularRidePlanner {
         for (final stop in request.plannedStops)
           (fraction: stop.fraction, point: stop.waypoint.point),
       ]..sort((first, second) => first.fraction.compareTo(second.fraction));
-      result = await routingService.routeThrough([
-        request.start,
-        ...orderedControls.map((control) => control.point),
-        request.start,
-      ], preferences: request.preferences);
+      try {
+        result = await routingService.routeThrough([
+          request.start,
+          ...orderedControls.map((control) => control.point),
+          request.start,
+        ], preferences: request.preferences);
+      } on RoadRoutingException catch (error) {
+        if (!error.routeNotFound) rethrow;
+        throw FormatException(_circularRideNoRouteMessage(request));
+      }
       _validateClosedRoute(request.start, result);
       if (_hasUTurn(result)) {
         throw const FormatException(
@@ -278,6 +283,21 @@ class CircularRidePlanner {
         '${request.mealAfter.inMinutes} min. '
         '${request.heatmapPreference == CircularRideHeatmapPreference.none ? 'No heatmap preference.' : 'Soft preference: ${request.heatmapPreference.label.toLowerCase()}.'}';
   }
+}
+
+String _circularRideNoRouteMessage(CircularRideRequest request) {
+  const lead = 'No circular route could be found with those settings.';
+  if (request.preferences.avoidMotorways) {
+    return '$lead Try turning off Avoid motorways, choosing another direction, '
+        'or reducing the distance.';
+  }
+  if (request.preferences.avoidMajorRoads ||
+      request.preferences.avoidTolls ||
+      request.preferences.avoidFerries) {
+    return '$lead Try relaxing a road exclusion, choosing another direction, '
+        'or reducing the distance.';
+  }
+  return '$lead Try choosing another direction or reducing the distance.';
 }
 
 const circularRideDistanceTolerance = 0.30;

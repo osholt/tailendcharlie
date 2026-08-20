@@ -88,6 +88,21 @@ class RoadRouteResult {
   final RoutePreferences? preferences;
 }
 
+/// A routing-provider failure with enough structure for a planner to explain
+/// what the rider can change, rather than exposing a bare HTTP status code.
+class RoadRoutingException extends FormatException {
+  const RoadRoutingException(
+    super.message, {
+    this.statusCode,
+    this.providerCode,
+    this.routeNotFound = false,
+  });
+
+  final int? statusCode;
+  final String? providerCode;
+  final bool routeNotFound;
+}
+
 /// A decision reported by the routing engine or restored from reviewed mapped
 /// junction data rather than inferred from a bend in recorded GPS geometry.
 /// These are the points where a second rider may need to mark a junction.
@@ -457,7 +472,12 @@ class OsrmRoadRoutingService implements RoadRoutingService {
         .get(uri, headers: _requestHeaders)
         .timeout(timeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw FormatException('Road routing failed (${response.statusCode}).');
+      throw _routingFailure(
+        response,
+        serviceName: 'Road routing',
+        errorKeys: const ['message', 'error'],
+        codeKeys: const ['code', 'error_code'],
+      );
     }
     if (response.bodyBytes.length > maximumResponseBytes) {
       throw const FormatException('Road routing response is too large.');
@@ -465,10 +485,14 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
     if (decoded is! Map || decoded['code'] != 'Ok') {
       final message = decoded is Map ? decoded['message'] : null;
-      throw FormatException(
-        message is String && message.trim().isNotEmpty
-            ? message
-            : 'No road route was found.',
+      final detail = message is String && message.trim().isNotEmpty
+          ? message.trim()
+          : 'No road route was found.';
+      final providerCode = decoded is Map ? decoded['code'] : null;
+      throw RoadRoutingException(
+        detail,
+        providerCode: providerCode?.toString(),
+        routeNotFound: _providerSaysNoRoute(providerCode, detail),
       );
     }
     final routes = decoded['routes'];
@@ -704,8 +728,11 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
         )
         .timeout(timeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw FormatException(
-        'Motorcycle routing failed (${response.statusCode}).',
+      throw _routingFailure(
+        response,
+        serviceName: 'Motorcycle routing',
+        errorKeys: const ['error', 'message'],
+        codeKeys: const ['error_code', 'code'],
       );
     }
     if (response.bodyBytes.length > maximumResponseBytes) {
@@ -715,10 +742,14 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
     final trip = decoded is Map ? decoded['trip'] : null;
     if (trip is! Map || trip['legs'] is! List) {
       final error = decoded is Map ? decoded['error'] : null;
-      throw FormatException(
-        error is String && error.trim().isNotEmpty
-            ? error
-            : 'No road route was found for those stops.',
+      final providerCode = decoded is Map ? decoded['error_code'] : null;
+      final detail = error is String && error.trim().isNotEmpty
+          ? error.trim()
+          : 'No road route was found for those stops.';
+      throw RoadRoutingException(
+        detail,
+        providerCode: providerCode?.toString(),
+        routeNotFound: _providerSaysNoRoute(providerCode, detail),
       );
     }
     final points = <GeoPoint>[];
@@ -1395,6 +1426,55 @@ bool _isRoundaboutManeuver(String type) => const {
   'exit roundabout',
   'exit rotary',
 }.contains(type.trim().toLowerCase());
+
+RoadRoutingException _routingFailure(
+  http.Response response, {
+  required String serviceName,
+  required List<String> errorKeys,
+  required List<String> codeKeys,
+}) {
+  String? detail;
+  Object? providerCode;
+  try {
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is Map) {
+      for (final key in errorKeys) {
+        final value = decoded[key];
+        if (value is String && value.trim().isNotEmpty) {
+          detail = value.trim();
+          break;
+        }
+      }
+      for (final key in codeKeys) {
+        final value = decoded[key];
+        if (value != null) {
+          providerCode = value;
+          break;
+        }
+      }
+    }
+  } on Object {
+    // A non-JSON failure still has its HTTP status as a safe fallback.
+  }
+  return RoadRoutingException(
+    detail == null
+        ? '$serviceName failed (${response.statusCode}).'
+        : '$serviceName failed: $detail',
+    statusCode: response.statusCode,
+    providerCode: providerCode?.toString(),
+    routeNotFound: _providerSaysNoRoute(providerCode, detail),
+  );
+}
+
+bool _providerSaysNoRoute(Object? code, String? detail) {
+  final normalizedCode = code?.toString().trim().toLowerCase();
+  final normalizedDetail = detail?.trim().toLowerCase() ?? '';
+  return normalizedCode == '442' ||
+      normalizedCode == 'noroute' ||
+      normalizedDetail.contains('no path could be found') ||
+      normalizedDetail.contains('no road route') ||
+      normalizedDetail.contains('no suitable edges');
+}
 
 const _requestHeaders = {
   'Accept': 'application/json',
