@@ -36,6 +36,38 @@ permissions by design.
 - ...
 ```
 
+## iOS build 70 / Android build 70 — 20 August 2026
+
+This follow-up restores the map's persistent navigation controls in portrait
+and landscape without bringing back the busy full-width bars.
+
+### What to test
+
+1. **Navigate in portrait.** The clock should stay at the top centre and the
+   speed/compass circles at the top right. ETA and the group overview should
+   begin below that row rather than pushing the clock down the screen.
+2. **Open the menu while navigating in both orientations.** The top-left menu
+   button should remain visible on the full-screen moving map. It must provide a
+   way to Settings and the other app destinations in free roam and during an
+   active ride.
+3. **Check the landscape safety controls.** SOS ALERT, LEAVE and REPORT should
+   remain visible and usable in the bottom-left area while the menu stays at the
+   top left.
+
+### Fixed
+
+- Portrait put the navigation clock below the ETA card and left speed/compass
+  in the bottom-right corner.
+- Entering the full-screen moving map could hide the only route to Settings and
+  other menus.
+- The active-ride menu sat below the portrait ETA card, where it looked like
+  part of the trip summary instead of a persistent navigation control.
+
+### Known limitations
+
+- The roundabout and landscape camera changes from builds 68 and 69 still need
+  confirmation on the reported roads during a physical ride.
+
 ## iOS build 69 / Android build 69 — 20 August 2026
 
 This build declutters the phone map and makes saved routes and spoken guidance

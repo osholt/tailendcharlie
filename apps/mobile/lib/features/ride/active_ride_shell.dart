@@ -3895,9 +3895,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             ? Stack(
                 children: [
                   Positioned.fill(child: body),
-                  // The one thing #133 puts in the upper leading corner, in the
-                  // same place, so a rider reaches for it where the ride menu
-                  // has always been.
+                  // Persistent in the upper-leading corner in both
+                  // orientations. This is the escape from a full-screen moving
+                  // map to Ride and Settings, so it cannot sit below the ETA
+                  // card where it reads as part of the trip summary.
                   Positioned(
                     left: 12,
                     top:

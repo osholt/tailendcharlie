@@ -244,9 +244,22 @@ Color groupMiniMapBackgroundColor(Brightness brightness) =>
 @visibleForTesting
 const Key portraitBottomChromeKey = Key('map-portrait-bottom-chrome');
 
-/// The moving portrait menu sits below the aligned ETA/mini-map header (#533).
+/// The moving portrait menu belongs in the top-leading corner.
+///
 /// Shared with [ActiveRideShell], which owns this button during a real ride.
-const double portraitRideMenuTopOffset = 196;
+/// Keeping it in the first row makes the way to Settings visible in both an
+/// active ride and free-roam navigation; placing it below the ETA card made it
+/// look like part of the trip summary and left some navigation states with no
+/// discoverable escape at all.
+const double portraitRideMenuTopOffset = 12;
+
+/// ETA and the group overview start below the persistent top navigation row.
+///
+/// The row above them carries menu, clock and speed/compass. A fixed offset
+/// keeps those three controls at the top without allowing either header card to
+/// slide underneath them as its contents change.
+@visibleForTesting
+const double portraitNavigationHeaderTopOffset = 154;
 
 /// Turn and TEC panes retain strong contrast while allowing some map context
 /// through them. Progress, actions and the mini-map keep their denser fills.
@@ -1938,7 +1951,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
         widget.overlayMarkers != null && !markerOverviewActive;
     final groupMiniMapWidth = landscape ? 196.0 : 150.0;
     final groupMiniMapHeight = landscape ? 116.0 : 104.0;
-    final showRideMenu = hideChrome && widget.onOpenRideMenu != null;
+    // An active ride supplies its own named destination menu. Free roam has no
+    // ride menu, but its host supplies More — including Settings and the ride
+    // library. The AppBar disappears on the navigation canvas, so one of these
+    // must remain in the same top-leading position or the map becomes a dead end.
+    final showRideMenu =
+        hideChrome &&
+        (widget.onOpenRideMenu != null || hostChrome?.onMore != null);
     // A route can contain manoeuvres before the device has a usable location.
     // The guidance banner is only composed into the band while guidance is
     // actually visible, so nothing reserves space for a banner that is absent.
@@ -2623,12 +2642,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
       // deliberately: a single small corner button is where a rider reaches for
       // it and does not obstruct the road ahead. #104's rule against persistent
       // *status* surfaces up there is untouched.
+      final navigationMenuAction = widget.onOpenRideMenu == null
+          ? widget.hostChrome?.onMore
+          : () => unawaited(widget.onOpenRideMenu!());
       final rideMenu = showRideMenu
           ? FloatingActionButton.small(
               key: const Key('ride-menu-button'),
               heroTag: 'ride-relay-menu',
-              tooltip: 'Ride actions',
-              onPressed: widget.onOpenRideMenu,
+              tooltip: widget.onOpenRideMenu == null ? 'More' : 'Ride actions',
+              onPressed: navigationMenuAction,
               backgroundColor: const Color(0xE6252E39),
               foregroundColor: Colors.white,
               child: const Icon(Icons.menu),
@@ -2981,29 +3003,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         );
       }
 
-      // SOS above LEAVE rather than beside it (#133), with REPORT alongside the
-      // pair and the speed sign opposite. Stacking them costs no height: the
-      // two-high column and the 62 pixel REPORT square both fit inside the height
-      // the speed sign already needed, so a row that used to be an action run
-      // *plus* a sign run is now one run of the taller of the two. The rider gets
-      // targets that no longer sit shoulder to shoulder - a mis-hit next to SOS
-      // used to be LEAVE - and the band gets shorter.
-      //
-      // The same cluster landscape uses, so the arrangement is a function of
-      // orientation and nothing else (#142). The `Spacer` between it and the
-      // speed sign absorbs the sign's own width, so the targets keep their place
-      // whatever the sign says.
-      final actionCluster = !hasActions && speedLimit == null
-          ? null
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                ?safetyCluster,
-                const Spacer(),
-                // Hard right, out of the way of the thumb reaching the stack.
-                ?speedCluster,
-              ],
-            );
+      // Portrait keeps only glove targets in the bottom action run. Speed and
+      // compass are glance surfaces, so they live at the requested top-right
+      // rather than charging the navigation camera for permanent bottom chrome.
+      final actionCluster = hasActions ? safetyCluster : null;
       return Stack(
         children: [
           if (rideMenu != null)
@@ -3016,9 +3019,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
             Positioned(
               key: const Key('route-progress-panel-position'),
               left: safeLeft + 12,
-              // ETA and the group overview form one aligned header. The moving
-              // menu now sits below them rather than indenting only this card.
-              top: safeTop + 12,
+              // ETA and the group overview form one aligned header below the
+              // persistent menu/clock/speed row.
+              top: safeTop + portraitNavigationHeaderTopOffset,
               width: math.min(
                 210,
                 (MediaQuery.sizeOf(context).width - safeLeft - safeRight) *
@@ -3026,14 +3029,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
               ),
               child: routeProgressPanel,
             ),
-          // The group overview is the second corner element (#133), opposite the
-          // ride menu. It is a glance rather than a target, so the top trailing
-          // corner costs the rider nothing - and out of the bottom band it stops
-          // charging the camera's forward bias for a surface nobody acts on.
+          // The group overview stays paired with ETA below the persistent top
+          // controls. It is a glance rather than a target, and keeping it out of
+          // the bottom band stops charging the camera's forward bias for a
+          // surface nobody acts on.
           if (miniMap != null)
             Positioned(
               right: safeRight + 12,
-              top: safeTop + 12,
+              top: safeTop + portraitNavigationHeaderTopOffset,
               child: miniMap,
             ),
           if (widget.isNavigating)
@@ -3041,10 +3044,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
               key: const Key('ride-clock-position'),
               left: safeLeft,
               right: safeRight,
-              top: safeTop + 154,
+              top: safeTop + 12,
               child: IgnorePointer(
                 child: Center(child: RideClock(darkMap: _basemap.dark)),
               ),
+            ),
+          if (speedCluster != null)
+            Positioned(
+              right: safeRight + 12,
+              top: safeTop + 12,
+              child: speedCluster,
             ),
           Positioned(
             left: safeLeft + 12,
