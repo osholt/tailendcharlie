@@ -29,6 +29,7 @@ import UserNotifications
   private var pendingOpenedPush: [String: String]?
   private var pushTokenTimeout: DispatchWorkItem?
   private var backgroundLocationPermissionBridge: BackgroundLocationPermissionBridge?
+  private var installationIdentityBridge: InstallationIdentityBridge?
   weak var carPlaySceneDelegate: CarPlaySceneDelegate?
 
   override func application(
@@ -43,6 +44,9 @@ import UserNotifications
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     backgroundLocationPermissionBridge = BackgroundLocationPermissionBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+    installationIdentityBridge = InstallationIdentityBridge(
       messenger: engineBridge.applicationRegistrar.messenger()
     )
     let channel = FlutterMethodChannel(
