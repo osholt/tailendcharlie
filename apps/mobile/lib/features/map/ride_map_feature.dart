@@ -6100,6 +6100,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           routingService: _roadRoutingService,
         ).generate(request);
         if (!mounted) return;
+        request = plan.request;
         final review = await _reviewRoute(
           plan.route,
           distanceMeters: plan.actualDistanceMeters,
@@ -6107,6 +6108,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           twistinessScore: plan.twistinessScore,
           warnings: [
             'The distance is approximate because the road network decides the final loop.',
+            ...plan.warnings,
             if (request.dayLength != RideDayLength.custom)
               'Fuel, bathroom/comfort and meal stops are suggestions. Edit each one and verify opening hours and facilities before accepting.',
             if (request.heatmapPreference !=

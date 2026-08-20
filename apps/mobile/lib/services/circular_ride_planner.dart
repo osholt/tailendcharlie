@@ -99,6 +99,21 @@ class CircularRideRequest {
     heatmapCells: heatmapCells,
   );
 
+  CircularRideRequest withVariant(int value) => CircularRideRequest(
+    start: start,
+    distanceMeters: distanceMeters,
+    direction: direction,
+    preferences: preferences,
+    variant: value,
+    dayLength: dayLength,
+    fuelEvery: fuelEvery,
+    comfortEvery: comfortEvery,
+    mealAfter: mealAfter,
+    plannedStops: plannedStops,
+    heatmapPreference: heatmapPreference,
+    heatmapCells: heatmapCells,
+  );
+
   CircularRideRequest withPlannedStops(List<CircularRideStop> stops) =>
       CircularRideRequest(
         start: start,
@@ -138,6 +153,8 @@ class CircularRidePlan {
     required this.actualDistanceMeters,
     required this.duration,
     required this.twistinessScore,
+    this.warnings = const [],
+    this.motorwayAvoidanceRelaxed = false,
   });
 
   final ImportedRoute route;
@@ -146,7 +163,14 @@ class CircularRidePlan {
   final double actualDistanceMeters;
   final Duration duration;
   final double? twistinessScore;
+  final List<String> warnings;
+  final bool motorwayAvoidanceRelaxed;
 }
+
+const circularRideMotorwayFallbackWarning =
+    'Avoid motorways was relaxed because no usable circular route could be '
+    'found with motorways excluded. This route may use motorways; review it '
+    'carefully before accepting.';
 
 /// Generates a road-routed loop from three non-stopping shaping controls.
 ///
@@ -155,6 +179,8 @@ class CircularRidePlan {
 /// materially different request rather than asking the router the same thing.
 class CircularRidePlanner {
   const CircularRidePlanner({required this.routingService});
+
+  static const _maximumCandidateVariants = 4;
 
   final RoadRoutingService routingService;
 
@@ -178,57 +204,45 @@ class CircularRidePlanner {
       );
     }
 
-    var shapingDistance = request.distanceMeters;
-    late List<GeoPoint> controls;
-    late RoadRouteResult result;
-    for (var attempt = 0; attempt < 3; attempt += 1) {
-      controls = circularRideShapingPoints(
+    final failures = <_CircularRideCandidateFailureKind>[];
+    var candidate = await _tryCandidateVariants(
+      request,
+      preferences: request.preferences,
+      failures: failures,
+      stopAfterNoRoute: request.preferences.avoidMotorways,
+    );
+    var motorwayAvoidanceRelaxed = false;
+    if (candidate == null && request.preferences.avoidMotorways) {
+      motorwayAvoidanceRelaxed = true;
+      candidate = await _tryCandidateVariants(
         request,
-        shapingDistanceMeters: shapingDistance,
+        preferences: request.preferences.copyWith(avoidMotorways: false),
+        failures: failures,
+        forceMotorcycleCosting: true,
       );
-      final orderedControls = <({double fraction, GeoPoint point})>[
-        for (final (index, point) in controls.indexed)
-          (fraction: (index + 1) / 4, point: point),
-        for (final stop in request.plannedStops)
-          (fraction: stop.fraction, point: stop.waypoint.point),
-      ]..sort((first, second) => first.fraction.compareTo(second.fraction));
-      try {
-        result = await routingService.routeThrough([
-          request.start,
-          ...orderedControls.map((control) => control.point),
-          request.start,
-        ], preferences: request.preferences);
-      } on RoadRoutingException catch (error) {
-        if (!error.routeNotFound) rethrow;
-        throw FormatException(_circularRideNoRouteMessage(request));
-      }
-      _validateClosedRoute(request.start, result);
-      if (_hasUTurn(result)) {
-        throw const FormatException(
-          'That loop contains a U-turn. Generate another route or move a shaping point.',
-        );
-      }
-      if (circularRideDistanceWithinTolerance(
-        requestedMeters: request.distanceMeters,
-        actualMeters: result.distanceMeters,
-      )) {
-        break;
-      }
-      if (attempt == 2) {
-        throw const FormatException(
-          'The road network could not make a loop close enough to that distance. Generate another route or adjust the distance.',
-        );
-      }
-      shapingDistance =
-          (shapingDistance * request.distanceMeters / result.distanceMeters)
-              .clamp(request.distanceMeters * 0.4, request.distanceMeters * 1.8)
-              .toDouble();
     }
+    if (candidate == null) {
+      throw FormatException(
+        _circularRideFailureMessage(
+          request,
+          failures,
+          motorwayFallbackAttempted: motorwayAvoidanceRelaxed,
+        ),
+      );
+    }
+
+    final selectedRequest = candidate.request;
+    final controls = candidate.controls;
+    final result = candidate.result;
     final now = DateTime.now().toUtc();
     final route = ImportedRoute(
-      id: 'circular-${now.microsecondsSinceEpoch}-${request.variant}',
-      name: _routeName(request),
-      description: _description(request),
+      id: 'circular-${now.microsecondsSinceEpoch}-${selectedRequest.variant}',
+      name: _routeName(selectedRequest),
+      description: _description(
+        selectedRequest,
+        candidate.preferences,
+        motorwayAvoidanceRelaxed: motorwayAvoidanceRelaxed,
+      ),
       importedAt: now,
       sourceFileName: 'circular-planner',
       paths: [
@@ -239,31 +253,140 @@ class CircularRidePlanner {
         ),
       ],
       waypoints: [
-        RouteWaypoint(point: request.start, name: 'Start and finish'),
-        ...request.plannedStops.map((stop) => stop.waypoint),
-        RouteWaypoint(point: request.start, name: 'Finish'),
+        RouteWaypoint(point: selectedRequest.start, name: 'Start and finish'),
+        ...selectedRequest.plannedStops.map((stop) => stop.waypoint),
+        RouteWaypoint(point: selectedRequest.start, name: 'Finish'),
       ],
       shapingPoints: [
         for (final (index, point) in controls.indexed)
           RouteShapingPoint(
-            id: 'loop-${request.variant}-$index',
+            id: 'loop-${selectedRequest.variant}-$index',
             point: point,
-            legIndex: request.plannedStops
+            legIndex: selectedRequest.plannedStops
                 .where((stop) => stop.fraction < (index + 1) / 4)
                 .length,
           ),
       ],
       maneuvers: result.maneuvers,
-      preferences: request.preferences,
+      preferences: candidate.preferences,
       plannedDuration: result.duration,
     );
     return CircularRidePlan(
       route: route,
-      request: request,
-      requestedDistanceMeters: request.distanceMeters,
+      request: selectedRequest,
+      requestedDistanceMeters: selectedRequest.distanceMeters,
       actualDistanceMeters: result.distanceMeters,
       duration: result.duration,
       twistinessScore: result.twistinessScore,
+      warnings: motorwayAvoidanceRelaxed
+          ? const [circularRideMotorwayFallbackWarning]
+          : const [],
+      motorwayAvoidanceRelaxed: motorwayAvoidanceRelaxed,
+    );
+  }
+
+  Future<_CircularRideCandidate?> _tryCandidateVariants(
+    CircularRideRequest request, {
+    required RoutePreferences preferences,
+    required List<_CircularRideCandidateFailureKind> failures,
+    bool stopAfterNoRoute = false,
+    bool forceMotorcycleCosting = false,
+  }) async {
+    for (var offset = 0; offset < _maximumCandidateVariants; offset += 1) {
+      final candidateRequest = request.withVariant(request.variant + offset);
+      try {
+        return await _generateCandidate(
+          candidateRequest,
+          preferences,
+          forceMotorcycleCosting: forceMotorcycleCosting,
+        );
+      } on _CircularRideCandidateFailure catch (failure) {
+        failures.add(failure.kind);
+        if (stopAfterNoRoute &&
+            failure.kind == _CircularRideCandidateFailureKind.noRoute) {
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<_CircularRideCandidate> _generateCandidate(
+    CircularRideRequest request,
+    RoutePreferences preferences, {
+    required bool forceMotorcycleCosting,
+  }) async {
+    var shapingDistance = request.distanceMeters;
+    for (var attempt = 0; attempt < 3; attempt += 1) {
+      final controls = circularRideShapingPoints(
+        request,
+        shapingDistanceMeters: shapingDistance,
+      );
+      final orderedControls = <({double fraction, GeoPoint point})>[
+        for (final (index, point) in controls.indexed)
+          (fraction: (index + 1) / 4, point: point),
+        for (final stop in request.plannedStops)
+          (fraction: stop.fraction, point: stop.waypoint.point),
+      ]..sort((first, second) => first.fraction.compareTo(second.fraction));
+      late final RoadRouteResult result;
+      try {
+        final waypoints = [
+          request.start,
+          ...orderedControls.map((control) => control.point),
+          request.start,
+        ];
+        final service = routingService;
+        if (forceMotorcycleCosting &&
+            service is MotorcycleCostingRoadRoutingService) {
+          result = await (service as MotorcycleCostingRoadRoutingService)
+              .routeThroughMotorcycle(waypoints, preferences: preferences);
+        } else {
+          result = await service.routeThrough(
+            waypoints,
+            preferences: preferences,
+          );
+        }
+      } on RoadRoutingException catch (error) {
+        if (!error.routeNotFound) rethrow;
+        throw const _CircularRideCandidateFailure(
+          _CircularRideCandidateFailureKind.noRoute,
+        );
+      }
+      if (!_isClosedRoute(request.start, result)) {
+        throw const _CircularRideCandidateFailure(
+          _CircularRideCandidateFailureKind.notClosed,
+        );
+      }
+      if (_hasUTurn(result)) {
+        throw const _CircularRideCandidateFailure(
+          _CircularRideCandidateFailureKind.uTurn,
+        );
+      }
+      if (circularRideDistanceWithinTolerance(
+        requestedMeters: request.distanceMeters,
+        actualMeters: result.distanceMeters,
+      )) {
+        return _CircularRideCandidate(
+          request: request,
+          preferences: preferences,
+          controls: controls,
+          result: result,
+        );
+      }
+      if (attempt == 2 ||
+          !result.distanceMeters.isFinite ||
+          result.distanceMeters <= 0) {
+        throw const _CircularRideCandidateFailure(
+          _CircularRideCandidateFailureKind.distanceMismatch,
+        );
+      }
+      shapingDistance =
+          (shapingDistance * request.distanceMeters / result.distanceMeters)
+              .clamp(request.distanceMeters * 0.4, request.distanceMeters * 1.8)
+              .toDouble();
+    }
+    throw const _CircularRideCandidateFailure(
+      _CircularRideCandidateFailureKind.distanceMismatch,
     );
   }
 
@@ -276,16 +399,64 @@ class CircularRidePlanner {
     };
   }
 
-  static String _description(CircularRideRequest request) {
+  static String _description(
+    CircularRideRequest request,
+    RoutePreferences preferences, {
+    required bool motorwayAvoidanceRelaxed,
+  }) {
     return 'Generated ${request.direction.label} circular ride; '
-        '${request.preferences.summary} Fuel every ${request.fuelEvery.inMinutes} min, '
+        '${preferences.summary} Fuel every ${request.fuelEvery.inMinutes} min, '
         'comfort every ${request.comfortEvery.inMinutes} min, meal after '
         '${request.mealAfter.inMinutes} min. '
-        '${request.heatmapPreference == CircularRideHeatmapPreference.none ? 'No heatmap preference.' : 'Soft preference: ${request.heatmapPreference.label.toLowerCase()}.'}';
+        '${request.heatmapPreference == CircularRideHeatmapPreference.none ? 'No heatmap preference.' : 'Soft preference: ${request.heatmapPreference.label.toLowerCase()}.'}'
+        '${motorwayAvoidanceRelaxed ? ' $circularRideMotorwayFallbackWarning' : ''}';
   }
 }
 
-String _circularRideNoRouteMessage(CircularRideRequest request) {
+enum _CircularRideCandidateFailureKind {
+  noRoute,
+  uTurn,
+  notClosed,
+  distanceMismatch,
+}
+
+class _CircularRideCandidateFailure implements Exception {
+  const _CircularRideCandidateFailure(this.kind);
+
+  final _CircularRideCandidateFailureKind kind;
+}
+
+class _CircularRideCandidate {
+  const _CircularRideCandidate({
+    required this.request,
+    required this.preferences,
+    required this.controls,
+    required this.result,
+  });
+
+  final CircularRideRequest request;
+  final RoutePreferences preferences;
+  final List<GeoPoint> controls;
+  final RoadRouteResult result;
+}
+
+String _circularRideFailureMessage(
+  CircularRideRequest request,
+  List<_CircularRideCandidateFailureKind> failures, {
+  required bool motorwayFallbackAttempted,
+}) {
+  if (motorwayFallbackAttempted) {
+    return 'No usable circular route could be found, even after allowing '
+        'motorways and trying different loop shapes. Try another direction or '
+        'adjust the distance.';
+  }
+  if (failures.isNotEmpty &&
+      failures.every(
+        (failure) => failure == _CircularRideCandidateFailureKind.uTurn,
+      )) {
+    return 'No circular route without a U-turn could be found after trying '
+        'different loop shapes. Try another direction or adjust the distance.';
+  }
   const lead = 'No circular route could be found with those settings.';
   if (request.preferences.avoidMotorways) {
     return '$lead Try turning off Avoid motorways, choosing another direction, '
@@ -317,17 +488,12 @@ bool circularRideDistanceWithinTolerance({
       circularRideDistanceTolerance;
 }
 
-void _validateClosedRoute(GeoPoint start, RoadRouteResult result) {
-  if (result.points.length < 2 ||
-      _distanceMetres(start, result.points.first) >
-          circularRideClosureToleranceMeters ||
-      _distanceMetres(start, result.points.last) >
-          circularRideClosureToleranceMeters) {
-    throw const FormatException(
-      'The router did not return a closed loop. Generate another route.',
-    );
-  }
-}
+bool _isClosedRoute(GeoPoint start, RoadRouteResult result) =>
+    result.points.length >= 2 &&
+    _distanceMetres(start, result.points.first) <=
+        circularRideClosureToleranceMeters &&
+    _distanceMetres(start, result.points.last) <=
+        circularRideClosureToleranceMeters;
 
 bool _hasUTurn(RoadRouteResult result) => result.maneuvers.any((maneuver) {
   final modifier = maneuver.modifier?.trim().toLowerCase().replaceAll('-', ' ');

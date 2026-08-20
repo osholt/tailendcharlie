@@ -406,6 +406,22 @@ abstract interface class RoadRoutingService {
   });
 }
 
+/// Optional capability for callers that must keep motorcycle costing while
+/// relaxing one of its preferences.
+///
+/// A normal [PreferenceAwareRoadRoutingService] call may switch back to OSRM
+/// once the final motorcycle-only preference is removed. Circular-route
+/// fallback must instead ask the same engine the same question with only the
+/// motorway exclusion changed, so any other motorcycle costing choices remain
+/// intact.
+abstract interface class MotorcycleCostingRoadRoutingService {
+  Future<RoadRouteResult> routeThroughMotorcycle(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  });
+}
+
 class OsrmRoadRoutingService implements RoadRoutingService {
   const OsrmRoadRoutingService({
     required this.client,
@@ -1005,7 +1021,8 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
 /// The dispatch rule is [RoutePreferences.requiresMotorcycleCosting], which is
 /// the web planner's `requestRoadRoute` rule. Same rule, same engine, same
 /// options, same route.
-class PreferenceAwareRoadRoutingService implements RoadRoutingService {
+class PreferenceAwareRoadRoutingService
+    implements RoadRoutingService, MotorcycleCostingRoadRoutingService {
   const PreferenceAwareRoadRoutingService({
     required this.osrm,
     required this.motorcycle,
@@ -1050,6 +1067,17 @@ class PreferenceAwareRoadRoutingService implements RoadRoutingService {
           preferences: preferences,
           originBearingDegrees: originBearingDegrees,
         );
+
+  @override
+  Future<RoadRouteResult> routeThroughMotorcycle(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) => motorcycle.routeThrough(
+    waypoints,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
 }
 
 class DestinationMatch {

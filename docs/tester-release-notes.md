@@ -36,6 +36,37 @@ permissions by design.
 - ...
 ```
 
+## iOS build 72 / Android build 72 — 21 August 2026
+
+This follow-up makes circular-route creation recover automatically when the
+first loop shape contains a U-turn or avoiding motorways leaves no usable path.
+
+### What to test
+
+1. **Create an 80-mile circular route to the northwest with Avoid motorways
+   enabled.** The planner should try alternative loop shapes rather than fail
+   immediately when one contains a U-turn.
+2. **Review the generated route before accepting it.** If no usable route can
+   be made while excluding motorways, the preview should still open and clearly
+   warn that Avoid motorways was relaxed and the route may use motorways.
+3. **Repeat the same request.** It should not reproduce the earlier bare 400 or
+   immediate U-turn failure. If neither the original nor relaxed request can
+   make a usable loop, the error should suggest changing direction or distance.
+
+### Fixed
+
+- A circular-route retry started from the same loop shape, so the same U-turn
+  could fail repeatedly.
+- The planner rejected a route as soon as one candidate contained a U-turn
+  instead of trying alternative loop geometry.
+- Avoid motorways could make an otherwise possible circular ride fail instead
+  of retrying with that one exclusion relaxed and warning the rider.
+
+### Known limitations
+
+- A fallback route is allowed to use motorways but is not guaranteed to use
+  one. Check the warning and inspect the route carefully before accepting it.
+
 ## iOS build 71 / Android build 71 — 20 August 2026
 
 This follow-up replaces an unexplained circular-route 400 error with guidance
