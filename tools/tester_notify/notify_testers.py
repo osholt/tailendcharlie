@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import html as html_module
 import os
 import re
 import smtplib
@@ -42,6 +43,21 @@ from email.message import EmailMessage
 from pathlib import Path
 
 PACKAGE_NAME = "app.tailendcharlie"
+
+#: Pre-sized, corner-rounded app icon embedded into the HTML mail by CID.
+#: Committed next to this tool rather than resized at send time so the mail
+#: needs no imaging library on the runner. Its absence is never an error -
+#: the mail degrades to text-only branding (#631).
+MAIL_ICON_PATH = Path(__file__).with_name("mail-icon.png")
+MAIL_ICON_CID = "app-icon"
+
+
+def load_mail_icon() -> bytes | None:
+    try:
+        return MAIL_ICON_PATH.read_bytes()
+    except OSError:
+        return None
+
 
 # Must stay identical to DistributionTrack's labels in
 # apps/mobile/lib/services/build_identity.dart: the mail tells a tester what
@@ -106,6 +122,10 @@ class ReleaseContext:
 class RenderedEmail:
     subject: str
     body: str
+    #: The TestFlight-shaped HTML alternative (#631). The plain body above
+    #: remains the first part of the multipart/alternative and what the run
+    #: summary renders, so a client that strips HTML loses nothing.
+    html: str
 
 
 @dataclass(frozen=True)
@@ -196,20 +216,154 @@ def assert_safe(text: str) -> None:
             raise UnsafeContentError("refusing to send a link to " + host)
 
 
-def render_email(context: ReleaseContext) -> RenderedEmail:
-    email = RenderedEmail(render_subject(context), render_body(context))
+def render_html(context: ReleaseContext, *, with_icon: bool) -> str:
+    """The TestFlight-shaped alternative: icon, headline, paragraphs, footer.
+
+    Every interpolated value passes through `html_module.escape` - the change
+    list is commit subjects, which are arbitrary text - and the finished
+    document goes through `assert_safe` like the plain body, so the HTML can
+    carry exactly the links the text can and no others. Styling is inline and
+    table-based because mail clients ignore stylesheets.
+    """
+    esc = html_module.escape
+    build = esc(f"{context.app_version} ({context.build_number})")
+    baseline = esc(context.changes_baseline or "the previous notified build")
+    changes = [
+        line[2:] if line.startswith("- ") else line
+        for line in (context.changes or ("(no commit list available for this release)",))
+    ]
+    change_items = "\n".join(f'<li style="margin:0 0 6px 0;">{esc(line)}</li>' for line in changes)
+    link = '<a href="{url}" style="color:#0066cc;text-decoration:none;">{label}</a>'
+    font = "-apple-system,'SF Pro Text','Helvetica Neue',Helvetica,Arial,sans-serif"
+    column_style = f"max-width:600px;width:100%;font-family:{font};"
+    h1_style = "font-size:28px;line-height:34px;font-weight:600;color:#1d1d1f;padding-bottom:28px;"
+    para_style = "font-size:17px;line-height:25px;color:#1d1d1f;"
+    h2_style = "font-size:17px;line-height:25px;font-weight:600;color:#1d1d1f;padding-bottom:8px;"
+    list_cell_style = "font-size:15px;line-height:22px;color:#1d1d1f;padding-bottom:22px;"
+    footer_style = (
+        "border-top:1px solid #d2d2d7;padding-top:18px;font-size:12px;"
+        "line-height:18px;color:#6e6e73;"
+    )
+    notes_link = link.format(
+        url=esc(context.doc_url("tester-release-notes.md")),
+        label="Tester notes for every build",
+    )
+    guide_link = link.format(
+        url=esc(context.doc_url("tester-update-guide.md")),
+        label="Full tester guide",
+    )
+    run_link = link.format(url=esc(context.run_url), label="Build run")
+    icon_block = (
+        (
+            '<img src="cid:' + MAIL_ICON_CID + '" width="120" height="120" '
+            'alt="Tail End Charlie" '
+            'style="display:block;margin:0 auto 28px auto;border:0;" />'
+        )
+        if with_icon
+        else ""
+    )
+    about_row = (
+        '<tr><td style="padding:2px 14px 2px 0;color:#6e6e73;">{name}</td>'
+        '<td style="padding:2px 0;color:#1d1d1f;">{value}</td></tr>'
+    )
+    return f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background-color:#ffffff;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         style="background-color:#ffffff;">
+    <tr><td align="center" style="padding:40px 16px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0"
+             style="{column_style}">
+        <tr><td style="padding-bottom:4px;">{icon_block}</td></tr>
+        <tr><td align="center" style="{h1_style}">
+          Tail End Charlie {build} is ready to test on Android.
+        </td></tr>
+        <tr><td style="{para_style}padding-bottom:18px;">
+          To test this build, open the
+          {link.format(url=esc(context.opt_in_url), label="closed-testing opt-in page")}
+          on the phone you ride with, signed in with the Google account you test
+          on, then install the update from Google Play. A new build can take a
+          few minutes to be offered.
+        </td></tr>
+        <tr><td style="{para_style}padding-bottom:8px;">
+          Confirm you are on this build under
+          <strong>Settings &#8594; About &amp; build</strong>:
+        </td></tr>
+        <tr><td style="padding:0 0 22px 0;">
+          <table role="presentation" cellpadding="0" cellspacing="0"
+                 style="font-size:15px;line-height:22px;">
+            {about_row.format(name="App version", value=esc(context.app_version))}
+            {about_row.format(name="Build number", value=esc(context.build_number))}
+            {about_row.format(name="Distribution track", value=esc(context.track_label))}
+          </table>
+        </td></tr>
+        <tr><td style="{h2_style}">
+          What changed since {baseline}
+        </td></tr>
+        <tr><td style="{list_cell_style}">
+          <ul style="margin:0;padding-left:20px;">
+{change_items}
+          </ul>
+        </td></tr>
+        <tr><td style="font-size:15px;line-height:22px;padding-bottom:28px;">
+          {notes_link}
+          &nbsp;&#183;&nbsp;
+          {guide_link}
+          &nbsp;&#183;&nbsp;
+          {run_link}
+        </td></tr>
+        <tr><td style="{footer_style}">
+          Built from commit
+          {link.format(url=esc(context.commit_url), label=esc(context.short_commit))}.
+          You are receiving this because you are on the Tail End Charlie closed
+          tester list. Tell the maintainer if you want to leave it. Paste the
+          About &amp; build details into every bug report - a report without
+          them cannot be matched to code.
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+"""
+
+
+def render_email(context: ReleaseContext, *, with_icon: bool = True) -> RenderedEmail:
+    email = RenderedEmail(
+        render_subject(context),
+        render_body(context),
+        render_html(context, with_icon=with_icon),
+    )
     assert_safe(email.subject)
     assert_safe(email.body)
+    assert_safe(email.html)
     return email
 
 
-def build_message(email: RenderedEmail, sender: str, recipient: str) -> EmailMessage:
+def build_message(
+    email: RenderedEmail,
+    sender: str,
+    recipient: str,
+    icon: bytes | None = None,
+) -> EmailMessage:
     message = EmailMessage()
     message["Subject"] = email.subject
     message["From"] = sender
     message["To"] = recipient
     message["Auto-Submitted"] = "auto-generated"
     message.set_content(email.body)
+    # The HTML alternative last, so clients that honour order prefer it. With
+    # an icon the alternative becomes multipart/related carrying the image by
+    # CID - embedded, not hotlinked, because the mail must not depend on any
+    # host being up (#631).
+    message.add_alternative(email.html, subtype="html")
+    if icon is not None:
+        message.get_payload()[-1].add_related(
+            icon,
+            maintype="image",
+            subtype="png",
+            cid=f"<{MAIL_ICON_CID}>",
+        )
     return message
 
 
@@ -407,8 +561,9 @@ def main(
         changes=read_changes(args.changes_file),
         changes_baseline=args.changes_baseline,
     )
+    icon = load_mail_icon()
     try:
-        email = render_email(context)
+        email = render_email(context, with_icon=icon is not None)
     except UnsafeContentError as error:
         stream.write(f"::error::Tester notification not sent: {error}\n")
         return 0
@@ -417,7 +572,7 @@ def main(
     decision = decide(args.mode, args.recipient, missing)
     delivered = False
     if decision.action == "send" and settings is not None:
-        message = build_message(email, settings.sender, args.recipient.strip())
+        message = build_message(email, settings.sender, args.recipient.strip(), icon=icon)
         try:
             send(message, settings)
             delivered = True

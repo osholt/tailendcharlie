@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from tools.tester_notify.notify_testers import (  # noqa: E402
+    _URL,
     ALLOWED_LINK_HOSTS,
     TRACK_LABELS,
     ReleaseContext,
@@ -280,7 +281,9 @@ class MainTest(unittest.TestCase):
         self.assertEqual(message["To"], RECIPIENT)
         self.assertEqual(message["From"], "releases@example.invalid")
         self.assertEqual(message["Auto-Submitted"], "auto-generated")
-        self.assertIn("Play closed testing (alpha)", message.get_content())
+        plain = message.get_body(preferencelist=("plain",))
+        assert plain is not None
+        self.assertIn("Play closed testing (alpha)", plain.get_content())
         self.assertEqual(settings.password, FAKE_LOGIN_VALUE)
         output = self.out.getvalue()
         self.assertNotIn(FAKE_LOGIN_VALUE, output)
@@ -349,11 +352,80 @@ class MainTest(unittest.TestCase):
         envelope = getaddresses([message["From"]])[0][1]
         self.assertEqual(envelope, "releases@example.invalid")
 
-    def test_builds_a_plain_text_message(self) -> None:
+    def test_builds_a_plain_text_part_inside_the_alternative(self) -> None:
+        # The mail is multipart/alternative now (#631), but the plain part is
+        # not decorative: it is what the run summary renders and what a client
+        # that strips HTML shows, so it keeps carrying the whole message.
         message = build_message(render_email(context()), "releases@example.invalid", RECIPIENT)
 
-        self.assertEqual(message.get_content_type(), "text/plain")
-        self.assertIn("HOW TO GET IT", message.get_content())
+        self.assertEqual(message.get_content_type(), "multipart/alternative")
+        plain = message.get_body(preferencelist=("plain",))
+        assert plain is not None
+        self.assertEqual(plain.get_content_type(), "text/plain")
+        self.assertIn("HOW TO GET IT", plain.get_content())
+
+    def test_the_html_alternative_reads_like_the_testflight_mail(self) -> None:
+        email = render_email(context())
+        message = build_message(email, "releases@example.invalid", RECIPIENT)
+
+        html_part = message.get_body(preferencelist=("html",))
+        assert html_part is not None
+        html = html_part.get_content()
+        self.assertIn("is ready to test on Android.", html)
+        self.assertIn("1.0.1 (31)", html)
+        self.assertIn("closed-testing opt-in page", html)
+        self.assertIn("About &amp; build", html)
+        self.assertIn("What changed since", html)
+
+    def test_a_commit_subject_cannot_inject_markup_into_the_html(self) -> None:
+        # Change lines are commit subjects: arbitrary text written by whoever
+        # committed. The HTML must show them as text, never parse them.
+        email = render_email(
+            context(changes=('- fix <script>alert("x")</script> & tidy (abc1234)',))
+        )
+
+        self.assertNotIn("<script>", email.html)
+        self.assertIn("&lt;script&gt;", email.html)
+        self.assertIn("&amp; tidy", email.html)
+
+    def test_every_link_in_the_html_is_allowlisted(self) -> None:
+        # assert_safe scans the HTML exactly as it scans the text, so the HTML
+        # can carry the links the text can and no others. Belt and braces: walk
+        # the rendered document and check every URL host ourselves.
+        email = render_email(context())
+        for match in _URL.finditer(email.html):
+            host = match.group(0)[len("https://") :].split("/", 1)[0]
+            self.assertIn(host.split(":", 1)[0], ALLOWED_LINK_HOSTS)
+
+    def test_the_icon_rides_by_cid_when_present_and_degrades_when_not(self) -> None:
+        with_icon = build_message(
+            render_email(context(), with_icon=True),
+            "releases@example.invalid",
+            RECIPIENT,
+            icon=b"\x89PNG fake bytes",
+        )
+        image_parts = [part for part in with_icon.walk() if part.get_content_type() == "image/png"]
+        self.assertEqual(len(image_parts), 1)
+        self.assertEqual(image_parts[0]["Content-ID"], "<app-icon>")
+        html_part = with_icon.get_body(preferencelist=("html",))
+        assert html_part is not None
+        self.assertIn("cid:app-icon", html_part.get_content())
+
+        # A missing icon file must cost the branding, never the release: no
+        # image part, and no reference to an image that is not there.
+        without_icon = build_message(
+            render_email(context(), with_icon=False),
+            "releases@example.invalid",
+            RECIPIENT,
+            icon=None,
+        )
+        self.assertEqual(
+            [p for p in without_icon.walk() if p.get_content_type() == "image/png"],
+            [],
+        )
+        html_fallback = without_icon.get_body(preferencelist=("html",))
+        assert html_fallback is not None
+        self.assertNotIn("cid:", html_fallback.get_content())
 
 
 if __name__ == "__main__":
