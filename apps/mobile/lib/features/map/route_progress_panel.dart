@@ -12,11 +12,21 @@ class RouteProgressPanel extends StatelessWidget {
     required this.progress,
     required this.distanceUnit,
     this.showClock = false,
+    this.onStop,
   });
 
   final RouteJourneyProgress progress;
   final DistanceUnit distanceUnit;
   final bool showClock;
+
+  /// Stops navigating, where the host offers a way out here (#615).
+  ///
+  /// On this card and not only in the overflow menu, because this card is the
+  /// surface that says "you are navigating" — a rider looking to stop looks at
+  /// the thing telling them they haven't. Offered in words, not an icon (#306).
+  /// Null hides the action entirely; a ride's route is the group's and leaves
+  /// through the ride's own controls.
+  final VoidCallback? onStop;
 
   @override
   Widget build(BuildContext context) {
@@ -134,6 +144,27 @@ class RouteProgressPanel extends StatelessWidget {
                     ),
                   ),
                 ],
+              ),
+            ],
+            if (onStop != null) ...[
+              const SizedBox(height: 4),
+              Container(height: 1, color: const Color(0x335E6B7B)),
+              SizedBox(
+                height: 32,
+                child: TextButton.icon(
+                  key: const Key('stop-navigating'),
+                  onPressed: onStop,
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFFFB27A),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: const Icon(Icons.close, size: 15),
+                  label: const Text(
+                    'Stop navigating',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
               ),
             ],
           ],

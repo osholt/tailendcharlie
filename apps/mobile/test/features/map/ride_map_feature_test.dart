@@ -4786,6 +4786,117 @@ void main() {
     },
   );
 
+  // #615. Ride 723888's rider followed a route for 48 minutes and could not
+  // find how to stop: the only exit was the overflow menu's "Remove route",
+  // an unlabelled ellipsis and a scroll away. The ETA card is the surface that
+  // says "you are navigating", so it carries the way to stop — in words (#306).
+  group('free roam can stop navigating from the card that says it is', () {
+    Future<
+      ({InMemoryRouteStore store, ValueNotifier<MapNavigationPosition?> nav})
+    >
+    pumpNavigating(WidgetTester tester, {required bool freeRoam}) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('stop-navigating');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final route = ImportedRoute(
+        id: 'stop',
+        name: 'To Bath',
+        importedAt: DateTime.utc(2026, 8, 20),
+        sourceFileName: 'bath.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 51.45, longitude: -2.60),
+              GeoPoint(latitude: 51.44, longitude: -2.50),
+              GeoPoint(latitude: 51.39, longitude: -2.36),
+            ],
+          ),
+        ],
+        waypoints: const [],
+        maneuvers: const [
+          RouteManeuver(
+            position: GeoPoint(latitude: 51.44, longitude: -2.50),
+            type: 'turn',
+            modifier: 'right',
+            name: 'A4',
+            drivingSide: 'left',
+          ),
+        ],
+      );
+      final store = InMemoryRouteStore(route);
+      final navigation = ValueNotifier<MapNavigationPosition?>(
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 51.449, longitude: -2.59),
+          recordedAt: DateTime.utc(2026, 8, 20, 9),
+          speedMetersPerSecond: 13,
+          headingDegrees: 95,
+          accuracyMeters: 5,
+        ),
+      );
+      addTearDown(navigation.dispose);
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: store,
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            navigationPosition: navigation,
+            routeAuthority: RouteAuthority.personal,
+            hostChrome: freeRoam
+                ? HostMapChrome(
+                    title: const Text('Where to?'),
+                    actions: const [],
+                  )
+                : null,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+      return (store: store, nav: navigation);
+    }
+
+    testWidgets('stopping is offered in words, asks once, and clears', (
+      tester,
+    ) async {
+      await pumpNavigating(tester, freeRoam: true);
+      expect(find.byKey(const Key('route-progress-panel')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('stop-navigating')));
+      await tester.pumpAndSettle();
+      // One confirmation, in free roam's own words — not the group-route
+      // dialog, which speaks of removing the route for every rider (#626).
+      expect(find.text('Stop navigating?'), findsOneWidget);
+      expect(find.textContaining('every rider'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('confirm-stop-navigating')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('route-progress-panel')), findsNothing);
+      expect(find.byKey(const Key('stop-navigating')), findsNothing);
+    });
+
+    testWidgets('a ride keeps its route out of one rider\'s reach', (
+      tester,
+    ) async {
+      // In a ride the route belongs to the group and leaves through the ride's
+      // own controls; the card must not offer a personal exit there.
+      await pumpNavigating(tester, freeRoam: false);
+      expect(find.byKey(const Key('route-progress-panel')), findsOneWidget);
+      expect(find.byKey(const Key('stop-navigating')), findsNothing);
+    });
+  });
+
   testWidgets('a ride with no route keeps SOS, Leave and the ride menu', (
     tester,
   ) async {
