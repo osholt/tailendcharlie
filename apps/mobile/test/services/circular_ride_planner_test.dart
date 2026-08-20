@@ -129,6 +129,33 @@ void main() {
   );
 
   test(
+    'turns a provider no-path response into actionable loop guidance',
+    () async {
+      await expectLater(
+        CircularRidePlanner(
+          routingService: _NoPathRoadRoutingService(),
+        ).generate(
+          const CircularRideRequest(
+            start: start,
+            distanceMeters: 80 * 1609.344,
+            direction: CircularRideDirection.northWest,
+            preferences: RoutePreferences(avoidMotorways: true),
+          ),
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            'No circular route could be found with those settings. '
+                'Try turning off Avoid motorways, choosing another direction, '
+                'or reducing the distance.',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
     'a confirmed generated loop can be filed without starting a ride',
     () async {
       final store = InMemoryRecordedRouteStore();
@@ -314,4 +341,18 @@ class _SequencedRoadRoutingService implements RoadRoutingService {
       preferences: preferences,
     );
   }
+}
+
+class _NoPathRoadRoutingService implements RoadRoutingService {
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) => throw const RoadRoutingException(
+    'Motorcycle routing failed: No path could be found for input',
+    statusCode: 400,
+    providerCode: '442',
+    routeNotFound: true,
+  );
 }

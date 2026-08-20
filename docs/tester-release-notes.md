@@ -36,6 +36,35 @@ permissions by design.
 - ...
 ```
 
+## iOS build 71 / Android build 71 — 20 August 2026
+
+This follow-up replaces an unexplained circular-route 400 error with guidance
+that says which route setting to change.
+
+### What to test
+
+1. **Create an 80-mile circular route to the northwest with Avoid motorways
+   enabled.** If the loop cannot cross the available road network, the app
+   should explain that no circular route was found and suggest turning off
+   Avoid motorways, changing direction or reducing the distance. It must not
+   display a bare 400 error.
+2. **Turn off Avoid motorways and retry.** Around Bristol, the northwest route
+   should reach the normal route preview at approximately the requested
+   distance. Check the route carefully before saving it.
+
+### Fixed
+
+- The routing client discarded Valhalla's useful “No path could be found”
+  response and showed only its HTTP 400 status.
+- Circular-route planning did not translate a provider no-path response into
+  advice relevant to the route controls.
+
+### Known limitations
+
+- The app does not silently relax a rider's road exclusions. A northwest loop
+  around the Severn may genuinely require a motorway crossing; in that case the
+  rider must explicitly turn off Avoid motorways or choose a different loop.
+
 ## iOS build 70 / Android build 70 — 20 August 2026
 
 This follow-up restores the map's persistent navigation controls in portrait

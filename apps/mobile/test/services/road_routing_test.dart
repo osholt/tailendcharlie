@@ -591,6 +591,47 @@ void main() {
       expect(result.maneuvers, isEmpty);
     });
 
+    test(
+      'a Valhalla no-path response keeps the reason instead of bare 400',
+      () async {
+        final service = ValhallaMotorcycleRoutingService(
+          client: MockClient(
+            (_) async => http.Response(
+              jsonEncode({
+                'error': 'No path could be found for input',
+                'error_code': 442,
+                'status_code': 400,
+              }),
+              400,
+            ),
+          ),
+          routeUrl: Uri.parse('https://valhalla.example.test/route'),
+        );
+
+        await expectLater(
+          service.routeThrough(
+            _twoPoints,
+            preferences: const RoutePreferences(avoidMotorways: true),
+          ),
+          throwsA(
+            isA<RoadRoutingException>()
+                .having((error) => error.statusCode, 'status code', 400)
+                .having((error) => error.providerCode, 'provider code', '442')
+                .having(
+                  (error) => error.routeNotFound,
+                  'route not found',
+                  isTrue,
+                )
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('No path could be found for input'),
+                ),
+          ),
+        );
+      },
+    );
+
     group('the motorcycle router keeps its turn instructions (#303)', () {
       // `maneuvers: const []`. Every route planned with a motorcycle
       // preference — avoid motorways, prefer twisty roads (#182) — arrived with
