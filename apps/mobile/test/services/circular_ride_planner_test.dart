@@ -106,7 +106,7 @@ void main() {
   );
 
   test(
-    'rejects a routed U-turn instead of presenting it as a valid loop',
+    'tries alternate loop shapes before rejecting repeated routed U-turns',
     () async {
       final routing = _FakeRoadRoutingService(
         maneuvers: const [
@@ -125,11 +125,59 @@ void main() {
         ),
         throwsA(isA<FormatException>()),
       );
+      expect(routing.calls, 4);
     },
   );
 
   test(
-    'turns a provider no-path response into actionable loop guidance',
+    'an alternate loop shape replaces a routed U-turn automatically',
+    () async {
+      final routing = _UTurnThenValidRoadRoutingService();
+
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 120000,
+          direction: CircularRideDirection.east,
+          preferences: RoutePreferences.defaults,
+        ),
+      );
+
+      expect(routing.calls, 2);
+      expect(plan.request.variant, 1);
+      expect(plan.route.maneuvers, isEmpty);
+      expect(plan.motorwayAvoidanceRelaxed, isFalse);
+    },
+  );
+
+  test(
+    'allows motorways after a no-path response and warns before acceptance',
+    () async {
+      final routing = _MotorwayFallbackRoadRoutingService();
+
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 80 * 1609.344,
+          direction: CircularRideDirection.northWest,
+          preferences: RoutePreferences(avoidMotorways: true),
+        ),
+      );
+
+      expect(routing.avoidMotorwaysAttempts, [true, false]);
+      expect(routing.forcedMotorcycleCalls, 1);
+      expect(plan.motorwayAvoidanceRelaxed, isTrue);
+      expect(plan.warnings, [circularRideMotorwayFallbackWarning]);
+      expect(plan.route.preferences?.avoidMotorways, isFalse);
+      expect(
+        plan.route.description,
+        contains(circularRideMotorwayFallbackWarning),
+      );
+    },
+  );
+
+  test(
+    'explains when no route exists even after the motorway fallback',
     () async {
       await expectLater(
         CircularRidePlanner(
@@ -146,9 +194,9 @@ void main() {
           isA<FormatException>().having(
             (error) => error.message,
             'message',
-            'No circular route could be found with those settings. '
-                'Try turning off Avoid motorways, choosing another direction, '
-                'or reducing the distance.',
+            'No usable circular route could be found, even after allowing '
+                'motorways and trying different loop shapes. Try another '
+                'direction or adjust the distance.',
           ),
         ),
       );
@@ -299,6 +347,7 @@ class _FakeRoadRoutingService implements RoadRoutingService {
 
   List<GeoPoint> waypoints = const [];
   RoutePreferences? preferences;
+  var calls = 0;
   final List<RoadRouteManeuver> maneuvers;
 
   @override
@@ -307,6 +356,7 @@ class _FakeRoadRoutingService implements RoadRoutingService {
     RoutePreferences? preferences,
     double? originBearingDegrees,
   }) async {
+    calls += 1;
     this.waypoints = waypoints;
     this.preferences = preferences;
     return RoadRouteResult(
@@ -315,6 +365,75 @@ class _FakeRoadRoutingService implements RoadRoutingService {
       duration: const Duration(hours: 2),
       maneuvers: maneuvers,
       twistinessScore: 31,
+      preferences: preferences,
+    );
+  }
+}
+
+class _UTurnThenValidRoadRoutingService implements RoadRoutingService {
+  var calls = 0;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    calls += 1;
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: 118000,
+      duration: const Duration(hours: 2),
+      maneuvers: calls == 1
+          ? const [
+              RoadRouteManeuver(
+                position: GeoPoint(latitude: 51.46, longitude: -2.51),
+                type: 'turn',
+                modifier: 'u-turn',
+              ),
+            ]
+          : const [],
+      preferences: preferences,
+    );
+  }
+}
+
+class _MotorwayFallbackRoadRoutingService
+    implements RoadRoutingService, MotorcycleCostingRoadRoutingService {
+  final avoidMotorwaysAttempts = <bool>[];
+  var forcedMotorcycleCalls = 0;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    final avoidsMotorways = preferences?.avoidMotorways ?? false;
+    avoidMotorwaysAttempts.add(avoidsMotorways);
+    if (avoidsMotorways) {
+      throw const RoadRoutingException(
+        'Motorcycle routing failed: No path could be found for input',
+        statusCode: 400,
+        providerCode: '442',
+        routeNotFound: true,
+      );
+    }
+    throw StateError('Fallback must retain motorcycle costing.');
+  }
+
+  @override
+  Future<RoadRouteResult> routeThroughMotorcycle(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    forcedMotorcycleCalls += 1;
+    avoidMotorwaysAttempts.add(preferences?.avoidMotorways ?? false);
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: 80 * 1609.344,
+      duration: const Duration(hours: 2),
       preferences: preferences,
     );
   }
