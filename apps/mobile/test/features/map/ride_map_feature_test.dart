@@ -4786,6 +4786,101 @@ void main() {
     },
   );
 
+  // #619. Reported from ride 723888: "the sos and other buttons somehow end up
+  // aligned to the middle of the screen" in landscape. The layout decides where
+  // the safety cluster goes by asking whether a mini-map exists, and the solo
+  // mini-map was `SizedBox.shrink()` — an invisible widget that answered yes.
+  // Every solo ride therefore reserved 240pt of corner for nothing and exiled
+  // SOS/LEAVE/REPORT to the middle of the map.
+  group('the landscape safety cluster anchors to what is actually drawn', () {
+    Future<Rect> clusterRect(
+      WidgetTester tester, {
+      required List<MapOverlayMarker> riders,
+      required int groupRiderCount,
+    }) async {
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('cluster-anchor');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = const Size(874 * 3, 402 * 3);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final currentPosition = ValueNotifier<GeoPoint?>(
+        const GeoPoint(latitude: 51.46, longitude: -2.59),
+      );
+      addTearDown(currentPosition.dispose);
+      final overlays = ValueNotifier<List<MapOverlayMarker>>(riders);
+      addTearDown(overlays.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: true,
+            currentPosition: currentPosition,
+            overlayMarkers: overlays,
+            groupRiderCount: groupRiderCount,
+            onEmergencyAlert: () async {},
+            onLeaveRide: () async {},
+            onReportHazard: (_) async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final rect = tester.getRect(
+        find.byKey(const Key('map-landscape-action-position')),
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      return rect;
+    }
+
+    testWidgets('a solo ride keeps SOS, LEAVE and REPORT in the corner', (
+      tester,
+    ) async {
+      final rect = await clusterRect(
+        tester,
+        riders: const [],
+        groupRiderCount: 1,
+      );
+      expect(
+        rect.left,
+        lessThan(120),
+        reason:
+            'no mini-map is drawn on a solo ride, so nothing may push the '
+            'safety cluster off its corner — mid-screen is where the road is',
+      );
+    });
+
+    testWidgets('a group ride sits the cluster beside the real mini-map', (
+      tester,
+    ) async {
+      final rect = await clusterRect(
+        tester,
+        riders: const [
+          MapOverlayMarker(
+            id: 'rider-alex',
+            point: GeoPoint(latitude: 51.47, longitude: -2.58),
+            label: 'Alex',
+          ),
+        ],
+        groupRiderCount: 2,
+      );
+      // The mini-map is genuinely there (two riders), so #533's layout holds:
+      // the cluster clears it to the right rather than stacking on top of it.
+      expect(rect.left, greaterThan(230));
+    });
+  });
+
   // #615. Ride 723888's rider followed a route for 48 minutes and could not
   // find how to stop: the only exit was the overflow menu's "Remove route",
   // an unlabelled ellipsis and a scroll away. The ETA card is the surface that
