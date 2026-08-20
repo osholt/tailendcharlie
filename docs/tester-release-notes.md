@@ -36,6 +36,68 @@ permissions by design.
 - ...
 ```
 
+## iOS build 68 / Android build 68 — 20 August 2026
+
+Everything in this build comes from one 48-minute ride around Bristol on build
+67 — six fixes from that ride's reports and diagnostics, plus a full
+consistency review of the app that the ride prompted. Thank you, Oliver.
+
+### What to test
+
+1. **The screen never sleeps while the app is open.** Anywhere — the home map,
+   free roam, menus, mid-ride. It used to stay awake only inside a started
+   ride, so free roam timed out mid-navigation. It should still sleep normally
+   once you leave the app or lock the phone.
+2. **Landscape, on the bike.** Three separate fixes land here:
+   - your bike sits in the **right third** of the frame (UK riding), not the
+     left — it was deciding the traffic side by majority vote over per-step
+     data that came back wrong for two thirds of a British ride;
+   - **SOS ALERT, LEAVE and REPORT sit in the bottom-left corner**, not
+     floating mid-screen over the road ahead;
+   - the rider marker clears the bottom bar instead of hiding behind it.
+3. **Roundabouts.** Directions are now read from the roads either side of the
+   junction rather than from bearings measured on the ring itself. The ring
+   road crossing at Deanery Road / A420 that said *"2nd exit, right"* when it
+   is plainly straight on was the proof case — ride it again if you can. Exit
+   numbers were never wrong and are untouched.
+4. **Stopping in free roam.** The ETA card now carries **Stop navigating** —
+   one tap, one confirmation, route gone. It used to be "Remove route" behind
+   the unlabelled `…` menu, which nobody found in 48 minutes of trying.
+5. **The `…` menu on the home map** now sits at the end of the row, after
+   Join / emergency / settings, where a menu belongs.
+6. **This email itself** should have arrived from "Tail End Charlie", not a
+   bare address.
+
+### Fixed
+
+- The display slept everywhere except inside a started ride (#607).
+- Landscape framed British rides for right-hand traffic — bike in the left
+  third (#613).
+- Landscape floated SOS/LEAVE/REPORT to the middle of the screen on every solo
+  ride — an invisible zero-size mini-map was reserving the corner (#619).
+- The follow camera never counted the home screen's bottom bar, so the marker's
+  lower edge sat behind it in landscape (#608).
+- Roundabout directions came from bearings measured on the ring, contradicting
+  the junction's own exit number and the rider's eyes (#614).
+- Free roam had no findable way to stop navigating (#615).
+- The map's overflow menu hid mid-row on the home screen, which read as the
+  menu having been removed (#606).
+- Home offered "Ride with others" over a still-running set-aside ride, and
+  pressing it created a second ride; it now offers the way back instead (#605).
+
+### Known limitations
+
+- **The consistency review filed more than this build fixes.** Still open, in
+  rough priority order: ending a ride asks the same question twice (#620);
+  creating a ride mid-navigation drops your turn directions and demands a
+  review (#624); solo rides get the group's No-TEC warning (#625); the
+  pre-ride landscape header letterboxes the map (#623); the ride-ended screen
+  clips under the camera housing in landscape (#622). All reproduced with
+  screenshots on the issues.
+- **Spoken directions** still mix voices (#616) — not started; the diagnostics
+  don't yet record which voice spoke, so that instrumentation comes first.
+- **Android Auto** is unchanged from build 67, tiles and all.
+
 ## iOS build 67 / Android build 67 — 18 August 2026
 
 **Android Auto, for the first time.** Keith reported it not working while CarPlay
