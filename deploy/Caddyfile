@@ -104,3 +104,12 @@
 
 	respond 404
 }
+
+# Balloon Crumbs is a separate Compose project with its own API, PostgreSQL,
+# cleanup job and inner Caddy. Only that project's edge alias joins TEC's
+# public-proxy network, so this route cannot reach its database or API directly.
+# Keeping the hostname in TEC's public Caddy lets the existing Oracle IP and TLS
+# ingress serve both products without a second process binding ports 80/443.
+relay.balloon-crumbs.tailendcharlie.app {
+	reverse_proxy balloon-crumbs-edge:8080
+}
