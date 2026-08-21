@@ -278,11 +278,7 @@ void main() {
         routing.relaxedPreferences,
         isA<RoutePreferences>()
             .having((value) => value.style, 'style', RouteStyle.twisty)
-            .having(
-              (value) => value.avoidMotorways,
-              'avoid motorways',
-              isFalse,
-            )
+            .having((value) => value.avoidMotorways, 'avoid motorways', isFalse)
             .having(
               (value) => value.avoidMajorRoads,
               'avoid major roads',
