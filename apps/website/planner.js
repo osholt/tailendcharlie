@@ -20,7 +20,7 @@ import {
   routeManeuvers,
   routeSelfCrossingArrows,
   StateHistory,
-} from "./planner-core.mjs?v=cb3fa189";
+} from "./planner-core.mjs?v=71faec00";
 import {
   BIKER_PLACES,
   bikerPlaceKey,
@@ -1019,7 +1019,7 @@ function generateCircularRide(alternative) {
       start: [start.longitude, start.latitude],
       cells: globalHeatmapCells(),
       enabled: elements.circularHeatmapPreference.value === "global",
-      searchRadiusMetres: (distanceMetres / 4.25) * 0.75,
+      searchRadiusMetres: (distanceMetres / 5) * 0.75,
     });
     replaceWithCircularRide({
       start,
@@ -1075,7 +1075,7 @@ function replaceWithCircularRide({
   let segmentStartId = stops[0].id;
   const controls = shapeCoordinates.map((coordinate, index) => ({
     kind: "shape",
-    fraction: (index + 1) / 4,
+    fraction: (index + 1) / (shapeCoordinates.length + 1),
     coordinate,
   }));
   const dayHours = { "half-day": 4, day: 8 }[dayLength] || 0;
@@ -1088,7 +1088,13 @@ function replaceWithCircularRide({
   const usedCafes = new Set();
   for (const scheduled of itinerary) {
     const fraction = scheduled.afterMinutes / (dayHours * 60);
-    const target = shapeCoordinates[Math.min(2, Math.floor(fraction * 3))];
+    const target =
+      shapeCoordinates[
+        Math.min(
+          shapeCoordinates.length - 1,
+          Math.floor(fraction * shapeCoordinates.length),
+        )
+      ];
     const needsMeal = scheduled.kinds.includes("meal");
     let cafe = needsMeal ? nearestUnusedBikerCafe(target, usedCafes) : null;
     if (
