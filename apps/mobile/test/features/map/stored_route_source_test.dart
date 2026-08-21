@@ -58,7 +58,7 @@ void main() {
     await tester.tap(find.byKey(const Key('use-stored-route')));
     await _followOriginalTrack(tester);
 
-    expect(find.text('Review route'), findsOneWidget);
+    expect(find.byKey(const Key('route-review-title')), findsOneWidget);
     expect(find.textContaining('tidied recording'), findsOneWidget);
     await _confirmReview(tester);
 
@@ -144,7 +144,7 @@ void main() {
     await tester.tap(find.byKey(const Key('use-stored-route')));
     await _followOriginalTrack(tester);
 
-    expect(find.text('Review route'), findsOneWidget);
+    expect(find.byKey(const Key('route-review-title')), findsOneWidget);
     expect(find.textContaining('Reversed'), findsWidgets);
     await _confirmReview(tester);
 
@@ -199,7 +199,7 @@ void main() {
       expect(reversed.paths[1].points.length, greaterThanOrEqualTo(2));
       expect(reversed.paths[1].points.first.latitude, closeTo(51.47, 1e-9));
       expect(reversed.paths[1].points.last.latitude, closeTo(51.45, 1e-9));
-      expect(find.text('Review route'), findsOneWidget);
+      expect(find.byKey(const Key('route-review-title')), findsOneWidget);
       expect(
         find.byKey(const Key('route-review-original-line')),
         findsOneWidget,

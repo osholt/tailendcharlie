@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import '../domain/imported_route.dart';
 import '../domain/recorded_route_store.dart';
 import 'road_routing.dart';
+import 'route_twistiness.dart';
 
 enum CircularRideDirection {
   north('N', 0),
@@ -155,6 +156,8 @@ class CircularRidePlan {
     required this.twistinessScore,
     this.warnings = const [],
     this.motorwayAvoidanceRelaxed = false,
+    this.motorwayAvoidanceRelaxedSections = 0,
+    this.routeSectionCount = 0,
   });
 
   final ImportedRoute route;
@@ -165,12 +168,20 @@ class CircularRidePlan {
   final double? twistinessScore;
   final List<String> warnings;
   final bool motorwayAvoidanceRelaxed;
+  final int motorwayAvoidanceRelaxedSections;
+  final int routeSectionCount;
 }
 
-const circularRideMotorwayFallbackWarning =
-    'Avoid motorways was relaxed because no usable circular route could be '
-    'found with motorways excluded. This route may use motorways; review it '
-    'carefully before accepting.';
+String circularRideMotorwayFallbackWarning({
+  required int relaxedSectionCount,
+  required int routeSectionCount,
+}) {
+  final noun = routeSectionCount == 1 ? 'section' : 'sections';
+  return 'Avoid motorways was relaxed for $relaxedSectionCount of '
+      '$routeSectionCount route $noun because no usable path was available '
+      'there. Only those sections may use motorways; review them carefully '
+      'before accepting.';
+}
 
 /// Generates a road-routed loop from three non-stopping shaping controls.
 ///
@@ -205,35 +216,22 @@ class CircularRidePlanner {
     }
 
     final failures = <_CircularRideCandidateFailureKind>[];
-    var candidate = await _tryCandidateVariants(
-      request,
-      preferences: request.preferences,
-      failures: failures,
-      stopAfterNoRoute: request.preferences.avoidMotorways,
-    );
-    var motorwayAvoidanceRelaxed = false;
-    if (candidate == null && request.preferences.avoidMotorways) {
-      motorwayAvoidanceRelaxed = true;
-      candidate = await _tryCandidateVariants(
-        request,
-        preferences: request.preferences.copyWith(avoidMotorways: false),
-        failures: failures,
-        forceMotorcycleCosting: true,
-      );
-    }
+    final candidate = await _tryCandidateVariants(request, failures: failures);
     if (candidate == null) {
-      throw FormatException(
-        _circularRideFailureMessage(
-          request,
-          failures,
-          motorwayFallbackAttempted: motorwayAvoidanceRelaxed,
-        ),
-      );
+      throw FormatException(_circularRideFailureMessage(request, failures));
     }
 
     final selectedRequest = candidate.request;
     final controls = candidate.controls;
     final result = candidate.result;
+    final motorwayAvoidanceRelaxed =
+        candidate.motorwayAvoidanceRelaxedSections > 0;
+    final motorwayWarning = motorwayAvoidanceRelaxed
+        ? circularRideMotorwayFallbackWarning(
+            relaxedSectionCount: candidate.motorwayAvoidanceRelaxedSections,
+            routeSectionCount: candidate.routeSectionCount,
+          )
+        : null;
     final now = DateTime.now().toUtc();
     final route = ImportedRoute(
       id: 'circular-${now.microsecondsSinceEpoch}-${selectedRequest.variant}',
@@ -241,7 +239,7 @@ class CircularRidePlanner {
       description: _description(
         selectedRequest,
         candidate.preferences,
-        motorwayAvoidanceRelaxed: motorwayAvoidanceRelaxed,
+        motorwayWarning: motorwayWarning,
       ),
       importedAt: now,
       sourceFileName: 'circular-planner',
@@ -278,34 +276,24 @@ class CircularRidePlanner {
       actualDistanceMeters: result.distanceMeters,
       duration: result.duration,
       twistinessScore: result.twistinessScore,
-      warnings: motorwayAvoidanceRelaxed
-          ? const [circularRideMotorwayFallbackWarning]
-          : const [],
+      warnings: motorwayWarning == null ? const [] : [motorwayWarning],
       motorwayAvoidanceRelaxed: motorwayAvoidanceRelaxed,
+      motorwayAvoidanceRelaxedSections:
+          candidate.motorwayAvoidanceRelaxedSections,
+      routeSectionCount: candidate.routeSectionCount,
     );
   }
 
   Future<_CircularRideCandidate?> _tryCandidateVariants(
     CircularRideRequest request, {
-    required RoutePreferences preferences,
     required List<_CircularRideCandidateFailureKind> failures,
-    bool stopAfterNoRoute = false,
-    bool forceMotorcycleCosting = false,
   }) async {
     for (var offset = 0; offset < _maximumCandidateVariants; offset += 1) {
       final candidateRequest = request.withVariant(request.variant + offset);
       try {
-        return await _generateCandidate(
-          candidateRequest,
-          preferences,
-          forceMotorcycleCosting: forceMotorcycleCosting,
-        );
+        return await _generateCandidate(candidateRequest, request.preferences);
       } on _CircularRideCandidateFailure catch (failure) {
         failures.add(failure.kind);
-        if (stopAfterNoRoute &&
-            failure.kind == _CircularRideCandidateFailureKind.noRoute) {
-          return null;
-        }
       }
     }
     return null;
@@ -313,39 +301,41 @@ class CircularRidePlanner {
 
   Future<_CircularRideCandidate> _generateCandidate(
     CircularRideRequest request,
-    RoutePreferences preferences, {
-    required bool forceMotorcycleCosting,
-  }) async {
+    RoutePreferences preferences,
+  ) async {
     var shapingDistance = request.distanceMeters;
     for (var attempt = 0; attempt < 3; attempt += 1) {
       final controls = circularRideShapingPoints(
         request,
         shapingDistanceMeters: shapingDistance,
       );
-      final orderedControls = <({double fraction, GeoPoint point})>[
-        for (final (index, point) in controls.indexed)
-          (fraction: (index + 1) / 4, point: point),
-        for (final stop in request.plannedStops)
-          (fraction: stop.fraction, point: stop.waypoint.point),
-      ]..sort((first, second) => first.fraction.compareTo(second.fraction));
+      final orderedControls =
+          <({double fraction, GeoPoint point, bool isStop})>[
+            for (final (index, point) in controls.indexed)
+              (fraction: (index + 1) / 4, point: point, isStop: false),
+            for (final stop in request.plannedStops)
+              (
+                fraction: stop.fraction,
+                point: stop.waypoint.point,
+                isStop: true,
+              ),
+          ]..sort((first, second) => first.fraction.compareTo(second.fraction));
       late final RoadRouteResult result;
+      late final _CircularRideSections sections;
       try {
         final waypoints = [
           request.start,
           ...orderedControls.map((control) => control.point),
           request.start,
         ];
-        final service = routingService;
-        if (forceMotorcycleCosting &&
-            service is MotorcycleCostingRoadRoutingService) {
-          result = await (service as MotorcycleCostingRoadRoutingService)
-              .routeThroughMotorcycle(waypoints, preferences: preferences);
-        } else {
-          result = await service.routeThrough(
-            waypoints,
-            preferences: preferences,
-          );
-        }
+        sections = await _routeSections(
+          waypoints,
+          preserveInternalBoundary: [
+            for (final control in orderedControls) control.isStop,
+          ],
+          preferences: preferences,
+        );
+        result = sections.result;
       } on RoadRoutingException catch (error) {
         if (!error.routeNotFound) rethrow;
         throw const _CircularRideCandidateFailure(
@@ -371,6 +361,9 @@ class CircularRidePlanner {
           preferences: preferences,
           controls: controls,
           result: result,
+          motorwayAvoidanceRelaxedSections:
+              sections.motorwayAvoidanceRelaxedSections,
+          routeSectionCount: sections.routeSectionCount,
         );
       }
       if (attempt == 2 ||
@@ -390,6 +383,88 @@ class CircularRidePlanner {
     );
   }
 
+  Future<_CircularRideSections> _routeSections(
+    List<GeoPoint> waypoints, {
+    required List<bool> preserveInternalBoundary,
+    required RoutePreferences preferences,
+  }) async {
+    final sections = await Future.wait([
+      for (var index = 0; index < waypoints.length - 1; index += 1)
+        _routeSection(
+          waypoints[index],
+          waypoints[index + 1],
+          preferences: preferences,
+        ),
+    ]);
+    final points = <GeoPoint>[];
+    final maneuvers = <RoadRouteManeuver>[];
+    var distanceMeters = 0.0;
+    var durationMicroseconds = 0;
+    var relaxedSectionCount = 0;
+    for (final (index, section) in sections.indexed) {
+      final result = section.result;
+      points.addAll(points.isEmpty ? result.points : result.points.skip(1));
+      distanceMeters += result.distanceMeters;
+      durationMicroseconds += result.duration.inMicroseconds;
+      if (section.motorwayAvoidanceRelaxed) relaxedSectionCount += 1;
+      final preserveStart = index > 0 && preserveInternalBoundary[index - 1];
+      final preserveEnd =
+          index < sections.length - 1 && preserveInternalBoundary[index];
+      maneuvers.addAll(
+        result.maneuvers.where(
+          (maneuver) =>
+              (index == 0 || preserveStart || maneuver.type != 'depart') &&
+              (index == sections.length - 1 ||
+                  preserveEnd ||
+                  maneuver.type != 'arrive'),
+        ),
+      );
+    }
+    return _CircularRideSections(
+      result: RoadRouteResult(
+        points: List.unmodifiable(points),
+        distanceMeters: distanceMeters,
+        duration: Duration(microseconds: durationMicroseconds),
+        maneuvers: List.unmodifiable(maneuvers),
+        twistinessScore: RouteTwistiness.score(
+          points,
+          distanceMeters: distanceMeters,
+        ),
+        preferences: preferences,
+      ),
+      motorwayAvoidanceRelaxedSections: relaxedSectionCount,
+      routeSectionCount: sections.length,
+    );
+  }
+
+  Future<_CircularRideSection> _routeSection(
+    GeoPoint start,
+    GeoPoint finish, {
+    required RoutePreferences preferences,
+  }) async {
+    final waypoints = [start, finish];
+    try {
+      return _CircularRideSection(
+        result: await routingService.routeThrough(
+          waypoints,
+          preferences: preferences,
+        ),
+      );
+    } on RoadRoutingException catch (error) {
+      if (!error.routeNotFound || !preferences.avoidMotorways) rethrow;
+      final relaxed = preferences.copyWith(avoidMotorways: false);
+      final service = routingService;
+      final result = service is MotorcycleCostingRoadRoutingService
+          ? await (service as MotorcycleCostingRoadRoutingService)
+                .routeThroughMotorcycle(waypoints, preferences: relaxed)
+          : await service.routeThrough(waypoints, preferences: relaxed);
+      return _CircularRideSection(
+        result: result,
+        motorwayAvoidanceRelaxed: true,
+      );
+    }
+  }
+
   static String _routeName(CircularRideRequest request) {
     final miles = (request.distanceMeters / 1609.344).round();
     return switch (request.dayLength) {
@@ -402,14 +477,14 @@ class CircularRidePlanner {
   static String _description(
     CircularRideRequest request,
     RoutePreferences preferences, {
-    required bool motorwayAvoidanceRelaxed,
+    required String? motorwayWarning,
   }) {
     return 'Generated ${request.direction.label} circular ride; '
         '${preferences.summary} Fuel every ${request.fuelEvery.inMinutes} min, '
         'comfort every ${request.comfortEvery.inMinutes} min, meal after '
         '${request.mealAfter.inMinutes} min. '
         '${request.heatmapPreference == CircularRideHeatmapPreference.none ? 'No heatmap preference.' : 'Soft preference: ${request.heatmapPreference.label.toLowerCase()}.'}'
-        '${motorwayAvoidanceRelaxed ? ' $circularRideMotorwayFallbackWarning' : ''}';
+        '${motorwayWarning == null ? '' : ' $motorwayWarning'}';
   }
 }
 
@@ -432,24 +507,44 @@ class _CircularRideCandidate {
     required this.preferences,
     required this.controls,
     required this.result,
+    required this.motorwayAvoidanceRelaxedSections,
+    required this.routeSectionCount,
   });
 
   final CircularRideRequest request;
   final RoutePreferences preferences;
   final List<GeoPoint> controls;
   final RoadRouteResult result;
+  final int motorwayAvoidanceRelaxedSections;
+  final int routeSectionCount;
+}
+
+class _CircularRideSection {
+  const _CircularRideSection({
+    required this.result,
+    this.motorwayAvoidanceRelaxed = false,
+  });
+
+  final RoadRouteResult result;
+  final bool motorwayAvoidanceRelaxed;
+}
+
+class _CircularRideSections {
+  const _CircularRideSections({
+    required this.result,
+    required this.motorwayAvoidanceRelaxedSections,
+    required this.routeSectionCount,
+  });
+
+  final RoadRouteResult result;
+  final int motorwayAvoidanceRelaxedSections;
+  final int routeSectionCount;
 }
 
 String _circularRideFailureMessage(
   CircularRideRequest request,
-  List<_CircularRideCandidateFailureKind> failures, {
-  required bool motorwayFallbackAttempted,
-}) {
-  if (motorwayFallbackAttempted) {
-    return 'No usable circular route could be found, even after allowing '
-        'motorways and trying different loop shapes. Try another direction or '
-        'adjust the distance.';
-  }
+  List<_CircularRideCandidateFailureKind> failures,
+) {
   if (failures.isNotEmpty &&
       failures.every(
         (failure) => failure == _CircularRideCandidateFailureKind.uTurn,
@@ -457,11 +552,12 @@ String _circularRideFailureMessage(
     return 'No circular route without a U-turn could be found after trying '
         'different loop shapes. Try another direction or adjust the distance.';
   }
-  const lead = 'No circular route could be found with those settings.';
   if (request.preferences.avoidMotorways) {
-    return '$lead Try turning off Avoid motorways, choosing another direction, '
-        'or reducing the distance.';
+    return 'No usable circular route could be found after trying different '
+        'loop shapes and allowing motorways only on blocked sections. Try '
+        'another direction or adjust the distance.';
   }
+  const lead = 'No circular route could be found with those settings.';
   if (request.preferences.avoidMajorRoads ||
       request.preferences.avoidTolls ||
       request.preferences.avoidFerries) {

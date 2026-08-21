@@ -2467,7 +2467,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
-    expect(find.text('Review route'), findsOneWidget);
+    expect(find.byKey(const Key('route-review-title')), findsOneWidget);
     expect(
       find.text("King's Oak Academy to Cross Hands Hotel"),
       findsOneWidget,
@@ -2560,7 +2560,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(matcher.originals, [same(original)]);
-      expect(find.text('Review route'), findsOneWidget);
+      expect(find.byKey(const Key('route-review-title')), findsOneWidget);
       expect(find.text('Sunday route (navigable)'), findsOneWidget);
       expect(
         find.byKey(const Key('route-review-original-line')),
@@ -2626,7 +2626,7 @@ void main() {
     await tester.tap(find.byKey(const Key('follow-original-track')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('Review route'), findsOneWidget);
+    expect(find.byKey(const Key('route-review-title')), findsOneWidget);
     expect(matcher.originals, isEmpty);
     expect(await savedRoutes.list(), [same(original)]);
 
@@ -2734,12 +2734,14 @@ void main() {
     await tester.tap(find.text('Load demo route'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Review route'), findsOneWidget);
+    expect(find.byKey(const Key('route-review-title')), findsOneWidget);
     await tester.scrollUntilVisible(
       find.byKey(const Key('cancel-reviewed-route')),
       250,
       scrollable: find.byType(Scrollable).last,
     );
+    await tester.ensureVisible(find.byKey(const Key('cancel-reviewed-route')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('cancel-reviewed-route')));
     await tester.pumpAndSettle();
 

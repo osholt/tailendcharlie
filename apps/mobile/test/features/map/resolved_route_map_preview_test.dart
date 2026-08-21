@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/resolved_route_map_preview.dart';
+import 'package:ride_relay/services/basemap_configuration.dart';
 
 void main() {
   test('the whole route is fitted once after the native map becomes ready', () {
@@ -163,5 +164,37 @@ void main() {
 
     expect(zoomInCount, 1);
     expect(zoomOutCount, 1);
+  });
+
+  testWidgets('a normal preview exposes zoom without covering map gestures', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ResolvedRouteMapPreview(
+            paths: [
+              [
+                GeoPoint(latitude: 51.45, longitude: -2.59),
+                GeoPoint(latitude: 51.50, longitude: -2.45),
+              ],
+            ],
+            basemapConfiguration: BasemapConfiguration(
+              styleUrl: 'https://example.test/style.json',
+              attribution: 'Test map',
+            ),
+            mapStyleString: '{"version":8,"sources":{},"layers":[]}',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const Key('route-preview-reshape-surface')),
+      findsNothing,
+    );
+    expect(find.byKey(const Key('route-preview-zoom-in')), findsOneWidget);
+    expect(find.byKey(const Key('route-preview-zoom-out')), findsOneWidget);
   });
 }

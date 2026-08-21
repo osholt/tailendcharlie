@@ -6093,38 +6093,40 @@ class _RideMapScreenState extends State<RideMapScreen> {
       globalHeatmapCells: _globalCircularHeatCells,
     );
     while (request != null && mounted) {
+      final requestedRide = request;
       setState(() => _routing = true);
       try {
-        request = await _withSuggestedDayRideStops(request);
-        final plan = await CircularRidePlanner(
+        final preparedRequest = await _withSuggestedDayRideStops(requestedRide);
+        final planner = CircularRidePlanner(
           routingService: _roadRoutingService,
-        ).generate(request);
+        );
+        var plan = await planner.generate(preparedRequest);
         if (!mounted) return;
-        request = plan.request;
         final review = await _reviewRoute(
           plan.route,
           distanceMeters: plan.actualDistanceMeters,
           duration: plan.duration,
           twistinessScore: plan.twistinessScore,
-          warnings: [
-            'The distance is approximate because the road network decides the final loop.',
-            ...plan.warnings,
-            if (request.dayLength != RideDayLength.custom)
-              'Fuel, bathroom/comfort and meal stops are suggestions. Edit each one and verify opening hours and facilities before accepting.',
-            if (request.heatmapPreference !=
-                    CircularRideHeatmapPreference.none &&
-                circularRideHeatmapBiasAvailable(
-                  request.heatmapCells,
-                  start: request.start,
-                ))
-              '${request.heatmapPreference.label} gently influenced the shaping controls; it did not require the route to use those roads.',
-          ],
+          warnings: _circularRideReviewWarnings(plan),
           canEditStops: true,
           canGenerateAlternative: true,
+          onGenerateAlternative: () async {
+            final alternativeRequest = await _withSuggestedDayRideStops(
+              plan.request.another(),
+            );
+            plan = await planner.generate(alternativeRequest);
+            return RouteReviewAlternative(
+              route: plan.route,
+              distanceMeters: plan.actualDistanceMeters,
+              duration: plan.duration,
+              twistinessScore: plan.twistinessScore,
+              warnings: _circularRideReviewWarnings(plan),
+            );
+          },
         );
         if (!mounted) return;
         if (review.action == RouteReviewAction.another) {
-          request = request.another();
+          request = plan.request.another();
           continue;
         }
         if (review.action == RouteReviewAction.edit) {
@@ -6156,6 +6158,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
         if (mounted) setState(() => _routing = false);
       }
     }
+  }
+
+  List<String> _circularRideReviewWarnings(CircularRidePlan plan) {
+    final request = plan.request;
+    return [
+      'The distance is approximate because the road network decides the final loop.',
+      ...plan.warnings,
+      if (request.dayLength != RideDayLength.custom)
+        'Fuel, bathroom/comfort and meal stops are suggestions. Edit each one and verify opening hours and facilities before accepting.',
+      if (request.heatmapPreference != CircularRideHeatmapPreference.none &&
+          circularRideHeatmapBiasAvailable(
+            request.heatmapCells,
+            start: request.start,
+          ))
+        '${request.heatmapPreference.label} gently influenced the shaping controls; it did not require the route to use those roads.',
+    ];
   }
 
   Future<CircularRideRequest> _withSuggestedDayRideStops(
@@ -6337,6 +6355,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     List<String> warnings = const [],
     bool canEditStops = false,
     bool canGenerateAlternative = false,
+    RouteAlternativeCallback? onGenerateAlternative,
     ImportedRoute? previousRoute,
     ImportedRoute? comparisonRoute,
   }) async {
@@ -6375,6 +6394,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       comparisonRoute: comparisonRoute,
       canEditStops: canEditStops,
       canGenerateAlternative: canGenerateAlternative,
+      onGenerateAlternative: onGenerateAlternative,
       showMarkerPlan: widget.markerFeaturesEnabled,
       onMarkerReviewChanged: (review) => markerReview = review,
       onReshapeRoute: (candidate, shapingPoints) => RouteReshapePlanner(
