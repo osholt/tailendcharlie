@@ -47,10 +47,21 @@ test("circular ride controls honour direction and alternatives", () => {
     variant: 1,
   });
 
+  assert.equal(north.length, 4);
   assert.ok(north[1][1] > start[1]);
   assert.ok(southWest[1][0] < start[0]);
   assert.ok(southWest[1][1] < start[1]);
   assert.notDeepEqual(alternative, north);
+  const northWest = circularRideShapingCoordinates({
+    start,
+    distanceMetres: 80 * 1609.344,
+    direction: "NW",
+  });
+  assert.ok(
+    northWest.every(
+      ([longitude, latitude]) => longitude < start[0] && latitude > start[1],
+    ),
+  );
   assert.equal(dayRideDistanceMetres("half-day"), 220000);
   assert.equal(dayRideDistanceMetres("day"), 440000);
   assert.equal(circularRideDistanceWithinTolerance(100000, 130000), true);

@@ -34,6 +34,50 @@ void main() {
     expect(southWest[1].longitude, lessThan(start.longitude));
   });
 
+  test('keeps a directional lobe beyond fixed gateway controls', () {
+    const request = CircularRideRequest(
+      start: start,
+      distanceMeters: 80 * 1609.344,
+      direction: CircularRideDirection.northWest,
+      preferences: RoutePreferences.defaults,
+    );
+    final controls = circularRideShapingPoints(request);
+    final resized = circularRideShapingPoints(
+      request,
+      shapingDistanceMeters: request.distanceMeters * 0.6,
+    );
+
+    expect(controls, hasLength(4));
+    expect(
+      controls.every(
+        (point) =>
+            point.latitude > start.latitude &&
+            point.longitude < start.longitude,
+      ),
+      isTrue,
+      reason: 'the selected direction should contain the whole loop lobe',
+    );
+    expect(resized.first.latitude, closeTo(controls.first.latitude, 0.000001));
+    expect(
+      resized.first.longitude,
+      closeTo(controls.first.longitude, 0.000001),
+    );
+    expect(resized.last.latitude, closeTo(controls.last.latitude, 0.000001));
+    expect(resized.last.longitude, closeTo(controls.last.longitude, 0.000001));
+    expect(resized[1].longitude, isNot(closeTo(controls[1].longitude, 0.0001)));
+    expect(resized[2].latitude, isNot(closeTo(controls[2].latitude, 0.0001)));
+    expect(resized[1].longitude, lessThan(resized.first.longitude));
+    expect(resized[2].latitude, greaterThan(resized.last.latitude));
+    expect(
+      _distanceSquared(start, resized[1]),
+      greaterThan(_distanceSquared(start, resized.first)),
+    );
+    expect(
+      _distanceSquared(start, resized[2]),
+      greaterThan(_distanceSquared(start, resized.last)),
+    );
+  });
+
   test('another route changes the shaping controls', () {
     const request = CircularRideRequest(
       start: start,
@@ -50,8 +94,8 @@ void main() {
 
   test('routes through shaping points and retains editable controls', () async {
     final routing = _FakeRoadRoutingService(
-      sectionDistanceMeters: 118000 / 5,
-      sectionDuration: const Duration(minutes: 24),
+      sectionDistanceMeters: 118000 / 6,
+      sectionDuration: const Duration(minutes: 20),
     );
     final planner = CircularRidePlanner(routingService: routing);
     final plan = await planner.generate(
@@ -73,7 +117,7 @@ void main() {
       ),
     );
 
-    expect(routing.requests, hasLength(5));
+    expect(routing.requests, hasLength(6));
     expect(
       routing.requests.every((request) => request.waypoints.length == 2),
       isTrue,
@@ -86,7 +130,7 @@ void main() {
       ),
       isTrue,
     );
-    expect(plan.route.shapingPoints, hasLength(3));
+    expect(plan.route.shapingPoints, hasLength(4));
     expect(plan.route.waypoints, hasLength(3));
     expect(plan.route.waypoints[1].name, 'Suggested lunch');
     expect(plan.route.shapingPoints.last.legIndex, 1);
@@ -123,6 +167,7 @@ void main() {
         'turn',
         'turn',
         'turn',
+        'turn',
         'arrive',
         'depart',
         'turn',
@@ -145,7 +190,7 @@ void main() {
         ),
       );
 
-      expect(routing.calls, 8);
+      expect(routing.calls, 10);
       expect(
         circularRideDistanceWithinTolerance(
           requestedMeters: plan.requestedDistanceMeters,
@@ -176,7 +221,7 @@ void main() {
         ),
         throwsA(isA<FormatException>()),
       );
-      expect(routing.calls, 16);
+      expect(routing.calls, 20);
     },
   );
 
@@ -194,7 +239,7 @@ void main() {
         ),
       );
 
-      expect(routing.calls, 8);
+      expect(routing.calls, 10);
       expect(plan.request.variant, 1);
       expect(plan.route.maneuvers, isEmpty);
       expect(plan.motorwayAvoidanceRelaxed, isFalse);
@@ -217,7 +262,7 @@ void main() {
 
       expect(
         routing.attempts.where((attempt) => attempt.avoidMotorways),
-        hasLength(4),
+        hasLength(5),
       );
       expect(
         routing.attempts.where((attempt) => !attempt.avoidMotorways),
@@ -226,17 +271,17 @@ void main() {
       expect(routing.forcedMotorcycleCalls, 1);
       expect(plan.motorwayAvoidanceRelaxed, isTrue);
       expect(plan.motorwayAvoidanceRelaxedSections, 1);
-      expect(plan.routeSectionCount, 4);
+      expect(plan.routeSectionCount, 5);
       final warning = circularRideMotorwayFallbackWarning(
         relaxedSectionCount: 1,
-        routeSectionCount: 4,
+        routeSectionCount: 5,
       );
       expect(plan.warnings, [warning]);
       expect(plan.route.preferences?.avoidMotorways, isTrue);
       expect(plan.route.description, contains(warning));
       expect(
         plan.route.maneuvers.map((maneuver) => maneuver.type),
-        ['depart', 'turn', 'turn', 'turn', 'turn', 'arrive'],
+        ['depart', 'turn', 'turn', 'turn', 'turn', 'turn', 'arrive'],
         reason: 'shaping sections must not sound like separate destinations',
       );
       expect(
@@ -252,7 +297,7 @@ void main() {
     () async {
       final routing = _ExcessiveDetourRoadRoutingService(
         blockedSectionDistanceMeters: 150000,
-        ordinarySectionDistanceMeters: 40000,
+        ordinarySectionDistanceMeters: 30000,
         relaxedSectionDistanceMeters: 40000,
         blockedSectionHasUTurn: true,
       );
@@ -271,7 +316,7 @@ void main() {
         ),
       );
 
-      expect(routing.motorwayAvoidingCalls, 4);
+      expect(routing.motorwayAvoidingCalls, 5);
       expect(routing.forcedMotorcycleCalls, 1);
       expect(routing.relaxedWaypoints, routing.blockedWaypoints);
       expect(
@@ -290,12 +335,12 @@ void main() {
       expect(plan.actualDistanceMeters, 160000);
       expect(plan.motorwayAvoidanceRelaxed, isTrue);
       expect(plan.motorwayAvoidanceRelaxedSections, 1);
-      expect(plan.routeSectionCount, 4);
+      expect(plan.routeSectionCount, 5);
       expect(plan.route.maneuvers, isEmpty);
       expect(plan.route.preferences?.avoidMotorways, isTrue);
       final warning = circularRideMotorwayFallbackWarning(
         relaxedSectionCount: 1,
-        routeSectionCount: 4,
+        routeSectionCount: 5,
       );
       expect(plan.warnings, [warning]);
       expect(plan.route.description, contains(warning));
@@ -304,8 +349,8 @@ void main() {
 
   test('keeps avoid motorways for an ordinary section detour', () async {
     final routing = _ExcessiveDetourRoadRoutingService(
-      blockedSectionDistanceMeters: 60000,
-      ordinarySectionDistanceMeters: 33500,
+      blockedSectionDistanceMeters: 40000,
+      ordinarySectionDistanceMeters: 30125,
       relaxedSectionDistanceMeters: 30000,
       blockedSectionHasUTurn: false,
     );
@@ -319,7 +364,7 @@ void main() {
       ),
     );
 
-    expect(routing.motorwayAvoidingCalls, 4);
+    expect(routing.motorwayAvoidingCalls, 5);
     expect(routing.forcedMotorcycleCalls, 0);
     expect(plan.actualDistanceMeters, 160500);
     expect(plan.motorwayAvoidanceRelaxed, isFalse);
@@ -350,7 +395,7 @@ void main() {
         1,
         reason: 'one timeout must stop repeated waits on the unavailable host',
       );
-      expect(routing.standardCalls, 4);
+      expect(routing.standardCalls, 5);
       expect(
         routing.standardPreferences,
         everyElement(
@@ -371,12 +416,12 @@ void main() {
             'standard routing keeps the bend bias without claiming hard '
             'motorcycle exclusions were honoured',
       );
-      expect(plan.standardRoutingFallbackSections, 4);
+      expect(plan.standardRoutingFallbackSections, 5);
       expect(plan.motorwayAvoidanceRelaxed, isTrue);
-      expect(plan.motorwayAvoidanceRelaxedSections, 4);
+      expect(plan.motorwayAvoidanceRelaxedSections, 5);
       final warning = circularRideStandardRoutingFallbackWarning(
-        fallbackSectionCount: 4,
-        routeSectionCount: 4,
+        fallbackSectionCount: 5,
+        routeSectionCount: 5,
         requestedPreferences: preferences,
       );
       expect(plan.warnings, [warning]);
@@ -553,11 +598,17 @@ double _distance(GeoPoint a, GeoPoint b) {
   return lat + lon;
 }
 
+double _distanceSquared(GeoPoint a, GeoPoint b) {
+  final latitude = a.latitude - b.latitude;
+  final longitude = (a.longitude - b.longitude) * 0.62;
+  return latitude * latitude + longitude * longitude;
+}
+
 class _FakeRoadRoutingService implements RoadRoutingService {
   _FakeRoadRoutingService({
     this.maneuvers = const [],
-    this.sectionDistanceMeters = 118000 / 4,
-    this.sectionDuration = const Duration(minutes: 30),
+    this.sectionDistanceMeters = 118000 / 5,
+    this.sectionDuration = const Duration(minutes: 24),
   });
 
   final requests = <_RoutingAttempt>[];
@@ -602,8 +653,8 @@ class _UTurnThenValidRoadRoutingService implements RoadRoutingService {
     calls += 1;
     return RoadRouteResult(
       points: waypoints,
-      distanceMeters: 118000 / 4,
-      duration: const Duration(minutes: 30),
+      distanceMeters: 118000 / 5,
+      duration: const Duration(minutes: 24),
       maneuvers: calls == 1
           ? const [
               RoadRouteManeuver(
@@ -626,8 +677,8 @@ class _BoundaryManeuverRoadRoutingService implements RoadRoutingService {
     double? originBearingDegrees,
   }) async => RoadRouteResult(
     points: waypoints,
-    distanceMeters: 118000 / 5,
-    duration: const Duration(minutes: 24),
+    distanceMeters: 118000 / 6,
+    duration: const Duration(minutes: 20),
     maneuvers: [
       RoadRouteManeuver(position: waypoints.first, type: 'depart'),
       RoadRouteManeuver(position: waypoints.first, type: 'turn'),
@@ -692,8 +743,8 @@ class _MotorwayFallbackRoadRoutingService
     RoutePreferences? preferences,
   ) => RoadRouteResult(
     points: waypoints,
-    distanceMeters: 80 * 1609.344 / 4,
-    duration: const Duration(minutes: 30),
+    distanceMeters: 80 * 1609.344 / 5,
+    duration: const Duration(minutes: 24),
     maneuvers: [
       RoadRouteManeuver(position: waypoints.first, type: 'depart'),
       RoadRouteManeuver(position: waypoints.first, type: 'turn'),
@@ -730,8 +781,8 @@ class _TimeoutFallbackRoadRoutingService
     standardPreferences.add(preferences);
     return RoadRouteResult(
       points: waypoints,
-      distanceMeters: 80 * 1609.344 / 4,
-      duration: const Duration(minutes: 30),
+      distanceMeters: 80 * 1609.344 / 5,
+      duration: const Duration(minutes: 24),
       preferences: preferences,
     );
   }
@@ -818,9 +869,9 @@ class _SequencedRoadRoutingService implements RoadRoutingService {
     RoutePreferences? preferences,
     double? originBearingDegrees,
   }) async {
-    final attempt = calls ~/ 4;
+    final attempt = calls ~/ 5;
     final distance =
-        distances[attempt.clamp(0, distances.length - 1).toInt()] / 4;
+        distances[attempt.clamp(0, distances.length - 1).toInt()] / 5;
     calls += 1;
     return RoadRouteResult(
       points: waypoints,

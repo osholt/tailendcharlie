@@ -212,11 +212,11 @@ String circularRideStandardRoutingFallbackWarning({
       '$affected carefully before accepting.';
 }
 
-/// Generates a road-routed loop from three non-stopping shaping controls.
+/// Generates a road-routed loop from four non-stopping shaping controls.
 ///
-/// The controls form a broad diamond in the requested compass direction. A
-/// variant changes its handedness and angle, so “another route” makes a
-/// materially different request rather than asking the router the same thing.
+/// The controls form a directional lobe beyond the ride start. A variant
+/// changes its handedness and angle, so “another route” makes a materially
+/// different request rather than asking the router the same thing.
 class CircularRidePlanner {
   const CircularRidePlanner({required this.routingService});
 
@@ -307,7 +307,9 @@ class CircularRidePlanner {
             id: 'loop-${selectedRequest.variant}-$index',
             point: point,
             legIndex: selectedRequest.plannedStops
-                .where((stop) => stop.fraction < (index + 1) / 4)
+                .where(
+                  (stop) => stop.fraction < (index + 1) / (controls.length + 1),
+                )
                 .length,
           ),
       ],
@@ -365,7 +367,11 @@ class CircularRidePlanner {
       final orderedControls =
           <({double fraction, GeoPoint point, bool isStop})>[
             for (final (index, point) in controls.indexed)
-              (fraction: (index + 1) / 4, point: point, isStop: false),
+              (
+                fraction: (index + 1) / (controls.length + 1),
+                point: point,
+                isStop: false,
+              ),
             for (final stop in request.plannedStops)
               (
                 fraction: stop.fraction,
@@ -838,22 +844,45 @@ List<GeoPoint> circularRideShapingPoints(
   final handedness = variant.isEven ? 1.0 : -1.0;
   final rotation = ((variant ~/ 2) * 7.5) * handedness;
   final heading = request.direction.bearingDegrees + rotation;
-  // The four straight legs of this diamond total about 3.78 radii. Roads add
-  // some distance, so 4.25 gives the router useful room without systematically
-  // overshooting the requested total.
-  final radius = (shapingDistanceMeters ?? request.distanceMeters) / 4.25;
+  // Keep every control beyond the start in the selected direction. The two
+  // nearer controls bound the outbound and return connectors; the two deeper
+  // controls make the bulk of the ride a loop in the requested area. The old
+  // broad diamond could put one side back across a river or mountain barrier,
+  // turning a local motorway crossing into several motorway-heavy sections.
+  //
+  // Distance correction only resizes the deep lobe. Keeping the gateways at
+  // their requested-distance positions prevents an overlong first attempt from
+  // pulling a necessary bridge or mountain-pass crossing back behind the
+  // barrier on the next attempt.
+  final gatewayRadius = request.distanceMeters / 5.0;
+  final lobeDistance = math.max(
+    shapingDistanceMeters ?? request.distanceMeters,
+    request.distanceMeters * 0.7,
+  );
+  final lobeRadius = lobeDistance / 5.0;
   final controls = [
     _offset(
       request.start,
-      forwardMeters: radius * 0.45,
-      rightMeters: radius * 0.8 * -handedness,
+      forwardMeters: gatewayRadius * 0.75,
+      rightMeters: gatewayRadius * 0.06 * -handedness,
       headingDegrees: heading,
     ),
-    _destination(request.start, heading, radius),
     _offset(
       request.start,
-      forwardMeters: radius * 0.45,
-      rightMeters: radius * 0.8 * handedness,
+      forwardMeters: lobeRadius * 1.12,
+      rightMeters: lobeRadius * 0.38 * -handedness,
+      headingDegrees: heading,
+    ),
+    _offset(
+      request.start,
+      forwardMeters: lobeRadius * 1.12,
+      rightMeters: lobeRadius * 0.38 * handedness,
+      headingDegrees: heading,
+    ),
+    _offset(
+      request.start,
+      forwardMeters: gatewayRadius * 0.75,
+      rightMeters: gatewayRadius * 0.06 * handedness,
       headingDegrees: heading,
     ),
   ];
@@ -862,7 +891,7 @@ List<GeoPoint> circularRideShapingPoints(
     start: request.start,
     cells: request.heatmapCells,
     enabled: request.heatmapPreference != CircularRideHeatmapPreference.none,
-    searchRadiusMeters: radius * 0.75,
+    searchRadiusMeters: lobeRadius * 0.75,
   );
 }
 

@@ -60,7 +60,7 @@ export const CIRCULAR_RIDE_DIRECTIONS = Object.freeze({
   NW: 315,
 });
 
-/// Returns three non-stopping controls for a broad road-routed loop.
+/// Returns four non-stopping controls for a road-routed directional lobe.
 /// Coordinate order is GeoJSON/Web convention: longitude, latitude.
 export function circularRideShapingCoordinates({
   start,
@@ -78,11 +78,12 @@ export function circularRideShapingCoordinates({
   const handedness = normalizedVariant % 2 === 0 ? 1 : -1;
   const rotation = Math.trunc(normalizedVariant / 2) * 7.5 * handedness;
   const heading = baseBearing + rotation;
-  const radius = distanceMetres / 4.25;
+  const radius = distanceMetres / 5;
   return [
-    offsetCoordinate(start, radius * 0.45, radius * 0.8 * -handedness, heading),
-    destinationCoordinate(start, heading, radius),
-    offsetCoordinate(start, radius * 0.45, radius * 0.8 * handedness, heading),
+    offsetCoordinate(start, radius * 0.75, radius * 0.06 * -handedness, heading),
+    offsetCoordinate(start, radius * 1.12, radius * 0.38 * -handedness, heading),
+    offsetCoordinate(start, radius * 1.12, radius * 0.38 * handedness, heading),
+    offsetCoordinate(start, radius * 0.75, radius * 0.06 * handedness, heading),
   ];
 }
 
