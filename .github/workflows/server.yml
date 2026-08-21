@@ -93,11 +93,16 @@ jobs:
           RIDE_RELAY_CURSOR_SIGNING_KEY: CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws
           RIDE_RELAY_DATA_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc
           RIDE_RELAY_DOMAIN: ride-relay.example.ts.net
-        run: >-
-          docker compose
-          --file deploy/compose.yaml
-          --file deploy/compose.tailnet.yaml
-          config --quiet
+        run: |
+          docker compose \
+            --file deploy/compose.yaml \
+            --file deploy/compose.tailnet.yaml \
+            config --quiet
+          docker run --rm \
+            --env RIDE_RELAY_DOMAIN \
+            --volume "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.4-alpine \
+            caddy validate --config /etc/caddy/Caddyfile
       - name: Validate isolated pre-production deployment
         env:
           POSTGRES_PASSWORD: production-ci-only-password
