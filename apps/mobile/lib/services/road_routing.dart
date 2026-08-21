@@ -422,6 +422,20 @@ abstract interface class MotorcycleCostingRoadRoutingService {
   });
 }
 
+/// Optional capability for callers that can recover from a motorcycle-router
+/// outage with ordinary road routing.
+///
+/// The caller must make any motorcycle-only preferences honest before using
+/// this method. In particular, OSRM cannot guarantee the hard exclusions that
+/// select Valhalla in [PreferenceAwareRoadRoutingService].
+abstract interface class StandardCostingRoadRoutingService {
+  Future<RoadRouteResult> routeThroughStandard(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  });
+}
+
 class OsrmRoadRoutingService implements RoadRoutingService {
   const OsrmRoadRoutingService({
     required this.client,
@@ -1022,7 +1036,10 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
 /// the web planner's `requestRoadRoute` rule. Same rule, same engine, same
 /// options, same route.
 class PreferenceAwareRoadRoutingService
-    implements RoadRoutingService, MotorcycleCostingRoadRoutingService {
+    implements
+        RoadRoutingService,
+        MotorcycleCostingRoadRoutingService,
+        StandardCostingRoadRoutingService {
   const PreferenceAwareRoadRoutingService({
     required this.osrm,
     required this.motorcycle,
@@ -1074,6 +1091,17 @@ class PreferenceAwareRoadRoutingService
     RoutePreferences? preferences,
     double? originBearingDegrees,
   }) => motorcycle.routeThrough(
+    waypoints,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
+
+  @override
+  Future<RoadRouteResult> routeThroughStandard(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) => osrm.routeThrough(
     waypoints,
     preferences: preferences,
     originBearingDegrees: originBearingDegrees,
