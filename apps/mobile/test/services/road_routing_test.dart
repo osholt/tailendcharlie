@@ -875,11 +875,17 @@ void main() {
           bywaySurface: BywaySurfacePreference.allowUnsurfaced,
         ),
       );
+      await dispatcher.routeThroughStandard(
+        _twoPoints,
+        preferences: const RoutePreferences(style: RouteStyle.twisty),
+      );
 
       expect(
         osrm.requests,
-        hasLength(3),
-        reason: 'no preference, the defaults, and a style-only change',
+        hasLength(4),
+        reason:
+            'no preference, the defaults, a style-only change, and an '
+            'explicit standard fallback',
       );
       expect(
         motorcycle.requests,

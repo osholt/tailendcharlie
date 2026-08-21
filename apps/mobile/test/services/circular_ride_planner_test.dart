@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -243,6 +244,67 @@ void main() {
         routing.blockedWaypoints,
         reason: 'only the blocked section may be retried with motorways',
       );
+    },
+  );
+
+  test(
+    'falls back once when motorcycle routing times out and warns clearly',
+    () async {
+      final routing = _TimeoutFallbackRoadRoutingService();
+      const preferences = RoutePreferences(
+        style: RouteStyle.twisty,
+        avoidMotorways: true,
+        avoidMajorRoads: true,
+      );
+
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 80 * 1609.344,
+          direction: CircularRideDirection.northWest,
+          preferences: preferences,
+        ),
+      );
+
+      expect(
+        routing.motorcycleCalls,
+        1,
+        reason: 'one timeout must stop repeated waits on the unavailable host',
+      );
+      expect(routing.standardCalls, 4);
+      expect(
+        routing.standardPreferences,
+        everyElement(
+          isA<RoutePreferences>()
+              .having((value) => value.style, 'style', RouteStyle.twisty)
+              .having(
+                (value) => value.avoidMotorways,
+                'avoid motorways',
+                isFalse,
+              )
+              .having(
+                (value) => value.avoidMajorRoads,
+                'avoid major roads',
+                isFalse,
+              ),
+        ),
+        reason:
+            'standard routing keeps the bend bias without claiming hard '
+            'motorcycle exclusions were honoured',
+      );
+      expect(plan.standardRoutingFallbackSections, 4);
+      expect(plan.motorwayAvoidanceRelaxed, isTrue);
+      expect(plan.motorwayAvoidanceRelaxedSections, 4);
+      final warning = circularRideStandardRoutingFallbackWarning(
+        fallbackSectionCount: 4,
+        routeSectionCount: 4,
+        requestedPreferences: preferences,
+      );
+      expect(plan.warnings, [warning]);
+      expect(warning, contains('Motorcycle routing timed out'));
+      expect(warning, contains('Avoid motorways'));
+      expect(warning, contains('Prefer quieter roads'));
+      expect(plan.route.description, contains(warning));
     },
   );
 
@@ -560,6 +622,40 @@ class _MotorwayFallbackRoadRoutingService
     ],
     preferences: preferences,
   );
+}
+
+class _TimeoutFallbackRoadRoutingService
+    implements RoadRoutingService, StandardCostingRoadRoutingService {
+  var motorcycleCalls = 0;
+  var standardCalls = 0;
+  final standardPreferences = <RoutePreferences?>[];
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    motorcycleCalls += 1;
+    await Future<void>.delayed(Duration.zero);
+    throw TimeoutException('Motorcycle routing did not respond.');
+  }
+
+  @override
+  Future<RoadRouteResult> routeThroughStandard(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    standardCalls += 1;
+    standardPreferences.add(preferences);
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: 80 * 1609.344 / 4,
+      duration: const Duration(minutes: 30),
+      preferences: preferences,
+    );
+  }
 }
 
 class _SequencedRoadRoutingService implements RoadRoutingService {

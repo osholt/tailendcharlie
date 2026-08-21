@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import '../domain/imported_route.dart';
@@ -157,6 +158,7 @@ class CircularRidePlan {
     this.warnings = const [],
     this.motorwayAvoidanceRelaxed = false,
     this.motorwayAvoidanceRelaxedSections = 0,
+    this.standardRoutingFallbackSections = 0,
     this.routeSectionCount = 0,
   });
 
@@ -169,6 +171,7 @@ class CircularRidePlan {
   final List<String> warnings;
   final bool motorwayAvoidanceRelaxed;
   final int motorwayAvoidanceRelaxedSections;
+  final int standardRoutingFallbackSections;
   final int routeSectionCount;
 }
 
@@ -181,6 +184,32 @@ String circularRideMotorwayFallbackWarning({
       '$routeSectionCount route $noun because no usable path was available '
       'there. Only those sections may use motorways; review them carefully '
       'before accepting.';
+}
+
+String circularRideStandardRoutingFallbackWarning({
+  required int fallbackSectionCount,
+  required int routeSectionCount,
+  required RoutePreferences requestedPreferences,
+}) {
+  final unavailableSettings = [
+    if (requestedPreferences.avoidMotorways) 'Avoid motorways',
+    if (requestedPreferences.avoidMajorRoads) 'Prefer quieter roads',
+    if (requestedPreferences.avoidTolls) 'Avoid tolls',
+    if (requestedPreferences.avoidFerries) 'Avoid ferries',
+    if (!requestedPreferences.bywaySurface.avoidsUnsurfaced)
+      'Allow unsurfaced byways',
+  ];
+  final affected = fallbackSectionCount == 1
+      ? 'that section'
+      : 'those sections';
+  final limitation = unavailableSettings.isEmpty
+      ? ''
+      : ' ${unavailableSettings.join(', ')} could not be guaranteed on '
+            '$affected.';
+  return 'Motorcycle routing timed out, so $fallbackSectionCount of '
+      '$routeSectionCount route sections used standard road routing.'
+      '$limitation The selected road-character bias was kept; review '
+      '$affected carefully before accepting.';
 }
 
 /// Generates a road-routed loop from three non-stopping shaping controls.
@@ -216,7 +245,12 @@ class CircularRidePlanner {
     }
 
     final failures = <_CircularRideCandidateFailureKind>[];
-    final candidate = await _tryCandidateVariants(request, failures: failures);
+    final routingFallback = _CircularRideRoutingFallbackState();
+    final candidate = await _tryCandidateVariants(
+      request,
+      failures: failures,
+      routingFallback: routingFallback,
+    );
     if (candidate == null) {
       throw FormatException(_circularRideFailureMessage(request, failures));
     }
@@ -224,14 +258,26 @@ class CircularRidePlanner {
     final selectedRequest = candidate.request;
     final controls = candidate.controls;
     final result = candidate.result;
-    final motorwayAvoidanceRelaxed =
-        candidate.motorwayAvoidanceRelaxedSections > 0;
-    final motorwayWarning = motorwayAvoidanceRelaxed
+    final motorwayAvoidanceRelaxedSections =
+        candidate.motorwayAvoidanceRelaxedSections +
+        (selectedRequest.preferences.avoidMotorways
+            ? candidate.standardRoutingFallbackSections
+            : 0);
+    final motorwayAvoidanceRelaxed = motorwayAvoidanceRelaxedSections > 0;
+    final motorwayWarning = candidate.motorwayAvoidanceRelaxedSections > 0
         ? circularRideMotorwayFallbackWarning(
             relaxedSectionCount: candidate.motorwayAvoidanceRelaxedSections,
             routeSectionCount: candidate.routeSectionCount,
           )
         : null;
+    final standardRoutingWarning = candidate.standardRoutingFallbackSections > 0
+        ? circularRideStandardRoutingFallbackWarning(
+            fallbackSectionCount: candidate.standardRoutingFallbackSections,
+            routeSectionCount: candidate.routeSectionCount,
+            requestedPreferences: selectedRequest.preferences,
+          )
+        : null;
+    final warnings = [?motorwayWarning, ?standardRoutingWarning];
     final now = DateTime.now().toUtc();
     final route = ImportedRoute(
       id: 'circular-${now.microsecondsSinceEpoch}-${selectedRequest.variant}',
@@ -239,7 +285,7 @@ class CircularRidePlanner {
       description: _description(
         selectedRequest,
         candidate.preferences,
-        motorwayWarning: motorwayWarning,
+        warnings: warnings,
       ),
       importedAt: now,
       sourceFileName: 'circular-planner',
@@ -276,10 +322,11 @@ class CircularRidePlanner {
       actualDistanceMeters: result.distanceMeters,
       duration: result.duration,
       twistinessScore: result.twistinessScore,
-      warnings: motorwayWarning == null ? const [] : [motorwayWarning],
+      warnings: List.unmodifiable(warnings),
       motorwayAvoidanceRelaxed: motorwayAvoidanceRelaxed,
-      motorwayAvoidanceRelaxedSections:
-          candidate.motorwayAvoidanceRelaxedSections,
+      motorwayAvoidanceRelaxedSections: motorwayAvoidanceRelaxedSections,
+      standardRoutingFallbackSections:
+          candidate.standardRoutingFallbackSections,
       routeSectionCount: candidate.routeSectionCount,
     );
   }
@@ -287,11 +334,16 @@ class CircularRidePlanner {
   Future<_CircularRideCandidate?> _tryCandidateVariants(
     CircularRideRequest request, {
     required List<_CircularRideCandidateFailureKind> failures,
+    required _CircularRideRoutingFallbackState routingFallback,
   }) async {
     for (var offset = 0; offset < _maximumCandidateVariants; offset += 1) {
       final candidateRequest = request.withVariant(request.variant + offset);
       try {
-        return await _generateCandidate(candidateRequest, request.preferences);
+        return await _generateCandidate(
+          candidateRequest,
+          request.preferences,
+          routingFallback: routingFallback,
+        );
       } on _CircularRideCandidateFailure catch (failure) {
         failures.add(failure.kind);
       }
@@ -301,8 +353,9 @@ class CircularRidePlanner {
 
   Future<_CircularRideCandidate> _generateCandidate(
     CircularRideRequest request,
-    RoutePreferences preferences,
-  ) async {
+    RoutePreferences preferences, {
+    required _CircularRideRoutingFallbackState routingFallback,
+  }) async {
     var shapingDistance = request.distanceMeters;
     for (var attempt = 0; attempt < 3; attempt += 1) {
       final controls = circularRideShapingPoints(
@@ -334,6 +387,7 @@ class CircularRidePlanner {
             for (final control in orderedControls) control.isStop,
           ],
           preferences: preferences,
+          routingFallback: routingFallback,
         );
         result = sections.result;
       } on RoadRoutingException catch (error) {
@@ -363,6 +417,8 @@ class CircularRidePlanner {
           result: result,
           motorwayAvoidanceRelaxedSections:
               sections.motorwayAvoidanceRelaxedSections,
+          standardRoutingFallbackSections:
+              sections.standardRoutingFallbackSections,
           routeSectionCount: sections.routeSectionCount,
         );
       }
@@ -387,26 +443,45 @@ class CircularRidePlanner {
     List<GeoPoint> waypoints, {
     required List<bool> preserveInternalBoundary,
     required RoutePreferences preferences,
+    required _CircularRideRoutingFallbackState routingFallback,
   }) async {
-    final sections = await Future.wait([
-      for (var index = 0; index < waypoints.length - 1; index += 1)
-        _routeSection(
-          waypoints[index],
-          waypoints[index + 1],
-          preferences: preferences,
-        ),
-    ]);
+    // Let the first section establish whether motorcycle routing is healthy.
+    // Once that is known, the remaining sections can run concurrently without
+    // turning a provider outage into four independent timeout waits.
+    final sections = <_CircularRideSection>[
+      await _routeSection(
+        waypoints.first,
+        waypoints[1],
+        preferences: preferences,
+        routingFallback: routingFallback,
+      ),
+    ];
+    sections.addAll(
+      await Future.wait([
+        for (var index = 1; index < waypoints.length - 1; index += 1)
+          _routeSection(
+            waypoints[index],
+            waypoints[index + 1],
+            preferences: preferences,
+            routingFallback: routingFallback,
+          ),
+      ]),
+    );
     final points = <GeoPoint>[];
     final maneuvers = <RoadRouteManeuver>[];
     var distanceMeters = 0.0;
     var durationMicroseconds = 0;
     var relaxedSectionCount = 0;
+    var standardRoutingFallbackCount = 0;
     for (final (index, section) in sections.indexed) {
       final result = section.result;
       points.addAll(points.isEmpty ? result.points : result.points.skip(1));
       distanceMeters += result.distanceMeters;
       durationMicroseconds += result.duration.inMicroseconds;
       if (section.motorwayAvoidanceRelaxed) relaxedSectionCount += 1;
+      if (section.standardRoutingFallback) {
+        standardRoutingFallbackCount += 1;
+      }
       final preserveStart = index > 0 && preserveInternalBoundary[index - 1];
       final preserveEnd =
           index < sections.length - 1 && preserveInternalBoundary[index];
@@ -433,6 +508,7 @@ class CircularRidePlanner {
         preferences: preferences,
       ),
       motorwayAvoidanceRelaxedSections: relaxedSectionCount,
+      standardRoutingFallbackSections: standardRoutingFallbackCount,
       routeSectionCount: sections.length,
     );
   }
@@ -441,14 +517,33 @@ class CircularRidePlanner {
     GeoPoint start,
     GeoPoint finish, {
     required RoutePreferences preferences,
+    required _CircularRideRoutingFallbackState routingFallback,
   }) async {
     final waypoints = [start, finish];
+    final standardService = routingService is StandardCostingRoadRoutingService
+        ? routingService as StandardCostingRoadRoutingService
+        : null;
+    if (routingFallback.standardRoutingOnly && standardService != null) {
+      return _routeStandardSection(
+        standardService,
+        waypoints,
+        requestedPreferences: preferences,
+      );
+    }
     try {
       return _CircularRideSection(
         result: await routingService.routeThrough(
           waypoints,
           preferences: preferences,
         ),
+      );
+    } on TimeoutException {
+      if (standardService == null) rethrow;
+      routingFallback.standardRoutingOnly = true;
+      return _routeStandardSection(
+        standardService,
+        waypoints,
+        requestedPreferences: preferences,
       );
     } on RoadRoutingException catch (error) {
       if (!error.routeNotFound || !preferences.avoidMotorways) rethrow;
@@ -465,6 +560,23 @@ class CircularRidePlanner {
     }
   }
 
+  Future<_CircularRideSection> _routeStandardSection(
+    StandardCostingRoadRoutingService service,
+    List<GeoPoint> waypoints, {
+    required RoutePreferences requestedPreferences,
+  }) async {
+    final standardPreferences = RoutePreferences(
+      style: requestedPreferences.style,
+    );
+    return _CircularRideSection(
+      result: await service.routeThroughStandard(
+        waypoints,
+        preferences: standardPreferences,
+      ),
+      standardRoutingFallback: true,
+    );
+  }
+
   static String _routeName(CircularRideRequest request) {
     final miles = (request.distanceMeters / 1609.344).round();
     return switch (request.dayLength) {
@@ -477,14 +589,14 @@ class CircularRidePlanner {
   static String _description(
     CircularRideRequest request,
     RoutePreferences preferences, {
-    required String? motorwayWarning,
+    required List<String> warnings,
   }) {
     return 'Generated ${request.direction.label} circular ride; '
         '${preferences.summary} Fuel every ${request.fuelEvery.inMinutes} min, '
         'comfort every ${request.comfortEvery.inMinutes} min, meal after '
         '${request.mealAfter.inMinutes} min. '
         '${request.heatmapPreference == CircularRideHeatmapPreference.none ? 'No heatmap preference.' : 'Soft preference: ${request.heatmapPreference.label.toLowerCase()}.'}'
-        '${motorwayWarning == null ? '' : ' $motorwayWarning'}';
+        '${warnings.isEmpty ? '' : ' ${warnings.join(' ')}'}';
   }
 }
 
@@ -508,6 +620,7 @@ class _CircularRideCandidate {
     required this.controls,
     required this.result,
     required this.motorwayAvoidanceRelaxedSections,
+    required this.standardRoutingFallbackSections,
     required this.routeSectionCount,
   });
 
@@ -516,6 +629,7 @@ class _CircularRideCandidate {
   final List<GeoPoint> controls;
   final RoadRouteResult result;
   final int motorwayAvoidanceRelaxedSections;
+  final int standardRoutingFallbackSections;
   final int routeSectionCount;
 }
 
@@ -523,22 +637,30 @@ class _CircularRideSection {
   const _CircularRideSection({
     required this.result,
     this.motorwayAvoidanceRelaxed = false,
+    this.standardRoutingFallback = false,
   });
 
   final RoadRouteResult result;
   final bool motorwayAvoidanceRelaxed;
+  final bool standardRoutingFallback;
 }
 
 class _CircularRideSections {
   const _CircularRideSections({
     required this.result,
     required this.motorwayAvoidanceRelaxedSections,
+    required this.standardRoutingFallbackSections,
     required this.routeSectionCount,
   });
 
   final RoadRouteResult result;
   final int motorwayAvoidanceRelaxedSections;
+  final int standardRoutingFallbackSections;
   final int routeSectionCount;
+}
+
+class _CircularRideRoutingFallbackState {
+  bool standardRoutingOnly = false;
 }
 
 String _circularRideFailureMessage(
