@@ -36,6 +36,43 @@ permissions by design.
 - ...
 ```
 
+## iOS build 74 / Android build 74 — 21 August 2026
+
+This build keeps circular-route creation working when the motorcycle routing
+service is temporarily unavailable, without silently claiming that unavailable
+road exclusions were honoured.
+
+### What to test
+
+1. **From Kingswood, create an 80-mile circular route to the northwest with
+   Twisty and Avoid motorways enabled.** The request should reach the route
+   review instead of ending with a timeout.
+2. **Read any warning on the route review.** If motorcycle routing timed out,
+   the warning should say how many sections used standard road routing and that
+   Avoid motorways could not be guaranteed on those sections.
+3. **Inspect the complete loop before accepting it.** The route should retain
+   the selected twisty-road bias, but it may include motorways when the fallback
+   warning is present.
+4. **Repeat the same request.** An unavailable motorcycle router should be
+   tested once per generated route rather than making every section wait for a
+   separate timeout.
+
+### Fixed
+
+- Circular-route creation exposed a timeout when the configured motorcycle
+  routing service stopped responding.
+- All four route-section requests could wait independently on the unavailable
+  service.
+- The planner had no honest fallback for completing the loop while explaining
+  which motorcycle-only road settings could no longer be guaranteed.
+
+### Known limitations
+
+- Standard routing cannot guarantee Avoid motorways, Prefer quieter roads,
+  Avoid tolls, Avoid ferries or unsurfaced-byway preferences. When this fallback
+  is used, the review names the affected settings and sections so the route can
+  be checked before acceptance.
+
 ## iOS build 73 / Android build 73 — 21 August 2026
 
 This build keeps circular rides on the requested kind of roads section by
