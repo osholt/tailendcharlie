@@ -181,9 +181,9 @@ String circularRideMotorwayFallbackWarning({
 }) {
   final noun = routeSectionCount == 1 ? 'section' : 'sections';
   return 'Avoid motorways was relaxed for $relaxedSectionCount of '
-      '$routeSectionCount route $noun because no usable path was available '
-      'there. Only those sections may use motorways; review them carefully '
-      'before accepting.';
+      '$routeSectionCount route $noun because the motorway-free path was '
+      'unavailable or excessively indirect there. Only those sections may use '
+      'motorways; review them carefully before accepting.';
 }
 
 String circularRideStandardRoutingFallbackWarning({
@@ -531,12 +531,34 @@ class CircularRidePlanner {
       );
     }
     try {
-      return _CircularRideSection(
-        result: await routingService.routeThrough(
+      final result = await routingService.routeThrough(
+        waypoints,
+        preferences: preferences,
+      );
+      if (!preferences.avoidMotorways ||
+          !_hasExcessiveSectionDetour(start, finish, result)) {
+        return _CircularRideSection(result: result);
+      }
+      try {
+        final relaxedResult = await _routeWithMotorwaysAllowed(
           waypoints,
           preferences: preferences,
-        ),
-      );
+        );
+        if (_motorwayFallbackImprovesSection(result, relaxedResult)) {
+          return _CircularRideSection(
+            result: relaxedResult,
+            motorwayAvoidanceRelaxed: true,
+          );
+        }
+      } on TimeoutException {
+        // The avoidance route is usable, so an optional comparison timing out
+        // is not a reason to discard the candidate.
+      } on RoadRoutingException {
+        // Keep the usable avoidance route if allowing motorways does not route.
+      } on FormatException {
+        // A malformed optional comparison cannot invalidate the usable route.
+      }
+      return _CircularRideSection(result: result);
     } on TimeoutException {
       if (standardService == null) rethrow;
       routingFallback.standardRoutingOnly = true;
@@ -547,17 +569,26 @@ class CircularRidePlanner {
       );
     } on RoadRoutingException catch (error) {
       if (!error.routeNotFound || !preferences.avoidMotorways) rethrow;
-      final relaxed = preferences.copyWith(avoidMotorways: false);
-      final service = routingService;
-      final result = service is MotorcycleCostingRoadRoutingService
-          ? await (service as MotorcycleCostingRoadRoutingService)
-                .routeThroughMotorcycle(waypoints, preferences: relaxed)
-          : await service.routeThrough(waypoints, preferences: relaxed);
       return _CircularRideSection(
-        result: result,
+        result: await _routeWithMotorwaysAllowed(
+          waypoints,
+          preferences: preferences,
+        ),
         motorwayAvoidanceRelaxed: true,
       );
     }
+  }
+
+  Future<RoadRouteResult> _routeWithMotorwaysAllowed(
+    List<GeoPoint> waypoints, {
+    required RoutePreferences preferences,
+  }) {
+    final relaxed = preferences.copyWith(avoidMotorways: false);
+    final service = routingService;
+    return service is MotorcycleCostingRoadRoutingService
+        ? (service as MotorcycleCostingRoadRoutingService)
+              .routeThroughMotorcycle(waypoints, preferences: relaxed)
+        : service.routeThrough(waypoints, preferences: relaxed);
   }
 
   Future<_CircularRideSection> _routeStandardSection(
@@ -692,6 +723,16 @@ String _circularRideFailureMessage(
 const circularRideDistanceTolerance = 0.30;
 const circularRideClosureToleranceMeters = 500.0;
 
+// A hard exclusion can still produce a nominal route by sending a section far
+// around a barrier. For a circular ride that is no more usable than "no path":
+// it makes the distance corrector oscillate and can introduce a U-turn. Both a
+// proportional and absolute bound are required so ordinary local detours do not
+// relax a rider's motorway preference.
+const _circularRideMaximumSectionDetourRatio = 1.8;
+const _circularRideMinimumSectionDetourMeters = 20_000.0;
+const _circularRideMinimumFallbackSavingRatio = 0.15;
+const _circularRideMinimumFallbackSavingMeters = 10_000.0;
+
 bool circularRideDistanceWithinTolerance({
   required double requestedMeters,
   required double actualMeters,
@@ -717,6 +758,34 @@ bool _hasUTurn(RoadRouteResult result) => result.maneuvers.any((maneuver) {
   final modifier = maneuver.modifier?.trim().toLowerCase().replaceAll('-', ' ');
   return modifier == 'uturn' || modifier == 'u turn';
 });
+
+bool _hasExcessiveSectionDetour(
+  GeoPoint start,
+  GeoPoint finish,
+  RoadRouteResult result,
+) {
+  final directDistance = _distanceMetres(start, finish);
+  if (!directDistance.isFinite || directDistance <= 0) return false;
+  return result.distanceMeters >=
+          directDistance * _circularRideMaximumSectionDetourRatio &&
+      result.distanceMeters - directDistance >=
+          _circularRideMinimumSectionDetourMeters;
+}
+
+bool _motorwayFallbackImprovesSection(
+  RoadRouteResult avoided,
+  RoadRouteResult relaxed,
+) {
+  if (!relaxed.distanceMeters.isFinite || relaxed.distanceMeters <= 0) {
+    return false;
+  }
+  final saving = avoided.distanceMeters - relaxed.distanceMeters;
+  if (saving <= 0 || _hasUTurn(relaxed)) return false;
+  if (_hasUTurn(avoided)) return true;
+  return saving >= _circularRideMinimumFallbackSavingMeters &&
+      saving / avoided.distanceMeters >=
+          _circularRideMinimumFallbackSavingRatio;
+}
 
 Future<void> saveCircularRideToLibrary(
   ImportedRoute route,

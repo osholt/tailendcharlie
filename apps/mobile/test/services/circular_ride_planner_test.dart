@@ -248,6 +248,89 @@ void main() {
   );
 
   test(
+    'allows motorways when avoiding them makes one section unusably indirect',
+    () async {
+      final routing = _ExcessiveDetourRoadRoutingService(
+        blockedSectionDistanceMeters: 150000,
+        ordinarySectionDistanceMeters: 40000,
+        relaxedSectionDistanceMeters: 40000,
+        blockedSectionHasUTurn: true,
+      );
+
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 100 * 1609.344,
+          direction: CircularRideDirection.northWest,
+          preferences: RoutePreferences(
+            style: RouteStyle.twisty,
+            avoidMotorways: true,
+            avoidMajorRoads: true,
+            avoidTolls: true,
+          ),
+        ),
+      );
+
+      expect(routing.motorwayAvoidingCalls, 4);
+      expect(routing.forcedMotorcycleCalls, 1);
+      expect(routing.relaxedWaypoints, routing.blockedWaypoints);
+      expect(
+        routing.relaxedPreferences,
+        isA<RoutePreferences>()
+            .having((value) => value.style, 'style', RouteStyle.twisty)
+            .having(
+              (value) => value.avoidMotorways,
+              'avoid motorways',
+              isFalse,
+            )
+            .having(
+              (value) => value.avoidMajorRoads,
+              'avoid major roads',
+              isTrue,
+            )
+            .having((value) => value.avoidTolls, 'avoid tolls', isTrue),
+      );
+      expect(plan.request.variant, 0);
+      expect(plan.actualDistanceMeters, 160000);
+      expect(plan.motorwayAvoidanceRelaxed, isTrue);
+      expect(plan.motorwayAvoidanceRelaxedSections, 1);
+      expect(plan.routeSectionCount, 4);
+      expect(plan.route.maneuvers, isEmpty);
+      expect(plan.route.preferences?.avoidMotorways, isTrue);
+      final warning = circularRideMotorwayFallbackWarning(
+        relaxedSectionCount: 1,
+        routeSectionCount: 4,
+      );
+      expect(plan.warnings, [warning]);
+      expect(plan.route.description, contains(warning));
+    },
+  );
+
+  test('keeps avoid motorways for an ordinary section detour', () async {
+    final routing = _ExcessiveDetourRoadRoutingService(
+      blockedSectionDistanceMeters: 60000,
+      ordinarySectionDistanceMeters: 33500,
+      relaxedSectionDistanceMeters: 30000,
+      blockedSectionHasUTurn: false,
+    );
+
+    final plan = await CircularRidePlanner(routingService: routing).generate(
+      const CircularRideRequest(
+        start: start,
+        distanceMeters: 100 * 1609.344,
+        direction: CircularRideDirection.northWest,
+        preferences: RoutePreferences(avoidMotorways: true),
+      ),
+    );
+
+    expect(routing.motorwayAvoidingCalls, 4);
+    expect(routing.forcedMotorcycleCalls, 0);
+    expect(plan.actualDistanceMeters, 160500);
+    expect(plan.motorwayAvoidanceRelaxed, isFalse);
+    expect(plan.warnings, isEmpty);
+  });
+
+  test(
     'falls back once when motorcycle routing times out and warns clearly',
     () async {
       final routing = _TimeoutFallbackRoadRoutingService();
@@ -653,6 +736,75 @@ class _TimeoutFallbackRoadRoutingService
       points: waypoints,
       distanceMeters: 80 * 1609.344 / 4,
       duration: const Duration(minutes: 30),
+      preferences: preferences,
+    );
+  }
+}
+
+class _ExcessiveDetourRoadRoutingService
+    implements RoadRoutingService, MotorcycleCostingRoadRoutingService {
+  _ExcessiveDetourRoadRoutingService({
+    required this.blockedSectionDistanceMeters,
+    required this.ordinarySectionDistanceMeters,
+    required this.relaxedSectionDistanceMeters,
+    required this.blockedSectionHasUTurn,
+  });
+
+  final double blockedSectionDistanceMeters;
+  final double ordinarySectionDistanceMeters;
+  final double relaxedSectionDistanceMeters;
+  final bool blockedSectionHasUTurn;
+  var motorwayAvoidingCalls = 0;
+  var forcedMotorcycleCalls = 0;
+  List<GeoPoint>? blockedWaypoints;
+  List<GeoPoint>? relaxedWaypoints;
+  RoutePreferences? relaxedPreferences;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    if (!(preferences?.avoidMotorways ?? false)) {
+      throw StateError('Fallback must retain motorcycle costing.');
+    }
+    motorwayAvoidingCalls += 1;
+    final isBlockedSection =
+        waypoints.first.longitude < -2.9 && waypoints.last.latitude > 51.6;
+    if (isBlockedSection) blockedWaypoints = List.unmodifiable(waypoints);
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: isBlockedSection
+          ? blockedSectionDistanceMeters
+          : ordinarySectionDistanceMeters,
+      duration: const Duration(minutes: 30),
+      maneuvers: isBlockedSection && blockedSectionHasUTurn
+          ? [
+              RoadRouteManeuver(
+                position: waypoints.first,
+                type: 'turn',
+                modifier: 'u-turn',
+              ),
+            ]
+          : const [],
+      preferences: preferences,
+    );
+  }
+
+  @override
+  Future<RoadRouteResult> routeThroughMotorcycle(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    forcedMotorcycleCalls += 1;
+    relaxedWaypoints = List.unmodifiable(waypoints);
+    relaxedPreferences = preferences;
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: relaxedSectionDistanceMeters,
+      duration: const Duration(minutes: 25),
       preferences: preferences,
     );
   }
