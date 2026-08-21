@@ -29,6 +29,24 @@ typedef RouteReshapeCallback =
       List<RouteShapingPoint> shapingPoints,
     );
 
+class RouteReviewAlternative {
+  const RouteReviewAlternative({
+    required this.route,
+    this.distanceMeters,
+    this.duration,
+    this.twistinessScore,
+    this.warnings = const [],
+  });
+
+  final ImportedRoute route;
+  final double? distanceMeters;
+  final Duration? duration;
+  final double? twistinessScore;
+  final List<String> warnings;
+}
+
+typedef RouteAlternativeCallback = Future<RouteReviewAlternative> Function();
+
 class RouteReviewScreen extends StatefulWidget {
   const RouteReviewScreen({
     super.key,
@@ -47,6 +65,7 @@ class RouteReviewScreen extends StatefulWidget {
     this.onMarkerReviewChanged,
     this.onReshapeRoute,
     this.onRouteChanged,
+    this.onGenerateAlternative,
     this.pointOfInterestLoader,
     this.discoveryLoader,
     this.discoveryPreferencesLoader,
@@ -79,6 +98,7 @@ class RouteReviewScreen extends StatefulWidget {
   final ValueChanged<MarkerPlanReview>? onMarkerReviewChanged;
   final RouteReshapeCallback? onReshapeRoute;
   final ValueChanged<ImportedRoute>? onRouteChanged;
+  final RouteAlternativeCallback? onGenerateAlternative;
   final Future<BikerPlaceCatalogue> Function()? pointOfInterestLoader;
 
   /// The motorcycle discovery layers — twisty highlights and the rest — shown
@@ -109,6 +129,7 @@ class RouteReviewScreen extends StatefulWidget {
     ValueChanged<MarkerPlanReview>? onMarkerReviewChanged,
     RouteReshapeCallback? onReshapeRoute,
     ValueChanged<ImportedRoute>? onRouteChanged,
+    RouteAlternativeCallback? onGenerateAlternative,
     Future<BikerPlaceCatalogue> Function()? pointOfInterestLoader,
     Future<MotorcycleDiscoveryCatalogue> Function()? discoveryLoader,
     Future<DiscoveryLayerPreferences> Function()? discoveryPreferencesLoader,
@@ -132,6 +153,7 @@ class RouteReviewScreen extends StatefulWidget {
             onMarkerReviewChanged: onMarkerReviewChanged,
             onReshapeRoute: onReshapeRoute,
             onRouteChanged: onRouteChanged,
+            onGenerateAlternative: onGenerateAlternative,
             pointOfInterestLoader: pointOfInterestLoader,
             discoveryLoader: discoveryLoader,
             discoveryPreferencesLoader: discoveryPreferencesLoader,
@@ -154,6 +176,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   late double? _distanceMeters = widget.distanceMeters;
   late Duration? _duration = widget.duration;
   late double? _twistinessScore = widget.twistinessScore;
+  late List<String> _warnings = List.of(widget.warnings);
   final List<List<RouteShapingPoint>> _reshapeHistory = [];
   Timer? _reshapeTimer;
   int _reshapeGeneration = 0;
@@ -162,6 +185,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   late bool _reshapeEnabled;
   bool _reshapeQueued = false;
   bool _reshaping = false;
+  bool _generatingAlternative = false;
   int _shapeSequence = 0;
   BikerPlaceCatalogue _pointOfInterests = BikerPlaceCatalogue.empty;
   MotorcycleDiscoveryCatalogue _discoveries =
@@ -179,7 +203,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   double? get distanceMeters => _distanceMeters;
   Duration? get duration => _duration;
   double? get twistinessScore => _twistinessScore;
-  List<String> get warnings => widget.warnings;
+  List<String> get warnings => _warnings;
   ImportedRoute? get previousRoute => widget.previousRoute;
   ImportedRoute? get comparisonRoute => widget.comparisonRoute;
   bool get canEditStops => widget.canEditStops;
@@ -192,9 +216,10 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   @override
   void initState() {
     super.initState();
-    // A destination plan opens ready to manipulate, matching the web planner.
-    // Imported/recorded routes retain the quieter review-only default.
-    _reshapeEnabled = canEditStops && widget.onReshapeRoute != null;
+    // Navigation is the default. Drawing places an opaque gesture surface over
+    // the native map, so opening editable reviews in that mode made ordinary
+    // drag-to-pan and pinch-to-zoom gestures appear broken.
+    _reshapeEnabled = false;
     if (canEditStops && widget.onReshapeRoute != null) {
       unawaited(_loadPointsOfInterest());
     }
@@ -233,6 +258,54 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   void _applyReview(MarkerPlanReview review) {
     setState(() => _markerReview = review);
     widget.onMarkerReviewChanged?.call(review);
+  }
+
+  Future<void> _generateAlternative() async {
+    if (_reshapeQueued || _reshaping || _generatingAlternative) return;
+    final callback = widget.onGenerateAlternative;
+    if (callback == null) return;
+    setState(() {
+      _generatingAlternative = true;
+      _reshapeError = null;
+    });
+    try {
+      final alternative = await callback();
+      if (!mounted) return;
+      final updatedRoute = alternative.route;
+      final updatedReview = updatedRoute.markerReview;
+      setState(() {
+        _route = updatedRoute;
+        _lastSuccessfulRoute = updatedRoute;
+        _markerReview = updatedReview;
+        _distanceMeters = alternative.distanceMeters;
+        _duration = alternative.duration;
+        _twistinessScore = alternative.twistinessScore;
+        _warnings = List.of(alternative.warnings);
+        _reshapeHistory.clear();
+        _activeShapingPointId = null;
+        _nearbyPointsOfInterest = _pointOfInterests.nearRoute(
+          updatedRoute.allPoints,
+        );
+        _nearbyDiscoveries = _discoveriesNearRoute(
+          _discoveries,
+          _enabledDiscoveryCategories,
+        );
+      });
+      widget.onMarkerReviewChanged?.call(updatedReview);
+      widget.onRouteChanged?.call(updatedRoute);
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not create another route. The current route is unchanged. '
+            '$error',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _generatingAlternative = false);
+    }
   }
 
   @override
@@ -779,40 +852,74 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Review route'),
+        title: Tooltip(
+          message: route.name,
+          child: Text(
+            route.name,
+            key: const Key('route-review-title'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
         leading: IconButton(
           tooltip: 'Cancel route review',
           onPressed: () => Navigator.of(context).pop(RouteReviewAction.cancel),
           icon: const Icon(Icons.close),
         ),
-        actions: [
-          if (widget.canGenerateAlternative)
-            TextButton.icon(
-              key: const Key('generate-another-route'),
-              onPressed: _reshapeQueued || _reshaping
-                  ? null
-                  : () => Navigator.of(context).pop(RouteReviewAction.another),
-              icon: const Icon(Icons.refresh),
-              label: const Text('Another'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(48),
+          child: SizedBox(
+            key: const Key('route-review-actions'),
+            height: 48,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (widget.canGenerateAlternative)
+                  TextButton.icon(
+                    key: const Key('generate-another-route'),
+                    onPressed:
+                        _reshapeQueued ||
+                            _reshaping ||
+                            _generatingAlternative ||
+                            widget.onGenerateAlternative == null
+                        ? null
+                        : _generateAlternative,
+                    icon: _generatingAlternative
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
+                    label: Text(
+                      _generatingAlternative ? 'Creating…' : 'Another',
+                    ),
+                  ),
+                if (canEditStops)
+                  IconButton(
+                    key: const Key('edit-reviewed-route'),
+                    tooltip: 'Edit stops',
+                    onPressed: _generatingAlternative
+                        ? null
+                        : () =>
+                              Navigator.of(context).pop(RouteReviewAction.edit),
+                    icon: const Icon(Icons.edit_location_alt_outlined),
+                  ),
+                TextButton.icon(
+                  key: const Key('confirm-reviewed-route'),
+                  onPressed:
+                      _reshapeQueued || _reshaping || _generatingAlternative
+                      ? null
+                      : () => Navigator.of(
+                          context,
+                        ).pop(RouteReviewAction.confirm),
+                  icon: const Icon(Icons.check),
+                  label: const Text('Confirm'),
+                ),
+                const SizedBox(width: 8),
+              ],
             ),
-          if (canEditStops)
-            IconButton(
-              key: const Key('edit-reviewed-route'),
-              tooltip: 'Edit stops',
-              onPressed: () =>
-                  Navigator.of(context).pop(RouteReviewAction.edit),
-              icon: const Icon(Icons.edit_location_alt_outlined),
-            ),
-          TextButton.icon(
-            key: const Key('confirm-reviewed-route'),
-            onPressed: _reshapeQueued || _reshaping
-                ? null
-                : () => Navigator.of(context).pop(RouteReviewAction.confirm),
-            icon: const Icon(Icons.check),
-            label: const Text('Confirm'),
           ),
-          const SizedBox(width: 8),
-        ],
+        ),
       ),
       body: SafeArea(
         child: Column(
@@ -1051,11 +1158,6 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
                 children: [
-                  Text(
-                    route.name,
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 6),
                   Wrap(
                     spacing: 16,
                     runSpacing: 8,

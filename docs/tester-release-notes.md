@@ -36,6 +36,44 @@ permissions by design.
 - ...
 ```
 
+## iOS build 73 / Android build 73 — 21 August 2026
+
+This build keeps circular rides on the requested kind of roads section by
+section and makes the route-review map easier to use.
+
+### What to test
+
+1. **Create an 80-mile circular route to the northwest with Twisty and Avoid
+   motorways enabled.** The route should be built as several independently
+   costed sections. If a motorway is unavoidable, only the blocked section
+   should relax that exclusion and the preview should say how many sections
+   were affected; the rest of the loop should retain the motorcycle settings.
+2. **Press Another on the circular-route review.** Stay on the review screen
+   while a replacement route is created, then see the new route and updated
+   statistics without returning to the planner.
+3. **Pan and zoom the review map.** One-finger dragging and pinch-to-zoom should
+   work immediately. Drawing a custom route should start only after choosing
+   **Draw route around**.
+4. **Check the review header.** The full ride name should have its own line,
+   with Another and Confirm on the separate action row below it.
+
+### Fixed
+
+- Relaxing Avoid motorways once applied the relaxed settings to the entire
+  circular ride, which could turn most of an otherwise twisty loop into
+  motorway routing.
+- Another closed the circular-route review instead of generating another loop.
+- The editable preview opened in route-drawing mode, so normal map panning and
+  pinch-to-zoom did not work.
+- The ride name shared a narrow row with every action and was almost completely
+  truncated.
+
+### Known limitations
+
+- A section that cannot be routed with Avoid motorways may still use a
+  motorway. The preview warns when this happens so the route can be inspected
+  before it is accepted.
+
 ## iOS build 72 / Android build 72 — 21 August 2026
 
 This follow-up makes circular-route creation recover automatically when the

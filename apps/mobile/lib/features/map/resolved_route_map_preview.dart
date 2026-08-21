@@ -241,15 +241,14 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                 top: 8,
                 child: _RouteComparisonLegend(),
               ),
-            if (widget.reshapeEnabled)
-              Positioned(
-                right: 8,
-                top: widget.referencePaths.isEmpty ? 8 : 66,
-                child: RoutePreviewZoomControls(
-                  onZoomIn: () => unawaited(_zoomBy(1)),
-                  onZoomOut: () => unawaited(_zoomBy(-1)),
-                ),
+            Positioned(
+              right: 8,
+              top: widget.referencePaths.isEmpty ? 8 : 66,
+              child: RoutePreviewZoomControls(
+                onZoomIn: () => unawaited(_zoomBy(1)),
+                onZoomOut: () => unawaited(_zoomBy(-1)),
               ),
+            ),
             if (widget.reshapeEnabled)
               const Positioned(
                 left: 58,
@@ -267,7 +266,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                         vertical: 7,
                       ),
                       child: Text(
-                        'Drag route or handle · +/− zoom · exit Reshape to pan',
+                        'Drag route or handle · +/− zoom · Finish drawing to pan',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white, fontSize: 12),
                       ),
@@ -812,7 +811,7 @@ class RoutePreviewZoomControls extends StatelessWidget {
       children: [
         IconButton(
           key: const Key('route-preview-zoom-in'),
-          tooltip: 'Zoom in for a more precise edit',
+          tooltip: 'Zoom in',
           onPressed: onZoomIn,
           color: Colors.white,
           icon: const Icon(Icons.add),

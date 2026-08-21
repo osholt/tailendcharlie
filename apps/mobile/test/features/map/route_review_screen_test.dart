@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +32,79 @@ void main() {
     );
 
     expect(warning, isNull);
+  });
+
+  testWidgets('the ride name has its own app bar line above the actions', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RouteReviewScreen(
+          route: _route(0.02, name: '80 mi north-west circular ride'),
+          distanceUnit: DistanceUnit.miles,
+          basemapConfiguration: const BasemapConfiguration(),
+          canGenerateAlternative: true,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final title = find.byKey(const Key('route-review-title'));
+    final actions = find.byKey(const Key('route-review-actions'));
+    expect(title, findsOneWidget);
+    expect(actions, findsOneWidget);
+    expect(
+      tester.getBottomLeft(title).dy,
+      lessThan(tester.getTopLeft(actions).dy),
+    );
+    expect(find.text('80 mi north-west circular ride'), findsOneWidget);
+  });
+
+  testWidgets('Another replaces the route without closing the review', (
+    tester,
+  ) async {
+    final alternative = Completer<RouteReviewAlternative>();
+    ImportedRoute? changedRoute;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RouteReviewScreen(
+          route: _route(0.02, name: 'First circular ride'),
+          distanceUnit: DistanceUnit.miles,
+          basemapConfiguration: const BasemapConfiguration(),
+          canGenerateAlternative: true,
+          onGenerateAlternative: () => alternative.future,
+          onRouteChanged: (route) => changedRoute = route,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('generate-another-route')));
+    await tester.pump();
+
+    expect(find.byType(RouteReviewScreen), findsOneWidget);
+    expect(find.text('Creating…'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextButton>(find.byKey(const Key('confirm-reviewed-route')))
+          .onPressed,
+      isNull,
+    );
+
+    final nextRoute = _route(0.04, name: 'Second circular ride');
+    alternative.complete(
+      RouteReviewAlternative(
+        route: nextRoute,
+        distanceMeters: 64000,
+        duration: const Duration(hours: 2),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(RouteReviewScreen), findsOneWidget);
+    expect(find.text('Second circular ride'), findsOneWidget);
+    expect(changedRoute?.id, nextRoute.id);
+    expect(find.text('Another'), findsOneWidget);
   });
 
   testWidgets('a long route can be confirmed without scrolling its points', (
@@ -72,7 +147,7 @@ void main() {
 
     final confirm = find.byKey(const Key('confirm-reviewed-route'));
     expect(confirm, findsOneWidget);
-    expect(tester.getTopLeft(confirm).dy, lessThan(80));
+    expect(tester.getTopLeft(confirm).dy, lessThan(120));
     expect(find.text('Route points (102)'), findsOneWidget);
     expect(
       find.byKey(const Key('route-review-waypoint-0')),
@@ -173,7 +248,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Finish drawing'), findsOneWidget);
+    expect(find.text('Draw route around'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilterChip>(find.byKey(const Key('toggle-route-reshape')))
+          .selected,
+      isFalse,
+      reason: 'the native map must receive drag and pinch gestures on entry',
+    );
     expect(
       find.byKey(const Key('toggle-route-points-of-interest')),
       findsOneWidget,
@@ -645,19 +727,20 @@ ImportedRoute _junctionRoute() => ImportedRoute(
   ],
 );
 
-ImportedRoute _route(double longitudeDelta) => ImportedRoute(
-  id: 'route-$longitudeDelta',
-  name: 'Review route',
-  importedAt: DateTime.utc(2026, 7, 23),
-  sourceFileName: 'review.gpx',
-  paths: [
-    RoutePath(
-      kind: RoutePathKind.track,
-      points: [
-        const GeoPoint(latitude: 51, longitude: -2),
-        GeoPoint(latitude: 51, longitude: -2 + longitudeDelta),
+ImportedRoute _route(double longitudeDelta, {String name = 'Review route'}) =>
+    ImportedRoute(
+      id: 'route-$longitudeDelta',
+      name: name,
+      importedAt: DateTime.utc(2026, 7, 23),
+      sourceFileName: 'review.gpx',
+      paths: [
+        RoutePath(
+          kind: RoutePathKind.track,
+          points: [
+            const GeoPoint(latitude: 51, longitude: -2),
+            GeoPoint(latitude: 51, longitude: -2 + longitudeDelta),
+          ],
+        ),
       ],
-    ),
-  ],
-  waypoints: const [],
-);
+      waypoints: const [],
+    );
