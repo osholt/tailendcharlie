@@ -5532,6 +5532,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       spokenGuidance: widget.spokenGuidance,
       rideDiagnostics: widget.rideDiagnostics,
       globalRideHeatmap: widget.globalRideHeatmap,
+      completedRideStore: widget.completedRideStore,
       embedded: true,
     ),
   );

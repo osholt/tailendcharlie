@@ -7,6 +7,7 @@ import 'package:ride_relay/controllers/global_ride_heatmap_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/rider_profile_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
+import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/features/settings/unit_settings_sheet.dart';
 import 'package:ride_relay/services/global_ride_heatmap.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -44,6 +45,7 @@ void main() {
               riderProfile: riderProfile,
               speedLimitDisplay: speedLimit,
               globalRideHeatmap: heatmap,
+              completedRideStore: InMemoryCompletedRideStore(),
               embedded: true,
             ),
           ),
@@ -53,7 +55,26 @@ void main() {
       final consent = find.byKey(const Key('global-heatmap-consent'));
       await tester.ensureVisible(consent);
       expect(heatmap.visible, isFalse);
+      expect(heatmap.consent, HeatmapContributionConsent.always);
+
+      final shareHistory = find.byKey(
+        const Key('global-heatmap-share-history'),
+      );
+      await tester.ensureVisible(shareHistory);
+      await tester.tap(shareHistory);
+      await tester.pumpAndSettle();
+      expect(
+        find.text('There are no saved rides to share yet.'),
+        findsOneWidget,
+      );
+
+      await tester.tap(consent);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Never').last);
+      await tester.pumpAndSettle();
       expect(heatmap.consent, HeatmapContributionConsent.never);
+      expect(heatmap.visible, isFalse);
+
       await tester.tap(consent);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Ask after each ride').last);

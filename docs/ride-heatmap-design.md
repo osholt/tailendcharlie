@@ -11,7 +11,8 @@ different data paths:
 - **Personal rides** is calculated on the phone from the travelled tracks in
   `CompletedRideStore`. It never needs an account, relay request or consent to
   upload because it never leaves the phone.
-- **Global rides** is a public aggregate of explicitly contributed coverage.
+- **Global rides** is a public aggregate of contributed coverage under the
+  rider's saved contribution preference.
   The phone trims the beginning and end, converts the remainder into an
   unordered set of fixed Web Mercator cells and sends only those cells through
   a heatmap-specific API and credential. It never sends a GPX track, ordered
@@ -42,16 +43,26 @@ safe to view without a contribution credential.
 
 Settings offers **Contribute my completed rides** with these values:
 
-- **Never** (default)
+- **Never**
 - **Ask after each ride**
-- **Always after a ride**
+- **Always after a ride** (default)
 
-The first change away from Never shows the data summary and endpoint control.
+First setup shows the default-on contribution switch, its data summary and the
+three-contributor publication threshold; skipping the product tour does not
+skip this choice. Settings retains the same opt-out and the more detailed
+three-value control. The first later change away from Never shows the data
+summary again.
 The endpoint control is **Hide at each end** with 0, 500 m, 1 km (default) and
 2 km choices. The same value is removed from both ends. A recording with no
 geometry left after trimming is not uploaded. Changing the value affects future
 uploads; the rider can remove all earlier contributions and contribute again if
 they want the new trim applied to them.
+
+**Share existing ride history** combines not-yet-contributed saved rides into
+one upload. Endpoint trimming runs separately for every ride before cells are
+unioned and deduplicated, so the bulk operation neither connects rides nor
+reveals their boundaries. It remains subject to the normal 20,000-cell payload
+limit.
 
 **Stop contributing and remove my data** deletes the server-side contributor
 record and every monthly cell row linked to it, removes the local credential
@@ -113,7 +124,7 @@ route it never receives.
 
 ## Contribution credential and revocation
 
-On first opt-in the phone creates 32 random bytes in Keychain/Android Keystore
+On the first contribution the phone creates 32 random bytes in Keychain/Android Keystore
 and registers a heatmap credential. The registration response returns an opaque
 contributor handle. The database stores only keyed hashes of the handle and
 secret. Neither value is shared with the ride relay protocol.
@@ -323,7 +334,8 @@ archive, heatmap credential, consent mode or endpoint-trim preference.
 - A transport-spy test proves cells cross the interface only after trimming,
   quantisation, deduplication and shuffling, and proves forbidden metadata does
   not.
-- Consent defaults to Never; viewing never changes it; contribution failures do
+- Consent defaults to Always after a ride and setup presents an opt-out;
+  viewing never changes it; contribution failures do
   not block local archiving.
 - Personal layer tests prove no network client is invoked and deleting a ride
   invalidates the overlay cache.

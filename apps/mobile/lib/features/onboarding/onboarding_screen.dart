@@ -1,21 +1,28 @@
 import 'package:flutter/material.dart';
 
+import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../domain/rider_color.dart';
+import '../../services/global_ride_heatmap.dart';
 import '../map/motorcycle_icon.dart';
 import '../map/rider_symbol_picker.dart';
 
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key, required this.riderProfile});
+  const OnboardingScreen({
+    super.key,
+    required this.riderProfile,
+    this.globalRideHeatmap,
+  });
 
   final RiderProfileController riderProfile;
+  final GlobalRideHeatmapController? globalRideHeatmap;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  static const _stepCount = 5;
+  static const _stepCount = 6;
 
   late final TextEditingController _nameController = TextEditingController(
     text: widget.riderProfile.displayName,
@@ -27,6 +34,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   int _step = 0;
   bool _educationSkipped = false;
   bool _permissionsDeferred = false;
+  late bool _shareGlobalHeatmap =
+      widget.globalRideHeatmap?.consent != HeatmapContributionConsent.never;
   String? _nameError;
   bool _saving = false;
 
@@ -94,6 +103,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     1 => _profile(context),
     2 => _rideWalkthrough(context),
     3 => _permissions(context),
+    4 => _heatmapPrivacy(context),
     _ => _finish(context),
   };
 
@@ -371,6 +381,57 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     ],
   );
 
+  Widget _heatmapPrivacy(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        'Help build better riding maps',
+        style: Theme.of(context).textTheme.headlineMedium,
+      ),
+      const SizedBox(height: 12),
+      const Text(
+        'Your personal ride heatmap always stays on this phone. You can also '
+        'contribute privacy-reduced road coverage to the global heatmap so '
+        'riders can discover roads the community actually uses.',
+        style: TextStyle(color: Color(0xFFBCC5D0), height: 1.5),
+      ),
+      const SizedBox(height: 20),
+      Card(
+        child: SwitchListTile.adaptive(
+          key: const Key('onboarding-global-heatmap-contribution'),
+          value: _shareGlobalHeatmap,
+          onChanged: (value) => setState(() => _shareGlobalHeatmap = value),
+          secondary: const Icon(Icons.local_fire_department_outlined),
+          title: const Text('Contribute completed rides'),
+          subtitle: const Text(
+            'On by default. You can turn this off at any time in Settings.',
+          ),
+        ),
+      ),
+      const SizedBox(height: 18),
+      const _InfoCard(
+        icon: Icons.privacy_tip_outlined,
+        title: 'Coverage, not ride histories',
+        body:
+            'The first and last 1 km are removed on your phone. The app sends unordered coarse cells with no ride name, route order, time, speed, rider identity or ride code.',
+      ),
+      const SizedBox(height: 12),
+      const _InfoCard(
+        icon: Icons.groups_outlined,
+        title: 'Three contributors before anything appears',
+        body:
+            'A road remains hidden from the public global heatmap until at least three separate contribution credentials overlap there.',
+      ),
+      const SizedBox(height: 16),
+      const Text(
+        'Settings also lets you change the hidden distance, share existing '
+        'saved rides in bulk, or stop contributing and remove data linked to '
+        'this phone’s heatmap credential.',
+        style: TextStyle(color: Color(0xFF98A3B1), height: 1.4),
+      ),
+    ],
+  );
+
   Widget _finish(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
@@ -467,7 +528,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
     setState(() {
       _educationSkipped = true;
-      _step = _stepCount - 1;
+      // The product tour is skippable; the default-on data choice is not
+      // hidden behind that shortcut.
+      _step = 4;
     });
   }
 
@@ -480,6 +543,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _complete(OnboardingRideChoice? choice) async {
     if (!_validateName()) return;
     setState(() => _saving = true);
+    await widget.globalRideHeatmap?.setConsent(
+      _shareGlobalHeatmap
+          ? HeatmapContributionConsent.always
+          : HeatmapContributionConsent.never,
+    );
     await widget.riderProfile.completeOnboarding(
       displayName: _nameController.text,
       motorcycleStyle: _motorcycleStyle,

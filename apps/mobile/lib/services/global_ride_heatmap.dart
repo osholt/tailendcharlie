@@ -104,36 +104,45 @@ class HeatmapContributionBuilder {
   static const canonicalZoom = 17;
   final int maximumCells;
 
-  HeatmapContribution build(CompletedRide ride, {required int trimMeters}) {
+  HeatmapContribution build(CompletedRide ride, {required int trimMeters}) =>
+      buildMany([ride], trimMeters: trimMeters);
+
+  /// Combines saved rides into one unordered coverage upload. Each ride is
+  /// trimmed independently before its cells enter the shared set, so joining
+  /// an archive never exposes the path between two separate rides.
+  HeatmapContribution buildMany(
+    Iterable<CompletedRide> rides, {
+    required int trimMeters,
+  }) {
     if (![0, 500, 1000, 2000].contains(trimMeters)) {
       throw ArgumentError.value(trimMeters, 'trimMeters');
     }
-    var paths =
-        ride.traveledRoute?.paths
-            .where((path) => path.kind == RoutePathKind.track)
-            .map((path) => List<GeoPoint>.of(path.points))
-            .where((points) => points.length >= 2)
-            .toList(growable: true) ??
-        <List<GeoPoint>>[];
-    paths = _trimFromStart(paths, trimMeters.toDouble());
-    paths = _trimFromEnd(paths, trimMeters.toDouble());
-    final remainingMeters = paths.fold<double>(0, (total, path) {
-      for (var index = 1; index < path.length; index += 1) {
-        total += _distance(path[index - 1], path[index]);
-      }
-      return total;
-    });
-    if (remainingMeters < 1) {
-      return HeatmapContribution(cells: const [], trimMeters: trimMeters);
-    }
     final cells = <(int x, int y)>{};
-    for (final path in paths) {
-      for (var index = 1; index < path.length; index += 1) {
-        for (final cell in _cellsBetween(path[index - 1], path[index])) {
-          if (cells.length >= maximumCells && !cells.contains(cell)) continue;
-          cells.add(cell);
+    final shuffledRides = rides.toList(growable: false)
+      ..shuffle(math.Random.secure());
+    for (final ride in shuffledRides) {
+      var paths =
+          ride.traveledRoute?.paths
+              .where((path) => path.kind == RoutePathKind.track)
+              .map((path) => List<GeoPoint>.of(path.points))
+              .where((points) => points.length >= 2)
+              .toList(growable: true) ??
+          <List<GeoPoint>>[];
+      paths = _trimFromStart(paths, trimMeters.toDouble());
+      paths = _trimFromEnd(paths, trimMeters.toDouble());
+      for (final path in paths) {
+        for (var index = 1; index < path.length; index += 1) {
+          for (final cell in _cellsBetween(path[index - 1], path[index])) {
+            if (cells.length >= maximumCells && !cells.contains(cell)) {
+              continue;
+            }
+            cells.add(cell);
+          }
         }
       }
+    }
+    if (cells.isEmpty) {
+      return HeatmapContribution(cells: const [], trimMeters: trimMeters);
     }
     final shuffled = cells.toList(growable: false)
       ..shuffle(math.Random.secure());

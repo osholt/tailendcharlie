@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues(const {}));
 
-  test('viewing is off and contribution consent is Never by default', () async {
+  test('viewing is off and contribution is on by default', () async {
     final controller = await GlobalRideHeatmapController.load(
       client: _client((_) async => http.Response('{}', 500)),
       credentials: _MemoryCredentials(),
@@ -21,9 +21,9 @@ void main() {
     addTearDown(controller.dispose);
 
     expect(controller.visible, isFalse);
-    expect(controller.consent, HeatmapContributionConsent.never);
+    expect(controller.consent, HeatmapContributionConsent.always);
     await controller.setVisible(true);
-    expect(controller.consent, HeatmapContributionConsent.never);
+    expect(controller.consent, HeatmapContributionConsent.always);
   });
 
   test(
@@ -100,8 +100,60 @@ void main() {
       expect(revocations, 1);
       expect(credentials.value, isNull);
       expect(controller.consent, HeatmapContributionConsent.never);
+
+      await controller.setConsent(HeatmapContributionConsent.always);
+      expect(await controller.contribute(_ride()), isTrue);
+      expect(contributions, 2);
     },
   );
+
+  test('saved history is combined into one contribution', () async {
+    var registrations = 0;
+    var contributions = 0;
+    late Map<String, Object?> upload;
+    final controller = await GlobalRideHeatmapController.load(
+      client: _client((request) async {
+        if (request.url.path.endsWith('/contributors')) {
+          registrations += 1;
+          return http.Response('{}', 201);
+        }
+        contributions += 1;
+        upload = Map<String, Object?>.from(jsonDecode(request.body) as Map);
+        return http.Response('{"accepted":true}', 200);
+      }),
+      credentials: _MemoryCredentials(),
+    );
+    addTearDown(controller.dispose);
+    await controller.setTrimMeters(0);
+
+    final result = await controller.contributeHistory([
+      _ride(),
+      _ride(rideId: 'ride-two', longitudeOffset: 0.02),
+      _ride(
+        rideId: 'deleted-ride',
+        longitudeOffset: 0.04,
+      ).copyWith(libraryStatus: RideLibraryStatus.deleted),
+    ]);
+
+    expect(result.rideCount, 2);
+    expect(result.cellCount, greaterThan(0));
+    expect(registrations, 1);
+    expect(contributions, 1);
+    expect(upload.keys, {
+      'schemaVersion',
+      'uploadId',
+      'trimMetersAtEachEnd',
+      'cells',
+    });
+    expect((upload['cells']! as List).length, result.cellCount);
+
+    final repeated = await controller.contributeHistory([
+      _ride(),
+      _ride(rideId: 'ride-two', longitudeOffset: 0.02),
+    ]);
+    expect(repeated.shared, isFalse);
+    expect(contributions, 1);
+  });
 }
 
 GlobalHeatmapClient _client(
@@ -124,34 +176,35 @@ class _MemoryCredentials implements HeatmapCredentialStore {
   Future<void> write(HeatmapCredential credential) async => value = credential;
 }
 
-CompletedRide _ride() => CompletedRide(
-  rideId: 'ride-one',
-  rideCode: '123456',
-  rideName: null,
-  localDisplayName: 'Oliver',
-  localRole: RideRole.rider,
-  startedAt: DateTime.utc(2026, 8, 16, 10),
-  endedAt: DateTime.utc(2026, 8, 16, 11),
-  archivedAt: DateTime.utc(2026, 8, 16, 11),
-  riderCount: 1,
-  eventCount: 10,
-  totalDistanceMeters: 5000,
-  markerSessions: const [],
-  plannedRoute: null,
-  traveledRoute: ImportedRoute(
-    id: 'track',
-    name: 'Track',
-    importedAt: DateTime.utc(2026, 8, 16),
-    sourceFileName: 'track.gpx',
-    paths: const [
-      RoutePath(
-        kind: RoutePathKind.track,
-        points: [
-          GeoPoint(latitude: 51.45, longitude: -2.59),
-          GeoPoint(latitude: 51.46, longitude: -2.58),
+CompletedRide _ride({String rideId = 'ride-one', double longitudeOffset = 0}) =>
+    CompletedRide(
+      rideId: rideId,
+      rideCode: '123456',
+      rideName: null,
+      localDisplayName: 'Oliver',
+      localRole: RideRole.rider,
+      startedAt: DateTime.utc(2026, 8, 16, 10),
+      endedAt: DateTime.utc(2026, 8, 16, 11),
+      archivedAt: DateTime.utc(2026, 8, 16, 11),
+      riderCount: 1,
+      eventCount: 10,
+      totalDistanceMeters: 5000,
+      markerSessions: const [],
+      plannedRoute: null,
+      traveledRoute: ImportedRoute(
+        id: 'track',
+        name: 'Track',
+        importedAt: DateTime.utc(2026, 8, 16),
+        sourceFileName: 'track.gpx',
+        paths: [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 51.45, longitude: -2.59 + longitudeOffset),
+              GeoPoint(latitude: 51.46, longitude: -2.58 + longitudeOffset),
+            ],
+          ),
         ],
+        waypoints: const [],
       ),
-    ],
-    waypoints: const [],
-  ),
-);
+    );

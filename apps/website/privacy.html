@@ -186,15 +186,17 @@
       <p>
         The optional <strong>Personal rides</strong> map layer is calculated
         entirely on your phone from travelled tracks in your Ride Library. It
-        is off by default and does not send those tracks to us. Deleting a ride
+        is on by default and does not send those tracks to us. Deleting a ride
         removes it from that local layer.
       </p>
       <p>
         The separate <strong>Global rides</strong> layer displays a public,
         thresholded aggregate. Viewing it is off by default and never opts you
-        into contribution. Contribution is also off by default; Settings lets
+        into contribution. Contribution of completed rides is on by default;
+        first setup and Settings let you turn it off, while Settings also lets
         you choose Never, Ask after each ride, or Always after a ride, and hide
-        0, 500 m, 1 km (the default), or 2 km at both ends.
+        0, 500 m, 1 km (the default), or 2 km at both ends. Settings can share
+        existing saved ride coverage in one bulk action.
       </p>
       <p>
         If you consent, your phone uses only the travelled recording, removes
@@ -205,6 +207,12 @@
         ride name, display name, installation identifier, speed, direction,
         timestamps, or live-ride credential. The cells can still describe
         places you visit and are not described as anonymous.
+      </p>
+      <p>
+        A bulk share applies the same endpoint removal separately to every
+        eligible saved ride, then combines and deduplicates their cells into
+        one unordered upload. It does not connect separate rides or send the
+        boundaries between them.
       </p>
       <p>
         We merge cells by opaque contributor and calendar month and retain them
