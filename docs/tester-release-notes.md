@@ -36,6 +36,32 @@ permissions by design.
 - ...
 ```
 
+## iOS build 78 / Android build 78 — 22 August 2026
+
+This build fixes Ride Library preview icons so previous rides show their
+complete recorded track instead of opening too close to one part of the ride.
+
+### What to test
+
+1. Open **Ride Library** and inspect several previous rides, especially long or
+   wide routes. Each preview icon should show the complete route shape,
+   including both ends.
+2. Open a previous ride's larger route preview. It should still use comfortable
+   map padding and show the complete route.
+3. Check a ride recap map. Its normal full-size framing should be unchanged.
+
+### Fixed
+
+- Tile-backed Ride Library thumbnails reused a 30 px camera inset inside a
+  52 x 52 px icon, leaving no usable fit area and framing only part of the ride.
+- Camera padding now responds to the actual preview size while retaining the
+  existing full-size padding.
+
+### Known limitations
+
+- Thumbnail framing still needs visual validation on a physical phone with
+  real previous-ride geometry and loaded map tiles.
+
 ## iOS build 77 / Android build 77 — 22 August 2026
 
 This build makes Tail End Charlie discoverable to Android Auto and lets riders
