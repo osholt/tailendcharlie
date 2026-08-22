@@ -64,8 +64,9 @@ heatmap.
 
 ### Fixed
 
-- Android Auto could not discover the app because the packaged Android build
-  did not publish the required automotive app descriptor.
+- Android Auto could not discover and render the navigation app because the
+  packaged Android build lacked its automotive descriptor and surface-access
+  permission.
 - Riders who had never made a heatmap contribution choice silently defaulted
   to **Never**, leaving the global heatmap without new coverage.
 - Existing personal ride history could not be contributed in bulk.
