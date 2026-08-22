@@ -212,7 +212,10 @@ class RideRelayApp extends StatelessWidget {
           );
         }
         if (riderProfile.needsOnboarding) {
-          return OnboardingScreen(riderProfile: riderProfile);
+          return OnboardingScreen(
+            riderProfile: riderProfile,
+            globalRideHeatmap: globalRideHeatmap,
+          );
         }
         return HomeScreen(
           controller: controller,

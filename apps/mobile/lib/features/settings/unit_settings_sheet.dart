@@ -13,6 +13,7 @@ import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/test_control_controller.dart';
 import '../map/discovery_layer_toggles.dart';
+import '../../domain/completed_ride_store.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
 import '../../domain/rider_color.dart';
@@ -41,6 +42,7 @@ class UnitSettingsSheet extends StatelessWidget {
     this.spokenGuidance,
     this.rideDiagnostics,
     this.globalRideHeatmap,
+    this.completedRideStore,
     this.embedded = false,
   });
 
@@ -64,6 +66,7 @@ class UnitSettingsSheet extends StatelessWidget {
   /// Off, and absent from an ordinary build (#419).
   final RideDiagnosticsController? rideDiagnostics;
   final GlobalRideHeatmapController? globalRideHeatmap;
+  final CompletedRideStore? completedRideStore;
 
   /// Present only in a build carrying the test-control define. Null everywhere
   /// else, and [TestControlSection] renders nothing when the define is absent,
@@ -92,6 +95,7 @@ class UnitSettingsSheet extends StatelessWidget {
     SpokenGuidanceController? spokenGuidance,
     RideDiagnosticsController? rideDiagnostics,
     GlobalRideHeatmapController? globalRideHeatmap,
+    CompletedRideStore? completedRideStore,
   }) => showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -109,6 +113,7 @@ class UnitSettingsSheet extends StatelessWidget {
       spokenGuidance: spokenGuidance,
       rideDiagnostics: rideDiagnostics,
       globalRideHeatmap: globalRideHeatmap,
+      completedRideStore: completedRideStore,
     ),
   );
 
@@ -410,6 +415,30 @@ class UnitSettingsSheet extends StatelessWidget {
             ),
             if (heatmap.consent != HeatmapContributionConsent.never) ...[
               const SizedBox(height: 8),
+              if (completedRideStore case final rides?)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    key: const Key('global-heatmap-share-history'),
+                    onPressed: heatmap.sharingHistory
+                        ? null
+                        : () => unawaited(
+                            _shareHeatmapHistory(context, heatmap, rides),
+                          ),
+                    icon: heatmap.sharingHistory
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cloud_upload_outlined),
+                    label: Text(
+                      heatmap.sharingHistory
+                          ? 'Sharing saved coverage…'
+                          : 'Share existing ride history',
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
@@ -538,6 +567,69 @@ class UnitSettingsSheet extends StatelessWidget {
         ),
       ) ??
       false;
+
+  static Future<void> _shareHeatmapHistory(
+    BuildContext context,
+    GlobalRideHeatmapController controller,
+    CompletedRideStore store,
+  ) async {
+    final rides = await store.list();
+    if (!context.mounted) return;
+    if (rides.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('There are no saved rides to share yet.')),
+      );
+      return;
+    }
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Share saved ride coverage?'),
+            content: Text(
+              'This combines coverage from ${rides.length} saved '
+              '${rides.length == 1 ? 'ride' : 'rides'} into one unordered '
+              'upload. Each ride is trimmed separately first, so the upload '
+              'does not join one ride to the next. No ride names, times, '
+              'speeds, route order, rider identity or ride codes are sent.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: const Key('confirm-global-heatmap-share-history'),
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Share coverage'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !context.mounted) return;
+    try {
+      final result = await controller.contributeHistory(rides);
+      if (!context.mounted) return;
+      final message = result.shared
+          ? 'Shared coverage from ${result.rideCount} saved '
+                '${result.rideCount == 1 ? 'ride' : 'rides'}. Public coverage '
+                'updates after the next snapshot and still requires three contributors.'
+          : 'All eligible saved rides have already been shared.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } on Object {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not share saved coverage. Your rides remain on this phone.',
+          ),
+        ),
+      );
+    }
+  }
 
   static Future<void> _removeHeatmapContributions(
     BuildContext context,

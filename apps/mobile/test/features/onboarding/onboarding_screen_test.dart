@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:ride_relay/controllers/global_ride_heatmap_controller.dart';
 import 'package:ride_relay/controllers/rider_profile_controller.dart';
 import 'package:ride_relay/features/onboarding/onboarding_screen.dart';
+import 'package:ride_relay/services/global_ride_heatmap.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -49,6 +53,9 @@ void main() {
     await tester.ensureVisible(purpleColour);
     await tester.tap(purpleColour);
     await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
+    await tester.pumpAndSettle();
+    expect(find.text('Help build better riding maps'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-continue')));
     await tester.pumpAndSettle();
     expect(find.text('You are ready to ride'), findsOneWidget);
 
@@ -130,6 +137,9 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
     await tester.pumpAndSettle();
+    expect(find.text('Help build better riding maps'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-continue')));
+    await tester.pumpAndSettle();
     expect(find.text('You are ready to ride'), findsOneWidget);
 
     final toMap = find.byKey(const Key('onboarding-free-roam'));
@@ -146,16 +156,70 @@ void main() {
       reason: 'no ride was chosen, so nothing should be staged',
     );
   });
+
+  testWidgets('global contribution defaults on and can be disabled in setup', (
+    tester,
+  ) async {
+    final profile = await RiderProfileController.load();
+    final heatmap = await GlobalRideHeatmapController.load(
+      client: GlobalHeatmapClient(
+        baseUri: Uri.parse('https://relay.example/api/'),
+        client: MockClient((_) async => http.Response('{}', 200)),
+      ),
+      credentials: _MemoryCredentials(),
+    );
+    addTearDown(heatmap.dispose);
+    await tester.pumpWidget(_app(profile, globalRideHeatmap: heatmap));
+
+    await tester.tap(find.byKey(const Key('onboarding-continue')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('onboarding-name-field')),
+      'Oliver',
+    );
+    await tester.tap(find.byKey(const Key('skip-onboarding-tour')));
+    await tester.pumpAndSettle();
+
+    final contribution = find.byKey(
+      const Key('onboarding-global-heatmap-contribution'),
+    );
+    expect(tester.widget<SwitchListTile>(contribution).value, isTrue);
+    await tester.tap(contribution);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('onboarding-continue')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('onboarding-free-roam')));
+    await tester.pumpAndSettle();
+
+    expect(heatmap.consent, HeatmapContributionConsent.never);
+  });
 }
 
 Widget _app(
   RiderProfileController profile, {
   TextScaler textScaler = TextScaler.noScaling,
+  GlobalRideHeatmapController? globalRideHeatmap,
 }) => MaterialApp(
   theme: ThemeData.dark(useMaterial3: true),
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(context).copyWith(textScaler: textScaler),
     child: child!,
   ),
-  home: OnboardingScreen(riderProfile: profile),
+  home: OnboardingScreen(
+    riderProfile: profile,
+    globalRideHeatmap: globalRideHeatmap,
+  ),
 );
+
+class _MemoryCredentials implements HeatmapCredentialStore {
+  HeatmapCredential? value;
+
+  @override
+  Future<void> delete() async => value = null;
+
+  @override
+  Future<HeatmapCredential?> read() async => value;
+
+  @override
+  Future<void> write(HeatmapCredential credential) async => value = credential;
+}

@@ -5,7 +5,20 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/completed_ride.dart';
+import '../domain/imported_route.dart';
 import '../services/global_ride_heatmap.dart';
+
+class BulkHeatmapContributionResult {
+  const BulkHeatmapContributionResult({
+    required this.rideCount,
+    required this.cellCount,
+  });
+
+  final int rideCount;
+  final int cellCount;
+
+  bool get shared => rideCount > 0 && cellCount > 0;
+}
 
 class GlobalRideHeatmapController extends ChangeNotifier {
   GlobalRideHeatmapController._(
@@ -33,6 +46,7 @@ class GlobalRideHeatmapController extends ChangeNotifier {
   int _trimMeters;
   GlobalHeatmapSnapshot _snapshot;
   GlobalHeatmapStatus _status = GlobalHeatmapStatus.idle;
+  bool _sharingHistory = false;
   int _requestGeneration = 0;
 
   static Future<GlobalRideHeatmapController> load({
@@ -44,7 +58,7 @@ class GlobalRideHeatmapController extends ChangeNotifier {
         HeatmapContributionConsent.values
             .where((value) => value.name == preferences.getString(consentKey))
             .firstOrNull ??
-        HeatmapContributionConsent.never;
+        HeatmapContributionConsent.always;
     final rawCache = preferences.getString(cacheKey);
     var snapshot = GlobalHeatmapSnapshot.empty;
     if (rawCache != null) {
@@ -72,6 +86,7 @@ class GlobalRideHeatmapController extends ChangeNotifier {
   int get trimMeters => _trimMeters;
   GlobalHeatmapSnapshot get snapshot => _snapshot;
   GlobalHeatmapStatus get status => _status;
+  bool get sharingHistory => _sharingHistory;
 
   Future<void> setVisible(bool value) async {
     if (_visible == value) return;
@@ -148,12 +163,7 @@ class GlobalRideHeatmapController extends ChangeNotifier {
       trimMeters: _trimMeters,
     );
     if (contribution.isEmpty) return false;
-    var credential = await _credentials.read();
-    if (credential == null) {
-      credential = HeatmapCredential.generate();
-      await _client.register(credential);
-      await _credentials.write(credential);
-    }
+    final credential = await _credential();
     await _client.contribute(credential, contribution);
     await _preferences.setStringList(
       contributedRideIdsKey,
@@ -162,10 +172,69 @@ class GlobalRideHeatmapController extends ChangeNotifier {
     return true;
   }
 
+  Future<BulkHeatmapContributionResult> contributeHistory(
+    Iterable<CompletedRide> rides,
+  ) async {
+    if (_consent == HeatmapContributionConsent.never || _sharingHistory) {
+      return const BulkHeatmapContributionResult(rideCount: 0, cellCount: 0);
+    }
+    _sharingHistory = true;
+    notifyListeners();
+    try {
+      final contributed =
+          _preferences.getStringList(contributedRideIdsKey) ?? const [];
+      final eligible = rides
+          .where((ride) => !contributed.contains(ride.rideId))
+          .where(_hasTravelledTrack)
+          .toList(growable: false);
+      if (eligible.isEmpty) {
+        return const BulkHeatmapContributionResult(rideCount: 0, cellCount: 0);
+      }
+      final contribution = const HeatmapContributionBuilder().buildMany(
+        eligible,
+        trimMeters: _trimMeters,
+      );
+      if (contribution.isEmpty) {
+        return const BulkHeatmapContributionResult(rideCount: 0, cellCount: 0);
+      }
+      final credential = await _credential();
+      await _client.contribute(credential, contribution);
+      await _preferences.setStringList(contributedRideIdsKey, [
+        ...contributed,
+        ...eligible.map((ride) => ride.rideId),
+      ]);
+      return BulkHeatmapContributionResult(
+        rideCount: eligible.length,
+        cellCount: contribution.cells.length,
+      );
+    } finally {
+      _sharingHistory = false;
+      notifyListeners();
+    }
+  }
+
+  Future<HeatmapCredential> _credential() async {
+    var credential = await _credentials.read();
+    if (credential != null) return credential;
+    credential = HeatmapCredential.generate();
+    await _client.register(credential);
+    await _credentials.write(credential);
+    return credential;
+  }
+
+  static bool _hasTravelledTrack(CompletedRide ride) =>
+      ride.libraryStatus != RideLibraryStatus.deleted &&
+      (ride.traveledRoute?.paths.any(
+            (path) =>
+                path.kind == RoutePathKind.track && path.points.length >= 2,
+          ) ??
+          false);
+
   Future<void> stopAndRemoveContributions() async {
     final credential = await _credentials.read();
     if (credential != null) await _client.revoke(credential);
     await _credentials.delete();
+    await _preferences.remove(contributedRideIdsKey);
     await setConsent(HeatmapContributionConsent.never);
   }
 

@@ -51,6 +51,32 @@ void main() {
     expect(contribution.isEmpty, isTrue);
   });
 
+  test('bulk coverage trims rides separately and never joins them', () {
+    final bristol = _ride([
+      _path(51.45, -2.60, 51.46, -2.58),
+    ], rideId: 'bristol');
+    final london = _ride([_path(51.50, -0.14, 51.51, -0.12)], rideId: 'london');
+
+    final contribution = const HeatmapContributionBuilder().buildMany([
+      bristol,
+      london,
+    ], trimMeters: 0);
+
+    expect(
+      contribution.cells,
+      contains(_tile(bristol.traveledRoute!.paths[0].points.first)),
+    );
+    expect(
+      contribution.cells,
+      contains(_tile(london.traveledRoute!.paths[0].points.last)),
+    );
+    expect(
+      contribution.cells,
+      isNot(contains(_tile(const GeoPoint(latitude: 51.48, longitude: -1.36)))),
+      reason: 'separate saved rides must not be connected by an invented line',
+    );
+  });
+
   test('transport contains only shuffled cells and the chosen trim', () async {
     late Map<String, Object?> uploaded;
     final client = GlobalHeatmapClient(
@@ -122,26 +148,27 @@ RoutePath _path(double lat1, double lon1, double lat2, double lon2) =>
   );
 }
 
-CompletedRide _ride(List<RoutePath> paths) => CompletedRide(
-  rideId: 'ride-private',
-  rideCode: '209271',
-  rideName: 'Private ride name',
-  localDisplayName: 'Private rider',
-  localRole: RideRole.rider,
-  startedAt: DateTime.utc(2026, 8, 16, 10),
-  endedAt: DateTime.utc(2026, 8, 16, 12),
-  archivedAt: DateTime.utc(2026, 8, 16, 12),
-  riderCount: 1,
-  eventCount: 100,
-  totalDistanceMeters: 10000,
-  markerSessions: const [],
-  plannedRoute: null,
-  traveledRoute: ImportedRoute(
-    id: 'travelled',
-    name: 'Travelled',
-    importedAt: DateTime.utc(2026, 8, 16),
-    sourceFileName: 'recording.gpx',
-    paths: paths,
-    waypoints: const [],
-  ),
-);
+CompletedRide _ride(List<RoutePath> paths, {String rideId = 'ride-private'}) =>
+    CompletedRide(
+      rideId: rideId,
+      rideCode: '209271',
+      rideName: 'Private ride name',
+      localDisplayName: 'Private rider',
+      localRole: RideRole.rider,
+      startedAt: DateTime.utc(2026, 8, 16, 10),
+      endedAt: DateTime.utc(2026, 8, 16, 12),
+      archivedAt: DateTime.utc(2026, 8, 16, 12),
+      riderCount: 1,
+      eventCount: 100,
+      totalDistanceMeters: 10000,
+      markerSessions: const [],
+      plannedRoute: null,
+      traveledRoute: ImportedRoute(
+        id: 'travelled',
+        name: 'Travelled',
+        importedAt: DateTime.utc(2026, 8, 16),
+        sourceFileName: 'recording.gpx',
+        paths: paths,
+        waypoints: const [],
+      ),
+    );

@@ -508,6 +508,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           spokenGuidance: widget.spokenGuidance,
                           rideDiagnostics: widget.rideDiagnostics,
                           globalRideHeatmap: widget.globalRideHeatmap,
+                          completedRideStore: widget.completedRides,
                         ),
                         icon: const Icon(Icons.settings_outlined),
                       ),
@@ -662,6 +663,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       spokenGuidance: widget.spokenGuidance,
                       rideDiagnostics: widget.rideDiagnostics,
                       globalRideHeatmap: widget.globalRideHeatmap,
+                      completedRideStore: widget.completedRides,
                     ),
                   );
                 },
