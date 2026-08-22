@@ -36,6 +36,51 @@ permissions by design.
 - ...
 ```
 
+## iOS build 77 / Android build 77 — 22 August 2026
+
+This build makes Tail End Charlie discoverable to Android Auto and lets riders
+contribute privacy-safe coverage from both new and existing rides to the global
+heatmap.
+
+### What to test
+
+1. **Android Auto discovery.** Connect an Android phone to a real Android Auto
+   head unit. Tail End Charlie should appear in the Android Auto launcher and
+   open its navigation experience.
+2. **Contribution during setup.** On a fresh install, the privacy step should
+   explain global heatmap sharing and leave contribution enabled by default.
+   Turn it off there and confirm the choice is respected. Skipping the rest of
+   setup must not skip this privacy choice.
+3. **Existing-user default.** If you never chose a contribution setting, open
+   **Settings → Global rides** and confirm it now shows **Always**. A previous
+   explicit choice of **Never** or **Ask each time** must remain unchanged.
+4. **Share existing history.** In **Settings → Global rides**, choose **Share
+   existing ride history** and confirm the action. The result should report the
+   number of rides combined into one privacy-safe contribution. Deleted rides
+   must not be included.
+5. **Future rides and opt-out.** Complete a ride while contribution is set to
+   **Always** and confirm there is no extra approval card. Change the setting to
+   **Never** and confirm future contributions stop.
+
+### Fixed
+
+- Android Auto could not discover the app because the packaged Android build
+  did not publish the required automotive app descriptor.
+- Riders who had never made a heatmap contribution choice silently defaulted
+  to **Never**, leaving the global heatmap without new coverage.
+- Existing personal ride history could not be contributed in bulk.
+- Bulk sharing now trims privacy-sensitive ride ends independently, excludes
+  deleted rides, and combines duplicate coverage cells before one upload.
+
+### Known limitations
+
+- Android Auto still needs confirmation on Keith's physical phone and head
+  unit. Passing packaging and native tests proves discovery metadata is in the
+  app, not that every vehicle integration works.
+- A public global heatmap cell appears only after at least three distinct
+  riders contribute to it and the next daily snapshot is generated. One rider
+  sharing history will not make a cell visible immediately.
+
 ## iOS build 74 / Android build 74 — 21 August 2026
 
 This build keeps circular-route creation working when the motorcycle routing
