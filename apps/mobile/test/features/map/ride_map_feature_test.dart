@@ -381,6 +381,99 @@ void main() {
     );
   });
 
+  testWidgets('a road suggestion is selected and matched on the map', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final directory = Directory.systemTemp.createTempSync(
+      'discovery-suggestion-picker',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final currentPosition = ValueNotifier<GeoPoint?>(
+      const GeoPoint(latitude: 51.4676, longitude: -2.5067),
+    );
+    addTearDown(currentPosition.dispose);
+    final routing = _RouteStartRoutingService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          currentPosition: currentPosition,
+          roadRoutingService: routing,
+          rideStarted: false,
+          navigating: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('map-layer-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Motorcycle discovery layers'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Suggest an addition'));
+    await tester.tap(find.text('Suggest an addition'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No point or road selected.'), findsOneWidget);
+    expect(find.textContaining('51.46760'), findsNothing);
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), 'Chew Valley lanes');
+    await tester.enterText(fields.at(1), 'A flowing rural road section');
+    await tester.tap(
+      find.byKey(const Key('choose-discovery-suggestion-location')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('discovery-suggestion-map-pin')),
+      findsOneWidget,
+    );
+    expect(find.text('Use as road start'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const Key('confirm-discovery-suggestion-picker')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Use as road end'), findsOneWidget);
+    await tester.drag(find.byType(FlutterMap), const Offset(-120, 0));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('confirm-discovery-suggestion-picker')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(routing.calls, hasLength(1));
+    expect(routing.calls.single.first, isNot(routing.calls.single.last));
+    expect(
+      find.textContaining('Road section: 2 mapped points'),
+      findsOneWidget,
+    );
+    expect(find.text('Chew Valley lanes'), findsOneWidget);
+    expect(find.text('A flowing rural road section'), findsOneWidget);
+
+    await tester.tap(find.text('Save offline draft'));
+    await tester.pumpAndSettle();
+    final preferences = await SharedPreferences.getInstance();
+    final stored =
+        jsonDecode(
+              preferences.getString('ride-relay-discovery-suggestions-v1')!,
+            )
+            as List;
+    expect(stored, hasLength(1));
+    expect(stored.single['geometry']['type'], 'LineString');
+    expect(stored.single['geometry']['coordinates'], hasLength(2));
+  });
+
   // #574. A handful of chosen stops are places; several hundred are the shape
   // of the line, and drawn at badge size they cover the road they describe.
   group('waypoint density decides how waypoints are drawn', () {
