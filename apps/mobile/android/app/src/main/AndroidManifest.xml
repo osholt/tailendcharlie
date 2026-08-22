@@ -64,6 +64,12 @@
         <meta-data
             android:name="androidx.car.app.minCarApiLevel"
             android:value="1" />
+        <!-- Android Auto discovers projected Car App Library apps through
+             this descriptor. Without it the phone app installs normally, but
+             the Android Auto host does not offer the app at all. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
         <service
             android:name=".TailEndCharlieCarAppService"
             android:exported="true"
