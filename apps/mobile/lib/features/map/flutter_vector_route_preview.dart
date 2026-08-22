@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -8,6 +9,43 @@ import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import 'route_trail_style.dart';
+
+const _routePreviewCameraInset = 30.0;
+const _minimumRoutePreviewFitExtent = 24.0;
+
+/// Keeps camera padding valid for both full previews and 52 px library icons.
+///
+/// A fixed 30 px inset consumes 60 px in each axis. That is comfortable on a
+/// recap or route sheet, but leaves a small thumbnail with no area in which to
+/// fit its route. Preserve the full inset whenever it fits and otherwise leave
+/// at least [_minimumRoutePreviewFitExtent] for the complete track and its
+/// endpoint markers.
+@visibleForTesting
+EdgeInsets routePreviewCameraPadding(Size viewportSize) {
+  final shortestSide = math.min(viewportSize.width, viewportSize.height);
+  if (!shortestSide.isFinite) {
+    return const EdgeInsets.all(_routePreviewCameraInset);
+  }
+  final maximumInset = math.max(
+    0.0,
+    (shortestSide - _minimumRoutePreviewFitExtent) / 2,
+  );
+  return EdgeInsets.all(math.min(_routePreviewCameraInset, maximumInset));
+}
+
+class _ResponsiveRoutePreviewCameraFit extends CameraFit {
+  const _ResponsiveRoutePreviewCameraFit({required this.bounds, this.maxZoom});
+
+  final LatLngBounds bounds;
+  final double? maxZoom;
+
+  @override
+  MapCamera fit(MapCamera camera) => CameraFit.bounds(
+    bounds: bounds,
+    padding: routePreviewCameraPadding(camera.nonRotatedSize),
+    maxZoom: maxZoom,
+  ).fit(camera);
+}
 
 /// A capture-safe route map rendered entirely inside Flutter's layer tree.
 ///
@@ -125,9 +163,8 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
           'flutter-vector-route-${widget.basemapConfiguration.styleUrl}',
         ),
         options: MapOptions(
-          initialCameraFit: CameraFit.bounds(
+          initialCameraFit: _ResponsiveRoutePreviewCameraFit(
             bounds: LatLngBounds.fromPoints(points),
-            padding: const EdgeInsets.all(30),
             maxZoom: 16,
           ),
           initialCenter: points.first,
