@@ -8,6 +8,26 @@ import org.junit.Test
 
 class AndroidAutoDiscoveryContractTest {
     @Test
+    fun manifestAllowsAndroidAutoToRenderTheNavigationSurface() {
+        val manifest = parseXml(File("src/main/AndroidManifest.xml"))
+        val permissions = manifest.getElementsByTagName("uses-permission")
+        val androidNamespace = "http://schemas.android.com/apk/res/android"
+
+        val surfacePermission = (0 until permissions.length)
+            .map { permissions.item(it) }
+            .firstOrNull {
+                it.attributes
+                    ?.getNamedItemNS(androidNamespace, "name")
+                    ?.nodeValue == "androidx.car.app.ACCESS_SURFACE"
+            }
+
+        assertNotNull(
+            "Android Auto navigation surface permission is missing",
+            surfacePermission,
+        )
+    }
+
+    @Test
     fun manifestPublishesAndroidAutoTemplateDescriptor() {
         val manifest = parseXml(File("src/main/AndroidManifest.xml"))
         val metadata = manifest.getElementsByTagName("meta-data")
