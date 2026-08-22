@@ -120,3 +120,16 @@ test("discovery source confidence is surfaced in the road details", () => {
   assert.match(plannerJs, /facts\.sourceVerificationLabel/);
   assert.match(plannerJs, /facts\.sourceVerificationDetail/);
 });
+
+test("discovery suggestions have a visible, confirmable map selection", () => {
+  assert.match(plannerHtml, /id="suggestion-map-picker"/);
+  assert.match(plannerHtml, /id="cancel-suggestion-location"/);
+  assert.match(plannerHtml, /id="confirm-suggestion-location"/);
+  assert.match(plannerJs, /addSource\("suggestion-selection"/);
+  assert.match(plannerJs, /id: "suggestion-selection-line"/);
+  assert.match(plannerJs, /function confirmSuggestionLocation\(\)/);
+  assert.match(plannerJs, /function cancelSuggestionLocation\(\)/);
+  assert.match(plannerJs, /suggestionPickPrevious/);
+  assert.match(plannerJs, /suggestionMatchRequest\?\.abort\(\)/);
+  assert.match(plannerCss, /\.planner-map-shell\.is-picking-suggestion/);
+});

@@ -57,6 +57,7 @@ import {
   decodeSuggestionQueue,
   DISCOVERY_SUGGESTION_QUEUE_KEY,
   encodeSuggestionQueue,
+  suggestionSelectionGeoJson,
   submissionPayload,
 } from "./discovery-suggestions.mjs";
 import {
@@ -151,7 +152,17 @@ const elements = {
   suggestionName: document.querySelector("#suggestion-name"),
   suggestionNearby: document.querySelector("#suggestion-nearby"),
   suggestionReason: document.querySelector("#suggestion-reason"),
+  suggestionMapPicker: document.querySelector("#suggestion-map-picker"),
+  suggestionMapPickerStatus: document.querySelector(
+    "#suggestion-map-picker-status",
+  ),
   pickSuggestionLocation: document.querySelector("#pick-suggestion-location"),
+  cancelSuggestionLocation: document.querySelector(
+    "#cancel-suggestion-location",
+  ),
+  confirmSuggestionLocation: document.querySelector(
+    "#confirm-suggestion-location",
+  ),
   sendSuggestionQueue: document.querySelector("#send-suggestion-queue"),
   twistiness: document.querySelector("#route-twistiness"),
   undoRoute: document.querySelector("#undo-route"),
@@ -206,6 +217,9 @@ let suggestionCoordinate = null;
 let suggestionGeometry = null;
 let suggestionSegmentStart = null;
 let suggestionPickMode = false;
+let suggestionPickPrevious = null;
+let suggestionMatching = false;
+let suggestionMatchRequest = null;
 let suggestionTargetFeatureId = null;
 let suggestionQueue = loadSuggestionQueue();
 const routeHistory = new StateHistory(50);
@@ -378,6 +392,53 @@ map.on("load", () => {
       "line-color": "#6d2ee8",
       "line-width": 24,
       "line-opacity": 0.01,
+    },
+  });
+  map.addSource("suggestion-selection", {
+    type: "geojson",
+    data: suggestionSelectionGeoJson(),
+  });
+  map.addLayer({
+    id: "suggestion-selection-casing",
+    type: "line",
+    source: "suggestion-selection",
+    filter: ["==", ["geometry-type"], "LineString"],
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": "#171823",
+      "line-width": 10,
+      "line-opacity": 0.92,
+    },
+  });
+  map.addLayer({
+    id: "suggestion-selection-line",
+    type: "line",
+    source: "suggestion-selection",
+    filter: ["==", ["geometry-type"], "LineString"],
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": "#ffad81",
+      "line-width": 6,
+    },
+  });
+  map.addLayer({
+    id: "suggestion-selection-points",
+    type: "circle",
+    source: "suggestion-selection",
+    filter: ["==", ["geometry-type"], "Point"],
+    paint: {
+      "circle-color": [
+        "match",
+        ["get", "role"],
+        "start",
+        "#54e1c4",
+        "end",
+        "#ffad81",
+        "#ffd166",
+      ],
+      "circle-radius": 8,
+      "circle-stroke-color": "#171823",
+      "circle-stroke-width": 3,
     },
   });
   map.addSource("route-marker-plan", {
@@ -587,6 +648,14 @@ for (const layerToggle of discoveryLayerElements) {
 }
 elements.suggestDiscovery.addEventListener("click", openSuggestionDialog);
 elements.pickSuggestionLocation.addEventListener("click", pickSuggestionLocation);
+elements.cancelSuggestionLocation.addEventListener(
+  "click",
+  cancelSuggestionLocation,
+);
+elements.confirmSuggestionLocation.addEventListener(
+  "click",
+  confirmSuggestionLocation,
+);
 elements.suggestionForm.addEventListener("submit", queueSuggestion);
 elements.sendSuggestionQueue.addEventListener("click", confirmSendSuggestionQueue);
 elements.suggestionAction.addEventListener("change", updateSuggestionNearby);
@@ -605,15 +674,8 @@ document.addEventListener("fullscreenchange", syncExpandedMapState);
 window.addEventListener("pagehide", savePlannerDraft);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && suggestionPickMode) {
-    suggestionPickMode = false;
-    suggestionSegmentStart = null;
-    suggestionCoordinate = null;
-    suggestionGeometry = null;
-    elements.mapInstructions.textContent = stops.length
-      ? "Tap the route to insert a stop · drag it to reshape · drag purple handles again"
-      : "Tap the map to add a route point";
-    elements.suggestionDialog.showModal();
-    updateSuggestionLocation();
+    event.preventDefault();
+    cancelSuggestionLocation();
     return;
   }
   if (
@@ -3349,6 +3411,7 @@ function openSuggestionDialog(reset = true) {
     suggestionGeometry = null;
     suggestionSegmentStart = null;
     suggestionTargetFeatureId = null;
+    updateSuggestionSelectionPreview();
   }
   updateSuggestionLocation();
   updateSuggestionNearby();
@@ -3361,14 +3424,83 @@ function openSuggestionDialog(reset = true) {
 }
 
 function pickSuggestionLocation() {
+  suggestionMatchRequest?.abort();
+  suggestionMatchRequest = null;
+  suggestionPickPrevious = {
+    coordinate: suggestionCoordinate ? [...suggestionCoordinate] : null,
+    geometry: suggestionGeometry
+      ? JSON.parse(JSON.stringify(suggestionGeometry))
+      : null,
+  };
   suggestionPickMode = true;
+  suggestionMatching = false;
   suggestionGeometry = null;
   suggestionCoordinate = null;
   suggestionSegmentStart = null;
   elements.suggestionDialog.close();
-  elements.mapInstructions.textContent = isLineSuggestionCategory()
-    ? "Tap the start of the road section you want to suggest"
-    : "Tap the map to place your private suggestion draft";
+  updateSuggestionMapPicker();
+}
+
+function confirmSuggestionLocation() {
+  if (!suggestionPickMode || suggestionMatching || !suggestionGeometry) return;
+  suggestionPickMode = false;
+  suggestionPickPrevious = null;
+  suggestionSegmentStart = null;
+  updateSuggestionMapPicker();
+  updateSuggestionLocation();
+  elements.suggestionDialog.showModal();
+}
+
+function cancelSuggestionLocation() {
+  if (!suggestionPickMode) return;
+  suggestionMatchRequest?.abort();
+  suggestionMatchRequest = null;
+  suggestionCoordinate = suggestionPickPrevious?.coordinate || null;
+  suggestionGeometry = suggestionPickPrevious?.geometry || null;
+  suggestionSegmentStart = null;
+  suggestionPickPrevious = null;
+  suggestionPickMode = false;
+  suggestionMatching = false;
+  updateSuggestionMapPicker();
+  updateSuggestionLocation();
+  elements.suggestionDialog.showModal();
+}
+
+function updateSuggestionMapPicker(status = null) {
+  elements.suggestionMapPicker.hidden = !suggestionPickMode;
+  elements.mapShell.classList.toggle("is-picking-suggestion", suggestionPickMode);
+  elements.confirmSuggestionLocation.disabled =
+    !suggestionGeometry || suggestionMatching;
+  elements.confirmSuggestionLocation.textContent = isLineSuggestionCategory()
+    ? "Confirm road"
+    : "Confirm point";
+  if (suggestionPickMode) {
+    elements.suggestionMapPickerStatus.textContent = status ||
+      (suggestionMatching
+        ? "Matching your selected section to the road network…"
+        : suggestionGeometry
+          ? isLineSuggestionCategory()
+            ? "Road preview ready. Check the highlighted line, then confirm."
+            : "Point preview ready. Check the marker, then confirm."
+          : suggestionSegmentStart
+            ? "Start selected. Tap the end of this road section."
+            : isLineSuggestionCategory()
+              ? "Tap the start of the road section. You can pan and zoom first."
+              : "Tap the location. You can pan and zoom first.");
+  }
+  elements.mapInstructions.textContent = stops.length
+    ? "Tap the route to insert a stop · drag it to reshape · drag purple handles again"
+    : "Tap the map to add a route point";
+  updateSuggestionSelectionPreview();
+}
+
+function updateSuggestionSelectionPreview() {
+  map.getSource("suggestion-selection")?.setData(
+    suggestionSelectionGeoJson({
+      geometry: suggestionPickMode ? suggestionGeometry : null,
+      segmentStart: suggestionPickMode ? suggestionSegmentStart : null,
+    }),
+  );
 }
 
 function updateSuggestionLocation() {
@@ -3390,6 +3522,7 @@ function changeSuggestionCategory() {
     suggestionGeometry = null;
     suggestionCoordinate = null;
     suggestionSegmentStart = null;
+    updateSuggestionSelectionPreview();
     updateSuggestionLocation();
   } else {
     updateSuggestionNearby();
@@ -3403,23 +3536,25 @@ function isLineSuggestionCategory() {
 }
 
 async function selectSuggestionMapLocation(lngLat) {
+  if (suggestionMatching) return;
   const coordinate = [lngLat.lng, lngLat.lat];
   if (!isLineSuggestionCategory()) {
-    suggestionPickMode = false;
     suggestionCoordinate = coordinate;
     suggestionGeometry = { type: "Point", coordinates: coordinate };
-    elements.mapInstructions.textContent = "Suggestion location selected";
-    updateSuggestionLocation();
-    elements.suggestionDialog.showModal();
+    updateSuggestionMapPicker();
     return;
   }
-  if (!suggestionSegmentStart) {
+  if (!suggestionSegmentStart || suggestionGeometry) {
+    suggestionGeometry = null;
+    suggestionCoordinate = null;
     suggestionSegmentStart = coordinate;
-    elements.mapInstructions.textContent =
-      "Now tap the end of this road section · Esc to cancel";
+    updateSuggestionMapPicker();
     return;
   }
-  elements.mapInstructions.textContent = "Matching your selected section to roads…";
+  suggestionMatching = true;
+  updateSuggestionMapPicker();
+  const matchRequest = new AbortController();
+  suggestionMatchRequest = matchRequest;
   try {
     const route = await requestRoadRoute(
       [
@@ -3436,22 +3571,28 @@ async function selectSuggestionMapLocation(lngLat) {
           latitude: coordinate[1],
         },
       ],
-      new AbortController().signal,
+      matchRequest.signal,
     );
+    if (!suggestionPickMode || suggestionMatchRequest !== matchRequest) return;
     suggestionGeometry = {
       type: "LineString",
       coordinates: route.geometry.coordinates,
     };
     suggestionCoordinate = discoveryFeatureAnchor({ geometry: suggestionGeometry });
-    suggestionPickMode = false;
     suggestionSegmentStart = null;
-    elements.mapInstructions.textContent = "Road segment selected";
-    updateSuggestionLocation();
-    elements.suggestionDialog.showModal();
+    suggestionMatching = false;
+    suggestionMatchRequest = null;
+    updateSuggestionMapPicker();
   } catch {
+    if (suggestionMatchRequest !== matchRequest) return;
+    suggestionMatching = false;
+    suggestionMatchRequest = null;
     suggestionSegmentStart = null;
-    elements.mapInstructions.textContent =
-      "That section could not be matched to roads. Tap its start to try again.";
+    suggestionGeometry = null;
+    suggestionCoordinate = null;
+    updateSuggestionMapPicker(
+      "That section could not be matched to roads. Tap its start to try again.",
+    );
   }
 }
 

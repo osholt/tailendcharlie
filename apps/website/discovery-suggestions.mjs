@@ -9,6 +9,41 @@ const CATEGORIES = new Set([
 ]);
 const ACTIONS = new Set(["add", "correct", "remove"]);
 
+export function suggestionSelectionGeoJson({ geometry, segmentStart } = {}) {
+  const features = [];
+  if (geometry?.type === "LineString" && validGeometry(geometry)) {
+    features.push({
+      type: "Feature",
+      properties: { role: "road" },
+      geometry,
+    });
+    const endpoints = [
+      ["start", geometry.coordinates[0]],
+      ["end", geometry.coordinates.at(-1)],
+    ];
+    for (const [role, coordinates] of endpoints) {
+      features.push({
+        type: "Feature",
+        properties: { role },
+        geometry: { type: "Point", coordinates },
+      });
+    }
+  } else if (geometry?.type === "Point" && validGeometry(geometry)) {
+    features.push({
+      type: "Feature",
+      properties: { role: "point" },
+      geometry,
+    });
+  } else if (validCoordinate(segmentStart)) {
+    features.push({
+      type: "Feature",
+      properties: { role: "start" },
+      geometry: { type: "Point", coordinates: segmentStart },
+    });
+  }
+  return { type: "FeatureCollection", features };
+}
+
 export function createSuggestionDraft(values, now = Date.now(), createId = defaultId) {
   const geometry = normalizeGeometry(
     values.geometry || {

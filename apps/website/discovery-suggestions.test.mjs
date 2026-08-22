@@ -5,6 +5,7 @@ import {
   createSuggestionDraft,
   decodeSuggestionQueue,
   encodeSuggestionQueue,
+  suggestionSelectionGeoJson,
   submissionPayload,
 } from "./discovery-suggestions.mjs";
 
@@ -58,4 +59,36 @@ test("road suggestions preserve a selected road-following line", () => {
   );
   assert.equal(draft.geometry.type, "LineString");
   assert.equal(draft.geometry.coordinates.length, 3);
+});
+
+test("the map preview distinguishes a point from a selected road", () => {
+  const point = suggestionSelectionGeoJson({
+    geometry: { type: "Point", coordinates: [-2.5, 51.46] },
+  });
+  assert.deepEqual(point.features.map((feature) => feature.properties.role), [
+    "point",
+  ]);
+
+  const road = suggestionSelectionGeoJson({
+    geometry: {
+      type: "LineString",
+      coordinates: [
+        [-2.6, 51.4],
+        [-2.55, 51.45],
+        [-2.5, 51.5],
+      ],
+    },
+  });
+  assert.deepEqual(road.features.map((feature) => feature.properties.role), [
+    "road",
+    "start",
+    "end",
+  ]);
+  assert.equal(road.features[0].geometry.coordinates.length, 3);
+});
+
+test("the first road tap is visible before the road is matched", () => {
+  const preview = suggestionSelectionGeoJson({ segmentStart: [-3.1, 52] });
+  assert.equal(preview.features.length, 1);
+  assert.equal(preview.features[0].properties.role, "start");
 });

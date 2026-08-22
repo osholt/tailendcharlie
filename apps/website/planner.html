@@ -28,7 +28,7 @@
       integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK"
       crossorigin="anonymous"
     />
-    <link rel="stylesheet" href="/planner.css?v=e1ee226c" />
+    <link rel="stylesheet" href="/planner.css?v=4bdc2d29" />
     <title>Ride planner | Tail End Charlie</title>
   </head>
   <body class="planner-page">
@@ -447,6 +447,28 @@
         <div class="map-instructions" id="map-instructions">
           Tap the map to add a route point
         </div>
+        <section
+          class="suggestion-map-picker"
+          id="suggestion-map-picker"
+          aria-labelledby="suggestion-map-picker-title"
+          hidden
+        >
+          <div>
+            <strong id="suggestion-map-picker-title">Select on the map</strong>
+            <p id="suggestion-map-picker-status" aria-live="polite"></p>
+          </div>
+          <div class="suggestion-map-picker-actions">
+            <button id="cancel-suggestion-location" type="button">Cancel</button>
+            <button
+              class="button button-primary"
+              id="confirm-suggestion-location"
+              type="button"
+              disabled
+            >
+              Confirm selection
+            </button>
+          </div>
+        </section>
         <button
           class="map-expand-button"
           id="map-expand"
@@ -555,6 +577,6 @@
       integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp"
       crossorigin="anonymous"
     ></script>
-    <script type="module" src="/planner.js?v=752b3433"></script>
+    <script type="module" src="/planner.js?v=78988340"></script>
   </body>
 </html>

@@ -1084,6 +1084,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   late final RoadRoutingService _roadRoutingService;
   late final Future<DiscoverySuggestionQueue> _suggestionQueue;
   late final DiscoverySuggestionConfiguration _suggestionConfiguration;
+  final ValueNotifier<GeoPoint?> _discoverySuggestionPickerCentre =
+      ValueNotifier(null);
+  _DiscoverySuggestionPickerRequest? _discoverySuggestionPicker;
+  bool _matchingDiscoverySuggestionRoad = false;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
   late final ImportedTrackMatcher _defaultImportedTrackMatcher;
@@ -1611,6 +1615,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreController?.removeListener(_scheduleCameraFramingRefresh);
     _mapController.dispose();
     _navigationGuidance.dispose();
+    final picker = _discoverySuggestionPicker;
+    if (picker != null && !picker.completer.isCompleted) {
+      picker.completer.complete(null);
+    }
+    _discoverySuggestionPickerCentre.dispose();
     _riderSpeedStalenessTimer?.cancel();
     _riderSpeedStalenessTimer = null;
     _riderStoppedTimer?.cancel();
@@ -1909,7 +1918,11 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // traffic-light or GPS speed dips. Switching the AppBar in and out changes
     // the platform map's size and was the main source of visible flashing.
     // Not route-gated (#124): a ride with no GPX gets the same riding canvas.
-    final hideChrome = _navigationCanvasActive || markerOverviewActive;
+    final suggestionPickerActive = _discoverySuggestionPicker != null;
+    final hideChrome =
+        _navigationCanvasActive ||
+        markerOverviewActive ||
+        suggestionPickerActive;
     // Notches, rounded corners and the home indicator are respected in every
     // orientation, with or without the AppBar. Scaffold already removes the
     // padding it consumed itself, so what is left is what the overlays owe.
@@ -2262,25 +2275,26 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     child: _buildMap(),
                   ),
                 ),
-                Positioned.fill(
-                  child: _buildRideChrome(
-                    landscape: landscape,
-                    hideChrome: hideChrome,
-                    markerOverviewActive: markerOverviewActive,
-                    hasGuidance: hasGuidance,
-                    routeStartOfferDistance: routeStartOfferDistance,
-                    showRideMenu: showRideMenu,
-                    showLeaveRide: showLeaveRide,
-                    showFollowMe: showFollowMe,
-                    canShowGroupMiniMap: canShowGroupMiniMap,
-                    groupMiniMapWidth: groupMiniMapWidth,
-                    groupMiniMapHeight: groupMiniMapHeight,
-                    safeLeft: overlayLeft,
-                    safeRight: overlayRight,
-                    safeTop: overlayTop,
-                    safeBottom: overlayBottom,
+                if (!suggestionPickerActive)
+                  Positioned.fill(
+                    child: _buildRideChrome(
+                      landscape: landscape,
+                      hideChrome: hideChrome,
+                      markerOverviewActive: markerOverviewActive,
+                      hasGuidance: hasGuidance,
+                      routeStartOfferDistance: routeStartOfferDistance,
+                      showRideMenu: showRideMenu,
+                      showLeaveRide: showLeaveRide,
+                      showFollowMe: showFollowMe,
+                      canShowGroupMiniMap: canShowGroupMiniMap,
+                      groupMiniMapWidth: groupMiniMapWidth,
+                      groupMiniMapHeight: groupMiniMapHeight,
+                      safeLeft: overlayLeft,
+                      safeRight: overlayRight,
+                      safeTop: overlayTop,
+                      safeBottom: overlayBottom,
+                    ),
                   ),
-                ),
                 // Route entry, and only while the map is still a planning
                 // surface. Once the riding canvas is up there is a rider on a
                 // moving bike behind this card, and a ride with no GPX is a
@@ -2401,6 +2415,33 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           },
                         );
                       },
+                    ),
+                  ),
+                if (suggestionPickerActive)
+                  Positioned.fill(child: _buildDiscoverySuggestionPicker()),
+                if (_matchingDiscoverySuggestionRoad)
+                  const Positioned.fill(
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        ModalBarrier(
+                          dismissible: false,
+                          color: Color(0x66000000),
+                        ),
+                        Card(
+                          child: Padding(
+                            padding: EdgeInsets.all(20),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(width: 16),
+                                Text('Matching the selected road…'),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
               ],
@@ -3218,6 +3259,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             ),
             initialZoom: 13,
             onMapEvent: _onFlutterMapEvent,
+            onTap: _onDiscoverySuggestionFlutterMapTap,
           )
         : MapOptions(
             initialCenter:
@@ -3225,6 +3267,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 (rider == null ? const LatLng(54.5, -3.2) : _latLng(rider)),
             initialZoom: points.isEmpty && rider == null ? 5 : 14,
             onMapEvent: _onFlutterMapEvent,
+            onTap: _onDiscoverySuggestionFlutterMapTap,
           );
 
     final map = FlutterMap(
@@ -3602,6 +3645,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
               unawaited(_prepareMapLibreStyle());
             },
             onCameraMove: _onMapLibreCameraMove,
+            onMapClick: _onDiscoverySuggestionMapLibreTap,
             onCameraIdle: () => unawaited(_updateMapLibreDiscoveryViewport()),
             // Without this the platform never reports its camera, and
             // `MapLibreMapController.cameraPosition` keeps the value it was
@@ -3654,6 +3698,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _onMapLibreCameraMove(ml.CameraPosition camera) {
     _updateViewportZoom(camera.zoom);
+    _updateDiscoverySuggestionPickerCentre(
+      GeoPoint(
+        latitude: camera.target.latitude,
+        longitude: camera.target.longitude,
+      ),
+    );
     if ((camera.bearing - _mapBearing.value).abs() >= 0.25) {
       _mapBearing.value = camera.bearing;
     }
@@ -4335,6 +4385,12 @@ class _RideMapScreenState extends State<RideMapScreen> {
   void _onFlutterMapEvent(MapEvent event) {
     if (event.source == MapEventSource.nonRotatedSizeChange) return;
     _updateViewportZoom(event.camera.zoom);
+    _updateDiscoverySuggestionPickerCentre(
+      GeoPoint(
+        latitude: event.camera.center.latitude,
+        longitude: event.camera.center.longitude,
+      ),
+    );
     if ((event.camera.rotation - _mapBearing.value).abs() >= 0.25) {
       _mapBearing.value = event.camera.rotation;
     }
@@ -5891,6 +5947,15 @@ class _RideMapScreenState extends State<RideMapScreen> {
     String layerId,
     ml.Annotation? annotation,
   ) {
+    if (_discoverySuggestionPicker != null) {
+      _moveDiscoverySuggestionPickerCamera(
+        GeoPoint(
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+        ),
+      );
+      return;
+    }
     if (layerId == 'ride-relay-discovery-lines' ||
         layerId == 'ride-relay-discovery-points') {
       if (id.startsWith('biker-cafe-')) {
@@ -7051,123 +7116,443 @@ class _RideMapScreenState extends State<RideMapScreen> {
     MotorcycleDiscoveryFeature? feature,
     String action = 'add',
   }) async {
-    final point =
-        feature?.anchor ??
-        _effectivePosition ??
-        _route?.paths.lastOrNull?.points.lastOrNull;
-    if (point == null) {
-      _showMessage(
-        'Enable location or load a route before placing a suggestion.',
-      );
-      return;
-    }
     var category =
         feature?.category ?? MotorcycleDiscoveryCategory.goodBikingRoad;
     var selectedAction = action;
+    _DiscoverySuggestionGeometry? selectedGeometry = feature == null
+        ? null
+        : _DiscoverySuggestionGeometry(
+            point: feature.anchor,
+            geometryPoints: _discoverySuggestionCategoryIsLine(category)
+                ? feature.points
+                : null,
+          );
     final name = TextEditingController(text: feature?.name ?? '');
     final reason = TextEditingController();
     final evidence = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(
-            feature == null ? 'Suggest an addition' : 'Suggest a map update',
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (feature != null)
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedAction,
-                    decoration: const InputDecoration(labelText: 'Change'),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'correct',
-                        child: Text('Correct entry'),
+    try {
+      while (true) {
+        if (!mounted) return;
+        final dialogAction = await showDialog<_DiscoverySuggestionDialogAction>(
+          context: context,
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text(
+                feature == null
+                    ? 'Suggest an addition'
+                    : 'Suggest a map update',
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (feature != null)
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedAction,
+                        decoration: const InputDecoration(labelText: 'Change'),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'correct',
+                            child: Text('Correct entry'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'remove',
+                            child: Text('Report closed, restricted or unsafe'),
+                          ),
+                        ],
+                        onChanged: (value) => setDialogState(
+                          () => selectedAction = value ?? selectedAction,
+                        ),
                       ),
-                      DropdownMenuItem(
-                        value: 'remove',
-                        child: Text('Report closed, restricted or unsafe'),
-                      ),
-                    ],
-                    onChanged: (value) => setDialogState(
-                      () => selectedAction = value ?? selectedAction,
+                    DropdownButtonFormField<MotorcycleDiscoveryCategory>(
+                      initialValue: category,
+                      decoration: const InputDecoration(labelText: 'Category'),
+                      items: [
+                        for (final item in MotorcycleDiscoveryCategory.values)
+                          DropdownMenuItem(
+                            value: item,
+                            child: Text(item.label),
+                          ),
+                      ],
+                      onChanged: (value) => setDialogState(() {
+                        final next = value ?? category;
+                        if (_discoverySuggestionCategoryIsLine(next) !=
+                            _discoverySuggestionCategoryIsLine(category)) {
+                          selectedGeometry = null;
+                        }
+                        category = next;
+                      }),
                     ),
-                  ),
-                DropdownButtonFormField<MotorcycleDiscoveryCategory>(
-                  initialValue: category,
-                  decoration: const InputDecoration(labelText: 'Category'),
-                  items: [
-                    for (final item in MotorcycleDiscoveryCategory.values)
-                      DropdownMenuItem(value: item, child: Text(item.label)),
+                    TextField(
+                      controller: name,
+                      maxLength: 120,
+                      decoration: const InputDecoration(labelText: 'Name'),
+                    ),
+                    TextField(
+                      controller: reason,
+                      maxLength: 500,
+                      minLines: 3,
+                      maxLines: 5,
+                      decoration: const InputDecoration(
+                        labelText: 'Reason or current condition',
+                      ),
+                    ),
+                    TextField(
+                      controller: evidence,
+                      keyboardType: TextInputType.url,
+                      decoration: const InputDecoration(
+                        labelText: 'Evidence link (optional)',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      selectedGeometry == null
+                          ? 'No point or road selected.'
+                          : _discoverySuggestionCategoryIsLine(category)
+                          ? 'Road section: ${selectedGeometry!.geometryPoints?.length ?? 0} mapped points'
+                          : 'Point: ${selectedGeometry!.point.latitude.toStringAsFixed(5)}, ${selectedGeometry!.point.longitude.toStringAsFixed(5)}',
+                      key: const Key('discovery-suggestion-location'),
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      key: const Key('choose-discovery-suggestion-location'),
+                      onPressed: () => Navigator.of(
+                        dialogContext,
+                      ).pop(_DiscoverySuggestionDialogAction.chooseLocation),
+                      icon: const Icon(Icons.add_location_alt_outlined),
+                      label: Text(
+                        _discoverySuggestionCategoryIsLine(category)
+                            ? 'Choose road on map'
+                            : 'Choose point on map',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Saved privately on this device until you explicitly send it. Not a safety endorsement.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
                   ],
-                  onChanged: (value) =>
-                      setDialogState(() => category = value ?? category),
                 ),
-                TextField(
-                  controller: name,
-                  maxLength: 120,
-                  decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(
+                    dialogContext,
+                  ).pop(_DiscoverySuggestionDialogAction.cancel),
+                  child: const Text('Cancel'),
                 ),
-                TextField(
-                  controller: reason,
-                  maxLength: 500,
-                  minLines: 3,
-                  maxLines: 5,
-                  decoration: const InputDecoration(
-                    labelText: 'Reason or current condition',
-                  ),
-                ),
-                TextField(
-                  controller: evidence,
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: 'Evidence link (optional)',
-                  ),
-                ),
-                Text(
-                  'Location: ${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)}\n'
-                  'Saved privately on this device until you explicitly send it. Not a safety endorsement.',
-                  style: Theme.of(context).textTheme.bodySmall,
+                FilledButton(
+                  onPressed: () {
+                    if (name.text.trim().isEmpty ||
+                        reason.text.trim().length < 5) {
+                      _showMessage('Enter a name and a short reason.');
+                      return;
+                    }
+                    if (selectedGeometry == null) {
+                      _showMessage('Choose a point or road on the map.');
+                      return;
+                    }
+                    Navigator.of(
+                      dialogContext,
+                    ).pop(_DiscoverySuggestionDialogAction.save);
+                  },
+                  child: const Text('Save offline draft'),
                 ),
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (name.text.trim().isEmpty || reason.text.trim().length < 5) {
-                  _showMessage('Enter a name and a short reason.');
-                  return;
-                }
-                Navigator.of(dialogContext).pop(true);
-              },
-              child: const Text('Save offline draft'),
-            ),
-          ],
-        ),
+        );
+        if (dialogAction == null ||
+            dialogAction == _DiscoverySuggestionDialogAction.cancel) {
+          return;
+        }
+        if (dialogAction == _DiscoverySuggestionDialogAction.chooseLocation) {
+          final chosen = await _chooseDiscoverySuggestionGeometry(
+            category: category,
+            initial: selectedGeometry?.point ?? feature?.anchor,
+          );
+          if (chosen != null) selectedGeometry = chosen;
+          continue;
+        }
+        final geometry = selectedGeometry!;
+        final queue = await _suggestionQueue;
+        await queue.enqueue(
+          category: category,
+          action: selectedAction,
+          targetFeatureId: feature?.id,
+          name: name.text,
+          reason: reason.text,
+          evidenceUrl: evidence.text,
+          point: geometry.point,
+          geometryPoints: geometry.geometryPoints,
+        );
+        _showMessage(
+          'Suggestion saved offline. It will only be sent when you choose Send queued suggestions.',
+        );
+        return;
+      }
+    } finally {
+      name.dispose();
+      reason.dispose();
+      evidence.dispose();
+    }
+  }
+
+  bool _discoverySuggestionCategoryIsLine(
+    MotorcycleDiscoveryCategory category,
+  ) =>
+      category == MotorcycleDiscoveryCategory.twistyHighlight ||
+      category == MotorcycleDiscoveryCategory.goodBikingRoad;
+
+  Future<_DiscoverySuggestionGeometry?> _chooseDiscoverySuggestionGeometry({
+    required MotorcycleDiscoveryCategory category,
+    GeoPoint? initial,
+  }) async {
+    if (!_discoverySuggestionCategoryIsLine(category)) {
+      final point = await _pickDiscoverySuggestionPoint(
+        prompt: 'Move the map or tap to place this suggestion',
+        confirmLabel: 'Use this point',
+        initial: initial,
+      );
+      return point == null ? null : _DiscoverySuggestionGeometry(point: point);
+    }
+
+    final start = await _pickDiscoverySuggestionPoint(
+      prompt: 'Move the map or tap to the start of the road section',
+      confirmLabel: 'Use as road start',
+      initial: initial,
+    );
+    if (start == null) return null;
+
+    GeoPoint? end;
+    while (end == null) {
+      final candidate = await _pickDiscoverySuggestionPoint(
+        prompt: 'Move the map or tap to the end of the road section',
+        confirmLabel: 'Use as road end',
+        initial: start,
+      );
+      if (candidate == null) return null;
+      if (_mapDistanceMeters(start, candidate) < 20) {
+        _showMessage('Move the map to choose a different road end.');
+        continue;
+      }
+      end = candidate;
+    }
+
+    setState(() => _matchingDiscoverySuggestionRoad = true);
+    try {
+      final route = await _roadRoutingService.routeThrough([start, end]);
+      if (route.points.length < 2) {
+        _showMessage('That section could not be matched to a road.');
+        return null;
+      }
+      return _DiscoverySuggestionGeometry(
+        point: route.points[route.points.length ~/ 2],
+        geometryPoints: route.points,
+      );
+    } on Object catch (error) {
+      _showMessage('That section could not be matched to a road: $error');
+      return null;
+    } finally {
+      if (mounted) setState(() => _matchingDiscoverySuggestionRoad = false);
+    }
+  }
+
+  Future<GeoPoint?> _pickDiscoverySuggestionPoint({
+    required String prompt,
+    required String confirmLabel,
+    GeoPoint? initial,
+  }) async {
+    if (!mounted || _discoverySuggestionPicker != null) return null;
+    final centre = initial ?? _currentDiscoverySuggestionMapCentre();
+    final request = _DiscoverySuggestionPickerRequest(
+      prompt: prompt,
+      confirmLabel: confirmLabel,
+      completer: Completer<GeoPoint?>(),
+    );
+    _discoverySuggestionPickerCentre.value = centre;
+    setState(() => _discoverySuggestionPicker = request);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && identical(_discoverySuggestionPicker, request)) {
+        _moveDiscoverySuggestionPickerCamera(centre);
+      }
+    });
+    return request.completer.future;
+  }
+
+  GeoPoint _currentDiscoverySuggestionMapCentre() {
+    final mapLibreCentre = _mapLibreController?.cameraPosition?.target;
+    if (mapLibreCentre != null) {
+      return GeoPoint(
+        latitude: mapLibreCentre.latitude,
+        longitude: mapLibreCentre.longitude,
+      );
+    }
+    try {
+      final centre = _mapController.camera.center;
+      return GeoPoint(latitude: centre.latitude, longitude: centre.longitude);
+    } on Object {
+      return _effectivePosition ??
+          const GeoPoint(latitude: 54.5, longitude: -3.2);
+    }
+  }
+
+  void _updateDiscoverySuggestionPickerCentre(GeoPoint centre) {
+    if (_discoverySuggestionPicker == null) return;
+    _discoverySuggestionPickerCentre.value = centre;
+  }
+
+  void _onDiscoverySuggestionFlutterMapTap(TapPosition _, LatLng coordinates) {
+    if (_discoverySuggestionPicker == null) return;
+    _moveDiscoverySuggestionPickerCamera(
+      GeoPoint(
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
       ),
     );
-    if (confirmed != true) return;
-    final queue = await _suggestionQueue;
-    await queue.enqueue(
-      category: category,
-      action: selectedAction,
-      targetFeatureId: feature?.id,
-      name: name.text,
-      reason: reason.text,
-      evidenceUrl: evidence.text,
-      point: point,
-      geometryPoints: feature?.points,
+  }
+
+  void _onDiscoverySuggestionMapLibreTap(
+    math.Point<double> _,
+    ml.LatLng coordinates,
+  ) {
+    if (_discoverySuggestionPicker == null) return;
+    _moveDiscoverySuggestionPickerCamera(
+      GeoPoint(
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+      ),
     );
-    _showMessage(
-      'Suggestion saved offline. It will only be sent when you choose Send queued suggestions.',
+  }
+
+  void _moveDiscoverySuggestionPickerCamera(GeoPoint point) {
+    if (_discoverySuggestionPicker == null) return;
+    _discoverySuggestionPickerCentre.value = point;
+    final mapLibre = _mapLibreController;
+    if (mapLibre != null) {
+      final zoom = math.max(mapLibre.cameraPosition?.zoom ?? 15, 15).toDouble();
+      unawaited(
+        mapLibre.animateCamera(
+          ml.CameraUpdate.newLatLngZoom(
+            ml.LatLng(point.latitude, point.longitude),
+            zoom,
+          ),
+        ),
+      );
+      return;
+    }
+    try {
+      _mapController.move(
+        LatLng(point.latitude, point.longitude),
+        math.max(_mapController.camera.zoom, 15).toDouble(),
+      );
+    } on Object {
+      // The first post-frame callback will retry once FlutterMap is attached.
+    }
+  }
+
+  void _finishDiscoverySuggestionPicker(GeoPoint? point) {
+    final request = _discoverySuggestionPicker;
+    if (request == null) return;
+    setState(() => _discoverySuggestionPicker = null);
+    if (!request.completer.isCompleted) request.completer.complete(point);
+  }
+
+  Widget _buildDiscoverySuggestionPicker() {
+    final request = _discoverySuggestionPicker!;
+    return SafeArea(
+      minimum: const EdgeInsets.all(12),
+      child: Stack(
+        children: [
+          Align(
+            alignment: Alignment.topCenter,
+            child: IgnorePointer(
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  child: Text(
+                    '${request.prompt}\nPan, pinch to zoom, or tap the map.',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const Center(
+            child: IgnorePointer(
+              child: Icon(
+                Icons.location_pin,
+                key: Key('discovery-suggestion-map-pin'),
+                size: 52,
+                color: Color(0xFFFFAD81),
+                shadows: [Shadow(color: Colors.black, blurRadius: 6)],
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ValueListenableBuilder<GeoPoint?>(
+                      valueListenable: _discoverySuggestionPickerCentre,
+                      builder: (context, point, _) => Text(
+                        point == null
+                            ? 'Move the map to choose a location'
+                            : '${point.latitude.toStringAsFixed(5)}, ${point.longitude.toStringAsFixed(5)}',
+                        key: const Key(
+                          'discovery-suggestion-picker-coordinate',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        TextButton(
+                          key: const Key('cancel-discovery-suggestion-picker'),
+                          onPressed: () =>
+                              _finishDiscoverySuggestionPicker(null),
+                          child: const Text('Cancel'),
+                        ),
+                        if (_effectivePosition != null)
+                          OutlinedButton.icon(
+                            key: const Key(
+                              'use-current-discovery-suggestion-location',
+                            ),
+                            onPressed: () =>
+                                _moveDiscoverySuggestionPickerCamera(
+                                  _effectivePosition!,
+                                ),
+                            icon: const Icon(Icons.my_location),
+                            label: const Text('My location'),
+                          ),
+                        FilledButton(
+                          key: const Key('confirm-discovery-suggestion-picker'),
+                          onPressed: () => _finishDiscoverySuggestionPicker(
+                            _discoverySuggestionPickerCentre.value,
+                          ),
+                          child: Text(request.confirmLabel),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -7719,6 +8104,30 @@ class _RideMapScreenState extends State<RideMapScreen> {
     if (_waitingRoutePromptDismissed) return;
     setState(() => _waitingRoutePromptDismissed = true);
   }
+}
+
+enum _DiscoverySuggestionDialogAction { cancel, chooseLocation, save }
+
+class _DiscoverySuggestionGeometry {
+  const _DiscoverySuggestionGeometry({
+    required this.point,
+    this.geometryPoints,
+  });
+
+  final GeoPoint point;
+  final List<GeoPoint>? geometryPoints;
+}
+
+class _DiscoverySuggestionPickerRequest {
+  const _DiscoverySuggestionPickerRequest({
+    required this.prompt,
+    required this.confirmLabel,
+    required this.completer,
+  });
+
+  final String prompt;
+  final String confirmLabel;
+  final Completer<GeoPoint?> completer;
 }
 
 enum _MapAction {

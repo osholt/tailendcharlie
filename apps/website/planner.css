@@ -979,6 +979,64 @@
   pointer-events: none;
 }
 
+.planner-map-shell.is-picking-suggestion .map-instructions {
+  display: none;
+}
+
+.planner-map-shell.is-picking-suggestion .maplibregl-canvas {
+  cursor: crosshair;
+}
+
+.suggestion-map-picker {
+  position: absolute;
+  z-index: 5;
+  right: 50%;
+  bottom: 24px;
+  display: flex;
+  width: min(620px, calc(100% - 32px));
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  transform: translateX(50%);
+  border: 1px solid rgba(253, 245, 240, 0.24);
+  border-radius: 14px;
+  padding: 13px 14px;
+  background: rgba(18, 20, 29, 0.94);
+  box-shadow: 0 12px 38px rgba(4, 5, 10, 0.42);
+  backdrop-filter: blur(14px);
+}
+
+.suggestion-map-picker[hidden] {
+  display: none;
+}
+
+.suggestion-map-picker p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.suggestion-map-picker-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.55rem;
+}
+
+.suggestion-map-picker button {
+  border: 1px solid rgba(177, 158, 207, 0.4);
+  border-radius: 9px;
+  padding: 0.62rem 0.8rem;
+  background: #30233f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.suggestion-map-picker button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 .map-expand-button {
   top: 15px;
   right: 15px;
@@ -1675,6 +1733,17 @@
   .suggestion-location {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .suggestion-map-picker {
+    bottom: 16px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .suggestion-map-picker-actions,
+  .suggestion-map-picker-actions button {
+    flex: 1;
   }
 }
 
