@@ -11,6 +11,7 @@ import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/map_style_mode.dart';
+import '../../domain/rider_location.dart';
 import '../../domain/route_authority.dart';
 import '../../services/device_location_source.dart';
 import '../map/ride_map_feature.dart';
@@ -121,6 +122,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   late final ValueNotifier<route_domain.GeoPoint?> _position =
       widget.position ?? ValueNotifier<route_domain.GeoPoint?>(null);
   late final bool _ownsPosition = widget.position == null;
+  final ValueNotifier<MapNavigationPosition?> _navigationPosition =
+      ValueNotifier<MapNavigationPosition?>(null);
   ForegroundLocationController? _location;
   bool _ownsLocationController = false;
   bool _requesting = false;
@@ -139,11 +142,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       _ownsLocationController = true;
       _location = ForegroundLocationController(
         DeviceLocationSource(),
-        (sample) async => _position.value = route_domain.GeoPoint(
-          latitude: sample.position.latitude,
-          longitude: sample.position.longitude,
-          recordedAt: sample.recordedAt,
-        ),
+        (sample) async => _acceptLocationSample(sample),
       );
     }
     final location = _location;
@@ -156,7 +155,38 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   }
 
   void _handleLocationChanged() {
+    final sample = _location?.activeSample;
+    if (sample != null &&
+        _navigationPosition.value?.recordedAt != sample.recordedAt) {
+      _acceptLocationSample(sample);
+    }
     if (mounted) setState(() {});
+  }
+
+  /// Keeps the complete foreground fix for navigation while publishing the
+  /// plain point Home uses for destination planning.
+  ///
+  /// Free roam used to discard speed, heading and accuracy here. The map could
+  /// still place the bike, but every navigation instrument then saw no fix at
+  /// all: live speed stayed at a dash, the posted limit could not move to the
+  /// next road, and the marker stayed on its initial bearing (#655).
+  void _acceptLocationSample(LocationSample sample) {
+    final point = route_domain.GeoPoint(
+      latitude: sample.position.latitude,
+      longitude: sample.position.longitude,
+      recordedAt: sample.recordedAt,
+    );
+    _navigationPosition.value = MapNavigationPosition(
+      point: point,
+      recordedAt: sample.recordedAt,
+      speedMetersPerSecond: sample.speedMetersPerSecond,
+      headingDegrees: sample.headingDegrees,
+      accuracyMeters: sample.accuracyMeters,
+    );
+    // Published second: `_position` also drives this State's listener, which
+    // must see the matching navigation fix already installed rather than
+    // recursively accepting the same native sample.
+    _position.value = point;
   }
 
   Future<void> _requestLocation() async {
@@ -190,6 +220,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     _position.removeListener(_handleLocationChanged);
     _location?.removeListener(_handleLocationChanged);
     if (_ownsLocationController) _location?.dispose();
+    _navigationPosition.dispose();
     // Not ours to dispose when the screen above owns it.
     if (_ownsPosition) _position.dispose();
     super.dispose();
@@ -224,6 +255,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
           RideMapFeature.fromEnvironment(
             key: const Key('home-map'),
             currentPosition: _position,
+            navigationPosition: _navigationPosition,
             completedRideStore: widget.completedRideStore,
             globalRideHeatmap: widget.globalRideHeatmap,
             darkMapStyle: widget.mapStyleMode.resolveDark(
