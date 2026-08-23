@@ -1,6 +1,7 @@
 export 'ride_map_feature.dart'
     show
         MapNavigationPosition,
+        NavigationMapOrientation,
         MapJunctionMarkerOverlay,
         MapJunctionMarkerStage,
         MapEmergencyContact,
@@ -21,6 +22,7 @@ export 'ride_map_feature.dart'
         motorcycleDiscoveryVisibleAtZoom,
         personalHeatmapContinuousMinimumZoom,
         personalHeatmapUsesContinuousCells,
+        navigationCameraBearingFor,
         portraitNavigationHeaderTopOffset,
         portraitRideMenuTopOffset,
         portraitBottomChromeKey,

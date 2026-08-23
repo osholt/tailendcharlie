@@ -1213,6 +1213,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   final Set<String> _dismissedQuickMessageReceipts = {};
   String? _acknowledgingQuickMessageId;
   double _cameraBearingDegrees = 0;
+  NavigationMapOrientation _mapOrientation =
+      NavigationMapOrientation.directionOfTravel;
   final NavigationHeadingSmoother _headingSmoother =
       NavigationHeadingSmoother();
   // The map viewport and the bottom chrome band are measured from the last laid
@@ -2860,6 +2862,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 bearingDegrees: bearing,
                 diameter: 58,
                 darkMap: _basemap.dark,
+                orientation: _mapOrientation,
+                onTap: _toggleMapOrientation,
               ),
             );
       final speedCluster = speedLimit == null
@@ -3527,7 +3531,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 height: 38,
                 child: _CurrentPositionMarker(
                   // The marker follows the bike, not the plan (#124).
-                  navigationMode: _isMoving,
+                  mapHeadingUp:
+                      _mapOrientation ==
+                      NavigationMapOrientation.directionOfTravel,
                   headingDegrees: _lastHeadingDegrees,
                   style: widget.localMotorcycleStyle,
                   symbol: widget.localRiderSymbol,
@@ -3726,6 +3732,39 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _navigationFix?.speedMetersPerSecond;
     if (speed != null && speed.isFinite) return speed;
     return _isMoving ? _headingSmoother.freezeBelowMetersPerSecond : 0;
+  }
+
+  double get _navigationCameraBearingDegrees => navigationCameraBearingFor(
+    orientation: _mapOrientation,
+    travelBearingDegrees: _cameraBearingDegrees,
+  );
+
+  void _toggleMapOrientation() {
+    setState(() {
+      _mapOrientation = switch (_mapOrientation) {
+        NavigationMapOrientation.northUp =>
+          NavigationMapOrientation.directionOfTravel,
+        NavigationMapOrientation.directionOfTravel =>
+          NavigationMapOrientation.northUp,
+      };
+      if (_effectivePosition != null) {
+        // Orientation is independent of following. Keep the rider anchored
+        // while the compass changes the frame from north-up to heading-up or
+        // back again (#656).
+        _navigationMode = true;
+        _navigationCanvasActive = true;
+        _autoFollowSuppressed = false;
+        _releaseNavigationViewport();
+      }
+    });
+    if (_navigationMode && _effectivePosition != null) {
+      unawaited(
+        _followNavigationCamera(
+          force: true,
+          transitionDuration: const Duration(milliseconds: 450),
+        ),
+      );
+    }
   }
 
   /// Restarts the silence window. Called for **every** fix, with or without a
@@ -4850,6 +4889,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // did. The same framing is what "Follow me" is measured against (#133).
     final framing = _followCameraFraming(position);
     final cameraPlan = framing.plan;
+    final cameraBearing = _navigationCameraBearingDegrees;
     final cameraDuration = transitionDuration ?? _cameraTransitionDuration;
     // Recorded before the camera is driven, so the arrival test compares the map
     // against what this app actually asked for rather than against a framing
@@ -4861,7 +4901,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         longitude: framing.target.longitude,
         zoom: cameraPlan.zoom,
         tilt: _basemap.usesMapLibre ? cameraPlan.tilt : 0,
-        bearing: _cameraBearingDegrees,
+        bearing: cameraBearing,
         sourceViewportHeightPixels: _mapViewportHeightPixels,
         sourceViewportWidthPixels: _mapViewportWidthPixels,
         riderViewportFraction: cameraPlan.riderViewportFraction,
@@ -4883,7 +4923,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       longitude: framing.target.longitude,
       zoom: cameraPlan.zoom,
       tilt: cameraPlan.tilt,
-      bearing: _cameraBearingDegrees,
+      bearing: cameraBearing,
     )) {
       return;
     }
@@ -4904,7 +4944,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
               ),
               zoom: cameraPlan.zoom,
               tilt: cameraPlan.tilt,
-              bearing: _cameraBearingDegrees,
+              bearing: cameraBearing,
             ),
           ),
           duration: cameraDuration,
@@ -4921,7 +4961,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _mapController.moveAndRotateAnimatedRaw(
         _latLng(framing.target),
         cameraPlan.zoom,
-        _cameraBearingDegrees,
+        cameraBearing,
         offset: Offset.zero,
         duration: cameraDuration,
         curve: transitionDuration == null
@@ -5326,6 +5366,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
           iconSize: widget.localRiderSymbol.kind == RiderSymbolKind.initials
               ? riderInitialsIconSize(badgeDiameter: _localBadgeRadius * 2)
               : 0.2,
+          iconRotate: ['get', 'bearing'],
+          iconRotationAlignment: 'map',
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -5870,7 +5912,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
     return MapGeoJson.points(
       point == null
           ? const <MapGeoJsonPoint>[]
-          : [MapGeoJsonPoint(id: 'current-position', point: point)],
+          : [
+              MapGeoJsonPoint(
+                id: 'current-position',
+                point: point,
+                properties: {'bearing': _lastHeadingDegrees},
+              ),
+            ],
     );
   }
 
@@ -7848,6 +7896,15 @@ class MapNavigationPosition {
     accuracyMeters,
   );
 }
+
+enum NavigationMapOrientation { northUp, directionOfTravel }
+
+@visibleForTesting
+double navigationCameraBearingFor({
+  required NavigationMapOrientation orientation,
+  required double travelBearingDegrees,
+}) =>
+    orientation == NavigationMapOrientation.northUp ? 0 : travelBearingDegrees;
 
 enum MapJunctionMarkerStage { waitingForRiders, tecApproaching, readyToRideOff }
 
@@ -10581,58 +10638,69 @@ class _RideCompass extends StatelessWidget {
     required this.bearingDegrees,
     required this.diameter,
     required this.darkMap,
+    required this.orientation,
+    required this.onTap,
   });
 
   final double bearingDegrees;
   final double diameter;
   final bool darkMap;
+  final NavigationMapOrientation orientation;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) => Semantics(
     key: const Key('ride-compass-position'),
-    label: 'Map heading ${bearingDegrees.round()} degrees',
+    label:
+        'Map heading ${bearingDegrees.round()} degrees. '
+        '${orientation == NavigationMapOrientation.northUp ? 'North up. Tap for direction of travel.' : 'Direction of travel. Tap for north up.'}',
+    button: true,
     excludeSemantics: true,
-    child: Container(
-      width: diameter,
-      height: diameter,
-      decoration: BoxDecoration(
-        color: darkMap ? const Color(0xD9252E39) : const Color(0xE6FFFFFF),
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: darkMap ? const Color(0xFF8993A0) : const Color(0xFF30343B),
-          width: 2,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x66000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        width: diameter,
+        height: diameter,
+        decoration: BoxDecoration(
+          color: darkMap ? const Color(0xD9252E39) : const Color(0xE6FFFFFF),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: darkMap ? const Color(0xFF8993A0) : const Color(0xFF30343B),
+            width: 2,
           ),
-        ],
-      ),
-      child: Transform.rotate(
-        angle: -bearingDegrees * math.pi / 180,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Positioned(
-              top: 6,
-              child: Text(
-                'N',
-                style: TextStyle(
-                  color: darkMap ? Colors.white : Colors.black,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  height: 1,
-                ),
-              ),
-            ),
-            Icon(
-              Icons.navigation,
-              size: diameter * 0.42,
-              color: const Color(0xFFD9304F),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 8,
+              offset: Offset(0, 2),
             ),
           ],
+        ),
+        child: Transform.rotate(
+          angle: -bearingDegrees * math.pi / 180,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Positioned(
+                top: 6,
+                child: Text(
+                  'N',
+                  style: TextStyle(
+                    color: darkMap ? Colors.white : Colors.black,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    height: 1,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.navigation,
+                size: diameter * 0.42,
+                color: const Color(0xFFD9304F),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -11617,7 +11685,7 @@ class _DownloadProgress extends StatelessWidget {
 
 class _CurrentPositionMarker extends StatelessWidget {
   const _CurrentPositionMarker({
-    required this.navigationMode,
+    required this.mapHeadingUp,
     required this.headingDegrees,
     required this.style,
     required this.symbol,
@@ -11625,7 +11693,7 @@ class _CurrentPositionMarker extends StatelessWidget {
     required this.badgeColor,
   });
 
-  final bool navigationMode;
+  final bool mapHeadingUp;
   final double headingDegrees;
   final MotorcycleIconStyle style;
   final RiderSymbol symbol;
@@ -11637,7 +11705,7 @@ class _CurrentPositionMarker extends StatelessWidget {
     // The badge circle is rotation-symmetric, so only the bike glyph inside
     // visibly turns - this keeps showing heading without the odd look a
     // rotating non-circular marker would have.
-    angle: navigationMode || symbol.kind != RiderSymbolKind.motorcycle
+    angle: mapHeadingUp || symbol.kind != RiderSymbolKind.motorcycle
         ? 0
         : headingDegrees * math.pi / 180,
     child: DecoratedBox(

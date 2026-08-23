@@ -6,6 +6,7 @@ import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/geo_point.dart' as rider_domain;
 import 'package:ride_relay/controllers/shared_route_controller.dart'
     show PendingInAppRoute;
 import 'package:ride_relay/domain/imported_route.dart'
@@ -101,6 +102,61 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(platform.permissionRequests, 0);
+  });
+
+  testWidgets('free roam preserves the complete navigation fix (#655)', (
+    tester,
+  ) async {
+    final platform = _RecordingLocationPlatform(
+      granted: DeviceLocationPermission.always,
+    );
+    addTearDown(platform.closeStreams);
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HomeMapBackdrop(
+            mapStyleMode: mapStyleMode,
+            speedLimitDisplay: speedLimitDisplay,
+            distanceUnit: DistanceUnit.kilometres,
+            locationController: location,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final recordedAt = DateTime.utc(2026, 8, 23, 14, 30);
+    platform.emit(
+      LocationSample(
+        position: const rider_domain.GeoPoint(
+          latitude: 51.46765,
+          longitude: -2.50679,
+        ),
+        recordedAt: recordedAt,
+        accuracyMeters: 4.5,
+        speedMetersPerSecond: 13.25,
+        headingDegrees: 287,
+      ),
+    );
+    await tester.pump();
+
+    final map = tester.widget<RideMapFeature>(
+      find.byKey(const Key('home-map')),
+    );
+    final fix = map.navigationPosition?.value;
+    expect(fix, isNotNull);
+    expect(fix!.point.latitude, 51.46765);
+    expect(fix.point.longitude, -2.50679);
+    expect(fix.recordedAt, recordedAt);
+    expect(fix.speedMetersPerSecond, 13.25);
+    expect(fix.headingDegrees, 287);
+    expect(fix.accuracyMeters, 4.5);
   });
   testWidgets('the free-roam map is the rider\'s own, not a follower\'s (#576)', (
     tester,
@@ -446,6 +502,12 @@ class _RecordingLocationPlatform implements DeviceLocationPlatform {
     final controller = StreamController<LocationSample>();
     _streams.add(controller);
     return controller.stream;
+  }
+
+  void emit(LocationSample sample) {
+    for (final controller in _streams) {
+      controller.add(sample);
+    }
   }
 
   Future<void> closeStreams() async {

@@ -113,6 +113,26 @@ void main() {
     expect(source, contains('compassEnabled: false'));
     expect(source, contains("Key('speed-compass-cluster')"));
     expect(source, contains("Key('ride-compass-position')"));
+    expect(source, contains("properties: {'bearing': _lastHeadingDegrees}"));
+    expect(source, contains("iconRotate: ['get', 'bearing']"));
+    expect(source, contains("iconRotationAlignment: 'map'"));
+  });
+
+  test('the compass mode selects north-up or direction of travel (#656)', () {
+    expect(
+      navigationCameraBearingFor(
+        orientation: NavigationMapOrientation.northUp,
+        travelBearingDegrees: 287,
+      ),
+      0,
+    );
+    expect(
+      navigationCameraBearingFor(
+        orientation: NavigationMapOrientation.directionOfTravel,
+        travelBearingDegrees: 287,
+      ),
+      287,
+    );
   });
 
   test('the group mini-map does not repeat the provider banner', () {
@@ -1688,6 +1708,69 @@ void main() {
     // finish before the tree is torn down, or the map is disposed with an active
     // ticker.
     await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('tapping the compass toggles its orientation mode (#656)', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('map-compass-mode');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final now = DateTime.utc(2026, 8, 23, 15);
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.46765, longitude: -2.50679),
+        recordedAt: now,
+        accuracyMeters: 4,
+        headingDegrees: 287,
+        speedMetersPerSecond: 12,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+      provider: _WidgetSpeedLimitProvider(),
+      clock: () => now,
+    );
+    addTearDown(speedLimitDisplay.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          speedLimitDisplay: speedLimitDisplay,
+        ),
+      ),
+    );
+    await tester.pump();
+    await speedLimitDisplay.waitForIdle();
+    await tester.pumpAndSettle();
+
+    Semantics compass() => tester.widget<Semantics>(
+      find.byKey(const Key('ride-compass-position')),
+    );
+    expect(compass().properties.label, contains('Direction of travel'));
+    expect(compass().properties.label, contains('Tap for north up'));
+
+    await tester.tap(find.byKey(const Key('ride-compass-position')));
+    await tester.pumpAndSettle();
+    expect(compass().properties.label, contains('North up'));
+    expect(compass().properties.label, contains('Tap for direction of travel'));
+
+    await tester.tap(find.byKey(const Key('ride-compass-position')));
+    await tester.pumpAndSettle();
+    expect(compass().properties.label, contains('Direction of travel'));
+
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
