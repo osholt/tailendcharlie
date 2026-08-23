@@ -426,6 +426,7 @@ class _HomeScreenState extends State<HomeScreen> {
           HomeMapBackdrop(
             mapStyleMode: widget.mapStyleMode,
             speedLimitDisplay: widget.speedLimitDisplay,
+            spokenGuidance: widget.spokenGuidance,
             distanceUnit: widget.distanceUnits.value,
             completedRideStore: widget.completedRides,
             globalRideHeatmap: widget.globalRideHeatmap,

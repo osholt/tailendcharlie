@@ -10,6 +10,7 @@ import 'package:ride_relay/controllers/ride_controller.dart';
 import 'package:ride_relay/controllers/rider_profile_controller.dart';
 import 'package:ride_relay/controllers/shared_route_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
+import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
@@ -46,6 +47,7 @@ void main() {
   late SharedRouteController sharedRoutes;
   late SpeedLimitDisplayController speedLimitDisplay;
   late CompletedRidesController completedRides;
+  late SpokenGuidanceController spokenGuidance;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(const {});
@@ -70,6 +72,7 @@ void main() {
     completedRides = await CompletedRidesController.load(
       _EmptyCompletedRideStore(),
     );
+    spokenGuidance = SpokenGuidanceController.inMemory(enabled: true);
   });
 
   tearDown(() {
@@ -81,6 +84,7 @@ void main() {
     sharedRoutes.dispose();
     speedLimitDisplay.dispose();
     completedRides.dispose();
+    spokenGuidance.dispose();
   });
 
   Future<void> pumpHome(WidgetTester tester) async {
@@ -95,6 +99,7 @@ void main() {
           riderProfile: riderProfile,
           sharedRoutes: sharedRoutes,
           speedLimitDisplay: speedLimitDisplay,
+          spokenGuidance: spokenGuidance,
           recordedRoutes: InMemoryRecordedRouteStore(),
           completedRides: completedRides,
           // The home map backdrop is live in production. Without this it would
@@ -106,6 +111,15 @@ void main() {
     );
     await tester.pump();
   }
+
+  testWidgets('the home map receives the rider\'s spoken-guidance setting', (
+    tester,
+  ) async {
+    await pumpHome(tester);
+
+    final map = tester.widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop));
+    expect(identical(map.spokenGuidance, spokenGuidance), isTrue);
+  });
 
   testWidgets('a set-aside running ride remains reachable from the top bar', (
     tester,
