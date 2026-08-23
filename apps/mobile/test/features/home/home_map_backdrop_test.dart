@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
+import 'package:ride_relay/controllers/ride_diagnostics_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
@@ -18,8 +19,10 @@ import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
 import 'package:ride_relay/features/map/ride_map_feature.dart';
 import 'package:ride_relay/domain/route_authority.dart';
+import 'package:ride_relay/data/ride_diagnostics_log_store.dart';
 import 'package:ride_relay/services/device_location_source.dart';
 import 'package:ride_relay/services/navigation_guidance.dart';
+import 'package:ride_relay/services/ride_diagnostics_configuration.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -177,6 +180,19 @@ void main() {
     );
     addTearDown(location.dispose);
     final archive = InMemoryCompletedRideStore();
+    final diagnosticsStore = _BlockingDiagnosticsStore();
+    addTearDown(diagnosticsStore.release);
+    final diagnostics = RideDiagnosticsController.inMemory(
+      switchedOn: true,
+      logStore: diagnosticsStore,
+    );
+    addTearDown(diagnostics.dispose);
+    final spokenEngine = _RecordingSpokenEngine();
+    final spokenGuidance = SpokenGuidanceController.inMemory(
+      enabled: true,
+      engine: () => spokenEngine,
+    );
+    addTearDown(spokenGuidance.dispose);
     CompletedRide? archived;
     var navigating = false;
 
@@ -188,6 +204,8 @@ void main() {
             speedLimitDisplay: speedLimitDisplay,
             distanceUnit: DistanceUnit.kilometres,
             locationController: location,
+            rideDiagnostics: diagnostics,
+            spokenGuidance: spokenGuidance,
             completedRideStore: archive,
             localDisplayName: 'Oliver',
             navigating: navigating,
@@ -249,10 +267,40 @@ void main() {
     );
     await tester.pump();
 
+    const maneuver = RouteManeuver(
+      position: GeoPoint(latitude: 51.4615, longitude: -2.5060),
+      type: 'turn',
+      modifier: 'left',
+      name: 'Station Road',
+    );
+    const guidance = NavigationGuidance(
+      maneuver: maneuver,
+      distanceMeters: 20,
+      instruction: ManeuverInstruction(
+        maneuver: maneuver,
+        kind: ManeuverKind.turn,
+        direction: ManeuverDirection.left,
+        text: 'Turn left',
+        standaloneText: 'Turn left onto Station Road',
+      ),
+    );
+    tester
+        .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+        .onNavigationGuidanceChanged!(guidance);
+    await tester.pump();
+
     tester
         .widget<RideMapFeature>(find.byKey(const Key('home-map')))
         .onRouteChanged!(null);
     await tester.pump();
+    if (RideDiagnosticsConfiguration.enabled) {
+      expect(
+        archived,
+        isNull,
+        reason: 'the archive callback waits until diagnostics are durable',
+      );
+    }
+    diagnosticsStore.release();
     await tester.pump(const Duration(seconds: 1));
 
     final stored = await archive.list();
@@ -260,6 +308,108 @@ void main() {
     expect(stored.single.title, 'To Tuckers Grave');
     expect(stored.single.traveledRoute?.paths.single.points, hasLength(2));
     expect(identical(archived, stored.single), isTrue);
+    final logs = await diagnosticsStore.list();
+    if (RideDiagnosticsConfiguration.enabled) {
+      expect(logs, hasLength(1));
+      expect(logs.single.rideId, stored.single.rideId);
+      expect(logs.single.text, contains('Ride:  PERSONAL'));
+      expect(logs.single.text, contains('personal navigation started'));
+      expect(logs.single.text, contains('LOCATION'));
+      expect(logs.single.text, contains('speed 10.0 m/s (22 mph)'));
+      expect(logs.single.text, contains('MANOEUVRE'));
+      expect(logs.single.text, contains('SPOKEN'));
+      expect(logs.single.text, contains('personal navigation completed'));
+    } else {
+      expect(logs, isEmpty);
+    }
+  });
+
+  testWidgets('diagnostics enabled mid-navigation attach to that navigation', (
+    tester,
+  ) async {
+    final diagnosticsStore = InMemoryRideDiagnosticsLogStore();
+    final diagnostics = RideDiagnosticsController.inMemory(
+      switchedOn: false,
+      logStore: diagnosticsStore,
+    );
+    addTearDown(diagnostics.dispose);
+    if (!RideDiagnosticsConfiguration.enabled) {
+      expect(diagnostics.isOn, isFalse);
+      return;
+    }
+    final platform = _RecordingLocationPlatform(
+      granted: DeviceLocationPermission.always,
+    );
+    addTearDown(platform.closeStreams);
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeMapBackdrop(
+          mapStyleMode: mapStyleMode,
+          speedLimitDisplay: speedLimitDisplay,
+          distanceUnit: DistanceUnit.kilometres,
+          locationController: location,
+          rideDiagnostics: diagnostics,
+          completedRideStore: InMemoryCompletedRideStore(),
+          navigating: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    final map = tester.widget<RideMapFeature>(
+      find.byKey(const Key('home-map')),
+    );
+    map.onRouteChanged!(
+      ImportedRoute(
+        id: 'late-diagnostics-route',
+        name: 'Late diagnostics route',
+        importedAt: DateTime.utc(2026, 8, 23),
+        sourceFileName: 'where-to.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.route,
+            points: [
+              GeoPoint(latitude: 51.4627, longitude: -2.5084),
+              GeoPoint(latitude: 51.2949, longitude: -2.3579),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      ),
+    );
+    await diagnostics.setEnabled(true);
+    await tester.pump();
+    platform.emit(
+      LocationSample(
+        position: const rider_domain.GeoPoint(
+          latitude: 51.4627,
+          longitude: -2.5084,
+        ),
+        recordedAt: DateTime.utc(2026, 8, 23, 11),
+        accuracyMeters: 5,
+        speedMetersPerSecond: 8,
+        headingDegrees: 90,
+      ),
+    );
+    await tester.pump();
+    tester
+        .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+        .onRouteChanged!(null);
+    await tester.pump(const Duration(seconds: 1));
+
+    final logs = await diagnosticsStore.list();
+    expect(logs, hasLength(1));
+    expect(
+      logs.single.text,
+      contains('recording started during an active personal navigation'),
+    );
+    expect(logs.single.text, contains('LOCATION'));
+    expect(logs.single.text, contains('personal navigation completed'));
   });
 
   testWidgets('free-roam navigation speaks the guidance shown on the map', (
@@ -635,6 +785,30 @@ class _RecordingSpokenEngine implements SpokenGuidanceEngine {
 
   @override
   Future<void> stop() async {}
+}
+
+class _BlockingDiagnosticsStore implements RideDiagnosticsLogStore {
+  final _inner = InMemoryRideDiagnosticsLogStore();
+  final _release = Completer<void>();
+
+  void release() {
+    if (!_release.isCompleted) _release.complete();
+  }
+
+  @override
+  Future<void> write({required String rideId, required String text}) async {
+    await _release.future;
+    await _inner.write(rideId: rideId, text: text);
+  }
+
+  @override
+  Future<String?> read(String rideId) => _inner.read(rideId);
+
+  @override
+  Future<List<RideDiagnosticsLog>> list() => _inner.list();
+
+  @override
+  Future<RideDiagnosticsLog?> latest() => _inner.latest();
 }
 
 /// Records that the backdrop asked for a restart, without standing up the

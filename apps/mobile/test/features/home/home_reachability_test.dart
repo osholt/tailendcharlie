@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/completed_rides_controller.dart';
 import 'package:ride_relay/controllers/distance_unit_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
+import 'package:ride_relay/controllers/ride_diagnostics_controller.dart';
 import 'package:ride_relay/controllers/ride_code_preference_controller.dart';
 import 'package:ride_relay/controllers/ride_controller.dart';
 import 'package:ride_relay/controllers/rider_profile_controller.dart';
@@ -13,6 +14,7 @@ import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
+import 'package:ride_relay/data/ride_diagnostics_log_store.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/imported_route.dart';
@@ -88,7 +90,10 @@ void main() {
     spokenGuidance.dispose();
   });
 
-  Future<void> pumpHome(WidgetTester tester) async {
+  Future<void> pumpHome(
+    WidgetTester tester, {
+    RideDiagnosticsController? rideDiagnostics,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
@@ -101,6 +106,7 @@ void main() {
           sharedRoutes: sharedRoutes,
           speedLimitDisplay: speedLimitDisplay,
           spokenGuidance: spokenGuidance,
+          rideDiagnostics: rideDiagnostics,
           recordedRoutes: InMemoryRecordedRouteStore(),
           completedRides: completedRides,
           // The home map backdrop is live in production. Without this it would
@@ -120,6 +126,19 @@ void main() {
 
     final map = tester.widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop));
     expect(identical(map.spokenGuidance, spokenGuidance), isTrue);
+  });
+
+  testWidgets('the home map receives the diagnostics lifecycle controller', (
+    tester,
+  ) async {
+    final diagnostics = RideDiagnosticsController.inMemory(
+      logStore: InMemoryRideDiagnosticsLogStore(),
+    );
+    addTearDown(diagnostics.dispose);
+    await pumpHome(tester, rideDiagnostics: diagnostics);
+
+    final map = tester.widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop));
+    expect(identical(map.rideDiagnostics, diagnostics), isTrue);
   });
 
   testWidgets('a set-aside running ride remains reachable from the top bar', (
@@ -153,7 +172,20 @@ void main() {
   testWidgets('a saved Where To ride offers its existing export screen', (
     tester,
   ) async {
-    await pumpHome(tester);
+    final diagnosticsStore = InMemoryRideDiagnosticsLogStore();
+    await diagnosticsStore.write(
+      rideId: 'free-roam-test',
+      text:
+          'Tail End Charlie · ride diagnostics\n'
+          'Ride:  PERSONAL\n'
+          'Written: 2026-08-23T11:00:00.000Z\n\n'
+          'navigation complete',
+    );
+    final diagnostics = RideDiagnosticsController.inMemory(
+      logStore: diagnosticsStore,
+    );
+    addTearDown(diagnostics.dispose);
+    await pumpHome(tester, rideDiagnostics: diagnostics);
     final ride = CompletedRide(
       rideId: 'free-roam-test',
       rideCode: 'PERSONAL',
@@ -179,6 +211,10 @@ void main() {
     expect(find.text('Navigation saved'), findsOneWidget);
     expect(find.textContaining('export the recorded GPX'), findsOneWidget);
     expect(find.byKey(const Key('open-saved-navigation')), findsOneWidget);
+    expect(
+      find.byKey(const Key('share-saved-navigation-diagnostics')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('starting a ride is offered in words on the first screen', (

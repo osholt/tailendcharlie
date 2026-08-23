@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
+import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
@@ -16,14 +17,18 @@ import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/map_style_mode.dart';
 import '../../domain/rider_location.dart';
 import '../../domain/route_authority.dart';
+import '../../internet/internet_relay_client.dart';
 import '../../services/device_location_source.dart';
 import '../../services/free_roam_ride_recorder.dart';
 import '../../services/geo_calculations.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
+import '../../services/ride_diagnostics_log_writer.dart';
+import '../../services/ride_diagnostics_recorder.dart';
 import '../../services/spoken_audio_mode.dart';
 import '../../services/spoken_guidance.dart';
 import '../../services/spoken_guidance_schedule.dart';
+import '../map/maneuver_diagnostics.dart';
 import '../map/ride_map_feature.dart';
 
 /// The live map the app opens on (#405).
@@ -45,6 +50,7 @@ class HomeMapBackdrop extends StatefulWidget {
     required this.speedLimitDisplay,
     required this.distanceUnit,
     this.spokenGuidance,
+    this.rideDiagnostics,
     this.enableNativeServices = true,
     this.locationController,
     this.bottomInset = 0,
@@ -80,6 +86,7 @@ class HomeMapBackdrop extends StatefulWidget {
   final MapStyleModeController mapStyleMode;
   final SpeedLimitDisplayController speedLimitDisplay;
   final SpokenGuidanceController? spokenGuidance;
+  final RideDiagnosticsController? rideDiagnostics;
   final DistanceUnit distanceUnit;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -150,6 +157,9 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   String? _guidanceManeuverIdentity;
   route_domain.GeoPoint? _passedManeuverPosition;
   route_domain.GeoPoint? _lastGuidanceManeuverPosition;
+  RideDiagnosticsRecorder? _diagnostics;
+  RideDiagnosticsLogWriter? _diagnosticsWriter;
+  String? _diagnosticsRideId;
   ForegroundLocationController? _location;
   bool _ownsLocationController = false;
   bool _requesting = false;
@@ -176,11 +186,12 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     }
     if (widget.enableNativeServices && widget.spokenGuidance != null) {
       _spokenGuidance = SpokenGuidanceSpeaker(
-        widget.spokenGuidance!.createEngine(),
+        widget.spokenGuidance!.createEngine(onOutput: _recordSpeechOutput),
       );
       widget.spokenGuidance!.addListener(_onSpokenGuidanceChanged);
       unawaited(_warmNaturalVoiceIfNeeded());
     }
+    widget.rideDiagnostics?.addListener(_onRideDiagnosticsChanged);
     final location = _location;
     if (location != null) {
       location.addListener(_handleLocationChanged);
@@ -220,6 +231,16 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       accuracyMeters: sample.accuracyMeters,
     );
     _freeRoamRideRecorder.record(point);
+    _diagnostics?.observePosition(
+      point: awareness_geo.GeoPoint(
+        latitude: point.latitude,
+        longitude: point.longitude,
+      ),
+      headingDegrees: sample.headingDegrees,
+      recordedAt: sample.recordedAt,
+      speedMetersPerSecond: sample.speedMetersPerSecond,
+      accuracyMeters: sample.accuracyMeters,
+    );
     // Published second: `_position` also drives this State's listener, which
     // must see the matching navigation fix already installed rather than
     // recursively accepting the same native sample.
@@ -228,16 +249,38 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
 
   void _onRouteChanged(route_domain.ImportedRoute? route) {
     if (route != null) {
+      final starting = !_freeRoamRideRecorder.active;
       _freeRoamRideRecorder.start(route, initialPosition: _position.value);
+      if (starting) {
+        _startDiagnostics(late: false);
+      } else {
+        _diagnostics?.recordNote('personal navigation route updated');
+      }
       widget.onRouteChanged?.call(route);
       return;
     }
+    _diagnostics?.recordNote('personal navigation completed');
+    final diagnosticsWriter = _diagnosticsWriter;
+    _diagnostics = null;
+    _diagnosticsWriter = null;
+    _diagnosticsRideId = null;
     final completed = _freeRoamRideRecorder.finish();
     widget.onRouteChanged?.call(null);
-    if (completed != null) unawaited(_saveCompletedNavigation(completed));
+    if (completed != null) {
+      unawaited(
+        _saveCompletedNavigation(
+          completed,
+          diagnosticsWriter: diagnosticsWriter,
+        ),
+      );
+    }
   }
 
-  Future<void> _saveCompletedNavigation(CompletedRide completed) async {
+  Future<void> _saveCompletedNavigation(
+    CompletedRide completed, {
+    RideDiagnosticsLogWriter? diagnosticsWriter,
+  }) async {
+    await diagnosticsWriter?.flush();
     final store = widget.completedRideStore;
     if (store == null) return;
     try {
@@ -269,6 +312,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
         enabled: widget.navigating && controller.enabled && naturalEnabled,
       );
     } on Object catch (error, stackTrace) {
+      _diagnostics?.recordNote('Natural voice warm-up failed: $error');
       assert(() {
         debugPrint(
           'Natural voice warm-up failed in free roam: $error\n$stackTrace',
@@ -280,6 +324,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
 
   void _onNavigationGuidanceChanged(NavigationGuidance? guidance) {
     if (guidance == null || !widget.navigating) return;
+    _recordManoeuvreDiagnostics(guidance);
     final speaker = _spokenGuidance;
     final controller = widget.spokenGuidance;
     if (speaker == null || controller == null) return;
@@ -322,6 +367,10 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     );
     if (announcement == null) return;
     _spokenGuidanceKeys.add(announcement.key);
+    _diagnostics?.recordSpokenPrompt(
+      phrase: announcement.phrase,
+      distanceToManoeuvreMeters: guidance.distanceMeters,
+    );
     unawaited(
       speaker.speakManoeuvre(
         key: announcement.key,
@@ -330,6 +379,78 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
         rideActive: widget.navigating,
       ),
     );
+  }
+
+  void _recordSpeechOutput(String phrase, SpokenGuidanceOutput output) {
+    _diagnostics?.recordSpeechDelivery(phrase: phrase, output: output);
+  }
+
+  void _recordManoeuvreDiagnostics(NavigationGuidance guidance) {
+    final recorder = _diagnostics;
+    if (recorder == null) return;
+    final instruction = guidance.instruction;
+    recorder.recordManoeuvre(
+      key: instruction.maneuver.identity,
+      position: awareness_geo.GeoPoint(
+        latitude: instruction.maneuver.position.latitude,
+        longitude: instruction.maneuver.position.longitude,
+      ),
+      shownAs: instruction.direction.label,
+      diagnostics: maneuverDiagnosticsReport(instruction),
+    );
+  }
+
+  void _onRideDiagnosticsChanged() {
+    final recorder = _diagnostics;
+    if (widget.rideDiagnostics?.isOn == true) {
+      if (recorder == null && _freeRoamRideRecorder.active) {
+        _startDiagnostics(late: true);
+      } else if (recorder != null && !recorder.isRecording) {
+        recorder.resumeRecording();
+      }
+      return;
+    }
+    if (recorder?.isRecording == true) {
+      recorder!.stopRecording();
+      unawaited(_diagnosticsWriter?.flush());
+    }
+  }
+
+  void _startDiagnostics({required bool late}) {
+    if (widget.rideDiagnostics?.isOn != true) return;
+    final rideId = _freeRoamRideRecorder.activeRideId;
+    if (rideId == null) return;
+    _diagnosticsRideId = rideId;
+    _diagnostics = RideDiagnosticsRecorder(onEntry: _markDiagnosticsDirty);
+    _diagnostics!.recordNote(
+      late
+          ? 'recording started during an active personal navigation'
+          : 'personal navigation started',
+    );
+  }
+
+  void _markDiagnosticsDirty() {
+    (_diagnosticsWriter ??= _buildDiagnosticsWriter())?.markDirty();
+  }
+
+  RideDiagnosticsLogWriter? _buildDiagnosticsWriter() {
+    final store = widget.rideDiagnostics?.logStore;
+    final recorder = _diagnostics;
+    final rideId = _diagnosticsRideId;
+    if (store == null || recorder == null || rideId == null) return null;
+    return RideDiagnosticsLogWriter(
+      store: store,
+      rideId: rideId,
+      render: () => recorder.render(
+        rideCode: 'PERSONAL',
+        appBuild: _diagnosticsBuildLabel,
+      ),
+    );
+  }
+
+  static String get _diagnosticsBuildLabel {
+    final descriptor = RelayClientDescriptor.current();
+    return '${descriptor.appVersion}+${descriptor.appBuild}';
   }
 
   Future<void> _requestLocation() async {
@@ -353,8 +474,11 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (state != AppLifecycleState.resumed) return;
-    unawaited(_location?.restartAfterForegroundResume());
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_location?.restartAfterForegroundResume());
+    } else {
+      unawaited(_diagnosticsWriter?.flush());
+    }
   }
 
   @override
@@ -378,7 +502,9 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     _position.removeListener(_handleLocationChanged);
     _location?.removeListener(_handleLocationChanged);
     widget.spokenGuidance?.removeListener(_onSpokenGuidanceChanged);
+    widget.rideDiagnostics?.removeListener(_onRideDiagnosticsChanged);
     unawaited(_spokenGuidance?.stop());
+    unawaited(_diagnosticsWriter?.flush());
     if (_ownsLocationController) _location?.dispose();
     _navigationPosition.dispose();
     // Not ours to dispose when the screen above owns it.

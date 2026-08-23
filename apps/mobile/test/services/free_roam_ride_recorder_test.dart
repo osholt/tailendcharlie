@@ -17,6 +17,7 @@ void main() {
 
   test('turns a Where To navigation into an exportable completed ride', () {
     recorder.start(_route('To Tuckers Grave'));
+    expect(recorder.activeRideId, 'free-roam-test-id');
     recorder.record(_point(51.4627, -2.5084, now));
     now = now.add(const Duration(seconds: 10));
     recorder.record(_point(51.4627, -2.5064, now));
@@ -35,6 +36,7 @@ void main() {
     expect(ride.traveledRoute?.paths.single.points, hasLength(2));
     expect(ride.totalDistanceMeters, greaterThan(100));
     expect(recorder.active, isFalse);
+    expect(recorder.activeRideId, isNull);
   });
 
   test('keeps location outages as honest GPX gaps', () {

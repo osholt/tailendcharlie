@@ -32,16 +32,19 @@ class FreeRoamRideRecorder {
   final RiderTrailRecorder _trailRecorder;
 
   ImportedRoute? _plannedRoute;
+  String? _rideId;
   DateTime? _startedAt;
   GeoPoint? _lastAcceptedPoint;
   double _totalDistanceMeters = 0;
   int _sampleCount = 0;
 
   bool get active => _plannedRoute != null;
+  String? get activeRideId => _rideId;
 
   /// Starts recording, or updates the plan without splitting an underway trip.
   void start(ImportedRoute route, {GeoPoint? initialPosition}) {
     if (!active) {
+      _rideId = 'free-roam-${_idFactory()}';
       _startedAt = _clock();
       _trailRecorder.clear();
       _lastAcceptedPoint = null;
@@ -91,7 +94,7 @@ class FreeRoamRideRecorder {
         .continuousSegments(trail)
         .where((segment) => segment.length >= 2)
         .toList(growable: false);
-    final id = 'free-roam-${_idFactory()}';
+    final id = _rideId!;
     final travelled = segments.isEmpty
         ? null
         : ImportedRoute(
@@ -124,6 +127,7 @@ class FreeRoamRideRecorder {
       traveledRoute: travelled,
     );
     _plannedRoute = null;
+    _rideId = null;
     _startedAt = null;
     _lastAcceptedPoint = null;
     _totalDistanceMeters = 0;

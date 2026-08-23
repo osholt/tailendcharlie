@@ -32,6 +32,13 @@ class RideDiagnosticsConfiguration {
   /// many went, because a silently truncated record reads as a complete one.
   static const int maximumEntries = 4000;
 
+  /// A normal ride must leave enough location evidence to diagnose a frozen
+  /// speed, heading, or route without turning a three-hour ride into a
+  /// once-per-second location dump. The first fix is always written; later
+  /// fixes are sampled when either bound is crossed.
+  static const Duration locationSampleInterval = Duration(seconds: 30);
+  static const double locationSampleDistanceMeters = 500;
+
   /// How close to a manoeuvre a position sample must be to serve as the
   /// *approach* heading, and how far past it for the *departure* heading.
   ///
