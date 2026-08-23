@@ -143,13 +143,13 @@ void main() {
     expect(source, isNot(contains('OpenFreeMap · © OSM')));
   });
 
-  test('completed planned geometry is absent from both map renderers', () {
+  test('completed planned geometry is present in both map renderers', () {
     final source = File(
       'lib/features/map/ride_map_feature.dart',
     ).readAsStringSync();
 
-    expect(source, isNot(contains('_riddenRouteSource')));
-    expect(source, isNot(contains('_progressGeometry.riddenPaths')));
+    expect(source, contains('_riddenRouteSource'));
+    expect(source, contains('_progressGeometry.riddenPaths'));
     expect(source, contains('_progressGeometry.remainingPaths'));
     expect(source, contains('_trailPolylines(dashed: false)'));
     expect(
@@ -1712,6 +1712,64 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('free-roam fixes always draw the local travelled track', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'map-local-travelled-track-test',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final start = DateTime.utc(2026, 8, 23, 10);
+    final navigation = ValueNotifier<MapNavigationPosition?>(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.4600, longitude: -2.5000),
+        recordedAt: start,
+        speedMetersPerSecond: 8,
+        headingDegrees: 90,
+      ),
+    );
+    addTearDown(navigation.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 51.4600, longitude: -2.4990),
+      recordedAt: start.add(const Duration(seconds: 5)),
+      speedMetersPerSecond: 8,
+      headingDegrees: 90,
+    );
+    await tester.pump();
+
+    final layer = tester.widget<PolylineLayer>(find.byType(PolylineLayer));
+    final travelled = layer.polylines.singleWhere(
+      (line) => line.color == RouteTrailStyle.travelled.color,
+    );
+    expect(travelled.points, hasLength(2));
+    expect(travelled.points.first.longitude, -2.5000);
+    expect(travelled.points.last.longitude, -2.4990);
+
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('tapping the compass toggles its orientation mode (#656)', (
     tester,
   ) async {
@@ -1752,7 +1810,6 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
     await speedLimitDisplay.waitForIdle();
     await tester.pumpAndSettle();
 
@@ -3575,8 +3632,13 @@ void main() {
       expect(ahead.color.a, 1.0);
       expect(
         layer.polylines.map((line) => line.color),
-        isNot(contains(RouteTrailStyle.travelled.color)),
-        reason: 'completed planned route must not be painted behind the rider',
+        contains(RouteTrailStyle.travelled.color),
+        reason: 'completed planned route must remain visible behind the rider',
+      );
+      final travelled = lineWithColor(RouteTrailStyle.travelled.color);
+      expect(
+        layer.polylines.indexOf(travelled),
+        lessThan(layer.polylines.indexOf(ahead)),
       );
       // The leader's trail is the widest line and is drawn under the plan; an
       // off-route trail is dashed and drawn over it.
