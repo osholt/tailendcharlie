@@ -28,6 +28,7 @@ class RideDiagnosticsRecorder {
   final void Function()? onEntry;
   final List<String> _entries = [];
   final List<_PositionSample> _recentPositions = [];
+  _PositionSample? _lastWrittenPosition;
 
   /// Manoeuvres seen but not yet passed, keyed by the identity the guidance layer
   /// uses, so a manoeuvre re-derived on every position fix is not logged twice.
@@ -88,13 +89,41 @@ class RideDiagnosticsRecorder {
   void observePosition({
     required GeoPoint point,
     required double? headingDegrees,
+    DateTime? recordedAt,
+    double? speedMetersPerSecond,
+    double? accuracyMeters,
   }) {
-    _recentPositions.add(
-      _PositionSample(point: point, headingDegrees: headingDegrees),
+    if (!_recording) return;
+    final sample = _PositionSample(
+      point: point,
+      headingDegrees: headingDegrees,
+      recordedAt: recordedAt ?? _clock(),
     );
+    _recentPositions.add(sample);
     // Enough to reach back past a junction at speed, and no more.
     if (_recentPositions.length > 240) _recentPositions.removeAt(0);
+    if (_shouldWritePosition(sample)) {
+      _lastWrittenPosition = sample;
+      _add(
+        'LOCATION   ${_coordinate(point)}  '
+        'heading ${_degrees(headingDegrees)}  '
+        'speed ${_metersPerSecond(speedMetersPerSecond)}  '
+        'accuracy ${_meters(accuracyMeters)}',
+      );
+    }
     _resolvePassedManoeuvres();
+  }
+
+  bool _shouldWritePosition(_PositionSample sample) {
+    final previous = _lastWrittenPosition;
+    if (previous == null) return true;
+    final elapsed = sample.recordedAt.difference(previous.recordedAt);
+    if (!elapsed.isNegative &&
+        elapsed >= RideDiagnosticsConfiguration.locationSampleInterval) {
+      return true;
+    }
+    return GeoCalculations.distanceMeters(previous.point, sample.point) >=
+        RideDiagnosticsConfiguration.locationSampleDistanceMeters;
   }
 
   /// The app has decided this is the manoeuvre the rider is riding towards.
@@ -299,6 +328,13 @@ class RideDiagnosticsRecorder {
   static String _degrees(double? value) =>
       value == null ? '—' : '${value.toStringAsFixed(1)}°';
 
+  static String _metersPerSecond(double? value) => value == null
+      ? '—'
+      : '${value.toStringAsFixed(1)} m/s (${(value * 2.236936).round()} mph)';
+
+  static String _meters(double? value) =>
+      value == null ? '—' : '${value.toStringAsFixed(1)} m';
+
   static String _coordinate(GeoPoint point) =>
       '${point.latitude.toStringAsFixed(6)}, '
       '${point.longitude.toStringAsFixed(6)}';
@@ -322,10 +358,15 @@ class RideDiagnosticsRecorder {
 }
 
 class _PositionSample {
-  _PositionSample({required this.point, required this.headingDegrees});
+  _PositionSample({
+    required this.point,
+    required this.headingDegrees,
+    required this.recordedAt,
+  });
 
   final GeoPoint point;
   final double? headingDegrees;
+  final DateTime recordedAt;
 }
 
 class _PendingManoeuvre {

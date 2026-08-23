@@ -2396,6 +2396,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           ),
           headingDegrees:
               simulatedLocal?.headingDegrees ?? localMapSample?.headingDegrees,
+          recordedAt: navigationRecordedAt,
+          speedMetersPerSecond:
+              simulatedLocal?.speedMetersPerSecond ??
+              localMapSample?.speedMetersPerSecond,
+          accuracyMeters: localMapSample?.accuracyMeters,
         );
       }
       _mapNavigationPosition.value = mapPoint == null
@@ -3646,6 +3651,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   Future<void> _handleRideEnded() async {
     if (_rideEndHandled) return;
     _rideEndHandled = true;
+    _diagnostics?.recordNote('ride completed');
+    await _diagnosticsWriter?.flush();
     _stalenessTimer?.cancel();
     _externalHazardTimer?.cancel();
     _simulationAwarenessTimer?.cancel();

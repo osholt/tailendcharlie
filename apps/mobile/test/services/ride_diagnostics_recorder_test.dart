@@ -349,6 +349,84 @@ void main() {
     });
   });
 
+  group('a representative ride leaves bounded telemetry evidence', () {
+    test('writes the first fix with speed, heading and accuracy', () {
+      final at = DateTime.utc(2026, 8, 23, 10);
+      final recorder = RideDiagnosticsRecorder(clock: () => at);
+
+      recorder.observePosition(
+        point: const GeoPoint(latitude: 51.4627, longitude: -2.5084),
+        headingDegrees: 120,
+        recordedAt: at,
+        speedMetersPerSecond: 12,
+        accuracyMeters: 4.5,
+      );
+
+      final report = recorder.render();
+      expect(report, contains('LOCATION   51.462700, -2.508400'));
+      expect(report, contains('heading 120.0°'));
+      expect(report, contains('speed 12.0 m/s (27 mph)'));
+      expect(report, contains('accuracy 4.5 m'));
+    });
+
+    test('samples again by elapsed time without logging every fix', () {
+      final start = DateTime.utc(2026, 8, 23, 10);
+      final recorder = RideDiagnosticsRecorder(clock: () => start);
+
+      for (var seconds = 0; seconds <= 60; seconds += 5) {
+        recorder.observePosition(
+          point: GeoPoint(latitude: 51.4627, longitude: -2.5084),
+          headingDegrees: 120,
+          recordedAt: start.add(Duration(seconds: seconds)),
+          speedMetersPerSecond: 10,
+        );
+      }
+
+      expect(
+        recorder.entries.where((entry) => entry.contains('LOCATION')),
+        hasLength(3),
+      );
+    });
+
+    test('samples a large movement before the time interval', () {
+      final start = DateTime.utc(2026, 8, 23, 10);
+      final recorder = RideDiagnosticsRecorder(clock: () => start);
+      recorder.observePosition(
+        point: GeoPoint(latitude: 51.4627, longitude: -2.5084),
+        headingDegrees: 120,
+        recordedAt: start,
+      );
+      recorder.observePosition(
+        point: GeoPoint(latitude: 51.4680, longitude: -2.5084),
+        headingDegrees: 120,
+        recordedAt: start.add(const Duration(seconds: 5)),
+      );
+
+      expect(
+        recorder.entries.where((entry) => entry.contains('LOCATION')),
+        hasLength(2),
+      );
+    });
+
+    test('the off switch does not retain location samples', () {
+      final recorder = RideDiagnosticsRecorder(
+        clock: () => DateTime.utc(2026, 8, 23, 10),
+      );
+      recorder.stopRecording();
+      recorder.observePosition(
+        point: const GeoPoint(latitude: 51.4627, longitude: -2.5084),
+        headingDegrees: 120,
+        speedMetersPerSecond: 12,
+      );
+      recorder.resumeRecording();
+
+      expect(
+        recorder.entries.where((entry) => entry.contains('LOCATION')),
+        isEmpty,
+      );
+    });
+  });
+
   group('the record is bounded and says when it truncated', () {
     test('a long ride drops the oldest entries and reports how many', () {
       final recorder = RideDiagnosticsRecorder(
