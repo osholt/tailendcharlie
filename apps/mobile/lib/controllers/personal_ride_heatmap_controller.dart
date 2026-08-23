@@ -29,10 +29,32 @@ class PersonalRideHeatmapCell {
     const zoom = PersonalRideHeatmapBuilder.canonicalZoom;
     final scale = 1 << zoom;
     final longitude = (x + 0.5) / scale * 360 - 180;
-    final mercator = math.pi * (1 - 2 * (y + 0.5) / scale);
-    final sinh = (math.exp(mercator) - math.exp(-mercator)) / 2;
-    final latitude = math.atan(sinh) * 180 / math.pi;
+    final latitude = _latitudeAtTileY(y + 0.5, scale);
     return GeoPoint(latitude: latitude, longitude: longitude);
+  }
+
+  /// The exact z17 square represented by this cell, clockwise from north-west.
+  /// Adjacent cells therefore share an edge exactly instead of becoming dots
+  /// whose radius happens to look joined at one zoom level (#661).
+  List<GeoPoint> get polygon {
+    const zoom = PersonalRideHeatmapBuilder.canonicalZoom;
+    final scale = 1 << zoom;
+    final west = x / scale * 360 - 180;
+    final east = (x + 1) / scale * 360 - 180;
+    final north = _latitudeAtTileY(y.toDouble(), scale);
+    final south = _latitudeAtTileY((y + 1).toDouble(), scale);
+    return List.unmodifiable([
+      GeoPoint(latitude: north, longitude: west),
+      GeoPoint(latitude: north, longitude: east),
+      GeoPoint(latitude: south, longitude: east),
+      GeoPoint(latitude: south, longitude: west),
+    ]);
+  }
+
+  static double _latitudeAtTileY(double tileY, int scale) {
+    final mercator = math.pi * (1 - 2 * tileY / scale);
+    final sinh = (math.exp(mercator) - math.exp(-mercator)) / 2;
+    return math.atan(sinh) * 180 / math.pi;
   }
 }
 
@@ -65,6 +87,27 @@ class PersonalRideHeatmap {
           'geometry': {
             'type': 'Point',
             'coordinates': [cell.centre.longitude, cell.centre.latitude],
+          },
+        },
+    ],
+  };
+
+  Map<String, dynamic> toCellGeoJson() => {
+    'type': 'FeatureCollection',
+    'features': [
+      for (final cell in cells)
+        {
+          'type': 'Feature',
+          'id': 'personal-cell-${cell.x}-${cell.y}',
+          'properties': {'visits': cell.visits, 'weight': cell.weight},
+          'geometry': {
+            'type': 'Polygon',
+            'coordinates': [
+              [
+                for (final point in [...cell.polygon, cell.polygon.first])
+                  [point.longitude, point.latitude],
+              ],
+            ],
           },
         },
     ],

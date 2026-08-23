@@ -80,6 +80,38 @@ void main() {
     expect(const PersonalRideHeatmapBuilder().build(const []).cells, isEmpty);
   });
 
+  test('adjacent coverage cells share a complete edge (#661)', () {
+    const left = PersonalRideHeatmapCell(
+      x: 64600,
+      y: 43500,
+      visits: 1,
+      weight: 0.4,
+    );
+    const right = PersonalRideHeatmapCell(
+      x: 64601,
+      y: 43500,
+      visits: 2,
+      weight: 0.7,
+    );
+
+    expect(left.polygon[1].latitude, right.polygon[0].latitude);
+    expect(left.polygon[1].longitude, right.polygon[0].longitude);
+    expect(left.polygon[2].latitude, right.polygon[3].latitude);
+    expect(left.polygon[2].longitude, right.polygon[3].longitude);
+
+    final geoJson = const PersonalRideHeatmap(
+      cells: [left, right],
+      inputPointCount: 2,
+      truncated: false,
+    ).toCellGeoJson();
+    final features = geoJson['features']! as List;
+    final ring =
+        ((features.first as Map)['geometry'] as Map)['coordinates'] as List;
+    final points = ring.single as List;
+    expect(points, hasLength(5));
+    expect(points.first, points.last, reason: 'GeoJSON polygon rings close');
+  });
+
   test(
     'visibility is on by default and an explicit off choice persists',
     () async {
