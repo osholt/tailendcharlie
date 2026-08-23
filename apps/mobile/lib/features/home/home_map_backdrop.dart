@@ -7,15 +7,23 @@ import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
 import '../../controllers/speed_limit_display_controller.dart';
+import '../../controllers/spoken_guidance_controller.dart';
 import '../../domain/completed_ride.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
+import '../../domain/geo_point.dart' as awareness_geo;
 import '../../domain/imported_route.dart' as route_domain;
 import '../../domain/map_style_mode.dart';
 import '../../domain/rider_location.dart';
 import '../../domain/route_authority.dart';
 import '../../services/device_location_source.dart';
 import '../../services/free_roam_ride_recorder.dart';
+import '../../services/geo_calculations.dart';
+import '../../services/measurement_formatter.dart';
+import '../../services/navigation_guidance.dart';
+import '../../services/spoken_audio_mode.dart';
+import '../../services/spoken_guidance.dart';
+import '../../services/spoken_guidance_schedule.dart';
 import '../map/ride_map_feature.dart';
 
 /// The live map the app opens on (#405).
@@ -36,6 +44,7 @@ class HomeMapBackdrop extends StatefulWidget {
     required this.mapStyleMode,
     required this.speedLimitDisplay,
     required this.distanceUnit,
+    this.spokenGuidance,
     this.enableNativeServices = true,
     this.locationController,
     this.bottomInset = 0,
@@ -70,6 +79,7 @@ class HomeMapBackdrop extends StatefulWidget {
 
   final MapStyleModeController mapStyleMode;
   final SpeedLimitDisplayController speedLimitDisplay;
+  final SpokenGuidanceController? spokenGuidance;
   final DistanceUnit distanceUnit;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -135,6 +145,11 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   final ValueNotifier<MapNavigationPosition?> _navigationPosition =
       ValueNotifier<MapNavigationPosition?>(null);
   late final FreeRoamRideRecorder _freeRoamRideRecorder;
+  SpokenGuidanceSpeaker? _spokenGuidance;
+  final _spokenGuidanceKeys = <String>{};
+  String? _guidanceManeuverIdentity;
+  route_domain.GeoPoint? _passedManeuverPosition;
+  route_domain.GeoPoint? _lastGuidanceManeuverPosition;
   ForegroundLocationController? _location;
   bool _ownsLocationController = false;
   bool _requesting = false;
@@ -158,6 +173,13 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
         DeviceLocationSource(),
         (sample) async => _acceptLocationSample(sample),
       );
+    }
+    if (widget.enableNativeServices && widget.spokenGuidance != null) {
+      _spokenGuidance = SpokenGuidanceSpeaker(
+        widget.spokenGuidance!.createEngine(),
+      );
+      widget.spokenGuidance!.addListener(_onSpokenGuidanceChanged);
+      unawaited(_warmNaturalVoiceIfNeeded());
     }
     final location = _location;
     if (location != null) {
@@ -231,6 +253,85 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     }
   }
 
+  void _onSpokenGuidanceChanged() {
+    unawaited(_warmNaturalVoiceIfNeeded());
+  }
+
+  Future<void> _warmNaturalVoiceIfNeeded() async {
+    final controller = widget.spokenGuidance;
+    final speaker = _spokenGuidance;
+    if (controller == null || speaker == null) return;
+    final naturalEnabled =
+        controller.naturalVoicePack.enabled &&
+        controller.naturalVoicePack.modelDirectory != null;
+    try {
+      await speaker.warmUp(
+        enabled: widget.navigating && controller.enabled && naturalEnabled,
+      );
+    } on Object catch (error, stackTrace) {
+      assert(() {
+        debugPrint(
+          'Natural voice warm-up failed in free roam: $error\n$stackTrace',
+        );
+        return true;
+      }());
+    }
+  }
+
+  void _onNavigationGuidanceChanged(NavigationGuidance? guidance) {
+    if (guidance == null || !widget.navigating) return;
+    final speaker = _spokenGuidance;
+    final controller = widget.spokenGuidance;
+    if (speaker == null || controller == null) return;
+    if (!spokenAudioAllows(controller.mode, SpokenAudioClass.navigation)) {
+      return;
+    }
+
+    final identity = guidance.instruction.maneuver.identity;
+    if (identity != _guidanceManeuverIdentity) {
+      if (_guidanceManeuverIdentity != null) {
+        _passedManeuverPosition = _lastGuidanceManeuverPosition;
+      }
+      _guidanceManeuverIdentity = identity;
+    }
+    _lastGuidanceManeuverPosition = guidance.instruction.maneuver.position;
+
+    final passed = _passedManeuverPosition;
+    final rider = _navigationPosition.value?.point;
+    final metersSincePrevious = passed == null || rider == null
+        ? null
+        : GeoCalculations.distanceMeters(
+            awareness_geo.GeoPoint(
+              latitude: rider.latitude,
+              longitude: rider.longitude,
+            ),
+            awareness_geo.GeoPoint(
+              latitude: passed.latitude,
+              longitude: passed.longitude,
+            ),
+          );
+    final announcement = nextGuidanceAnnouncement(
+      maneuverIdentity: identity,
+      instructionText: guidance.instruction.standaloneText,
+      distanceToManeuverMeters: guidance.distanceMeters,
+      speedMetersPerSecond: _navigationPosition.value?.speedMetersPerSecond,
+      alreadySpokenKeys: _spokenGuidanceKeys,
+      metersSincePreviousManeuver: metersSincePrevious,
+      distanceFormatter: MeasurementFormatter(widget.distanceUnit).distance,
+      followingInstructionText: guidance.followingInstruction?.standaloneText,
+    );
+    if (announcement == null) return;
+    _spokenGuidanceKeys.add(announcement.key);
+    unawaited(
+      speaker.speakManoeuvre(
+        key: announcement.key,
+        phrase: announcement.phrase,
+        enabled: true,
+        rideActive: widget.navigating,
+      ),
+    );
+  }
+
   Future<void> _requestLocation() async {
     final location = _location;
     if (location == null || _requesting) return;
@@ -257,10 +358,27 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   }
 
   @override
+  void didUpdateWidget(covariant HomeMapBackdrop oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.navigating && widget.navigating) {
+      unawaited(_warmNaturalVoiceIfNeeded());
+    } else if (oldWidget.navigating && !widget.navigating) {
+      _spokenGuidanceKeys.clear();
+      _guidanceManeuverIdentity = null;
+      _passedManeuverPosition = null;
+      _lastGuidanceManeuverPosition = null;
+      _spokenGuidance?.reset();
+      unawaited(_spokenGuidance?.stop());
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _position.removeListener(_handleLocationChanged);
     _location?.removeListener(_handleLocationChanged);
+    widget.spokenGuidance?.removeListener(_onSpokenGuidanceChanged);
+    unawaited(_spokenGuidance?.stop());
     if (_ownsLocationController) _location?.dispose();
     _navigationPosition.dispose();
     // Not ours to dispose when the screen above owns it.
@@ -321,6 +439,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             circularRideRequestToken: widget.circularRideRequestToken,
             onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
             onRouteChanged: _onRouteChanged,
+            onNavigationGuidanceChanged: _onNavigationGuidanceChanged,
             navigating: widget.navigating,
             markerFeaturesEnabled: false,
           )

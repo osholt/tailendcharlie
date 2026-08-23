@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
+import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
@@ -12,12 +13,14 @@ import 'package:ride_relay/domain/geo_point.dart' as rider_domain;
 import 'package:ride_relay/controllers/shared_route_controller.dart'
     show PendingInAppRoute;
 import 'package:ride_relay/domain/imported_route.dart'
-    show GeoPoint, ImportedRoute, RoutePath, RoutePathKind;
+    show GeoPoint, ImportedRoute, RouteManeuver, RoutePath, RoutePathKind;
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
 import 'package:ride_relay/features/map/ride_map_feature.dart';
 import 'package:ride_relay/domain/route_authority.dart';
 import 'package:ride_relay/services/device_location_source.dart';
+import 'package:ride_relay/services/navigation_guidance.dart';
+import 'package:ride_relay/services/spoken_guidance.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -257,6 +260,78 @@ void main() {
     expect(stored.single.title, 'To Tuckers Grave');
     expect(stored.single.traveledRoute?.paths.single.points, hasLength(2));
     expect(identical(archived, stored.single), isTrue);
+  });
+
+  testWidgets('free-roam navigation speaks the guidance shown on the map', (
+    tester,
+  ) async {
+    final engine = _RecordingSpokenEngine();
+    final spoken = SpokenGuidanceController.inMemory(
+      enabled: true,
+      engine: () => engine,
+    );
+    addTearDown(spoken.dispose);
+    final platform = _RecordingLocationPlatform(
+      granted: DeviceLocationPermission.always,
+    );
+    addTearDown(platform.closeStreams);
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeMapBackdrop(
+          mapStyleMode: mapStyleMode,
+          speedLimitDisplay: speedLimitDisplay,
+          spokenGuidance: spoken,
+          distanceUnit: DistanceUnit.kilometres,
+          locationController: location,
+          navigating: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    platform.emit(
+      LocationSample(
+        position: const rider_domain.GeoPoint(
+          latitude: 51.46765,
+          longitude: -2.50679,
+        ),
+        recordedAt: DateTime.utc(2026, 8, 23, 15),
+        accuracyMeters: 4,
+        speedMetersPerSecond: 10,
+        headingDegrees: 270,
+      ),
+    );
+    await tester.pump();
+
+    const maneuver = RouteManeuver(
+      position: GeoPoint(latitude: 51.46765, longitude: -2.5070),
+      type: 'turn',
+      modifier: 'left',
+      name: 'Station Road',
+    );
+    const guidance = NavigationGuidance(
+      maneuver: maneuver,
+      distanceMeters: 20,
+      instruction: ManeuverInstruction(
+        maneuver: maneuver,
+        kind: ManeuverKind.turn,
+        direction: ManeuverDirection.left,
+        text: 'Turn left',
+        standaloneText: 'Turn left onto Station Road',
+      ),
+    );
+    final map = tester.widget<RideMapFeature>(
+      find.byKey(const Key('home-map')),
+    );
+    map.onNavigationGuidanceChanged!(guidance);
+    await tester.pump();
+
+    expect(engine.spoken, ['Turn left onto Station Road']);
   });
   testWidgets('the free-roam map is the rider\'s own, not a follower\'s (#576)', (
     tester,
@@ -547,6 +622,19 @@ void main() {
       expect(find.byKey(const Key('home-show-my-location')), findsNothing);
     });
   });
+}
+
+class _RecordingSpokenEngine implements SpokenGuidanceEngine {
+  final spoken = <String>[];
+
+  @override
+  Future<void> configure() async {}
+
+  @override
+  Future<void> speak(String phrase) async => spoken.add(phrase);
+
+  @override
+  Future<void> stop() async {}
 }
 
 /// Records that the backdrop asked for a restart, without standing up the
