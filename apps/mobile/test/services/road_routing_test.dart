@@ -142,6 +142,85 @@ void main() {
     expect(exit.bearingAfterDegrees, 2);
   });
 
+  test('uses advance markings for the A4174 Kingsfield approach', () {
+    // Captured from the public OSRM response for Kingswood to Tuckers Grave on
+    // 2026-08-23. The previous A4174 step contains the three markings painted
+    // on the approach to the leisure-park junction. The fork step starts at the
+    // junction and carries a different topological set; assigning that set to
+    // the banner produced straight/right/right instead of left/straight/
+    // straight in the field (#657).
+    final maneuvers = OsrmRoadRoutingService.parseManeuvers([
+      {
+        'steps': [
+          {
+            'name': '',
+            'ref': 'A4174',
+            'maneuver': {
+              'type': 'exit rotary',
+              'modifier': 'straight',
+              'location': [-2.486872, 51.453048],
+            },
+            'intersections': [
+              {
+                'location': [-2.498528, 51.447685],
+                'lanes': [
+                  {
+                    'valid': false,
+                    'indications': ['left'],
+                  },
+                  {
+                    'valid': true,
+                    'indications': ['straight'],
+                  },
+                  {
+                    'valid': true,
+                    'indications': ['straight'],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            'name': '',
+            'ref': 'A4174',
+            'maneuver': {
+              'type': 'fork',
+              'modifier': 'slight left',
+              'location': [-2.499012, 51.447123],
+            },
+            'intersections': [
+              {
+                'location': [-2.499012, 51.447123],
+                'lanes': [
+                  {
+                    'valid': true,
+                    'indications': ['straight'],
+                  },
+                  {
+                    'valid': false,
+                    'indications': ['right'],
+                  },
+                  {
+                    'valid': false,
+                    'indications': ['right'],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    expect(maneuvers.first.lanes, isEmpty);
+    expect(maneuvers.last.lanes.map((lane) => lane.indications.single), [
+      'left',
+      'straight',
+      'straight',
+    ]);
+    expect(maneuvers.last.lanes.map((lane) => lane.valid), [false, true, true]);
+  });
+
   test(
     'a junction the engine omits is restored from the bundled layer',
     () async {
