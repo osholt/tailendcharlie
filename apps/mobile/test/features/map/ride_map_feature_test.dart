@@ -57,6 +57,24 @@ void main() {
     );
   });
 
+  test(
+    'personal heatmap changes from density to continuous cells at street zoom',
+    () {
+      expect(
+        personalHeatmapUsesContinuousCells(
+          personalHeatmapContinuousMinimumZoom - 0.01,
+        ),
+        isFalse,
+      );
+      expect(
+        personalHeatmapUsesContinuousCells(
+          personalHeatmapContinuousMinimumZoom,
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('navigation panels preserve map context and rider clearance', () {
     expect(rideMapPrimaryPanelFill.toARGB32(), 0xD9252E39);
     expect(
@@ -198,7 +216,7 @@ void main() {
     );
     final map = tester.widget<FlutterMap>(find.byType(FlutterMap));
     final heatmapIndex = map.children.indexWhere(
-      (child) => child is CircleLayer,
+      (child) => child.key == const Key('personal-rides-heatmap-layer'),
     );
     final routeIndex = map.children.indexWhere(
       (child) => child is PolylineLayer,
