@@ -147,6 +147,13 @@ bool canGenerateNavigableRoute(ImportedRoute route) =>
 @visibleForTesting
 const motorcycleDiscoveryMinimumZoom = 12.5;
 
+/// Point-density heatmaps become isolated dots at street zoom. From here the
+/// personal archive is rendered as its contiguous z17 coverage cells instead.
+const personalHeatmapContinuousMinimumZoom = 15.0;
+
+bool personalHeatmapUsesContinuousCells(double zoom) =>
+    zoom >= personalHeatmapContinuousMinimumZoom;
+
 @visibleForTesting
 bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
     zoom >= motorcycleDiscoveryMinimumZoom;
@@ -1050,10 +1057,15 @@ class RideMapScreen extends StatefulWidget {
 class _RideMapScreenState extends State<RideMapScreen> {
   static const _personalHeatmapSource = 'ride-relay-personal-heatmap';
   static const _personalHeatmapLayer = 'ride-relay-personal-heatmap-layer';
+  static const _personalHeatmapCellSource = 'ride-relay-personal-heatmap-cells';
+  static const _personalHeatmapCellLayer =
+      'ride-relay-personal-heatmap-cells-layer';
   static const _globalHeatmapSource = 'ride-relay-global-heatmap';
   static const _globalHeatmapLayer = 'ride-relay-global-heatmap-layer';
+  static const _riddenRouteSource = 'ride-relay-route-ridden';
   static const _remainingRouteSource = 'ride-relay-route-remaining';
   static const _riderTrailSource = 'ride-relay-rider-trails';
+  static const _localTrailRiderId = 'local-map-rider';
   static const _casingHex = RouteTrailStyle.casingHex;
   static const _trailDirectionArrowSource = 'ride-relay-trail-direction-arrows';
   static const _waypointSource = 'ride-relay-waypoints';
@@ -1077,6 +1089,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   final RouteJourneyProgressTracker _routeJourneyProgressTracker =
       RouteJourneyProgressTracker();
   final RouteProgressTracker _rejoinProgressTracker = RouteProgressTracker();
+  final RiderTrailRecorder _localTrailRecorder = RiderTrailRecorder();
   final ValueNotifier<NavigationGuidanceAssessment> _navigationGuidance =
       ValueNotifier(const NavigationGuidanceAssessment.noRoute());
   final Map<int, Offset> _mapPointerOrigins = {};
@@ -1478,6 +1491,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         MapLibreOfflineManager(configuration: _basemap);
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
+    _recordLocalTrail(_effectivePosition, _navigationFix?.recordedAt);
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.riderTrails?.addListener(_onOverlayDataChanged);
     widget.rejoinNavigationRoute?.addListener(_onRejoinNavigationRouteChanged);
@@ -3245,7 +3259,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
               cache: widget.offlineTileCache,
             ),
           ),
-        if (_visiblePersonalHeatmap.cells.isNotEmpty)
+        if (_visiblePersonalHeatmap.cells.isNotEmpty &&
+            !personalHeatmapUsesContinuousCells(_lastViewportZoom))
           CircleLayer(
             key: const Key('personal-rides-heatmap-layer'),
             circles: [
@@ -3258,6 +3273,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
                     const Color(0xFFF97316),
                     cell.weight,
                   )!.withValues(alpha: 0.16 + 0.24 * cell.weight),
+                ),
+            ],
+          ),
+        if (_visiblePersonalHeatmap.cells.isNotEmpty &&
+            personalHeatmapUsesContinuousCells(_lastViewportZoom))
+          PolygonLayer(
+            key: const Key('personal-rides-heatmap-layer'),
+            polygons: [
+              for (final cell in _visiblePersonalHeatmap.cells)
+                Polygon(
+                  points: cell.polygon.map(_latLng).toList(growable: false),
+                  color: Color.lerp(
+                    const Color(0xFF7C3AED),
+                    const Color(0xFFF97316),
+                    cell.weight,
+                  )!.withValues(alpha: 0.20 + 0.28 * cell.weight),
+                  borderColor: Colors.transparent,
+                  borderStrokeWidth: 0,
                 ),
             ],
           ),
@@ -3357,14 +3390,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
                 )
                 .toList(growable: false),
           ),
-        // Actual travelled trails are drawn whether or not a route is loaded,
-        // and the leader's trail sits under the remaining planned route so both
-        // stay readable where they coincide. Completed *planned* geometry is
-        // intentionally absent: the map behind the rider is basemap unless a
-        // real rider/group trail records where somebody actually went.
+        // Both the completed plan and actual travelled trails remain visible
+        // behind the rider. The former keeps route progress legible even when
+        // location recording has a gap; the latter shows where the bike really
+        // went, including while navigating without a group ride (#658).
         if (route != null || _visibleRiderTrails.isNotEmpty)
           PolylineLayer(
             polylines: [
+              ..._progressGeometry.riddenPaths.map(
+                (path) => _routePolyline(path, RouteTrailStyle.travelled),
+              ),
               ..._trailPolylines(dashed: false),
               ..._progressGeometry.remainingPaths.map(
                 (path) => _routePolyline(path, RouteTrailStyle.routeAhead),
@@ -4130,6 +4165,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       _lastHandledCurrentPosition = position;
       _lastHandledNavigationFix = null;
     }
+    _recordLocalTrail(position, navigationFix?.recordedAt);
     _finishRouteStartConnectorIfReached(position);
     final suppliedHeading = _navigationFix?.headingDegrees;
     double? observedHeading;
@@ -4446,9 +4482,14 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _updateViewportZoom(double zoom) {
     final wasVisible = motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom);
+    final wasContinuous = personalHeatmapUsesContinuousCells(_lastViewportZoom);
     _lastViewportZoom = zoom;
     final isVisible = motorcycleDiscoveryVisibleAtZoom(zoom);
-    if (!mounted || wasVisible == isVisible) return;
+    final isContinuous = personalHeatmapUsesContinuousCells(zoom);
+    if (!mounted ||
+        (wasVisible == isVisible && wasContinuous == isContinuous)) {
+      return;
+    }
     setState(() {});
     _scheduleMapLibreSync(overlays: true);
   }
@@ -5131,6 +5172,30 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ],
           heatmapOpacity: 0.48,
         ),
+        maxzoom: personalHeatmapContinuousMinimumZoom,
+      );
+      await controller.addGeoJsonSource(
+        _personalHeatmapCellSource,
+        _visiblePersonalHeatmap.toCellGeoJson(),
+      );
+      await controller.addFillLayer(
+        _personalHeatmapCellSource,
+        _personalHeatmapCellLayer,
+        const ml.FillLayerProperties(
+          fillAntialias: false,
+          fillColor: [
+            'interpolate',
+            ['linear'],
+            ['get', 'weight'],
+            0,
+            '#7C3AED',
+            1,
+            '#F97316',
+          ],
+          fillOpacity: 0.48,
+        ),
+        minzoom: personalHeatmapContinuousMinimumZoom,
+        enableInteraction: false,
       );
       await controller.addGeoJsonSource(
         _discoveryLineSource,
@@ -5180,6 +5245,32 @@ class _RideMapScreenState extends State<RideMapScreen> {
       );
       // Solid trails are drawn before the planned route so the leader's wider
       // trail reads as a corridor beneath it rather than hiding it.
+      await controller.addGeoJsonSource(
+        _riddenRouteSource,
+        _riddenRouteGeoJson(),
+      );
+      await controller.addLineLayer(
+        _riddenRouteSource,
+        'ride-relay-route-ridden-border',
+        ml.LineLayerProperties(
+          lineColor: _casingHex,
+          lineWidth: RouteTrailStyle.travelled.casingWidthPixels,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _riddenRouteSource,
+        'ride-relay-route-ridden',
+        ml.LineLayerProperties(
+          lineColor: _hexColor(RouteTrailStyle.travelled.color),
+          lineWidth: RouteTrailStyle.travelled.widthPixels,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
       await controller.addGeoJsonSource(
         _riderTrailSource,
         _riderTrailGeoJson(),
@@ -5438,12 +5529,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _visiblePersonalHeatmap.toGeoJson(),
       );
       await controller.setGeoJsonSource(
+        _personalHeatmapCellSource,
+        _visiblePersonalHeatmap.toCellGeoJson(),
+      );
+      await controller.setGeoJsonSource(
         _discoveryLineSource,
         _discoveryLineGeoJson(),
       );
       await controller.setGeoJsonSource(
         _discoveryPointSource,
         _discoveryPointGeoJson(),
+      );
+      await controller.setGeoJsonSource(
+        _riddenRouteSource,
+        _riddenRouteGeoJson(),
       );
       await controller.setGeoJsonSource(
         _remainingRouteSource,
@@ -5507,12 +5606,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
       }
       if (progress) {
         await controller.setGeoJsonSource(
+          _riddenRouteSource,
+          _riddenRouteGeoJson(),
+        );
+        await controller.setGeoJsonSource(
           _remainingRouteSource,
           _remainingRouteGeoJson(),
         );
       }
       if (position) {
         await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
+        if (widget.riderTrails == null) {
+          await controller.setGeoJsonSource(
+            _riderTrailSource,
+            _riderTrailGeoJson(),
+          );
+        }
       }
       if (overlays) {
         await controller.setGeoJsonSource(
@@ -5522,6 +5631,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await controller.setGeoJsonSource(
           _personalHeatmapSource,
           _visiblePersonalHeatmap.toGeoJson(),
+        );
+        await controller.setGeoJsonSource(
+          _personalHeatmapCellSource,
+          _visiblePersonalHeatmap.toCellGeoJson(),
         );
         await controller.setGeoJsonSource(
           _discoveryLineSource,
@@ -5566,6 +5679,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
     idPrefix: 'remaining-route',
   );
 
+  Map<String, dynamic> _riddenRouteGeoJson() =>
+      MapGeoJson.lines(_progressGeometry.riddenPaths, idPrefix: 'ridden-route');
+
+  void _recordLocalTrail(GeoPoint? position, DateTime? recordedAt) {
+    if (widget.riderTrails != null || position == null) return;
+    _localTrailRecorder.record(
+      riderId: _localTrailRiderId,
+      point: GeoPoint(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        elevationMeters: position.elevationMeters,
+        recordedAt: position.recordedAt ?? recordedAt,
+      ),
+    );
+  }
+
   /// Every rider's travelled trail with enough geometry to draw. Rendering is
   /// deliberately independent of whether a route is loaded or matched (#100).
   List<MapOverlayTrace> get _visibleRiderTrails {
@@ -5574,6 +5703,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
         : null;
     return [
       ...(widget.riderTrails?.value ?? const <MapOverlayTrace>[]),
+      if (widget.riderTrails == null)
+        for (final segment
+            in _localTrailRecorder
+                .continuousSegments(
+                  _localTrailRecorder.trailFor(_localTrailRiderId),
+                )
+                .indexed)
+          MapOverlayTrace(
+            id: 'local-map-trail-${segment.$1}',
+            points: segment.$2,
+            label: 'Your travelled track',
+          ),
       if (connector != null)
         MapOverlayTrace(
           id: 'route-start-connector',
