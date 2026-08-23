@@ -607,8 +607,13 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     final maneuvers = <RoadRouteManeuver>[];
     for (final rawLeg in rawLegs) {
       if (rawLeg is! Map || rawLeg['steps'] is! List) continue;
-      for (final rawStep in rawLeg['steps'] as List) {
-        if (rawStep is! Map || rawStep['maneuver'] is! Map) continue;
+      final rawSteps = (rawLeg['steps'] as List).whereType<Map>().toList(
+        growable: false,
+      );
+      var approachingLanes = const <RouteLane>[];
+      for (var index = 0; index < rawSteps.length; index += 1) {
+        final rawStep = rawSteps[index];
+        if (rawStep['maneuver'] is! Map) continue;
         final step = Map<String, Object?>.from(rawStep);
         final rawManeuver = Map<String, Object?>.from(
           rawStep['maneuver'] as Map,
@@ -622,12 +627,17 @@ class OsrmRoadRoutingService implements RoadRoutingService {
             type is! String) {
           continue;
         }
+        final maneuverPosition = GeoPoint(
+          latitude: (location[1] as num).toDouble(),
+          longitude: (location[0] as num).toDouble(),
+        );
+        final lanesAtManeuver = _parseLanesAtManeuver(
+          step['intersections'],
+          maneuverPosition,
+        );
         maneuvers.add(
           RoadRouteManeuver(
-            position: GeoPoint(
-              latitude: (location[1] as num).toDouble(),
-              longitude: (location[0] as num).toDouble(),
-            ),
+            position: maneuverPosition,
             type: type,
             modifier: rawManeuver['modifier'] as String?,
             name: step['name'] as String?,
@@ -637,9 +647,24 @@ class OsrmRoadRoutingService implements RoadRoutingService {
             drivingSide: step['driving_side'] as String?,
             bearingBeforeDegrees: _bearing(rawManeuver['bearing_before']),
             bearingAfterDegrees: _bearing(rawManeuver['bearing_after']),
-            lanes: _parseLanes(step['intersections']),
+            // OSRM can put advance lane markings near the end of the previous
+            // step and another, topological set on the manoeuvre itself. The
+            // former is what the rider sees on approach. Assigning every lane
+            // found in a step to that step's *starting* manoeuvre both showed it
+            // at the wrong junction and discarded it at the junction it was
+            // painted for (#657).
+            lanes: approachingLanes.isNotEmpty
+                ? approachingLanes
+                : lanesAtManeuver,
           ),
         );
+        approachingLanes = index + 1 < rawSteps.length
+            ? _parseApproachingLanes(
+                step['intersections'],
+                currentManeuver: maneuverPosition,
+                nextManeuver: _maneuverPosition(rawSteps[index + 1]),
+              )
+            : const <RouteLane>[];
       }
     }
     return List.unmodifiable(maneuvers);
@@ -653,29 +678,115 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     return (value.toDouble() % 360 + 360) % 360;
   }
 
-  static List<RouteLane> _parseLanes(Object? rawIntersections) {
+  static const _maneuverLaneRadiusMeters = 30.0;
+  static const _approachLaneLookaheadMeters = 300.0;
+
+  static GeoPoint? _maneuverPosition(Map rawStep) {
+    final maneuver = rawStep['maneuver'];
+    if (maneuver is! Map) return null;
+    final location = maneuver['location'];
+    if (location is! List ||
+        location.length < 2 ||
+        location[0] is! num ||
+        location[1] is! num) {
+      return null;
+    }
+    return GeoPoint(
+      latitude: (location[1] as num).toDouble(),
+      longitude: (location[0] as num).toDouble(),
+    );
+  }
+
+  static List<RouteLane> _parseLanesAtManeuver(
+    Object? rawIntersections,
+    GeoPoint maneuver,
+  ) {
     if (rawIntersections is! List) return const [];
     for (final rawIntersection in rawIntersections) {
-      if (rawIntersection is! Map || rawIntersection['lanes'] is! List) {
-        continue;
+      if (rawIntersection is! Map) continue;
+      final lanes = _parseIntersectionLanes(rawIntersection);
+      if (lanes.isEmpty) continue;
+      final position = _intersectionPosition(rawIntersection);
+      // Some fixtures and providers omit intersection coordinates. Before
+      // approach-lane reassignment those lanes belonged to this manoeuvre, and
+      // without a coordinate there is no evidence to move them elsewhere.
+      if (position == null ||
+          _routePointDistanceMeters(position, maneuver) <=
+              _maneuverLaneRadiusMeters) {
+        return lanes;
       }
-      final lanes = <RouteLane>[];
-      for (final rawLane in rawIntersection['lanes'] as List) {
-        if (rawLane is! Map) continue;
-        final indications =
-            (rawLane['indications'] as List?)
-                ?.whereType<String>()
-                .map((value) => value.trim().toLowerCase())
-                .where((value) => value.isNotEmpty)
-                .toList(growable: false) ??
-            const <String>[];
-        lanes.add(
-          RouteLane(indications: indications, valid: rawLane['valid'] == true),
-        );
-      }
-      if (lanes.isNotEmpty) return List.unmodifiable(lanes);
     }
     return const [];
+  }
+
+  static List<RouteLane> _parseApproachingLanes(
+    Object? rawIntersections, {
+    required GeoPoint currentManeuver,
+    required GeoPoint? nextManeuver,
+  }) {
+    if (rawIntersections is! List || nextManeuver == null) return const [];
+    for (final rawIntersection in rawIntersections) {
+      if (rawIntersection is! Map) continue;
+      final lanes = _parseIntersectionLanes(rawIntersection);
+      final position = _intersectionPosition(rawIntersection);
+      if (lanes.isEmpty || position == null) continue;
+      if (_routePointDistanceMeters(position, currentManeuver) <=
+          _maneuverLaneRadiusMeters) {
+        continue;
+      }
+      if (_routePointDistanceMeters(position, nextManeuver) <=
+          _approachLaneLookaheadMeters) {
+        return lanes;
+      }
+    }
+    return const [];
+  }
+
+  static GeoPoint? _intersectionPosition(Map rawIntersection) {
+    final location = rawIntersection['location'];
+    if (location is! List ||
+        location.length < 2 ||
+        location[0] is! num ||
+        location[1] is! num) {
+      return null;
+    }
+    return GeoPoint(
+      latitude: (location[1] as num).toDouble(),
+      longitude: (location[0] as num).toDouble(),
+    );
+  }
+
+  static List<RouteLane> _parseIntersectionLanes(Map rawIntersection) {
+    if (rawIntersection['lanes'] is! List) return const [];
+    final lanes = <RouteLane>[];
+    for (final rawLane in rawIntersection['lanes'] as List) {
+      if (rawLane is! Map) continue;
+      final indications =
+          (rawLane['indications'] as List?)
+              ?.whereType<String>()
+              .map((value) => value.trim().toLowerCase())
+              .where((value) => value.isNotEmpty)
+              .toList(growable: false) ??
+          const <String>[];
+      lanes.add(
+        RouteLane(indications: indications, valid: rawLane['valid'] == true),
+      );
+    }
+    return lanes.isEmpty ? const [] : List.unmodifiable(lanes);
+  }
+
+  static double _routePointDistanceMeters(GeoPoint first, GeoPoint second) {
+    const earthRadiusMeters = 6371008.8;
+    final latitude1 = first.latitude * math.pi / 180;
+    final latitude2 = second.latitude * math.pi / 180;
+    final latitudeDelta = latitude2 - latitude1;
+    final longitudeDelta = (second.longitude - first.longitude) * math.pi / 180;
+    final a =
+        math.pow(math.sin(latitudeDelta / 2), 2) +
+        math.cos(latitude1) *
+            math.cos(latitude2) *
+            math.pow(math.sin(longitudeDelta / 2), 2);
+    return earthRadiusMeters * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
   }
 }
 
