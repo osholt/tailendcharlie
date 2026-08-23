@@ -6,6 +6,8 @@ import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/completed_ride.dart';
+import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/geo_point.dart' as rider_domain;
 import 'package:ride_relay/controllers/shared_route_controller.dart'
     show PendingInAppRoute;
@@ -157,6 +159,104 @@ void main() {
     expect(fix.speedMetersPerSecond, 13.25);
     expect(fix.headingDegrees, 287);
     expect(fix.accuracyMeters, 4.5);
+  });
+
+  testWidgets('Where To navigation is saved automatically when it stops', (
+    tester,
+  ) async {
+    final platform = _RecordingLocationPlatform(
+      granted: DeviceLocationPermission.always,
+    );
+    addTearDown(platform.closeStreams);
+    final location = ForegroundLocationController(
+      DeviceLocationSource(platform),
+      (_) async {},
+    );
+    addTearDown(location.dispose);
+    final archive = InMemoryCompletedRideStore();
+    CompletedRide? archived;
+    var navigating = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) => HomeMapBackdrop(
+            mapStyleMode: mapStyleMode,
+            speedLimitDisplay: speedLimitDisplay,
+            distanceUnit: DistanceUnit.kilometres,
+            locationController: location,
+            completedRideStore: archive,
+            localDisplayName: 'Oliver',
+            navigating: navigating,
+            onRouteChanged: (route) =>
+                setState(() => navigating = route != null),
+            onNavigationArchived: (ride) => archived = ride,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final route = ImportedRoute(
+      id: 'where-to',
+      name: 'To Tuckers Grave',
+      importedAt: DateTime.utc(2026, 8, 23),
+      sourceFileName: 'where-to.gpx',
+      paths: const [
+        RoutePath(
+          kind: RoutePathKind.route,
+          points: [
+            GeoPoint(latitude: 51.4627, longitude: -2.5084),
+            GeoPoint(latitude: 51.2949, longitude: -2.3579),
+          ],
+        ),
+      ],
+      waypoints: const [],
+    );
+    tester
+        .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+        .onRouteChanged!(route);
+    await tester.pump();
+
+    final start = DateTime.utc(2026, 8, 23, 10);
+    platform.emit(
+      LocationSample(
+        position: const rider_domain.GeoPoint(
+          latitude: 51.4627,
+          longitude: -2.5084,
+        ),
+        recordedAt: start,
+        accuracyMeters: 4,
+        speedMetersPerSecond: 10,
+        headingDegrees: 120,
+      ),
+    );
+    await tester.pump();
+    platform.emit(
+      LocationSample(
+        position: const rider_domain.GeoPoint(
+          latitude: 51.4617,
+          longitude: -2.5064,
+        ),
+        recordedAt: start.add(const Duration(seconds: 10)),
+        accuracyMeters: 4,
+        speedMetersPerSecond: 10,
+        headingDegrees: 120,
+      ),
+    );
+    await tester.pump();
+
+    tester
+        .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+        .onRouteChanged!(null);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    final stored = await archive.list();
+    expect(stored, hasLength(1));
+    expect(stored.single.title, 'To Tuckers Grave');
+    expect(stored.single.traveledRoute?.paths.single.points, hasLength(2));
+    expect(identical(archived, stored.single), isTrue);
   });
   testWidgets('the free-roam map is the rider\'s own, not a follower\'s (#576)', (
     tester,
