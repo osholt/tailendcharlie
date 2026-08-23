@@ -8,6 +8,7 @@ import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
+import '../../domain/completed_ride.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
@@ -16,6 +17,7 @@ import '../../domain/map_style_mode.dart';
 import '../../domain/rider_location.dart';
 import '../../domain/route_authority.dart';
 import '../../services/device_location_source.dart';
+import '../../services/free_roam_ride_recorder.dart';
 import '../../services/geo_calculations.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
@@ -57,6 +59,8 @@ class HomeMapBackdrop extends StatefulWidget {
     this.circularRideRequestToken,
     this.onCircularRideRequestHandled,
     this.onRouteChanged,
+    this.localDisplayName = 'Rider',
+    this.onNavigationArchived,
     this.navigating = false,
   });
 
@@ -108,6 +112,12 @@ class HomeMapBackdrop extends StatefulWidget {
   /// including the one restored from the last session.
   final ValueChanged<route_domain.ImportedRoute?>? onRouteChanged;
 
+  /// The local identity stored beside personal navigation history.
+  final String localDisplayName;
+
+  /// Fires after a Where To session has been saved into My rides.
+  final ValueChanged<CompletedRide>? onNavigationArchived;
+
   /// Whether this map is following a route.
   ///
   /// Free roam has no ride to start, so the guidance chrome cannot key off one
@@ -134,6 +144,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   late final bool _ownsPosition = widget.position == null;
   final ValueNotifier<MapNavigationPosition?> _navigationPosition =
       ValueNotifier<MapNavigationPosition?>(null);
+  late final FreeRoamRideRecorder _freeRoamRideRecorder;
   SpokenGuidanceSpeaker? _spokenGuidance;
   final _spokenGuidanceKeys = <String>{};
   String? _guidanceManeuverIdentity;
@@ -149,6 +160,9 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     // Free roam had no lifecycle observer at all, so the recovery that exists
     // inside a ride did not exist outside one (#577).
     WidgetsBinding.instance.addObserver(this);
+    _freeRoamRideRecorder = FreeRoamRideRecorder(
+      localDisplayName: widget.localDisplayName,
+    );
     // The recovery control is offered on whether this map can show the rider,
     // so it has to rebuild when that changes.
     _position.addListener(_handleLocationChanged);
@@ -205,10 +219,38 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       headingDegrees: sample.headingDegrees,
       accuracyMeters: sample.accuracyMeters,
     );
+    _freeRoamRideRecorder.record(point);
     // Published second: `_position` also drives this State's listener, which
     // must see the matching navigation fix already installed rather than
     // recursively accepting the same native sample.
     _position.value = point;
+  }
+
+  void _onRouteChanged(route_domain.ImportedRoute? route) {
+    if (route != null) {
+      _freeRoamRideRecorder.start(route, initialPosition: _position.value);
+      widget.onRouteChanged?.call(route);
+      return;
+    }
+    final completed = _freeRoamRideRecorder.finish();
+    widget.onRouteChanged?.call(null);
+    if (completed != null) unawaited(_saveCompletedNavigation(completed));
+  }
+
+  Future<void> _saveCompletedNavigation(CompletedRide completed) async {
+    final store = widget.completedRideStore;
+    if (store == null) return;
+    try {
+      await store.save(completed);
+      if (mounted) widget.onNavigationArchived?.call(completed);
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This navigation could not be saved to My rides.'),
+        ),
+      );
+    }
   }
 
   void _onSpokenGuidanceChanged() {
@@ -396,7 +438,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
             circularRideRequestToken: widget.circularRideRequestToken,
             onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
-            onRouteChanged: widget.onRouteChanged,
+            onRouteChanged: _onRouteChanged,
             onNavigationGuidanceChanged: _onNavigationGuidanceChanged,
             navigating: widget.navigating,
             markerFeaturesEnabled: false,

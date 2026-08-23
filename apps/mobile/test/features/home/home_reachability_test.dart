@@ -19,6 +19,7 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/domain/ride_session.dart';
+import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
 import 'package:ride_relay/features/home/home_screen.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
@@ -147,6 +148,37 @@ void main() {
     await tester.tap(find.text('Rejoin ride $code'));
     await tester.pump();
     expect(rideController.rideSetAside, isFalse);
+  });
+
+  testWidgets('a saved Where To ride offers its existing export screen', (
+    tester,
+  ) async {
+    await pumpHome(tester);
+    final ride = CompletedRide(
+      rideId: 'free-roam-test',
+      rideCode: 'PERSONAL',
+      rideName: 'To Tuckers Grave',
+      localDisplayName: 'Oliver',
+      localRole: RideRole.rider,
+      startedAt: DateTime.utc(2026, 8, 23, 10),
+      endedAt: DateTime.utc(2026, 8, 23, 11),
+      archivedAt: DateTime.utc(2026, 8, 23, 11),
+      riderCount: 1,
+      eventCount: 2,
+      totalDistanceMeters: 1000,
+      markerSessions: const [],
+      plannedRoute: null,
+      traveledRoute: null,
+    );
+
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .onNavigationArchived!(ride);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Navigation saved'), findsOneWidget);
+    expect(find.textContaining('export the recorded GPX'), findsOneWidget);
+    expect(find.byKey(const Key('open-saved-navigation')), findsOneWidget);
   });
 
   testWidgets('starting a ride is offered in words on the first screen', (

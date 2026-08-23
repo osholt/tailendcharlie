@@ -19,6 +19,7 @@ import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
+import '../../domain/completed_ride.dart';
 import '../../domain/imported_route.dart' show GeoPoint, ImportedRoute;
 import '../../domain/map_style_mode.dart';
 import '../../services/road_routing.dart';
@@ -447,6 +448,9 @@ class _HomeScreenState extends State<HomeScreen> {
               _circularRideRequestToken = null;
             }),
             navigating: _routeOnMap != null,
+            localDisplayName: widget.riderProfile.displayName,
+            onNavigationArchived: (ride) =>
+                unawaited(_showSavedNavigation(ride)),
             onRouteChanged: (route) => setState(() => _routeOnMap = route),
             // The search field and these two actions used to be painted on
             // top of the map's own AppBar, in the same corner of the same
@@ -908,6 +912,51 @@ class _HomeScreenState extends State<HomeScreen> {
         route: prepared.route,
         reviewNotes: prepared.notes,
       ),
+    );
+  }
+
+  Future<void> _showSavedNavigation(CompletedRide ride) async {
+    if (!mounted) return;
+    final open = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Navigation saved',
+              style: Theme.of(sheetContext).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${ride.title} is now in My rides. You can share its summary, '
+              'export the recorded GPX, or make a recap image.',
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              key: const Key('open-saved-navigation'),
+              onPressed: () => Navigator.of(sheetContext).pop(true),
+              icon: const Icon(Icons.ios_share),
+              label: const Text('View ride and exports'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(sheetContext).pop(false),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (open != true || !mounted) return;
+    await PreviousRideDetailScreen.show(
+      context,
+      ride: ride,
+      completedRides: widget.completedRides,
+      distanceUnits: widget.distanceUnits,
     );
   }
 }
