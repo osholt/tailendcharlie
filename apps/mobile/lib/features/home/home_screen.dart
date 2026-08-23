@@ -19,6 +19,8 @@ import '../../controllers/shared_route_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
+import '../../data/ride_diagnostics_log_store.dart';
+import '../../domain/completed_ride.dart';
 import '../../domain/imported_route.dart' show GeoPoint, ImportedRoute;
 import '../../domain/map_style_mode.dart';
 import '../../services/road_routing.dart';
@@ -427,6 +429,7 @@ class _HomeScreenState extends State<HomeScreen> {
             mapStyleMode: widget.mapStyleMode,
             speedLimitDisplay: widget.speedLimitDisplay,
             spokenGuidance: widget.spokenGuidance,
+            rideDiagnostics: widget.rideDiagnostics,
             distanceUnit: widget.distanceUnits.value,
             completedRideStore: widget.completedRides,
             globalRideHeatmap: widget.globalRideHeatmap,
@@ -447,6 +450,9 @@ class _HomeScreenState extends State<HomeScreen> {
               _circularRideRequestToken = null;
             }),
             navigating: _routeOnMap != null,
+            localDisplayName: widget.riderProfile.displayName,
+            onNavigationArchived: (ride) =>
+                unawaited(_showSavedNavigation(ride)),
             onRouteChanged: (route) => setState(() => _routeOnMap = route),
             // The search field and these two actions used to be painted on
             // top of the map's own AppBar, in the same corner of the same
@@ -909,6 +915,101 @@ class _HomeScreenState extends State<HomeScreen> {
         reviewNotes: prepared.notes,
       ),
     );
+  }
+
+  Future<void> _showSavedNavigation(CompletedRide ride) async {
+    if (!mounted) return;
+    final diagnostics = await _diagnosticsFor(ride.rideId);
+    if (!mounted) return;
+    final open = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Navigation saved',
+                style: Theme.of(sheetContext).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${ride.title} is now in My rides. You can share its summary, '
+                'export the recorded GPX, or make a recap image.',
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                key: const Key('open-saved-navigation'),
+                onPressed: () => Navigator.of(sheetContext).pop(true),
+                icon: const Icon(Icons.ios_share),
+                label: const Text('View ride and exports'),
+              ),
+              if (diagnostics != null) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  key: const Key('share-saved-navigation-diagnostics'),
+                  onPressed: () => unawaited(
+                    _shareNavigationDiagnostics(sheetContext, diagnostics),
+                  ),
+                  icon: const Icon(Icons.bug_report_outlined),
+                  label: const Text('Share ride diagnostics'),
+                ),
+              ],
+              TextButton(
+                onPressed: () => Navigator.of(sheetContext).pop(false),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (open != true || !mounted) return;
+    await PreviousRideDetailScreen.show(
+      context,
+      ride: ride,
+      completedRides: widget.completedRides,
+      distanceUnits: widget.distanceUnits,
+    );
+  }
+
+  Future<RideDiagnosticsLog?> _diagnosticsFor(String rideId) async {
+    final store = widget.rideDiagnostics?.logStore;
+    if (store == null) return null;
+    return (await store.list())
+        .where((log) => log.rideId == rideId)
+        .firstOrNull;
+  }
+
+  Future<void> _shareNavigationDiagnostics(
+    BuildContext context,
+    RideDiagnosticsLog log,
+  ) async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          title: 'Ride diagnostics ${log.rideCode ?? log.rideId}',
+          subject: 'Tail End Charlie diagnostics ${log.rideCode ?? log.rideId}',
+          files: [
+            XFile.fromData(
+              Uint8List.fromList(utf8.encode(log.text)),
+              mimeType: 'text/plain',
+              name: log.fileName,
+            ),
+          ],
+          fileNameOverrides: [log.fileName],
+        ),
+      );
+    } on Object catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not share the diagnostics: $error')),
+      );
+    }
   }
 }
 

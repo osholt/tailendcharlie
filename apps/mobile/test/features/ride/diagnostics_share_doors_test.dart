@@ -62,6 +62,15 @@ void main() {
     expect(source, contains('logStore'));
     expect(source, contains('SharePlus'));
   });
+
+  test('an ended ride records completion and flushes before teardown', () {
+    final source = File(
+      'lib/features/ride/active_ride_shell.dart',
+    ).readAsStringSync();
+
+    expect(source, contains("_diagnostics?.recordNote('ride completed')"));
+    expect(source, contains('await _diagnosticsWriter?.flush()'));
+  });
 }
 
 Iterable<String> _dartFilesUnder(String directory) => Directory(directory)

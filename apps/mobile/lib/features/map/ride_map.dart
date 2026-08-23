@@ -20,6 +20,8 @@ export 'ride_map_feature.dart'
         landscapeGuidancePanelWidth,
         motorcycleDiscoveryMinimumZoom,
         motorcycleDiscoveryVisibleAtZoom,
+        personalHeatmapContinuousMinimumZoom,
+        personalHeatmapUsesContinuousCells,
         navigationCameraBearingFor,
         portraitNavigationHeaderTopOffset,
         portraitRideMenuTopOffset,
