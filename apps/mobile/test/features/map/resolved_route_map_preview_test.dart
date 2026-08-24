@@ -141,6 +141,10 @@ void main() {
     );
   });
 
+  test('north-up reset changes bearing without replacing the framing', () {
+    expect(routePreviewNorthUpCameraUpdate().toJson(), ['bearingTo', 0.0]);
+  });
+
   testWidgets('reshape zoom controls expose independent in and out actions', (
     tester,
   ) async {
@@ -196,5 +200,52 @@ void main() {
     );
     expect(find.byKey(const Key('route-preview-zoom-in')), findsOneWidget);
     expect(find.byKey(const Key('route-preview-zoom-out')), findsOneWidget);
+    expect(find.byKey(const Key('route-preview-north-up')), findsOneWidget);
+    expect(find.byTooltip('Reset map to north'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('route-preview-north-up')));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('north reset stays clear of fit and zoom in both orientations', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    for (final size in const [Size(390, 844), Size(844, 390)]) {
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ResolvedRouteMapPreview(
+              paths: [
+                [
+                  GeoPoint(latitude: 51.45, longitude: -2.59),
+                  GeoPoint(latitude: 51.50, longitude: -2.45),
+                ],
+              ],
+              basemapConfiguration: BasemapConfiguration(
+                styleUrl: 'https://example.test/style.json',
+                attribution: 'Test map',
+              ),
+              mapStyleString: '{"version":8,"sources":{},"layers":[]}',
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final north = tester.getRect(
+        find.byKey(const Key('route-preview-north-up')),
+      );
+      final fit = tester.getRect(
+        find.byKey(const Key('route-preview-fit-route')),
+      );
+      final zoom = tester.getRect(
+        find.byKey(const Key('route-preview-zoom-in')),
+      );
+      expect(north.overlaps(fit), isFalse, reason: '$size north versus fit');
+      expect(north.overlaps(zoom), isFalse, reason: '$size north versus zoom');
+    }
   });
 }

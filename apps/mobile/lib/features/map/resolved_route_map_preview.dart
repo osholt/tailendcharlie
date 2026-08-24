@@ -185,7 +185,10 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                 featureTapsTriggersMapClick: true,
                 gestureRecognizers: embeddedMapGestureRecognizers,
                 logoEnabled: false,
-                compassEnabled: true,
+                // The native compass defaults to top-right, underneath this
+                // preview's zoom control. Use the app-owned control below so
+                // it remains visible and tappable in drawing mode too (#671).
+                compassEnabled: false,
                 minMaxZoomPreference: ml.MinMaxZoomPreference(
                   3,
                   widget.basemapConfiguration.maximumNativeZoom.toDouble(),
@@ -222,7 +225,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
               ),
             Positioned(
               left: 8,
-              top: 8,
+              top: 64,
               child: Material(
                 color: const Color(0xD9182029),
                 shape: const CircleBorder(),
@@ -232,6 +235,21 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                   onPressed: _fit,
                   color: Colors.white,
                   icon: const Icon(Icons.fit_screen),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 8,
+              top: 8,
+              child: Material(
+                color: const Color(0xD9182029),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  key: const Key('route-preview-north-up'),
+                  tooltip: 'Reset map to north',
+                  onPressed: () => unawaited(_resetNorth()),
+                  color: Colors.white,
+                  icon: const Icon(Icons.explore_outlined),
                 ),
               ),
             ),
@@ -539,6 +557,15 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     );
   }
 
+  Future<void> _resetNorth() async {
+    final controller = _controller;
+    if (controller == null) return;
+    await controller.animateCamera(
+      routePreviewNorthUpCameraUpdate(),
+      duration: const Duration(milliseconds: 220),
+    );
+  }
+
   Future<void> _handlePointTap(math.Point<double> tap) async {
     final controller = _controller;
     if (controller == null) return;
@@ -756,6 +783,10 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     };
   }
 }
+
+/// A bearing-only update preserves the rider's chosen centre, zoom and tilt.
+ml.CameraUpdate routePreviewNorthUpCameraUpdate() =>
+    ml.CameraUpdate.bearingTo(0);
 
 bool routePreviewNeedsInitialFit({
   required bool styleReady,
