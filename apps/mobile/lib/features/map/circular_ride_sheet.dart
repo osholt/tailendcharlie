@@ -9,12 +9,14 @@ class CircularRideSheet extends StatefulWidget {
     super.key,
     required this.start,
     required this.distanceUnit,
+    this.initialRequest,
     this.personalHeatmapCells = const [],
     this.globalHeatmapCells = const [],
   });
 
   final GeoPoint start;
   final DistanceUnit distanceUnit;
+  final CircularRideRequest? initialRequest;
   final List<CircularRideHeatCell> personalHeatmapCells;
   final List<CircularRideHeatCell> globalHeatmapCells;
 
@@ -22,6 +24,7 @@ class CircularRideSheet extends StatefulWidget {
     BuildContext context, {
     required GeoPoint start,
     required DistanceUnit distanceUnit,
+    CircularRideRequest? initialRequest,
     List<CircularRideHeatCell> personalHeatmapCells = const [],
     List<CircularRideHeatCell> globalHeatmapCells = const [],
   }) => showModalBottomSheet<CircularRideRequest>(
@@ -31,6 +34,7 @@ class CircularRideSheet extends StatefulWidget {
     builder: (_) => CircularRideSheet(
       start: start,
       distanceUnit: distanceUnit,
+      initialRequest: initialRequest,
       personalHeatmapCells: personalHeatmapCells,
       globalHeatmapCells: globalHeatmapCells,
     ),
@@ -60,9 +64,31 @@ class _CircularRideSheetState extends State<CircularRideSheet> {
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialRequest;
+    if (initial != null) {
+      _direction = initial.direction;
+      _dayLength = initial.dayLength;
+      _style = initial.preferences.style;
+      _fuelEvery = initial.fuelEvery;
+      _comfortEvery = initial.comfortEvery;
+      _mealAfter = initial.mealAfter;
+      _heatmapPreference = initial.heatmapPreference;
+      _avoidMotorways = initial.preferences.avoidMotorways;
+      _avoidMajorRoads = initial.preferences.avoidMajorRoads;
+    }
+    final distance = initial?.distanceMeters;
     _distanceController = TextEditingController(
-      text: widget.distanceUnit == DistanceUnit.miles ? '80' : '130',
+      text: distance == null
+          ? widget.distanceUnit == DistanceUnit.miles
+                ? '80'
+                : '130'
+          : _formatDistance(distance / _unitMetres),
     );
+  }
+
+  static String _formatDistance(double value) {
+    final fixed = value.toStringAsFixed(1);
+    return fixed.endsWith('.0') ? fixed.substring(0, fixed.length - 2) : fixed;
   }
 
   @override

@@ -6594,6 +6594,7 @@ void main() {
       HostMapChrome? hostChrome,
       ValueListenable<GeoPoint?>? currentPosition,
       RouteStore? routeStore,
+      RoadRoutingService? roadRoutingService,
       Object? circularRideRequestToken,
       VoidCallback? onCircularRideRequestHandled,
     }) async {
@@ -6617,6 +6618,7 @@ void main() {
             routeAuthority: authority,
             hostChrome: hostChrome,
             currentPosition: currentPosition,
+            roadRoutingService: roadRoutingService,
             circularRideRequestToken: circularRideRequestToken,
             onCircularRideRequestHandled: onCircularRideRequestHandled,
             discoveryCatalogueLoader: () async =>
@@ -6672,6 +6674,89 @@ void main() {
       expect(find.text('Create a circular ride'), findsOneWidget);
       expect(find.byKey(const Key('generate-circular-ride')), findsOneWidget);
       expect(handled, 1);
+    });
+
+    testWidgets(
+      'circular generation keeps the map visible and can be cancelled',
+      (tester) async {
+        final routing = _BlockingRoadRoutingService();
+        final position = ValueNotifier(
+          const GeoPoint(latitude: 51.45, longitude: -2.59),
+        );
+        addTearDown(position.dispose);
+        await pumpMap(
+          tester,
+          started: false,
+          authority: RouteAuthority.personal,
+          currentPosition: position,
+          roadRoutingService: routing,
+          circularRideRequestToken: Object(),
+        );
+
+        await tester.ensureVisible(
+          find.byKey(const Key('generate-circular-ride')),
+        );
+        await tester.tap(find.byKey(const Key('generate-circular-ride')));
+        await tester.pump();
+        await routing.started.future;
+        await tester.pump();
+
+        expect(find.byType(FlutterMap), findsOneWidget);
+        expect(find.text('Calculating circular route'), findsOneWidget);
+        expect(find.textContaining('road sections'), findsOneWidget);
+        expect(
+          find.byKey(const Key('cancel-circular-ride-generation')),
+          findsOneWidget,
+        );
+
+        await tester.tap(
+          find.byKey(const Key('cancel-circular-ride-generation')),
+        );
+        await tester.pump();
+        expect(find.text('Calculating circular route'), findsNothing);
+
+        routing.release.complete();
+        await tester.pumpAndSettle();
+        expect(find.text('Confirm'), findsNothing);
+        expect(find.text('Calculating circular route'), findsNothing);
+      },
+    );
+
+    testWidgets('a failed circular route keeps its chosen parameters', (
+      tester,
+    ) async {
+      final position = ValueNotifier(
+        const GeoPoint(latitude: 51.45, longitude: -2.59),
+      );
+      addTearDown(position.dispose);
+      await pumpMap(
+        tester,
+        started: false,
+        authority: RouteAuthority.personal,
+        currentPosition: position,
+        roadRoutingService: const _FailingRoadRoutingService(),
+        circularRideRequestToken: Object(),
+      );
+
+      await tester.tap(find.byKey(const Key('circular-direction-NW')));
+      await tester.enterText(find.byKey(const Key('circular-distance')), '100');
+      await tester.ensureVisible(
+        find.byKey(const Key('generate-circular-ride')),
+      );
+      await tester.tap(find.byKey(const Key('generate-circular-ride')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Create a circular ride'), findsOneWidget);
+      final distance = tester.widget<TextFormField>(
+        find.byKey(const Key('circular-distance')),
+      );
+      expect(distance.controller!.text, '100');
+      expect(
+        tester
+            .widget<ChoiceChip>(find.byKey(const Key('circular-direction-NW')))
+            .selected,
+        isTrue,
+      );
     });
 
     testWidgets('free roam is a map, not a card asking for a route (#600)', (
@@ -7618,6 +7703,42 @@ class _StraightRoadRoutingService implements RoadRoutingService {
     distanceMeters: 12000,
     duration: const Duration(minutes: 22),
   );
+}
+
+class _BlockingRoadRoutingService implements RoadRoutingService {
+  final started = Completer<void>();
+  final release = Completer<void>();
+  var calls = 0;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    calls += 1;
+    if (calls == 1) {
+      started.complete();
+      await release.future;
+    }
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: 26000,
+      duration: const Duration(minutes: 25),
+      preferences: preferences,
+    );
+  }
+}
+
+class _FailingRoadRoutingService implements RoadRoutingService {
+  const _FailingRoadRoutingService();
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) => throw StateError('routing unavailable');
 }
 
 class _RouteStartRoutingService implements RoadRoutingService {
