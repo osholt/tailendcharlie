@@ -247,6 +247,58 @@ void main() {
   );
 
   test(
+    'an alternate loop shape replaces an unannounced dead-end spur',
+    () async {
+      final routing = _SpurRoadRoutingService(
+        sectionsPerCandidate: 5,
+        spurBoundaryAfterSection: 1,
+        spurFirstCandidateOnly: true,
+      );
+
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 120000,
+          direction: CircularRideDirection.north,
+          preferences: RoutePreferences.defaults,
+        ),
+      );
+
+      expect(routing.calls, 10);
+      expect(plan.request.variant, 1);
+      expect(plan.route.maneuvers, isEmpty);
+    },
+  );
+
+  test('a deliberate stop may be at the end of an out-and-back road', () async {
+    final routing = _SpurRoadRoutingService(
+      sectionsPerCandidate: 6,
+      spurBoundaryAfterSection: 2,
+    );
+
+    final plan = await CircularRidePlanner(routingService: routing).generate(
+      const CircularRideRequest(
+        start: start,
+        distanceMeters: 120000,
+        direction: CircularRideDirection.north,
+        preferences: RoutePreferences.defaults,
+        plannedStops: [
+          CircularRideStop(
+            fraction: 0.5,
+            waypoint: RouteWaypoint(
+              point: GeoPoint(latitude: 51.58, longitude: -2.51),
+              name: 'Viewpoint',
+            ),
+          ),
+        ],
+      ),
+    );
+
+    expect(routing.calls, 6);
+    expect(plan.request.variant, 0);
+  });
+
+  test(
     'allows motorways after a no-path response and warns before acceptance',
     () async {
       final routing = _MotorwayFallbackRoadRoutingService();
@@ -664,6 +716,48 @@ class _UTurnThenValidRoadRoutingService implements RoadRoutingService {
               ),
             ]
           : const [],
+      preferences: preferences,
+    );
+  }
+}
+
+class _SpurRoadRoutingService implements RoadRoutingService {
+  _SpurRoadRoutingService({
+    required this.sectionsPerCandidate,
+    required this.spurBoundaryAfterSection,
+    this.spurFirstCandidateOnly = false,
+  });
+
+  final int sectionsPerCandidate;
+  final int spurBoundaryAfterSection;
+  final bool spurFirstCandidateOnly;
+  var calls = 0;
+  GeoPoint? _sharedSpurPoint;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    final call = calls++;
+    final candidate = call ~/ sectionsPerCandidate;
+    final section = call % sectionsPerCandidate;
+    final addSpur = !spurFirstCandidateOnly || candidate == 0;
+    var points = List<GeoPoint>.of(waypoints);
+    if (addSpur && section == spurBoundaryAfterSection) {
+      _sharedSpurPoint = GeoPoint(
+        latitude: (waypoints.first.latitude + waypoints.last.latitude) / 2,
+        longitude: (waypoints.first.longitude + waypoints.last.longitude) / 2,
+      );
+      points = [waypoints.first, _sharedSpurPoint!, waypoints.last];
+    } else if (addSpur && section == spurBoundaryAfterSection + 1) {
+      points = [waypoints.first, _sharedSpurPoint!, waypoints.last];
+    }
+    return RoadRouteResult(
+      points: points,
+      distanceMeters: 118000 / sectionsPerCandidate,
+      duration: const Duration(minutes: 24),
       preferences: preferences,
     );
   }
