@@ -70,4 +70,57 @@ void main() {
     expect(find.byKey(const Key('circular-comfort-frequency')), findsOneWidget);
     expect(find.byKey(const Key('circular-meal-time')), findsOneWidget);
   });
+
+  testWidgets('restores a previous request for editing or retry', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CircularRideSheet(
+            start: const GeoPoint(latitude: 51.46, longitude: -2.51),
+            distanceUnit: DistanceUnit.miles,
+            initialRequest: const CircularRideRequest(
+              start: GeoPoint(latitude: 51.46, longitude: -2.51),
+              distanceMeters: 160934.4,
+              direction: CircularRideDirection.northWest,
+              preferences: RoutePreferences(
+                style: RouteStyle.twisty,
+                avoidMotorways: false,
+                avoidMajorRoads: true,
+              ),
+              dayLength: RideDayLength.custom,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final distance = tester.widget<TextFormField>(
+      find.byKey(const Key('circular-distance')),
+    );
+    expect(distance.controller!.text, '100');
+    expect(
+      tester
+          .widget<ChoiceChip>(find.byKey(const Key('circular-direction-NW')))
+          .selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<DropdownButtonFormField<RouteStyle>>(
+            find.byKey(const Key('circular-road-style')),
+          )
+          .initialValue,
+      RouteStyle.twisty,
+    );
+    final motorway = tester.widget<CheckboxListTile>(
+      find.widgetWithText(CheckboxListTile, 'Avoid motorways'),
+    );
+    final majorRoads = tester.widget<CheckboxListTile>(
+      find.widgetWithText(CheckboxListTile, 'Prefer quieter roads'),
+    );
+    expect(motorway.value, isFalse);
+    expect(majorRoads.value, isTrue);
+  });
 }

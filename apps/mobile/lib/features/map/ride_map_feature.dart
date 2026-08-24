@@ -1182,6 +1182,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   bool _importing = false;
   bool _exporting = false;
   bool _routing = false;
+  int _circularRideGeneration = 0;
+  String? _circularRideGenerationStage;
   bool _routingToStart = false;
   bool _navigationMode = false;
   bool _navigationCanvasActive = false;
@@ -2417,6 +2419,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
                           },
                         );
                       },
+                    ),
+                  ),
+                if (_circularRideGenerationStage case final stage?)
+                  Positioned.fill(
+                    child: _CircularRideGenerationOverlay(
+                      stage: stage,
+                      onCancel: _cancelCircularRideGeneration,
                     ),
                   ),
               ],
@@ -6283,14 +6292,29 @@ class _RideMapScreenState extends State<RideMapScreen> {
     );
     while (request != null && mounted) {
       final requestedRide = request;
-      setState(() => _routing = true);
+      final generation = ++_circularRideGeneration;
+      setState(() {
+        _routing = true;
+        _circularRideGenerationStage =
+            'Preparing your road preferences and suggested stops…';
+      });
+      CircularRideRequest? retryRequest;
       try {
         final preparedRequest = await _withSuggestedDayRideStops(requestedRide);
+        if (!_isCircularRideGenerationCurrent(generation)) return;
+        _setCircularRideGenerationStage(
+          generation,
+          'Routing road sections and checking alternative loop shapes…',
+        );
         final planner = CircularRidePlanner(
           routingService: _roadRoutingService,
         );
         var plan = await planner.generate(preparedRequest);
-        if (!mounted) return;
+        if (!_isCircularRideGenerationCurrent(generation)) return;
+        _setCircularRideGenerationStage(
+          generation,
+          'Preparing the route preview…',
+        );
         final review = await _reviewRoute(
           plan.route,
           distanceMeters: plan.actualDistanceMeters,
@@ -6313,6 +6337,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             );
           },
         );
+        if (!_isCircularRideGenerationCurrent(generation)) return;
         if (!mounted) return;
         if (review.action == RouteReviewAction.another) {
           request = plan.request.another();
@@ -6323,6 +6348,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
             context,
             start: origin,
             distanceUnit: widget.distanceUnit,
+            initialRequest: plan.request,
             personalHeatmapCells: _personalCircularHeatCells,
             globalHeatmapCells: _globalCircularHeatCells,
           );
@@ -6338,15 +6364,49 @@ class _RideMapScreenState extends State<RideMapScreen> {
         }
         return;
       } on FormatException catch (error) {
+        if (!_isCircularRideGenerationCurrent(generation)) return;
         _showMessage(error.message);
-        return;
+        retryRequest = requestedRide;
       } on Object catch (error) {
+        if (!_isCircularRideGenerationCurrent(generation)) return;
         _showMessage('Could not generate the circular ride: $error');
-        return;
+        retryRequest = requestedRide;
       } finally {
-        if (mounted) setState(() => _routing = false);
+        if (_isCircularRideGenerationCurrent(generation)) {
+          setState(() {
+            _routing = false;
+            _circularRideGenerationStage = null;
+          });
+        }
       }
+      if (!mounted) return;
+      request = await CircularRideSheet.show(
+        context,
+        start: origin,
+        distanceUnit: widget.distanceUnit,
+        initialRequest: retryRequest,
+        personalHeatmapCells: _personalCircularHeatCells,
+        globalHeatmapCells: _globalCircularHeatCells,
+      );
     }
+  }
+
+  bool _isCircularRideGenerationCurrent(int generation) =>
+      mounted && generation == _circularRideGeneration;
+
+  void _setCircularRideGenerationStage(int generation, String stage) {
+    if (!_isCircularRideGenerationCurrent(generation)) return;
+    setState(() => _circularRideGenerationStage = stage);
+  }
+
+  void _cancelCircularRideGeneration() {
+    if (_circularRideGenerationStage == null) return;
+    _circularRideGeneration += 1;
+    setState(() {
+      _routing = false;
+      _circularRideGenerationStage = null;
+    });
+    _showMessage('Circular route calculation cancelled.');
   }
 
   List<String> _circularRideReviewWarnings(CircularRidePlan plan) {
@@ -8233,6 +8293,66 @@ ml.LatLngBounds _mapLibreBounds(List<GeoPoint> points) {
 
 String _hexColor(Color color) =>
     '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2)}';
+
+class _CircularRideGenerationOverlay extends StatelessWidget {
+  const _CircularRideGenerationOverlay({
+    required this.stage,
+    required this.onCancel,
+  });
+
+  final String stage;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      const ModalBarrier(dismissible: false, color: Color(0x99090D12)),
+      SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Calculating circular route',
+                        style: Theme.of(context).textTheme.titleLarge,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      const LinearProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text(stage, textAlign: TextAlign.center),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Longer rides may take up to a minute while several '
+                        'road combinations are checked.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 20),
+                      OutlinedButton(
+                        key: const Key('cancel-circular-ride-generation'),
+                        onPressed: onCancel,
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
 
 class _EmptyRoutePrompt extends StatelessWidget {
   const _EmptyRoutePrompt({
