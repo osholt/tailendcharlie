@@ -4322,10 +4322,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       // announced at the junction itself (#460).
       followingInstructionText: guidance.followingInstruction?.standaloneText,
     );
-    if (announcement == null) return;
+    if (announcement == null || speaker.isSpeaking) return;
 
     // Marked spoken before the await, so a slow speech engine cannot let the
-    // same stage fire again on the next fix.
+    // same stage fire again on the next fix. A stage found while another prompt
+    // is active is deliberately left unmarked above, so the next position fix
+    // can reconsider whichever stage is then useful (#616).
     _spokenGuidanceKeys.add(announcement.key);
     // #409 is about *when* this is said, so the distance to the junction at the
     // moment it left the speaker is the measurement.

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_tts/flutter_tts.dart';
 
 /// One installed English text-to-speech voice.
@@ -339,6 +341,16 @@ class SpokenGuidanceSpeaker {
   final _spokenAlertKeys = <String>{};
   bool _configured = false;
   Future<void>? _configuration;
+  bool _speaking = false;
+  Completer<void>? _speechIdle;
+
+  /// Whether one complete utterance currently owns the shared speech engine.
+  ///
+  /// Neural generation and both platform TTS implementations are single-output
+  /// resources. Letting a later guidance stage enter while the previous stage
+  /// is still generating supersedes the first neural attempt and used to latch
+  /// the whole ride onto the system fallback (#616).
+  bool get isSpeaking => _speaking;
 
   /// The instruction most recently spoken, for tests and for the caller to check
   /// it is not about to repeat itself.
@@ -367,11 +379,16 @@ class SpokenGuidanceSpeaker {
     if (!rideActive) return false;
     if (phrase.trim().isEmpty) return false;
     if (key == _lastSpokenKey) return false;
+    if (!_claimSpeechSlot()) return false;
 
-    await _ensureConfigured();
-    _lastSpokenKey = key;
-    await _engine.speak(_expandSpokenAbbreviations(phrase));
-    return true;
+    try {
+      await _ensureConfigured();
+      _lastSpokenKey = key;
+      await _engine.speak(_expandSpokenAbbreviations(phrase));
+      return true;
+    } finally {
+      _releaseSpeechSlot();
+    }
   }
 
   /// Speaks a warning about the road, which is a different class of thing from a
@@ -395,13 +412,18 @@ class SpokenGuidanceSpeaker {
     if (phrase.trim().isEmpty) return false;
     if (_spokenAlertKeys.contains(key)) return false;
 
-    await _ensureConfigured();
     // Alerts keep their own memory rather than sharing `_lastSpokenKey`: a turn
     // spoken between two sightings of the same camera would otherwise let the
     // camera be announced twice.
     _spokenAlertKeys.add(key);
-    await _engine.speak(_expandSpokenAbbreviations(phrase));
-    return true;
+    await _waitForSpeechSlot();
+    try {
+      await _ensureConfigured();
+      await _engine.speak(_expandSpokenAbbreviations(phrase));
+      return true;
+    } finally {
+      _releaseSpeechSlot();
+    }
   }
 
   /// Forgets what was last spoken, so the next ride starts clean.
@@ -435,6 +457,28 @@ class SpokenGuidanceSpeaker {
     } finally {
       if (identical(_configuration, pending)) _configuration = null;
     }
+  }
+
+  bool _claimSpeechSlot() {
+    if (_speaking) return false;
+    _speaking = true;
+    _speechIdle = Completer<void>();
+    return true;
+  }
+
+  Future<void> _waitForSpeechSlot() async {
+    while (!_claimSpeechSlot()) {
+      final idle = _speechIdle;
+      if (idle != null) await idle.future;
+    }
+  }
+
+  void _releaseSpeechSlot() {
+    if (!_speaking) return;
+    _speaking = false;
+    final idle = _speechIdle;
+    _speechIdle = null;
+    if (idle != null && !idle.isCompleted) idle.complete();
   }
 
   Future<void> stop() => _engine.stop();
