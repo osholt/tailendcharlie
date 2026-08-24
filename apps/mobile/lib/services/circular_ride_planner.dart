@@ -473,6 +473,11 @@ class CircularRidePlanner {
           ),
       ]),
     );
+    if (_hasUnintendedSpur(sections, preserveInternalBoundary)) {
+      throw const _CircularRideCandidateFailure(
+        _CircularRideCandidateFailureKind.spur,
+      );
+    }
     final points = <GeoPoint>[];
     final maneuvers = <RoadRouteManeuver>[];
     var distanceMeters = 0.0;
@@ -640,6 +645,7 @@ class CircularRidePlanner {
 enum _CircularRideCandidateFailureKind {
   noRoute,
   uTurn,
+  spur,
   notClosed,
   distanceMismatch,
 }
@@ -711,6 +717,16 @@ String _circularRideFailureMessage(
     return 'No circular route without a U-turn could be found after trying '
         'different loop shapes. Try another direction or adjust the distance.';
   }
+  if (failures.isNotEmpty &&
+      failures.every(
+        (failure) =>
+            failure == _CircularRideCandidateFailureKind.uTurn ||
+            failure == _CircularRideCandidateFailureKind.spur,
+      )) {
+    return 'No circular route without a dead-end detour or U-turn could be '
+        'found after trying different loop shapes. Try another direction or '
+        'adjust the distance.';
+  }
   if (request.preferences.avoidMotorways) {
     return 'No usable circular route could be found after trying different '
         'loop shapes and allowing motorways only on blocked sections. Try '
@@ -764,6 +780,87 @@ bool _hasUTurn(RoadRouteResult result) => result.maneuvers.any((maneuver) {
   final modifier = maneuver.modifier?.trim().toLowerCase().replaceAll('-', ' ');
   return modifier == 'uturn' || modifier == 'u turn';
 });
+
+const _circularRideSpurProbeDistancesMeters = [75.0, 150.0, 300.0];
+const _circularRideSpurMaximumSeparationMeters = 35.0;
+const _circularRideSectionBoundaryToleranceMeters = 100.0;
+
+/// Detects a shaping control that sends consecutive routed sections down the
+/// same road in opposite directions. Routing providers often describe the two
+/// sections independently, so neither result contains an explicit U-turn even
+/// though joining them produces a dead-end excursion.
+///
+/// A deliberate stop is allowed to be at the end of an out-and-back road. The
+/// loop start/finish is not an internal boundary and is therefore exempt too.
+bool _hasUnintendedSpur(
+  List<_CircularRideSection> sections,
+  List<bool> preserveInternalBoundary,
+) {
+  for (var boundary = 0; boundary < sections.length - 1; boundary += 1) {
+    if (boundary < preserveInternalBoundary.length &&
+        preserveInternalBoundary[boundary]) {
+      continue;
+    }
+    final incoming = sections[boundary].result.points;
+    final outgoing = sections[boundary + 1].result.points;
+    if (incoming.length < 2 || outgoing.length < 2) continue;
+    if (_distanceMetres(incoming.last, outgoing.first) >
+        _circularRideSectionBoundaryToleranceMeters) {
+      continue;
+    }
+    final overlapsAtEveryProbe = _circularRideSpurProbeDistancesMeters.every((
+      distance,
+    ) {
+      final before = _pointAlongPolylineFromBoundary(
+        incoming,
+        distance,
+        fromEnd: true,
+      );
+      final after = _pointAlongPolylineFromBoundary(
+        outgoing,
+        distance,
+        fromEnd: false,
+      );
+      return before != null &&
+          after != null &&
+          _distanceMetres(before, after) <=
+              _circularRideSpurMaximumSeparationMeters;
+    });
+    if (overlapsAtEveryProbe) return true;
+  }
+  return false;
+}
+
+GeoPoint? _pointAlongPolylineFromBoundary(
+  List<GeoPoint> points,
+  double distanceMeters, {
+  required bool fromEnd,
+}) {
+  var remaining = distanceMeters;
+  var previous = fromEnd ? points.last : points.first;
+  for (
+    var index = fromEnd ? points.length - 2 : 1;
+    fromEnd ? index >= 0 : index < points.length;
+    index += fromEnd ? -1 : 1
+  ) {
+    final current = points[index];
+    final segmentDistance = _distanceMetres(previous, current);
+    if (segmentDistance > 0 && segmentDistance >= remaining) {
+      final fraction = remaining / segmentDistance;
+      return GeoPoint(
+        latitude:
+            previous.latitude +
+            (current.latitude - previous.latitude) * fraction,
+        longitude:
+            previous.longitude +
+            (current.longitude - previous.longitude) * fraction,
+      );
+    }
+    if (segmentDistance.isFinite) remaining -= segmentDistance;
+    previous = current;
+  }
+  return null;
+}
 
 bool _hasExcessiveSectionDetour(
   GeoPoint start,
