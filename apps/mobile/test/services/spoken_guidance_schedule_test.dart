@@ -288,6 +288,25 @@ void main() {
         reason: 'and it must come from the guidance, not be re-derived',
       );
     });
+
+    test('ride and free-roam callers leave a busy stage unmarked (#616)', () {
+      // The speaker rejects overlapping navigation prompts, but these callers
+      // used to mark a stage as spoken before starting its asynchronous call.
+      // They must therefore check the shared slot first, leaving a deferred
+      // stage eligible for the next position fix.
+      for (final path in [
+        'lib/features/ride/active_ride_shell.dart',
+        'lib/features/home/home_map_backdrop.dart',
+      ]) {
+        final source = File(path).readAsStringSync();
+
+        expect(
+          source,
+          contains('if (announcement == null || speaker.isSpeaking) return;'),
+          reason: '$path must not consume a prompt the speaker cannot accept',
+        );
+      }
+    });
   });
 
   group('nothing is invented from bad input', () {

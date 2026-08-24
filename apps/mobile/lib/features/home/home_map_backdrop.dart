@@ -365,7 +365,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       distanceFormatter: MeasurementFormatter(widget.distanceUnit).distance,
       followingInstructionText: guidance.followingInstruction?.standaloneText,
     );
-    if (announcement == null) return;
+    if (announcement == null || speaker.isSpeaking) return;
     _spokenGuidanceKeys.add(announcement.key);
     _diagnostics?.recordSpokenPrompt(
       phrase: announcement.phrase,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
@@ -48,6 +50,82 @@ void main() {
     expect(await speak(key: 'turn-2', phrase: 'Turn left'), isTrue);
 
     expect(engine.spoken, ['Second exit', 'Turn left']);
+  });
+
+  test(
+    'a later navigation stage is deferred while a prompt is active',
+    () async {
+      final blocking = _BlockingRecordingEngine();
+      final guardedSpeaker = SpokenGuidanceSpeaker(blocking);
+
+      final first = guardedSpeaker.speakManoeuvre(
+        key: 'turn-1|approach',
+        phrase: 'In 60 yd, turn right',
+        enabled: true,
+        rideActive: true,
+      );
+      await blocking.waitForCallCount(1);
+
+      final second = guardedSpeaker.speakManoeuvre(
+        key: 'turn-1|immediate',
+        phrase: 'Turn right',
+        enabled: true,
+        rideActive: true,
+      );
+      await Future<void>.delayed(Duration.zero);
+      final callsBeforeRelease = List<String>.of(blocking.spoken);
+      blocking.completeAll();
+
+      expect(await first, isTrue);
+      expect(await second, isFalse);
+      expect(callsBeforeRelease, ['In 60 yards, turn right']);
+      expect(guardedSpeaker.isSpeaking, isFalse);
+
+      final deferred = guardedSpeaker.speakManoeuvre(
+        key: 'turn-1|immediate',
+        phrase: 'Turn right',
+        enabled: true,
+        rideActive: true,
+      );
+      await blocking.waitForCallCount(2);
+      blocking.completeNext();
+      expect(
+        await deferred,
+        isTrue,
+        reason: 'the deferred stage remains eligible after the speaker is idle',
+      );
+    },
+  );
+
+  test('a safety alert is serialized behind an active direction', () async {
+    final blocking = _BlockingRecordingEngine();
+    final guardedSpeaker = SpokenGuidanceSpeaker(blocking);
+
+    final direction = guardedSpeaker.speakManoeuvre(
+      key: 'turn-1|approach',
+      phrase: 'In 60 yd, turn right',
+      enabled: true,
+      rideActive: true,
+    );
+    await blocking.waitForCallCount(1);
+    final alert = guardedSpeaker.speakAlert(
+      key: 'camera-1',
+      phrase: 'Speed camera, in 150 yd',
+      enabled: true,
+      rideActive: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(blocking.spoken, ['In 60 yards, turn right']);
+    blocking.completeNext();
+    await direction;
+    await blocking.waitForCallCount(2);
+    expect(blocking.spoken, [
+      'In 60 yards, turn right',
+      'Speed camera, in 150 yards',
+    ]);
+    blocking.completeNext();
+    expect(await alert, isTrue);
   });
 
   test('says nothing at all while the option is off', () async {
@@ -260,6 +338,40 @@ class _RecordingEngine implements SpokenGuidanceEngine {
 
   @override
   Future<void> stop() async => stopped = true;
+}
+
+class _BlockingRecordingEngine extends _RecordingEngine {
+  final _pending = <Completer<void>>[];
+  Completer<void> _changed = Completer<void>();
+
+  @override
+  Future<void> speak(String phrase) {
+    spoken.add(phrase);
+    final completion = Completer<void>();
+    _pending.add(completion);
+    _changed.complete();
+    _changed = Completer<void>();
+    return completion.future;
+  }
+
+  Future<void> waitForCallCount(int count) async {
+    while (spoken.length < count) {
+      final changed = _changed.future;
+      if (spoken.length >= count) return;
+      await changed;
+    }
+  }
+
+  void completeNext() {
+    if (_pending.isEmpty) return;
+    _pending.removeAt(0).complete();
+  }
+
+  void completeAll() {
+    while (_pending.isNotEmpty) {
+      completeNext();
+    }
+  }
 }
 
 class _WarmableRecordingEngine extends _RecordingEngine
