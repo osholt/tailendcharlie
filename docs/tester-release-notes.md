@@ -36,7 +36,7 @@ permissions by design.
 - ...
 ```
 
-## Android build 82 — 1.0.1 — 31 August 2026
+## iOS build 82 / Android build 82 — 1.0.1 — 31 August 2026
 
 This build prepares the app for the group trip to France and adds a French Ride
 Lab route taken from the supplied Day 3 GPX to Puy Mary.
