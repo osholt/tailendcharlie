@@ -193,15 +193,10 @@ void main() {
       );
     });
 
-    test('vertical phone framing and CarPlay traffic side are projected', () {
+    test('vertical framing and the fixed open right third are projected', () {
       expect(source, contains('riderViewportFraction'));
-      expect(source, contains('viewport["leftHandTraffic"]'));
-      expect(
-        source,
-        contains(
-          'let riderHorizontalFraction = leftHandTraffic ? (2.0 / 3.0) : (1.0 / 3.0)',
-        ),
-      );
+      expect(source, contains('let riderHorizontalFraction = 2.0 / 3.0'));
+      expect(source, isNot(contains('leftHandTraffic ? (2.0 / 3.0)')));
       expect(source, contains('let riderChromeClearance: CGFloat = 28'));
       expect(
         source,

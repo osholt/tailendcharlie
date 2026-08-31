@@ -25,12 +25,12 @@ const double navigationCameraFastRiderFractionPortrait = 0.70;
 const double navigationCameraRestRiderFractionLandscape = 0.64;
 const double navigationCameraFastRiderFractionLandscape = 0.72;
 
-/// Landscape puts the rider away from the screen centre so the road ahead has
-/// an unobstructed wide area. Left-hand traffic uses the right third, clear of
-/// the guidance/action rail shown in the supplied UK reference; right-hand
-/// traffic mirrors it. Portrait remains centred horizontally.
+/// Landscape puts the rider in the right third, clear of the fixed left-hand
+/// status/action rail. The app chrome does not move when the road's driving
+/// side changes, so right-hand traffic must keep the same open-map anchor.
+/// Portrait remains centred horizontally.
 const double navigationCameraLandscapeRiderFractionLeftTraffic = 2 / 3;
-const double navigationCameraLandscapeRiderFractionRightTraffic = 1 / 3;
+const double navigationCameraLandscapeRiderFractionRightTraffic = 2 / 3;
 
 /// Space kept between the rider's marker and the top of the bottom chrome
 /// band, as a fraction of the viewport height. The marker is 38 logical
@@ -148,7 +148,7 @@ class NavigationCameraPlan {
   final double riderViewportFraction;
 
   /// Horizontal position of the rider from the left edge. Portrait is centred;
-  /// landscape uses the traffic-side third of the viewport.
+  /// landscape uses the open right third beside the fixed left-hand chrome.
   final double riderHorizontalViewportFraction;
 
   /// Logical pixels between the viewport centre and the rider's marker.
