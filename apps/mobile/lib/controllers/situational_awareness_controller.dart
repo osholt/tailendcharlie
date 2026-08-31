@@ -14,6 +14,7 @@ import '../services/external_hazard_provider.dart';
 import '../services/hazard_deduplicator.dart';
 import '../services/route_deviation_detector.dart';
 import '../services/leader_track_exemption.dart';
+import '../services/road_jurisdiction.dart';
 import '../services/situation_event_factory.dart';
 
 class SituationalAwarenessController extends ChangeNotifier {
@@ -31,6 +32,9 @@ class SituationalAwarenessController extends ChangeNotifier {
     this.deduplicator = const HazardDeduplicator(),
     this.routeConfig = const RouteDeviationConfig(),
     this.freshnessPolicy = const PresenceFreshnessPolicy(),
+    RoadJurisdictionCatalogue roadJurisdictions =
+        RoadJurisdictionCatalogue.empty,
+    bool roadJurisdictionsReady = true,
     this.onEventStored,
   }) : _route = List.unmodifiable(route),
        _routeSegments = List.unmodifiable(
@@ -39,6 +43,12 @@ class SituationalAwarenessController extends ChangeNotifier {
          ),
        ),
        _externalProviders = List.unmodifiable(externalProviders),
+       // Public constructor names keep tests and callers explicit; these fields
+       // become mutable once the bundled layer finishes loading.
+       // ignore: prefer_initializing_formals
+       _roadJurisdictions = roadJurisdictions,
+       // ignore: prefer_initializing_formals
+       _roadJurisdictionsReady = roadJurisdictionsReady,
        _clock = clock ?? DateTime.now,
        _idFactory = idFactory ?? const Uuid().v7 {
     _eventFactory = SituationEventFactory(
@@ -60,6 +70,8 @@ class SituationalAwarenessController extends ChangeNotifier {
   final HazardExpiryPolicy expiryPolicy;
   final HazardDeduplicator deduplicator;
   final RouteDeviationConfig routeConfig;
+  RoadJurisdictionCatalogue _roadJurisdictions;
+  bool _roadJurisdictionsReady;
 
   /// Documented age thresholds shared with the ephemeral presence channels, so
   /// the journal side and the presence side cannot disagree about whether a
@@ -126,6 +138,11 @@ class SituationalAwarenessController extends ChangeNotifier {
     final now = _clock();
     final values = _hazards.values
         .where((hazard) => hazard.isActiveAt(now))
+        .where(
+          (hazard) =>
+              !_isEnforcementHazard(hazard.type) ||
+              allowsEnforcementAt(hazard.position),
+        )
         .toList();
     values.sort((first, second) {
       final bySeverity = second.severity.index.compareTo(first.severity.index);
@@ -165,6 +182,24 @@ class SituationalAwarenessController extends ChangeNotifier {
     final alert = _alerts[riderId];
     return alert == null ? null : _exemptIfFollowingLeaderTrack(alert);
   }
+
+  void updateRoadJurisdictions(RoadJurisdictionCatalogue catalogue) {
+    _roadJurisdictions = catalogue;
+    _roadJurisdictionsReady = true;
+    notifyListeners();
+  }
+
+  /// France prohibits carrying or using devices that warn of enforcement
+  /// controls. Ordinary road hazards remain available there.
+  bool allowsEnforcementAt(GeoPoint position) =>
+      _roadJurisdictionsReady &&
+      _roadJurisdictions
+              .resolve(
+                latitude: position.latitude,
+                longitude: position.longitude,
+              )
+              ?.countryCode !=
+          'FR';
 
   /// Whether [riderId]'s most recent fix was inside the ride leader's live
   /// track corridor. Such a rider is on route by definition.
@@ -244,14 +279,19 @@ class SituationalAwarenessController extends ChangeNotifier {
     if (!type.isRiderReportable) {
       throw const FormatException('That hazard type cannot be reported.');
     }
+    final reportPosition = position ?? localLocation?.sample.position;
+    if (reportPosition == null) {
+      throw const FormatException(
+        'A current location is required to report a hazard.',
+      );
+    }
+    if (_isEnforcementHazard(type) && !allowsEnforcementAt(reportPosition)) {
+      throw const FormatException(
+        'Camera and police alerts are disabled in France.',
+      );
+    }
     HazardReport? result;
     await _run(() async {
-      final reportPosition = position ?? localLocation?.sample.position;
-      if (reportPosition == null) {
-        throw const FormatException(
-          'A current location is required to report a hazard.',
-        );
-      }
       final now = _clock();
       final trimmedDetails = details?.trim();
       final incoming = HazardReport(
@@ -752,3 +792,6 @@ class SituationalAwarenessController extends ChangeNotifier {
     RideEventType.routeAlertAcknowledged,
   };
 }
+
+bool _isEnforcementHazard(HazardType type) =>
+    type == HazardType.speedCamera || type == HazardType.policeActivity;

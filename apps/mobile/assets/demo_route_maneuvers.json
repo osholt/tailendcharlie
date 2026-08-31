@@ -1,48 +1,46 @@
 {
-  "source": "OSRM navigation steps generated for King's Oak Academy to Cross Hands Hotel",
+  "source": "OSRM navigation steps generated for the supplied Day 3 route from Argentat to Saint-Privat",
   "maneuvers": [
-    {
-      "type": "end of road",
-      "modifier": "right",
-      "name": "High Street",
-      "ref": "A420",
-      "latitude": 51.457750,
-      "longitude": -2.462319
-    },
     {
       "type": "turn",
       "modifier": "left",
-      "name": "Gorse Lane",
-      "latitude": 51.452344,
-      "longitude": -2.386091
+      "name": "Avenue Raymond Poincaré",
+      "ref": "D 980",
+      "latitude": 45.090423,
+      "longitude": 1.940636,
+      "drivingSide": "right",
+      "trafficSideConfirmed": true
     },
     {
-      "type": "end of road",
-      "modifier": "left",
-      "ref": "A46",
-      "latitude": 51.469563,
-      "longitude": -2.365986
+      "type": "turn",
+      "modifier": "right",
+      "name": "Avenue Raymond Poincaré",
+      "ref": "D 980",
+      "latitude": 45.091623,
+      "longitude": 1.943078,
+      "drivingSide": "right",
+      "trafficSideConfirmed": true
     },
     {
-      "type": "rotary",
-      "modifier": "straight",
-      "name": "Bath Road",
-      "ref": "A46",
-      "latitude": 51.501168,
-      "longitude": -2.350268,
-      "exitNumber": 2,
-      "drivingSide": "left",
-      "bearingBeforeDegrees": 345
-    },
-    {
-      "type": "exit rotary",
+      "type": "fork",
       "modifier": "slight right",
-      "name": "Bath Road",
-      "ref": "A46",
-      "latitude": 51.501971,
-      "longitude": -2.350703,
-      "drivingSide": "left",
-      "bearingAfterDegrees": 15
+      "name": "Rue de Bellevue",
+      "ref": "D 980",
+      "latitude": 45.136810,
+      "longitude": 2.096474,
+      "drivingSide": "right",
+      "trafficSideConfirmed": true
+    },
+    {
+      "type": "roundabout",
+      "modifier": "right",
+      "name": "Rue des Tours de Merle",
+      "ref": "D 980",
+      "exitNumber": 3,
+      "latitude": 45.136958,
+      "longitude": 2.099481,
+      "drivingSide": "right",
+      "trafficSideConfirmed": true
     }
   ]
 }

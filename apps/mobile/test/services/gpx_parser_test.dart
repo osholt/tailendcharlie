@@ -307,18 +307,15 @@ void main() {
       importedAt: DateTime.utc(2026),
     );
 
-    expect(route.name, "King's Oak Academy to Cross Hands Hotel");
+    expect(route.name, 'Argentat to Saint-Privat — France');
     expect(route.pathPointCount, greaterThan(450));
     expect(route.waypoints, hasLength(3));
     expect(route.paths.single.kind.name, 'track');
     expect(
       route.paths.single.points.first.latitude,
-      closeTo(51.462674, 0.00001),
+      closeTo(45.09125, 0.00001),
     );
-    expect(
-      route.paths.single.points.last.latitude,
-      closeTo(51.528729, 0.00001),
-    );
+    expect(route.paths.single.points.last.latitude, closeTo(45.13701, 0.00001));
   });
 }
 

@@ -589,4 +589,5 @@ double _headingDifference(double first, double second) {
 bool _sameAnswer(SpeedLimitLookupResult first, SpeedLimitLookupResult second) =>
     first.outcome == second.outcome &&
     first.limit?.unlimited == second.limit?.unlimited &&
-    first.limit?.milesPerHour == second.limit?.milesPerHour;
+    first.limit?.signValue == second.limit?.signValue &&
+    first.limit?.speedUnitLabel == second.limit?.speedUnitLabel;

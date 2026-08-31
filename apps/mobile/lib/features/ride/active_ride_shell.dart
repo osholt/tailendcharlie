@@ -29,6 +29,7 @@ import '../../controllers/situational_awareness_controller.dart';
 import '../../data/in_memory_event_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../data/secure_observer_grant_store.dart';
+import '../../domain/distance_unit.dart';
 import '../../domain/event_store.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
@@ -92,6 +93,7 @@ import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
 import '../../services/rejoin_route_share.dart';
 import '../../services/rider_contact_share.dart';
+import '../../services/road_jurisdiction.dart';
 import '../../services/road_routing.dart';
 import '../../services/ride_connectivity_summary.dart';
 import '../../services/tec_gap_trend.dart';
@@ -1178,6 +1180,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// than failing the ride: no camera warnings is a degraded ride, no ride is
   /// not.
   FixedSpeedCameraCatalogue? _fixedSpeedCameras;
+  RoadJurisdictionCatalogue _roadJurisdictions =
+      RoadJurisdictionCatalogue.empty;
+  bool _roadJurisdictionsReady = false;
   CarPlayBridge? _carPlayBridge;
   String? _carPlayMapStyleJson;
   late final http.Client _carPlayRoutingClient;
@@ -1322,6 +1327,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       }
       _clearSharedRoutePending();
     }
+    unawaited(_loadRoadJurisdictions());
     unawaited(_initialize());
     _carPlayBridge = CarPlayBridge(
       onEmergencyTriggered: _sendEmergencyMapAlert,
@@ -1340,6 +1346,35 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         if (!mounted) return;
         _updateMapOverlays(updateDerivedState: false);
       },
+    );
+  }
+
+  Future<void> _loadRoadJurisdictions() async {
+    final catalogue = await bundledRoadJurisdictions();
+    if (!mounted) return;
+    _roadJurisdictions = catalogue;
+    _roadJurisdictionsReady = catalogue.jurisdictions.isNotEmpty;
+    if (_roadJurisdictionsReady) {
+      _awarenessController?.updateRoadJurisdictions(catalogue);
+    }
+    _schedulePublish();
+    setState(() {});
+  }
+
+  void _observeAutomaticRoadUnits(route_domain.GeoPoint? position) {
+    if (position == null ||
+        widget.distanceUnits.roadJurisdiction?.contains(
+              latitude: position.latitude,
+              longitude: position.longitude,
+            ) ==
+            true) {
+      return;
+    }
+    unawaited(
+      widget.distanceUnits.observeRoadPosition(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      ),
     );
   }
 
@@ -1721,6 +1756,28 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     await awareness.reportHazard(type: type, severity: HazardSeverity.serious);
   }
 
+  bool get _enforcementReportsAllowed {
+    if (!_roadJurisdictionsReady) return false;
+    final position = _mapPosition.value;
+    if (position != null) {
+      return _roadJurisdictions
+              .resolve(
+                latitude: position.latitude,
+                longitude: position.longitude,
+              )
+              ?.countryCode !=
+          'FR';
+    }
+    return !(_activeRoute?.allPoints.any(
+          (point) =>
+              _roadJurisdictions
+                  .resolve(latitude: point.latitude, longitude: point.longitude)
+                  ?.countryCode ==
+              'FR',
+        ) ??
+        false);
+  }
+
   List<HazardReport> get _trafficRerouteHazards {
     if (!widget.rideController.isLocalRideLeader ||
         !widget.rideController.rideStarted ||
@@ -1937,6 +1994,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       route: routeSegments.expand((segment) => segment).toList(growable: false),
       routeSegments: routeSegments,
       externalProviders: externalProviders,
+      roadJurisdictions: _roadJurisdictions,
+      roadJurisdictionsReady: _roadJurisdictionsReady,
       rideStarted: widget.rideController.rideStarted,
       rideStartedAt: widget.rideController.rideStartedAt,
       onEventStored: widget.rideController.ingestStoredEvent,
@@ -2004,6 +2063,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     previous?.removeListener(_onAwarenessChanged);
     previousMarker?.dispose();
     _awarenessController = controller;
+    if (_roadJurisdictionsReady) {
+      controller.updateRoadJurisdictions(_roadJurisdictions);
+    }
     _markerAssistanceController = markerController;
     _routeFingerprint = effectiveFingerprint;
     // Replacing the awareness controller usually only means the route changed -
@@ -2400,6 +2462,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             longitude: localMapSample.position.longitude,
             recordedAt: localMapSample.recordedAt,
           );
+    _observeAutomaticRoadUnits(mapPoint);
     final navigationRecordedAt = simulatedLocal == null
         ? localMapSample?.recordedAt
         : DateTime.now();
@@ -2787,8 +2850,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             !widget.rideController.rideEnded &&
             widget.speedLimitDisplay.enabled,
         speedLimitStatus: widget.speedLimitDisplay.status.name,
-        speedLimitMilesPerHour: widget.speedLimitDisplay.limit?.milesPerHour,
+        speedLimitValue: widget.speedLimitDisplay.limit?.signValue,
+        speedLimitUnit:
+            widget.speedLimitDisplay.limit?.speedUnitLabel ??
+            ((widget.distanceUnits.roadJurisdiction?.distanceUnit ??
+                        widget.distanceUnits.value) ==
+                    DistanceUnit.kilometres
+                ? 'km/h'
+                : 'mph'),
         speedLimitUnlimited: widget.speedLimitDisplay.limit?.unlimited ?? false,
+        enforcementReportsAllowed: _enforcementReportsAllowed,
         routeProgress: routeProgress,
         journeyProgress: journeyProgress,
         tecRequest: pendingTecRequest == null
@@ -4173,7 +4244,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       initialRouteStartConnector: _routeStartConnector,
       onRouteStartConnectorChanged: (connector) =>
           _routeStartConnector = connector,
-      onReportHazard: _awarenessController == null
+      onReportHazard:
+          _awarenessController == null || !_enforcementReportsAllowed
           ? null
           : _reportHazardFromMap,
       emergencyContacts: _emergencyContacts,
