@@ -10,11 +10,13 @@ not bulk-download from the public OpenStreetMap tile servers.
 The map layer menu can show **Personal rides heatmap**. It is on by default
 and derives its coverage only from travelled track segments in the completed
 ride archive—never planned routes. It quantises those tracks into a bounded
-z17 spatial index, so a large archive does not become one map object per GPS
+z19 spatial index, so a large archive does not become one map object per GPS
 fix. Saving or deleting an archived ride rebuilds the visible index. There is
 no account, HTTP client, contribution credential or server request in this
-personal-layer path; global opt-in coverage is a separate feature and data
-boundary.
+personal-layer path. Its z19 cells are roughly 45–50 m across at UK latitudes,
+small enough to retain street-level detail without rendering every GPS fix.
+Global opt-in coverage remains a separate feature and data boundary, with its
+coarser privacy-oriented z17 contribution cells.
 
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**

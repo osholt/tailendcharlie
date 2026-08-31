@@ -147,12 +147,12 @@ bool canGenerateNavigableRoute(ImportedRoute route) =>
 @visibleForTesting
 const motorcycleDiscoveryMinimumZoom = 12.5;
 
-/// Point-density heatmaps become isolated dots at street zoom. From here the
-/// personal archive is rendered as its contiguous z17 coverage cells instead.
-const personalHeatmapContinuousMinimumZoom = 13.0;
-
-bool personalHeatmapUsesContinuousCells(double zoom) =>
-    zoom >= personalHeatmapContinuousMinimumZoom;
+/// Ground radius for the fallback renderer. z19 cell centres are about 45–50 m
+/// apart at UK and French latitudes, so these circles overlap without turning
+/// a travelled road into the large square bands produced by filled cells.
+@visibleForTesting
+double personalHeatmapGroundRadiusMeters(double weight) =>
+    26 + 10 * weight.clamp(0, 1);
 
 @visibleForTesting
 bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
@@ -1057,9 +1057,6 @@ class RideMapScreen extends StatefulWidget {
 class _RideMapScreenState extends State<RideMapScreen> {
   static const _personalHeatmapSource = 'ride-relay-personal-heatmap';
   static const _personalHeatmapLayer = 'ride-relay-personal-heatmap-layer';
-  static const _personalHeatmapCellSource = 'ride-relay-personal-heatmap-cells';
-  static const _personalHeatmapCellLayer =
-      'ride-relay-personal-heatmap-cells-layer';
   static const _globalHeatmapSource = 'ride-relay-global-heatmap';
   static const _globalHeatmapLayer = 'ride-relay-global-heatmap-layer';
   static const _riddenRouteSource = 'ride-relay-route-ridden';
@@ -3269,38 +3266,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
               cache: widget.offlineTileCache,
             ),
           ),
-        if (_visiblePersonalHeatmap.cells.isNotEmpty &&
-            !personalHeatmapUsesContinuousCells(_lastViewportZoom))
+        if (_visiblePersonalHeatmap.cells.isNotEmpty)
           CircleLayer(
             key: const Key('personal-rides-heatmap-layer'),
             circles: [
               for (final cell in _visiblePersonalHeatmap.cells)
                 CircleMarker(
                   point: _latLng(cell.centre),
-                  radius: 7 + 5 * cell.weight,
+                  radius: personalHeatmapGroundRadiusMeters(cell.weight),
+                  useRadiusInMeter: true,
                   color: Color.lerp(
                     const Color(0xFF7C3AED),
                     const Color(0xFFF97316),
                     cell.weight,
                   )!.withValues(alpha: 0.16 + 0.24 * cell.weight),
-                ),
-            ],
-          ),
-        if (_visiblePersonalHeatmap.cells.isNotEmpty &&
-            personalHeatmapUsesContinuousCells(_lastViewportZoom))
-          PolygonLayer(
-            key: const Key('personal-rides-heatmap-layer'),
-            polygons: [
-              for (final cell in _visiblePersonalHeatmap.cells)
-                Polygon(
-                  points: cell.polygon.map(_latLng).toList(growable: false),
-                  color: Color.lerp(
-                    const Color(0xFF7C3AED),
-                    const Color(0xFFF97316),
-                    cell.weight,
-                  )!.withValues(alpha: 0.20 + 0.28 * cell.weight),
-                  borderColor: Colors.transparent,
-                  borderStrokeWidth: 0,
                 ),
             ],
           ),
@@ -4489,14 +4468,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _updateViewportZoom(double zoom) {
     final wasVisible = motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom);
-    final wasContinuous = personalHeatmapUsesContinuousCells(_lastViewportZoom);
     _lastViewportZoom = zoom;
     final isVisible = motorcycleDiscoveryVisibleAtZoom(zoom);
-    final isContinuous = personalHeatmapUsesContinuousCells(zoom);
-    if (!mounted ||
-        (wasVisible == isVisible && wasContinuous == isContinuous)) {
-      return;
-    }
+    if (!mounted || wasVisible == isVisible) return;
     setState(() {});
     _scheduleMapLibreSync(overlays: true);
   }
@@ -5160,8 +5134,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
             4,
             12,
             10,
-            17,
+            13,
             18,
+            14,
+            30,
+            15,
+            58,
+            16,
+            114,
+            17,
+            226,
+            18,
+            450,
+            19,
+            898,
+            20,
+            1794,
           ],
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.85,
@@ -5180,30 +5168,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ],
           heatmapOpacity: 0.48,
         ),
-        maxzoom: personalHeatmapContinuousMinimumZoom,
-      );
-      await controller.addGeoJsonSource(
-        _personalHeatmapCellSource,
-        _visiblePersonalHeatmap.toCellGeoJson(),
-      );
-      await controller.addFillLayer(
-        _personalHeatmapCellSource,
-        _personalHeatmapCellLayer,
-        const ml.FillLayerProperties(
-          fillAntialias: false,
-          fillColor: [
-            'interpolate',
-            ['linear'],
-            ['get', 'weight'],
-            0,
-            '#7C3AED',
-            1,
-            '#F97316',
-          ],
-          fillOpacity: 0.48,
-        ),
-        minzoom: personalHeatmapContinuousMinimumZoom,
-        enableInteraction: false,
       );
       await controller.addGeoJsonSource(
         _discoveryLineSource,
@@ -5537,10 +5501,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _visiblePersonalHeatmap.toGeoJson(),
       );
       await controller.setGeoJsonSource(
-        _personalHeatmapCellSource,
-        _visiblePersonalHeatmap.toCellGeoJson(),
-      );
-      await controller.setGeoJsonSource(
         _discoveryLineSource,
         _discoveryLineGeoJson(),
       );
@@ -5639,10 +5599,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await controller.setGeoJsonSource(
           _personalHeatmapSource,
           _visiblePersonalHeatmap.toGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _personalHeatmapCellSource,
-          _visiblePersonalHeatmap.toCellGeoJson(),
         );
         await controller.setGeoJsonSource(
           _discoveryLineSource,

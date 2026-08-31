@@ -112,6 +112,23 @@ void main() {
     expect(points.first, points.last, reason: 'GeoJSON polygon rings close');
   });
 
+  test('coverage cells stay granular at street scale', () {
+    const cell = PersonalRideHeatmapCell(
+      x: 258400,
+      y: 174000,
+      visits: 1,
+      weight: 0.4,
+    );
+
+    final longitudeSpan = cell.polygon[1].longitude - cell.polygon[0].longitude;
+    expect(
+      longitudeSpan,
+      lessThan(0.001),
+      reason:
+          'a personal heatmap cell should be under about 70 metres wide at UK latitudes',
+    );
+  });
+
   test(
     'visibility is on by default and an explicit off choice persists',
     () async {

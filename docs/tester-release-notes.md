@@ -36,6 +36,35 @@ permissions by design.
 - ...
 ```
 
+## iOS build 85 — 1.0.1 — 1 September 2026
+
+This build refines the personal ride heat map after physical-device feedback.
+
+### What to test
+
+1. Open the home map with **Personal rides heatmap** enabled and inspect roads
+   at wide, normal and close street zooms.
+2. Coverage should remain a smooth purple/orange hue as you zoom. It should not
+   break into purple dots or switch to large square blocks.
+3. Repeatedly ridden sections should remain warmer than single-pass sections,
+   and the active route, bike and road labels should stay readable above it.
+
+### Fixed
+
+- Increased the private personal-coverage index from z17 to z19, reducing UK
+  and French cells from roughly 190 m to 45–50 m.
+- Replaced the close-zoom filled-cell layer with one continuously scaled
+  MapLibre heat layer, keeping samples blended through every zoom level.
+- Updated the fallback renderer to use overlapping ground-sized coverage
+  circles instead of fixed screen-space dots.
+
+### Known limitations
+
+- The personal heat map is derived only from completed travelled tracks stored
+  on this phone. Planned routes and the live position are never added.
+- The release has automated coverage, an iOS simulator build and visual checks
+  at three zoom levels; physical iPhone confirmation remains requested.
+
 ## iOS build 84 — 1.0.1 — 31 August 2026
 
 This build makes the iOS ride map and recorded-ride history more dependable,

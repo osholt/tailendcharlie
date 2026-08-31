@@ -58,26 +58,12 @@ void main() {
   });
 
   test(
-    'personal heatmap changes from density to continuous cells at street zoom',
+    'personal heatmap fallback overlaps fine-grid coverage without blocks',
     () {
-      expect(
-        personalHeatmapUsesContinuousCells(
-          personalHeatmapContinuousMinimumZoom - 0.01,
-        ),
-        isFalse,
-      );
-      expect(
-        personalHeatmapUsesContinuousCells(
-          personalHeatmapContinuousMinimumZoom,
-        ),
-        isTrue,
-      );
-      expect(
-        personalHeatmapUsesContinuousCells(14),
-        isTrue,
-        reason:
-            'the normal close home-map zoom must not expose individual dots',
-      );
+      expect(personalHeatmapGroundRadiusMeters(0), 26);
+      expect(personalHeatmapGroundRadiusMeters(1), 36);
+      expect(personalHeatmapGroundRadiusMeters(-1), 26);
+      expect(personalHeatmapGroundRadiusMeters(2), 36);
     },
   );
 
