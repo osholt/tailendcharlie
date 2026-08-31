@@ -60,8 +60,9 @@ attribution are in `tools/places/`.
 - Attempts to match sparse `<rte>` geometry, or waypoint-only GPX files, to the
   road network after an explicit import. If routing is unavailable, the original
   GPX remains usable and is stored unchanged.
-- Includes a valid 17.5 km, 484-point GPX track following roads from the King's
-  Oak Academy car park to the Cross Hands Hotel car park.
+- Includes a valid 17.9 km, 466-point French GPX track from
+  Argentat-sur-Dordogne to Saint-Privat, excerpted from the supplied Day 3 route
+  to Puy Mary.
 
 ## Motorcycle discovery layers
 
@@ -777,7 +778,7 @@ curvy-road optimization.
 ## Mapped speed-limit display
 
 The map, map menu and Settings screen carry a mapped speed-limit display for
-Great Britain and the Isle of Man. **It is on by default, and an explicit
+France, Great Britain and the Isle of Man. **It is on by default, and an explicit
 opt-out is respected.** The preference is only ever written by a rider toggling
 it, so an absent key means "never chose" and takes the default while a stored
 `false` stays off across an upgrade. A rider who has turned it off sees the
@@ -829,8 +830,8 @@ candidates still post different limits, as they do standing where a 30 becomes a
 50, the reading stays unconfirmed and resolves on the next fix or on movement
 using heading, rather than one of the two being chosen.
 
-`locate` reports no country of its own, so the GB/Isle of Man requirement is met
-by a `trace_attributes` confirmation sent at the chosen road's own snapped
+`locate` reports no country of its own, so the supported-country requirement is
+met by a `trace_attributes` confirmation sent at the chosen road's own snapped
 position — and only when a mapped value is actually about to be displayed. A
 position with nothing to show costs one request, not two, and the country that
 comes back belongs to the road on the sign rather than to whichever edge a map
@@ -840,10 +841,10 @@ Ambiguity is stated, not hidden. Poor accuracy or an uncertain match resolves to
 `unconfirmedRoad` — named for the condition, not for a wait — which shows `GPS
 accuracy too low` or `Road not confirmed` and is retried where the rider stands
 every 5 seconds, or immediately once the bike moves. A settled negative (no
-mapped limit on this road, outside the UK) waits for the bike to move rather than
-re-asking about a spot that cannot change; an unreachable service is retried on
-the ordinary 15-second interval. Once a limit is known, rechecking still needs
-both 25 metres of travel and 15 seconds.
+mapped limit on this road, outside the supported countries) waits for the bike
+to move rather than re-asking about a spot that cannot change; an unreachable
+service is retried on the ordinary 15-second interval. Once a limit is known,
+rechecking still needs both 25 metres of travel and 15 seconds.
 
 Lookups are fed from the navigation fix rather than a bare position, because the
 confidence test is built on reported accuracy and heading and a position
@@ -874,44 +875,45 @@ the second half of the ride-start failure.
 Valhalla serialises an explicit OpenStreetMap `maxspeed=none` as
 `"speed_limit": "unlimited"`; an untagged road omits `speed_limit`. Those live
 responses were captured separately from Isle of Man OSM way 25985919 (Ballanard
-Road/A22) and the untagged bundled-demo-start way 844320294. Valhalla reports the
+Road/A22) and the untagged King's Oak Academy access way 844320294. Valhalla reports the
 former with country code `IM`, so that mph jurisdiction is accepted alongside
 `GB`. The app renders the first as `∞` and the second as `–` without inventing an
 unrestricted road from missing data.
 
-The value must also convert to one of the six limits a UK sign carries (20, 30,
-40, 50, 60, 70 mph) or it is treated as unknown. That keeps an inferred or foreign
-value off the sign and fails safe on units: every UK limit read in the wrong unit
-falls outside the set rather than producing a plausible wrong number.
+Valhalla reports numeric limits in km/h. France keeps that canonical value and
+accepts only the plausible 5–150 km/h range. Great Britain and the Isle of Man
+convert it to one of the six limits a UK sign carries (20, 30, 40, 50, 60,
+70 mph) or treat it as unknown. This fails safe on units: a UK limit read in the
+wrong unit cannot become a plausible-looking sign.
 
 After the first lookup completes the sign has exactly three visual states:
 number, dash or infinity. A loading indicator is allowed only for that first
 resolution; a later refresh keeps the last completed state visible until the
-next answer arrives. The UI uses mph and familiar UK sign styling, labels the
-reading `MAPPED`, and always warns that it is not live: temporary and variable
-limits may differ and roadside signs apply.
+next answer arrives. The UI uses the road country's unit — km/h in France and
+mph in Britain or the Isle of Man — labels the reading `MAPPED`, and always
+warns that it is not live: temporary and variable limits may differ and roadside
+signs apply.
 
-OpenStreetMap `maxspeed` coverage in Great Britain and the Isle of Man is real
-but patchy, and that sets a floor on what the feature can show. The bundled demo
-route's own start point is a worked example: the King's Oak Academy car park
-access road is untagged, and the nearest road, Brook Road 43 metres away, is
-untagged too, so no tolerance can honestly produce a number there. The A4174
-ring road a few streets away is tagged throughout. Absent readings on minor
-urban roads are a data limitation, not a bug.
+OpenStreetMap `maxspeed` coverage in all three supported countries is real but
+patchy, and that sets a floor on what the feature can show. A retained UK worked
+example is the King's Oak Academy car park: its access road is untagged, and the
+nearest road, Brook Road 43 metres away, is untagged too, so no tolerance can
+honestly produce a number there. Absent readings on minor roads are a data
+limitation, not a bug.
 
 The sign is drawn straight onto the map with no surrounding panel. The rider's
 own GPS speed appears directly beneath it at the sign's own font size, so the
-two numbers can be compared at a glance. That readout stays in mph regardless
-of the rider's distance-unit preference, because two different units under one
-mph sign would invite a dangerous misread. It is the smoothed foreground GPS
-speed already used for the navigation camera, it is never sent anywhere, and it
-shows `–` when the platform reports no usable speed. Labels outside the white
-sign face are stroked as well as shadowed so they stay legible over both the
-day and night basemaps.
+two numbers can be compared at a glance. That readout stays in the posted sign's
+unit regardless of the rider's distance-unit preference, because two different
+units under one sign would invite a dangerous misread. It is the smoothed
+foreground GPS speed already used for the navigation camera, it is never sent
+anywhere, and it shows `–` when the platform reports no usable speed. Labels
+outside the white sign face are stroked as well as shadowed so they stay legible
+over both the day and night basemaps.
 
-There is **no caption under the readout**. A red-ringed UK sign above a plain
+There is **no caption under the readout**. A red-ringed road sign above a plain
 number is already unambiguous, and the nine-point
-`MPH · MAPPED LIMIT · GPS SPEED` line cost glance time on a moving bike without
+`MAPPED LIMIT · GPS SPEED` line cost glance time on a moving bike without
 adding meaning. Its wording was not lost: the badge's accessibility label and
 tooltip still say which number is the sign and which is the rider, that the
 limit is mapped rather than live, how stale it is, and — when there is no
@@ -943,7 +945,7 @@ tester rollout that enables this endpoint, the project must notify its
 operators as requested in the Valhalla repository.
 
 A production release needs an operated Valhalla service or licensed provider,
-capacity monitoring, and Great Britain/Isle of Man road tests covering
+capacity monitoring, and France/Great Britain/Isle of Man road tests covering
 direction, parallel roads, junctions, national or unrestricted roads, temporary
 limits, and variable limits. The current alpha integration has no per-request
 provider fee, but operating a production instance or selecting a commercial

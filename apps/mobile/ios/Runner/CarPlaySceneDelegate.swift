@@ -48,6 +48,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var activeManeuverKey: String?
   private var activeManeuver: CPManeuver?
   private var rideStartPrompt: [String: Any]?
+  private var enforcementReportsAllowed = true
   private var isShowingPanningInterface = false
   private var rideMenuButton: CPBarButton?
   private var surfaceMode = "unavailable"
@@ -154,6 +155,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   func apply(snapshot: [String: Any]) {
+    enforcementReportsAllowed =
+      (snapshot["enforcementReportsAllowed"] as? NSNumber)?.boolValue ?? true
     mapViewController?.apply(snapshot: snapshot)
     if let statusTemplate {
       CarPlayStatusTemplate.apply(snapshot: snapshot, to: statusTemplate)
@@ -910,27 +913,37 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       (UIApplication.shared.delegate as? AppDelegate)?
         .reportCarPlayHazard(type: type)
     }
+    var actions: [CPAlertAction] = []
+    if enforcementReportsAllowed {
+      actions.append(
+        CPAlertAction(title: "Speed camera", style: .default) { _ in
+          report("speedCamera")
+        }
+      )
+      actions.append(
+        CPAlertAction(title: "Police", style: .default) { _ in
+          report("policeActivity")
+        }
+      )
+    }
+    actions.append(
+      CPAlertAction(title: "Road hazard", style: .default) { _ in
+        report("other")
+      }
+    )
+    actions.append(
+      CPAlertAction(title: "Cancel", style: .cancel) { _ in
+        interfaceController.dismissTemplate(animated: true) { _, error in
+          if let error {
+            NSLog("CarPlay report sheet could not be dismissed: %@", error.localizedDescription)
+          }
+        }
+      }
+    )
     let sheet = CPActionSheetTemplate(
       title: "Report to group",
       message: "Uses your current position",
-      actions: [
-        CPAlertAction(title: "Speed camera", style: .default) { _ in
-          report("speedCamera")
-        },
-        CPAlertAction(title: "Police", style: .default) { _ in
-          report("policeActivity")
-        },
-        CPAlertAction(title: "Road hazard", style: .default) { _ in
-          report("other")
-        },
-        CPAlertAction(title: "Cancel", style: .cancel) { _ in
-          interfaceController.dismissTemplate(animated: true) { _, error in
-            if let error {
-              NSLog("CarPlay report sheet could not be dismissed: %@", error.localizedDescription)
-            }
-          }
-        },
-      ]
+      actions: actions
     )
     interfaceController.presentTemplate(sheet, animated: true) { success, error in
       if !success, let error {
@@ -1916,7 +1929,7 @@ private final class CarPlayNavigationViewController: UIViewController,
     // Fit the route's actual coordinates. `MLNPolyline.overlayBounds` can
     // still report the style's default world-sized bounds while an annotation
     // is being installed during the CarPlay scene's first layout; using it is
-    // what reduced a 17.5 km demo route to a tiny mark on a UK-wide map.
+    // what reduced a short demo route to a tiny mark on a country-wide map.
     var coordinates = routeCoordinates
     mapView.setVisibleCoordinates(
       &coordinates,
@@ -2799,8 +2812,8 @@ private final class CarPlayRideActionButton: UIButton {
 }
 
 /// The phone's landscape speed-limit sign and current-speed readout, scaled for
-/// CarPlay's shorter map canvas. The upper number is always the mapped UK mph
-/// limit and the number below is always GPS speed in mph, just as on the phone.
+/// CarPlay's shorter map canvas. The two numbers always use the posted road
+/// country's unit together, just as on the phone.
 private final class CarPlaySpeedLimitBadge: UIView {
   private let sign = UIView()
   private let limitLabel = UILabel()
@@ -2881,7 +2894,8 @@ private final class CarPlaySpeedLimitBadge: UIView {
     isHidden = false
 
     let status = speed["limitStatus"] as? String
-    let limit = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    let limit = (speed["limitValue"] as? NSNumber)?.intValue
+    let usesKilometres = (speed["limitUnit"] as? String) == "km/h"
     let unlimited = (speed["limitUnlimited"] as? NSNumber)?.boolValue ?? false
     let known = status == "known" && (limit != nil || unlimited)
     let checking = status == "checking"
@@ -2899,10 +2913,11 @@ private final class CarPlaySpeedLimitBadge: UIView {
     ).cgColor
 
     let metresPerSecond = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
-    let milesPerHour = metresPerSecond.flatMap { value in
-      value.isFinite && value >= 0 ? Int((value * 2.236_936).rounded()) : nil
+    let riderSpeed = metresPerSecond.flatMap { value -> Int? in
+      guard value.isFinite && value >= 0 else { return nil }
+      return Int((value * (usesKilometres ? 3.6 : 2.236_936)).rounded())
     }
-    let currentSpeed = milesPerHour.map(String.init) ?? "–"
+    let currentSpeed = riderSpeed.map(String.init) ?? "–"
     speedLabel.attributedText = NSAttributedString(
       string: currentSpeed,
       attributes: [
@@ -2915,10 +2930,11 @@ private final class CarPlaySpeedLimitBadge: UIView {
     let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
     speedLabel.alpha = ageing ? 0.55 : 1
 
+    let spokenUnit = usesKilometres ? "kilometres per hour" : "miles per hour"
     let limitDescription = known
-      ? (unlimited ? "unrestricted" : "\(limit!) miles per hour")
+      ? (unlimited ? "unrestricted" : "\(limit!) \(spokenUnit)")
       : "unavailable"
-    let speedDescription = milesPerHour.map { "\($0) miles per hour" }
+    let speedDescription = riderSpeed.map { "\($0) \(spokenUnit)" }
       ?? "unavailable"
     accessibilityLabel = "Mapped speed limit \(limitDescription). "
       + "Your GPS speed is \(speedDescription)."

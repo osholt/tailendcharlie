@@ -12,10 +12,12 @@ import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
+import 'package:ride_relay/domain/distance_unit.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
+import 'package:ride_relay/services/road_jurisdiction.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Its own file on purpose.
@@ -64,8 +66,20 @@ void main() {
     final controller = await _controller();
     await controller.createSimulationRide();
     addTearDown(controller.dispose);
+    final frenchRoads = RoadJurisdictionCatalogue.parse('''
+      {"type":"FeatureCollection","features":[{
+        "type":"Feature",
+        "properties":{"countryCode":"FR","name":"France","drivingSide":"right","distanceUnit":"kilometres"},
+        "geometry":{"type":"Polygon","coordinates":[[[1,44],[3,44],[3,46],[1,46],[1,44]]]}
+      }]}
+    ''');
+    final distanceUnits = DistanceUnitController.forLocale(
+      const Locale('en', 'GB'),
+      readRoadJurisdictions: () async => frenchRoads,
+    );
+    addTearDown(distanceUnits.dispose);
 
-    await tester.pumpWidget(_app(controller));
+    await tester.pumpWidget(_app(controller, distanceUnits));
     Future<void> pumpUntil(bool Function() satisfied) async {
       for (var attempt = 0; attempt < 60 && !satisfied(); attempt += 1) {
         await tester.pump(const Duration(milliseconds: 100));
@@ -108,6 +122,9 @@ void main() {
     // hides the bar comes from a simulated position.
     await pumpUntil(() => find.text('RUNNING').evaluate().isNotEmpty);
     expect(find.text('RUNNING'), findsOneWidget);
+    await pumpUntil(() => distanceUnits.roadJurisdiction?.countryCode == 'FR');
+    expect(distanceUnits.roadJurisdiction?.countryCode, 'FR');
+    expect(distanceUnits.value, DistanceUnit.kilometres);
 
     // Back to the map, which is where a rider actually rides.
     await tester.tap(find.text('Map').last);
@@ -179,9 +196,12 @@ late RideCodePreferenceController _rideCodePreference;
 late CompletedRidesController _completedRides;
 final _recordedRoutes = InMemoryRecordedRouteStore();
 
-RideRelayApp _app(RideController controller) => RideRelayApp(
+RideRelayApp _app(
+  RideController controller,
+  DistanceUnitController distanceUnits,
+) => RideRelayApp(
   controller: controller,
-  distanceUnits: DistanceUnitController.forLocale(const Locale('en', 'GB')),
+  distanceUnits: distanceUnits,
   mapStyleMode: _mapStyleMode,
   rideCodePreference: _rideCodePreference,
   riderProfile: _riderProfile,

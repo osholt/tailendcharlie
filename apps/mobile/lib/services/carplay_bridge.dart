@@ -357,9 +357,11 @@ class CarPlayBridge {
     double? localSpeedMetersPerSecond,
     bool speedLimitEnabled = false,
     String? speedLimitStatus,
-    int? speedLimitMilesPerHour,
+    int? speedLimitValue,
+    String? speedLimitUnit,
     bool speedLimitUnlimited = false,
     bool localSpeedIsAgeing = false,
+    bool enforcementReportsAllowed = true,
     RouteProgressGeometry? routeProgress,
     RouteJourneyProgress? journeyProgress,
   }) async {
@@ -433,13 +435,15 @@ class CarPlayBridge {
       'tec': showTecStatus ? tec.toSnapshot() : null,
       'tecRequest': tecRequest?.toSnapshot(),
       'rideStart': rideStart?.toSnapshot(),
+      'enforcementReportsAllowed': enforcementReportsAllowed,
       'speed': !speedLimitEnabled
           ? null
           : {
               'metresPerSecond': localSpeedMetersPerSecond,
               'isAgeing': localSpeedIsAgeing,
               'limitStatus': speedLimitStatus,
-              'limitMilesPerHour': speedLimitMilesPerHour,
+              'limitValue': speedLimitValue,
+              'limitUnit': speedLimitUnit,
               'limitUnlimited': speedLimitUnlimited,
             },
       // The head unit draws with the same MapLibre styles as the phone, and

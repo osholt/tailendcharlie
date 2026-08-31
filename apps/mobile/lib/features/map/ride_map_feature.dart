@@ -2856,6 +2856,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                                 status: _speedLimitDisplay.status,
                                 outcome: _speedLimitDisplay.lastOutcome,
                                 limit: _speedLimitDisplay.limit,
+                                distanceUnit: widget.distanceUnit,
                                 riderSpeedMetersPerSecond: riderSpeed?.value,
                                 riderSpeedIsAgeing: riderSpeed?.ageing ?? false,
                                 emphasised: emphasised,
@@ -7679,9 +7680,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         content: const Text(
           'When this is on, the app sends your current and recent foreground '
           'GPS positions, plus sampled points up to 1 km ahead on your route '
-          'or heading, to a Valhalla road-matching service. It works in Great '
-          'Britain and the Isle of Man and uses mapped OpenStreetMap limits, '
-          'which may be missing or out of date. Roadside signs always apply.',
+          'or heading, to a Valhalla road-matching service. It works in France, '
+          'Great Britain and the Isle of Man and uses mapped OpenStreetMap '
+          'limits in the road country’s units. They may be missing or out of '
+          'date. Roadside signs always apply.',
         ),
         actions: [
           TextButton(
@@ -10639,6 +10641,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
     required this.status,
     required this.outcome,
     required this.limit,
+    required this.distanceUnit,
     required this.riderSpeedMetersPerSecond,
     this.riderSpeedIsAgeing = false,
     this.emphasised = false,
@@ -10657,6 +10660,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
   final SpeedLimitDisplayStatus status;
   final SpeedLimitLookupOutcome? outcome;
   final PostedSpeedLimit? limit;
+  final DistanceUnit distanceUnit;
   final double? riderSpeedMetersPerSecond;
 
   /// True while the number is the last one observed rather than a current
@@ -10675,16 +10679,18 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
     final value = known
         ? reading.unlimited
               ? '∞'
-              : '${reading.milesPerHour}'
+              : '${reading.signValue}'
         : '–';
-    // The readout sits under a UK mph sign, so it stays in mph whatever the
-    // rider's distance-unit preference is. Two units under one sign would
-    // invite a dangerous misread.
+    // The rider-speed readout uses the posted sign's unit. Two units under one
+    // sign would invite a dangerous misread.
     final speed = riderSpeedMetersPerSecond;
-    final riderMilesPerHour = speed != null && speed.isFinite && speed >= 0
-        ? (speed * 2.236936).round()
+    final usesKilometresPerHour =
+        reading?.usesKilometresPerHour ??
+        distanceUnit == DistanceUnit.kilometres;
+    final riderSpeed = speed != null && speed.isFinite && speed >= 0
+        ? (speed * (usesKilometresPerHour ? 3.6 : 2.236936)).round()
         : null;
-    final speedValue = riderMilesPerHour == null ? '–' : '$riderMilesPerHour';
+    final speedValue = riderSpeed == null ? '–' : '$riderSpeed';
     final checkedAt = known
         ? MaterialLocalizations.of(
             context,
@@ -10705,21 +10711,24 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
             },
             _ => switch (outcome) {
               SpeedLimitLookupOutcome.unsupportedRegion =>
-                'Great Britain and Isle of Man only',
+                'France, Great Britain and Isle of Man only',
               SpeedLimitLookupOutcome.noTaggedLimit => 'No mapped limit',
               _ => 'Limit unavailable',
             },
           };
-    final riderSpeedLabel = riderMilesPerHour == null
+    final spokenUnit =
+        reading?.spokenSpeedUnit ??
+        (usesKilometresPerHour ? 'kilometres per hour' : 'miles per hour');
+    final riderSpeedLabel = riderSpeed == null
         ? 'Your speed is unavailable.'
-        : 'You are riding at $riderMilesPerHour miles per hour by GPS.';
+        : 'You are riding at $riderSpeed $spokenUnit by GPS.';
     // Carries what the deleted caption used to say (#125): which number is the
     // sign and which is the rider, that the limit is mapped rather than live,
     // and how stale it is. Removing the caption moved this wording, it did not
     // lose it.
     final semanticLimit = reading?.unlimited == true
         ? 'unrestricted'
-        : '${reading?.milesPerHour} miles per hour';
+        : '${reading?.signValue} $spokenUnit';
     final semanticLabel = known
         ? 'Mapped speed limit $semanticLimit'
               '${reading.roadName == null ? '' : ' on ${reading.roadName}'}. '
@@ -10809,7 +10818,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                   shadows: _mapOverlayTextShadows,
                 ),
               ),
-              // No caption (#125). A red-ringed UK sign over a plain number is
+              // No caption (#125). A red-ringed road sign over a plain number is
               // already unambiguous, and nine-point text on a moving bike cost
               // glance time without adding meaning. The wording it carried is
               // not lost: [semanticLabel] and the tooltip above still say which

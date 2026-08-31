@@ -13,6 +13,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/services/road_jurisdiction.dart';
 import 'package:ride_relay/services/road_routing.dart';
 
 /// Ordered geometry for a fixture route, as `[longitude, latitude]` pairs.
@@ -24,11 +25,14 @@ Future<ImportedRoute> routeFromOsrmResponse(
   Map<String, Object?> response, {
   String id = 'fixture',
   Future<MappedMiniRoundaboutCatalogue> Function()? readMiniRoundabouts,
+  Future<RoadJurisdictionCatalogue> Function()? readRoadJurisdictions,
 }) async {
   final service = OsrmRoadRoutingService(
     readMiniRoundabouts:
         readMiniRoundabouts ??
         (() async => MappedMiniRoundaboutCatalogue.empty),
+    readRoadJurisdictions:
+        readRoadJurisdictions ?? (() async => RoadJurisdictionCatalogue.empty),
     client: MockClient(
       (_) async => http.Response(
         jsonEncode(response),

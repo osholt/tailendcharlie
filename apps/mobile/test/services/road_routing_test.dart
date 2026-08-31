@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/services/navigation_guidance.dart';
+import 'package:ride_relay/services/road_jurisdiction.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_geometry_enricher.dart';
 
@@ -123,6 +125,67 @@ void main() {
       GeoPoint(latitude: 53.01, longitude: -1.01),
       GeoPoint(latitude: 53.02, longitude: -1.02),
     ], originBearingDegrees: 90.6);
+  });
+
+  test('French roundabouts are confirmed as right-hand traffic', () async {
+    final client = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'code': 'Ok',
+          'routes': [
+            {
+              'distance': 100,
+              'duration': 30,
+              'geometry': {
+                'coordinates': [
+                  [2.351, 48.856],
+                  [2.353, 48.857],
+                ],
+              },
+              'legs': [
+                {
+                  'steps': [
+                    {
+                      'driving_side': 'left',
+                      'maneuver': {
+                        'type': 'roundabout',
+                        'exit': 3,
+                        'location': [2.3522, 48.8566],
+                        'bearing_before': 0,
+                        'bearing_after': 90,
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        200,
+      ),
+    );
+    final jurisdictions = RoadJurisdictionCatalogue.parse('''
+{"type":"FeatureCollection","features":[{
+  "type":"Feature",
+  "properties":{"countryCode":"FR","name":"France","drivingSide":"right","distanceUnit":"kilometres"},
+  "geometry":{"type":"Polygon","coordinates":[[[1,41],[10,41],[10,52],[1,52],[1,41]]]}
+}]}
+''');
+    final service = OsrmRoadRoutingService(
+      client: client,
+      baseUrl: Uri.parse('https://routing.example.test'),
+      readMiniRoundabouts: () async => MappedMiniRoundaboutCatalogue.empty,
+      readRoadJurisdictions: () async => jurisdictions,
+    );
+
+    final result = await service.routeThrough(const [
+      GeoPoint(latitude: 48.856, longitude: 2.351),
+      GeoPoint(latitude: 48.857, longitude: 2.353),
+    ]);
+
+    expect(result.maneuvers.single.drivingSide, 'right');
+    expect(result.maneuvers.single.trafficSideConfirmed, isTrue);
+    expect(collapseManeuvers(result.maneuvers).single.leftHandTraffic, isFalse);
   });
 
   test('roundabout steps keep their bearings, exit count and lanes', () async {

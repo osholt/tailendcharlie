@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../domain/distance_unit.dart';
 import '../domain/imported_route.dart';
 import 'measurement_formatter.dart';
+import 'road_jurisdiction.dart';
 import 'route_origin_bearing.dart';
 import 'route_twistiness.dart';
 
@@ -115,6 +116,7 @@ class RoadRouteManeuver extends RouteManeuver {
     super.ref,
     super.exitNumber,
     super.drivingSide,
+    super.trafficSideConfirmed,
     super.bearingBeforeDegrees,
     super.bearingAfterDegrees,
     super.lanes,
@@ -153,6 +155,7 @@ class RoadRouteManeuver extends RouteManeuver {
       ref: json['ref'] as String?,
       exitNumber: (json['exitNumber'] as num?)?.toInt(),
       drivingSide: json['drivingSide'] as String?,
+      trafficSideConfirmed: json['trafficSideConfirmed'] == true,
       bearingBeforeDegrees: (json['bearingBeforeDegrees'] as num?)?.toDouble(),
       bearingAfterDegrees: (json['bearingAfterDegrees'] as num?)?.toDouble(),
       lanes:
@@ -341,12 +344,14 @@ class MappedMiniRoundaboutCatalogue {
             position: roundabout.position,
             type: 'roundabout',
             drivingSide: drivingSide,
+            trafficSideConfirmed: drivingSide != null,
             bearingBeforeDegrees: approachBearing,
           ),
           RoadRouteManeuver(
             position: roundabout.position,
             type: 'exit roundabout',
             drivingSide: drivingSide,
+            trafficSideConfirmed: drivingSide != null,
             bearingAfterDegrees: departureBearing,
           ),
         ],
@@ -443,6 +448,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     this.timeout = const Duration(seconds: 15),
     this.maximumResponseBytes = 5 * 1024 * 1024,
     this.readMiniRoundabouts = bundledMiniRoundabouts,
+    this.readRoadJurisdictions = bundledRoadJurisdictions,
   });
 
   /// Alternatives asked of OSRM when a bendier style has to choose between
@@ -459,6 +465,7 @@ class OsrmRoadRoutingService implements RoadRoutingService {
   /// A function rather than the catalogue itself so the asset is read lazily,
   /// off the path that builds a route, and only once per process.
   final Future<MappedMiniRoundaboutCatalogue> Function() readMiniRoundabouts;
+  final Future<RoadJurisdictionCatalogue> Function() readRoadJurisdictions;
 
   @override
   Future<RoadRouteResult> routeThrough(
@@ -542,15 +549,19 @@ class OsrmRoadRoutingService implements RoadRoutingService {
           twistiness: (candidate) => candidate.twistinessScore ?? 0,
         ) ??
         parsed.first;
-    final miniRoundabouts = await readMiniRoundabouts();
+    final (miniRoundabouts, jurisdictions) = await (
+      readMiniRoundabouts(),
+      readRoadJurisdictions(),
+    ).wait;
+    final enriched = miniRoundabouts.enrich(
+      route: chosen.points,
+      maneuvers: chosen.maneuvers,
+    );
     return RoadRouteResult(
       points: chosen.points,
       distanceMeters: chosen.distanceMeters,
       duration: chosen.duration,
-      maneuvers: miniRoundabouts.enrich(
-        route: chosen.points,
-        maneuvers: chosen.maneuvers,
-      ),
+      maneuvers: _confirmTrafficSides(enriched, jurisdictions),
       twistinessScore: chosen.twistinessScore,
       preferences: preferences,
     );
@@ -811,6 +822,7 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
     this.timeout = const Duration(seconds: 20),
     this.maximumResponseBytes = 5 * 1024 * 1024,
     this.readMiniRoundabouts = bundledMiniRoundabouts,
+    this.readRoadJurisdictions = bundledRoadJurisdictions,
   });
 
   final http.Client client;
@@ -823,6 +835,7 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
   /// A function rather than the catalogue itself so the asset is read lazily,
   /// off the path that builds a route, and only once per process.
   final Future<MappedMiniRoundaboutCatalogue> Function() readMiniRoundabouts;
+  final Future<RoadJurisdictionCatalogue> Function() readRoadJurisdictions;
 
   @override
   Future<RoadRouteResult> routeThrough(
@@ -921,19 +934,23 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
       throw const FormatException('Motorcycle routing summary is invalid.');
     }
     final distanceMeters = lengthKm.toDouble() * 1000;
-    final miniRoundabouts = await readMiniRoundabouts();
+    final (miniRoundabouts, jurisdictions) = await (
+      readMiniRoundabouts(),
+      readRoadJurisdictions(),
+    ).wait;
+    final enriched = miniRoundabouts.enrich(
+      route: points,
+      maneuvers: parseManeuvers(
+        route: points,
+        legManeuvers: rawLegManeuvers,
+        legShapeOffsets: legShapeOffsets,
+      ),
+    );
     return RoadRouteResult(
       points: List.unmodifiable(points),
       distanceMeters: distanceMeters,
       duration: Duration(milliseconds: (seconds.toDouble() * 1000).round()),
-      maneuvers: miniRoundabouts.enrich(
-        route: points,
-        maneuvers: parseManeuvers(
-          route: points,
-          legManeuvers: rawLegManeuvers,
-          legShapeOffsets: legShapeOffsets,
-        ),
-      ),
+      maneuvers: _confirmTrafficSides(enriched, jurisdictions),
       twistinessScore: RouteTwistiness.score(
         points,
         distanceMeters: distanceMeters,
@@ -1480,6 +1497,39 @@ class DestinationRoutePlan {
   final double? twistinessScore;
   final List<String> warnings;
 }
+
+/// Replaces an engine's per-step traffic-side claim with the country fact.
+///
+/// This is deliberately applied to every route provider. OSRM once returned
+/// `right` for a UK roundabout; Valhalla returns no traffic side at all. The
+/// same offline country layer fixes both without special-casing a junction or
+/// assuming the phone locale is where the route will be ridden.
+List<RoadRouteManeuver> _confirmTrafficSides(
+  List<RoadRouteManeuver> maneuvers,
+  RoadJurisdictionCatalogue jurisdictions,
+) => List.unmodifiable([
+  for (final maneuver in maneuvers)
+    if (jurisdictions.resolve(
+          latitude: maneuver.position.latitude,
+          longitude: maneuver.position.longitude,
+        )
+        case final jurisdiction?)
+      RoadRouteManeuver(
+        position: maneuver.position,
+        type: maneuver.type,
+        modifier: maneuver.modifier,
+        name: maneuver.name,
+        ref: maneuver.ref,
+        exitNumber: maneuver.exitNumber,
+        drivingSide: jurisdiction.drivingSide.name,
+        trafficSideConfirmed: true,
+        bearingBeforeDegrees: maneuver.bearingBeforeDegrees,
+        bearingAfterDegrees: maneuver.bearingAfterDegrees,
+        lanes: maneuver.lanes,
+      )
+    else
+      maneuver,
+]);
 
 ({GeoPoint point, double progressMeters, double distanceMeters})
 _projectOntoRoute(GeoPoint point, List<GeoPoint> route) {

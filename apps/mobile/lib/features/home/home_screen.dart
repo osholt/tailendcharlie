@@ -180,6 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
       onStateRequested: () async => _publishHomeCarPlayState(),
     );
     _position.addListener(_publishHomeCarPlayState);
+    _position.addListener(_observeAutomaticUnits);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _publishHomeCarPlayState();
     });
@@ -226,11 +227,23 @@ class _HomeScreenState extends State<HomeScreen> {
   /// be routed from here (#431).
   final _position = ValueNotifier<GeoPoint?>(null);
 
+  void _observeAutomaticUnits() {
+    final position = _position.value;
+    if (position == null) return;
+    unawaited(
+      widget.distanceUnits.observeRoadPosition(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      ),
+    );
+  }
+
   @override
   void dispose() {
     // This screen had nothing to dispose until #431 gave it a notifier it shares
     // with the map and a client it lends to the geocoder.
     _position.removeListener(_publishHomeCarPlayState);
+    _position.removeListener(_observeAutomaticUnits);
     unawaited(_carPlayBridge.dispose());
     _position.dispose();
     _routingClient.close();
@@ -690,7 +703,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 key: const Key('start-ride-simulator'),
                 leading: const Icon(Icons.science_outlined),
                 title: const Text('Try a simulated ride'),
-                subtitle: const Text('Never shares your location'),
+                subtitle: const Text(
+                  'France: Argentat to Saint-Privat · never shares your location',
+                ),
                 enabled:
                     !widget.controller.busy &&
                     widget.onRetryRestoration == null,

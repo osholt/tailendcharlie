@@ -9,12 +9,17 @@ without requiring several phones or physical travel.
 2. Select **Try a simulated ride** on the start screen.
 3. Use **Map** to watch the ride or **Ride Lab** to control it.
 
-The bundled 17.5 km GPX from the King's Oak Academy car park to the Cross Hands
-Hotel car park is loaded automatically. Its 484-point track follows the routed
-roads through Kingswood, Pucklechurch and Old Sodbury. The Ride Lab fleet picker
-supports four to thirty synthetic bikes. It always keeps a lead, a second bike,
-Alex for the off-route scenario, and a Tail End Charlie; any extra riders are
-distributed between them.
+The bundled 17.9 km GPX from Argentat-sur-Dordogne to Saint-Privat is loaded
+automatically. Its 466-point track is an excerpt of the supplied Day 3 route to
+Puy Mary and follows the D 980, including the right-hand roundabout at
+Saint-Privat. The Ride Lab fleet picker supports four to thirty synthetic bikes.
+It always keeps a lead, a second bike, Alex for the off-route scenario, and a
+Tail End Charlie; any extra riders are distributed between them.
+
+Because Ride Lab now runs on a real French track, a UK-configured phone switches
+its automatic ride distances to kilometres. The bundled route decisions are
+country-confirmed as right-hand traffic, so the simulator also covers French
+roundabout guidance without a routing request.
 
 Ride Lab can:
 

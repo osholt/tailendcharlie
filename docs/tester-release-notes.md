@@ -36,6 +36,46 @@ permissions by design.
 - ...
 ```
 
+## Android build 81 — 1.0.1 — 31 August 2026
+
+This build prepares the app for the group trip to France and adds a French Ride
+Lab route taken from the supplied Day 3 GPX to Puy Mary.
+
+### What to test
+
+1. From the home map, open **More → Try a simulated ride**. Ride Lab should load
+   **Argentat to Saint-Privat — France**, a 17.9 km section of the D 980.
+2. On a UK-configured phone, start that simulation and confirm ride distances
+   switch automatically to kilometres.
+3. At the Saint-Privat roundabout, guidance should use right-hand traffic and
+   show the third exit without reversing the roundabout symbol.
+4. With mapped limits enabled, French limits and GPS speed should use km/h on
+   both the phone and CarPlay.
+5. Camera and police reports should not be offered on the French route. An
+   ordinary road hazard should remain reportable.
+
+### Fixed
+
+- Added offline road-country detection so automatic units follow the road
+  country rather than the phone's locale.
+- Added France to mapped speed-limit support, preserving mapped values in km/h.
+- Confirmed route manoeuvre traffic side from the offline country layer, so
+  French roundabouts use right-hand circulation.
+- Suppressed camera and police reporting and presentation in France while
+  retaining non-enforcement hazards.
+- Updated phone and CarPlay speed displays to keep the sign and rider speed in
+  the same road-country unit.
+- Replaced the generic UK Ride Lab route with a French excerpt of the supplied
+  Day 3 GPX, including a country-confirmed roundabout.
+
+### Known limitations
+
+- This has automated and simulator coverage but has not yet been ridden with
+  live GPS in France.
+- The configured live-traffic incident feed remains UK-only.
+- Plan routes and download their offline maps before departure; creating a new
+  road-snapped route and destination search still require connectivity.
+
 ## iOS build 78 / Android build 78 — 22 August 2026
 
 This build fixes Ride Library preview icons so previous rides show their

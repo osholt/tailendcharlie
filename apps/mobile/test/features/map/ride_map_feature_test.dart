@@ -2626,10 +2626,7 @@ void main() {
     }
 
     expect(find.byKey(const Key('route-review-title')), findsOneWidget);
-    expect(
-      find.text("King's Oak Academy to Cross Hands Hotel"),
-      findsOneWidget,
-    );
+    expect(find.text('Argentat to Saint-Privat — France'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.byKey(const Key('confirm-reviewed-route')),
       250,
