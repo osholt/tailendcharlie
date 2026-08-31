@@ -21,8 +21,13 @@ void main() {
   const height = 64.0;
 
   /// Whether [point] lands inside the framed viewport, in projected pixels.
-  bool isVisible(GroupMiniMapFraming framing, GeoPoint point) {
-    final worldPixels = 256 * math.pow(2, framing.zoom).toDouble();
+  bool isVisible(
+    GroupMiniMapFraming framing,
+    GeoPoint point, {
+    double tileSize = GroupMiniMapFraming.referenceTileSize,
+    double? zoom,
+  }) {
+    final worldPixels = tileSize * math.pow(2, zoom ?? framing.zoom).toDouble();
     double mercatorY(double latitude) {
       final radians = latitude.clamp(-85.05, 85.05) * math.pi / 180;
       return (1 -
@@ -37,6 +42,61 @@ void main() {
         worldPixels;
     return dx.abs() <= width / 2 + 0.5 && dy.abs() <= height / 2 + 0.5;
   }
+
+  group('iOS MapLibre scale', () {
+    const west = GeoPoint(latitude: 45.052, longitude: 2.315);
+    const east = GeoPoint(latitude: 45.052, longitude: 2.485);
+
+    test('the native camera conversion retains the planned margin', () {
+      final framing = GroupMiniMapFraming.forPoints(
+        const [west, east],
+        width: width,
+        height: height,
+      );
+      final nativeZoom = framing.zoomForTileSize(
+        GroupMiniMapFraming.mapLibreNativeTileSize,
+      );
+
+      expect(nativeZoom, closeTo(framing.zoom - 1, 1e-9));
+      for (final rider in const [west, east]) {
+        expect(
+          isVisible(
+            framing,
+            rider,
+            tileSize: GroupMiniMapFraming.mapLibreNativeTileSize,
+            zoom: nativeZoom,
+          ),
+          isTrue,
+          reason: 'iOS must preserve the same 20 px fit margin',
+        );
+      }
+    });
+
+    test('using the 256 px zoom on iOS reproduces the clipped group', () {
+      final framing = GroupMiniMapFraming.forPoints(
+        const [west, east],
+        width: width,
+        height: height,
+      );
+
+      expect(
+        isVisible(
+          framing,
+          west,
+          tileSize: GroupMiniMapFraming.mapLibreNativeTileSize,
+        ),
+        isFalse,
+      );
+      expect(
+        isVisible(
+          framing,
+          east,
+          tileSize: GroupMiniMapFraming.mapLibreNativeTileSize,
+        ),
+        isFalse,
+      );
+    });
+  });
 
   group('the K-Lo edge case', () {
     // Isle of Man to Bristol: the ride that produced the report.

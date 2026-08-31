@@ -65,6 +65,14 @@ class GroupMiniMapFraming {
   /// group overview rather than becoming a second navigation map.
   static const maximumZoom = 15.0;
 
+  /// The world size used by the renderer-independent framing calculation.
+  static const referenceTileSize = 256.0;
+
+  /// MapLibre Native's world is 512 logical pixels wide at zoom 0. Supplying a
+  /// zoom calculated for a 256 px world makes the same rider spread twice as
+  /// wide on iOS, consuming the intended margin and clipping edge markers.
+  static const mapLibreNativeTileSize = 512.0;
+
   /// Metres of ground per logical pixel at the equator, zoom 0. The standard
   /// Web Mercator constant, and what makes the arithmetic below check out
   /// against a scale bar.
@@ -136,6 +144,16 @@ class GroupMiniMapFraming {
       math.cos(centre.latitude * math.pi / 180).abs() /
       math.pow(2, zoom);
 
+  /// Converts the reference zoom to a renderer with a different zoom-0 world
+  /// size while preserving the exact geographic viewport.
+  double zoomForTileSize(double tileSize) {
+    if (!tileSize.isFinite || tileSize <= 0) return zoom;
+    return (zoom + math.log(referenceTileSize / tileSize) / math.ln2).clamp(
+      minimumZoom,
+      maximumZoom,
+    );
+  }
+
   /// The zoom at which [fraction] of the world fills [pixels].
   ///
   /// A degenerate span - every rider on the same spot in one axis - must not
@@ -143,9 +161,9 @@ class GroupMiniMapFraming {
   /// axis decide.
   static double _zoomForFraction(double fraction, double pixels) {
     if (fraction <= 0 || pixels <= 0) return maximumZoom;
-    // 256 * 2^z pixels spans the world, so fraction * 256 * 2^z must fit in
-    // `pixels`.
-    return math.log(pixels / (fraction * 256)) / math.ln2;
+    // referenceTileSize * 2^z pixels spans the world, so the projected fraction
+    // at that zoom must fit in `pixels`.
+    return math.log(pixels / (fraction * referenceTileSize)) / math.ln2;
   }
 
   /// The latitude at normalised Mercator [y] - the inverse of [_mercatorY].

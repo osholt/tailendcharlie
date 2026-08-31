@@ -72,6 +72,12 @@ void main() {
         ),
         isTrue,
       );
+      expect(
+        personalHeatmapUsesContinuousCells(14),
+        isTrue,
+        reason:
+            'the normal close home-map zoom must not expose individual dots',
+      );
     },
   );
 

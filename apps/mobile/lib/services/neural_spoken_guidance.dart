@@ -40,6 +40,7 @@ abstract interface class NeuralSpeechBackend {
   Future<String> generate({
     required String phrase,
     required NaturalNavigationVoice voice,
+    bool allowCachedAudio = true,
   });
 
   Future<void> abort();
@@ -89,6 +90,7 @@ class SherpaOnnxNeuralSpeechBackend implements NeuralSpeechBackend {
   Future<String> generate({
     required String phrase,
     required NaturalNavigationVoice voice,
+    bool allowCachedAudio = true,
   }) async {
     await prepare();
     final cache = _cacheDirectory!;
@@ -101,10 +103,11 @@ class SherpaOnnxNeuralSpeechBackend implements NeuralSpeechBackend {
         )
         .toString();
     final output = File(path.join(cache.path, '$key.wav'));
-    if (output.existsSync() && output.lengthSync() > 44) {
+    if (allowCachedAudio && output.existsSync() && output.lengthSync() > 44) {
       await output.setLastModified(DateTime.now());
       return output.path;
     }
+    if (output.existsSync()) await output.delete();
     await _worker!.generate(
       phrase: phrase,
       speakerId: voice.speakerId,
@@ -165,20 +168,51 @@ class NeuralSpokenGuidanceEngine
   NeuralSpokenGuidanceEngine({
     required this.backend,
     required this.voiceProvider,
-    AudioPlayer? player,
+    Future<void> Function()? audioConfigurator,
     this.disposePlayerOnStop = false,
-  }) : _player = player ?? AudioPlayer();
+  }) : _audioConfigurator = audioConfigurator ?? _configureAudio;
 
   final NeuralSpeechBackend backend;
   final NaturalNavigationVoice Function() voiceProvider;
-  final AudioPlayer _player;
+  AudioPlayer? _player;
+  final Future<void> Function() _audioConfigurator;
   final bool disposePlayerOnStop;
   int _attemptGeneration = 0;
+  int _preparationGeneration = 0;
+  Future<void>? _preparing;
+  bool _prepared = false;
+
+  static const _warmUpPhrase = 'Ready.';
 
   @override
   Future<void> prepare() async {
-    await _configureAudio();
+    if (_prepared) return;
+    final generation = _preparationGeneration;
+    final pending = _preparing ??= _prepareAndPrime();
+    try {
+      await pending;
+      if (generation != _preparationGeneration) {
+        throw const _NeuralSpeechSuperseded();
+      }
+      _prepared = true;
+    } finally {
+      if (identical(_preparing, pending)) _preparing = null;
+    }
+  }
+
+  Future<void> _prepareAndPrime() async {
+    await _audioConfigurator();
     await backend.prepare();
+    // Model loading alone does not exercise the inference path. Generate one
+    // short, silent-to-the-user phrase during ride warm-up so the first real
+    // instruction does not pay the runtime's one-off startup cost.
+    await backend.generate(
+      phrase: _warmUpPhrase,
+      voice: voiceProvider(),
+      // A cached WAV from an earlier ride proves only that inference was warm
+      // then. This run must reach the freshly loaded model.
+      allowCachedAudio: false,
+    );
   }
 
   @override
@@ -202,9 +236,10 @@ class NeuralSpokenGuidanceEngine
         if (generation != _attemptGeneration) {
           throw const _NeuralSpeechSuperseded();
         }
-        await _player.setReleaseMode(ReleaseMode.stop);
-        final finished = _player.onPlayerComplete.first;
-        await _player.play(DeviceFileSource(file));
+        final player = _player ??= AudioPlayer();
+        await player.setReleaseMode(ReleaseMode.stop);
+        final finished = player.onPlayerComplete.first;
+        await player.play(DeviceFileSource(file));
         if (!started.isCompleted) started.complete();
         await finished;
       } on Object catch (error, stackTrace) {
@@ -226,16 +261,23 @@ class NeuralSpokenGuidanceEngine
   @override
   Future<void> cancelCurrentAttempt() async {
     _attemptGeneration += 1;
-    await _player.stop();
+    await _player?.stop();
   }
 
   @override
   Future<void> stop() async {
     _attemptGeneration += 1;
-    if (disposePlayerOnStop) {
-      await _player.dispose();
-    } else {
-      await _player.stop();
+    _preparationGeneration += 1;
+    _prepared = false;
+    _preparing = null;
+    final player = _player;
+    if (player != null) {
+      if (disposePlayerOnStop) {
+        await player.dispose();
+        _player = null;
+      } else {
+        await player.stop();
+      }
     }
     await backend.abort();
   }
@@ -277,7 +319,6 @@ class FailSafeNeuralSpokenGuidanceEngine
   final Duration warmedStartDeadline;
   final SpokenGuidanceOutputObserver? onOutput;
   bool _warmed = false;
-  bool _fallbackOnly = false;
   Future<void>? _warming;
 
   @override
@@ -285,7 +326,9 @@ class FailSafeNeuralSpokenGuidanceEngine
     await fallback.configure();
     // Warming is intentionally not awaited. The first urgent prompt still has
     // an immediately configured OS voice while the model loads in parallel.
-    unawaited(neural.prepare().catchError((Object _) {}));
+    // It is nevertheless tracked, so that prompt receives the longer deadline
+    // reserved for a model whose one-off startup work is already under way.
+    unawaited(warmUp().catchError((Object _) {}));
   }
 
   @override
@@ -301,11 +344,6 @@ class FailSafeNeuralSpokenGuidanceEngine
 
   @override
   Future<void> speak(String phrase) async {
-    if (_fallbackOnly) {
-      await fallback.speak(phrase);
-      _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
-      return;
-    }
     final attempt = neural.beginSpeak(phrase);
     try {
       await attempt.started.timeout(
@@ -313,11 +351,9 @@ class FailSafeNeuralSpokenGuidanceEngine
       );
     } on Object {
       await neural.cancelCurrentAttempt();
-      // A different voice on alternating prompts is harder to follow through a
-      // helmet than one consistent system voice. Once the natural path misses
-      // its safety deadline, keep this ride on the fail-safe until the engine is
-      // recreated (for example after the rider toggles the voice setting).
-      _fallbackOnly = true;
+      // Preserve this instruction with the fail-safe, but do not disable the
+      // selected natural voice for the rest of the ride. A transient first-run
+      // delay or audio-focus race must be allowed to recover on the next prompt.
       await fallback.speak(phrase);
       _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
       return;

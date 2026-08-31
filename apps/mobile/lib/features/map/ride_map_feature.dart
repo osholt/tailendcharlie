@@ -149,7 +149,7 @@ const motorcycleDiscoveryMinimumZoom = 12.5;
 
 /// Point-density heatmaps become isolated dots at street zoom. From here the
 /// personal archive is rendered as its contiguous z17 coverage cells instead.
-const personalHeatmapContinuousMinimumZoom = 15.0;
+const personalHeatmapContinuousMinimumZoom = 13.0;
 
 bool personalHeatmapUsesContinuousCells(double zoom) =>
     zoom >= personalHeatmapContinuousMinimumZoom;
@@ -9361,12 +9361,15 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     final controller = _controller;
     if (controller == null) return;
     final centre = ml.LatLng(framing.centre.latitude, framing.centre.longitude);
+    final nativeZoom = framing.zoomForTileSize(
+      GroupMiniMapFraming.mapLibreNativeTileSize,
+    );
     // The mini-map frames the whole group, so one rider reporting a bad
     // position takes the camera - and with it the process - down for everyone
     // watching (#359).
-    if (!mapLibreCameraIsUsable(centre, zoom: framing.zoom)) return;
+    if (!mapLibreCameraIsUsable(centre, zoom: nativeZoom)) return;
     await controller.animateCamera(
-      ml.CameraUpdate.newLatLngZoom(centre, framing.zoom),
+      ml.CameraUpdate.newLatLngZoom(centre, nativeZoom),
       duration: const Duration(milliseconds: 500),
     );
   }
