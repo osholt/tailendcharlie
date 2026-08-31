@@ -3864,12 +3864,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   /// Whether this route is ridden on the left.
   ///
-  /// Landscape places the rider two thirds across the frame on the left and one
-  /// third across on the right, so getting this wrong does not degrade the view
-  /// — it mirrors it. Ride 723888, 17 miles around Bristol, came back with 46
-  /// manoeuvres annotated `right` and 23 `left`, so the majority vote this used
-  /// to take concluded right-hand traffic and put the bike in the left third of
-  /// the screen (#613).
+  /// The driving side remains route metadata for projected displays. It no
+  /// longer mirrors the landscape camera: the status/action rail is fixed on
+  /// the left, so both driving sides keep the bike in the open right third.
   ///
   /// The asymmetry below is deliberate, and reads the field as the engine seems
   /// to mean it: `left` is only ever emitted where the data says so, while
@@ -3880,8 +3877,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// UK default, as before.
   ///
   /// The cost of this asymmetry is a genuinely right-hand-traffic route carrying
-  /// one spurious `left` step, which would be framed for the UK. That is the
-  /// same failure as having no annotation at all, and a mirrored ride is worse.
+  /// one spurious `left` step being reported as left-hand traffic. Camera
+  /// visibility is unaffected because its anchor is now jurisdiction-neutral.
   bool get _routeUsesLeftHandTraffic {
     var right = 0;
     for (final maneuver in _route?.maneuvers ?? const <RouteManeuver>[]) {

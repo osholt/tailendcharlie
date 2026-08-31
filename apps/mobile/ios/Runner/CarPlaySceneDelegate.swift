@@ -3619,11 +3619,10 @@ final class CarPlayNavigationViewController: UIViewController,
       max(0.35, (viewport["riderViewportFraction"] as? NSNumber)?.doubleValue ?? 0.64)
     )
     // CarPlay is always landscape even when its attached phone is portrait.
-    // A portrait phone publishes a centred phone anchor, so derive the car's
-    // traffic-side third from the route handedness instead of copying 0.5.
-    let leftHandTraffic =
-      (viewport["leftHandTraffic"] as? NSNumber)?.boolValue ?? true
-    let riderHorizontalFraction = leftHandTraffic ? (2.0 / 3.0) : (1.0 / 3.0)
+    // Its status/action rail stays on the left in every road jurisdiction, so
+    // the rider belongs in the open right third for both driving sides. Mirroring
+    // this anchor in France put the rider underneath that fixed left rail.
+    let riderHorizontalFraction = 2.0 / 3.0
     guard adjustedZoom.isFinite, tilt.isFinite, bearing.isFinite else { return }
 
     // MapLibre's zoom is the scale of 512 px Web Mercator tiles. Convert that

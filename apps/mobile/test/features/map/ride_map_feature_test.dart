@@ -4862,13 +4862,10 @@ void main() {
     }
   });
 
-  // #613. Landscape puts the rider two thirds across the frame on the left and
-  // one third across on the right, so this boolean does not degrade the view —
-  // it mirrors it. Ride 723888, 17 miles around Bristol, came back with 46
-  // manoeuvres annotated `right` and 23 `left`, and the majority vote this
-  // replaces therefore framed a British ride for the continent.
+  // The landscape chrome stays on the left when the route crosses into France.
+  // Driving-side metadata must therefore not mirror the rider underneath it.
   testWidgets(
-    'a British route keeps the bike in the right third of landscape',
+    'a French route keeps the bike in the open right third of landscape',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       final directory = Directory.systemTemp.createTempSync('traffic-side');
@@ -4879,44 +4876,40 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       RouteManeuver step(double longitude, String? side) => RouteManeuver(
-        position: GeoPoint(latitude: 51.45, longitude: longitude),
+        position: GeoPoint(latitude: 45.05, longitude: longitude),
         type: 'turn',
         modifier: 'right',
-        name: 'Cornbrash Park',
+        name: 'Route de Mauriac',
         drivingSide: side,
       );
 
       final route = ImportedRoute(
         id: 'side',
-        name: 'Bristol',
+        name: 'Salers',
         importedAt: DateTime.utc(2026, 8, 19),
-        sourceFileName: 'bristol.gpx',
+        sourceFileName: 'salers.gpx',
         paths: const [
           RoutePath(
             kind: RoutePathKind.track,
             points: [
-              GeoPoint(latitude: 51.45, longitude: -2.6),
-              GeoPoint(latitude: 51.45, longitude: -2.1),
+              GeoPoint(latitude: 45.05, longitude: 2.3),
+              GeoPoint(latitude: 45.05, longitude: 2.8),
             ],
           ),
         ],
         waypoints: const [],
-        // The ride's own proportions: `right` in the clear majority, `left`
-        // stated on a minority of steps.
+        // OSRM's right-hand-traffic metadata for this French route.
         maneuvers: [
-          step(-2.55, 'right'),
-          step(-2.50, 'right'),
-          step(-2.45, 'left'),
-          step(-2.40, 'right'),
-          step(-2.35, 'right'),
-          step(-2.30, 'left'),
-          step(-2.25, 'right'),
+          step(2.35, 'right'),
+          step(2.40, 'right'),
+          step(2.45, 'right'),
+          step(2.50, 'right'),
         ],
       );
 
       final navigation = ValueNotifier<MapNavigationPosition?>(
         MapNavigationPosition(
-          point: const GeoPoint(latitude: 51.45, longitude: -2.4),
+          point: const GeoPoint(latitude: 45.05, longitude: 2.5),
           recordedAt: DateTime.utc(2026, 8, 19, 17),
           speedMetersPerSecond: 13,
           headingDegrees: 90,
@@ -4958,8 +4951,7 @@ void main() {
         viewport!.riderHorizontalViewportFraction,
         closeTo(navigationCameraLandscapeRiderFractionLeftTraffic, 1e-9),
         reason:
-            'one third across is the continental frame, and this ride was in '
-            'Bristol',
+            'France changes the driving side, not the fixed left-hand chrome',
       );
 
       await tester.pumpWidget(const SizedBox.shrink());

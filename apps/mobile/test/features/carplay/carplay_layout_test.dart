@@ -172,18 +172,21 @@ void main() {
   });
 
   group('map behavior remains usable', () {
-    test('starts from the UK fallback and follows the traffic-side third', () {
+    test('vertical framing and the fixed open right third are projected', () {
+      expect(source, contains('riderViewportFraction'));
+      expect(source, contains('let riderHorizontalFraction = 2.0 / 3.0'));
+      expect(source, isNot(contains('leftHandTraffic ? (2.0 / 3.0)')));
+      expect(source, contains('let riderChromeClearance: CGFloat = 28'));
       expect(
         source,
-        contains('CLLocationCoordinate2D(latitude: 54.5, longitude: -3.2)'),
+        contains('guidanceView.frame.minY - riderChromeClearance'),
       );
-      expect(source, contains('zoomLevel: 5'));
       expect(
         source,
-        contains(
-          'let riderHorizontalFraction = leftHandTraffic ? (2.0 / 3.0) : (1.0 / 3.0)',
-        ),
+        contains('mapView.convert(localCoordinate, toPointTo: mapView)'),
       );
+      expect(source, contains('for _ in 0 ..< 3'));
+      expect(source, contains('hypot(error.x, error.y) < 1'));
     });
 
     test('host safe areas drive every camera mode and route overview', () {

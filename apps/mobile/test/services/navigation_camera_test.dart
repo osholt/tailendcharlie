@@ -168,42 +168,49 @@ void main() {
     }
   });
 
-  test(
-    'landscape uses mirrored traffic-side thirds and portrait stays centred',
-    () {
-      final leftTraffic = NavigationCameraPlanner.plan(
-        speedMetersPerSecond: 13,
-        landscape: true,
-        viewportHeightPixels: 390,
-        viewportWidthPixels: 840,
-        leftHandTraffic: true,
-      );
-      final rightTraffic = NavigationCameraPlanner.plan(
-        speedMetersPerSecond: 13,
-        landscape: true,
-        viewportHeightPixels: 390,
-        viewportWidthPixels: 840,
-        leftHandTraffic: false,
-      );
-      final portrait = NavigationCameraPlanner.plan(
-        speedMetersPerSecond: 13,
-        landscape: false,
-        viewportHeightPixels: 840,
-        viewportWidthPixels: 390,
-        leftHandTraffic: false,
-      );
+  test('landscape stays in the open right third for either driving side', () {
+    final leftTraffic = NavigationCameraPlanner.plan(
+      speedMetersPerSecond: 13,
+      landscape: true,
+      viewportHeightPixels: 390,
+      viewportWidthPixels: 840,
+      leftHandTraffic: true,
+    );
+    final rightTraffic = NavigationCameraPlanner.plan(
+      speedMetersPerSecond: 13,
+      landscape: true,
+      viewportHeightPixels: 390,
+      viewportWidthPixels: 840,
+      leftHandTraffic: false,
+    );
+    final portrait = NavigationCameraPlanner.plan(
+      speedMetersPerSecond: 13,
+      landscape: false,
+      viewportHeightPixels: 840,
+      viewportWidthPixels: 390,
+      leftHandTraffic: false,
+    );
 
-      expect(leftTraffic.riderHorizontalViewportFraction, closeTo(2 / 3, 1e-9));
-      expect(
-        rightTraffic.riderHorizontalViewportFraction,
-        closeTo(1 / 3, 1e-9),
-      );
-      expect(leftTraffic.lateralBiasPixels, closeTo(140, 0.01));
-      expect(rightTraffic.lateralBiasPixels, closeTo(-140, 0.01));
-      expect(portrait.riderHorizontalViewportFraction, 0.5);
-      expect(portrait.lateralBiasPixels, 0);
-    },
-  );
+    expect(leftTraffic.riderHorizontalViewportFraction, closeTo(2 / 3, 1e-9));
+    expect(rightTraffic.riderHorizontalViewportFraction, closeTo(2 / 3, 1e-9));
+    expect(leftTraffic.lateralBiasPixels, closeTo(140, 0.01));
+    expect(rightTraffic.lateralBiasPixels, closeTo(140, 0.01));
+    expect(portrait.riderHorizontalViewportFraction, 0.5);
+    expect(portrait.lateralBiasPixels, 0);
+  });
+
+  test('France landscape framing clears the fixed left rail', () {
+    final plan = NavigationCameraPlanner.plan(
+      speedMetersPerSecond: 13,
+      landscape: true,
+      viewportHeightPixels: 1179,
+      viewportWidthPixels: 2556,
+      leftHandTraffic: false,
+    );
+
+    expect(plan.riderHorizontalViewportFraction * 2556, closeTo(1704, 0.01));
+    expect(plan.lateralBiasPixels, closeTo(426, 0.01));
+  });
 
   test('look-ahead scales with speed and stays bounded', () {
     for (final landscape in [false, true]) {

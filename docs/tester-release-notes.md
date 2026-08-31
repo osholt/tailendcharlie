@@ -36,7 +36,36 @@ permissions by design.
 - ...
 ```
 
-## Android build 81 — 1.0.1 — 31 August 2026
+## iOS build 83 — 1.0.1 — 31 August 2026
+
+This build keeps the current rider visible in landscape while riding the
+French simulated route.
+
+### What to test
+
+1. Open **More → Try a simulated ride** and start **Argentat to Saint-Privat —
+   France**.
+2. Rotate the phone to landscape. The current rider should remain in the open
+   right third of the map, clear of the route, TEC and group panels on the
+   left.
+3. Open the same ride on CarPlay. The current rider should use the same right-
+   third framing and remain above the guidance card.
+
+### Fixed
+
+- Right-hand-traffic routes incorrectly mirrored the current rider into the
+  left third even though the app's status and action rail remains fixed on the
+  left.
+- Phone landscape and CarPlay now keep the rider in the open right third in
+  both left- and right-hand-traffic countries.
+
+### Known limitations
+
+- The framing has automated coverage at the reported 2556 × 1179 resolution
+  and has been compiled for the iOS simulator, but still needs confirmation on
+  the tester's physical CarPlay display.
+
+## iOS build 82 / Android build 82 — 1.0.1 — 31 August 2026
 
 This build prepares the app for the group trip to France and adds a French Ride
 Lab route taken from the supplied Day 3 GPX to Puy Mary.
