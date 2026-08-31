@@ -8,7 +8,7 @@ import '../domain/completed_ride.dart';
 import '../domain/completed_ride_store.dart';
 import '../domain/imported_route.dart';
 
-/// One bounded z17 cell in the private, on-device archive heatmap.
+/// One bounded z19 cell in the private, on-device archive heatmap.
 class PersonalRideHeatmapCell {
   const PersonalRideHeatmapCell({
     required this.x,
@@ -33,7 +33,7 @@ class PersonalRideHeatmapCell {
     return GeoPoint(latitude: latitude, longitude: longitude);
   }
 
-  /// The exact z17 square represented by this cell, clockwise from north-west.
+  /// The exact z19 square represented by this cell, clockwise from north-west.
   /// Adjacent cells therefore share an edge exactly instead of becoming dots
   /// whose radius happens to look joined at one zoom level (#661).
   List<GeoPoint> get polygon {
@@ -122,7 +122,10 @@ class PersonalRideHeatmap {
 class PersonalRideHeatmapBuilder {
   const PersonalRideHeatmapBuilder({this.maximumCells = 20000});
 
-  static const canonicalZoom = 17;
+  // Roughly 45-50 m across at UK latitudes. z17 was about 190 m and made the
+  // close-zoom overlay look like a handful of large coloured map tiles rather
+  // than road coverage (#661).
+  static const canonicalZoom = 19;
   static const _maximumMercatorLatitude = 85.05112878;
 
   final int maximumCells;
