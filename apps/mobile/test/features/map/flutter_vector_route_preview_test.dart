@@ -19,4 +19,20 @@ void main() {
       const EdgeInsets.all(30),
     );
   });
+
+  test(
+    'ride-library endpoint markers stay small enough to reveal the route',
+    () {
+      const viewport = Size.square(52);
+
+      final diameter = routePreviewEndpointMarkerDiameter(viewport);
+
+      expect(diameter, lessThanOrEqualTo(8));
+      expect(diameter, lessThan(viewport.shortestSide / 6));
+    },
+  );
+
+  test('full route previews retain clearly visible endpoint markers', () {
+    expect(routePreviewEndpointMarkerDiameter(const Size(390, 220)), 18);
+  });
 }

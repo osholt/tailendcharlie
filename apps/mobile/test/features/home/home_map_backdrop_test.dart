@@ -325,6 +325,117 @@ void main() {
     }
   });
 
+  testWidgets(
+    'active Where To navigation checkpoints on background and finishes later',
+    (tester) async {
+      final platform = _RecordingLocationPlatform(
+        granted: DeviceLocationPermission.always,
+      );
+      addTearDown(platform.closeStreams);
+      final location = _RecordingLocationController(
+        DeviceLocationSource(platform),
+        (_) async {},
+      );
+      addTearDown(location.dispose);
+      final archive = InMemoryCompletedRideStore();
+      var navigating = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) => HomeMapBackdrop(
+              mapStyleMode: mapStyleMode,
+              speedLimitDisplay: speedLimitDisplay,
+              distanceUnit: DistanceUnit.kilometres,
+              locationController: location,
+              completedRideStore: archive,
+              navigating: navigating,
+              onRouteChanged: (route) =>
+                  setState(() => navigating = route != null),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final map = tester.widget<RideMapFeature>(
+        find.byKey(const Key('home-map')),
+      );
+      map.onRouteChanged!(
+        ImportedRoute(
+          id: 'checkpoint-route',
+          name: 'Checkpoint route',
+          importedAt: DateTime.utc(2026, 8, 31),
+          sourceFileName: 'where-to.gpx',
+          paths: const [
+            RoutePath(
+              kind: RoutePathKind.route,
+              points: [
+                GeoPoint(latitude: 51.4627, longitude: -2.5084),
+                GeoPoint(latitude: 51.4500, longitude: -2.4800),
+              ],
+            ),
+          ],
+          waypoints: const [],
+        ),
+      );
+      await tester.pump();
+
+      final start = DateTime.utc(2026, 8, 31, 20);
+      void emit(double latitude, double longitude, int seconds) {
+        platform.emit(
+          LocationSample(
+            position: rider_domain.GeoPoint(
+              latitude: latitude,
+              longitude: longitude,
+            ),
+            recordedAt: start.add(Duration(seconds: seconds)),
+            accuracyMeters: 4,
+            speedMetersPerSecond: 10,
+            headingDegrees: 120,
+          ),
+        );
+      }
+
+      emit(51.4627, -2.5084, 0);
+      await tester.pump();
+      emit(51.4617, -2.5064, 10);
+      await tester.pump();
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      var stored = await archive.list();
+      expect(stored, hasLength(1));
+      final rideId = stored.single.rideId;
+      expect(stored.single.traveledRoute?.paths.single.points, hasLength(2));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(location.restarts, 1);
+      emit(51.4607, -2.5044, 20);
+      await tester.pump();
+      expect(
+        tester
+            .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+            .navigationPosition
+            ?.value
+            ?.point
+            .latitude,
+        51.4607,
+        reason: 'the resumed sampler must deliver the rest of the ride',
+      );
+      tester
+          .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+          .onRouteChanged!(null);
+      await tester.pump();
+
+      stored = await archive.list();
+      expect(stored, hasLength(1), reason: 'the final save replaces its draft');
+      expect(stored.single.rideId, rideId);
+      expect(stored.single.traveledRoute?.paths.single.points, hasLength(3));
+    },
+  );
+
   testWidgets('diagnostics enabled mid-navigation attach to that navigation', (
     tester,
   ) async {

@@ -85,6 +85,18 @@ class FreeRoamRideRecorder {
 
   /// Finishes the active navigation and resets ready for the next one.
   CompletedRide? finish() {
+    final completed = checkpoint();
+    if (completed == null) return null;
+    _reset();
+    return completed;
+  }
+
+  /// Returns a durable snapshot without stopping the navigation.
+  ///
+  /// Free roam has no ride journal behind it, so the owner checkpoints this
+  /// when the app backgrounds or the home map is removed. A later final save
+  /// uses the same ride id and safely replaces the partial record.
+  CompletedRide? checkpoint() {
     final plan = _plannedRoute;
     final startedAt = _startedAt;
     if (plan == null || startedAt == null) return null;
@@ -126,6 +138,10 @@ class FreeRoamRideRecorder {
       plannedRoute: plan,
       traveledRoute: travelled,
     );
+    return completed;
+  }
+
+  void _reset() {
     _plannedRoute = null;
     _rideId = null;
     _startedAt = null;
@@ -133,7 +149,6 @@ class FreeRoamRideRecorder {
     _totalDistanceMeters = 0;
     _sampleCount = 0;
     _trailRecorder.clear();
-    return completed;
   }
 
   static bool _isContinuous(GeoPoint previous, GeoPoint current) {

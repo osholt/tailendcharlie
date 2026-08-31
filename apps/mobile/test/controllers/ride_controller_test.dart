@@ -765,6 +765,50 @@ void main() {
     expect(archived.toJson().toString(), isNot(contains(joinToken)));
   });
 
+  for (final mode in RideCoordinationMode.values) {
+    test('${mode.name} rides archive their local travelled track', () async {
+      await controller.createRide(
+        'Oliver',
+        rideName: '${mode.label} recording',
+        coordinationMode: mode,
+      );
+      await controller.startRide();
+      final session = controller.session!;
+      final startedAt = controller.rideStartedAt!;
+      for (final (index, longitude) in [-2.5084, -2.5064].indexed) {
+        final recordedAt = startedAt.add(Duration(seconds: index + 1));
+        final location = RiderLocation(
+          riderId: session.localRiderId,
+          displayName: session.displayName,
+          role: session.role,
+          sample: LocationSample(
+            position: GeoPoint(latitude: 51.4627, longitude: longitude),
+            recordedAt: recordedAt,
+            accuracyMeters: 4,
+          ),
+          receivedAt: recordedAt,
+        );
+        final event =
+            SituationEventFactory(
+              session: session,
+              clock: () => recordedAt,
+              idFactory: () => 'mode-location-$index',
+            ).create(
+              type: RideEventType.riderLocationUpdated,
+              payload: {'location': location.toJson()},
+            );
+        await eventStore.append(event);
+      }
+      await controller.reloadEvents();
+
+      await controller.endRide();
+
+      final archived = (await completedRideStore.list()).single;
+      expect(archived.traveledRoute?.paths.single.points, hasLength(2));
+      expect(archived.totalDistanceMeters, greaterThan(100));
+    });
+  }
+
   test(
     'a failed archive is retried on restart without duplicating the ride',
     () async {

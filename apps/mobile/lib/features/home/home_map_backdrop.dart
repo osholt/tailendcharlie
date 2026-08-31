@@ -160,6 +160,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   RideDiagnosticsRecorder? _diagnostics;
   RideDiagnosticsLogWriter? _diagnosticsWriter;
   String? _diagnosticsRideId;
+  Future<void> _navigationSaveChain = Future<void>.value();
   ForegroundLocationController? _location;
   bool _ownsLocationController = false;
   bool _requesting = false;
@@ -270,33 +271,76 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     final completed = _freeRoamRideRecorder.finish();
     widget.onRouteChanged?.call(null);
     if (completed != null) {
-      unawaited(
-        _saveCompletedNavigation(
-          completed,
-          diagnosticsWriter: diagnosticsWriter,
-        ),
+      _queueCompletedNavigation(
+        completed,
+        diagnosticsWriter: diagnosticsWriter,
       );
     }
+  }
+
+  /// Serialises checkpoints and the final save for one personal navigation.
+  ///
+  /// They deliberately share a ride id, so the final, longer track replaces
+  /// its background checkpoint. Without ordering, a slower old checkpoint can
+  /// finish last and overwrite the complete ride with its shorter snapshot.
+  void _queueCompletedNavigation(
+    CompletedRide completed, {
+    RideDiagnosticsLogWriter? diagnosticsWriter,
+    bool announce = true,
+    bool reportFailure = true,
+  }) {
+    _navigationSaveChain = _navigationSaveChain.then(
+      (_) => _saveCompletedNavigation(
+        completed,
+        diagnosticsWriter: diagnosticsWriter,
+        announce: announce,
+        reportFailure: reportFailure,
+      ),
+    );
   }
 
   Future<void> _saveCompletedNavigation(
     CompletedRide completed, {
     RideDiagnosticsLogWriter? diagnosticsWriter,
+    bool announce = true,
+    bool reportFailure = true,
   }) async {
-    await diagnosticsWriter?.flush();
+    try {
+      await diagnosticsWriter?.flush();
+    } on Object catch (error) {
+      // A diagnostics write must never make the ride itself disposable.
+      assert(() {
+        debugPrint('Could not flush navigation diagnostics: $error');
+        return true;
+      }());
+    }
     final store = widget.completedRideStore;
     if (store == null) return;
     try {
       await store.save(completed);
-      if (mounted) widget.onNavigationArchived?.call(completed);
+      if (announce && mounted) widget.onNavigationArchived?.call(completed);
     } on Object {
-      if (!mounted) return;
+      if (!reportFailure || !mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('This navigation could not be saved to My rides.'),
         ),
       );
     }
+  }
+
+  void _checkpointFreeRoamNavigation() {
+    final completed = _freeRoamRideRecorder.checkpoint();
+    if (completed == null) {
+      unawaited(_diagnosticsWriter?.flush());
+      return;
+    }
+    _queueCompletedNavigation(
+      completed,
+      diagnosticsWriter: _diagnosticsWriter,
+      announce: false,
+      reportFailure: false,
+    );
   }
 
   void _onSpokenGuidanceChanged() {
@@ -487,7 +531,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     if (state == AppLifecycleState.resumed) {
       unawaited(_location?.restartAfterForegroundResume());
     } else {
-      unawaited(_diagnosticsWriter?.flush());
+      _checkpointFreeRoamNavigation();
     }
   }
 
@@ -514,7 +558,17 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     widget.spokenGuidance?.removeListener(_onSpokenGuidanceChanged);
     widget.rideDiagnostics?.removeListener(_onRideDiagnosticsChanged);
     unawaited(_spokenGuidance?.stop());
-    unawaited(_diagnosticsWriter?.flush());
+    final completed = _freeRoamRideRecorder.finish();
+    if (completed == null) {
+      unawaited(_diagnosticsWriter?.flush());
+    } else {
+      _queueCompletedNavigation(
+        completed,
+        diagnosticsWriter: _diagnosticsWriter,
+        announce: false,
+        reportFailure: false,
+      );
+    }
     if (_ownsLocationController) _location?.dispose();
     _navigationPosition.dispose();
     // Not ours to dispose when the screen above owns it.

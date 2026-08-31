@@ -1,11 +1,30 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/services/natural_voice_pack.dart';
 import 'package:ride_relay/services/neural_spoken_guidance.dart';
 import 'package:ride_relay/services/spoken_audio_mode.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('natural voice warm-up primes inference exactly once', () async {
+    final backend = _RecordingBackend();
+    final engine = NeuralSpokenGuidanceEngine(
+      backend: backend,
+      voiceProvider: () => NaturalNavigationVoice.george,
+      audioConfigurator: () async {},
+    );
+
+    await Future.wait([engine.prepare(), engine.prepare()]);
+    await engine.prepare();
+
+    expect(backend.prepareCalls, 1);
+    expect(backend.generatedPhrases, ['Ready.']);
+    expect(backend.allowCachedAudio, [isFalse]);
+  });
+
   test('a neural utterance that starts in time is used whole', () async {
     final neural = _FakeNeuralStarter();
     final fallback = _RecordingEngine();
@@ -35,6 +54,7 @@ void main() {
         neural: neural,
         fallback: fallback,
         startDeadline: const Duration(milliseconds: 5),
+        warmedStartDeadline: const Duration(milliseconds: 5),
         onOutput: (_, output) => outputs.add(output),
       );
 
@@ -48,29 +68,56 @@ void main() {
     },
   );
 
-  test('one missed deadline does not disable later natural prompts', () async {
-    final neural = _FakeNeuralStarter(neverStarts: true);
-    final fallback = _RecordingEngine();
-    final outputs = <SpokenGuidanceOutput>[];
-    final engine = FailSafeNeuralSpokenGuidanceEngine(
-      neural: neural,
-      fallback: fallback,
-      startDeadline: const Duration(milliseconds: 5),
-      onOutput: (_, output) => outputs.add(output),
-    );
+  test(
+    'one missed deadline retries the natural voice on the next prompt',
+    () async {
+      final neural = _FakeNeuralStarter(missedStarts: 1);
+      final fallback = _RecordingEngine();
+      final outputs = <SpokenGuidanceOutput>[];
+      final engine = FailSafeNeuralSpokenGuidanceEngine(
+        neural: neural,
+        fallback: fallback,
+        startDeadline: const Duration(milliseconds: 5),
+        warmedStartDeadline: const Duration(milliseconds: 5),
+        onOutput: (_, output) => outputs.add(output),
+      );
 
-    await engine.configure();
-    await engine.speak('First prompt');
-    await engine.speak('Second prompt');
+      await engine.configure();
+      await engine.speak('First prompt');
+      await engine.speak('Second prompt');
 
-    expect(neural.phrases, ['First prompt', 'Second prompt']);
-    expect(neural.cancelCalls, 2);
-    expect(fallback.spoken, ['First prompt', 'Second prompt']);
-    expect(outputs, [
-      SpokenGuidanceOutput.systemFallback,
-      SpokenGuidanceOutput.systemFallback,
-    ]);
-  });
+      expect(neural.phrases, ['First prompt', 'Second prompt']);
+      expect(neural.cancelCalls, 1);
+      expect(fallback.spoken, ['First prompt']);
+      expect(outputs, [
+        SpokenGuidanceOutput.systemFallback,
+        SpokenGuidanceOutput.natural,
+      ]);
+    },
+  );
+
+  test(
+    'configure tracks background warm-up for the first instruction',
+    () async {
+      final neural = _FakeNeuralStarter(
+        prepareDelay: const Duration(milliseconds: 40),
+        startDelay: const Duration(milliseconds: 30),
+      );
+      final fallback = _RecordingEngine();
+      final engine = FailSafeNeuralSpokenGuidanceEngine(
+        neural: neural,
+        fallback: fallback,
+        startDeadline: const Duration(milliseconds: 5),
+        warmedStartDeadline: const Duration(milliseconds: 80),
+      );
+
+      await engine.configure();
+      await engine.speak('First instruction');
+
+      expect(fallback.spoken, isEmpty);
+      expect(neural.phrases, ['First instruction']);
+    },
+  );
 
   test(
     'explicit warm-up completes model preparation before an alert',
@@ -85,7 +132,7 @@ void main() {
       await engine.warmUp();
       await engine.speak('Speed camera, in 150 yards.');
 
-      expect(neural.prepareCalls, greaterThanOrEqualTo(2));
+      expect(neural.prepareCalls, 1);
       expect(neural.preparedBeforeFirstPhrase, isTrue);
     },
   );
@@ -169,13 +216,16 @@ void main() {
 class _FakeNeuralStarter implements NeuralSpeechStarter {
   _FakeNeuralStarter({
     this.neverStarts = false,
+    this.missedStarts = 0,
     this.startDelay,
     this.prepareDelay,
-  });
+  }) : _remainingMissedStarts = missedStarts;
 
   final bool neverStarts;
+  final int missedStarts;
   final Duration? startDelay;
   final Duration? prepareDelay;
+  int _remainingMissedStarts;
   final phrases = <String>[];
   int prepareCalls = 0;
   int cancelCalls = 0;
@@ -197,8 +247,10 @@ class _FakeNeuralStarter implements NeuralSpeechStarter {
   }) {
     preparedBeforeFirstPhrase ??= prepared;
     phrases.add(phrase);
+    final missesStart = neverStarts || _remainingMissedStarts > 0;
+    if (_remainingMissedStarts > 0) _remainingMissedStarts -= 1;
     return NeuralSpeechAttempt(
-      neverStarts
+      missesStart
           ? Completer<void>().future
           : startDelay == null
           ? Future<void>.value()
@@ -228,4 +280,27 @@ class _RecordingEngine implements SpokenGuidanceEngine {
 
   @override
   Future<void> stop() async {}
+}
+
+class _RecordingBackend implements NeuralSpeechBackend {
+  int prepareCalls = 0;
+  final generatedPhrases = <String>[];
+  final allowCachedAudio = <bool>[];
+
+  @override
+  Future<void> prepare() async => prepareCalls += 1;
+
+  @override
+  Future<String> generate({
+    required String phrase,
+    required NaturalNavigationVoice voice,
+    bool allowCachedAudio = true,
+  }) async {
+    generatedPhrases.add(phrase);
+    this.allowCachedAudio.add(allowCachedAudio);
+    return '/tmp/natural-voice-prime.wav';
+  }
+
+  @override
+  Future<void> abort() async {}
 }

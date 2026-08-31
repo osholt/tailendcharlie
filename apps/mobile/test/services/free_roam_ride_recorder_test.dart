@@ -67,6 +67,23 @@ void main() {
 
     expect(recorder.finish(), isNull);
   });
+
+  test('a checkpoint preserves an underway navigation without ending it', () {
+    recorder.start(_route('Checkpointed ride'));
+    recorder.record(_point(51.4627, -2.5084, now));
+    now = now.add(const Duration(seconds: 10));
+    recorder.record(_point(51.4627, -2.5064, now));
+
+    final checkpoint = recorder.checkpoint()!;
+
+    expect(recorder.active, isTrue);
+    expect(checkpoint.traveledRoute?.paths.single.points, hasLength(2));
+    now = now.add(const Duration(seconds: 10));
+    recorder.record(_point(51.4627, -2.5044, now));
+    final completed = recorder.finish()!;
+    expect(completed.rideId, checkpoint.rideId);
+    expect(completed.traveledRoute?.paths.single.points, hasLength(3));
+  });
 }
 
 ImportedRoute _route(String name) => ImportedRoute(

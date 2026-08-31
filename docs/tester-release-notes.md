@@ -36,6 +36,54 @@ permissions by design.
 - ...
 ```
 
+## iOS build 84 — 1.0.1 — 31 August 2026
+
+This build makes the iOS ride map and recorded-ride history more dependable,
+including the group mini-map, natural guidance voice, personal heat map and
+free-roam recording.
+
+### What to test
+
+1. Start a five-rider simulated ride and watch the group mini-map as the bikes
+   spread out. Every bike should remain inside the frame with visible margin.
+2. Navigate through several spoken instructions with the natural voice enabled.
+   A slow first instruction may use the system voice for safety, but later
+   instructions must retry the natural voice rather than staying robotic.
+3. Open the Ride Library. Start and finish markers should remain small enough
+   that the route is clearly visible in every thumbnail.
+4. Start a free-roam **Where to?** navigation, background and reopen the app,
+   continue moving, then stop navigation. My rides should contain one complete
+   travelled track rather than losing it or keeping only the early section.
+5. View the personal rides heat map at the normal close home-map zoom. Covered
+   roads should form a continuous purple/orange hue rather than separate purple
+   dots.
+
+### Fixed
+
+- Corrected the iOS MapLibre zoom scale used by the group mini-map, preserving
+  its intended all-rider margin.
+- Natural speech now primes inference during warm-up and retries after a
+  transient missed deadline instead of permanently switching to the system
+  voice for the rest of the ride.
+- Ride Library endpoint markers now scale down with their 52 px preview rather
+  than covering most of the route.
+- Active free-roam navigation now saves an ordered background checkpoint and
+  replaces it with the complete track when navigation ends. Solo and both group
+  coordination modes retain their existing durable ride archives.
+- Personal ride heat-map coverage changes to contiguous cells at normal
+  street-level zoom, removing the dotted appearance.
+
+### Known limitations
+
+- The system voice remains the per-instruction safety fallback if the natural
+  engine cannot start before an instruction's deadline; the next instruction
+  now retries the natural voice.
+- Opening the free-roam map alone does not record location. Recording begins
+  when a **Where to?** route starts, preserving the app's explicit location and
+  privacy boundary.
+- The fixes have automated coverage and an iOS simulator build, but still need
+  confirmation on a tester's physical iPhone and CarPlay display.
+
 ## iOS build 83 — 1.0.1 — 31 August 2026
 
 This build keeps the current rider visible in landscape while riding the

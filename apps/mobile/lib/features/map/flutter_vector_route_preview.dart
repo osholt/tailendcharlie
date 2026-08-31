@@ -12,6 +12,8 @@ import 'route_trail_style.dart';
 
 const _routePreviewCameraInset = 30.0;
 const _minimumRoutePreviewFitExtent = 24.0;
+const _minimumRoutePreviewEndpointMarkerDiameter = 7.0;
+const _maximumRoutePreviewEndpointMarkerDiameter = 18.0;
 
 /// Keeps camera padding valid for both full previews and 52 px library icons.
 ///
@@ -31,6 +33,19 @@ EdgeInsets routePreviewCameraPadding(Size viewportSize) {
     (shortestSide - _minimumRoutePreviewFitExtent) / 2,
   );
   return EdgeInsets.all(math.min(_routePreviewCameraInset, maximumInset));
+}
+
+/// Keeps endpoints legible without letting them cover a 52 px library image.
+@visibleForTesting
+double routePreviewEndpointMarkerDiameter(Size viewportSize) {
+  final shortestSide = math.min(viewportSize.width, viewportSize.height);
+  if (!shortestSide.isFinite || shortestSide <= 0) {
+    return _maximumRoutePreviewEndpointMarkerDiameter;
+  }
+  return (shortestSide * 0.14).clamp(
+    _minimumRoutePreviewEndpointMarkerDiameter,
+    _maximumRoutePreviewEndpointMarkerDiameter,
+  );
 }
 
 class _ResponsiveRoutePreviewCameraFit extends CameraFit {
@@ -158,86 +173,103 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
       }
       final points = _points;
       if (points.length < 2) return const SizedBox.shrink();
-      return FlutterMap(
-        key: ValueKey(
-          'flutter-vector-route-${widget.basemapConfiguration.styleUrl}',
-        ),
-        options: MapOptions(
-          initialCameraFit: _ResponsiveRoutePreviewCameraFit(
-            bounds: LatLngBounds.fromPoints(points),
-            maxZoom: 16,
-          ),
-          initialCenter: points.first,
-          initialZoom: 12,
-          minZoom: 3,
-          maxZoom: 18,
-          interactionOptions: InteractionOptions(
-            flags: widget.interactive
-                ? InteractiveFlag.all
-                : InteractiveFlag.none,
-          ),
-          onMapReady: _mapReady,
-        ),
-        children: [
-          vmt.VectorTileLayer(
-            tileProviders: style.providers,
-            theme: style.theme,
-            sprites: style.sprites,
-            maximumZoom: 16,
-            concurrency: 2,
-            fileCacheTtl: Duration.zero,
-            fileCacheMaximumSizeInBytes: 0,
-          ),
-          PolylineLayer(
-            polylines: [
-              for (final path in widget.paths)
-                if (path.length >= 2)
-                  Polyline(
-                    points: path
-                        .map((point) => LatLng(point.latitude, point.longitude))
-                        .toList(growable: false),
-                    color: RouteTrailStyle.routeAhead.color,
-                    strokeWidth: RouteTrailStyle.routeAhead.widthPixels,
-                    borderColor: RouteTrailStyle.casing,
-                    borderStrokeWidth:
-                        RouteTrailStyle.routeAhead.casingWidthPixels -
-                        RouteTrailStyle.routeAhead.widthPixels,
-                  ),
-            ],
-          ),
-          MarkerLayer(
-            markers: [
-              Marker(
-                point: points.first,
-                width: 22,
-                height: 22,
-                child: const DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    border: Border.fromBorderSide(
-                      BorderSide(color: RouteTrailStyle.casing, width: 2),
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final markerDiameter = routePreviewEndpointMarkerDiameter(
+            constraints.biggest,
+          );
+          final markerBorderWidth = markerDiameter < 12 ? 1.0 : 2.0;
+          return FlutterMap(
+            key: ValueKey(
+              'flutter-vector-route-${widget.basemapConfiguration.styleUrl}',
+            ),
+            options: MapOptions(
+              initialCameraFit: _ResponsiveRoutePreviewCameraFit(
+                bounds: LatLngBounds.fromPoints(points),
+                maxZoom: 16,
+              ),
+              initialCenter: points.first,
+              initialZoom: 12,
+              minZoom: 3,
+              maxZoom: 18,
+              interactionOptions: InteractionOptions(
+                flags: widget.interactive
+                    ? InteractiveFlag.all
+                    : InteractiveFlag.none,
+              ),
+              onMapReady: _mapReady,
+            ),
+            children: [
+              vmt.VectorTileLayer(
+                tileProviders: style.providers,
+                theme: style.theme,
+                sprites: style.sprites,
+                maximumZoom: 16,
+                concurrency: 2,
+                fileCacheTtl: Duration.zero,
+                fileCacheMaximumSizeInBytes: 0,
+              ),
+              PolylineLayer(
+                polylines: [
+                  for (final path in widget.paths)
+                    if (path.length >= 2)
+                      Polyline(
+                        points: path
+                            .map(
+                              (point) =>
+                                  LatLng(point.latitude, point.longitude),
+                            )
+                            .toList(growable: false),
+                        color: RouteTrailStyle.routeAhead.color,
+                        strokeWidth: RouteTrailStyle.routeAhead.widthPixels,
+                        borderColor: RouteTrailStyle.casing,
+                        borderStrokeWidth:
+                            RouteTrailStyle.routeAhead.casingWidthPixels -
+                            RouteTrailStyle.routeAhead.widthPixels,
+                      ),
+                ],
+              ),
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: points.first,
+                    width: markerDiameter,
+                    height: markerDiameter,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.fromBorderSide(
+                          BorderSide(
+                            color: RouteTrailStyle.casing,
+                            width: markerBorderWidth,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              Marker(
-                point: points.last,
-                width: 22,
-                height: 22,
-                child: const DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Color(0xFFFFC857),
-                    shape: BoxShape.circle,
-                    border: Border.fromBorderSide(
-                      BorderSide(color: RouteTrailStyle.casing, width: 2),
+                  Marker(
+                    point: points.last,
+                    width: markerDiameter,
+                    height: markerDiameter,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFC857),
+                        shape: BoxShape.circle,
+                        border: Border.fromBorderSide(
+                          BorderSide(
+                            color: RouteTrailStyle.casing,
+                            width: markerBorderWidth,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
             ],
-          ),
-        ],
+          );
+        },
       );
     },
   );
