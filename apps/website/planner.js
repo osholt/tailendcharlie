@@ -19,8 +19,10 @@ import {
   routeBendScore,
   routeManeuvers,
   routeSelfCrossingArrows,
+  standardRoutingFallbackPreferences,
+  standardRoutingFallbackWarning,
   StateHistory,
-} from "./planner-core.mjs?v=71faec00";
+} from "./planner-core.mjs?v=4d759d14";
 import {
   BIKER_PLACES,
   bikerPlaceKey,
@@ -68,6 +70,7 @@ const MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 const ROUTING_URL = "https://router.project-osrm.org";
 const MOTORCYCLE_ROUTING_URL = "https://valhalla1.openstreetmap.de/route";
 const SEARCH_URL = "https://nominatim.openstreetmap.org/search";
+const ROUTING_TIMEOUT_MS = 8_000;
 const MAX_STOPS = 50;
 const SEARCH_CACHE_KEY = "tec-planner-search-v1";
 const SEARCH_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -164,6 +167,8 @@ let routeLegGeometries = [];
 let routeManeuverList = [];
 let markerReview = { rejected: [], added: [] };
 let routedControls = [];
+let routeAppliedPreferences = null;
+let motorcycleRoutingUnavailable = false;
 let routeDistance = null;
 let routeDuration = null;
 let routeBendScoreValue = null;
@@ -1322,6 +1327,7 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
     routeCoordinates = [];
     routeLegGeometries = [];
     routedControls = [];
+    routeAppliedPreferences = null;
     routeManeuverList = [];
     setSummary();
     updateMapLines();
@@ -1358,6 +1364,7 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
     routeCoordinates = route.geometry.coordinates;
     routeManeuverList = maneuvers;
     routedControls = controls;
+    routeAppliedPreferences = route.appliedPreferences;
     routeLegGeometries =
       route.legGeometries ||
       (Array.isArray(route.legs) ? route.legs.map(legGeometry) : []);
@@ -1383,7 +1390,11 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
     const preferenceNote = preferenceNotes.length
       ? ` ${preferenceNotes.join(", ").replace(/^./, (letter) => letter.toUpperCase())} applied.`
       : "";
-    setStatus(`Road route ready.${preferenceNote} You can keep editing or download the GPX file.`);
+    setStatus(
+      route.standardRoutingFallback
+        ? route.fallbackWarning
+        : `Road route ready.${preferenceNote} You can keep editing or download the GPX file.`,
+    );
     if (shouldFit) fitRoute();
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -1415,10 +1426,32 @@ function routePreferences() {
   };
 }
 
-function requestRoadRoute(controls, signal) {
-  if (requiresMotorcycleCosting(routePreferences())) {
-    return fetchMotorcycleRoute(controls, signal);
+async function requestRoadRoute(controls, signal) {
+  const requestedPreferences = routePreferences();
+  if (!requiresMotorcycleCosting(requestedPreferences)) {
+    const route = await fetchStandardRoadRoute(controls, signal);
+    return { ...route, appliedPreferences: requestedPreferences };
   }
+  if (motorcycleRoutingUnavailable) {
+    return fetchStandardRoutingFallback(controls, signal, requestedPreferences);
+  }
+  try {
+    const route = await fetchMotorcycleRoute(
+      controls,
+      signal,
+      requestedPreferences,
+    );
+    return { ...route, appliedPreferences: requestedPreferences };
+  } catch (error) {
+    if (signal.aborted || error.name === "AbortError") throw error;
+    if (error.routingUnavailable || error instanceof TypeError) {
+      motorcycleRoutingUnavailable = true;
+    }
+    return fetchStandardRoutingFallback(controls, signal, requestedPreferences);
+  }
+}
+
+function fetchStandardRoadRoute(controls, signal) {
   const coordinates = controls
     .map((control) => `${control.longitude.toFixed(6)},${control.latitude.toFixed(6)}`)
     .join(";");
@@ -1432,11 +1465,22 @@ function requestRoadRoute(controls, signal) {
   return fetchOsrmRoute(url, signal);
 }
 
+async function fetchStandardRoutingFallback(
+  controls,
+  signal,
+  requestedPreferences,
+) {
+  const route = await fetchStandardRoadRoute(controls, signal);
+  return {
+    ...route,
+    appliedPreferences: standardRoutingFallbackPreferences(requestedPreferences),
+    standardRoutingFallback: true,
+    fallbackWarning: standardRoutingFallbackWarning(requestedPreferences),
+  };
+}
+
 async function fetchOsrmRoute(url, signal) {
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-    signal,
-  });
+  const response = await fetchRoutingResponse(url, signal);
   if (!response.ok) throw new Error(`Routing failed (${response.status}).`);
   const data = await response.json();
   const route = chooseRoadRoute(data?.routes, elements.routeStyle.value);
@@ -1446,8 +1490,8 @@ async function fetchOsrmRoute(url, signal) {
   return route;
 }
 
-async function fetchMotorcycleRoute(controls, signal) {
-  const costingOptions = motorcycleCostingOptions(routePreferences());
+async function fetchMotorcycleRoute(controls, signal, preferences) {
+  const costingOptions = motorcycleCostingOptions(preferences);
   const routingRequest = {
     locations: controls.map((control) => ({
       lat: control.latitude,
@@ -1461,11 +1505,12 @@ async function fetchMotorcycleRoute(controls, signal) {
   };
   const url = new URL(MOTORCYCLE_ROUTING_URL);
   url.searchParams.set("json", JSON.stringify(routingRequest));
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  if (!response.ok) throw new Error(`Routing failed (${response.status}).`);
+  const response = await fetchRoutingResponse(url, signal);
+  if (!response.ok) {
+    const error = new Error(`Routing failed (${response.status}).`);
+    error.routingUnavailable = response.status === 429 || response.status >= 500;
+    throw error;
+  }
   const data = await response.json();
   const trip = data?.trip;
   const legGeometries = (trip?.legs || []).map((leg) => decodePolyline(leg.shape));
@@ -1481,6 +1526,33 @@ async function fetchMotorcycleRoute(controls, signal) {
     distance: Number(trip?.summary?.length) * 1000,
     duration: Number(trip?.summary?.time),
   };
+}
+
+async function fetchRoutingResponse(url, signal) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const forwardAbort = () => controller.abort();
+  if (signal.aborted) forwardAbort();
+  else signal.addEventListener("abort", forwardAbort, { once: true });
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, ROUTING_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (!timedOut) throw error;
+    const timeoutError = new Error("The routing service timed out.");
+    timeoutError.name = "TimeoutError";
+    timeoutError.routingUnavailable = true;
+    throw timeoutError;
+  } finally {
+    window.clearTimeout(timeout);
+    signal.removeEventListener("abort", forwardAbort);
+  }
 }
 
 function updateMapLines(draftControls = routingControls()) {
@@ -1681,7 +1753,7 @@ function downloadGpx() {
       stops,
       routeCoordinates,
       createdAt: new Date(),
-      preferences: routedControls ? routePreferences() : null,
+      preferences: routeAppliedPreferences,
       markerReview,
     });
     const blob = new Blob([gpx], { type: "application/gpx+xml;charset=utf-8" });
@@ -1714,7 +1786,7 @@ async function createPlanCode() {
       stops,
       routeCoordinates,
       createdAt: new Date(),
-      preferences: routedControls ? routePreferences() : null,
+      preferences: routeAppliedPreferences,
       markerReview,
     });
     const plan = await createRoutePlan({
@@ -2395,6 +2467,7 @@ function restorePlannerDraft() {
   markerReview = draft.markerReview;
   routeCoordinates = draft.routeCoordinates;
   routedControls = routingControls();
+  routeAppliedPreferences = null;
   routeDistance = draft.routeDistance;
   routeDuration = draft.routeDuration;
   routeBendScoreValue =

@@ -761,6 +761,46 @@ export function requiresMotorcycleCosting({
   );
 }
 
+/// Preferences that standard OSRM routing can honestly carry after the
+/// motorcycle-only provider fails. The road-character style still selects an
+/// OSRM alternative, but hard exclusions and trail seeking cannot be claimed.
+export function standardRoutingFallbackPreferences({
+  routeStyle = "quickest",
+} = {}) {
+  return {
+    routeStyle,
+    avoidMotorways: false,
+    avoidMajorRoads: false,
+    avoidTolls: false,
+    avoidFerries: false,
+    avoidUnsurfacedByways: true,
+  };
+}
+
+export function standardRoutingFallbackWarning({
+  avoidMotorways = false,
+  avoidMajorRoads = false,
+  avoidTolls = false,
+  avoidFerries = false,
+  avoidUnsurfacedByways = true,
+} = {}) {
+  const unavailable = [
+    ...(avoidMotorways ? ["Avoid motorways"] : []),
+    ...(avoidMajorRoads ? ["Avoid major roads"] : []),
+    ...(avoidTolls ? ["Avoid toll roads"] : []),
+    ...(avoidFerries ? ["Avoid ferries"] : []),
+    ...(!avoidUnsurfacedByways ? ["Allow unsurfaced byways"] : []),
+  ];
+  const limitation = unavailable.length
+    ? ` ${unavailable.join(", ")} could not be guaranteed.`
+    : "";
+  return (
+    "Road route ready using standard routing because motorcycle routing is " +
+    `unavailable.${limitation} The selected road-character bias was kept; ` +
+    "review the route before exporting."
+  );
+}
+
 export class StateHistory {
   constructor(limit = 50) {
     this.limit = limit;
