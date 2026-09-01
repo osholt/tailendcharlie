@@ -257,6 +257,7 @@ class CircularRidePlanner {
 
     final selectedRequest = candidate.request;
     final controls = candidate.controls;
+    final controlLegIndexes = candidate.controlLegIndexes;
     final result = candidate.result;
     final motorwayAvoidanceRelaxedSections =
         candidate.motorwayAvoidanceRelaxedSections +
@@ -306,11 +307,7 @@ class CircularRidePlanner {
           RouteShapingPoint(
             id: 'loop-${selectedRequest.variant}-$index',
             point: point,
-            legIndex: selectedRequest.plannedStops
-                .where(
-                  (stop) => stop.fraction < (index + 1) / (controls.length + 1),
-                )
-                .length,
+            legIndex: controlLegIndexes[index],
           ),
       ],
       maneuvers: result.maneuvers,
@@ -392,6 +389,10 @@ class CircularRidePlanner {
           preserveInternalBoundary: [
             for (final control in orderedControls) control.isStop,
           ],
+          shapingPointSearchRadiusMeters: (request.distanceMeters * 0.01).clamp(
+            200.0,
+            1000.0,
+          ),
           preferences: preferences,
           routingFallback: routingFallback,
         );
@@ -419,7 +420,18 @@ class CircularRidePlanner {
         return _CircularRideCandidate(
           request: request,
           preferences: preferences,
-          controls: controls,
+          controls: [
+            for (final (index, control) in orderedControls.indexed)
+              if (!control.isStop &&
+                  !sections.omittedWaypointIndexes.contains(index + 1))
+                control.point,
+          ],
+          controlLegIndexes: [
+            for (final (index, control) in orderedControls.indexed)
+              if (!control.isStop &&
+                  !sections.omittedWaypointIndexes.contains(index + 1))
+                orderedControls.take(index).where((item) => item.isStop).length,
+          ],
           result: result,
           motorwayAvoidanceRelaxedSections:
               sections.motorwayAvoidanceRelaxedSections,
@@ -448,9 +460,19 @@ class CircularRidePlanner {
   Future<_CircularRideSections> _routeSections(
     List<GeoPoint> waypoints, {
     required List<bool> preserveInternalBoundary,
+    required double shapingPointSearchRadiusMeters,
     required RoutePreferences preferences,
     required _CircularRideRoutingFallbackState routingFallback,
   }) async {
+    final wholeLoop = await _tryRouteWholeLoop(
+      waypoints,
+      preserveInternalBoundary: preserveInternalBoundary,
+      shapingPointSearchRadiusMeters: shapingPointSearchRadiusMeters,
+      preferences: preferences,
+      routingFallback: routingFallback,
+    );
+    if (wholeLoop != null) return wholeLoop;
+
     // Let the first section establish whether motorcycle routing is healthy.
     // Once that is known, the remaining sections can run concurrently without
     // turning a provider outage into four independent timeout waits.
@@ -523,6 +545,167 @@ class CircularRidePlanner {
       routeSectionCount: sections.length,
     );
   }
+
+  /// Routes a loop atomically when the provider understands silent controls.
+  ///
+  /// The old compatibility path below has to snap and route each section
+  /// independently. Besides multiplying network latency, that can make two
+  /// adjacent sections choose the same dead-end road in opposite directions.
+  /// A single provider request both avoids that artefact and reduces the usual
+  /// five-request candidate to one request.
+  Future<_CircularRideSections?> _tryRouteWholeLoop(
+    List<GeoPoint> waypoints, {
+    required List<bool> preserveInternalBoundary,
+    required double shapingPointSearchRadiusMeters,
+    required RoutePreferences preferences,
+    required _CircularRideRoutingFallbackState routingFallback,
+  }) async {
+    final service = routingService;
+    if (service is! ShapingPointRoadRoutingService) return null;
+    final shapingService = service as ShapingPointRoadRoutingService;
+    final shapingPointIndexes = <int>[
+      for (var index = 1; index < waypoints.length - 1; index += 1)
+        if (!preserveInternalBoundary[index - 1]) index,
+    ];
+    final fullRequest = _CircularRideAtomicRoute(
+      waypoints: waypoints,
+      shapingPointIndexes: shapingPointIndexes.toSet(),
+    );
+    final reducedRequest = shapingPointIndexes.length < 4
+        ? null
+        : () {
+            final omitted = {
+              shapingPointIndexes.first,
+              shapingPointIndexes.last,
+            };
+            final reducedWaypoints = <GeoPoint>[];
+            final reducedShapingIndexes = <int>{};
+            for (final (index, waypoint) in waypoints.indexed) {
+              if (omitted.contains(index)) continue;
+              if (shapingPointIndexes.contains(index)) {
+                reducedShapingIndexes.add(reducedWaypoints.length);
+              }
+              reducedWaypoints.add(waypoint);
+            }
+            return _CircularRideAtomicRoute(
+              waypoints: reducedWaypoints,
+              shapingPointIndexes: reducedShapingIndexes,
+              omittedWaypointIndexes: omitted,
+            );
+          }();
+
+    Future<({RoadRouteResult result, _CircularRideAtomicRoute request})> route({
+      required RoutePreferences routePreferences,
+      required RoadRoutingCosting costing,
+    }) async {
+      var request = fullRequest;
+      var result = await shapingService.routeThroughShapingPoints(
+        request.waypoints,
+        shapingPointIndexes: request.shapingPointIndexes,
+        shapingPointSearchRadiusMeters: shapingPointSearchRadiusMeters,
+        preferences: routePreferences,
+        costing: costing,
+      );
+      if (_hasUTurn(result) && reducedRequest != null) {
+        request = reducedRequest;
+        result = await shapingService.routeThroughShapingPoints(
+          request.waypoints,
+          shapingPointIndexes: request.shapingPointIndexes,
+          shapingPointSearchRadiusMeters: shapingPointSearchRadiusMeters,
+          preferences: routePreferences,
+          costing: costing,
+        );
+      }
+      return (result: result, request: request);
+    }
+
+    _CircularRideSections sections(
+      ({RoadRouteResult result, _CircularRideAtomicRoute request}) routed, {
+      int motorwayAvoidanceRelaxedSections = 0,
+      int standardRoutingFallbackSections = 0,
+    }) => _wholeLoopSections(
+      routed.result,
+      routeSectionCount: routed.request.waypoints.length - 1,
+      motorwayAvoidanceRelaxedSections: motorwayAvoidanceRelaxedSections,
+      standardRoutingFallbackSections: standardRoutingFallbackSections,
+      omittedWaypointIndexes: routed.request.omittedWaypointIndexes,
+    );
+
+    if (routingFallback.standardRoutingOnly &&
+        service is StandardCostingRoadRoutingService) {
+      final standardPreferences = RoutePreferences(style: preferences.style);
+      final routed = await route(
+        routePreferences: standardPreferences,
+        costing: RoadRoutingCosting.standard,
+      );
+      return sections(
+        routed,
+        standardRoutingFallbackSections: routed.request.waypoints.length - 1,
+      );
+    }
+
+    try {
+      return sections(
+        await route(
+          routePreferences: preferences,
+          // A circular motorcycle ride needs Valhalla's non-reversing
+          // `through` controls. OSRM can keep coordinates silent, but cannot
+          // prevent it from turning back at one of them.
+          costing: service is MotorcycleCostingRoadRoutingService
+              ? RoadRoutingCosting.motorcycle
+              : RoadRoutingCosting.preferred,
+        ),
+      );
+    } on TimeoutException {
+      if (service is! StandardCostingRoadRoutingService) rethrow;
+      routingFallback.standardRoutingOnly = true;
+      final standardPreferences = RoutePreferences(style: preferences.style);
+      final routed = await route(
+        routePreferences: standardPreferences,
+        costing: RoadRoutingCosting.standard,
+      );
+      return sections(
+        routed,
+        standardRoutingFallbackSections: routed.request.waypoints.length - 1,
+      );
+    } on RoadRoutingException catch (error) {
+      if (!error.routeNotFound) rethrow;
+      if (!preferences.avoidMotorways ||
+          service is! MotorcycleCostingRoadRoutingService) {
+        return null;
+      }
+      try {
+        final routed = await route(
+          routePreferences: preferences.copyWith(avoidMotorways: false),
+          costing: RoadRoutingCosting.motorcycle,
+        );
+        return sections(
+          routed,
+          motorwayAvoidanceRelaxedSections: routed.request.waypoints.length - 1,
+        );
+      } on TimeoutException {
+        return null;
+      } on RoadRoutingException {
+        return null;
+      } on FormatException {
+        return null;
+      }
+    }
+  }
+
+  _CircularRideSections _wholeLoopSections(
+    RoadRouteResult result, {
+    required int routeSectionCount,
+    int motorwayAvoidanceRelaxedSections = 0,
+    int standardRoutingFallbackSections = 0,
+    Set<int> omittedWaypointIndexes = const {},
+  }) => _CircularRideSections(
+    result: result,
+    motorwayAvoidanceRelaxedSections: motorwayAvoidanceRelaxedSections,
+    standardRoutingFallbackSections: standardRoutingFallbackSections,
+    routeSectionCount: routeSectionCount,
+    omittedWaypointIndexes: omittedWaypointIndexes,
+  );
 
   Future<_CircularRideSection> _routeSection(
     GeoPoint start,
@@ -661,6 +844,7 @@ class _CircularRideCandidate {
     required this.request,
     required this.preferences,
     required this.controls,
+    required this.controlLegIndexes,
     required this.result,
     required this.motorwayAvoidanceRelaxedSections,
     required this.standardRoutingFallbackSections,
@@ -670,6 +854,7 @@ class _CircularRideCandidate {
   final CircularRideRequest request;
   final RoutePreferences preferences;
   final List<GeoPoint> controls;
+  final List<int> controlLegIndexes;
   final RoadRouteResult result;
   final int motorwayAvoidanceRelaxedSections;
   final int standardRoutingFallbackSections;
@@ -688,18 +873,32 @@ class _CircularRideSection {
   final bool standardRoutingFallback;
 }
 
+class _CircularRideAtomicRoute {
+  const _CircularRideAtomicRoute({
+    required this.waypoints,
+    required this.shapingPointIndexes,
+    this.omittedWaypointIndexes = const {},
+  });
+
+  final List<GeoPoint> waypoints;
+  final Set<int> shapingPointIndexes;
+  final Set<int> omittedWaypointIndexes;
+}
+
 class _CircularRideSections {
   const _CircularRideSections({
     required this.result,
     required this.motorwayAvoidanceRelaxedSections,
     required this.standardRoutingFallbackSections,
     required this.routeSectionCount,
+    this.omittedWaypointIndexes = const {},
   });
 
   final RoadRouteResult result;
   final int motorwayAvoidanceRelaxedSections;
   final int standardRoutingFallbackSections;
   final int routeSectionCount;
+  final Set<int> omittedWaypointIndexes;
 }
 
 class _CircularRideRoutingFallbackState {

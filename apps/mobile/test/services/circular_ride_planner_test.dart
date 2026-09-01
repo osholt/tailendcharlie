@@ -139,6 +139,94 @@ void main() {
   });
 
   test(
+    'routes a circular candidate atomically when the provider supports it',
+    () async {
+      final routing = _AtomicCircularRoadRoutingService();
+
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 80 * 1609.344,
+          direction: CircularRideDirection.northWest,
+          preferences: RoutePreferences(style: RouteStyle.flowing),
+        ),
+      );
+
+      expect(routing.ordinaryCalls, 0);
+      expect(routing.attempts, hasLength(1));
+      expect(routing.attempts.single.waypoints, hasLength(6));
+      expect(routing.attempts.single.shapingPointIndexes, {1, 2, 3, 4});
+      expect(routing.attempts.single.costing, RoadRoutingCosting.motorcycle);
+      expect(routing.attempts.single.shapingPointSearchRadiusMeters, 1000);
+      expect(plan.route.shapingPoints, hasLength(4));
+      expect(plan.routeSectionCount, 5);
+    },
+  );
+
+  test('drops dead-end gateway controls in one fast retry', () async {
+    final routing = _AtomicCircularRoadRoutingService(fullLoopHasUTurn: true);
+
+    final plan = await CircularRidePlanner(routingService: routing).generate(
+      const CircularRideRequest(
+        start: start,
+        distanceMeters: 80 * 1609.344,
+        direction: CircularRideDirection.northWest,
+        preferences: RoutePreferences(style: RouteStyle.flowing),
+        plannedStops: [
+          CircularRideStop(
+            fraction: 0.5,
+            waypoint: RouteWaypoint(
+              point: GeoPoint(latitude: 51.63, longitude: -2.78),
+              name: 'Lunch',
+            ),
+          ),
+        ],
+      ),
+    );
+
+    expect(routing.ordinaryCalls, 0);
+    expect(routing.attempts, hasLength(2));
+    expect(routing.attempts.first.waypoints, hasLength(7));
+    expect(routing.attempts.last.waypoints, hasLength(5));
+    expect(routing.attempts.last.shapingPointIndexes, {1, 3});
+    expect(plan.route.shapingPoints, hasLength(2));
+    expect(plan.route.shapingPoints.map((point) => point.legIndex), [0, 1]);
+    expect(plan.route.waypoints[1].name, 'Lunch');
+    expect(plan.routeSectionCount, 4);
+    expect(plan.request.variant, 0);
+  });
+
+  test('relaxes an impossible whole-loop motorway exclusion without fanning '
+      'out section requests', () async {
+    final routing = _AtomicCircularRoadRoutingService(
+      rejectMotorwayFreeLoop: true,
+      fullLoopHasUTurn: true,
+    );
+
+    final plan = await CircularRidePlanner(routingService: routing).generate(
+      const CircularRideRequest(
+        start: start,
+        distanceMeters: 80 * 1609.344,
+        direction: CircularRideDirection.northWest,
+        preferences: RoutePreferences(
+          style: RouteStyle.flowing,
+          avoidMotorways: true,
+        ),
+      ),
+    );
+
+    expect(routing.ordinaryCalls, 0);
+    expect(routing.attempts, hasLength(3));
+    expect(
+      routing.attempts.map((attempt) => attempt.preferences.avoidMotorways),
+      [true, false, false],
+    );
+    expect(plan.motorwayAvoidanceRelaxedSections, 3);
+    expect(plan.routeSectionCount, 3);
+    expect(plan.warnings.single, contains('3 of 3 route sections'));
+  });
+
+  test(
     'keeps arrival and departure prompts at deliberate stops only',
     () async {
       final plan =
@@ -691,6 +779,102 @@ class _FakeRoadRoutingService implements RoadRoutingService {
       preferences: preferences,
     );
   }
+}
+
+class _AtomicCircularRoadRoutingService
+    implements
+        RoadRoutingService,
+        MotorcycleCostingRoadRoutingService,
+        ShapingPointRoadRoutingService {
+  _AtomicCircularRoadRoutingService({
+    this.fullLoopHasUTurn = false,
+    this.rejectMotorwayFreeLoop = false,
+  });
+
+  final bool fullLoopHasUTurn;
+  final bool rejectMotorwayFreeLoop;
+  final attempts = <_AtomicRoutingAttempt>[];
+  var ordinaryCalls = 0;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    ordinaryCalls += 1;
+    throw StateError('The atomic circular route should be used.');
+  }
+
+  @override
+  Future<RoadRouteResult> routeThroughMotorcycle(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) => routeThrough(
+    waypoints,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
+
+  @override
+  Future<RoadRouteResult> routeThroughShapingPoints(
+    List<GeoPoint> waypoints, {
+    required Set<int> shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
+    RoutePreferences? preferences,
+    RoadRoutingCosting costing = RoadRoutingCosting.preferred,
+    double? originBearingDegrees,
+  }) async {
+    final resolved = preferences ?? RoutePreferences.defaults;
+    attempts.add(
+      _AtomicRoutingAttempt(
+        waypoints: List.unmodifiable(waypoints),
+        shapingPointIndexes: Set.unmodifiable(shapingPointIndexes),
+        shapingPointSearchRadiusMeters: shapingPointSearchRadiusMeters,
+        preferences: resolved,
+        costing: costing,
+      ),
+    );
+    if (rejectMotorwayFreeLoop && resolved.avoidMotorways) {
+      throw const RoadRoutingException(
+        'No path could be found for input',
+        routeNotFound: true,
+      );
+    }
+    final isFullLoop = shapingPointIndexes.length == 4;
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: isFullLoop ? 129000 : 118800,
+      duration: const Duration(hours: 2),
+      maneuvers: fullLoopHasUTurn && isFullLoop
+          ? const [
+              RoadRouteManeuver(
+                position: GeoPoint(latitude: 51.46, longitude: -2.51),
+                type: 'turn',
+                modifier: 'u-turn',
+              ),
+            ]
+          : const [],
+      preferences: resolved,
+    );
+  }
+}
+
+class _AtomicRoutingAttempt {
+  const _AtomicRoutingAttempt({
+    required this.waypoints,
+    required this.shapingPointIndexes,
+    required this.shapingPointSearchRadiusMeters,
+    required this.preferences,
+    required this.costing,
+  });
+
+  final List<GeoPoint> waypoints;
+  final Set<int> shapingPointIndexes;
+  final double shapingPointSearchRadiusMeters;
+  final RoutePreferences preferences;
+  final RoadRoutingCosting costing;
 }
 
 class _UTurnThenValidRoadRoutingService implements RoadRoutingService {
