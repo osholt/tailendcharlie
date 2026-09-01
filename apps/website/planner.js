@@ -16,13 +16,14 @@ import {
   gpxFileName,
   motorcycleCostingOptions,
   requiresMotorcycleCosting,
+  resolveProgressiveRoadRoute,
   routeBendScore,
   routeManeuvers,
   routeSelfCrossingArrows,
   standardRoutingFallbackPreferences,
   standardRoutingFallbackWarning,
   StateHistory,
-} from "./planner-core.mjs?v=4d759d14";
+} from "./planner-core.mjs?v=a01f6b20";
 import {
   BIKER_PLACES,
   bikerPlaceKey,
@@ -744,6 +745,14 @@ function addStop(
     .setLngLat([longitude, latitude])
     .addTo(map);
   marker.on("dragstart", () => recordRouteChange());
+  marker.on("drag", () => {
+    const stop = stops.find((item) => item.id === id);
+    if (!stop) return;
+    const position = marker.getLngLat();
+    stop.longitude = position.lng;
+    stop.latitude = position.lat;
+    queueRoutePreview(routingControls());
+  });
   marker.on("dragend", () => {
     const stop = stops.find((item) => item.id === id);
     if (!stop) return;
@@ -1344,9 +1353,25 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
   const controls = routingControls();
   const circularDistanceMetres = pendingCircularDistanceMetres;
   pendingCircularDistanceMetres = null;
+  let fittedStandardRoute = false;
 
   try {
-    const route = await requestRoadRoute(controls, routeRequest.signal);
+    const route = await requestRoadRoute(controls, routeRequest.signal, {
+      onStandardRoute:
+        circularDistanceMetres === null
+          ? (standardRoute) => {
+              if (requestSequence !== routeRequestSequence) return;
+              applyRoadRoute(standardRoute, controls);
+              setStatus(
+                "Road route ready using standard routing. Refining your motorcycle preferences…",
+              );
+              if (shouldFit) {
+                fitRoute();
+                fittedStandardRoute = true;
+              }
+            }
+          : null,
+    });
     if (requestSequence !== routeRequestSequence) return;
     const maneuvers = routeManeuvers(route);
     if (circularDistanceMetres !== null) {
@@ -1361,41 +1386,9 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
         );
       }
     }
-    routeCoordinates = route.geometry.coordinates;
-    routeManeuverList = maneuvers;
-    routedControls = controls;
-    routeAppliedPreferences = route.appliedPreferences;
-    routeLegGeometries =
-      route.legGeometries ||
-      (Array.isArray(route.legs) ? route.legs.map(legGeometry) : []);
-    setSummary(route.distance, route.duration, routeBendScore(route));
-    updateMapLines();
-    updateDownloadState();
-    const preferenceNotes = [];
-    const curvePreference = {
-      balanced: "Flowing-road bias",
-      twisty: "Twisty-road bias",
-      "very-twisty": "Very-twisty-road bias",
-    }[elements.routeStyle.value];
-    if (curvePreference) preferenceNotes.push(curvePreference);
-    if (elements.avoidMotorways.checked) preferenceNotes.push("motorways excluded");
-    if (elements.avoidMajorRoads.checked) preferenceNotes.push("major roads avoided");
-    if (elements.avoidTolls.checked) preferenceNotes.push("tolls excluded");
-    if (elements.avoidFerries.checked) preferenceNotes.push("ferries excluded");
-    preferenceNotes.push(
-      elements.avoidUnsurfacedByways.checked
-        ? "unsurfaced byways avoided"
-        : "unsurfaced byways allowed",
-    );
-    const preferenceNote = preferenceNotes.length
-      ? ` ${preferenceNotes.join(", ").replace(/^./, (letter) => letter.toUpperCase())} applied.`
-      : "";
-    setStatus(
-      route.standardRoutingFallback
-        ? route.fallbackWarning
-        : `Road route ready.${preferenceNote} You can keep editing or download the GPX file.`,
-    );
-    if (shouldFit) fitRoute();
+    applyRoadRoute(route, controls, maneuvers);
+    setStatus(routeReadyStatus(route));
+    if (shouldFit && !fittedStandardRoute) fitRoute();
   } catch (error) {
     if (error.name === "AbortError") return;
     if (preserveExistingRoute && routeCoordinates.length > 1) {
@@ -1408,6 +1401,43 @@ async function routeStops(shouldFit = true, preserveExistingRoute = false) {
       );
     }
   }
+}
+
+function applyRoadRoute(route, controls, maneuvers = routeManeuvers(route)) {
+  routeCoordinates = route.geometry.coordinates;
+  routeManeuverList = maneuvers;
+  routedControls = controls;
+  routeAppliedPreferences = route.appliedPreferences;
+  routeLegGeometries =
+    route.legGeometries ||
+    (Array.isArray(route.legs) ? route.legs.map(legGeometry) : []);
+  setSummary(route.distance, route.duration, routeBendScore(route));
+  updateMapLines();
+  updateDownloadState();
+}
+
+function routeReadyStatus(route) {
+  if (route.standardRoutingFallback) return route.fallbackWarning;
+  const preferenceNotes = [];
+  const curvePreference = {
+    balanced: "Flowing-road bias",
+    twisty: "Twisty-road bias",
+    "very-twisty": "Very-twisty-road bias",
+  }[elements.routeStyle.value];
+  if (curvePreference) preferenceNotes.push(curvePreference);
+  if (elements.avoidMotorways.checked) preferenceNotes.push("motorways excluded");
+  if (elements.avoidMajorRoads.checked) preferenceNotes.push("major roads avoided");
+  if (elements.avoidTolls.checked) preferenceNotes.push("tolls excluded");
+  if (elements.avoidFerries.checked) preferenceNotes.push("ferries excluded");
+  preferenceNotes.push(
+    elements.avoidUnsurfacedByways.checked
+      ? "unsurfaced byways avoided"
+      : "unsurfaced byways allowed",
+  );
+  const preferenceNote = preferenceNotes.length
+    ? ` ${preferenceNotes.join(", ").replace(/^./, (letter) => letter.toUpperCase())} applied.`
+    : "";
+  return `Road route ready.${preferenceNote} You can keep editing or download the GPX file.`;
 }
 
 /// The route character the rider has asked for.
@@ -1426,7 +1456,7 @@ function routePreferences() {
   };
 }
 
-async function requestRoadRoute(controls, signal) {
+async function requestRoadRoute(controls, signal, { onStandardRoute } = {}) {
   const requestedPreferences = routePreferences();
   if (!requiresMotorcycleCosting(requestedPreferences)) {
     const route = await fetchStandardRoadRoute(controls, signal);
@@ -1435,20 +1465,25 @@ async function requestRoadRoute(controls, signal) {
   if (motorcycleRoutingUnavailable) {
     return fetchStandardRoutingFallback(controls, signal, requestedPreferences);
   }
-  try {
-    const route = await fetchMotorcycleRoute(
+  const result = await resolveProgressiveRoadRoute({
+    standardRoutePromise: fetchStandardRoadRoute(controls, signal),
+    motorcycleRoutePromise: fetchMotorcycleRoute(
       controls,
       signal,
       requestedPreferences,
-    );
-    return { ...route, appliedPreferences: requestedPreferences };
-  } catch (error) {
-    if (signal.aborted || error.name === "AbortError") throw error;
-    if (error.routingUnavailable || error instanceof TypeError) {
-      motorcycleRoutingUnavailable = true;
-    }
-    return fetchStandardRoutingFallback(controls, signal, requestedPreferences);
+    ),
+    onStandardRoute: (route) =>
+      onStandardRoute?.(standardRoutingFallbackRoute(route, requestedPreferences)),
+  });
+  if (!result.usedStandardFallback) {
+    return { ...result.route, appliedPreferences: requestedPreferences };
   }
+  const error = result.motorcycleError;
+  if (signal.aborted || error.name === "AbortError") throw error;
+  if (error.routingUnavailable || error instanceof TypeError) {
+    motorcycleRoutingUnavailable = true;
+  }
+  return standardRoutingFallbackRoute(result.route, requestedPreferences);
 }
 
 function fetchStandardRoadRoute(controls, signal) {
@@ -1471,6 +1506,10 @@ async function fetchStandardRoutingFallback(
   requestedPreferences,
 ) {
   const route = await fetchStandardRoadRoute(controls, signal);
+  return standardRoutingFallbackRoute(route, requestedPreferences);
+}
+
+function standardRoutingFallbackRoute(route, requestedPreferences) {
   return {
     ...route,
     appliedPreferences: standardRoutingFallbackPreferences(requestedPreferences),
@@ -2905,7 +2944,10 @@ async function runRoutePreview() {
   lastPreviewRouteAt = Date.now();
   const sequence = ++previewRouteSequence;
   try {
-    const route = await requestRoadRoute(controls, previewRouteRequest.signal);
+    const route = await fetchStandardRoadRoute(
+      controls,
+      previewRouteRequest.signal,
+    );
     if (sequence !== previewRouteSequence) return;
     routeCoordinates = route.geometry.coordinates;
     routeManeuverList = routeManeuvers(route);

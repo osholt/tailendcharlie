@@ -801,6 +801,68 @@ export function standardRoutingFallbackWarning({
   );
 }
 
+/// Prefer a motorcycle-specific result without making the editor wait for it.
+/// The standard route is surfaced as soon as it is ready while the motorcycle
+/// request continues, then the caller receives whichever final result is
+/// honest to use.
+export async function resolveProgressiveRoadRoute({
+  standardRoutePromise,
+  motorcycleRoutePromise,
+  onStandardRoute,
+}) {
+  const standardOutcome = Promise.resolve(standardRoutePromise).then(
+    (route) => ({ source: "standard", route, error: null }),
+    (error) => ({ source: "standard", route: null, error }),
+  );
+  const motorcycleOutcome = Promise.resolve(motorcycleRoutePromise).then(
+    (route) => ({ source: "motorcycle", route, error: null }),
+    (error) => ({ source: "motorcycle", route: null, error }),
+  );
+  const first = await Promise.race([standardOutcome, motorcycleOutcome]);
+
+  if (first.source === "motorcycle") {
+    if (!first.error) {
+      return {
+        route: first.route,
+        motorcycleError: null,
+        usedStandardFallback: false,
+      };
+    }
+    const standard = await standardOutcome;
+    if (standard.error) throw first.error;
+    return {
+      route: standard.route,
+      motorcycleError: first.error,
+      usedStandardFallback: true,
+    };
+  }
+
+  if (first.error) {
+    const motorcycle = await motorcycleOutcome;
+    if (motorcycle.error) throw motorcycle.error;
+    return {
+      route: motorcycle.route,
+      motorcycleError: null,
+      usedStandardFallback: false,
+    };
+  }
+
+  onStandardRoute?.(first.route);
+  const motorcycle = await motorcycleOutcome;
+  if (motorcycle.error) {
+    return {
+      route: first.route,
+      motorcycleError: motorcycle.error,
+      usedStandardFallback: true,
+    };
+  }
+  return {
+    route: motorcycle.route,
+    motorcycleError: null,
+    usedStandardFallback: false,
+  };
+}
+
 export class StateHistory {
   constructor(limit = 50) {
     this.limit = limit;

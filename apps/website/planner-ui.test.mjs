@@ -94,6 +94,17 @@ test("an unavailable motorcycle router falls back once instead of hanging", () =
   assert.match(plannerJs, /await fetchStandardRoadRoute\(controls, signal\)/);
 });
 
+test("route editing previews use fast standard routing while preferences refine", () => {
+  assert.match(plannerJs, /onStandardRoute:/);
+  assert.match(plannerJs, /Refining your motorcycle preferences/);
+  assert.match(
+    plannerJs,
+    /const route = await fetchStandardRoadRoute\(\s*controls,\s*previewRouteRequest\.signal/,
+  );
+  assert.match(plannerJs, /marker\.on\("drag", \(\) => \{/);
+  assert.match(plannerJs, /queueRoutePreview\(routingControls\(\)\)/);
+});
+
 test("global rides stay below the editable route and do not capture gestures", () => {
   const heatmapLayer = plannerJs.indexOf('id: "global-rides-heatmap"');
   const routeLayer = plannerJs.indexOf('id: "road-route-casing"');
