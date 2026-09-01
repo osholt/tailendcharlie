@@ -77,6 +77,30 @@ void main() {
     );
   });
 
+  test('a distant jump is excluded from anonymous coverage', () {
+    const first = GeoPoint(latitude: 51.4500, longitude: -2.5900);
+    const second = GeoPoint(latitude: 51.4501, longitude: -2.5899);
+    const third = GeoPoint(latitude: 52.4500, longitude: -1.5900);
+    const fourth = GeoPoint(latitude: 52.4501, longitude: -1.5899);
+    final contribution = const HeatmapContributionBuilder().build(
+      _ride([
+        const RoutePath(
+          kind: RoutePathKind.track,
+          points: [first, second, third, fourth],
+        ),
+      ]),
+      trimMeters: 0,
+    );
+
+    expect(contribution.cells, containsAll([_tile(first), _tile(fourth)]));
+    expect(
+      contribution.cells,
+      isNot(contains(_tile(const GeoPoint(latitude: 51.95, longitude: -2.09)))),
+      reason: 'a GPS jump must not become public ridden-road coverage',
+    );
+    expect(contribution.cells.length, lessThan(20));
+  });
+
   test('transport contains only shuffled cells and the chosen trim', () async {
     late Map<String, Object?> uploaded;
     final client = GlobalHeatmapClient(
@@ -127,14 +151,22 @@ void main() {
   });
 }
 
-RoutePath _path(double lat1, double lon1, double lat2, double lon2) =>
-    RoutePath(
-      kind: RoutePathKind.track,
-      points: [
-        GeoPoint(latitude: lat1, longitude: lon1),
-        GeoPoint(latitude: lat2, longitude: lon2),
-      ],
-    );
+RoutePath _path(double lat1, double lon1, double lat2, double lon2) {
+  final steps = math.max(
+    1,
+    (math.max((lat2 - lat1).abs(), (lon2 - lon1).abs()) / 0.001).ceil(),
+  );
+  return RoutePath(
+    kind: RoutePathKind.track,
+    points: [
+      for (var step = 0; step <= steps; step += 1)
+        GeoPoint(
+          latitude: lat1 + (lat2 - lat1) * step / steps,
+          longitude: lon1 + (lon2 - lon1) * step / steps,
+        ),
+    ],
+  );
+}
 
 (int, int) _tile(GeoPoint point) {
   final scale = (1 << HeatmapContributionBuilder.canonicalZoom).toDouble();

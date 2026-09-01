@@ -120,6 +120,37 @@ enum GroupMiniMapRenderer {
 
 enum _ImportedTrackChoice { cancel, followOriginal, generateNavigable }
 
+/// The first basemap road-geometry layer, used to keep heat colouring under
+/// the roads rather than washing out a dark navigation map.
+@visibleForTesting
+String? heatmapRoadLayerId(String styleJson) {
+  try {
+    final style = jsonDecode(styleJson);
+    if (style is! Map) return null;
+    final layers = style['layers'];
+    if (layers is! List) return null;
+    for (final layer in layers) {
+      if (layer is! Map) continue;
+      final id = layer['id'];
+      final type = layer['type'];
+      if (id is! String || (type != 'line' && type != 'fill')) continue;
+      final normalized = id.toLowerCase();
+      if (normalized.startsWith('road_') ||
+          normalized.startsWith('tunnel_') ||
+          normalized.startsWith('bridge_') ||
+          normalized.contains('highway') ||
+          normalized.contains('motorway') ||
+          normalized.contains('transportation')) {
+        return id;
+      }
+    }
+  } on FormatException {
+    // Style validation owns malformed documents; layer placement can safely
+    // fall back to the top when an injected test/embedder style is incomplete.
+  }
+  return null;
+}
+
 /// Whether to offer to turn an import into a navigable route.
 ///
 /// This required **every** drawable path to be a track, so a file carrying a
@@ -5080,6 +5111,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreStyleReady = false;
     try {
       await _registerMarkerImages(controller);
+      final heatmapBelowLayerId = heatmapRoadLayerId(widget.mapStyleString);
       await controller.addGeoJsonSource(
         _globalHeatmapSource,
         _visibleGlobalHeatmap.toGeoJson(),
@@ -5116,6 +5148,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ],
           heatmapOpacity: 0.42,
         ),
+        belowLayerId: heatmapBelowLayerId,
       );
       await controller.addGeoJsonSource(
         _personalHeatmapSource,
@@ -5167,6 +5200,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ],
           heatmapOpacity: 0.48,
         ),
+        belowLayerId: heatmapBelowLayerId,
       );
       await controller.addGeoJsonSource(
         _discoveryLineSource,

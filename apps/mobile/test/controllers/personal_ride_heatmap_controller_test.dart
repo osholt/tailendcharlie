@@ -76,6 +76,36 @@ void main() {
     expect(heatmap.cells.length, lessThan(10));
   });
 
+  test('a distant jump inside one recorded path is not painted as ridden', () {
+    final heatmap = const PersonalRideHeatmapBuilder().build([
+      _ride(
+        'bad-jump',
+        travelled: _route([
+          const RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 51.4500, longitude: -2.5900),
+              GeoPoint(latitude: 51.4501, longitude: -2.5899),
+              GeoPoint(latitude: 52.4500, longitude: -1.5900),
+              GeoPoint(latitude: 52.4501, longitude: -1.5899),
+            ],
+          ),
+        ]),
+      ),
+    ]);
+
+    expect(heatmap.cells.any((cell) => cell.centre.latitude < 51.5), isTrue);
+    expect(heatmap.cells.any((cell) => cell.centre.latitude > 52.4), isTrue);
+    expect(
+      heatmap.cells.any(
+        (cell) => cell.centre.latitude > 51.7 && cell.centre.latitude < 52.2,
+      ),
+      isFalse,
+      reason: 'only the real fixes either side of the GPS jump are coverage',
+    );
+    expect(heatmap.cells.length, lessThan(20));
+  });
+
   test('empty archives stay empty', () {
     expect(const PersonalRideHeatmapBuilder().build(const []).cells, isEmpty);
   });

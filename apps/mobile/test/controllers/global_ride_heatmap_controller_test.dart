@@ -200,8 +200,11 @@ CompletedRide _ride({String rideId = 'ride-one', double longitudeOffset = 0}) =>
           RoutePath(
             kind: RoutePathKind.track,
             points: [
-              GeoPoint(latitude: 51.45, longitude: -2.59 + longitudeOffset),
-              GeoPoint(latitude: 51.46, longitude: -2.58 + longitudeOffset),
+              for (var sample = 0; sample <= 10; sample += 1)
+                GeoPoint(
+                  latitude: 51.45 + sample * 0.001,
+                  longitude: -2.59 + longitudeOffset + sample * 0.001,
+                ),
             ],
           ),
         ],

@@ -17,6 +17,7 @@ export 'ride_map_feature.dart'
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
         groupMiniMapRenderer,
+        heatmapRoadLayerId,
         landscapeGuidancePanelWidth,
         motorcycleDiscoveryMinimumZoom,
         motorcycleDiscoveryVisibleAtZoom,
