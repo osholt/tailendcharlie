@@ -21,6 +21,8 @@ import {
   gpxFileName,
   motorcycleCostingOptions,
   requiresMotorcycleCosting,
+  standardRoutingFallbackPreferences,
+  standardRoutingFallbackWarning,
   routeBendScore,
   routePreferencesGpxExtension,
   routeDetourLimit,
@@ -493,6 +495,35 @@ test("the engine choice matches the mobile app's dispatch rule", () => {
     requiresMotorcycleCosting({ avoidUnsurfacedByways: false }),
     true,
   );
+});
+
+test("standard routing fallback keeps style without claiming hard exclusions", () => {
+  assert.deepEqual(
+    standardRoutingFallbackPreferences({
+      routeStyle: "very-twisty",
+      avoidMotorways: true,
+      avoidMajorRoads: true,
+      avoidTolls: true,
+      avoidFerries: true,
+      avoidUnsurfacedByways: false,
+    }),
+    {
+      routeStyle: "very-twisty",
+      avoidMotorways: false,
+      avoidMajorRoads: false,
+      avoidTolls: false,
+      avoidFerries: false,
+      avoidUnsurfacedByways: true,
+    },
+  );
+  const warning = standardRoutingFallbackWarning({
+    avoidMotorways: true,
+    avoidMajorRoads: true,
+  });
+  assert.match(warning, /motorcycle routing is unavailable/i);
+  assert.match(warning, /Avoid motorways/);
+  assert.match(warning, /Avoid major roads/);
+  assert.match(warning, /review the route before exporting/i);
 });
 
 test("shared GPX states the preferences the route was planned with", () => {

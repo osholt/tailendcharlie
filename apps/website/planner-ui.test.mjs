@@ -86,6 +86,14 @@ test("circular and day ride generation is available in the editable planner", ()
   assert.match(plannerJs, /routeStops\(true\)/);
 });
 
+test("an unavailable motorcycle router falls back once instead of hanging", () => {
+  assert.match(plannerJs, /const ROUTING_TIMEOUT_MS = 8_000/);
+  assert.match(plannerJs, /motorcycleRoutingUnavailable = true/);
+  assert.match(plannerJs, /standardRoutingFallbackPreferences/);
+  assert.match(plannerJs, /standardRoutingFallbackWarning/);
+  assert.match(plannerJs, /await fetchStandardRoadRoute\(controls, signal\)/);
+});
+
 test("global rides stay below the editable route and do not capture gestures", () => {
   const heatmapLayer = plannerJs.indexOf('id: "global-rides-heatmap"');
   const routeLayer = plannerJs.indexOf('id: "road-route-casing"');
