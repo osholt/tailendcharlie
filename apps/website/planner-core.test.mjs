@@ -21,6 +21,7 @@ import {
   gpxFileName,
   motorcycleCostingOptions,
   requiresMotorcycleCosting,
+  resolveProgressiveRoadRoute,
   standardRoutingFallbackPreferences,
   standardRoutingFallbackWarning,
   routeBendScore,
@@ -524,6 +525,88 @@ test("standard routing fallback keeps style without claiming hard exclusions", (
   assert.match(warning, /Avoid motorways/);
   assert.match(warning, /Avoid major roads/);
   assert.match(warning, /review the route before exporting/i);
+});
+
+test("standard routing is surfaced while motorcycle refinement continues", async () => {
+  let finishMotorcycle;
+  const motorcycleRoutePromise = new Promise((resolve) => {
+    finishMotorcycle = resolve;
+  });
+  const previews = [];
+  let standardShown;
+  const standardShownPromise = new Promise((resolve) => {
+    standardShown = resolve;
+  });
+  const resultPromise = resolveProgressiveRoadRoute({
+    standardRoutePromise: Promise.resolve({ id: "standard" }),
+    motorcycleRoutePromise,
+    onStandardRoute: (route) => {
+      previews.push(route);
+      standardShown();
+    },
+  });
+
+  await standardShownPromise;
+  assert.deepEqual(previews, [{ id: "standard" }]);
+  finishMotorcycle({ id: "motorcycle" });
+  assert.deepEqual(await resultPromise, {
+    route: { id: "motorcycle" },
+    motorcycleError: null,
+    usedStandardFallback: false,
+  });
+});
+
+test("a fast motorcycle result does not flash a standard preview", async () => {
+  let finishStandard;
+  const standardRoutePromise = new Promise((resolve) => {
+    finishStandard = resolve;
+  });
+  const previews = [];
+  const resultPromise = resolveProgressiveRoadRoute({
+    standardRoutePromise,
+    motorcycleRoutePromise: Promise.resolve({ id: "motorcycle" }),
+    onStandardRoute: (route) => previews.push(route),
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(await resultPromise, {
+    route: { id: "motorcycle" },
+    motorcycleError: null,
+    usedStandardFallback: false,
+  });
+  assert.deepEqual(previews, []);
+  finishStandard({ id: "standard" });
+});
+
+test("a failed motorcycle refinement keeps the already-ready standard route", async () => {
+  const motorcycleError = new Error("motorcycle router unavailable");
+  let rejectMotorcycle;
+  const motorcycleRoutePromise = new Promise((resolve, reject) => {
+    rejectMotorcycle = reject;
+  });
+  const previews = [];
+  let standardShown;
+  const standardShownPromise = new Promise((resolve) => {
+    standardShown = resolve;
+  });
+  const resultPromise = resolveProgressiveRoadRoute({
+    standardRoutePromise: Promise.resolve({ id: "standard" }),
+    motorcycleRoutePromise,
+    onStandardRoute: (route) => {
+      previews.push(route);
+      standardShown();
+    },
+  });
+
+  await standardShownPromise;
+  assert.deepEqual(previews, [{ id: "standard" }]);
+  rejectMotorcycle(motorcycleError);
+  assert.deepEqual(await resultPromise, {
+    route: { id: "standard" },
+    motorcycleError,
+    usedStandardFallback: true,
+  });
 });
 
 test("shared GPX states the preferences the route was planned with", () => {
