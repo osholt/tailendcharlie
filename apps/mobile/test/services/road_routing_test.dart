@@ -108,6 +108,31 @@ void main() {
     expect(result.maneuvers.last.requiresSecondBikeDrop, isFalse);
   });
 
+  test('OSRM keeps circular shaping controls silent in one request', () async {
+    Uri? requested;
+    final service = OsrmRoadRoutingService(
+      client: MockClient((request) async {
+        requested = request.url;
+        return http.Response(_osrmResponse(), 200);
+      }),
+      baseUrl: Uri.parse('https://routing.example.test'),
+    );
+
+    await service.routeThroughShapingPoints(
+      const [
+        GeoPoint(latitude: 51.46, longitude: -2.51),
+        GeoPoint(latitude: 51.55, longitude: -2.60),
+        GeoPoint(latitude: 51.60, longitude: -2.70),
+        GeoPoint(latitude: 51.65, longitude: -2.65),
+        GeoPoint(latitude: 51.55, longitude: -2.55),
+        GeoPoint(latitude: 51.46, longitude: -2.51),
+      ],
+      shapingPointIndexes: const {1, 2, 4},
+    );
+
+    expect(requested!.queryParameters['waypoints'], '0;3;5');
+  });
+
   test('OSRM constrains only the moving reroute origin bearing', () async {
     final client = MockClient((request) async {
       // OSRM requires one bearings element per coordinate; empty elements keep
@@ -731,6 +756,41 @@ void main() {
       // for it. What changed in #303 is that a response which *does* carry them
       // no longer has them discarded — see the group below.
       expect(result.maneuvers, isEmpty);
+    });
+
+    test('Valhalla uses non-reversing nearby-road shaping controls', () async {
+      List<dynamic>? requestedLocations;
+      final service = ValhallaMotorcycleRoutingService(
+        client: MockClient((request) async {
+          final json = jsonDecode(request.url.queryParameters['json']!) as Map;
+          requestedLocations = json['locations'] as List;
+          return http.Response(_valhallaResponse(), 200);
+        }),
+        routeUrl: Uri.parse('https://valhalla.example.test/route'),
+      );
+
+      await service.routeThroughShapingPoints(
+        const [
+          GeoPoint(latitude: 51.46, longitude: -2.51),
+          GeoPoint(latitude: 51.58, longitude: -2.90),
+          GeoPoint(latitude: 51.70, longitude: -2.70),
+          GeoPoint(latitude: 51.46, longitude: -2.51),
+        ],
+        shapingPointIndexes: const {1, 2},
+        shapingPointSearchRadiusMeters: 1287.4,
+      );
+
+      expect(requestedLocations!.map((location) => location['type']), [
+        'break',
+        'through',
+        'through',
+        'break',
+      ]);
+      expect(requestedLocations![0].containsKey('radius'), isFalse);
+      expect(requestedLocations![1]['radius'], 1287);
+      expect(requestedLocations![1]['rank_candidates'], isFalse);
+      expect(requestedLocations![2]['radius'], 1287);
+      expect(requestedLocations![3].containsKey('radius'), isFalse);
     });
 
     test(

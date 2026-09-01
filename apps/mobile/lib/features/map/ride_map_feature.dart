@@ -6259,7 +6259,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         if (!_isCircularRideGenerationCurrent(generation)) return;
         _setCircularRideGenerationStage(
           generation,
-          'Routing road sections and checking alternative loop shapes…',
+          'Routing the complete road loop and checking its shape…',
         );
         final planner = CircularRidePlanner(
           routingService: _roadRoutingService,
@@ -8287,8 +8287,8 @@ class _CircularRideGenerationOverlay extends StatelessWidget {
                       Text(stage, textAlign: TextAlign.center),
                       const SizedBox(height: 8),
                       Text(
-                        'Longer rides may take up to a minute while several '
-                        'road combinations are checked.',
+                        'This usually completes in a few seconds. Difficult '
+                        'road constraints may need a second pass.',
                         style: Theme.of(context).textTheme.bodySmall,
                         textAlign: TextAlign.center,
                       ),

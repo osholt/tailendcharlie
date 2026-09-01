@@ -6684,7 +6684,7 @@ void main() {
 
         expect(find.byType(FlutterMap), findsOneWidget);
         expect(find.text('Calculating circular route'), findsOneWidget);
-        expect(find.textContaining('road sections'), findsOneWidget);
+        expect(find.textContaining('complete road loop'), findsOneWidget);
         expect(
           find.byKey(const Key('cancel-circular-ride-generation')),
           findsOneWidget,

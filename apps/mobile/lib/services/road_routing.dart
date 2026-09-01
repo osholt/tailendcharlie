@@ -411,6 +411,31 @@ abstract interface class RoadRoutingService {
   });
 }
 
+/// Which provider path a shaping-point request must use.
+///
+/// [preferred] applies the normal preference-aware dispatch. The two explicit
+/// values let a planner make an honest fallback without losing the distinction
+/// between Valhalla's motorcycle costing and OSRM's standard driving profile.
+enum RoadRoutingCosting { preferred, motorcycle, standard }
+
+/// Optional support for route controls that influence geometry without acting
+/// like destinations.
+///
+/// Circular planners need this distinction: routing every control as a stop
+/// creates artificial arrivals, independent section snaps and dead-end
+/// reversals. Providers that support this capability can calculate the whole
+/// loop atomically while preserving real planned stops as ordinary waypoints.
+abstract interface class ShapingPointRoadRoutingService {
+  Future<RoadRouteResult> routeThroughShapingPoints(
+    List<GeoPoint> waypoints, {
+    required Set<int> shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
+    RoutePreferences? preferences,
+    RoadRoutingCosting costing = RoadRoutingCosting.preferred,
+    double? originBearingDegrees,
+  });
+}
+
 /// Optional capability for callers that must keep motorcycle costing while
 /// relaxing one of its preferences.
 ///
@@ -441,7 +466,8 @@ abstract interface class StandardCostingRoadRoutingService {
   });
 }
 
-class OsrmRoadRoutingService implements RoadRoutingService {
+class OsrmRoadRoutingService
+    implements RoadRoutingService, ShapingPointRoadRoutingService {
   const OsrmRoadRoutingService({
     required this.client,
     required this.baseUrl,
@@ -472,6 +498,32 @@ class OsrmRoadRoutingService implements RoadRoutingService {
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
     double? originBearingDegrees,
+  }) => _routeThrough(
+    waypoints,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
+
+  @override
+  Future<RoadRouteResult> routeThroughShapingPoints(
+    List<GeoPoint> waypoints, {
+    required Set<int> shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
+    RoutePreferences? preferences,
+    RoadRoutingCosting costing = RoadRoutingCosting.preferred,
+    double? originBearingDegrees,
+  }) => _routeThrough(
+    waypoints,
+    shapingPointIndexes: shapingPointIndexes,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
+
+  Future<RoadRouteResult> _routeThrough(
+    List<GeoPoint> waypoints, {
+    Set<int>? shapingPointIndexes,
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     if (waypoints.length < 2) {
       throw const FormatException('At least two route points are required.');
@@ -493,6 +545,14 @@ class OsrmRoadRoutingService implements RoadRoutingService {
         'overview': 'full',
         'geometries': 'geojson',
         'steps': 'true',
+        // OSRM still routes through every coordinate, but only indexes named
+        // here split the response into legs. Omitting silent shaping controls
+        // prevents fake arrival/departure prompts at circular-route controls.
+        if (shapingPointIndexes != null)
+          'waypoints': [
+            for (var index = 0; index < waypoints.length; index += 1)
+              if (!shapingPointIndexes.contains(index)) index,
+          ].join(';'),
         // Only asked for when a style has to choose. The quickest route needs
         // no alternatives, and not asking keeps the default request identical
         // to the one this client has always sent.
@@ -815,7 +875,11 @@ class OsrmRoadRoutingService implements RoadRoutingService {
 /// Reviewed mapped mini-roundabouts may still be added from route geometry; the
 /// rest falls back to geometry-derived decision points, and
 /// [PreferenceAwareRoadRoutingService] says so out loud.
-class ValhallaMotorcycleRoutingService implements RoadRoutingService {
+class ValhallaMotorcycleRoutingService
+    implements
+        RoadRoutingService,
+        MotorcycleCostingRoadRoutingService,
+        ShapingPointRoadRoutingService {
   const ValhallaMotorcycleRoutingService({
     required this.client,
     required this.routeUrl,
@@ -842,6 +906,45 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
     List<GeoPoint> waypoints, {
     RoutePreferences? preferences,
     double? originBearingDegrees,
+  }) => _routeThrough(
+    waypoints,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
+
+  @override
+  Future<RoadRouteResult> routeThroughMotorcycle(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) => routeThrough(
+    waypoints,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
+
+  @override
+  Future<RoadRouteResult> routeThroughShapingPoints(
+    List<GeoPoint> waypoints, {
+    required Set<int> shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
+    RoutePreferences? preferences,
+    RoadRoutingCosting costing = RoadRoutingCosting.preferred,
+    double? originBearingDegrees,
+  }) => _routeThrough(
+    waypoints,
+    shapingPointIndexes: shapingPointIndexes,
+    shapingPointSearchRadiusMeters: shapingPointSearchRadiusMeters,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
+
+  Future<RoadRouteResult> _routeThrough(
+    List<GeoPoint> waypoints, {
+    Set<int>? shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
   }) async {
     if (waypoints.length < 2) {
       throw const FormatException('At least two route points are required.');
@@ -854,15 +957,24 @@ class ValhallaMotorcycleRoutingService implements RoadRoutingService {
     _requireHttps(routeUrl, 'Motorcycle routing');
     final resolved = preferences ?? RoutePreferences.defaults;
     final request = {
-      'locations': waypoints
-          .map(
-            (point) => {
-              'lat': point.latitude,
-              'lon': point.longitude,
-              'type': 'break',
-            },
-          )
-          .toList(growable: false),
+      'locations': [
+        for (final (index, point) in waypoints.indexed)
+          {
+            'lat': point.latitude,
+            'lon': point.longitude,
+            // `through` is Valhalla's non-stopping control and, unlike a
+            // `break`, disallows a U-turn at that point.
+            'type': shapingPointIndexes?.contains(index) ?? false
+                ? 'through'
+                : 'break',
+            if ((shapingPointIndexes?.contains(index) ?? false) &&
+                shapingPointSearchRadiusMeters > 0)
+              'radius': shapingPointSearchRadiusMeters.round(),
+            if ((shapingPointIndexes?.contains(index) ?? false) &&
+                shapingPointSearchRadiusMeters > 0)
+              'rank_candidates': false,
+          },
+      ],
       'costing': 'motorcycle',
       'costing_options': {
         'motorcycle': resolved.valhallaMotorcycleCostingOptions(),
@@ -1167,7 +1279,8 @@ class PreferenceAwareRoadRoutingService
     implements
         RoadRoutingService,
         MotorcycleCostingRoadRoutingService,
-        StandardCostingRoadRoutingService {
+        StandardCostingRoadRoutingService,
+        ShapingPointRoadRoutingService {
   const PreferenceAwareRoadRoutingService({
     required this.osrm,
     required this.motorcycle,
@@ -1234,6 +1347,37 @@ class PreferenceAwareRoadRoutingService
     preferences: preferences,
     originBearingDegrees: originBearingDegrees,
   );
+
+  @override
+  Future<RoadRouteResult> routeThroughShapingPoints(
+    List<GeoPoint> waypoints, {
+    required Set<int> shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
+    RoutePreferences? preferences,
+    RoadRoutingCosting costing = RoadRoutingCosting.preferred,
+    double? originBearingDegrees,
+  }) {
+    final selected = switch (costing) {
+      RoadRoutingCosting.preferred =>
+        usesMotorcycleCosting(preferences) ? motorcycle : osrm,
+      RoadRoutingCosting.motorcycle => motorcycle,
+      RoadRoutingCosting.standard => osrm,
+    };
+    return selected is ShapingPointRoadRoutingService
+        ? (selected as ShapingPointRoadRoutingService)
+              .routeThroughShapingPoints(
+                waypoints,
+                shapingPointIndexes: shapingPointIndexes,
+                shapingPointSearchRadiusMeters: shapingPointSearchRadiusMeters,
+                preferences: preferences,
+                originBearingDegrees: originBearingDegrees,
+              )
+        : selected.routeThrough(
+            waypoints,
+            preferences: preferences,
+            originBearingDegrees: originBearingDegrees,
+          );
+  }
 }
 
 class DestinationMatch {
