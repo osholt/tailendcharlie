@@ -67,6 +67,31 @@ void main() {
     },
   );
 
+  test('native heatmaps sit below basemap road geometry', () {
+    final style = jsonEncode({
+      'version': 8,
+      'sources': <String, Object?>{},
+      'layers': [
+        {'id': 'background', 'type': 'background'},
+        {'id': 'landcover', 'type': 'fill'},
+        {'id': 'road_service_track', 'type': 'line'},
+        {'id': 'highway-name-major', 'type': 'symbol'},
+      ],
+    });
+
+    expect(heatmapRoadLayerId(style), 'road_service_track');
+    expect(heatmapRoadLayerId(MapStyleRepository.fallbackStyle), isNull);
+
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+    expect(
+      RegExp('belowLayerId: heatmapBelowLayerId').allMatches(source).length,
+      2,
+      reason: 'both private and global native heatmaps stay beneath roads',
+    );
+  });
+
   test('navigation panels preserve map context and rider clearance', () {
     expect(rideMapPrimaryPanelFill.toARGB32(), 0xD9252E39);
     expect(

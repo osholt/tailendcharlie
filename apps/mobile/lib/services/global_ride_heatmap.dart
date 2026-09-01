@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../domain/completed_ride.dart';
 import '../domain/imported_route.dart';
+import 'recorded_heatmap_continuity.dart';
 
 enum HeatmapContributionConsent { never, askAfterEachRide, always }
 
@@ -128,6 +129,12 @@ class HeatmapContributionBuilder {
               .where((points) => points.length >= 2)
               .toList(growable: true) ??
           <List<GeoPoint>>[];
+      paths = [
+        for (final path in paths)
+          ...continuousRecordedHeatmapSegments(
+            path,
+          ).where((segment) => segment.length >= 2),
+      ];
       paths = _trimFromStart(paths, trimMeters.toDouble());
       paths = _trimFromEnd(paths, trimMeters.toDouble());
       for (final path in paths) {

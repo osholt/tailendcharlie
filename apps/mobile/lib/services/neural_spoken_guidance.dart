@@ -393,9 +393,9 @@ class NeuralSpokenGuidanceEngine
   );
 }
 
-/// Gives a warmed neural voice a strict opportunity to start, then preserves
-/// the existing OS speech path. A slow model can improve a prompt; it can never
-/// delay or silence one.
+/// Uses the OS speech path while the neural model is unavailable or genuinely
+/// fails. Once model warm-up succeeds, generation time alone never changes the
+/// rider's selected voice.
 class FailSafeNeuralSpokenGuidanceEngine
     implements SpokenGuidanceEngine, WarmableSpokenGuidanceEngine {
   FailSafeNeuralSpokenGuidanceEngine({
@@ -442,9 +442,18 @@ class FailSafeNeuralSpokenGuidanceEngine
   }) async {
     final attempt = neural.beginSpeak(phrase, audioClass: audioClass);
     try {
-      await attempt.started.timeout(
-        _warmed || _warming != null ? warmedStartDeadline : startDeadline,
-      );
+      if (_warmed) {
+        // Kokoro generates a complete WAV before playback. Long road names and
+        // following instructions routinely take more than the old 2.5 second
+        // deadline on a phone, even though generation is healthy. Timing that
+        // full render turned the rider's choice into an intermittent system
+        // voice and left the still-running worker blocking the next prompt.
+        await attempt.started;
+      } else {
+        await attempt.started.timeout(
+          _warming != null ? warmedStartDeadline : startDeadline,
+        );
+      }
     } on Object {
       await neural.cancelCurrentAttempt();
       // This prompt must not be late, but one slow generation must not disable

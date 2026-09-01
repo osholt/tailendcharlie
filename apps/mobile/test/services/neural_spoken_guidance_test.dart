@@ -47,7 +47,10 @@ void main() {
   test(
     'a late neural result is cancelled and OS speech gets the same text',
     () async {
-      final neural = _FakeNeuralStarter(neverStarts: true);
+      final neural = _FakeNeuralStarter(
+        neverStarts: true,
+        prepareDelay: const Duration(milliseconds: 40),
+      );
       final fallback = _RecordingEngine();
       final outputs = <SpokenGuidanceOutput>[];
       final engine = FailSafeNeuralSpokenGuidanceEngine(
@@ -71,7 +74,10 @@ void main() {
   test(
     'one missed deadline retries the natural voice on the next prompt',
     () async {
-      final neural = _FakeNeuralStarter(missedStarts: 1);
+      final neural = _FakeNeuralStarter(
+        missedStarts: 1,
+        prepareDelay: const Duration(milliseconds: 40),
+      );
       final fallback = _RecordingEngine();
       final outputs = <SpokenGuidanceOutput>[];
       final engine = FailSafeNeuralSpokenGuidanceEngine(
@@ -158,6 +164,34 @@ void main() {
       await engine.speak('Speed camera, in 150 yards.');
 
       expect(fallback.spoken, isEmpty);
+      expect(outputs, [SpokenGuidanceOutput.natural]);
+    },
+  );
+
+  test(
+    'a healthy warmed voice is not replaced just because generation is slow',
+    () async {
+      final neural = _FakeNeuralStarter(
+        startDelay: const Duration(milliseconds: 30),
+      );
+      final fallback = _RecordingEngine();
+      final outputs = <SpokenGuidanceOutput>[];
+      final engine = FailSafeNeuralSpokenGuidanceEngine(
+        neural: neural,
+        fallback: fallback,
+        startDeadline: const Duration(milliseconds: 5),
+        warmedStartDeadline: const Duration(milliseconds: 5),
+        onOutput: (_, output) => outputs.add(output),
+      );
+
+      await engine.configure();
+      await engine.warmUp();
+      await engine.speak(
+        'In 2 miles, at the roundabout, take the third exit onto Wickwar Road.',
+      );
+
+      expect(fallback.spoken, isEmpty);
+      expect(neural.cancelCalls, 0);
       expect(outputs, [SpokenGuidanceOutput.natural]);
     },
   );
