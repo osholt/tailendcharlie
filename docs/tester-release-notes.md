@@ -36,6 +36,39 @@ permissions by design.
 - ...
 ```
 
+## iOS build 86 — 1.0.1 — 1 September 2026
+
+This build makes long circular rides much faster and more reliable, including
+the reported 80-mile north-west loop from Kingswood.
+
+### What to test
+
+1. Open the circular ride editor in Kingswood, choose **80 miles** and
+   **North-west**, then generate the ride with your preferred road settings.
+2. The route should normally appear within a few seconds instead of failing
+   after a long wait.
+3. Repeat with **Avoid motorways** enabled. If that combination cannot produce
+   a practical loop, the app should complete a second pass and clearly explain
+   any relaxed constraint.
+4. Check that the resulting loop has no artificial U-turn at its shaping
+   points and that deliberate stops remain in the correct order.
+
+### Fixed
+
+- Replaced five sequential section requests with one complete-loop routing
+  request using silent, non-reversing shaping controls.
+- Added one bounded retry that removes only dead-end gateway controls while
+  retaining the deeper loop shape and deliberate stops.
+- Prevented provider failures from fanning out into several additional slow
+  requests.
+
+### Known limitations
+
+- Route generation still needs an internet connection to the routing provider.
+- Unusually restrictive road combinations may need the advertised second pass.
+- The exact Kingswood test completed in under two seconds in live checks and is
+  covered by automated tests; physical iPhone confirmation remains requested.
+
 ## iOS build 85 — 1.0.1 — 1 September 2026
 
 This build refines the personal ride heat map after physical-device feedback.
