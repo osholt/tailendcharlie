@@ -36,6 +36,44 @@ permissions by design.
 - ...
 ```
 
+## iOS build 87 — 1.0.1 — 1 September 2026
+
+This build keeps natural navigation guidance natural once its voice engine is
+ready, and makes ride heat maps safer and clearer during navigation.
+
+### What to test
+
+1. Enable the natural guidance voice and navigate through several long spoken
+   instructions. After the engine has warmed up, every instruction should use
+   the natural voice rather than alternating with the system voice.
+2. Turn on the personal ride heat map in dark mode, start navigation and check
+   roads at close and normal zooms. Road geometry and labels should remain
+   legible above the heat-map glow.
+3. Inspect an area where a recorded ride previously contained a large GPS jump.
+   The heat map should retain the genuine recorded locations without drawing a
+   long straight connection across the gap.
+
+### Fixed
+
+- Removed the short generation deadline that made healthy, longer natural
+  phrases fall back to the system voice even after the voice engine was ready.
+- Placed both personal and shared heat-map layers beneath road geometry so dark
+  roads remain visible during navigation.
+- Added continuity filtering so location gaps over 250 m are not interpolated
+  into artificial heat-map roads; genuine recorded points on either side are
+  still retained.
+
+### Known limitations
+
+- The first instruction after a cold start may still use the system voice if
+  the natural voice engine is not ready, or if natural speech generation
+  actually fails. Later instructions retry the natural voice.
+- Previously uploaded shared heat-map aggregates cannot be rewritten by this
+  build. New contributions are filtered, and the personal heat map is rebuilt
+  locally from recorded rides using the new continuity rule.
+- The fixes have full automated coverage but still need confirmation on a
+  physical iPhone and CarPlay display.
+
 ## iOS build 86 — 1.0.1 — 1 September 2026
 
 This build makes long circular rides much faster and more reliable, including
