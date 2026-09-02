@@ -517,6 +517,12 @@ import UserNotifications
     )
   }
 
+  /// Ends projected turn-by-turn guidance only. Dart deliberately keeps the
+  /// ride session, location recording, and group membership alive.
+  func cancelCarPlayNavigation() {
+    carPlayChannel?.invokeMethod("cancelNavigation", arguments: nil)
+  }
+
   func startFreeRoamFromCarPlay(
     completion: @escaping (Bool, String?) -> Void
   ) {

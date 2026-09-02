@@ -129,6 +129,7 @@ class CarPlayBridge {
     this.onDestinationPreviewRequested,
     this.onDestinationPreviewCommitted,
     this.onDestinationPreviewCancelled,
+    this.onNavigationCancelRequested,
     this.onFreeRoamRequested,
     this.onStateRequested,
     this.onAndroidAutoNavigationHostEvent,
@@ -203,6 +204,10 @@ class CarPlayBridge {
 
   /// Drops an uncommitted preview. This must never end or create a ride.
   final Future<void> Function(String previewId)? onDestinationPreviewCancelled;
+
+  /// Stops turn-by-turn guidance at the vehicle's request without changing the
+  /// ride journal, recording state, route authority, or group membership.
+  final Future<void> Function()? onNavigationCancelRequested;
 
   /// Creates and starts a route-less solo ride from the home map.
   final Future<void> Function()? onFreeRoamRequested;
@@ -411,6 +416,16 @@ class CarPlayBridge {
             ),
           };
         }
+      case 'cancelNavigation':
+        final cancel = onNavigationCancelRequested;
+        if (cancel == null) {
+          return const {
+            'ok': false,
+            'error': 'Directions cannot be ended from this screen.',
+          };
+        }
+        await cancel();
+        return const {'ok': true, 'error': null};
       case 'startFreeRoam':
         final start = onFreeRoamRequested;
         if (start == null) {
@@ -480,6 +495,8 @@ class CarPlayBridge {
     String? routeName,
     String? rideState,
     bool followRider = false,
+    bool navigationEnabled = true,
+    bool navigationPaused = false,
     String? guidanceTitle,
     String? guidanceDetail,
     String? guidanceRoadName,
@@ -570,6 +587,8 @@ class CarPlayBridge {
         generatedAt: now,
         ridePhase: surfaceMode.name,
         route: route,
+        navigationEnabled: navigationEnabled,
+        navigationPaused: navigationPaused,
         guidance: navigationGuidance,
         distanceUnit: distanceUnit,
         localeIdentifier: localeIdentifier,

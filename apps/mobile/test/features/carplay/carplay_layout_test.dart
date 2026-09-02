@@ -243,14 +243,14 @@ void main() {
       },
     );
 
-    test('Apple trip estimate is cancelled in favour of app-owned ETA', () {
+    test('Apple navigation session receives manoeuvre and trip estimates', () {
+      expect(source, contains('mapTemplate.startNavigationSession(for: trip)'));
       expect(
         source,
-        contains(
-          'A CPNavigationSession always owns Apple\'s trip-estimate panel',
-        ),
+        contains('navigationSession.upcomingManeuvers = maneuvers'),
       );
-      expect(source, contains('navigationSession?.cancelTrip()'));
+      expect(source, contains('session.updateEstimates('));
+      expect(source, contains('mapTemplate.updateEstimates('));
       expect(source, contains('routeProgressView.trailingAnchor.constraint('));
     });
 

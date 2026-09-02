@@ -120,6 +120,87 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(store.latest?.sourceID, "dart-new")
   }
 
+  func testCarPlayNavigationLifecycleIsIdempotent() throws {
+    var coordinator = CarPlayNavigationCoordinator()
+    let navigating = try XCTUnwrap(
+      CarPlayNavigationProjectionV2(
+        snapshot: carPlayNavigationSnapshot(sourceID: "dart-1", sequence: 1)
+      )
+    )
+
+    XCTAssertEqual(
+      coordinator.apply(navigating),
+      .start(routeID: "france-route", paused: false)
+    )
+    XCTAssertEqual(coordinator.apply(navigating), .update)
+
+    let paused = try XCTUnwrap(
+      CarPlayNavigationProjectionV2(
+        snapshot: carPlayNavigationSnapshot(
+          sourceID: "dart-1",
+          sequence: 2,
+          navigationPhase: "paused"
+        )
+      )
+    )
+    XCTAssertEqual(coordinator.apply(paused), .pause)
+    XCTAssertEqual(coordinator.apply(paused), .none)
+    XCTAssertEqual(coordinator.apply(navigating), .resume)
+  }
+
+  func testCarPlayNavigationLifecycleReroutesArrivesAndCancelsOnce() throws {
+    var coordinator = CarPlayNavigationCoordinator()
+    let first = try XCTUnwrap(
+      CarPlayNavigationProjectionV2(
+        snapshot: carPlayNavigationSnapshot(sourceID: "dart-1", sequence: 1)
+      )
+    )
+    _ = coordinator.apply(first)
+    let reroute = try XCTUnwrap(
+      CarPlayNavigationProjectionV2(
+        snapshot: carPlayNavigationSnapshot(
+          sourceID: "dart-1",
+          sequence: 2,
+          routeID: "rerouted-france-route"
+        )
+      )
+    )
+    XCTAssertEqual(
+      coordinator.apply(reroute),
+      .reroute(from: "france-route", to: "rerouted-france-route")
+    )
+    coordinator.completeReroute(routeID: "rerouted-france-route")
+
+    let ended = try XCTUnwrap(
+      CarPlayNavigationProjectionV2(
+        snapshot: carPlayNavigationSnapshot(
+          sourceID: "dart-1",
+          sequence: 3,
+          navigationPhase: "ended",
+          routeID: "rerouted-france-route"
+        )
+      )
+    )
+    XCTAssertEqual(coordinator.apply(ended), .finish)
+    XCTAssertEqual(coordinator.apply(ended), .none)
+    XCTAssertEqual(coordinator.cancel(), .cancel)
+    XCTAssertEqual(coordinator.cancel(), .none)
+  }
+
+  func testCarPlayVehicleCancellationSuppressesSameRouteReplay() throws {
+    var coordinator = CarPlayNavigationCoordinator()
+    let navigating = try XCTUnwrap(
+      CarPlayNavigationProjectionV2(
+        snapshot: carPlayNavigationSnapshot(sourceID: "dart-1", sequence: 1)
+      )
+    )
+    _ = coordinator.apply(navigating)
+
+    XCTAssertEqual(coordinator.cancel(), .cancel)
+    XCTAssertEqual(coordinator.apply(navigating), .none)
+    XCTAssertEqual(coordinator.phase, .cancelled("france-route"))
+  }
+
   func testCarPlayRoutePreviewRejectsNoRoute() {
     XCTAssertNil(
       CarPlayRoutePreviewPayload(
@@ -152,6 +233,12 @@ class RunnerTests: XCTestCase {
         choiceID: "route-choice-1"
       ),
       "a repeated CarPlay start callback must not reach Dart twice"
+    )
+    coordinator.completeCommit(succeeded: true)
+    XCTAssertEqual(coordinator.phase, .committed)
+    XCTAssertNil(
+      coordinator.preview,
+      "committed preview state must not intercept End Directions"
     )
   }
 
@@ -243,7 +330,9 @@ class RunnerTests: XCTestCase {
   private func carPlayNavigationSnapshot(
     sourceID: String,
     sequence: Int,
-    generatedAtMillis: Int64 = 1_000
+    generatedAtMillis: Int64 = 1_000,
+    navigationPhase: String = "navigating",
+    routeID: String = "france-route"
   ) -> [String: Any] {
     [
       "carplayNavigation": [
@@ -252,10 +341,10 @@ class RunnerTests: XCTestCase {
         "sequence": sequence,
         "generatedAtMillis": generatedAtMillis,
         "rideLifecycle": ["phase": "activeRide"],
-        "navigationLifecycle": ["phase": "navigating"],
+        "navigationLifecycle": ["phase": navigationPhase],
         "trip": [
-          "id": "france-route",
-          "routeChoiceId": "france-route:primary",
+          "id": routeID,
+          "routeChoiceId": "\(routeID):primary",
           "name": "To Puy Mary",
           "trafficSide": "right",
         ],

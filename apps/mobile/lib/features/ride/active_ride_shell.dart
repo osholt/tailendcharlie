@@ -1211,6 +1211,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   String? _simulationRouteFingerprint;
   route_domain.ImportedRoute? _activeRoute;
   NavigationGuidance? _latestNavigationGuidance;
+  bool _carPlayGuidanceSuppressed = false;
   TrafficRerouteSuppression? _trafficRerouteSuppression;
   String? _lastTrafficOfferFingerprint;
   String? _trafficRerouteError;
@@ -1329,6 +1330,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onDestinationPreviewRequested: _previewCarPlayDestination,
       onDestinationPreviewCommitted: _commitCarPlayDestinationPreview,
       onDestinationPreviewCancelled: _cancelCarPlayDestinationPreview,
+      onNavigationCancelRequested: _cancelNavigationFromCarPlay,
       onStateRequested: () async {
         if (!mounted) return;
         _updateMapOverlays(updateDerivedState: false);
@@ -2043,6 +2045,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     _publishingRouteChange = true;
+    if (route != null) _carPlayGuidanceSuppressed = false;
     _activeRoute = route;
     try {
       await _replaceAwarenessController(route);
@@ -2088,6 +2091,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       }
     }
     _activeRoute = route;
+    if (route != null) _carPlayGuidanceSuppressed = false;
     await _replaceAwarenessController(route);
     if (mounted) setState(() {});
   }
@@ -2724,11 +2728,23 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         followRider:
             widget.rideController.rideStarted &&
             !widget.rideController.rideEnded,
-        guidanceTitle: _projectedGuidanceTitle,
-        guidanceDetail: _projectedGuidanceDetail,
-        guidanceRoadName: _latestNavigationGuidance?.roadLabel,
-        guidanceDistanceMeters: _latestNavigationGuidance?.distanceMeters,
-        navigationGuidance: _latestNavigationGuidance,
+        navigationEnabled: !_carPlayGuidanceSuppressed,
+        navigationPaused: widget.rideController.ridePaused,
+        guidanceTitle: _carPlayGuidanceSuppressed
+            ? null
+            : _projectedGuidanceTitle,
+        guidanceDetail: _carPlayGuidanceSuppressed
+            ? null
+            : _projectedGuidanceDetail,
+        guidanceRoadName: _carPlayGuidanceSuppressed
+            ? null
+            : _latestNavigationGuidance?.roadLabel,
+        guidanceDistanceMeters: _carPlayGuidanceSuppressed
+            ? null
+            : _latestNavigationGuidance?.distanceMeters,
+        navigationGuidance: _carPlayGuidanceSuppressed
+            ? null
+            : _latestNavigationGuidance,
         distanceUnit: widget.distanceUnits.value,
         localeIdentifier: Localizations.localeOf(context).toLanguageTag(),
         groupStatus: '${visibleRiderLocations.length} riders visible',
@@ -2905,6 +2921,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<void> _cancelCarPlayDestinationPreview(String previewId) async {
     _carPlayRoutePreview.cancel(previewId);
+  }
+
+  Future<void> _cancelNavigationFromCarPlay() async {
+    if (_carPlayGuidanceSuppressed) return;
+    _carPlayGuidanceSuppressed = true;
+    _latestNavigationGuidance = null;
+    // Deliberately do not clear the authoritative route or touch RideController:
+    // ending vehicle guidance must not leave/end the ride or interrupt its
+    // durable location journal.
+    if (mounted) _updateMapOverlays(updateDerivedState: false);
   }
 
   /// Publishes the quick messages the ride map has to present, and returns the
@@ -4178,6 +4204,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   void _onNavigationGuidanceChanged(NavigationGuidance? guidance) {
+    if (_carPlayGuidanceSuppressed) {
+      _latestNavigationGuidance = null;
+      _updateMapOverlays(updateDerivedState: false);
+      return;
+    }
     _latestNavigationGuidance = guidance;
     _recordManoeuvreDiagnostics(guidance);
     _speakGuidance(guidance);

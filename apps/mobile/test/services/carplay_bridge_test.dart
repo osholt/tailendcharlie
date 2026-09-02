@@ -1271,6 +1271,34 @@ void main() {
     expect(leaves, 1);
   });
 
+  test(
+    'vehicle cancellation ends directions without leaving the ride',
+    () async {
+      var navigationCancellations = 0;
+      var leaves = 0;
+      final bridge = CarPlayBridge(
+        channel: channel,
+        onNavigationCancelRequested: () async {
+          navigationCancellations += 1;
+        },
+        onLeaveRequested: () async {
+          leaves += 1;
+        },
+      );
+      addTearDown(bridge.dispose);
+
+      final response = await invokeDartChannel(
+        messenger,
+        channel,
+        const MethodCall('cancelNavigation'),
+      );
+
+      expect(response, {'ok': true, 'error': null});
+      expect(navigationCancellations, 1);
+      expect(leaves, 0);
+    },
+  );
+
   test('searches only a submitted CarPlay destination query', () async {
     final queries = <String>[];
     final bridge = CarPlayBridge(

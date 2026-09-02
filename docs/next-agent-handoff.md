@@ -184,9 +184,10 @@ app-owned MapLibre route/rider canvas using the phone's resolved style and
 navigation viewport. It has rider identity badges, route progress, recenter and
 pan controls, persistent TEC status, a low-frequency group overview mini-map,
 Report and confirmed SOS controls. A 2 September 2026 compliance audit found
-that those overlays and controls are drawn in Apple's map-only base view, and
-that `updateNavigationSession` cancels the `CPNavigationSession` before its
-turn/marker path can run. See `docs/carplay-compliance-checklist.md`; do not
+that those overlays and controls are drawn in Apple's map-only base view. The
+navigation-session defect found by that audit has since been fixed; the custom
+active-ride overlays remain the next compliance change in #693. See
+`docs/carplay-compliance-checklist.md`; do not
 describe this surface as compliant or field validated until its release gate
 passes. Every unchecked CarPlay item is mapped to #690–#699 or the existing
 audio/wording tickets. The cross-platform architecture, Android Auto Tier 2
@@ -205,8 +206,8 @@ snapshot contains an additive `carplayNavigation` schema V2 with separate
 ride/navigation phases, stable trip/choice/manoeuvre IDs, typed directions,
 roundabout exits, lanes, traffic side, road/instruction variants, estimates,
 locale and unit metadata. Swift bounds and decodes it and rejects malformed,
-replayed and out-of-order updates, but does not yet activate an Apple navigation
-session. Issue #700 adds a separately versioned `androidAutoNavigation` schema
+replayed and out-of-order updates. Issue #700 adds a separately versioned
+`androidAutoNavigation` schema
 V2 with the same Dart-owned domain boundary, an independent strict Kotlin
 decoder, replay/out-of-order protection, separate ride and navigation
 lifecycles, and bounded typed host events. Android V1 snapshots continue to
@@ -224,6 +225,16 @@ to Dart, with exact-once guards on both sides. Cancellation and stale planning
 responses cannot create, start, or end a ride. The CarPlay product boundary is
 now explicit: a route started from the home surface creates a solo ride; group
 ride setup remains a pre-drive phone task.
+
+The CarPlay navigation-session lifecycle for #692 now consumes that typed
+projection. A pure native coordinator covers loading, navigating, pause/resume,
+reroute, arrival/finish, cancellation and reconnect idempotently. Current and
+following manoeuvres, lane/traffic-side metadata, light/dark symbols, material
+manoeuvre/trip estimate updates, and deduplicated `CPNavigationAlert` warnings
+reach Apple's APIs. A vehicle cancellation invokes a Dart navigation-only path:
+the authoritative route, ride journal, recording state and membership are not
+changed, and replay of the same route cannot restart guidance. Locked-phone and
+physical-head-unit evidence remains #698.
 
 Flutter analysis, the full test suite, an Android debug APK and an unsigned iOS
 simulator build passed on the PR. A signed Profile build also passed with the
@@ -243,7 +254,7 @@ creation, joining, route editing and first-time permissions intentionally stay
 on the phone; CarPlay can preview and commit a solo route, and a leader can
 start an already-prepared ride.
 
-Continue mandatory CarPlay behavior with #692–#696 and Android Auto behavior
+Continue mandatory CarPlay behavior with #693–#696 and Android Auto behavior
 with #684–#689. Keep #698 and #703 open until their physical head-unit evidence
 gates can truthfully be completed; tester uploads remain explicit manual jobs.
 

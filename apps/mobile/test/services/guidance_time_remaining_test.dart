@@ -94,8 +94,8 @@ void main() {
 
       expect(
         source,
-        contains('guidanceSecondsRemaining'),
-        reason: 'the car must use the computed estimate',
+        contains('currentPayload.secondsRemaining ?? -1'),
+        reason: 'the typed CarPlay manoeuvre must use the computed estimate',
       );
       expect(
         source,
