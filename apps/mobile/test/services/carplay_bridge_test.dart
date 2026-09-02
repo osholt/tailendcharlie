@@ -16,6 +16,7 @@ import 'package:ride_relay/services/carplay_bridge.dart';
 import 'package:ride_relay/services/carplay_tec_status.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
+import 'package:ride_relay/services/navigation_guidance.dart';
 import 'package:ride_relay/services/route_progress.dart';
 import 'package:ride_relay/services/route_journey_progress.dart';
 import 'package:ride_relay/services/tec_gap_trend.dart';
@@ -38,7 +39,11 @@ void main() {
       calls.add(call);
       return null;
     });
-    final bridge = CarPlayBridge(channel: channel, clock: () => now);
+    final bridge = CarPlayBridge(
+      channel: channel,
+      clock: () => now,
+      projectionSourceId: 'test-source',
+    );
     addTearDown(bridge.dispose);
 
     Future<void> publish() => bridge.publish(
@@ -76,6 +81,25 @@ void main() {
       'remainingRoutePoints': <Object?>[],
       'riddenRoutePoints': <Object?>[],
       'journeyProgress': null,
+      'carplayNavigation': {
+        'schemaVersion': 2,
+        'sourceId': 'test-source',
+        'sequence': 1,
+        'generatedAtMillis': DateTime.utc(
+          2026,
+          7,
+          23,
+          12,
+        ).millisecondsSinceEpoch,
+        'rideLifecycle': {'phase': 'activeRide'},
+        'navigationLifecycle': {'phase': 'inactive'},
+        'trip': null,
+        'currentManeuver': null,
+        'followingManeuver': null,
+        'journey': null,
+        'units': {'distance': null, 'speed': null},
+        'localeIdentifier': null,
+      },
       'guidanceTitle': 'turn right',
       'guidanceDetail': '400 m · A27',
       'guidanceRoadName': null,
@@ -392,6 +416,168 @@ void main() {
         {'latitude': 51.46, 'longitude': -2.57},
         {'latitude': 51.47, 'longitude': -2.56},
       ]);
+    },
+  );
+
+  test(
+    'adds typed CarPlay navigation without changing legacy fields',
+    () async {
+      MethodCall? received;
+      final now = DateTime.utc(2026, 9, 2, 10, 15);
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
+      final bridge = CarPlayBridge(
+        channel: channel,
+        clock: () => now,
+        projectionSourceId: 'projection-test',
+      );
+      addTearDown(bridge.dispose);
+
+      const currentManeuver = RouteManeuver(
+        position: GeoPoint(latitude: 45.052, longitude: 2.711),
+        type: 'roundabout',
+        modifier: 'right',
+        name: 'Route de Salers',
+        ref: 'D 680',
+        exitNumber: 3,
+        drivingSide: 'right',
+        bearingBeforeDegrees: 12,
+        bearingAfterDegrees: 112,
+        lanes: [
+          RouteLane(indications: ['right'], valid: true),
+        ],
+      );
+      const followingManeuver = RouteManeuver(
+        position: GeoPoint(latitude: 45.053, longitude: 2.714),
+        type: 'turn',
+        modifier: 'slight right',
+        name: 'D 680',
+        drivingSide: 'right',
+      );
+      const guidance = NavigationGuidance(
+        maneuver: currentManeuver,
+        distanceMeters: 400,
+        instruction: ManeuverInstruction(
+          maneuver: currentManeuver,
+          kind: ManeuverKind.roundabout,
+          direction: ManeuverDirection.right,
+          text: '3rd exit, right',
+          standaloneText: 'At the roundabout take the 3rd exit, right',
+          exitNumber: 3,
+          roadName: 'Route de Salers',
+          roadRef: 'D 680',
+          lanes: [
+            RouteLane(indications: ['right'], valid: true),
+          ],
+          leftHandTraffic: false,
+          stepCount: 2,
+          departureBearingDegrees: 112,
+        ),
+        followingManeuver: followingManeuver,
+        followingDistanceMeters: 120,
+        followingInstruction: ManeuverInstruction(
+          maneuver: followingManeuver,
+          kind: ManeuverKind.turn,
+          direction: ManeuverDirection.slightRight,
+          text: 'Keep slight right',
+          roadName: 'D 680',
+          leftHandTraffic: false,
+        ),
+      );
+      final route = ImportedRoute(
+        id: 'france-route',
+        name: 'To Puy Mary',
+        importedAt: now,
+        sourceFileName: 'puy-mary.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.route,
+            points: [
+              GeoPoint(latitude: 45.051, longitude: 2.710),
+              GeoPoint(latitude: 45.054, longitude: 2.716),
+            ],
+          ),
+        ],
+        waypoints: const [],
+        maneuvers: const [currentManeuver, followingManeuver],
+      );
+
+      await bridge.publish(
+        session: null,
+        riderLocations: const [],
+        routeAlerts: const [],
+        activeHazards: const [],
+        route: route,
+        routeName: route.name,
+        rideState: 'Ride in progress',
+        surfaceMode: CarPlaySurfaceMode.activeRide,
+        navigationGuidance: guidance,
+        guidanceTitle: guidance.instruction.standaloneText,
+        guidanceRoadName: guidance.roadLabel,
+        guidanceDistanceMeters: guidance.distanceMeters,
+        distanceUnit: DistanceUnit.kilometres,
+        localeIdentifier: 'fr-FR',
+        localSpeedMetersPerSecond: 20,
+      );
+
+      final snapshot = Map<String, Object?>.from(received!.arguments as Map);
+      final projection = Map<String, Object?>.from(
+        snapshot['carplayNavigation']! as Map,
+      );
+      expect(projection['schemaVersion'], 2);
+      expect(projection['sourceId'], 'projection-test');
+      expect(projection['sequence'], 1);
+      expect(projection['rideLifecycle'], {'phase': 'activeRide'});
+      expect(projection['navigationLifecycle'], {'phase': 'navigating'});
+      expect(projection['localeIdentifier'], 'fr-FR');
+      expect(projection['units'], {
+        'distance': 'kilometres',
+        'speed': 'kilometresPerHour',
+      });
+      expect(projection['trip'], {
+        'id': 'france-route',
+        'routeChoiceId': 'france-route:primary',
+        'name': 'To Puy Mary',
+        'trafficSide': 'right',
+      });
+      final current = Map<String, Object?>.from(
+        projection['currentManeuver']! as Map,
+      );
+      expect(current['id'], currentManeuver.identity);
+      expect(current['kind'], 'roundabout');
+      expect(current['direction'], 'right');
+      expect(current['exitNumber'], 3);
+      expect(current['trafficSide'], 'right');
+      expect(current['distanceMeters'], 400);
+      expect(current['secondsRemaining'], 20);
+      expect(current['instructionVariants'], [
+        '3rd exit, right',
+        'At the roundabout take the 3rd exit, right',
+      ]);
+      expect(current['roadNameVariants'], [
+        'Route de Salers · D 680',
+        'Route de Salers',
+        'D 680',
+      ]);
+      expect(current['lanes'], [
+        {
+          'indications': ['right'],
+          'valid': true,
+        },
+      ]);
+      expect(
+        (projection['followingManeuver'] as Map)['id'],
+        followingManeuver.identity,
+      );
+
+      // The existing shared snapshot remains intact until Android Auto moves to
+      // its own V2 adapter.
+      expect(snapshot['guidanceTitle'], guidance.instruction.standaloneText);
+      expect(snapshot['guidanceRoadName'], guidance.roadLabel);
+      expect(snapshot['guidanceDistanceMeters'], 400);
+      expect(snapshot['distanceUnit'], 'kilometres');
     },
   );
 

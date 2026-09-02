@@ -66,6 +66,36 @@ class AndroidAutoCompanionTest {
     }
 
     @Test
+    fun `CarPlay V2 block cannot change the legacy Android projection`() {
+        val legacy = mapOf<String, Any?>(
+            "routeName" to "To Puy Mary",
+            "rideState" to "Riding",
+            "guidanceTitle" to "At the roundabout take exit 3",
+            "guidanceRoadName" to "D 680",
+            "guidanceDistanceMeters" to 400.0,
+            "distanceUnit" to "kilometres",
+            "updatedAtMillis" to 1_777_777L,
+        )
+        val withCarPlayV2 = legacy + mapOf(
+            "carplayNavigation" to mapOf(
+                "schemaVersion" to 2,
+                "sourceId" to "dart-1",
+                "sequence" to 1,
+                "currentManeuver" to mapOf(
+                    "kind" to "roundabout",
+                    "direction" to "right",
+                    "exitNumber" to 3,
+                ),
+            ),
+        )
+
+        assertEquals(
+            ProjectedRideSnapshot.from(legacy),
+            ProjectedRideSnapshot.from(withCarPlayV2),
+        )
+    }
+
+    @Test
     fun `route geometry and the progress split reach the head unit`() {
         // The whole of #602 in one assertion: every one of these fields arrived
         // on every tick and was dropped, which is why the car could only ever

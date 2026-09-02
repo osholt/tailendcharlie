@@ -13,9 +13,11 @@ import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 import '../features/map/motorcycle_icon.dart';
 import 'basemap_configuration.dart';
+import 'carplay_navigation_projection.dart';
 import 'guidance_time_remaining.dart';
 import 'carplay_tec_status.dart';
 import 'navigation_camera.dart';
+import 'navigation_guidance.dart';
 import 'route_progress.dart';
 import 'route_journey_progress.dart';
 
@@ -119,11 +121,15 @@ class CarPlayBridge {
     this.onStateRequested,
     @visibleForTesting MethodChannel? channel,
     @visibleForTesting DateTime Function()? clock,
+    @visibleForTesting String? projectionSourceId,
     @visibleForTesting
     this._minimumPublishInterval = const Duration(seconds: 1),
   }) : _channel =
            channel ?? const MethodChannel('me.osholt.ride_relay/carplay'),
-       _clock = clock ?? DateTime.now {
+       _clock = clock ?? DateTime.now,
+       _projectionSourceId =
+           projectionSourceId ??
+           '${DateTime.now().microsecondsSinceEpoch}-${_nextProjectionSourceId++}' {
     _methodHandlerOwner = this;
     _channel.setMethodCallHandler(_handleMethodCall);
   }
@@ -133,10 +139,12 @@ class CarPlayBridge {
   /// surface's handler and CarPlay controls stop responding at exactly the
   /// home-to-ride transition.
   static CarPlayBridge? _methodHandlerOwner;
+  static int _nextProjectionSourceId = 1;
 
   final MethodChannel _channel;
   final DateTime Function() _clock;
   final Duration _minimumPublishInterval;
+  final String _projectionSourceId;
   final Future<void> Function()? onEmergencyTriggered;
 
   /// Leaves the current ride after CarPlay has shown its own confirmation.
@@ -337,7 +345,9 @@ class CarPlayBridge {
     String? guidanceDetail,
     String? guidanceRoadName,
     double? guidanceDistanceMeters,
+    NavigationGuidance? navigationGuidance,
     DistanceUnit? distanceUnit,
+    String? localeIdentifier,
     String? groupStatus,
     String? markerStatus,
     CarPlayMarkerStatus? marker,
@@ -414,6 +424,18 @@ class CarPlayBridge {
       ),
       'riddenRoutePoints': _projectProgressPath(routeProgress?.riddenPaths),
       'journeyProgress': journeyProgress?.toSnapshot(),
+      'carplayNavigation': projectCarPlayNavigationV2(
+        sourceId: _projectionSourceId,
+        sequence: attempt,
+        generatedAt: now,
+        ridePhase: surfaceMode.name,
+        route: route,
+        guidance: navigationGuidance,
+        distanceUnit: distanceUnit,
+        localeIdentifier: localeIdentifier,
+        speedMetersPerSecond: localSpeedMetersPerSecond,
+        journeyProgress: journeyProgress,
+      ),
       'guidanceTitle': guidanceTitle,
       'guidanceDetail': guidanceDetail,
       'guidanceRoadName': guidanceRoadName,
