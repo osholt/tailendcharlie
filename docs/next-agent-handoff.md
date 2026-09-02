@@ -256,7 +256,16 @@ creation, joining, route editing and first-time permissions intentionally stay
 on the phone; CarPlay can preview and commit a solo route, and a leader can
 start an already-prepared ride.
 
-Continue mandatory CarPlay behavior with #694–#696 and Android Auto behavior
+The #694 phone-independence change hides Search, Free roam and prepared-ride
+Start until their pre-drive prerequisites are satisfied. Every exposed report,
+SOS, TEC answer, Start, Leave, free-roam and navigation-cancel command now
+returns a bounded acknowledged result; failures replace the confirmation with a
+native CarPlay error instead of silently waiting for the phone. Native retains
+the last complete map/trip projection through protected-data unavailability and
+requests one idempotent Dart refresh after unlock. Physical locked-phone and
+reconnect proof remains #698.
+
+Continue mandatory CarPlay behavior with #695–#696 and Android Auto behavior
 with #684–#689. Keep #698 and #703 open until their physical head-unit evidence
 gates can truthfully be completed; tester uploads remain explicit manual jobs.
 

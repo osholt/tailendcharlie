@@ -243,33 +243,63 @@ class CarPlayBridge {
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'triggerEmergency':
-        await onEmergencyTriggered?.call();
+        return _completeAction(
+          onEmergencyTriggered,
+          unavailable: 'SOS is unavailable on this screen.',
+          failure: 'Could not send SOS.',
+        );
       case 'leaveRide':
-        await onLeaveRequested?.call();
+        return _completeAction(
+          onLeaveRequested,
+          unavailable: 'This ride cannot be left from this screen.',
+          failure: 'Could not leave the ride.',
+        );
       case 'reportHazard':
         final arguments = call.arguments;
-        if (arguments is! Map) return;
+        if (arguments is! Map) {
+          return const {'ok': false, 'error': 'That report is invalid.'};
+        }
         final rawType = arguments['type'];
-        if (rawType is! String) return;
+        if (rawType is! String) {
+          return const {'ok': false, 'error': 'That report is invalid.'};
+        }
         final type = HazardType.values
             .where((candidate) => candidate.name == rawType)
             .firstOrNull;
-        if (type == null || !type.isRiderReportable) return;
-        await onHazardReported?.call(type);
+        if (type == null || !type.isRiderReportable) {
+          return const {'ok': false, 'error': 'That report is invalid.'};
+        }
+        final report = onHazardReported;
+        return _completeAction(
+          report == null ? null : () => report(type),
+          unavailable: 'Reporting is unavailable on this screen.',
+          failure: 'Could not send that report.',
+        );
       case 'answerTecRoleRequest':
         final arguments = call.arguments;
-        if (arguments is! Map) return;
+        if (arguments is! Map) {
+          return const {'ok': false, 'error': 'That request is invalid.'};
+        }
         final requestId = arguments['requestId'];
         final accepted = arguments['accepted'];
         // A malformed answer is dropped rather than guessed at: recording
         // "accepted" for a request this phone cannot identify would put a rider
         // on the back of the group without them having agreed to it.
         if (requestId is! String || requestId.isEmpty || accepted is! bool) {
-          return;
+          return const {'ok': false, 'error': 'That request is invalid.'};
         }
-        await onTecRoleAnswered?.call(requestId, accepted);
+        final answer = onTecRoleAnswered;
+        return _completeAction(
+          answer == null ? null : () => answer(requestId, accepted),
+          unavailable: 'That request is no longer available.',
+          failure: 'Could not answer that request.',
+        );
       case 'startPreparedRide':
-        await onRideStartRequested?.call();
+        return _completeAction(
+          onRideStartRequested,
+          unavailable: 'This ride is not ready to start.',
+          failure: 'Could not start the ride.',
+        );
       case 'searchDestinations':
         final arguments = call.arguments;
         final query = arguments is Map ? arguments['query'] : null;
@@ -417,35 +447,17 @@ class CarPlayBridge {
           };
         }
       case 'cancelNavigation':
-        final cancel = onNavigationCancelRequested;
-        if (cancel == null) {
-          return const {
-            'ok': false,
-            'error': 'Directions cannot be ended from this screen.',
-          };
-        }
-        await cancel();
-        return const {'ok': true, 'error': null};
+        return _completeAction(
+          onNavigationCancelRequested,
+          unavailable: 'Directions cannot be ended from this screen.',
+          failure: 'Could not end directions.',
+        );
       case 'startFreeRoam':
-        final start = onFreeRoamRequested;
-        if (start == null) {
-          return const {
-            'ok': false,
-            'error': 'Free roam is unavailable on this screen.',
-          };
-        }
-        try {
-          await start();
-          return const {'ok': true, 'error': null};
-        } on Object catch (error) {
-          return {
-            'ok': false,
-            'error': _readableCarPlayError(
-              error,
-              fallback: 'Could not start free roam.',
-            ),
-          };
-        }
+        return _completeAction(
+          onFreeRoamRequested,
+          unavailable: 'Free roam is unavailable on this screen.',
+          failure: 'Could not start free roam.',
+        );
       case 'androidAutoNavigationEvent':
         final event = AndroidAutoNavigationHostEvent.tryParse(call.arguments);
         if (event == null) {
@@ -483,6 +495,23 @@ class CarPlayBridge {
           _publishedMapStyleJson = null;
           await publishViewport(viewport);
         }
+    }
+  }
+
+  Future<Map<String, Object?>> _completeAction(
+    Future<void> Function()? action, {
+    required String unavailable,
+    required String failure,
+  }) async {
+    if (action == null) return {'ok': false, 'error': unavailable};
+    try {
+      await action();
+      return const {'ok': true, 'error': null};
+    } on Object catch (error) {
+      return {
+        'ok': false,
+        'error': _readableCarPlayError(error, fallback: failure),
+      };
     }
   }
 
@@ -955,7 +984,7 @@ class CarPlayRideStart {
           : null,
       unavailableReason: locationReady
           ? (busy ? 'Ride setup is still being saved.' : null)
-          : 'Allow location access on the iPhone before starting from CarPlay.',
+          : 'Location is not ready. This ride cannot start yet.',
     );
   }
 

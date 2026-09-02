@@ -315,8 +315,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'Planning route…'
             : 'Ready to plan or free roam',
         surfaceMode: CarPlaySurfaceMode.home,
-        canPlanRoute: true,
-        canFreeRoam: true,
+        // Location consent and account/profile setup are pre-drive work. Do
+        // not expose an in-car action until it can finish entirely in CarPlay.
+        canPlanRoute: position != null && _rideEntryEnabled,
+        canFreeRoam: position != null && _rideEntryEnabled,
         showTecStatus: false,
         followRider: position != null,
         distanceUnit: widget.distanceUnits.value,
@@ -352,7 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final origin = _position.value;
     if (origin == null) {
       throw const FormatException(
-        'Show your location on the iPhone before planning from CarPlay.',
+        'Location is not ready. Route planning is unavailable.',
       );
     }
     if (groupRide == null) {
@@ -403,7 +405,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final origin = _position.value;
     if (origin == null) {
       throw const FormatException(
-        'Show your location on the iPhone before planning from CarPlay.',
+        'Location is not ready. Route planning is unavailable.',
       );
     }
     setState(() => _planningDestination = true);
@@ -475,7 +477,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (_position.value == null) {
       throw const FormatException(
-        'Show your location on the iPhone before starting free roam.',
+        'Location is not ready. Free roam is unavailable.',
       );
     }
     final controller = widget.controller;

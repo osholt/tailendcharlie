@@ -101,6 +101,25 @@ class RunnerTests: XCTestCase {
     XCTAssertTrue(controller.view.subviews.first is MLNMapView)
   }
 
+  func testCarPlayCommandCompletionResolvesExactlyOnce() {
+    let completed = expectation(description: "command completed")
+    completed.assertForOverFulfill = true
+    var results: [(Bool, String?)] = []
+    let command = CarPlayCommandCompletion { success, error in
+      results.append((success, error))
+      completed.fulfill()
+    }
+
+    command.resolve(success: true, error: nil)
+    command.resolve(success: false, error: "late timeout")
+
+    wait(for: [completed], timeout: 1)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    XCTAssertEqual(results.count, 1)
+    XCTAssertTrue(results[0].0)
+    XCTAssertNil(results[0].1)
+  }
+
   func testCarPlayV2ProjectionDecodesTypedFrenchRoundabout() throws {
     let projection = try XCTUnwrap(
       CarPlayNavigationProjectionV2(

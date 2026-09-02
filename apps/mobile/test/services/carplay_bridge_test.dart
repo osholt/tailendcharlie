@@ -303,7 +303,14 @@ void main() {
 
     final needsPermission = project(locationReady: false)!;
     expect(needsPermission.enabled, isFalse);
-    expect(needsPermission.unavailableReason, contains('iPhone'));
+    expect(
+      needsPermission.unavailableReason,
+      contains('Location is not ready'),
+    );
+    expect(
+      needsPermission.unavailableReason!.toLowerCase(),
+      isNot(contains('phone')),
+    );
 
     final saving = project(busy: true)!;
     expect(saving.enabled, isFalse);
@@ -1270,6 +1277,52 @@ void main() {
 
     expect(leaves, 1);
   });
+
+  test(
+    'every unavailable vehicle action returns an in-CarPlay result',
+    () async {
+      final bridge = CarPlayBridge(channel: channel);
+      addTearDown(bridge.dispose);
+
+      final responses = <Object?>[
+        await invokeDartChannel(
+          messenger,
+          channel,
+          const MethodCall('triggerEmergency'),
+        ),
+        await invokeDartChannel(
+          messenger,
+          channel,
+          const MethodCall('leaveRide'),
+        ),
+        await invokeDartChannel(
+          messenger,
+          channel,
+          const MethodCall('startPreparedRide'),
+        ),
+        await invokeDartChannel(
+          messenger,
+          channel,
+          const MethodCall('reportHazard', {'type': 'other'}),
+        ),
+        await invokeDartChannel(
+          messenger,
+          channel,
+          const MethodCall('answerTecRoleRequest', {
+            'requestId': 'request-1',
+            'accepted': true,
+          }),
+        ),
+      ];
+
+      for (final response in responses.cast<Map>()) {
+        expect(response['ok'], isFalse);
+        final error = (response['error'] as String).toLowerCase();
+        expect(error, isNot(contains('phone')));
+        expect(error, isNot(contains('unlock')));
+      }
+    },
+  );
 
   test(
     'vehicle cancellation ends directions without leaving the ride',

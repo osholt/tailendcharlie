@@ -14,6 +14,9 @@ void main() {
   final statusSource = File(
     'ios/Runner/CarPlayStatusTemplate.swift',
   ).readAsStringSync();
+  final appDelegateSource = File(
+    'ios/Runner/AppDelegate.swift',
+  ).readAsStringSync();
   final viewControllerSource = source.substring(
     source.indexOf('final class CarPlayNavigationViewController'),
     source.indexOf('private final class CarPlayRiderAnnotation'),
@@ -60,7 +63,7 @@ void main() {
       expect(source, contains('zoomButton(delta: 1)'));
       expect(source, contains('zoomButton(delta: -1)'));
       expect(source, contains('presentLeaveConfirmation()'));
-      expect(source, contains('.leaveRideFromCarPlay()'));
+      expect(source, contains('leaveRideFromCarPlay(completion: completion)'));
       expect(source, contains('return CPBarButton(image: image)'));
       expect(statusSource, contains('text: "Leave ride"'));
       expect(statusSource, contains('leave.handler ='));
@@ -138,5 +141,32 @@ void main() {
       expect(source, contains('searchTemplateSearchButtonPressed'));
       expect(source, contains('searchCarPlayDestinations(query: query)'));
     });
+  });
+
+  group('projected flows remain self-contained', () {
+    test('pre-drive requirements never direct a rider back to the phone', () {
+      final projectedStrings = '$source\n$statusSource';
+      expect(projectedStrings, isNot(contains('Finish setup on iPhone')));
+      expect(projectedStrings, isNot(contains('Try again on the iPhone')));
+      expect(projectedStrings, isNot(contains('unlock the iPhone')));
+      expect(
+        statusSource,
+        contains('text: enabled ? "Ready to start" : "Ride not ready"'),
+      );
+    });
+
+    test(
+      'commands complete or time out and unlock refreshes retained state',
+      () {
+        expect(appDelegateSource, contains('CarPlayCommandCompletion'));
+        expect(appDelegateSource, contains('deadline: .now() + 8'));
+        expect(
+          appDelegateSource,
+          contains('applicationProtectedDataDidBecomeAvailable'),
+        );
+        expect(appDelegateSource, contains('invokeMethod("requestState"'));
+        expect(source, contains('performConfirmedAction('));
+      },
+    );
   });
 }
