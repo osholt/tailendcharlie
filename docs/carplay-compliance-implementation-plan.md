@@ -449,12 +449,12 @@ outside this Android Auto plan.
 | TH-1 custom component theming | NOT APPLICABLE | Current Car App Library is 1.7.0 and no custom host-component theme is applied; reassess before a 1.9+ upgrade. |
 | DD-1 navigation audio only | PARTIAL | Natural audio is classified correctly; align system TTS and ownership in #702. |
 | PA-1 payments | NOT APPLICABLE | No purchase flow is exposed in Android Auto. |
-| IN-1 relevant notifications only | UNVERIFIED | Add only active-turn notifications in #684; validate in #703. |
+| IN-1 relevant notifications only | PARTIAL | #684 limits the ongoing notification to active turn guidance; validate rail/HUN behavior in #703. |
 | NF-1 turn-by-turn directions | FAIL | Typed projection #700 and manoeuvre mapping #687. |
 | NF-2 map-only surface/safe area | FAIL | Surface and camera correction #686. |
-| NF-3 notifications | FAIL | Navigation lifecycle/notification integration #684. |
-| NF-4 cluster next-turn metadata | FAIL | `NavigationManager.updateTrip()` integration #684. |
-| NF-5 navigation ownership | FAIL | Host callback #684 and audio shutdown #702. |
+| NF-3 notifications | PARTIAL | #684 publishes an ongoing `CATEGORY_NAVIGATION` notification with `CarAppExtender`; validate in #703. |
+| NF-4 cluster next-turn metadata | PARTIAL | #684 publishes current/following steps and destination estimates through `NavigationManager.updateTrip()`; validate in #703. |
+| NF-5 navigation ownership | PARTIAL | #684 ends trip metadata and notifications on host pre-emption without ending the ride; audio shutdown remains #702 and hardware validation #703. |
 | NF-6 external navigation requests | FAIL | Intent handling #685. |
 | NF-7 simulated test drive | FAIL | `onAutoDriveEnabled` support #685. |
 | MR-1 host day/night map mode | FAIL | Host configuration handling #689. |
@@ -519,6 +519,12 @@ versioned even when they draw from the same Dart domain state.
 Exit gate: state-machine tests cover start, repeated updates, reroute, host
 pre-emption, user cancellation, arrival, disconnect and restoration without a
 duplicate start/end or lost ride.
+
+Implemented in #684: the session-retained coordinator registers the host callback before
+guidance, balances every navigation start/end, publishes typed V2 trip data and the bounded
+ongoing navigation notification, and suppresses stale reacquisition after host pre-emption.
+The automated exit gate is covered; DHU/physical rail, cluster and ownership evidence remains
+in #703.
 
 ### A3. Handle voice/external navigation requests and test-drive mode — #685
 

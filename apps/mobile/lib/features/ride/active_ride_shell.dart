@@ -57,6 +57,7 @@ import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
 import '../../services/carplay_route_preview.dart';
 import '../../services/carplay_tec_status.dart';
+import '../../services/android_auto_navigation_projection.dart';
 import '../../services/geo_calculations.dart';
 import '../../services/spoken_audio_mode.dart';
 import '../../services/spoken_guidance_schedule.dart';
@@ -1331,6 +1332,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onDestinationPreviewCommitted: _commitCarPlayDestinationPreview,
       onDestinationPreviewCancelled: _cancelCarPlayDestinationPreview,
       onNavigationCancelRequested: _cancelNavigationFromCarPlay,
+      onAndroidAutoNavigationHostEvent: _handleAndroidAutoNavigationHostEvent,
       onStateRequested: () async {
         if (!mounted) return;
         _updateMapOverlays(updateDerivedState: false);
@@ -2934,6 +2936,25 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // ending vehicle guidance must not leave/end the ride or interrupt its
     // durable location journal.
     if (mounted) _updateMapOverlays(updateDerivedState: false);
+  }
+
+  Future<void> _handleAndroidAutoNavigationHostEvent(
+    AndroidAutoNavigationHostEvent event,
+  ) async {
+    switch (event.type) {
+      case AndroidAutoNavigationHostEventType.stopped:
+        await _cancelNavigationFromCarPlay();
+        return;
+      case AndroidAutoNavigationHostEventType.started:
+      case AndroidAutoNavigationHostEventType.externalDestination:
+      case AndroidAutoNavigationHostEventType.autoDriveEnabled:
+      case AndroidAutoNavigationHostEventType.rerouteRequested:
+      case AndroidAutoNavigationHostEventType.arrived:
+      case AndroidAutoNavigationHostEventType.restorationAcknowledged:
+        // These acknowledgements are consumed by the later intent/test-drive and reroute
+        // tickets. They must not mutate ride recording or group membership here.
+        return;
+    }
   }
 
   /// Publishes the quick messages the ride map has to present, and returns the

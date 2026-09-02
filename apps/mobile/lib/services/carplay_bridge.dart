@@ -630,6 +630,7 @@ class CarPlayBridge {
         generatedAt: now,
         ridePhase: surfaceMode.name,
         route: route,
+        navigationEnabled: navigationEnabled,
         guidance: navigationGuidance,
         distanceUnit: distanceUnit,
         localeIdentifier: localeIdentifier,

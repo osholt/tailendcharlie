@@ -68,12 +68,14 @@ the phone's 400 ms camera cadence independently. Route geometry is reduced to at
 most 600 points before it crosses the platform channel.
 
 Android Auto uses Android for Cars App Library 1.7.0 and declares the
-navigation category. It renders the same bounded snapshot as a read-only
-`ListTemplate`: route, next instruction, ride/group/marker state, priority
-alert, and at most one rider needing attention. It does not persist rider
-positions in the car integration. A cold host connection without an active
-Flutter process shows `Open Tail End Charlie on the phone`; once the phone app
-resumes, the existing journal-derived snapshot repopulates the car surface.
+navigation category. Its session-retained `NavigationManager` coordinator tells
+the host exactly when guidance starts and ends, publishes current/following
+steps and destination estimates for the cluster/HUD, and maintains one ongoing
+`CATEGORY_NAVIGATION` notification extended for the car rail. Host pre-emption
+ends that projected guidance without ending the ride, its recording, or group
+membership. The `NavigationTemplate` and map continue to consume the same
+bounded, journal-derived snapshot; no rider positions are persisted by the car
+integration.
 
 Debug builds accept the Desktop Head Unit host for development. Release builds
 use the Car App Library's documented host allow-list and privileged template
@@ -88,7 +90,9 @@ renderer permission instead of trusting arbitrary callers.
   the smaller camera viewport follows the phone's 400 ms cadence.
 - Android Auto uses host-rendered templates rather than custom touch targets or
   a mirrored phone UI.
-- Unit tests cover bounded snapshot parsing and in-process reconnect updates.
+- Unit tests cover bounded snapshot parsing, balanced navigation ownership,
+  stale host-pre-emption replay, trip/cluster metadata, notification shape and
+  in-process reconnect updates.
 - Flutter analysis/tests, Android native unit tests, and a debug APK build cover
   compilation and phone-side state publication.
 - Real-host or official Desktop Head Unit checks for disconnect/reconnect,
