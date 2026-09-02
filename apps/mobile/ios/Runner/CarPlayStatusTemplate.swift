@@ -4,13 +4,24 @@ import UIKit
 /// Builds and updates the glanceable CarPlay status list from the same bounded
 /// projected snapshot used by Android Auto.
 enum CarPlayStatusTemplate {
-  static func makeTemplate() -> CPListTemplate {
+  static func makeTemplate(
+    onEmergency: @escaping () -> Void = {
+      (UIApplication.shared.delegate as? AppDelegate)?.triggerCarPlayEmergency()
+    }
+  ) -> CPListTemplate {
     let template = CPListTemplate(title: "Tail End Charlie", sections: [])
-    template.trailingNavigationBarButtons = [emergencyButton()]
+    template.trailingNavigationBarButtons = [
+      CPBarButton(title: "SOS") { _ in onEmergency() }
+    ]
     return template
   }
 
-  static func apply(snapshot: [String: Any], to template: CPListTemplate) {
+  static func apply(
+    snapshot: [String: Any],
+    to template: CPListTemplate,
+    listsLimited: Bool = false,
+    onLeave: @escaping () -> Void = {}
+  ) {
     var items: [CPListItem] = []
 
     let routeName = (snapshot["routeName"] as? String).flatMap {
@@ -24,7 +35,7 @@ enum CarPlayStatusTemplate {
       )
     )
 
-    if let rideStart = snapshot["rideStart"] as? [String: Any] {
+    if !listsLimited, let rideStart = snapshot["rideStart"] as? [String: Any] {
       let enabled = (rideStart["enabled"] as? NSNumber)?.boolValue ?? false
       items.append(
         CPListItem(
@@ -36,7 +47,7 @@ enum CarPlayStatusTemplate {
       )
     }
 
-    if let guidance = snapshot["guidanceTitle"] as? String {
+    if !listsLimited, let guidance = snapshot["guidanceTitle"] as? String {
       items.append(
         CPListItem(
           text: guidance,
@@ -46,6 +57,7 @@ enum CarPlayStatusTemplate {
     }
 
     if
+      !listsLimited,
       let alert = snapshot["alert"] as? [String: Any],
       let message = alert["message"] as? String
     {
@@ -66,7 +78,7 @@ enum CarPlayStatusTemplate {
       )
     }
 
-    if let markerStatus = snapshot["markerStatus"] as? String {
+    if !listsLimited, let markerStatus = snapshot["markerStatus"] as? String {
       items.append(CPListItem(text: "Marker", detailText: markerStatus))
     }
 
@@ -74,7 +86,19 @@ enum CarPlayStatusTemplate {
       items.append(CPListItem(text: "Group", detailText: groupStatus))
     }
 
-    if let riders = snapshot["riders"] as? [[String: Any]] {
+    if snapshot["surfaceMode"] as? String == "activeRide" {
+      let leave = CPListItem(
+        text: "Leave ride",
+        detailText: "Stop sharing and return to the home map"
+      )
+      leave.handler = { _, completion in
+        onLeave()
+        completion()
+      }
+      items.append(leave)
+    }
+
+    if !listsLimited, let riders = snapshot["riders"] as? [[String: Any]] {
       for rider in riders.prefix(4) {
         guard let label = rider["label"] as? String else { continue }
         let isLocal = (rider["isLocal"] as? NSNumber)?.boolValue ?? false
@@ -98,11 +122,5 @@ enum CarPlayStatusTemplate {
     }
 
     template.updateSections([CPListSection(items: items)])
-  }
-
-  private static func emergencyButton() -> CPBarButton {
-    CPBarButton(title: "SOS") { _ in
-      (UIApplication.shared.delegate as? AppDelegate)?.triggerCarPlayEmergency()
-    }
   }
 }

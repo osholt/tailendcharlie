@@ -118,7 +118,7 @@ void main() {
     });
   });
 
-  group('both surfaces draw it themselves', () {
+  group('the phone landscape surface draws it', () {
     test('the landscape map places the clock', () {
       // Read as source because the ride map needs a platform map to build.
       final source = File(
@@ -126,24 +126,6 @@ void main() {
       ).readAsStringSync();
 
       expect(source, contains('RideClock(darkMap: _basemap.dark)'));
-    });
-
-    test('CarPlay draws its own label rather than using an Apple widget', () {
-      // "don't use Apple's built in widgets to do it", stated explicitly in the
-      // report. Read as source: this is only reachable from a head unit.
-      final source = File(
-        'ios/Runner/CarPlaySceneDelegate.swift',
-      ).readAsStringSync();
-
-      expect(source, contains('CarPlayClockLabel'));
-      // `j`, not a hard-coded HH: it resolves to whichever of 12- or 24-hour the
-      // head unit's locale uses.
-      expect(source, contains('setLocalizedDateFormatFromTemplate("j:mm")'));
-      expect(source, contains('label.textColor = darkMap ? .white : .black'));
-      // A hard 24-hour format would show 13:00 on a car set to a 12-hour clock.
-      // Checked on the formatter call rather than the string, since the comment
-      // above it names "HH:mm" as the thing not being used.
-      expect(source, isNot(contains('dateFormat = "HH:mm"')));
     });
   });
 }

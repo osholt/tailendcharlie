@@ -1,4 +1,6 @@
+import CarPlay
 import Flutter
+import MapLibre
 import UIKit
 import XCTest
 @testable import Runner
@@ -40,6 +42,63 @@ class RunnerTests: XCTestCase {
       lifecycle.completeRootPresentation(generation: generation, succeeded: true)
     )
     XCTAssertFalse(lifecycle.rootReady)
+  }
+
+  func testCarPlayDrivingRestrictionsHideOnlyUnsafeDetail() {
+    let unrestricted = CarPlayInteractionPolicy(limitedUserInterfaces: [])
+    XCTAssertTrue(unrestricted.allowsDestinationSearch)
+    XCTAssertTrue(unrestricted.allowsRiderRows)
+
+    let keyboardLimited = CarPlayInteractionPolicy(
+      limitedUserInterfaces: [.keyboard]
+    )
+    XCTAssertFalse(keyboardLimited.allowsDestinationSearch)
+    XCTAssertTrue(keyboardLimited.allowsRiderRows)
+
+    let listsLimited = CarPlayInteractionPolicy(
+      limitedUserInterfaces: [.lists]
+    )
+    XCTAssertFalse(listsLimited.allowsDestinationSearch)
+    XCTAssertFalse(listsLimited.allowsRiderRows)
+  }
+
+  func testCarPlayListRestrictionKeepsOnlyEssentialRideRows() {
+    let snapshot: [String: Any] = [
+      "routeName": "D 980 to Salers",
+      "rideState": "activeRide",
+      "rideStart": ["enabled": true],
+      "guidanceTitle": "At the fork, keep right",
+      "alert": ["message": "Debris", "severity": "warning"],
+      "tec": ["detail": "Charlie · 250 m behind"],
+      "markerStatus": "Next marker in 2 km",
+      "groupStatus": "5 riders connected",
+      "surfaceMode": "activeRide",
+      "riders": [["label": "Alice", "role": "leader"]],
+    ]
+    let template = CarPlayStatusTemplate.makeTemplate()
+
+    CarPlayStatusTemplate.apply(
+      snapshot: snapshot,
+      to: template,
+      listsLimited: true
+    )
+
+    let titles = template.sections.first?.items.compactMap {
+      ($0 as? CPListItem)?.text
+    }
+    XCTAssertEqual(
+      titles,
+      ["D 980 to Salers", "Tail End Charlie", "Group", "Leave ride"]
+    )
+  }
+
+  func testCarPlayBaseViewContainsOnlyTheMap() {
+    let controller = CarPlayNavigationViewController()
+    controller.loadViewIfNeeded()
+    controller.viewWillAppear(false)
+
+    XCTAssertEqual(controller.view.subviews.count, 1)
+    XCTAssertTrue(controller.view.subviews.first is MLNMapView)
   }
 
   func testCarPlayV2ProjectionDecodesTypedFrenchRoundabout() throws {
