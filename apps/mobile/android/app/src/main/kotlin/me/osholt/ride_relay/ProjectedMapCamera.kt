@@ -1,7 +1,9 @@
 package me.osholt.ride_relay
 
 import kotlin.math.abs
+import kotlin.math.atan
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.tan
@@ -27,6 +29,14 @@ internal class ProjectedMapCamera private constructor(
     fun x(point: ProjectedPoint): Float = ((mercatorX(point.longitude) - westX) * scale).toFloat()
 
     fun y(point: ProjectedPoint): Float = ((mercatorY(point.latitude) - northY) * scale).toFloat()
+
+    /** Geographic edges represented by this camera's unobstructed viewport. */
+    fun region(): ProjectedMapRegion = ProjectedMapRegion(
+        north = inverseMercatorY(northY + viewport.top / scale),
+        east = inverseMercatorX(westX + viewport.right / scale),
+        south = inverseMercatorY(northY + viewport.bottom / scale),
+        west = inverseMercatorX(westX + viewport.left / scale),
+    )
 
     /** True when the point is inside the drawn area, with a little margin. */
     fun contains(point: ProjectedPoint): Boolean {
@@ -141,6 +151,13 @@ internal class ProjectedMapCamera private constructor(
             return 0.5 - ln(tan(radians) + 1 / cos(radians)) / (2 * Math.PI)
         }
 
+        private fun inverseMercatorX(value: Double): Double = (value - 0.5) * 360.0
+
+        private fun inverseMercatorY(value: Double): Double {
+            val radians = 2.0 * atan(exp((0.5 - value) * 2.0 * Math.PI)) - Math.PI / 2.0
+            return Math.toDegrees(radians).coerceIn(-MAX_LATITUDE, MAX_LATITUDE)
+        }
+
         /** Metres per unit of the normalised Mercator square, at this latitude. */
         private fun metresPerMercatorUnit(latitude: Double): Double {
             val equatorial = 40_075_016.686
@@ -148,6 +165,13 @@ internal class ProjectedMapCamera private constructor(
         }
     }
 }
+
+internal data class ProjectedMapRegion(
+    val north: Double,
+    val east: Double,
+    val south: Double,
+    val west: Double,
+)
 
 /** Host-owned surface rectangle in absolute surface pixels. */
 internal data class ProjectedMapBounds(

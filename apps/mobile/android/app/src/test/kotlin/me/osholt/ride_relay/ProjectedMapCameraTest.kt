@@ -232,4 +232,24 @@ class ProjectedMapCameraTest {
         assertNotNull(ProjectedMapCamera.mercatorY(90.0))
         assertTrue(ProjectedMapCamera.mercatorY(90.0).isFinite())
     }
+
+    @Test
+    fun `region is the geographic inverse of the obstructed viewport`() {
+        val viewport = ProjectedMapBounds(240f, 80f, 1200f, 640f)
+        val camera = ProjectedMapCamera.fitting(
+            points = listOf(bristol, bath),
+            viewport = viewport,
+            paddingPx = 40f,
+        )!!
+
+        val region = camera.region()
+        val northWest = ProjectedPoint(region.north, region.west)
+        val southEast = ProjectedPoint(region.south, region.east)
+        assertEquals(viewport.left, camera.x(northWest), 0.01f)
+        assertEquals(viewport.top, camera.y(northWest), 0.01f)
+        assertEquals(viewport.right, camera.x(southEast), 0.01f)
+        assertEquals(viewport.bottom, camera.y(southEast), 0.01f)
+        assertTrue(region.north > region.south)
+        assertTrue(region.east > region.west)
+    }
 }

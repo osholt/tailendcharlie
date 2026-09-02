@@ -12,6 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -100,6 +101,67 @@ class ProjectedMapRendererTest {
             ProjectedMapPalette.day.groundArgb,
             ProjectedMapPalette.day.markerHaloArgb,
         )
+    }
+
+    @Test
+    fun `road basemap fills only the host safe area beneath ride overlays`() {
+        val width = 800
+        val height = 480
+        val stable = ProjectedMapBounds(220f, 64f, 770f, 448f)
+        val snapshot = ProjectedRideSnapshot.from(ride(followRider = false))
+        val camera = renderer.camera(snapshot, stable)!!
+        val mapColour = 0xFF285C46.toInt()
+        val map = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(mapColour)
+        }
+        val frame = ProjectedBasemapFrame(map, camera.region(), dark = true)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
+        assertTrue(
+            renderer.draw(
+                canvas = Canvas(bitmap),
+                snapshot = snapshot,
+                widthPx = width.toFloat(),
+                heightPx = height.toFloat(),
+                stableArea = stable,
+                hostDarkMode = true,
+                basemapFrame = frame,
+                resolvedCamera = camera,
+            ),
+        )
+
+        assertEquals(
+            mapColour,
+            bitmap.getPixel(stable.left.toInt() + 12, stable.top.toInt() + 12),
+        )
+        assertEquals(ProjectedMapPalette.night.groundArgb, bitmap.getPixel(1, 1))
+        val routePoint = snapshot.remainingPoints[7]
+        assertNotEquals(
+            mapColour,
+            bitmap.getPixel(camera.x(routePoint).roundToInt(), camera.y(routePoint).roundToInt()),
+        )
+    }
+
+    @Test
+    fun `stale opposite appearance frame is ignored for deterministic fallback`() {
+        val snapshot = ProjectedRideSnapshot.from(ride(followRider = false))
+        val camera = renderer.camera(snapshot, ProjectedMapBounds.full(800f, 480f))!!
+        val staleMap = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(0xFFFF00FF.toInt())
+        }
+        val bitmap = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888)
+
+        renderer.draw(
+            Canvas(bitmap),
+            snapshot,
+            800f,
+            480f,
+            hostDarkMode = true,
+            basemapFrame = ProjectedBasemapFrame(staleMap, camera.region(), dark = false),
+            resolvedCamera = camera,
+        )
+
+        assertEquals(ProjectedMapPalette.night.groundArgb, bitmap.getPixel(12, 12))
     }
 
     @Test

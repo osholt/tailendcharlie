@@ -395,7 +395,57 @@ def structural_checks(failures: list[str]) -> None:
     require_text(
         failures,
         "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoCompanionTest.kt",
-        ["CarPlay V2 block cannot change the legacy Android projection"],
+        [
+            "CarPlay V2 block cannot change the legacy Android projection",
+            "basemap parser keeps only bounded secure styles",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/ProjectedBasemapProvider.kt",
+        [
+            "MapSnapshotter",
+            "MAX_BITMAP_PIXELS",
+            "MIN_REFRESH_MS",
+            "FAILURE_RETRY_MS",
+            "withAttribution(true)",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/ProjectedMapRenderer.kt",
+        [
+            "basemapFrame",
+            "drawBasemap(",
+            "canvas.clipRect(",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/AndroidAutoNavigationScreen.kt",
+        [
+            "MapLibreProjectedBasemapProvider",
+            "basemapProvider.frame(",
+            "basemapProvider.cancel()",
+            "basemapProvider.close()",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/ProjectedBasemapProviderTest.kt",
+        [
+            "host appearance selects its own style",
+            "snapshot plans stay inside the bitmap budget on every host shape",
+            "no style or camera produces no native map work",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/ProjectedMapRendererTest.kt",
+        [
+            "road basemap fills only the host safe area beneath ride overlays",
+            "stale opposite appearance frame is ignored for deterministic fallback",
+        ],
     )
     require_text(
         failures,

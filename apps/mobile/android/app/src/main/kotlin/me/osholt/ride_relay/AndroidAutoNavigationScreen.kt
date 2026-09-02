@@ -38,6 +38,8 @@ import kotlin.math.roundToLong
 internal class AndroidAutoNavigationScreen(
     carContext: CarContext,
     private val renderer: ProjectedMapRenderer = ProjectedMapRenderer(),
+    private val basemapProvider: ProjectedBasemapProvider =
+        MapLibreProjectedBasemapProvider(carContext.applicationContext),
     private val now: () -> Long = System::currentTimeMillis,
 ) : Screen(carContext) {
 
@@ -66,6 +68,7 @@ internal class AndroidAutoNavigationScreen(
             surface = null
             visibleArea = null
             stableArea = null
+            basemapProvider.cancel()
         }
 
         override fun onVisibleAreaChanged(visibleArea: Rect) {
@@ -94,6 +97,10 @@ internal class AndroidAutoNavigationScreen(
 
                 override fun onStop(owner: LifecycleOwner) {
                     AndroidAutoSnapshotStore.removeListener(snapshotListener)
+                }
+
+                override fun onDestroy(owner: LifecycleOwner) {
+                    basemapProvider.close()
                 }
             },
         )
@@ -276,16 +283,33 @@ internal class AndroidAutoNavigationScreen(
 
     private fun drawMap() {
         val container = surface ?: return
+        val snapshot = AndroidAutoSnapshotStore.latest?.takeIf { it.isFresh(now()) }
+        val viewport = ProjectedMapBounds.resolve(
+            container.width.toFloat(),
+            container.height.toFloat(),
+            visibleArea,
+            stableArea,
+        )
+        val camera = snapshot?.let { renderer.camera(it, viewport) }
+        val basemap = basemapProvider.frame(
+            snapshot = snapshot,
+            camera = camera,
+            density = carContext.resources.displayMetrics.density,
+            hostDarkMode = hostDarkMode,
+            onChanged = ::drawMap,
+        )
         val canvas = container.surface?.lockCanvas(null) ?: return
         try {
             renderer.draw(
                 canvas = canvas,
-                snapshot = AndroidAutoSnapshotStore.latest?.takeIf { it.isFresh(now()) },
+                snapshot = snapshot,
                 widthPx = container.width.toFloat(),
                 heightPx = container.height.toFloat(),
                 visibleArea = visibleArea,
                 stableArea = stableArea,
                 hostDarkMode = hostDarkMode,
+                basemapFrame = basemap,
+                resolvedCamera = camera,
             )
         } finally {
             container.surface?.unlockCanvasAndPost(canvas)

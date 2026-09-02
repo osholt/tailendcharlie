@@ -66,6 +66,43 @@ class AndroidAutoCompanionTest {
     }
 
     @Test
+    fun `basemap parser keeps only bounded secure styles`() {
+        val snapshot = ProjectedRideSnapshot.from(
+            mapOf(
+                "basemap" to mapOf(
+                    "styleUrl" to "https://tiles.example.test/day",
+                    "darkStyleUrl" to "https://tiles.example.test/night",
+                    "selectedStyleUrl" to "https://tiles.example.test/night",
+                    "styleJson" to "{\"version\":8}",
+                    "dark" to true,
+                ),
+            ),
+        )
+
+        val basemap = snapshot.basemap!!
+        assertEquals("https://tiles.example.test/day", basemap.styleUrl(false))
+        assertEquals("https://tiles.example.test/night", basemap.styleUrl(true))
+        assertNull(basemap.styleJson(false))
+        assertEquals("{\"version\":8}", basemap.styleJson(true))
+
+        assertNull(
+            ProjectedRideSnapshot.from(
+                mapOf("basemap" to mapOf("styleUrl" to "http://tiles.example.test/day")),
+            ).basemap,
+        )
+        assertNull(
+            ProjectedRideSnapshot.from(
+                mapOf(
+                    "basemap" to mapOf(
+                        "styleUrl" to "https://tiles.example.test/day",
+                        "styleJson" to "x".repeat(1_500_001),
+                    ),
+                ),
+            ).basemap?.selectedStyleJson,
+        )
+    }
+
+    @Test
     fun `CarPlay V2 block cannot change the legacy Android projection`() {
         val legacy = mapOf<String, Any?>(
             "routeName" to "To Puy Mary",

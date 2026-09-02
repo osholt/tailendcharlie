@@ -421,10 +421,10 @@ These features must not change baseline route or ride behavior on older iOS.
 The Android implementation has advanced beyond the old text companion: it now
 declares the Navigation category, owns the `NavigationManager` lifecycle,
 publishes typed manoeuvres, handles the public navigation-intent and auto-drive
-contracts, and provides bounded Search and List templates. It is not yet a
-compliant release candidate. The remaining software gaps are host-owned
-day/night mode, parked-safe wording and audio ownership are now implemented; a
-road basemap and DHU/physical-head-unit evidence remain.
+contracts, provides bounded Search and List templates, and renders the approved
+road basemap beneath the route. It is not yet a compliant release candidate.
+The planned software baseline is implemented; DHU and physical-head-unit
+evidence remain.
 
 Google requires Navigation apps used while driving to meet the applicable Car
 optimized (Tier 2) requirements for Play acceptance. Tier 1 cluster-map support
@@ -434,7 +434,7 @@ outside this Android Auto plan.
 | Applicable criterion | Current status | Primary work |
 |---|---|---|
 | PC-1 permitted category | PASS | Preserve Navigation-only projected functionality. |
-| EP-1 works as described | FAIL | Accurate manoeuvres #687 and a usable road map #701. |
+| EP-1 works as described | PARTIAL | Accurate manoeuvres #687 and a usable road map #701 are implemented; validate them in #703. |
 | EP-2 state restoration | UNVERIFIED | Typed state #700 and evidence gate #703. |
 | SA-1 no distracting animation | UNVERIFIED | Bound map updates and validate in #703. |
 | AD-1 and NA-1 no ads | PASS | Preserve the current no-ad surfaces and notifications. |
@@ -444,12 +444,12 @@ outside this Android Auto plan.
 | ST-1 no auto-scrolling text | PASS | Preserve host-owned static text behavior. |
 | VC-1 Gemini/Assistant commands | PARTIAL | #685 implements the public `ACTION_NAVIGATE`/`geo` contract in both Session entry points; validate spoken requests in #703. |
 | DR-1–DR-3 response/launch/content latency | UNVERIFIED | Instrument and validate two-/ten-second limits in #703. |
-| VD-1 contrast | UNVERIFIED | Road basemap/palettes #701 and evidence #703. |
+| VD-1 contrast | PARTIAL | Road basemap/palettes #701 are implemented; collect host evidence in #703. |
 | TH-1 custom component theming | NOT APPLICABLE | Current Car App Library is 1.7.0 and no custom host-component theme is applied; reassess before a 1.9+ upgrade. |
 | DD-1 navigation audio only | PARTIAL | #702 gives natural/system speech the same short-lived typed focus lease; validate coexistence in #703. |
 | PA-1 payments | NOT APPLICABLE | No purchase flow is exposed in Android Auto. |
 | IN-1 relevant notifications only | PARTIAL | #684 limits the ongoing notification to active turn guidance; validate rail/HUN behavior in #703. |
-| NF-1 turn-by-turn directions | FAIL | Typed projection #700 and manoeuvre mapping #687. |
+| NF-1 turn-by-turn directions | PARTIAL | Typed projection #700, manoeuvre mapping #687 and road map #701 are implemented; validate in #703. |
 | NF-2 map-only surface/safe area | PARTIAL | #686 keeps pixels inside the intersected stable/visible host area; validate controls in #703. |
 | NF-3 notifications | PARTIAL | #684 publishes an ongoing `CATEGORY_NAVIGATION` notification with `CarAppExtender`; validate in #703. |
 | NF-4 cluster next-turn metadata | PARTIAL | #684 publishes current/following steps and destination estimates through `NavigationManager.updateTrip()`; validate in #703. |
@@ -609,6 +609,18 @@ Impact: Android Auto gains the largest visual and resource change in this plan.
 It becomes genuinely useful at junctions, but adds native rendering, cache,
 memory, thermal and offline-recovery responsibilities. The renderer choice must
 be made from a working spike, not assumed from the phone's Flutter MapLibre view.
+
+Implemented in #701: the native MapLibre snapshotter renders the phone's approved
+day/night style and process-wide cached tiles into Android Auto's bare surface.
+The deterministic Canvas pass keeps the route progress and valid rider markers
+above that image, clips everything to the host safe area, and remains as the
+fallback when no style or tile can be rendered. Snapshot requests are serialized,
+rate-limited and held to a 1920-by-1080 pixel budget across compact, standard and
+ultrawide shapes; repeated failures back off for 15 seconds. JVM camera, plan and
+pixel tests protect geographic alignment, host appearance, resource bounds and
+the blank-map fallback. Location-jump rejection remains upstream and is not
+bypassed by this renderer; DHU/offline recovery, memory, thermal and physical
+contrast evidence remains in #703.
 
 ### A7. Follow host appearance and prove contrast — #689
 
