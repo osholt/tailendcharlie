@@ -198,8 +198,35 @@ def structural_checks(failures: list[str]) -> None:
             "CPNavigationAlert(",
             "mapTemplateDidCancelNavigation",
             "resumeTrip(updatedRouteInformation:",
+            "CPSessionConfiguration(delegate: self)",
+            "limitedUserInterfacesChanged",
+            "panButton(mapTemplate: mapTemplate)",
+            "panBeganWith direction:",
+            "mapTemplateDidBeginZoomGesture",
+            "mapTemplateDidBeginRotationGesture",
+            "mapTemplateDidBeginPitchGesture",
         ],
     )
+    carplay_scene = read("apps/mobile/ios/Runner/CarPlaySceneDelegate.swift")
+    map_base = carplay_scene.split(
+        "final class CarPlayNavigationViewController", maxsplit=1
+    )[-1].split("private final class CarPlayRiderAnnotation", maxsplit=1)[0]
+    for forbidden in (
+        "view.addSubview(",
+        "CarPlayTecBadge",
+        "CarPlaySpeedLimitBadge",
+        "CarPlayCompassBadge",
+        "CarPlayGroupMiniMapView",
+        "CarPlayClockLabel",
+        "CarPlayRouteProgressView",
+        "CarPlayGuidanceView",
+        "CarPlayRideActionsView",
+    ):
+        if forbidden in map_base:
+            failures.append(
+                "apps/mobile/ios/Runner/CarPlaySceneDelegate.swift: "
+                f"base map still contains {forbidden!r}"
+            )
     require_text(
         failures,
         "apps/mobile/lib/services/carplay_route_preview.dart",
@@ -232,6 +259,8 @@ def structural_checks(failures: list[str]) -> None:
             "testCarPlayNavigationLifecycleIsIdempotent",
             "testCarPlayNavigationLifecycleReroutesArrivesAndCancelsOnce",
             "testCarPlayVehicleCancellationSuppressesSameRouteReplay",
+            "testCarPlayDrivingRestrictionsHideOnlyUnsafeDetail",
+            "testCarPlayBaseViewContainsOnlyTheMap",
         ],
     )
     require_text(

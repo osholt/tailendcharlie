@@ -179,14 +179,14 @@ Store profile uses the same certificate as the previously working CI profile;
 `APPLE_APPSTORE_PROFILE_BASE64` has been replaced.
 
 The merged implementation replaces the status-only CarPlay root with a
-`CPMapTemplate` and an
-app-owned MapLibre route/rider canvas using the phone's resolved style and
-navigation viewport. It has rider identity badges, route progress, recenter and
-pan controls, persistent TEC status, a low-frequency group overview mini-map,
-Report and confirmed SOS controls. A 2 September 2026 compliance audit found
-that those overlays and controls are drawn in Apple's map-only base view. The
-navigation-session defect found by that audit has since been fixed; the custom
-active-ride overlays remain the next compliance change in #693. See
+`CPMapTemplate` and an app-owned MapLibre route/rider canvas using the phone's
+resolved style and navigation viewport. The #693 compliance change reduces
+that base view to the map alone: route and rider annotations stay cartographic,
+while manoeuvres, estimates, status, Pan/Recenter/Zoom, Report, confirmed SOS,
+Leave, Search and Free roam use CarPlay templates and controls. A retained
+`CPSessionConfiguration` removes destination entry when keyboard/list use is
+limited and collapses per-rider detail without hiding essential group state.
+See
 `docs/carplay-compliance-checklist.md`; do not
 describe this surface as compliant or field validated until its release gate
 passes. Every unchecked CarPlay item is mapped to #690–#699 or the existing
@@ -240,8 +240,10 @@ Flutter analysis, the full test suite, an Android debug APK and an unsigned iOS
 simulator build passed on the PR. A signed Profile build also passed with the
 replacement development profile and both CarPlay entitlements stamped into
 `Runner.app`. The CarPlay Simulator has opened the navigation scene and the
-main map/style/viewport were compared with the phone. The latest mini-map and
-button layout were subsequently compared with the phone. The simulator helper
+main map/style/viewport were compared with the phone. The former custom mini-map
+and ride-action chrome have since been removed from the CarPlay base view; the
+system-template replacement still requires signed simulator and head-unit visual
+evidence. The simulator helper
 now handles Xcode's `CarPlay…` custom-display dialog, finds a Python interpreter
 with Quartz instead of assuming the first one on PATH, installs before attaching
 so the CarPlay catalogue is current, and captures the external display directly.
@@ -254,7 +256,7 @@ creation, joining, route editing and first-time permissions intentionally stay
 on the phone; CarPlay can preview and commit a solo route, and a leader can
 start an already-prepared ride.
 
-Continue mandatory CarPlay behavior with #693–#696 and Android Auto behavior
+Continue mandatory CarPlay behavior with #694–#696 and Android Auto behavior
 with #684–#689. Keep #698 and #703 open until their physical head-unit evidence
 gates can truthfully be completed; tester uploads remain explicit manual jobs.
 

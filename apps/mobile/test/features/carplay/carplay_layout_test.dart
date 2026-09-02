@@ -2,248 +2,79 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// #442 and #533's CarPlay layout faults, asserted where they live.
+/// Structural coverage for the native-only CarPlay surface.
 ///
-/// A head unit is not reachable from a test here, so these read the Swift the
-/// same way the #439 reachability check reads Dart: what broke is *placement*,
-/// and placement is what the constraints say.
+/// XCTest proves the live base-view hierarchy contains exactly one MapLibre
+/// map. These checks keep controls and driving restrictions on supported
+/// CarPlay APIs, where a Flutter widget test cannot instantiate them.
 void main() {
   final source = File(
     'ios/Runner/CarPlaySceneDelegate.swift',
   ).readAsStringSync();
+  final statusSource = File(
+    'ios/Runner/CarPlayStatusTemplate.swift',
+  ).readAsStringSync();
+  final viewControllerSource = source.substring(
+    source.indexOf('final class CarPlayNavigationViewController'),
+    source.indexOf('private final class CarPlayRiderAnnotation'),
+  );
 
-  group('the speed pair stays trailing while status moves left (#533)', () {
-    test('the TEC message joins the left status column', () {
+  group('the CarPlay base view is one map', () {
+    test('only installs the MapLibre map in the root view', () {
       expect(
-        source,
-        contains(
-          'tecBadge.leadingAnchor.constraint(\n'
-          '        equalTo: groupMiniMap.leadingAnchor',
-        ),
+        viewControllerSource,
+        contains('view.insertSubview(mapView, at: 0)'),
       );
-      expect(
-        source,
-        contains(
-          'tecBadge.trailingAnchor.constraint(\n'
-          '        equalTo: groupMiniMap.trailingAnchor',
-        ),
-      );
-      expect(source, contains('tecBadge.bottomAnchor.constraint('));
-      expect(source, contains('equalTo: groupMiniMap.topAnchor'));
-      expect(source, isNot(contains('equalTo: speedBadge.bottomAnchor')));
-    });
-
-    test('the speed badge keeps its established top-trailing position', () {
-      expect(
-        source,
-        contains('equalTo: view.safeAreaLayoutGuide.trailingAnchor'),
-      );
-      expect(source, contains('speedBadge.topAnchor.constraint('));
-    });
-  });
-
-  group('the mini-map is distinguishable from the map (#442)', () {
-    test('it scales inside a bounded left rail', () {
-      expect(source, contains('equalTo: view.safeAreaLayoutGuide.widthAnchor'));
-      expect(source, contains('multiplier: 0.28'));
-      expect(source, contains('lessThanOrEqualToConstant: 196'));
-      expect(source, contains('multiplier: 116.0 / 196.0'));
-    });
-
-    test('its border is thick enough to read against a basemap', () {
-      // "It blends into the main map, so it is not obvious which is which."
-      // A 1.5px hairline in the casing grey is invisible over a mostly-grey map.
-      expect(source, contains('layer.borderWidth = 3'));
-      expect(source, contains('UIColor.white.withAlphaComponent(0.85)'));
-    });
-
-    test('it says how far it spans', () {
-      // "It needs a clear edge, and a scale, so a rider can tell what they are
-      // looking at and how far it spans."
-      expect(source, contains('static func spanLabel('));
-    });
-
-    test('the scale is in the rider units the rest of the car uses', () {
-      expect(source, contains('usesMiles'));
-      // Both unit families, and a short form for a group that is close together.
-      for (final unit in ['yd', 'mi', 'km']) {
-        expect(source, contains(unit), reason: unit);
+      expect(viewControllerSource, isNot(contains('view.addSubview(')));
+      for (final legacyOverlay in [
+        'CarPlayTecBadge',
+        'CarPlaySpeedLimitBadge',
+        'CarPlayCompassBadge',
+        'CarPlayGroupMiniMapView',
+        'CarPlayClockLabel',
+        'CarPlayRouteProgressView',
+        'CarPlayGuidanceView',
+        'CarPlayRideActionsView',
+      ]) {
+        expect(
+          viewControllerSource,
+          isNot(contains(legacyOverlay)),
+          reason: '$legacyOverlay must not be attached to the base view',
+        );
       }
     });
 
-    test('the caption cannot widen the overview', () {
-      // The view is 110pt. #142's rule on the phone is the same one: variable
-      // text gives way inside a fixed width rather than moving the surface.
-      expect(source, contains('caption.adjustsFontSizeToFitWidth = true'));
-      expect(source, contains('caption.trailingAnchor.constraint('));
+    test('keeps route and rider content inside the map itself', () {
+      expect(viewControllerSource, contains('MLNLineStyleLayer('));
+      expect(viewControllerSource, contains('CarPlayRiderAnnotationView'));
+      expect(viewControllerSource, isNot(contains('riddenRoutePoints')));
     });
   });
 
-  group('CarPlay echoes the phone landscape controls (#442)', () {
-    test('the ride menu is the same leading compact hamburger', () {
-      expect(source, contains('named: "line.3.horizontal"'));
-      expect(source, contains('accessibilityLabel: "Ride actions"'));
+  group('all driving controls use CarPlay APIs', () {
+    test('active ride retains pan, follow, report, SOS, leave, and status', () {
+      expect(source, contains('panButton(mapTemplate: mapTemplate)'));
+      expect(source, contains('recenterButton()'));
+      expect(source, contains('reportBarButton()'));
+      expect(source, contains('emergencyBarButton()'));
+      expect(source, contains('zoomButton(delta: 1)'));
+      expect(source, contains('zoomButton(delta: -1)'));
+      expect(source, contains('presentLeaveConfirmation()'));
+      expect(source, contains('.leaveRideFromCarPlay()'));
       expect(source, contains('return CPBarButton(image: image)'));
-      expect(source, isNot(contains('CPBarButton(title: "Ride")')));
-      expect(
-        source,
-        contains('mapTemplate.leadingNavigationBarButtons = [rideMenuButton]'),
-      );
-      expect(
-        source,
-        isNot(contains('mapTemplate.trailingNavigationBarButtons = [\n')),
-      );
-      expect(source, contains('? [rideMenuButton, startRideButton()]'));
-      expect(source, contains(': [rideMenuButton]'));
+      expect(statusSource, contains('text: "Leave ride"'));
+      expect(statusSource, contains('leave.handler ='));
+      expect(statusSource, contains('CPBarButton(title: "SOS")'));
     });
 
-    test(
-      'active ride uses labelled phone-style actions, not template buttons',
-      () {
-        expect(source, contains('private final class CarPlayRideActionsView'));
-        expect(source, contains('title: "ALERT"'));
-        expect(source, contains('title: "LEAVE"'));
-        expect(source, contains('title: "REPORT"'));
-        expect(source, contains('private func presentLeaveConfirmation()'));
-        expect(source, contains('.leaveRideFromCarPlay()'));
-        expect(source, contains('mapTemplate.mapButtons = buttons'));
-        expect(source, contains('if surfaceMode != "activeRide"'));
-      },
-    );
-
-    test('the clock is top-centre and clear of map attribution', () {
-      expect(source, contains('clockLabel.centerXAnchor.constraint('));
-      expect(source, contains('clockLabel.topAnchor.constraint('));
-      expect(source, isNot(contains('clockLabel.bottomAnchor.constraint(')));
+    test('home retains route planning and recorded free roam', () {
+      expect(source, contains('named: "magnifyingglass"'));
+      expect(source, contains('named: "road.lanes"'));
+      expect(source, contains('presentDestinationSearch()'));
+      expect(source, contains('presentFreeRoamConfirmation()'));
     });
 
-    test('route progress sits above TEC in the left status stack', () {
-      expect(source, contains('routeProgressView.leadingAnchor.constraint('));
-      expect(source, contains('routeProgressView.trailingAnchor.constraint('));
-      expect(source, contains('routeProgressView.bottomAnchor.constraint('));
-      expect(
-        source,
-        contains(
-          'groupMiniMap.leadingAnchor.constraint(\n'
-          '        equalTo: view.safeAreaLayoutGuide.leadingAnchor',
-        ),
-      );
-      expect(
-        source,
-        contains(
-          'groupMiniMap.bottomAnchor.constraint(\n'
-          '        equalTo: view.bottomAnchor,\n'
-          '        constant: -12',
-        ),
-        reason: 'the full left stack must clear CarPlay’s top navigation bar',
-      );
-      expect(
-        source,
-        contains(
-          'routeProgressView.trailingAnchor.constraint(\n'
-          '        equalTo: groupMiniMap.trailingAnchor',
-        ),
-      );
-      expect(
-        source,
-        contains(
-          'routeProgressView.bottomAnchor.constraint(\n'
-          '        equalTo: tecBadge.topAnchor',
-        ),
-      );
-      expect(source, contains('private final class CarPlayGuidanceView'));
-      expect(
-        source,
-        contains(
-          'guidanceView.bottomAnchor.constraint(\n'
-          '        equalTo: view.bottomAnchor',
-        ),
-      );
-      expect(source, contains('CarPlayRouteProgressView'));
-      expect(source, contains(r'\(duration)'));
-      expect(source, contains(r'\(waypointName)'));
-    });
-
-    test(
-      'MapLibre attribution remains while its fixed compass is replaced',
-      () {
-        expect(
-          source,
-          contains('mapView.attributionButtonPosition = .bottomRight'),
-        );
-        expect(
-          source,
-          contains('mapView.attributionButtonMargins = CGPoint(x: 52, y: 14)'),
-        );
-        expect(source, contains('mapView.compassView.isHidden = true'));
-        expect(source, contains('private final class CarPlayCompassBadge'));
-        expect(
-          source,
-          contains('compassBadge.widthAnchor.constraint(equalToConstant: 34)'),
-        );
-      },
-    );
-
-    test('primary guidance panes reveal some map context', () {
-      expect(source, contains('alpha: 0.85'));
-      expect(source, contains('private final class CarPlayGuidanceView'));
-      expect(
-        source,
-        contains('backgroundColor = CarPlayPalette.primaryPanelFill'),
-      );
-    });
-
-    test('vertical phone framing and CarPlay traffic side are projected', () {
-      expect(source, contains('riderViewportFraction'));
-      expect(source, contains('viewport["leftHandTraffic"]'));
-      expect(
-        source,
-        contains(
-          'let riderHorizontalFraction = leftHandTraffic ? (2.0 / 3.0) : (1.0 / 3.0)',
-        ),
-      );
-      expect(source, contains('let riderChromeClearance: CGFloat = 28'));
-      expect(
-        source,
-        contains('guidanceView.frame.minY - riderChromeClearance'),
-      );
-      expect(
-        source,
-        contains('mapView.convert(localCoordinate, toPointTo: mapView)'),
-      );
-      expect(source, contains('for _ in 0 ..< 3'));
-      expect(source, contains('hypot(error.x, error.y) < 1'));
-    });
-
-    test('custom action labels cannot wrap on short head units', () {
-      expect(
-        source,
-        contains('configuration.titleLineBreakMode = .byClipping'),
-      );
-      expect(source, contains('titleLabel?.numberOfLines = 1'));
-      expect(source, contains('titleLabel?.adjustsFontSizeToFitWidth = true'));
-      expect(
-        source,
-        contains('button.heightAnchor.constraint(equalToConstant: 34)'),
-      );
-      expect(
-        source,
-        contains('button.widthAnchor.constraint(equalToConstant: 82)'),
-      );
-      expect(source, contains('pointSize: 10'));
-      expect(source, contains('.systemFont(ofSize: 7, weight: .black)'));
-      expect(source, contains('bounds.insetBy(dx: -5, dy: -5)'));
-    });
-
-    test(
-      'the narrow ETA card wraps instead of truncating timing and stops',
-      () {
-        expect(source, contains('label.numberOfLines = 2'));
-        expect(source, contains('label.lineBreakMode = .byWordWrapping'));
-      },
-    );
-
-    test('Apple navigation session receives manoeuvre and trip estimates', () {
+    test('Apple navigation owns manoeuvres, estimates, and alerts', () {
       expect(source, contains('mapTemplate.startNavigationSession(for: trip)'));
       expect(
         source,
@@ -251,31 +82,54 @@ void main() {
       );
       expect(source, contains('session.updateEstimates('));
       expect(source, contains('mapTemplate.updateEstimates('));
-      expect(source, contains('routeProgressView.trailingAnchor.constraint('));
-    });
-
-    test('completed planned route is omitted behind the rider', () {
-      expect(source, isNot(contains('travelledRouteAnnotation')));
-      expect(source, isNot(contains('snapshot["riddenRoutePoints"]')));
+      expect(source, contains('CPNavigationAlert('));
     });
   });
 
-  group('CarPlay home map and ride entry', () {
-    test('starts with the phone home fallback instead of the world', () {
+  group('panning and driving restrictions', () {
+    test('touch and non-touch hosts can enter, pan, and exit', () {
+      expect(
+        source,
+        contains('mapTemplate.showPanningInterface(animated: true)'),
+      );
+      expect(source, contains('mapTemplateDidShowPanningInterface'));
+      expect(source, contains('mapTemplateDidDismissPanningInterface'));
+      expect(source, contains('panBeganWith direction'));
+      expect(source, contains('panEndedWith direction'));
+      expect(source, contains('beginDirectionalPan(direction: direction)'));
+      expect(source, contains('endDirectionalPan()'));
+    });
+
+    test('applicable host gestures reach the map', () {
+      expect(source, contains('mapTemplateDidBeginZoomGesture'));
+      expect(source, contains('didUpdateZoomGestureWithCenter'));
+      expect(source, contains('mapTemplateDidBeginRotationGesture'));
+      expect(source, contains('didRotateWithCenter'));
+      expect(source, contains('mapTemplateDidBeginPitchGesture'));
+      expect(source, contains('pitchWithCenter'));
+    });
+
+    test('keyboard and list restrictions change exposed content', () {
+      expect(source, contains('CPSessionConfiguration(delegate: self)'));
+      expect(source, contains('limitedUserInterfacesChanged'));
+      expect(source, contains('interactionPolicy.allowsDestinationSearch'));
+      expect(statusSource, contains('if !listsLimited'));
+    });
+  });
+
+  group('map behavior remains usable', () {
+    test('starts from the UK fallback and follows the traffic-side third', () {
       expect(
         source,
         contains('CLLocationCoordinate2D(latitude: 54.5, longitude: -3.2)'),
       );
       expect(source, contains('zoomLevel: 5'));
-      expect(source, contains('mapView.setCenter(coordinate, zoomLevel: 14'));
-    });
-
-    test('uses matching plan, free-roam, report, and SOS glyphs', () {
-      expect(source, contains('named: "magnifyingglass"'));
-      expect(source, contains('named: "road.lanes"'));
-      expect(source, contains('named: "bell.badge.fill"'));
-      expect(source, contains('named: "sos"'));
-      expect(source, contains('surfaceMode == "activeRide"'));
+      expect(
+        source,
+        contains(
+          'let riderHorizontalFraction = leftHandTraffic ? (2.0 / 3.0) : (1.0 / 3.0)',
+        ),
+      );
     });
 
     test('search waits for explicit submission', () {
@@ -283,11 +137,6 @@ void main() {
       expect(source, contains('completionHandler([])'));
       expect(source, contains('searchTemplateSearchButtonPressed'));
       expect(source, contains('searchCarPlayDestinations(query: query)'));
-    });
-
-    test('home hides ride-only status overlays', () {
-      expect(source, contains('clockLabel.isHidden = surfaceMode == "home"'));
-      expect(source, contains('groupMiniMap.isHidden = true'));
     });
   });
 }
