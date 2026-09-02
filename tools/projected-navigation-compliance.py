@@ -397,6 +397,39 @@ def structural_checks(failures: list[str]) -> None:
         "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoCompanionTest.kt",
         ["CarPlay V2 block cannot change the legacy Android projection"],
     )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/AndroidAutoNavigationCoordinator.kt",
+        [
+            "setNavigationManagerCallback(",
+            "navigationManager.navigationStarted()",
+            "navigationManager.updateTrip(",
+            "navigationManager.navigationEnded()",
+            "NotificationCompat.CATEGORY_NAVIGATION",
+            "CarAppExtender.Builder()",
+            "hostRejectedSessionId",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoNavigationCoordinatorTest.kt",
+        [
+            "starts once updates every accepted trip and ends once",
+            "host preemption stops once and blocks stale ownership replay",
+            "route replacement and close balance host ownership",
+            "trip contains current following and destination metadata",
+            "active turn notification is ongoing navigation and extended for the car",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/lib/features/ride/active_ride_shell.dart",
+        [
+            "onAndroidAutoNavigationHostEvent: _handleAndroidAutoNavigationHostEvent",
+            "AndroidAutoNavigationHostEventType.stopped",
+            "await _cancelNavigationFromCarPlay()",
+        ],
+    )
 
 
 def write_summary(

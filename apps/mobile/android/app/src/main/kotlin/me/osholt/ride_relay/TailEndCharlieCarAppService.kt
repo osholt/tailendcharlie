@@ -6,6 +6,8 @@ import androidx.car.app.CarAppService
 import androidx.car.app.Screen
 import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 
 /**
  * The app, as Android Auto sees it.
@@ -37,8 +39,51 @@ class TailEndCharlieCarAppService : CarAppService() {
 }
 
 private class TailEndCharlieCarSession : Session() {
+    private var navigationCoordinator: AndroidAutoNavigationCoordinator? = null
+    private var snapshotListener: AndroidAutoSnapshotStore.Listener? = null
+
     override fun onCreateScreen(intent: Intent): Screen {
         RideRelayEngine.ensure(carContext)
+        ensureNavigationCoordinator()
         return AndroidAutoNavigationScreen(carContext)
+    }
+
+    private fun ensureNavigationCoordinator() {
+        if (navigationCoordinator != null) return
+        var coordinator: AndroidAutoNavigationCoordinator? = null
+        val host = AndroidAutoNavigationManagerHost(
+            carContext = carContext,
+            onStopNavigation = { coordinator?.hostStoppedNavigation() },
+        )
+        val createdCoordinator = AndroidAutoNavigationCoordinator(
+            host = host,
+            notification = AndroidAutoNavigationNotifier(carContext),
+        ) { type, projection, reason ->
+            ProjectedRideChannel.navigationEvent(
+                type = type,
+                navigationSessionId = projection.route?.navigationSessionId,
+                routeId = projection.route?.id,
+                reason = reason,
+                projectionSequence = projection.sequence,
+            ) {}
+        }
+        coordinator = createdCoordinator
+        navigationCoordinator = createdCoordinator
+        val listener = AndroidAutoSnapshotStore.Listener {
+            createdCoordinator.accept(AndroidAutoSnapshotStore.latest?.androidAutoNavigation)
+        }
+        snapshotListener = listener
+        AndroidAutoSnapshotStore.addListener(listener)
+        createdCoordinator.accept(AndroidAutoSnapshotStore.latest?.androidAutoNavigation)
+        lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onDestroy(owner: LifecycleOwner) {
+                    snapshotListener?.let(AndroidAutoSnapshotStore::removeListener)
+                    snapshotListener = null
+                    navigationCoordinator?.close()
+                    navigationCoordinator = null
+                }
+            },
+        )
     }
 }

@@ -108,6 +108,7 @@ Map<String, Object?> projectAndroidAutoNavigationV2({
   required DateTime generatedAt,
   required String ridePhase,
   required ImportedRoute? route,
+  required bool navigationEnabled,
   required NavigationGuidance? guidance,
   required DistanceUnit? distanceUnit,
   required String? localeIdentifier,
@@ -120,10 +121,11 @@ Map<String, Object?> projectAndroidAutoNavigationV2({
   required bool canStartPreparedRide,
   required Map<String, Object?>? alert,
 }) {
-  final navigationPhase = switch ((route, ridePhase)) {
-    (null, _) => 'inactive',
-    (_, 'endedRide') => 'ended',
-    (_, 'activeRide') => 'navigating',
+  final navigationPhase = switch ((route, ridePhase, navigationEnabled)) {
+    (null, _, _) => 'inactive',
+    (_, 'endedRide', _) => 'ended',
+    (_, _, false) => 'ended',
+    (_, 'activeRide', true) => 'navigating',
     _ => 'routeReady',
   };
   final trafficSide = _trafficSide(

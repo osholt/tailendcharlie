@@ -90,6 +90,7 @@ void main() {
       generatedAt: generatedAt,
       ridePhase: 'activeRide',
       route: route,
+      navigationEnabled: true,
       guidance: guidance,
       distanceUnit: DistanceUnit.kilometres,
       localeIdentifier: 'fr-FR',
@@ -131,6 +132,7 @@ void main() {
       generatedAt: DateTime.utc(2026, 9, 2),
       ridePhase: 'activeRide',
       route: null,
+      navigationEnabled: true,
       guidance: null,
       distanceUnit: DistanceUnit.miles,
       localeIdentifier: 'en-GB',
@@ -152,6 +154,55 @@ void main() {
     expect((projection['actions'] as Map)['canLeaveRide'], isTrue);
     expect((projection['actions'] as Map)['canCancelNavigation'], isFalse);
   });
+
+  test(
+    'host-suppressed guidance does not ask for navigation ownership again',
+    () {
+      final projection = projectAndroidAutoNavigationV2(
+        sourceId: 'host-stop',
+        sequence: 2,
+        generatedAt: DateTime.utc(2026, 9, 2),
+        ridePhase: 'activeRide',
+        route: ImportedRoute(
+          id: 'still-recording',
+          name: 'Ride route',
+          importedAt: DateTime.utc(2026, 9, 2),
+          sourceFileName: 'route.gpx',
+          paths: const [
+            RoutePath(
+              kind: RoutePathKind.route,
+              points: [
+                GeoPoint(latitude: 51.46, longitude: -2.50),
+                GeoPoint(latitude: 51.47, longitude: -2.51),
+              ],
+            ),
+          ],
+          waypoints: const [],
+          maneuvers: const [],
+        ),
+        navigationEnabled: false,
+        guidance: null,
+        distanceUnit: DistanceUnit.miles,
+        localeIdentifier: 'en-GB',
+        speedMetersPerSecond: null,
+        journeyProgress: null,
+        routeProgress: null,
+        followRider: true,
+        canPlanRoute: false,
+        canFreeRoam: false,
+        canStartPreparedRide: false,
+        alert: null,
+      );
+
+      expect(projection['rideLifecycle'], {'phase': 'activeRide'});
+      expect(projection['navigationLifecycle'], {
+        'phase': 'ended',
+        'shouldOwnNavigation': false,
+      });
+      expect((projection['route'] as Map)['id'], 'still-recording');
+      expect((projection['actions'] as Map)['canLeaveRide'], isTrue);
+    },
+  );
 
   test('parses bounded Android host events and rejects malformed payloads', () {
     final event = AndroidAutoNavigationHostEvent.tryParse({
