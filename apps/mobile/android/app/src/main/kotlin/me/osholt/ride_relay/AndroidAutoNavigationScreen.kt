@@ -44,6 +44,7 @@ internal class AndroidAutoNavigationScreen(
     private var surface: SurfaceContainer? = null
     private var visibleArea: ProjectedMapBounds? = null
     private var stableArea: ProjectedMapBounds? = null
+    private var hostDarkMode = carContext.isDarkMode
 
     private val snapshotListener = AndroidAutoSnapshotStore.Listener {
         // Both, and for different reasons: the card is host-drawn and only
@@ -108,6 +109,14 @@ internal class AndroidAutoNavigationScreen(
         }
         travelEstimate(snapshot)?.let(builder::setDestinationTravelEstimate)
         return builder.build()
+    }
+
+    /** Called by the Session whenever Android Auto changes its host configuration. */
+    fun applyHostDarkMode(darkMode: Boolean) {
+        if (hostDarkMode == darkMode) return
+        hostDarkMode = darkMode
+        invalidate()
+        drawMap()
     }
 
     /**
@@ -268,6 +277,7 @@ internal class AndroidAutoNavigationScreen(
                 heightPx = container.height.toFloat(),
                 visibleArea = visibleArea,
                 stableArea = stableArea,
+                hostDarkMode = hostDarkMode,
             )
         } finally {
             container.surface?.unlockCanvasAndPost(canvas)

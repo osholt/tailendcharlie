@@ -42,6 +42,7 @@ class ProjectedMapRendererTest {
                     snapshot = snapshot,
                     widthPx = size.first.toFloat(),
                     heightPx = size.second.toFloat(),
+                    hostDarkMode = true,
                 )
                 write(bitmap, "$state-$label")
                 assertEquals("$state drew when it should not have", snapshot != null, drew)
@@ -62,12 +63,43 @@ class ProjectedMapRendererTest {
     fun `nothing to draw remains a map-only surface`() {
         val bitmap = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888)
 
-        assertFalse(renderer.draw(Canvas(bitmap), null, 800f, 480f))
+        assertFalse(renderer.draw(Canvas(bitmap), null, 800f, 480f, hostDarkMode = true))
         assertUniform(bitmap)
         // Loading and ride state belong to host templates, never map pixels.
         val bare = ProjectedRideSnapshot.from(mapOf("rideState" to "Waiting to start"))
-        assertFalse(renderer.draw(Canvas(bitmap), bare, 800f, 480f))
+        assertFalse(renderer.draw(Canvas(bitmap), bare, 800f, 480f, hostDarkMode = true))
         assertUniform(bitmap)
+    }
+
+    @Test
+    fun `car host selects day and night independently of phone theme`() {
+        val phoneLight = ProjectedRideSnapshot.from(
+            ride(followRider = false) + ("basemap" to mapOf("dark" to false)),
+        )
+        val phoneDark = ProjectedRideSnapshot.from(
+            ride(followRider = false) + ("basemap" to mapOf("dark" to true)),
+        )
+        val night = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888)
+        val day = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888)
+
+        renderer.draw(Canvas(night), phoneLight, 800f, 480f, hostDarkMode = true)
+        renderer.draw(Canvas(day), phoneDark, 800f, 480f, hostDarkMode = false)
+
+        assertEquals(ProjectedMapPalette.night.groundArgb, night.getPixel(0, 0))
+        assertEquals(ProjectedMapPalette.day.groundArgb, day.getPixel(0, 0))
+        assertNotEquals(night.getPixel(0, 0), day.getPixel(0, 0))
+    }
+
+    @Test
+    fun `host palettes keep marker outlines legible on their ground`() {
+        assertNotEquals(
+            ProjectedMapPalette.night.groundArgb,
+            ProjectedMapPalette.night.markerHaloArgb,
+        )
+        assertNotEquals(
+            ProjectedMapPalette.day.groundArgb,
+            ProjectedMapPalette.day.markerHaloArgb,
+        )
     }
 
     @Test
@@ -91,6 +123,7 @@ class ProjectedMapRendererTest {
                     heightPx = height.toFloat(),
                     visibleArea = ProjectedMapBounds(0f, 0f, width.toFloat(), height.toFloat()),
                     stableArea = stable,
+                    hostDarkMode = true,
                 ),
             )
 
@@ -109,7 +142,7 @@ class ProjectedMapRendererTest {
         )
         val bitmap = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888)
 
-        assertTrue(renderer.draw(Canvas(bitmap), snapshot, 800f, 480f))
+        assertTrue(renderer.draw(Canvas(bitmap), snapshot, 800f, 480f, hostDarkMode = true))
         assertNotEquals(bitmap.getPixel(1, 1), centreOfMass(bitmap))
     }
 
@@ -161,6 +194,7 @@ class ProjectedMapRendererTest {
             ),
             widthPx = 800f,
             heightPx = 480f,
+            hostDarkMode = true,
         )
         return bitmap
     }

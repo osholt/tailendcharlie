@@ -2,6 +2,7 @@ package me.osholt.ride_relay
 
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.res.Configuration
 import androidx.car.app.CarAppService
 import androidx.car.app.Screen
 import androidx.car.app.ScreenManager
@@ -42,17 +43,24 @@ class TailEndCharlieCarAppService : CarAppService() {
 private class TailEndCharlieCarSession : Session() {
     private var navigationCoordinator: AndroidAutoNavigationCoordinator? = null
     private var snapshotListener: AndroidAutoSnapshotStore.Listener? = null
+    private var navigationScreen: AndroidAutoNavigationScreen? = null
 
     override fun onCreateScreen(intent: Intent): Screen {
         RideRelayEngine.ensure(carContext)
         ensureNavigationCoordinator()
         val navigationIntent = AndroidAutoNavigationIntent.parse(intent)
         val root = AndroidAutoNavigationScreen(carContext)
+        navigationScreen = root
         if (navigationIntent != null) {
             carContext.getCarService(ScreenManager::class.java)
                 .push(AndroidAutoDestinationScreen(carContext, navigationIntent))
         }
         return root
+    }
+
+    override fun onCarConfigurationChanged(newConfiguration: Configuration) {
+        super.onCarConfigurationChanged(newConfiguration)
+        navigationScreen?.applyHostDarkMode(carContext.isDarkMode)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -104,6 +112,7 @@ private class TailEndCharlieCarSession : Session() {
                     snapshotListener = null
                     navigationCoordinator?.close()
                     navigationCoordinator = null
+                    navigationScreen = null
                 }
             },
         )

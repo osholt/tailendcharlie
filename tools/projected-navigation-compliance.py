@@ -518,6 +518,23 @@ def structural_checks(failures: list[str]) -> None:
             "nothing to draw remains a map-only surface",
             "route pixels remain inside obstructed stable area",
             "800 to 480, 1280 to 720, 1920 to 720",
+            "car host selects day and night independently of phone theme",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/TailEndCharlieCarAppService.kt",
+        [
+            "override fun onCarConfigurationChanged(newConfiguration: Configuration)",
+            "navigationScreen?.applyHostDarkMode(carContext.isDarkMode)",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/ProjectedMapRenderer.kt",
+        [
+            "hostDarkMode: Boolean",
+            "ProjectedMapPalette.forHost(hostDarkMode)",
         ],
     )
 

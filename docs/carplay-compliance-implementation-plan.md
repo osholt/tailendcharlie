@@ -456,7 +456,7 @@ outside this Android Auto plan.
 | NF-5 navigation ownership | PARTIAL | #684 ends trip metadata and notifications on host pre-emption without ending the ride; audio shutdown remains #702 and hardware validation #703. |
 | NF-6 external navigation requests | PARTIAL | #685 parses bounded query/coordinate navigation intents and presents them for in-car confirmation; validate in #703. |
 | NF-7 simulated test drive | PARTIAL | #685 implements `onAutoDriveEnabled` with deterministic host-only trip progress that cannot enter GPS, recording or heat-map data; validate in #703. |
-| MR-1 host day/night map mode | FAIL | Host configuration handling #689. |
+| MR-1 host day/night map mode | PARTIAL | #689 follows the car host independently of phone theme; validate switching/contrast in #703. |
 | NF-9 cluster map | OPTIONAL TIER 1 | Separate post-baseline ticket #704. |
 
 Parent feature: #602. Final Tier 2 evidence gate: #703.
@@ -621,6 +621,12 @@ be made from a working spike, not assumed from the phone's Flutter MapLibre view
 
 Impact: the Android Auto map can change mode independently of the phone. Stored
 phone preferences and screenshots remain unchanged.
+
+Implemented in #689: the Session applies `CarContext.isDarkMode` at creation and
+after every car-configuration change, and the active screen redraws immediately.
+The renderer requires that host value and no longer reads the phone's `darkMap`
+snapshot field. Pixel tests prove both host palettes override the opposite phone
+theme. DHU/physical switching and road-label contrast remain in #703/#701.
 
 ### A8. Make voice guidance a correct Android Auto audio citizen — #702
 
