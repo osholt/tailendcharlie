@@ -183,13 +183,33 @@ The merged implementation replaces the status-only CarPlay root with a
 app-owned MapLibre route/rider canvas using the phone's resolved style and
 navigation viewport. It has rider identity badges, route progress, recenter and
 pan controls, persistent TEC status, a low-frequency group overview mini-map,
-Report and confirmed SOS map buttons, and a `CPNavigationSession` whose turn and
-marker cards carry leading symbols. CarPlay reports are validated in Dart and
-use the same current-location hazard path as the phone. Issue #328 also adds a
+Report and confirmed SOS controls. A 2 September 2026 compliance audit found
+that those overlays and controls are drawn in Apple's map-only base view, and
+that `updateNavigationSession` cancels the `CPNavigationSession` before its
+turn/marker path can run. See `docs/carplay-compliance-checklist.md`; do not
+describe this surface as compliant or field validated until its release gate
+passes. Every unchecked CarPlay item is mapped to #690–#699 or the existing
+audio/wording tickets. The cross-platform architecture, Android Auto Tier 2
+sequence (#602, #684–#689, #700–#703), optional cluster work (#704), and
+view/function impact are in
+`docs/carplay-compliance-implementation-plan.md`. CarPlay reports are validated
+in Dart and use the same current-location
+hazard path as the phone. Issue #328 also adds a
 leader-only **Start prepared ride** action: CarPlay confirms the route/no-route
 state and no-TEC warning, while creation, joining, route selection and first-time
 location permission stay on the phone. Dart revalidates leadership, lifecycle
 and location readiness when the native action arrives.
+
+Implementation of #690 began on `codex/issue-690-carplay-projection`. The shared
+snapshot now contains an additive `carplayNavigation` schema V2 with separate
+ride/navigation phases, stable trip/choice/manoeuvre IDs, typed directions,
+roundabout exits, lanes, traffic side, road/instruction variants, estimates,
+locale and unit metadata. Swift bounds and decodes it and rejects malformed,
+replayed and out-of-order updates, but does not yet activate an Apple navigation
+session. Android's legacy decoder is unchanged and has a compatibility test
+proving the new block cannot affect its result. The incremental compliance
+checker runs in mobile CI and both closed-tester upload workflows; `--strict`
+remains red until all required CarPlay and Android Auto rows have evidence.
 
 Flutter analysis, the full test suite, an Android debug APK and an unsigned iOS
 simulator build passed on the PR. A signed Profile build also passed with the

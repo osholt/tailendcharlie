@@ -59,6 +59,9 @@ jobs:
         with:
           # Enough history for the tester release summary to list what changed.
           fetch-depth: 50
+      - name: Check projected-navigation compliance guardrails
+        working-directory: ${{ github.workspace }}
+        run: python3 tools/projected-navigation-compliance.py
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin

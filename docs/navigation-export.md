@@ -45,20 +45,19 @@ preselect a third-party recipient.
 Apple approved Tail End Charlie's CarPlay Navigation entitlement under
 Case-ID 21286533. The CarPlay scene therefore uses the navigation-only
 window-bearing scene callback and a `CPMapTemplate` root. An app-owned MapLibre
-canvas lets the head unit use the phone's resolved
-day/night style and process-level tile cache. It draws the active route and
-current rider positions behind CarPlay's controls; the local rider is followed
-until the map is panned, and the recenter control restores that view.
+canvas lets the head unit use the phone's resolved day/night style and
+process-level tile cache. It draws the active route and current rider positions;
+the local rider is followed until the map is panned.
 
-The phone's current guidance is published as a `CPManeuver` with live distance
-estimates through a `CPNavigationSession`, so CarPlay owns the turn card and
-navigation chrome. A **Ride** button opens the existing `CPListTemplate` with
-ride state, group/marker status, alerts and a bounded rider list. SOS remains
-wired to the same emergency alert as the phone map. Route setup and detailed
-settings stay on the phone. A leader whose ride is already configured can use
-the map's **Start** action after confirming the route/no-route state and the
-existing no-TEC warning. Creating or joining a ride, selecting a route and
-granting first-time location permission remain phone setup.
+The current active-ride implementation also draws guidance, ETA, group status,
+speed and interactive ride controls directly in that base view. It cancels the
+`CPNavigationSession` before the retained `CPManeuver` path can execute. This is
+not the Apple-template navigation flow and is a compliance blocker recorded in
+the [CarPlay navigation compliance checklist](./carplay-compliance-checklist.md).
+A **Ride** button still opens a `CPListTemplate` with ride state, group/marker
+status, alerts and a bounded rider list. Route setup and detailed settings stay
+on the phone; an already configured leader can also receive a CarPlay **Start**
+action.
 
 Debug and Release signing request both
 `com.apple.developer.carplay-driving-task` and

@@ -35,6 +35,346 @@ struct CarPlaySceneLifecycle {
   }
 }
 
+/// The versioned, iOS-only navigation contract projected by Dart.
+///
+/// Decoding is intentionally strict at this boundary: rider-authored route
+/// names and platform-channel values are bounded before a future coordinator
+/// turns them into CarPlay templates. The legacy top-level snapshot remains the
+/// active renderer during the migration tracked by #690–#698.
+struct CarPlayNavigationProjectionV2: Equatable {
+  struct Trip: Equatable {
+    let id: String
+    let routeChoiceID: String
+    let name: String
+    let trafficSide: String
+  }
+
+  struct Units: Equatable {
+    let distance: String?
+    let speed: String?
+  }
+
+  struct Position: Equatable {
+    let latitude: Double
+    let longitude: Double
+  }
+
+  struct Lane: Equatable {
+    let indications: [String]
+    let isValid: Bool
+  }
+
+  struct Maneuver: Equatable {
+    let id: String
+    let kind: String
+    let direction: String
+    let engineType: String
+    let engineModifier: String?
+    let instructionVariants: [String]
+    let roadNameVariants: [String]
+    let position: Position
+    let exitNumber: Int?
+    let trafficSide: String
+    let distanceMeters: Double?
+    let secondsRemaining: Double?
+    let bearingBeforeDegrees: Double?
+    let bearingAfterDegrees: Double?
+    let departureBearingDegrees: Double?
+    let stepCount: Int
+    let lanes: [Lane]
+  }
+
+  let sourceID: String
+  let sequence: Int
+  let generatedAtMillis: Int64
+  let ridePhase: String
+  let navigationPhase: String
+  let trip: Trip?
+  let currentManeuver: Maneuver?
+  let followingManeuver: Maneuver?
+  let units: Units
+  let localeIdentifier: String?
+
+  init?(snapshot: [String: Any]) {
+    guard
+      let raw = snapshot["carplayNavigation"] as? [String: Any],
+      Self.integer(raw["schemaVersion"]) == 2,
+      let sourceID = Self.string(raw["sourceId"], maximumLength: 96),
+      let sequence = Self.integer(raw["sequence"]),
+      sequence > 0,
+      let generatedAtMillis = Self.int64(raw["generatedAtMillis"]),
+      generatedAtMillis >= 0,
+      let ride = raw["rideLifecycle"] as? [String: Any],
+      let ridePhase = Self.string(ride["phase"], maximumLength: 32),
+      Self.ridePhases.contains(ridePhase),
+      let navigation = raw["navigationLifecycle"] as? [String: Any],
+      let navigationPhase = Self.string(navigation["phase"], maximumLength: 32),
+      Self.navigationPhases.contains(navigationPhase),
+      let rawUnits = raw["units"] as? [String: Any],
+      let units = Self.units(rawUnits)
+    else { return nil }
+
+    let trip: Trip?
+    if let rawTrip = raw["trip"] as? [String: Any] {
+      guard let decoded = Self.trip(rawTrip) else { return nil }
+      trip = decoded
+    } else {
+      trip = nil
+    }
+    if navigationPhase != "inactive", trip == nil { return nil }
+
+    let currentManeuver: Maneuver?
+    if let rawManeuver = raw["currentManeuver"] as? [String: Any] {
+      guard let decoded = Self.maneuver(rawManeuver) else { return nil }
+      currentManeuver = decoded
+    } else {
+      currentManeuver = nil
+    }
+    let followingManeuver: Maneuver?
+    if let rawManeuver = raw["followingManeuver"] as? [String: Any] {
+      guard let decoded = Self.maneuver(rawManeuver) else { return nil }
+      followingManeuver = decoded
+    } else {
+      followingManeuver = nil
+    }
+
+    self.sourceID = sourceID
+    self.sequence = sequence
+    self.generatedAtMillis = generatedAtMillis
+    self.ridePhase = ridePhase
+    self.navigationPhase = navigationPhase
+    self.trip = trip
+    self.currentManeuver = currentManeuver
+    self.followingManeuver = followingManeuver
+    self.units = units
+    self.localeIdentifier = Self.string(
+      raw["localeIdentifier"],
+      maximumLength: 48
+    )
+  }
+
+  private static let ridePhases = Set([
+    "home", "preRide", "activeRide", "endedRide",
+  ])
+  private static let navigationPhases = Set([
+    "inactive", "routeReady", "navigating", "ended",
+  ])
+  private static let maneuverKinds = Set([
+    "depart", "arrive", "roundabout", "turn", "endOfRoad", "merge",
+    "fork", "onRamp", "offRamp", "useLane", "continueAhead",
+  ])
+  private static let maneuverDirections = Set([
+    "sharpLeft", "left", "slightLeft", "straight", "slightRight", "right",
+    "sharpRight", "uTurn", "unstated",
+  ])
+  private static let trafficSides = Set(["left", "right", "unknown"])
+
+  private static func trip(_ raw: [String: Any]) -> Trip? {
+    guard
+      let id = string(raw["id"], maximumLength: 160),
+      let routeChoiceID = string(raw["routeChoiceId"], maximumLength: 180),
+      let name = string(raw["name"], maximumLength: 160),
+      let trafficSide = string(raw["trafficSide"], maximumLength: 12),
+      trafficSides.contains(trafficSide)
+    else { return nil }
+    return Trip(
+      id: id,
+      routeChoiceID: routeChoiceID,
+      name: name,
+      trafficSide: trafficSide
+    )
+  }
+
+  private static func units(_ raw: [String: Any]) -> Units? {
+    let distance = string(raw["distance"], maximumLength: 24)
+    let speed = string(raw["speed"], maximumLength: 32)
+    if let distance, !["miles", "kilometres"].contains(distance) { return nil }
+    if let speed, !["milesPerHour", "kilometresPerHour"].contains(speed) {
+      return nil
+    }
+    if (distance == "miles") != (speed == "milesPerHour"),
+      distance != nil || speed != nil
+    {
+      return nil
+    }
+    return Units(distance: distance, speed: speed)
+  }
+
+  private static func maneuver(_ raw: [String: Any]) -> Maneuver? {
+    guard
+      let id = string(raw["id"], maximumLength: 220),
+      let kind = string(raw["kind"], maximumLength: 32),
+      maneuverKinds.contains(kind),
+      let direction = string(raw["direction"], maximumLength: 32),
+      maneuverDirections.contains(direction),
+      let engineType = string(raw["engineType"], maximumLength: 80),
+      let instructions = stringArray(
+        raw["instructionVariants"],
+        maximumCount: 4,
+        maximumLength: 180
+      ),
+      !instructions.isEmpty,
+      let roadNames = stringArray(
+        raw["roadNameVariants"],
+        maximumCount: 4,
+        maximumLength: 160
+      ),
+      let rawPosition = raw["position"] as? [String: Any],
+      let position = position(rawPosition),
+      let trafficSide = string(raw["trafficSide"], maximumLength: 12),
+      trafficSides.contains(trafficSide),
+      let stepCount = integer(raw["stepCount"]),
+      (1...32).contains(stepCount),
+      let lanes = lanes(raw["lanes"])
+    else { return nil }
+
+    let exitNumber = integer(raw["exitNumber"])
+    if let exitNumber, !(1...99).contains(exitNumber) { return nil }
+    let distanceMeters = nonNegativeDouble(raw["distanceMeters"])
+    if isPresent(raw["distanceMeters"]), distanceMeters == nil { return nil }
+    let secondsRemaining = nonNegativeDouble(raw["secondsRemaining"])
+    if isPresent(raw["secondsRemaining"]), secondsRemaining == nil { return nil }
+    let bearingBefore = bearing(raw["bearingBeforeDegrees"])
+    if isPresent(raw["bearingBeforeDegrees"]), bearingBefore == nil { return nil }
+    let bearingAfter = bearing(raw["bearingAfterDegrees"])
+    if isPresent(raw["bearingAfterDegrees"]), bearingAfter == nil { return nil }
+    let departureBearing = bearing(raw["departureBearingDegrees"])
+    if isPresent(raw["departureBearingDegrees"]), departureBearing == nil {
+      return nil
+    }
+
+    return Maneuver(
+      id: id,
+      kind: kind,
+      direction: direction,
+      engineType: engineType,
+      engineModifier: string(raw["engineModifier"], maximumLength: 80),
+      instructionVariants: instructions,
+      roadNameVariants: roadNames,
+      position: position,
+      exitNumber: exitNumber,
+      trafficSide: trafficSide,
+      distanceMeters: distanceMeters,
+      secondsRemaining: secondsRemaining,
+      bearingBeforeDegrees: bearingBefore,
+      bearingAfterDegrees: bearingAfter,
+      departureBearingDegrees: departureBearing,
+      stepCount: stepCount,
+      lanes: lanes
+    )
+  }
+
+  private static func lanes(_ raw: Any?) -> [Lane]? {
+    guard let values = raw as? [Any], values.count <= 8 else { return nil }
+    var decoded: [Lane] = []
+    for value in values {
+      guard
+        let lane = value as? [String: Any],
+        let indications = stringArray(
+          lane["indications"],
+          maximumCount: 4,
+          maximumLength: 32
+        ),
+        let valid = boolean(lane["valid"])
+      else { return nil }
+      decoded.append(Lane(indications: indications, isValid: valid))
+    }
+    return decoded
+  }
+
+  private static func position(_ raw: [String: Any]) -> Position? {
+    guard
+      let latitude = finiteDouble(raw["latitude"]),
+      let longitude = finiteDouble(raw["longitude"]),
+      (-90...90).contains(latitude),
+      (-180...180).contains(longitude)
+    else { return nil }
+    return Position(latitude: latitude, longitude: longitude)
+  }
+
+  private static func stringArray(
+    _ raw: Any?,
+    maximumCount: Int,
+    maximumLength: Int
+  ) -> [String]? {
+    guard let values = raw as? [Any], values.count <= maximumCount else {
+      return nil
+    }
+    var decoded: [String] = []
+    for value in values {
+      guard let text = string(value, maximumLength: maximumLength) else {
+        return nil
+      }
+      if !decoded.contains(text) { decoded.append(text) }
+    }
+    return decoded
+  }
+
+  private static func string(_ raw: Any?, maximumLength: Int) -> String? {
+    guard let value = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !value.isEmpty
+    else { return nil }
+    return String(value.prefix(maximumLength))
+  }
+
+  private static func integer(_ raw: Any?) -> Int? {
+    (raw as? NSNumber)?.intValue ?? raw as? Int
+  }
+
+  private static func int64(_ raw: Any?) -> Int64? {
+    (raw as? NSNumber)?.int64Value ?? raw as? Int64
+  }
+
+  private static func boolean(_ raw: Any?) -> Bool? {
+    (raw as? NSNumber)?.boolValue ?? raw as? Bool
+  }
+
+  private static func finiteDouble(_ raw: Any?) -> Double? {
+    let value = (raw as? NSNumber)?.doubleValue ?? raw as? Double
+    return value?.isFinite == true ? value : nil
+  }
+
+  private static func nonNegativeDouble(_ raw: Any?) -> Double? {
+    guard let value = finiteDouble(raw), value >= 0 else { return nil }
+    return value
+  }
+
+  private static func bearing(_ raw: Any?) -> Double? {
+    guard let value = finiteDouble(raw), (0...360).contains(value) else {
+      return nil
+    }
+    return value
+  }
+
+  private static func isPresent(_ raw: Any?) -> Bool {
+    raw != nil && !(raw is NSNull)
+  }
+}
+
+/// Rejects stale or replayed V2 messages without coupling navigation state to
+/// the ride lifecycle. A newly-created Dart bridge can start at sequence one;
+/// its newer generation timestamp is what safely takes ownership.
+struct CarPlayNavigationProjectionStore {
+  private(set) var latest: CarPlayNavigationProjectionV2?
+
+  mutating func accept(snapshot: [String: Any]) -> Bool {
+    guard let candidate = CarPlayNavigationProjectionV2(snapshot: snapshot) else {
+      return false
+    }
+    if let latest {
+      if candidate.sourceID == latest.sourceID {
+        guard candidate.sequence > latest.sequence else { return false }
+      } else {
+        guard candidate.generatedAtMillis >= latest.generatedAtMillis else {
+          return false
+        }
+      }
+    }
+    latest = candidate
+    return true
+  }
+}
+
 /// Owns the navigation-app CarPlay scene. Navigation apps must use the
 /// window-bearing delegate callback and place a `CPMapTemplate` at the root.
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate,
@@ -56,6 +396,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var submittedSearchText = ""
   private weak var interfaceController: CPInterfaceController?
   private var sceneLifecycle = CarPlaySceneLifecycle()
+  private var navigationProjectionV2Store = CarPlayNavigationProjectionStore()
 
   /// The request the presented alert is asking about, so the same question is
   /// not raised twice and a question that has gone away takes its alert with
@@ -154,6 +495,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   func apply(snapshot: [String: Any]) {
+    // Decode and order the typed contract now, while the legacy renderer stays
+    // active. The navigation coordinator can then migrate without changing the
+    // wire format or risking Android Auto's shared V1 decoder (#690).
+    _ = navigationProjectionV2Store.accept(snapshot: snapshot)
     mapViewController?.apply(snapshot: snapshot)
     if let statusTemplate {
       CarPlayStatusTemplate.apply(snapshot: snapshot, to: statusTemplate)

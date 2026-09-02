@@ -26,6 +26,9 @@ jobs:
         working-directory: ${{ env.MOBILE_DIR }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check projected-navigation compliance guardrails
+        working-directory: ${{ github.workspace }}
+        run: python3 tools/projected-navigation-compliance.py
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -95,7 +98,7 @@ jobs:
     name: iOS unsigned debug app
     needs: quality
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: ${{ env.MOBILE_DIR }}
@@ -122,6 +125,25 @@ jobs:
             --dart-define=RIDE_RELAY_APP_BUILD="$RIDE_RELAY_APP_BUILD" \
             --dart-define=RIDE_RELAY_DISTRIBUTION_TRACK="$RIDE_RELAY_DISTRIBUTION_TRACK" \
             --dart-define=RIDE_RELAY_BUILD_TIMESTAMP="$RIDE_RELAY_BUILD_TIMESTAMP"
+      - name: Run iOS native contract tests
+        run: |
+          set -euo pipefail
+          simulator_id="$(
+            xcrun simctl list devices available \
+              | sed -nE 's/.*iPhone.*\(([[:xdigit:]-]{36})\).*/\1/p' \
+              | sed -n '1p'
+          )"
+          test -n "$simulator_id"
+          xcodebuild test \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$simulator_id" \
+            -only-testing:RunnerTests \
+            -disableAutomaticPackageResolution \
+            -skipPackageUpdates \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ride-relay-ios-unsigned-debug

@@ -315,6 +315,7 @@ class _HomeScreenState extends State<HomeScreen> {
         showTecStatus: false,
         followRider: position != null,
         distanceUnit: widget.distanceUnits.value,
+        localeIdentifier: Localizations.localeOf(context).toLanguageTag(),
         basemap: _homeBasemap,
         mapStyleJson: _carPlayMapStyleJson,
         localPosition: position,
