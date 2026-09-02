@@ -2762,7 +2762,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             widget.rideController.isLocalRideLeader &&
             !widget.rideController.rideStarted &&
             !widget.rideController.rideEnded &&
-            !widget.rideController.busy,
+            !widget.rideController.busy &&
+            (_isSimulation ||
+                !widget.enableNativeServices ||
+                (_locationController?.status.canSample ?? false)),
         basemap: selectedBasemap,
         mapStyleJson: _carPlayMapStyleJson,
         localPosition: _mapPosition.value,
@@ -2847,7 +2850,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final origin = _mapPosition.value ?? await _acquireCurrentPosition();
     if (origin == null) {
       throw const FormatException(
-        'Allow location access on the iPhone before planning from CarPlay.',
+        'Location is not ready. Route planning is unavailable.',
       );
     }
     final plan = await _carPlayDestinationPlanner.planForReview(
@@ -2878,7 +2881,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final origin = _mapPosition.value ?? await _acquireCurrentPosition();
     if (origin == null) {
       throw const FormatException(
-        'Allow location access on the iPhone before planning from CarPlay.',
+        'Location is not ready. Route planning is unavailable.',
       );
     }
     final plan = await _carPlayDestinationPlanner.planForReview(
@@ -4485,7 +4488,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// may be stale, so leader, lifecycle, busy and location state are checked
   /// again before the durable start event is recorded.
   Future<void> _startPreparedRideFromCarPlay() async {
-    if (!mounted) return;
+    if (!mounted) {
+      throw const FormatException('This ride is no longer available.');
+    }
     final controller = widget.rideController;
     if (controller.session == null ||
         !controller.isLocalRideLeader ||
@@ -4494,7 +4499,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         controller.busy ||
         _rideStartFlowInProgress) {
       _updateMapOverlays(updateDerivedState: false);
-      return;
+      throw const FormatException('This ride is no longer ready to start.');
     }
     _rideStartFlowInProgress = true;
     try {
@@ -4503,19 +4508,20 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           widget.enableNativeServices &&
           (locationController == null ||
               !locationController.status.canSample)) {
-        final added = _warnings.add(
-          'Open Tail End Charlie on the iPhone and allow location access before '
-          'starting the ride from CarPlay.',
-        );
+        final message = 'Location is not ready. This ride cannot start yet.';
+        final added = _warnings.add(message);
         _updateMapOverlays(updateDerivedState: false);
         if (added && mounted) setState(() {});
-        return;
+        throw FormatException(message);
       }
 
       _diagnostics?.recordNote('start ride accepted from CarPlay');
-      if (await _commitRideStart(source: 'CarPlay')) {
-        await _resumeLocationForActiveRide();
+      if (!await _commitRideStart(source: 'CarPlay')) {
+        throw const FormatException(
+          'This ride could not be started. Try again.',
+        );
       }
+      await _resumeLocationForActiveRide();
     } finally {
       _rideStartFlowInProgress = false;
       if (mounted) _updateMapOverlays(updateDerivedState: false);

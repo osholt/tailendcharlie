@@ -1018,13 +1018,20 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     let answer: (Bool) -> Void = { [weak self] accepted in
       self?.presentedTecRequestID = nil
-      interfaceController.dismissTemplate(animated: true) { _, error in
-        if let error {
-          NSLog("CarPlay role answer could not be dismissed: %@", error.localizedDescription)
+      self?.performConfirmedAction(
+        dismissing: interfaceController,
+        failureMessage: "That request could not be answered. Try again."
+      ) { completion in
+        guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+          completion(false, nil)
+          return
         }
+        appDelegate.answerCarPlayTecRoleRequest(
+          requestID: requestID,
+          accepted: accepted,
+          completion: completion
+        )
       }
-      (UIApplication.shared.delegate as? AppDelegate)?
-        .answerCarPlayTecRoleRequest(requestID: requestID, accepted: accepted)
     }
     let alert = CPAlertTemplate(
       titleVariants: [
@@ -2097,14 +2104,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       message: "Starts a solo ride with no planned route. Your track is still recorded.",
       actions: [
         CPAlertAction(title: "Start free roam", style: .default) { [weak self] _ in
-          interfaceController.dismissTemplate(animated: true) { _, _ in
-            (UIApplication.shared.delegate as? AppDelegate)?
-              .startFreeRoamFromCarPlay { [weak self] success, error in
-                guard !success else { return }
-                DispatchQueue.main.async {
-                  self?.presentCarPlayError(error ?? "Could not start free roam.")
-                }
-              }
+          self?.performConfirmedAction(
+            dismissing: interfaceController,
+            failureMessage: "Could not start free roam."
+          ) { completion in
+            guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+              completion(false, nil)
+              return
+            }
+            appDelegate.startFreeRoamFromCarPlay(completion: completion)
           }
         },
         CPAlertAction(title: "Cancel", style: .cancel) { _ in
@@ -2132,6 +2140,36 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     interfaceController.presentTemplate(alert, animated: true) { success, error in
       if !success, let error {
         NSLog("CarPlay error alert was not presented: %@", error.localizedDescription)
+      }
+    }
+  }
+
+  /// Leaves the system confirmation visible while Dart validates the command,
+  /// then either dismisses it or replaces it with an actionable CarPlay error.
+  /// AppDelegate bounds the wait so a restoring/locked Flutter engine cannot
+  /// strand the vehicle UI indefinitely.
+  private func performConfirmedAction(
+    dismissing interfaceController: CPInterfaceController,
+    failureMessage: String,
+    action: (@escaping (Bool, String?) -> Void) -> Void
+  ) {
+    action { [weak self, weak interfaceController] success, errorMessage in
+      guard
+        let self,
+        let interfaceController,
+        self.interfaceController === interfaceController
+      else { return }
+      interfaceController.dismissTemplate(animated: true) {
+        [weak self] _, dismissError in
+        if let dismissError {
+          NSLog(
+            "CarPlay action sheet could not be dismissed: %@",
+            dismissError.localizedDescription
+          )
+        }
+        if !success {
+          self?.presentCarPlayError(errorMessage ?? failureMessage)
+        }
       }
     }
   }
@@ -2204,16 +2242,26 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       message: message.isEmpty ? nil : message,
       actions: [
         CPAlertAction(title: "Start ride", style: .default) { [weak self] _ in
-          interfaceController.dismissTemplate(animated: true) { _, error in
-            if let error {
-              NSLog("CarPlay start sheet could not be dismissed: %@", error.localizedDescription)
-            }
-          }
           // Hide the action immediately. Dart will either publish the active
           // ride or re-offer it if revalidation rejects the stale snapshot.
           self?.rideStartPrompt = nil
           self?.updateLeadingNavigationButtons()
-          (UIApplication.shared.delegate as? AppDelegate)?.startPreparedRideFromCarPlay()
+          self?.performConfirmedAction(
+            dismissing: interfaceController,
+            failureMessage: "The ride could not be started. Try again."
+          ) { completion in
+            guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+              completion(false, nil)
+              return
+            }
+            appDelegate.startPreparedRideFromCarPlay { [weak self] success, error in
+              if !success {
+                self?.rideStartPrompt = self?.latestSnapshot?["rideStart"] as? [String: Any]
+                self?.updateLeadingNavigationButtons()
+              }
+              completion(success, error)
+            }
+          }
         },
         CPAlertAction(title: "Cancel", style: .cancel) { _ in
           interfaceController.dismissTemplate(animated: true) { _, error in
@@ -2233,14 +2281,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
   private func presentReportActions() {
     guard sceneLifecycle.rootReady, let interfaceController else { return }
-    let report: (String) -> Void = { type in
-      interfaceController.dismissTemplate(animated: true) { _, error in
-        if let error {
-          NSLog("CarPlay report sheet could not be dismissed: %@", error.localizedDescription)
+    let report: (String) -> Void = { [weak self] type in
+      self?.performConfirmedAction(
+        dismissing: interfaceController,
+        failureMessage: "That report could not be sent. Try again."
+      ) { completion in
+        guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+          completion(false, nil)
+          return
         }
+        appDelegate.reportCarPlayHazard(type: type, completion: completion)
       }
-      (UIApplication.shared.delegate as? AppDelegate)?
-        .reportCarPlayHazard(type: type)
     }
     let sheet = CPActionSheetTemplate(
       title: "Report to group",
@@ -2277,12 +2328,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       titleVariants: ["Send SOS to the group?", "Send SOS?"],
       actions: [
         CPAlertAction(title: "Send SOS", style: .destructive) { _ in
-          interfaceController.dismissTemplate(animated: true) { _, error in
-            if let error {
-              NSLog("CarPlay SOS alert could not be dismissed: %@", error.localizedDescription)
+          self.performConfirmedAction(
+            dismissing: interfaceController,
+            failureMessage: "SOS could not be sent. Try again."
+          ) { completion in
+            guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+              completion(false, nil)
+              return
             }
+            appDelegate.triggerCarPlayEmergency(completion: completion)
           }
-          (UIApplication.shared.delegate as? AppDelegate)?.triggerCarPlayEmergency()
         },
         CPAlertAction(title: "Cancel", style: .cancel) { _ in
           interfaceController.dismissTemplate(animated: true) { _, error in
@@ -2304,15 +2359,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     guard sceneLifecycle.rootReady, let interfaceController else { return }
     let sheet = CPActionSheetTemplate(
       title: "Leave this ride?",
-      message: "Stops sharing this rider's position and returns the phone and CarPlay to the home map.",
+      message: "Stops sharing this rider's position and returns to the home map.",
       actions: [
         CPAlertAction(title: "Leave ride", style: .destructive) { _ in
-          interfaceController.dismissTemplate(animated: true) { _, error in
-            if let error {
-              NSLog("CarPlay leave sheet could not be dismissed: %@", error.localizedDescription)
+          self.performConfirmedAction(
+            dismissing: interfaceController,
+            failureMessage: "The ride could not be left. Try again."
+          ) { completion in
+            guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+              completion(false, nil)
+              return
             }
+            appDelegate.leaveRideFromCarPlay(completion: completion)
           }
-          (UIApplication.shared.delegate as? AppDelegate)?.leaveRideFromCarPlay()
         },
         CPAlertAction(title: "Cancel", style: .cancel) { _ in
           interfaceController.dismissTemplate(animated: true) { _, error in

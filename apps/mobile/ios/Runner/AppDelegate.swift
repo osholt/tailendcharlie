@@ -4,6 +4,26 @@ import NearbyConnections
 import UIKit
 import UserNotifications
 
+/// Resolves a vehicle action exactly once on the main thread. The timeout keeps
+/// a CarPlay confirmation from hanging when Flutter is being restored after a
+/// lock, suspension, or process replacement.
+final class CarPlayCommandCompletion {
+  private var resolved = false
+  private let completion: (Bool, String?) -> Void
+
+  init(_ completion: @escaping (Bool, String?) -> Void) {
+    self.completion = completion
+  }
+
+  func resolve(success: Bool, error: String?) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self, !resolved else { return }
+      resolved = true
+      completion(success, error)
+    }
+  }
+}
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private var nearbyChannel: FlutterMethodChannel?
@@ -38,6 +58,14 @@ import UserNotifications
     let launched = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     UNUserNotificationCenter.current().delegate = self
     return launched
+  }
+
+  override func applicationProtectedDataDidBecomeAvailable(_ application: UIApplication) {
+    super.applicationProtectedDataDidBecomeAvailable(application)
+    // Keep the native cached trip visible while protected data is unavailable,
+    // then ask the restored Dart owner for one authoritative refresh. This does
+    // not create or start a ride and is safe to repeat after every unlock.
+    carPlayChannel?.invokeMethod("requestState", arguments: nil)
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
@@ -361,6 +389,32 @@ import UserNotifications
     pushChannel?.invokeMethod("notificationOpened", arguments: value)
   }
 
+  private func invokeCarPlayCommand(
+    _ method: String,
+    arguments: Any? = nil,
+    unavailableMessage: String,
+    completion: @escaping (Bool, String?) -> Void
+  ) {
+    guard let carPlayChannel else {
+      completion(false, unavailableMessage)
+      return
+    }
+    let command = CarPlayCommandCompletion(completion)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+      command.resolve(success: false, error: unavailableMessage)
+    }
+    carPlayChannel.invokeMethod(method, arguments: arguments) { value in
+      guard let response = value as? [String: Any] else {
+        command.resolve(success: false, error: unavailableMessage)
+        return
+      }
+      command.resolve(
+        success: (response["ok"] as? NSNumber)?.boolValue ?? false,
+        error: response["error"] as? String
+      )
+    }
+  }
+
   /// Called by CarPlaySceneDelegate once the CarPlay navigation scene is
   /// ready. Applies whatever snapshot Dart already published - the CarPlay
   /// scene can connect well after the ride screen's first publish.
@@ -387,35 +441,60 @@ import UserNotifications
     }
   }
 
-  func triggerCarPlayEmergency() {
-    carPlayChannel?.invokeMethod("triggerEmergency", arguments: nil)
+  func triggerCarPlayEmergency(
+    completion: @escaping (Bool, String?) -> Void = { _, _ in }
+  ) {
+    invokeCarPlayCommand(
+      "triggerEmergency",
+      unavailableMessage: "SOS is temporarily unavailable.",
+      completion: completion
+    )
   }
 
   /// The head unit owns the confirmation sheet; Dart owns the actual departure
   /// so journal, relay and restored-state handling remain identical to phone.
-  func leaveRideFromCarPlay() {
-    carPlayChannel?.invokeMethod("leaveRide", arguments: nil)
+  func leaveRideFromCarPlay(
+    completion: @escaping (Bool, String?) -> Void = { _, _ in }
+  ) {
+    invokeCarPlayCommand(
+      "leaveRide",
+      unavailableMessage: "The ride could not be left. Try again.",
+      completion: completion
+    )
   }
 
   /// Requests the final lifecycle transition for a ride already configured on
   /// the phone. Dart revalidates leadership, location readiness and lifecycle
   /// state because the native snapshot may have become stale before the tap.
-  func startPreparedRideFromCarPlay() {
-    carPlayChannel?.invokeMethod("startPreparedRide", arguments: nil)
+  func startPreparedRideFromCarPlay(
+    completion: @escaping (Bool, String?) -> Void = { _, _ in }
+  ) {
+    invokeCarPlayCommand(
+      "startPreparedRide",
+      unavailableMessage: "The ride could not be started. Try again.",
+      completion: completion
+    )
   }
 
   func searchCarPlayDestinations(
     query: String,
     completion: @escaping ([String: Any]) -> Void
   ) {
-    carPlayChannel?.invokeMethod(
+    guard let carPlayChannel else {
+      completion([
+        "results": [],
+        "error": "Destination search is temporarily unavailable.",
+      ])
+      return
+    }
+    carPlayChannel.invokeMethod(
       "searchDestinations",
       arguments: ["query": query]
     ) { value in
       guard let response = value as? [String: Any] else {
         completion([
           "results": [],
-          "error": "Destination search is unavailable. Try again on the iPhone.",
+          "error": "Destination search is temporarily unavailable.",
         ])
         return
       }
@@ -436,9 +515,13 @@ import UserNotifications
       "longitude": longitude,
     ]
     if let groupRide { arguments["groupRide"] = groupRide }
-    carPlayChannel?.invokeMethod("planDestination", arguments: arguments) { value in
+    guard let carPlayChannel else {
+      completion(false, "Route planning is temporarily unavailable.")
+      return
+    }
+    carPlayChannel.invokeMethod("planDestination", arguments: arguments) { value in
       guard let response = value as? [String: Any] else {
-        completion(false, "Route planning is unavailable. Try again on the iPhone.")
+        completion(false, "Route planning is temporarily unavailable.")
         return
       }
       completion(
@@ -520,31 +603,39 @@ import UserNotifications
   /// Ends projected turn-by-turn guidance only. Dart deliberately keeps the
   /// ride session, location recording, and group membership alive.
   func cancelCarPlayNavigation() {
-    carPlayChannel?.invokeMethod("cancelNavigation", arguments: nil)
+    invokeCarPlayCommand(
+      "cancelNavigation",
+      unavailableMessage: "Directions could not be ended. Try again."
+    ) { success, error in
+      if !success {
+        NSLog("CarPlay navigation cancellation failed: %@", error ?? "unknown error")
+      }
+    }
   }
 
   func startFreeRoamFromCarPlay(
     completion: @escaping (Bool, String?) -> Void
   ) {
-    carPlayChannel?.invokeMethod("startFreeRoam", arguments: nil) { value in
-      guard let response = value as? [String: Any] else {
-        completion(false, "Free roam is unavailable. Try again on the iPhone.")
-        return
-      }
-      completion(
-        (response["ok"] as? NSNumber)?.boolValue ?? false,
-        response["error"] as? String
-      )
+    invokeCarPlayCommand(
+      "startFreeRoam",
+      unavailableMessage: "Free roam is temporarily unavailable."
+    ) { success, error in
+      completion(success, error)
     }
   }
 
   /// Reports one of the same first-hand hazards available on the phone map.
   /// Dart validates the value against its rider-reportable allow-list before
   /// adding the rider's location and publishing it to the group.
-  func reportCarPlayHazard(type: String) {
-    carPlayChannel?.invokeMethod(
+  func reportCarPlayHazard(
+    type: String,
+    completion: @escaping (Bool, String?) -> Void = { _, _ in }
+  ) {
+    invokeCarPlayCommand(
       "reportHazard",
-      arguments: ["type": type]
+      arguments: ["type": type],
+      unavailableMessage: "That report could not be sent. Try again.",
+      completion: completion
     )
   }
 
@@ -552,10 +643,16 @@ import UserNotifications
   /// Dart owns whether the answer is admissible - the reducer accepts one only
   /// from the rider the request named, and rejects an expired or superseded
   /// request - so this passes the id through untouched rather than deciding.
-  func answerCarPlayTecRoleRequest(requestID: String, accepted: Bool) {
-    carPlayChannel?.invokeMethod(
+  func answerCarPlayTecRoleRequest(
+    requestID: String,
+    accepted: Bool,
+    completion: @escaping (Bool, String?) -> Void = { _, _ in }
+  ) {
+    invokeCarPlayCommand(
       "answerTecRoleRequest",
-      arguments: ["requestId": requestID, "accepted": accepted]
+      arguments: ["requestId": requestID, "accepted": accepted],
+      unavailableMessage: "That request could not be answered. Try again.",
+      completion: completion
     )
   }
 

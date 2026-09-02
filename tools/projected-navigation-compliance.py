@@ -245,8 +245,39 @@ def structural_checks(failures: list[str]) -> None:
             "case 'commitDestinationPreview':",
             "case 'cancelDestinationPreview':",
             "case 'cancelNavigation':",
+            "_completeAction(",
         ],
     )
+    require_text(
+        failures,
+        "apps/mobile/ios/Runner/AppDelegate.swift",
+        [
+            "CarPlayCommandCompletion",
+            "deadline: .now() + 8",
+            "applicationProtectedDataDidBecomeAvailable",
+            'invokeMethod("requestState"',
+        ],
+    )
+    projected_sources = "\n".join(
+        read(path)
+        for path in (
+            "apps/mobile/lib/services/carplay_bridge.dart",
+            "apps/mobile/lib/features/home/home_screen.dart",
+            "apps/mobile/lib/features/ride/active_ride_shell.dart",
+            "apps/mobile/ios/Runner/AppDelegate.swift",
+            "apps/mobile/ios/Runner/CarPlaySceneDelegate.swift",
+            "apps/mobile/ios/Runner/CarPlayStatusTemplate.swift",
+        )
+    )
+    for forbidden in (
+        "Finish setup on iPhone",
+        "Try again on the iPhone",
+        "Show your location on the iPhone",
+        "Allow location access on the iPhone",
+        "Open Tail End Charlie on the iPhone",
+    ):
+        if forbidden in projected_sources:
+            failures.append(f"CarPlay flow contains phone-directed text: {forbidden!r}")
     require_text(
         failures,
         "apps/mobile/ios/RunnerTests/RunnerTests.swift",
@@ -261,6 +292,7 @@ def structural_checks(failures: list[str]) -> None:
             "testCarPlayVehicleCancellationSuppressesSameRouteReplay",
             "testCarPlayDrivingRestrictionsHideOnlyUnsafeDetail",
             "testCarPlayBaseViewContainsOnlyTheMap",
+            "testCarPlayCommandCompletionResolvesExactlyOnce",
         ],
     )
     require_text(

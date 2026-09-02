@@ -89,11 +89,11 @@ A checked box means the item currently passes. A box stays unchecked for
 
 | Done | ID | Requirement | Status | Tail End Charlie evidence / action |
 |---|---|---|---|---|
-| [ ] | CP-SAFE-01 | Never tell a driver to pick up, unlock, or manipulate the iPhone. | FAIL | `CarPlayStatusTemplate` says `Finish setup on iPhone`, and the shared unavailable reason says to allow location access on the iPhone. Fix is tracked by #688. |
-| [ ] | CP-SAFE-02 | Every flow exposed in CarPlay completes in CarPlay; setup that requires the phone happens before driving. | PARTIAL | Search and free roam can start from CarPlay, but prepared/group flows and first-time permission can lead into phone-dependent states. Define which setup is strictly pre-drive and hide unavailable in-drive actions. |
+| [x] | CP-SAFE-01 | Never tell a driver to pick up, unlock, or manipulate the iPhone. | PASS | Projected status, action errors, route planning, prepared-ride and free-roam paths use neutral in-car outcomes; structural tests reject the former iPhone-directed strings. |
+| [x] | CP-SAFE-02 | Every flow exposed in CarPlay completes in CarPlay; setup that requires the phone happens before driving. | PASS | Account/profile, first-time permission, downloads and group creation remain pre-drive; Search/Free roam/Start are hidden until ready, while every exposed command returns an acknowledged CarPlay success or system-template error. |
 | [x] | CP-SAFE-03 | Keep CarPlay content focused on navigation and tasks that materially help the drive. | PASS | Route guidance, group status, hazards, ride leave, and SOS are driving-related. Keep account management, detailed settings, and route editing off CarPlay. |
 | [x] | CP-SAFE-04 | Report actionable errors on CarPlay using a system template. | PASS | `presentCarPlayError` uses `CPAlertTemplate`; remove any phone-manipulation wording from its inputs. |
-| [ ] | CP-SAFE-05 | Work without unlocking the iPhone and while protected data is unavailable. | UNVERIFIED | Validate cold connect, reconnect, cached map, route state, and group state with the phone locked before and during the ride. |
+| [ ] | CP-SAFE-05 | Work without unlocking the iPhone and while protected data is unavailable. | PARTIAL | Native retains the latest map/trip projection while protected data is unavailable, bounds every command wait, and requests one idempotent state refresh when data becomes available. Locked-device/head-unit evidence remains #698. |
 
 ## 6. Voice prompts and audio coexistence
 
@@ -141,7 +141,7 @@ tickets below.
 | CP-UI-05–06 | [#695](https://github.com/osholt/tailendcharlie/issues/695) | Multi-display evidence in #698. |
 | CP-NAV-02 | [#691](https://github.com/osholt/tailendcharlie/issues/691) | Existing destination work in #367. |
 | CP-NAV-03–10 | [#692](https://github.com/osholt/tailendcharlie/issues/692) | Physical/locked-phone evidence in #698; cluster issues #447/#449. |
-| CP-SAFE-01 | [#688](https://github.com/osholt/tailendcharlie/issues/688) | Platform-specific wording. |
+| CP-SAFE-01 | [#694](https://github.com/osholt/tailendcharlie/issues/694), [#688](https://github.com/osholt/tailendcharlie/issues/688) | CarPlay phone independence in #694; Android platform wording in #688. |
 | CP-SAFE-02, CP-SAFE-05 | [#694](https://github.com/osholt/tailendcharlie/issues/694) | Locked-phone evidence in #698; prepared rides #328/#441. |
 | CP-AUDIO-01–05 | [#450](https://github.com/osholt/tailendcharlie/issues/450) | Expanded compliance acceptance criteria; physical audio evidence in #698. |
 | CP-MAP-01–04 | [#695](https://github.com/osholt/tailendcharlie/issues/695) | France/UK/offline evidence in #698; map context #295/#321/#451. |
