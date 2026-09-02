@@ -142,6 +142,45 @@ class AndroidAutoNavigationCoordinatorTest {
         assertTrue(manager.activeNotifications.isEmpty())
     }
 
+    @Test
+    fun `auto drive is enabled once and receives the active projection`() {
+        val host = FakeHost()
+        val notification = FakeNotification()
+        val testDrive = FakeTestDrive()
+        val events = mutableListOf<ProjectedRideChannel.NavigationHostEvent>()
+        val coordinator = AndroidAutoNavigationCoordinator(
+            host = host,
+            notification = notification,
+            testDrive = testDrive,
+        ) { event, _, _ -> events += event }
+        val navigating = projection()
+        coordinator.accept(navigating)
+
+        coordinator.hostEnabledAutoDrive()
+        coordinator.hostEnabledAutoDrive()
+        coordinator.accept(navigating.copy(sequence = 2))
+
+        assertTrue(testDrive.enabled)
+        assertEquals(3, testDrive.projections.size)
+        assertEquals(1, events.count { it == ProjectedRideChannel.NavigationHostEvent.AUTO_DRIVE_ENABLED })
+        assertEquals(1, host.trips.size)
+    }
+
+    @Test
+    fun `deterministic auto drive advances turns without creating location samples`() {
+        val projection = projection()
+
+        val beforeTurn = AndroidAutoDeterministicTestDrive.simulate(projection, 10.0)
+        val afterTurn = AndroidAutoDeterministicTestDrive.simulate(projection, 30.0)
+
+        assertEquals(250.0, beforeTurn.currentManeuver!!.distanceMeters!!, 0.0)
+        assertEquals(13_550.0, beforeTurn.journey!!.remainingDistanceMeters!!, 0.0)
+        assertEquals("turn-2", afterTurn.currentManeuver!!.id)
+        assertEquals(70.0, afterTurn.currentManeuver!!.distanceMeters!!, 0.0)
+        assertEquals(null, afterTurn.followingManeuver)
+        assertEquals(projection.progress, afterTurn.progress)
+    }
+
     private class FakeHost : AndroidAutoNavigationHost {
         var started = 0
         var ended = 0
@@ -175,6 +214,25 @@ class AndroidAutoNavigationCoordinatorTest {
 
         override fun cancel() {
             cancelled += 1
+        }
+    }
+
+    private class FakeTestDrive : AndroidAutoNavigationTestDrive {
+        override var enabled = false
+        val projections = mutableListOf<AndroidAutoNavigationProjectionV2>()
+
+        override fun enable() {
+            enabled = true
+        }
+
+        override fun accept(projection: AndroidAutoNavigationProjectionV2) {
+            projections += projection
+        }
+
+        override fun clearRoute() = Unit
+
+        override fun close() {
+            enabled = false
         }
     }
 

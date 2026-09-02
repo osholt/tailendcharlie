@@ -4,6 +4,7 @@ import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidAutoDiscoveryContractTest {
@@ -57,6 +58,32 @@ class AndroidAutoDiscoveryContractTest {
 
         assertEquals(1, uses.length)
         assertEquals("template", uses.item(0).attributes.getNamedItem("name").nodeValue)
+    }
+
+    @Test
+    fun manifestPublishesTheAssistantNavigationContract() {
+        val manifest = parseXml(File("src/main/AndroidManifest.xml"))
+        val androidNamespace = "http://schemas.android.com/apk/res/android"
+        val filters = manifest.getElementsByTagName("intent-filter")
+        val matchingFilter = (0 until filters.length)
+            .map { filters.item(it) }
+            .firstOrNull { filter ->
+                val actions = filter.childNodes
+                (0 until actions.length).map { actions.item(it) }.any { child ->
+                    child.nodeName == "action" &&
+                        child.attributes?.getNamedItemNS(androidNamespace, "name")?.nodeValue ==
+                        "androidx.car.app.action.NAVIGATE"
+                }
+            }
+
+        assertNotNull("Gemini/Assistant navigation action is missing", matchingFilter)
+        val schemes = matchingFilter!!.childNodes
+        assertTrue(
+            (0 until schemes.length).map { schemes.item(it) }.any { child ->
+                child.nodeName == "data" &&
+                    child.attributes?.getNamedItemNS(androidNamespace, "scheme")?.nodeValue == "geo"
+            },
+        )
     }
 
     private fun parseXml(file: File) =

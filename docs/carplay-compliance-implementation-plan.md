@@ -443,7 +443,7 @@ outside this Android Auto plan.
 | VI-1 safe phone handoff | FAIL | Platform-safe parked wording #688. |
 | AC-1 five screens or fewer | PASS | Current navigation, search and group hierarchy is within the limit. |
 | ST-1 no auto-scrolling text | PASS | Preserve host-owned static text behavior. |
-| VC-1 Gemini/Assistant commands | FAIL | Navigation intent support #685. |
+| VC-1 Gemini/Assistant commands | PARTIAL | #685 implements the public `ACTION_NAVIGATE`/`geo` contract in both Session entry points; validate spoken requests in #703. |
 | DR-1–DR-3 response/launch/content latency | UNVERIFIED | Instrument and validate two-/ten-second limits in #703. |
 | VD-1 contrast | UNVERIFIED | Road basemap/palettes #701 and evidence #703. |
 | TH-1 custom component theming | NOT APPLICABLE | Current Car App Library is 1.7.0 and no custom host-component theme is applied; reassess before a 1.9+ upgrade. |
@@ -455,8 +455,8 @@ outside this Android Auto plan.
 | NF-3 notifications | PARTIAL | #684 publishes an ongoing `CATEGORY_NAVIGATION` notification with `CarAppExtender`; validate in #703. |
 | NF-4 cluster next-turn metadata | PARTIAL | #684 publishes current/following steps and destination estimates through `NavigationManager.updateTrip()`; validate in #703. |
 | NF-5 navigation ownership | PARTIAL | #684 ends trip metadata and notifications on host pre-emption without ending the ride; audio shutdown remains #702 and hardware validation #703. |
-| NF-6 external navigation requests | FAIL | Intent handling #685. |
-| NF-7 simulated test drive | FAIL | `onAutoDriveEnabled` support #685. |
+| NF-6 external navigation requests | PARTIAL | #685 parses bounded query/coordinate navigation intents and presents them for in-car confirmation; validate in #703. |
+| NF-7 simulated test drive | PARTIAL | #685 implements `onAutoDriveEnabled` with deterministic host-only trip progress that cannot enter GPS, recording or heat-map data; validate in #703. |
 | MR-1 host day/night map mode | FAIL | Host configuration handling #689. |
 | NF-9 cluster map | OPTIONAL TIER 1 | Separate post-baseline ticket #704. |
 
@@ -542,6 +542,12 @@ in #703.
 Impact: Android Auto can be opened directly with a destination. The ordinary
 phone deep-link planner remains unchanged, while intent parsing becomes shared,
 tested domain input rather than car-service string handling.
+
+Implemented in #685: `ACTION_NAVIGATE` requests using the documented `geo` contract are
+parsed on initial and subsequent Session intents, exact coordinates or bounded search results
+are shown for explicit selection, and the existing phone planner receives the confirmed place.
+The review-only auto-drive callback advances deterministic trip metadata at 15 m/s and never
+creates a location fix or journal event. Voice/DHU/physical evidence remains in #703.
 
 ### A4. Publish accurate manoeuvres and estimates — #687
 

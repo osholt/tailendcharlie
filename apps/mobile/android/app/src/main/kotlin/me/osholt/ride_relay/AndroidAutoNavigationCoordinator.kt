@@ -50,6 +50,7 @@ internal interface AndroidAutoNavigationNotification {
 internal class AndroidAutoNavigationCoordinator(
     private val host: AndroidAutoNavigationHost,
     private val notification: AndroidAutoNavigationNotification,
+    private val testDrive: AndroidAutoNavigationTestDrive = DisabledAndroidAutoTestDrive,
     private val sendHostEvent: (
         ProjectedRideChannel.NavigationHostEvent,
         AndroidAutoNavigationProjectionV2,
@@ -64,6 +65,7 @@ internal class AndroidAutoNavigationCoordinator(
 
     private var active: ActiveNavigation? = null
     private var hostRejectedSessionId: String? = null
+    private var autoDriveEventSessionId: String? = null
     private var closed = false
 
     @Synchronized
@@ -93,8 +95,13 @@ internal class AndroidAutoNavigationCoordinator(
             active = current.copy(projection = projection)
         }
 
-        host.updateTrip(projection)
-        notification.publish(projection)
+        if (testDrive.enabled) {
+            publishAutoDriveEvent(projection)
+            testDrive.accept(projection)
+        } else {
+            host.updateTrip(projection)
+            notification.publish(projection)
+        }
     }
 
     /** Called only by [NavigationManagerCallback.onStopNavigation]. */
@@ -106,6 +113,7 @@ internal class AndroidAutoNavigationCoordinator(
         // event, cannot produce a duplicate navigationEnded call.
         active = null
         hostRejectedSessionId = stopped.sessionId
+        testDrive.clearRoute()
         host.navigationEnded()
         notification.cancel()
         sendHostEvent(
@@ -116,18 +124,41 @@ internal class AndroidAutoNavigationCoordinator(
     }
 
     @Synchronized
+    fun hostEnabledAutoDrive() {
+        if (closed) return
+        testDrive.enable()
+        active?.projection?.let { projection ->
+            publishAutoDriveEvent(projection)
+            testDrive.accept(projection)
+        }
+    }
+
+    @Synchronized
     fun close() {
         if (closed) return
         endActiveNavigation()
         closed = true
+        testDrive.close()
         host.close()
     }
 
     private fun endActiveNavigation() {
         if (active == null) return
         active = null
+        testDrive.clearRoute()
         host.navigationEnded()
         notification.cancel()
+    }
+
+    private fun publishAutoDriveEvent(projection: AndroidAutoNavigationProjectionV2) {
+        val sessionId = projection.route?.navigationSessionId ?: return
+        if (sessionId == autoDriveEventSessionId) return
+        autoDriveEventSessionId = sessionId
+        sendHostEvent(
+            ProjectedRideChannel.NavigationHostEvent.AUTO_DRIVE_ENABLED,
+            projection,
+            "Android Auto test drive",
+        )
     }
 }
 
@@ -135,6 +166,7 @@ internal class AndroidAutoNavigationCoordinator(
 internal class AndroidAutoNavigationManagerHost(
     carContext: CarContext,
     onStopNavigation: () -> Unit,
+    onAutoDriveEnabled: () -> Unit,
     private val now: () -> Long = System::currentTimeMillis,
 ) : AndroidAutoNavigationHost {
     private val navigationManager = carContext.getCarService(NavigationManager::class.java)
@@ -144,6 +176,8 @@ internal class AndroidAutoNavigationManagerHost(
             ContextCompat.getMainExecutor(carContext),
             object : NavigationManagerCallback {
                 override fun onStopNavigation() = onStopNavigation()
+
+                override fun onAutoDriveEnabled() = onAutoDriveEnabled()
             },
         )
     }

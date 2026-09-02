@@ -75,7 +75,10 @@ steps and destination estimates for the cluster/HUD, and maintains one ongoing
 ends that projected guidance without ending the ride, its recording, or group
 membership. The `NavigationTemplate` and map continue to consume the same
 bounded, journal-derived snapshot; no rider positions are persisted by the car
-integration.
+integration. Public Gemini and Google Assistant `ACTION_NAVIGATE` requests open
+an in-car destination result for confirmation on both cold and warm sessions.
+The Android Auto review harness can enable deterministic host-only trip motion;
+that simulation never creates GPS, journal, recording or heat-map data.
 
 Debug builds accept the Desktop Head Unit host for development. Release builds
 use the Car App Library's documented host allow-list and privileged template
@@ -90,9 +93,12 @@ renderer permission instead of trusting arbitrary callers.
   the smaller camera viewport follows the phone's 400 ms cadence.
 - Android Auto uses host-rendered templates rather than custom touch targets or
   a mirrored phone UI.
+- Assistant destinations are confirmed through the bounded destination screen;
+  route planning is not started merely because an intent arrived.
 - Unit tests cover bounded snapshot parsing, balanced navigation ownership,
   stale host-pre-emption replay, trip/cluster metadata, notification shape and
-  in-process reconnect updates.
+  intent parsing, deterministic test-drive progress and in-process reconnect
+  updates.
 - Flutter analysis/tests, Android native unit tests, and a debug APK build cover
   compilation and phone-side state publication.
 - Real-host or official Desktop Head Unit checks for disconnect/reconnect,
