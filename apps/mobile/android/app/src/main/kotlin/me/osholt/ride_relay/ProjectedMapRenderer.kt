@@ -3,6 +3,8 @@ package me.osholt.ride_relay
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
 
 /**
  * Draws the ride onto whatever surface the head unit hands over.
@@ -12,20 +14,17 @@ import android.graphics.Path
  * CarPlay hands an app a `UIWindow`, so the phone's MapLibre view can simply be
  * put in it. Android Auto hands over a bare `Surface` and expects the app to
  * render onto it, so there is no equivalent of "show the map view over there".
- * What is drawn here is the ride — the route, the ridden/remaining split, the
- * group, the rider — on a plain ground rather than on basemap tiles.
- *
- * That is deliberate for a first pass, and it is the honest half of the parity
- * gap with CarPlay: no roads, no place names. It is also the half that carries
- * the information this app exists for, and unlike a GL basemap it is
- * deterministic, testable without a car, and cannot fail to a black screen at
- * 60mph. Tiles are tracked separately.
+ * MapLibre renders roads and labels asynchronously into a bitmap, while this
+ * deterministic Canvas pass draws route/rider state on top. If style or tile
+ * loading fails the plain safety palette remains, so guidance can never become
+ * a blank or black screen at speed.
  */
 internal class ProjectedMapRenderer {
     private val ridden = strokePaint(0xFF56606C.toInt(), 10f)
     private val remaining = strokePaint(0xFFFF7A1A.toInt(), 10f)
     private val routeOutline = strokePaint(ProjectedMapPalette.night.routeOutlineArgb, 16f)
     private val marker = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val basemapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     /**
      * @param widthPx/[heightPx] the surface size, which differs per head unit.
@@ -39,13 +38,18 @@ internal class ProjectedMapRenderer {
         visibleArea: ProjectedMapBounds? = null,
         stableArea: ProjectedMapBounds? = null,
         hostDarkMode: Boolean,
+        basemapFrame: ProjectedBasemapFrame? = null,
+        resolvedCamera: ProjectedMapCamera? = null,
     ): Boolean {
         val palette = ProjectedMapPalette.forHost(hostDarkMode)
         routeOutline.color = palette.routeOutlineArgb
         canvas.drawColor(palette.groundArgb)
         if (snapshot == null) return false
         val viewport = ProjectedMapBounds.resolve(widthPx, heightPx, visibleArea, stableArea)
-        val camera = camera(snapshot, viewport) ?: return false
+        val camera = resolvedCamera ?: camera(snapshot, viewport) ?: return false
+        basemapFrame?.takeIf { it.dark == hostDarkMode }?.let {
+            drawBasemap(canvas, camera, it)
+        }
         // Ridden first, so the part still to come is drawn over the part behind
         // where they meet.
         drawPath(canvas, camera, snapshot.riddenPoints, ridden)
@@ -77,7 +81,7 @@ internal class ProjectedMapRenderer {
         return true
     }
 
-    private fun camera(
+    internal fun camera(
         snapshot: ProjectedRideSnapshot,
         viewport: ProjectedMapBounds?,
     ): ProjectedMapCamera? {
@@ -100,6 +104,35 @@ internal class ProjectedMapRenderer {
             local?.let(::add)
         }
         return ProjectedMapCamera.fitting(framed, viewport, FIT_PADDING_PX)
+    }
+
+    private fun drawBasemap(
+        canvas: Canvas,
+        camera: ProjectedMapCamera,
+        frame: ProjectedBasemapFrame,
+    ) {
+        val northWest = ProjectedPoint(frame.region.north, frame.region.west)
+        val southEast = ProjectedPoint(frame.region.south, frame.region.east)
+        val destination = RectF(
+            camera.x(northWest),
+            camera.y(northWest),
+            camera.x(southEast),
+            camera.y(southEast),
+        )
+        canvas.save()
+        canvas.clipRect(
+            camera.viewport.left,
+            camera.viewport.top,
+            camera.viewport.right,
+            camera.viewport.bottom,
+        )
+        canvas.drawBitmap(
+            frame.bitmap,
+            Rect(0, 0, frame.bitmap.width, frame.bitmap.height),
+            destination,
+            basemapPaint,
+        )
+        canvas.restore()
     }
 
     private fun drawPath(

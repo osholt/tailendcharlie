@@ -66,6 +66,40 @@ internal data class ProjectedRideStart(
     val unavailableReason: String?,
 )
 
+internal data class ProjectedBasemap(
+    val lightStyleUrl: String,
+    val darkStyleUrl: String,
+    val selectedStyleUrl: String?,
+    val selectedDark: Boolean,
+    val selectedStyleJson: String?,
+) {
+    fun styleUrl(hostDarkMode: Boolean): String =
+        if (hostDarkMode) darkStyleUrl else lightStyleUrl
+
+    fun styleJson(hostDarkMode: Boolean): String? =
+        selectedStyleJson?.takeIf { selectedDark == hostDarkMode }
+
+    companion object {
+        private const val MAX_STYLE_JSON_CHARS = 1_500_000
+
+        fun from(raw: Map<*, *>?): ProjectedBasemap? {
+            if (raw == null) return null
+            val light = raw.secureUrl("styleUrl") ?: return null
+            val dark = raw.secureUrl("darkStyleUrl") ?: light
+            val selected = raw.secureUrl("selectedStyleUrl")
+            val styleJson = (raw["styleJson"] as? String)
+                ?.takeIf { it.length in 2..MAX_STYLE_JSON_CHARS }
+            return ProjectedBasemap(
+                lightStyleUrl = light,
+                darkStyleUrl = dark,
+                selectedStyleUrl = selected,
+                selectedDark = raw["dark"] == true,
+                selectedStyleJson = styleJson,
+            )
+        }
+    }
+}
+
 internal data class ProjectedRideSnapshot(
     val routeName: String?,
     val rideState: String,
@@ -90,6 +124,7 @@ internal data class ProjectedRideSnapshot(
     val followRider: Boolean,
     val metric: Boolean,
     val darkMap: Boolean,
+    val basemap: ProjectedBasemap?,
     /**
      * What the phone is showing: `home`, `preRide`, `activeRide`, `endedRide`.
      *
@@ -144,6 +179,7 @@ internal data class ProjectedRideSnapshot(
                 // has not chosen sees kilometres rather than a wrong unit.
                 metric = raw.boundedString("distanceUnit") != "miles",
                 darkMap = (raw["basemap"] as? Map<*, *>)?.get("dark") == true,
+                basemap = ProjectedBasemap.from(raw["basemap"] as? Map<*, *>),
                 surfaceMode = raw.boundedString("surfaceMode"),
                 canPlanRoute = raw["canPlanRoute"] == true,
                 canFreeRoam = raw["canFreeRoam"] == true,
@@ -249,6 +285,12 @@ private fun Map<*, *>.string(key: String, fallback: String): String =
 
 private fun Map<*, *>.boundedString(key: String): String? =
     (this[key] as? String)?.trim()?.take(120)?.takeIf(String::isNotEmpty)
+
+private fun Map<*, *>.secureUrl(key: String): String? {
+    val value = (this[key] as? String)?.trim()?.take(2_048) ?: return null
+    val uri = runCatching { java.net.URI(value) }.getOrNull() ?: return null
+    return value.takeIf { uri.scheme == "https" && !uri.host.isNullOrBlank() }
+}
 
 internal object AndroidAutoSnapshotStore {
     fun interface Listener {

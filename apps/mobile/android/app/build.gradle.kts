@@ -144,6 +144,10 @@ dependencies {
     implementation("androidx.car.app:app:1.7.0")
     implementation("androidx.car.app:app-projected:1.7.0")
     implementation("androidx.core:core:1.13.0")
+    // The Flutter map plugin already packages this exact MapLibre runtime. An
+    // explicit app dependency makes its off-screen snapshotter available to the
+    // Android Auto Surface while Gradle still resolves one shared SDK/cache.
+    implementation("org.maplibre.gl:android-sdk-opengl:13.3.0")
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
     implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
     implementation("com.google.firebase:firebase-messaging")
