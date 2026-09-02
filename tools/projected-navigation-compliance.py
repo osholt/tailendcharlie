@@ -496,6 +496,30 @@ def structural_checks(failures: list[str]) -> None:
             "step cue road and icon come from one typed manoeuvre",
         ],
     )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/AndroidAutoNavigationScreen.kt",
+        [
+            "override fun onVisibleAreaChanged(visibleArea: Rect)",
+            "override fun onStableAreaChanged(stableArea: Rect)",
+            "visibleArea = visibleArea",
+            "stableArea = stableArea",
+        ],
+    )
+    renderer = read(
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/ProjectedMapRenderer.kt"
+    )
+    if "drawText(" in renderer:
+        failures.append("Android Auto navigation surface still draws non-map text")
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/ProjectedMapRendererTest.kt",
+        [
+            "nothing to draw remains a map-only surface",
+            "route pixels remain inside obstructed stable area",
+            "800 to 480, 1280 to 720, 1920 to 720",
+        ],
+    )
 
 
 def write_summary(

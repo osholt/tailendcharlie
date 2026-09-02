@@ -42,6 +42,8 @@ internal class AndroidAutoNavigationScreen(
 ) : Screen(carContext) {
 
     private var surface: SurfaceContainer? = null
+    private var visibleArea: ProjectedMapBounds? = null
+    private var stableArea: ProjectedMapBounds? = null
 
     private val snapshotListener = AndroidAutoSnapshotStore.Listener {
         // Both, and for different reasons: the card is host-drawn and only
@@ -54,17 +56,24 @@ internal class AndroidAutoNavigationScreen(
     private val surfaceCallback = object : SurfaceCallback {
         override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
             surface = surfaceContainer
+            visibleArea = null
+            stableArea = null
             drawMap()
         }
 
         override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
             surface = null
+            visibleArea = null
+            stableArea = null
         }
 
         override fun onVisibleAreaChanged(visibleArea: Rect) {
-            // The host has moved its own controls over the surface. Redraw at
-            // the new size; insetting the drawing to the safe rectangle needs a
-            // head unit to judge and is not guessed at here.
+            this@AndroidAutoNavigationScreen.visibleArea = visibleArea.toProjectedBounds()
+            drawMap()
+        }
+
+        override fun onStableAreaChanged(stableArea: Rect) {
+            this@AndroidAutoNavigationScreen.stableArea = stableArea.toProjectedBounds()
             drawMap()
         }
     }
@@ -257,11 +266,20 @@ internal class AndroidAutoNavigationScreen(
                 snapshot = AndroidAutoSnapshotStore.latest?.takeIf { it.isFresh(now()) },
                 widthPx = container.width.toFloat(),
                 heightPx = container.height.toFloat(),
+                visibleArea = visibleArea,
+                stableArea = stableArea,
             )
         } finally {
             container.surface?.unlockCanvasAndPost(canvas)
         }
     }
+
+    private fun Rect.toProjectedBounds() = ProjectedMapBounds(
+        left = left.toFloat(),
+        top = top.toFloat(),
+        right = right.toFloat(),
+        bottom = bottom.toFloat(),
+    )
 }
 
 /**

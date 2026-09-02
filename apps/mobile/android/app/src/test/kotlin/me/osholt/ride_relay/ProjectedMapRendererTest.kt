@@ -59,14 +59,44 @@ class ProjectedMapRendererTest {
     }
 
     @Test
-    fun `nothing to draw is said rather than left blank`() {
+    fun `nothing to draw remains a map-only surface`() {
         val bitmap = Bitmap.createBitmap(800, 480, Bitmap.Config.ARGB_8888)
 
         assertFalse(renderer.draw(Canvas(bitmap), null, 800f, 480f))
-        // A ride with no geometry at all: still nothing to frame, and the rider
-        // is told rather than shown an empty map.
+        assertUniform(bitmap)
+        // Loading and ride state belong to host templates, never map pixels.
         val bare = ProjectedRideSnapshot.from(mapOf("rideState" to "Waiting to start"))
         assertFalse(renderer.draw(Canvas(bitmap), bare, 800f, 480f))
+        assertUniform(bitmap)
+    }
+
+    @Test
+    fun `route pixels remain inside obstructed stable area`() {
+        val sizes = listOf(800 to 480, 1280 to 720, 1920 to 720)
+        for ((width, height) in sizes) {
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val stable = ProjectedMapBounds(
+                left = width * 0.28f,
+                top = height * 0.12f,
+                right = width * 0.96f,
+                bottom = height * 0.92f,
+            )
+            val snapshot = ProjectedRideSnapshot.from(ride(followRider = false))
+
+            assertTrue(
+                renderer.draw(
+                    canvas = Canvas(bitmap),
+                    snapshot = snapshot,
+                    widthPx = width.toFloat(),
+                    heightPx = height.toFloat(),
+                    visibleArea = ProjectedMapBounds(0f, 0f, width.toFloat(), height.toFloat()),
+                    stableArea = stable,
+                ),
+            )
+
+            assertBackgroundOutside(bitmap, stable)
+            assertNotEquals(bitmap.getPixel(1, 1), centreOfMass(bitmap, stable))
+        }
     }
 
     @Test
@@ -136,12 +166,20 @@ class ProjectedMapRendererTest {
     }
 
     /** The most-used colour away from the edges, as a crude "something is here". */
-    private fun centreOfMass(bitmap: Bitmap): Int {
+    private fun centreOfMass(
+        bitmap: Bitmap,
+        bounds: ProjectedMapBounds = ProjectedMapBounds(
+            0f,
+            0f,
+            bitmap.width.toFloat(),
+            bitmap.height.toFloat(),
+        ),
+    ): Int {
         val counts = mutableMapOf<Int, Int>()
-        var x = bitmap.width / 8
-        while (x < bitmap.width * 7 / 8) {
-            var y = bitmap.height / 8
-            while (y < bitmap.height * 7 / 8) {
+        var x = bounds.left.toInt().coerceAtLeast(0)
+        while (x < bounds.right.toInt().coerceAtMost(bitmap.width)) {
+            var y = bounds.top.toInt().coerceAtLeast(0)
+            while (y < bounds.bottom.toInt().coerceAtMost(bitmap.height)) {
                 val pixel = bitmap.getPixel(x, y)
                 if (pixel != bitmap.getPixel(1, 1)) counts[pixel] = (counts[pixel] ?: 0) + 1
                 y += 2
@@ -149,6 +187,28 @@ class ProjectedMapRendererTest {
             x += 2
         }
         return counts.maxByOrNull { it.value }?.key ?: bitmap.getPixel(1, 1)
+    }
+
+    private fun assertUniform(bitmap: Bitmap) {
+        val expected = bitmap.getPixel(0, 0)
+        for (x in 0 until bitmap.width step 16) {
+            for (y in 0 until bitmap.height step 16) {
+                assertEquals("non-map pixel at $x,$y", expected, bitmap.getPixel(x, y))
+            }
+        }
+    }
+
+    private fun assertBackgroundOutside(bitmap: Bitmap, bounds: ProjectedMapBounds) {
+        val expected = bitmap.getPixel(0, 0)
+        for (x in 0 until bitmap.width step 4) {
+            for (y in 0 until bitmap.height step 4) {
+                val inside = x >= bounds.left && x <= bounds.right &&
+                    y >= bounds.top && y <= bounds.bottom
+                if (!inside) {
+                    assertEquals("content escaped safe area at $x,$y", expected, bitmap.getPixel(x, y))
+                }
+            }
+        }
     }
 
     private fun states(): List<Pair<String, ProjectedRideSnapshot?>> = listOf(

@@ -40,6 +40,54 @@ class ProjectedMapCameraTest {
     }
 
     @Test
+    fun `host safe areas frame content with margin on every supported shape`() {
+        val cases = listOf(
+            "compact" to ProjectedMapBounds(188f, 72f, 760f, 456f),
+            "standard" to ProjectedMapBounds(240f, 80f, 1200f, 640f),
+            "ultrawide" to ProjectedMapBounds(420f, 56f, 1880f, 664f),
+        )
+
+        for ((label, viewport) in cases) {
+            val camera = ProjectedMapCamera.fitting(
+                points = listOf(bristol, bath),
+                viewport = viewport,
+                paddingPx = 40f,
+            )!!
+            for (point in listOf(bristol, bath)) {
+                val x = camera.x(point)
+                val y = camera.y(point)
+                assertTrue("$label x=$x", x in viewport.left + 39f..viewport.right - 39f)
+                assertTrue("$label y=$y", y in viewport.top + 39f..viewport.bottom - 39f)
+            }
+        }
+    }
+
+    @Test
+    fun `following places the local rider inside the obstructed safe area`() {
+        val viewport = ProjectedMapBounds(260f, 64f, 800f, 440f)
+        val camera = ProjectedMapCamera.following(
+            rider = bristol,
+            viewport = viewport,
+            metresAcross = 900.0,
+        )!!
+
+        assertEquals((viewport.left + viewport.right) / 2f, camera.x(bristol), 1f)
+        assertTrue(camera.y(bristol) in viewport.top..viewport.bottom)
+    }
+
+    @Test
+    fun `visible and stable areas are intersected and clamped to the surface`() {
+        val resolved = ProjectedMapBounds.resolve(
+            widthPx = 800f,
+            heightPx = 480f,
+            visible = ProjectedMapBounds(-20f, 40f, 780f, 500f),
+            stable = ProjectedMapBounds(180f, 0f, 820f, 440f),
+        )
+
+        assertEquals(ProjectedMapBounds(180f, 40f, 780f, 440f), resolved)
+    }
+
+    @Test
     fun `fitting centres what it frames`() {
         val camera = ProjectedMapCamera.fitting(
             points = listOf(bristol, bath),
