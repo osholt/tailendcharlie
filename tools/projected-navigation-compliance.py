@@ -537,6 +537,35 @@ def structural_checks(failures: list[str]) -> None:
             "ProjectedMapPalette.forHost(hostDarkMode)",
         ],
     )
+    require_text(
+        failures,
+        "apps/mobile/lib/services/carplay_bridge.dart",
+        [
+            "enum ProjectedHostPlatform { carPlay, androidAuto }",
+            "projectedLocationUnavailableReason(ProjectedHostPlatform platform)",
+            "When safely parked, check Location access",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/RideRelayEngine.kt",
+        [
+            "That did not work. When safely parked",
+            "When safely parked, open Tail End Charlie on your phone.",
+            "When safely parked, update Tail End Charlie on your phone.",
+            "onDone(okError(reply))",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/test/services/carplay_bridge_test.dart",
+        ["projected phone handoffs are platform-safe"],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoChannelContractTest.kt",
+        ["That did not work. When safely parked"],
+    )
 
 
 def write_summary(

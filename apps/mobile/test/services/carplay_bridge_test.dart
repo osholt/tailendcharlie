@@ -276,6 +276,22 @@ void main() {
     });
   });
 
+  test('projected phone handoffs are platform-safe', () {
+    final carPlay = projectedLocationUnavailableReason(
+      ProjectedHostPlatform.carPlay,
+    );
+    final androidAuto = projectedLocationUnavailableReason(
+      ProjectedHostPlatform.androidAuto,
+    );
+
+    expect(carPlay, contains('CarPlay'));
+    expect(carPlay.toLowerCase(), isNot(contains('phone')));
+    expect(androidAuto, contains('safely parked'));
+    expect(androidAuto, contains('on your phone'));
+    expect(androidAuto, isNot(contains('iPhone')));
+    expect(androidAuto, isNot(contains('CarPlay')));
+  });
+
   test('offers prepared-ride start only to an eligible leader', () {
     CarPlayRideStart? project({
       bool hasSession = true,
@@ -286,6 +302,7 @@ void main() {
       bool locationReady = true,
       bool isGroup = false,
       bool hasTec = false,
+      ProjectedHostPlatform? hostPlatform,
     }) => CarPlayRideStart.project(
       hasSession: hasSession,
       isLeader: isLeader,
@@ -295,6 +312,7 @@ void main() {
       locationReady: locationReady,
       isGroup: isGroup,
       hasTec: hasTec,
+      hostPlatform: hostPlatform,
     );
 
     expect(project(hasSession: false), isNull);
@@ -302,16 +320,28 @@ void main() {
     expect(project(rideStarted: true), isNull);
     expect(project(rideEnded: true), isNull);
 
-    final needsPermission = project(locationReady: false)!;
-    expect(needsPermission.enabled, isFalse);
+    final carPlayPermission = project(
+      locationReady: false,
+      hostPlatform: ProjectedHostPlatform.carPlay,
+    )!;
+    expect(carPlayPermission.enabled, isFalse);
     expect(
-      needsPermission.unavailableReason,
-      contains('Location is not ready'),
+      carPlayPermission.unavailableReason,
+      contains('cannot start from CarPlay'),
     );
     expect(
-      needsPermission.unavailableReason!.toLowerCase(),
+      carPlayPermission.unavailableReason!.toLowerCase(),
       isNot(contains('phone')),
     );
+
+    final androidPermission = project(
+      locationReady: false,
+      hostPlatform: ProjectedHostPlatform.androidAuto,
+    )!;
+    expect(androidPermission.unavailableReason, contains('safely parked'));
+    expect(androidPermission.unavailableReason, contains('on your phone'));
+    expect(androidPermission.unavailableReason, isNot(contains('iPhone')));
+    expect(androidPermission.unavailableReason, isNot(contains('CarPlay')));
 
     final saving = project(busy: true)!;
     expect(saving.enabled, isFalse);

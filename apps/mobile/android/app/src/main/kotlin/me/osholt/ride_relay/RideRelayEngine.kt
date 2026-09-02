@@ -138,15 +138,14 @@ object ProjectedRideChannel {
      * Asks the phone to start free roam.
      *
      * [onDone] receives null on success or a rider-facing message. Dart already
-     * words those messages for CarPlay, so they are passed through rather than
-     * reworded here — two surfaces explaining the same refusal differently is
-     * how they drift.
+     * returns neutral shared refusals, so they are passed through. Native-only
+     * failures below use the explicit safely-parked Android handoff wording.
      */
     fun startFreeRoam(onDone: (String?) -> Unit) =
         invoke(METHOD_FREE_ROAM, null) { reply -> onDone(okError(reply)) }
 
     fun startPreparedRide(onDone: (String?) -> Unit) =
-        invoke(METHOD_PREPARED_RIDE, null) { onDone(null) }
+        invoke(METHOD_PREPARED_RIDE, null) { reply -> onDone(okError(reply)) }
 
     fun searchDestinations(
         query: String,
@@ -221,11 +220,12 @@ object ProjectedRideChannel {
         },
     ) { reply -> onDone(okError(reply)) }
 
-    /** Null when the phone said yes; otherwise the phone's own wording. */
+    /** Null when Dart said yes; otherwise bounded wording suitable for Android Auto. */
     internal fun okError(reply: Any?): String? {
         val map = reply as? Map<*, *> ?: return null
         if (map["ok"] == true) return null
-        return (map["error"] as? String) ?: "That did not work. Try the phone."
+        return (map["error"] as? String)
+            ?: "That did not work. When safely parked, check Tail End Charlie on your phone."
     }
 
     /**
@@ -238,7 +238,12 @@ object ProjectedRideChannel {
         val target = channel
         Handler(Looper.getMainLooper()).post {
             if (target == null) {
-                onReply(mapOf("ok" to false, "error" to "Open Tail End Charlie on the phone."))
+                onReply(
+                    mapOf(
+                        "ok" to false,
+                        "error" to "When safely parked, open Tail End Charlie on your phone.",
+                    ),
+                )
                 return@post
             }
             target.invokeMethod(
@@ -251,7 +256,11 @@ object ProjectedRideChannel {
                         onReply(mapOf("ok" to false, "error" to (message ?: code)))
 
                     override fun notImplemented() = onReply(
-                        mapOf("ok" to false, "error" to "The phone app is too old for this."),
+                        mapOf(
+                            "ok" to false,
+                            "error" to
+                                "When safely parked, update Tail End Charlie on your phone.",
+                        ),
                     )
                 },
             )
