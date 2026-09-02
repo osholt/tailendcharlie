@@ -135,6 +135,36 @@ void main() {
       );
     });
 
+    test('host safe areas drive every camera mode and route overview', () {
+      expect(source, contains('CarPlayMapSafeArea('));
+      expect(viewControllerSource, contains('viewSafeAreaInsetsDidChange()'));
+      expect(
+        viewControllerSource,
+        contains('mapView.contentInset = safeArea.contentInsets'),
+      );
+      expect(viewControllerSource, contains('safeFrame.height'));
+      expect(viewControllerSource, contains('overviewCoordinates('));
+      expect(
+        viewControllerSource,
+        contains('riderAnnotations.map(\\.coordinate)'),
+      );
+      expect(viewControllerSource, contains('maneuverCoordinates'));
+    });
+
+    test('CarPlay host appearance owns the day and night basemap', () {
+      expect(source, contains('contentStyleChanged contentStyle'));
+      expect(source, contains('contentStyleDidChange('));
+      expect(source, contains('applyHostContentStyle('));
+      expect(
+        viewControllerSource,
+        contains('hostContentStyle.contains(.dark)'),
+      );
+      expect(
+        viewControllerSource,
+        isNot(contains('traitCollection.userInterfaceStyle == .dark')),
+      );
+    });
+
     test('search waits for explicit submission', () {
       expect(source, contains('submittedSearchText = searchText'));
       expect(source, contains('completionHandler([])'));

@@ -52,6 +52,56 @@ struct CarPlayInteractionPolicy: Equatable {
   }
 }
 
+/// One unit decision for every value Tail End Charlie gives CarPlay. An
+/// explicit in-app preference wins; locale is only the restoration fallback
+/// for an older snapshot that predates the units field.
+struct CarPlayUnitPolicy: Equatable {
+  let usesMiles: Bool
+
+  init(distanceUnit: String?, localeIdentifier: String?) {
+    if distanceUnit == "miles" {
+      usesMiles = true
+    } else if distanceUnit == "kilometres" {
+      usesMiles = false
+    } else {
+      let locale = localeIdentifier.map(Locale.init(identifier:)) ?? .current
+      usesMiles = locale.measurementSystem != .metric
+    }
+  }
+
+  func distanceMeasurement(meters: Double) -> Measurement<UnitLength> {
+    usesMiles
+      ? Measurement(value: meters / 1_609.344, unit: .miles)
+      : Measurement(value: meters, unit: .meters)
+  }
+
+  func speedValue(metersPerSecond: Double) -> Int {
+    Int(
+      (metersPerSecond * (usesMiles ? 2.236_936 : 3.6)).rounded()
+    )
+  }
+
+  var spokenSpeedUnit: String {
+    usesMiles ? "miles per hour" : "kilometres per hour"
+  }
+}
+
+/// Converts the host-owned safe rectangle into MapLibre content insets. Kept
+/// independent of any particular head-unit resolution so the same calculation
+/// covers left/right driving layouts, compact displays, and wide screens.
+struct CarPlayMapSafeArea: Equatable {
+  let contentInsets: UIEdgeInsets
+
+  init(viewBounds: CGRect, safeFrame: CGRect) {
+    contentInsets = UIEdgeInsets(
+      top: max(0, safeFrame.minY - viewBounds.minY),
+      left: max(0, safeFrame.minX - viewBounds.minX),
+      bottom: max(0, viewBounds.maxY - safeFrame.maxY),
+      right: max(0, viewBounds.maxX - safeFrame.maxX)
+    )
+  }
+}
+
 /// The versioned, iOS-only navigation contract projected by Dart.
 ///
 /// Decoding is intentionally strict at this boundary: rider-authored route
@@ -866,6 +916,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapTemplate.hidesButtonsWithNavigationBar = false
     mapTemplate.guidanceBackgroundColor = CarPlayPalette.primaryPanelFill
     mapTemplate.mapButtons = []
+    applyHostContentStyle(sessionConfiguration.contentStyle)
     // Phone landscape puts its compact ride menu at the leading edge. Keep the
     // same learned location in the car; CarPlay still owns the navigation bar
     // and lays its manoeuvre card below it.
@@ -986,6 +1037,26 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         )
       }
     }
+  }
+
+  func sessionConfiguration(
+    _ sessionConfiguration: CPSessionConfiguration,
+    contentStyleChanged contentStyle: CPContentStyle
+  ) {
+    guard self.sessionConfiguration === sessionConfiguration else { return }
+    applyHostContentStyle(contentStyle)
+  }
+
+  func contentStyleDidChange(_ contentStyle: UIUserInterfaceStyle) {
+    applyHostContentStyle(contentStyle == .dark ? [.dark] : [.light])
+  }
+
+  private func applyHostContentStyle(_ contentStyle: CPContentStyle) {
+    let dark = contentStyle.contains(.dark)
+    mapTemplate?.guidanceBackgroundColor = dark
+      ? CarPlayPalette.primaryPanelFill
+      : UIColor(red: 0.94, green: 0.95, blue: 0.96, alpha: 1)
+    mapViewController?.apply(contentStyle: contentStyle)
   }
 
   /// Raises, and takes down, the leader's "will you be Tail End Charlie?"
@@ -1204,6 +1275,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     snapshot: [String: Any]
   ) {
     guard sceneLifecycle.rootReady, let mapTemplate else { return }
+    let unitPolicy = CarPlayUnitPolicy(
+      distanceUnit: projection.units.distance,
+      localeIdentifier: projection.localeIdentifier
+    )
     let action = navigationCoordinator.apply(projection)
     var shouldResume = false
     switch action {
@@ -1290,13 +1365,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       currentPayload,
       maneuver: currentManeuver,
       session: navigationSession,
-      usesMiles: projection.units.distance == "miles"
+      usesMiles: unitPolicy.usesMiles
     )
     updateTripEstimate(
       snapshot: snapshot,
       trip: activeNavigationTrip,
       mapTemplate: mapTemplate,
-      usesMiles: projection.units.distance == "miles"
+      usesMiles: unitPolicy.usesMiles
     )
     if shouldResume {
       resumeNavigationSession(
@@ -1304,7 +1379,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         maneuvers: maneuvers,
         currentPayload: currentPayload,
         snapshot: snapshot,
-        usesMiles: projection.units.distance == "miles"
+        usesMiles: unitPolicy.usesMiles
       )
     }
   }
@@ -2505,6 +2580,7 @@ final class CarPlayNavigationViewController: UIViewController,
   private var routeID: String?
   private var routeProjectionKey: String?
   private var riderAnnotations: [CarPlayRiderAnnotation] = []
+  private var maneuverCoordinates: [CLLocationCoordinate2D] = []
   private var localCoordinate: CLLocationCoordinate2D?
   private var localHeading: CLLocationDirection?
   private var followsLocalRider = true
@@ -2516,15 +2592,18 @@ final class CarPlayNavigationViewController: UIViewController,
   private var pitchGestureStart: (point: CGPoint?, pitch: CGFloat)?
   private var hasFramedFirstFix = false
   private var surfaceMode = "unavailable"
+  private var hostContentStyle: CPContentStyle = [.light]
+  private var appliedHostInsets: UIEdgeInsets?
 
-  /// The styles Dart published, the exact style selected on the phone, and the
-  /// one currently applied. CarPlay's trait remains a fallback until Dart has
-  /// supplied the phone selection; after that both screens change together.
+  /// Dart supplies both basemap variants plus the resolved document currently
+  /// used by the phone. The resolved document is reused only when it matches
+  /// CarPlay's requested appearance; the vehicle host owns day/night choice.
   private var lightStyleURL: URL?
   private var darkStyleURL: URL?
   private var appliedStyleURL: URL?
   private var phoneStyleURL: URL?
   private var phoneStyleJSON: String?
+  private var phoneStyleIsDark = false
   private var appliedStyleJSON: String?
 
   /// The last snapshot, replayed once the style finishes loading. A style load
@@ -2562,15 +2641,22 @@ final class CarPlayNavigationViewController: UIViewController,
     applyPreferredStyle()
   }
 
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    applyHostSafeAreaIfNeeded()
+  }
+
+  override func viewSafeAreaInsetsDidChange() {
+    super.viewSafeAreaInsetsDidChange()
+    applyHostSafeAreaIfNeeded()
+  }
+
   deinit {
     directionalPanTimer?.invalidate()
   }
 
-  override func traitCollectionDidChange(_ previous: UITraitCollection?) {
-    super.traitCollectionDidChange(previous)
-    guard
-      traitCollection.userInterfaceStyle != previous?.userInterfaceStyle
-    else { return }
+  func apply(contentStyle: CPContentStyle) {
+    hostContentStyle = contentStyle
     applyPreferredStyle()
   }
 
@@ -2598,6 +2684,7 @@ final class CarPlayNavigationViewController: UIViewController,
       routeID = incomingRouteID
       routeProjectionKey = routeKey
     }
+    updateManeuverCoordinates(snapshot)
     updateRiders(snapshot)
     let requestedRiderFollow =
       (snapshot["followRider"] as? NSNumber)?.boolValue ?? false
@@ -2652,8 +2739,11 @@ final class CarPlayNavigationViewController: UIViewController,
       let styleURL = URL(string: rawStyleURL)
     {
       phoneStyleURL = styleURL
-      applyPreferredStyle()
     }
+    if let dark = (viewport["mapStyleDark"] as? NSNumber)?.boolValue {
+      phoneStyleIsDark = dark
+    }
+    applyPreferredStyle()
     guard
       surfaceMode == "activeRide",
       snapshotWantsRiderFollow,
@@ -2672,6 +2762,8 @@ final class CarPlayNavigationViewController: UIViewController,
       !styleJSON.isEmpty
     else { return }
     phoneStyleJSON = styleJSON
+    phoneStyleIsDark =
+      (mapStyle["dark"] as? NSNumber)?.boolValue ?? phoneStyleIsDark
     if
       let rawURL = mapStyle["fallbackStyleUrl"] as? String,
       let fallbackURL = URL(string: rawURL)
@@ -2865,6 +2957,8 @@ final class CarPlayNavigationViewController: UIViewController,
     lightStyleURL = light ?? dark
     darkStyleURL = dark ?? light
     phoneStyleURL = selected
+    phoneStyleIsDark =
+      (basemap["dark"] as? NSNumber)?.boolValue ?? phoneStyleIsDark
     if let styleJSON = basemap["styleJson"] as? String, !styleJSON.isEmpty {
       phoneStyleJSON = styleJSON
     }
@@ -2872,7 +2966,8 @@ final class CarPlayNavigationViewController: UIViewController,
   }
 
   private func applyPreferredStyle() {
-    if let preferredJSON = phoneStyleJSON {
+    let hostWantsDark = hostContentStyle.contains(.dark)
+    if phoneStyleIsDark == hostWantsDark, let preferredJSON = phoneStyleJSON {
       guard preferredJSON != appliedStyleJSON else { return }
       appliedStyleJSON = preferredJSON
       appliedStyleURL = nil
@@ -2883,8 +2978,8 @@ final class CarPlayNavigationViewController: UIViewController,
       mapView.styleJSON = preferredJSON
       return
     }
-    let preferred = phoneStyleURL
-      ?? (traitCollection.userInterfaceStyle == .dark ? darkStyleURL : lightStyleURL)
+    let preferred = (hostWantsDark ? darkStyleURL : lightStyleURL)
+      ?? phoneStyleURL
     guard let preferred, preferred != appliedStyleURL else { return }
     appliedStyleURL = preferred
     appliedStyleJSON = nil
@@ -2893,11 +2988,6 @@ final class CarPlayNavigationViewController: UIViewController,
       return
     }
     mapView.styleURL = preferred
-  }
-
-  private var preferredStyleURL: URL? {
-    phoneStyleURL
-      ?? (traitCollection.userInterfaceStyle == .dark ? darkStyleURL : lightStyleURL)
   }
 
   private func installMapView(styleURL: URL) {
@@ -2936,8 +3026,34 @@ final class CarPlayNavigationViewController: UIViewController,
     )
     view.insertSubview(mapView, at: 0)
     self.mapView = mapView
+    applyHostSafeAreaIfNeeded()
     if let latestSnapshot { apply(snapshot: latestSnapshot) }
     if let latestViewport { apply(viewport: latestViewport) }
+  }
+
+  private func applyHostSafeAreaIfNeeded() {
+    guard let mapView, view.bounds.width > 0, view.bounds.height > 0 else { return }
+    let safeArea = CarPlayMapSafeArea(
+      viewBounds: view.bounds,
+      safeFrame: view.safeAreaLayoutGuide.layoutFrame
+    )
+    guard appliedHostInsets != safeArea.contentInsets else { return }
+    appliedHostInsets = safeArea.contentInsets
+    mapView.automaticallyAdjustsContentInset = false
+    mapView.contentInset = safeArea.contentInsets
+
+    // A host can change its safe region when the navigation bar, guidance
+    // card, or secondary display state changes. Refit the current mode without
+    // taking a deliberately panned map back from the rider.
+    if snapshotWantsRiderFollow, followsLocalRider, latestViewport != nil {
+      applyPhoneViewport(animated: false)
+    } else if previewRouteCoordinates != nil {
+      showPreviewRouteCoordinates(animated: false)
+    } else if !followsLocalRider {
+      return
+    } else {
+      showCompleteRoute(animated: false)
+    }
   }
 
   private func applyPhoneViewport(animated: Bool) {
@@ -2959,7 +3075,9 @@ final class CarPlayNavigationViewController: UIViewController,
       (-180 ... 180).contains(longitude)
     else { return }
 
-    let heightRatio = Double(mapView.bounds.height) / phoneHeight
+    let safeFrame = view.safeAreaLayoutGuide.layoutFrame
+    guard safeFrame.width > 0, safeFrame.height > 0 else { return }
+    let heightRatio = Double(safeFrame.height) / phoneHeight
     guard heightRatio.isFinite, heightRatio > 0 else { return }
     let adjustedZoom = phoneZoom + log2(heightRatio)
     let rawTilt = (viewport["tilt"] as? NSNumber)?.doubleValue ?? 0
@@ -2985,7 +3103,7 @@ final class CarPlayNavigationViewController: UIViewController,
       78_271.516_964_020_48 * abs(cos(latitudeRadians)) / pow(2, adjustedZoom)
     let fieldOfView = 0.643_501_108_793_284_4
     let cameraToCenterDistance =
-      Double(mapView.bounds.height) * 0.5 / tan(fieldOfView * 0.5)
+      Double(safeFrame.height) * 0.5 / tan(fieldOfView * 0.5)
     let altitude = cameraToCenterDistance * metresPerPoint * cos(tilt * .pi / 180)
     guard altitude.isFinite, altitude > 0 else { return }
 
@@ -3001,10 +3119,9 @@ final class CarPlayNavigationViewController: UIViewController,
     // screen. CarPlay owns every card and button over this map.
     mapView.setCamera(camera, animated: false)
     view.layoutIfNeeded()
-    let frame = view.safeAreaLayoutGuide.layoutFrame
     let desired = CGPoint(
-      x: frame.minX + frame.width * riderHorizontalFraction,
-      y: frame.minY + frame.height * riderVerticalFraction
+      x: safeFrame.minX + safeFrame.width * riderHorizontalFraction,
+      y: safeFrame.minY + safeFrame.height * riderVerticalFraction
     )
     if let localCoordinate {
       var correctedCamera = camera
@@ -3103,6 +3220,23 @@ final class CarPlayNavigationViewController: UIViewController,
       remainingPoints = allPoints
     }
     updateRemainingRoute(remainingPoints)
+  }
+
+  private func updateManeuverCoordinates(_ snapshot: [String: Any]) {
+    guard
+      let navigation = snapshot["carplayNavigation"] as? [String: Any]
+    else {
+      maneuverCoordinates = []
+      return
+    }
+    maneuverCoordinates = ["currentManeuver", "followingManeuver"].compactMap {
+      key in
+      guard
+        let maneuver = navigation[key] as? [String: Any],
+        let position = maneuver["position"] as? [String: Any]
+      else { return nil }
+      return coordinate(from: position)
+    }
   }
 
   /// The phone's route ahead is a long dash, not a solid line. Shape
@@ -3237,7 +3371,7 @@ final class CarPlayNavigationViewController: UIViewController,
   /// Returning silently with no route is half of #295: a route-less ride
   /// reached here, nothing happened, and the map stayed wherever it had been
   /// left with no way back.
-  private func showCompleteRoute() {
+  private func showCompleteRoute(animated: Bool = true) {
     guard let mapView else { return }
     guard routeCoordinates.count >= 2 else {
       mapView.userTrackingMode = .none
@@ -3251,26 +3385,37 @@ final class CarPlayNavigationViewController: UIViewController,
     // still report the style's default world-sized bounds while an annotation
     // is being installed during the CarPlay scene's first layout; using it is
     // what reduced a 17.5 km demo route to a tiny mark on a UK-wide map.
-    var coordinates = routeCoordinates
+    var coordinates = overviewCoordinates(routeCoordinates)
     mapView.setVisibleCoordinates(
       &coordinates,
       count: UInt(coordinates.count),
-      edgePadding: UIEdgeInsets(top: 60, left: 60, bottom: 60, right: 60),
-      animated: true
+      edgePadding: UIEdgeInsets(top: 36, left: 36, bottom: 44, right: 36),
+      animated: animated
     )
   }
 
-  private func showPreviewRouteCoordinates() {
+  private func showPreviewRouteCoordinates(animated: Bool = true) {
     guard let mapView, var coordinates = previewRouteCoordinates else { return }
     guard coordinates.count >= 2 else { return }
     mapView.userTrackingMode = .none
     updateRemainingRoute(coordinates)
+    coordinates = overviewCoordinates(coordinates)
     mapView.setVisibleCoordinates(
       &coordinates,
       count: UInt(coordinates.count),
-      edgePadding: UIEdgeInsets(top: 72, left: 72, bottom: 96, right: 72),
-      animated: true
+      edgePadding: UIEdgeInsets(top: 36, left: 36, bottom: 52, right: 36),
+      animated: animated
     )
+  }
+
+  private func overviewCoordinates(
+    _ route: [CLLocationCoordinate2D]
+  ) -> [CLLocationCoordinate2D] {
+    var coordinates = route
+    coordinates.append(contentsOf: maneuverCoordinates)
+    coordinates.append(contentsOf: riderAnnotations.map(\.coordinate))
+    if let localCoordinate { coordinates.append(localCoordinate) }
+    return coordinates
   }
 
   private func coordinate(from raw: [String: Any]) -> CLLocationCoordinate2D? {
@@ -3669,7 +3814,10 @@ private final class CarPlayGroupMiniMapView: UIView {
     // be a hundred metres or ten miles and there is nothing on it to say which.
     let span = Self.spanLabel(
       for: Self.groupBounds(for: riders.map(\.coordinate)),
-      usesMiles: (snapshot["distanceUnit"] as? String) == "miles"
+      usesMiles: CarPlayUnitPolicy(
+        distanceUnit: snapshot["distanceUnit"] as? String,
+        localeIdentifier: snapshot["localeIdentifier"] as? String
+      ).usesMiles
     )
     caption.text = "  \(riders.count) \(riderWord) · \(span)  "
     accessibilityLabel = "Group overview, \(riders.count) \(riderWord)"
@@ -4138,8 +4286,8 @@ private final class CarPlayRideActionButton: UIButton {
 }
 
 /// The phone's landscape speed-limit sign and current-speed readout, scaled for
-/// CarPlay's shorter map canvas. The upper number is always the mapped UK mph
-/// limit and the number below is always GPS speed in mph, just as on the phone.
+/// CarPlay's shorter map canvas. It follows the same explicit unit policy as
+/// system travel estimates; locale is only a fallback for restored old data.
 private final class CarPlaySpeedLimitBadge: UIView {
   private let sign = UIView()
   private let limitLabel = UILabel()
@@ -4211,7 +4359,11 @@ private final class CarPlaySpeedLimitBadge: UIView {
   @available(*, unavailable)
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-  func apply(_ speed: [String: Any]?) {
+  func apply(
+    _ speed: [String: Any]?,
+    distanceUnit: String?,
+    localeIdentifier: String?
+  ) {
     guard let speed else {
       isHidden = true
       spinner.stopAnimating()
@@ -4220,16 +4372,23 @@ private final class CarPlaySpeedLimitBadge: UIView {
     isHidden = false
 
     let status = speed["limitStatus"] as? String
-    let limit = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    let limitMilesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
     let unlimited = (speed["limitUnlimited"] as? NSNumber)?.boolValue ?? false
-    let known = status == "known" && (limit != nil || unlimited)
+    let known = status == "known" && (limitMilesPerHour != nil || unlimited)
     let checking = status == "checking"
+    let unitPolicy = CarPlayUnitPolicy(
+      distanceUnit: distanceUnit,
+      localeIdentifier: localeIdentifier
+    )
+    let displayedLimit = limitMilesPerHour.map {
+      unitPolicy.usesMiles ? $0 : Int((Double($0) * 1.609_344).rounded())
+    }
     limitLabel.isHidden = checking
     if checking {
       spinner.startAnimating()
     } else {
       spinner.stopAnimating()
-      limitLabel.text = known ? (unlimited ? "∞" : "\(limit!)") : "–"
+      limitLabel.text = known ? (unlimited ? "∞" : "\(displayedLimit!)") : "–"
     }
     sign.layer.borderColor = (
       known
@@ -4238,10 +4397,10 @@ private final class CarPlaySpeedLimitBadge: UIView {
     ).cgColor
 
     let metresPerSecond = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
-    let milesPerHour = metresPerSecond.flatMap { value in
-      value.isFinite && value >= 0 ? Int((value * 2.236_936).rounded()) : nil
+    let displayedSpeed = metresPerSecond.flatMap { value in
+      value.isFinite && value >= 0 ? unitPolicy.speedValue(metersPerSecond: value) : nil
     }
-    let currentSpeed = milesPerHour.map(String.init) ?? "–"
+    let currentSpeed = displayedSpeed.map(String.init) ?? "–"
     speedLabel.attributedText = NSAttributedString(
       string: currentSpeed,
       attributes: [
@@ -4255,9 +4414,13 @@ private final class CarPlaySpeedLimitBadge: UIView {
     speedLabel.alpha = ageing ? 0.55 : 1
 
     let limitDescription = known
-      ? (unlimited ? "unrestricted" : "\(limit!) miles per hour")
+      ? (unlimited
+          ? "unrestricted"
+          : "\(displayedLimit!) \(unitPolicy.spokenSpeedUnit)")
       : "unavailable"
-    let speedDescription = milesPerHour.map { "\($0) miles per hour" }
+    let speedDescription = displayedSpeed.map {
+      "\($0) \(unitPolicy.spokenSpeedUnit)"
+    }
       ?? "unavailable"
     accessibilityLabel = "Mapped speed limit \(limitDescription). "
       + "Your GPS speed is \(speedDescription)."

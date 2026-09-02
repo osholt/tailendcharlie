@@ -6,6 +6,7 @@ class BasemapConfiguration {
 
   const BasemapConfiguration({
     this.styleUrl = '',
+    String? lightStyleUrl,
     this.darkStyleUrl = '',
     this.urlTemplate = '',
     this.attribution = '',
@@ -14,7 +15,7 @@ class BasemapConfiguration {
     this.maximumNativeZoom = 18,
     this.restrainedLightStyle = true,
     this.dark = false,
-  });
+  }) : lightStyleUrl = lightStyleUrl ?? styleUrl;
 
   factory BasemapConfiguration.fromEnvironment() => BasemapConfiguration(
     styleUrl: const String.fromEnvironment(
@@ -52,6 +53,12 @@ class BasemapConfiguration {
 
   /// HTTPS MapLibre style document used by the production vector-map path.
   final String styleUrl;
+
+  /// The canonical daytime style, retained even when [styleUrl] has been
+  /// resolved to the night style for the phone. Projected displays choose
+  /// their own host-requested appearance and must not inherit the handset's
+  /// current brightness.
+  final String lightStyleUrl;
 
   /// HTTPS MapLibre style document used at night/in dark mode. Both styles
   /// are expected to render the same underlying vector tiles, just restyled
@@ -92,7 +99,8 @@ class BasemapConfiguration {
         return this;
       }
       return BasemapConfiguration(
-        styleUrl: styleUrl,
+        styleUrl: lightStyleUrl,
+        lightStyleUrl: lightStyleUrl,
         darkStyleUrl: darkStyleUrl,
         urlTemplate: urlTemplate,
         attribution: attribution,
@@ -111,6 +119,7 @@ class BasemapConfiguration {
     }
     return BasemapConfiguration(
       styleUrl: darkStyleUrl,
+      lightStyleUrl: lightStyleUrl,
       darkStyleUrl: darkStyleUrl,
       urlTemplate: urlTemplate,
       attribution: attribution,

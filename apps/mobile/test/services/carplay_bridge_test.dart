@@ -143,6 +143,7 @@ void main() {
       // never 0: zero tells CarPlay the rider is arriving now (#452).
       'guidanceSecondsRemaining': null,
       'distanceUnit': null,
+      'localeIdentifier': null,
       'groupStatus': '5 riders visible',
       'markerStatus': 'Marker at the next junction',
       'marker': null,
@@ -731,6 +732,7 @@ void main() {
           leftHandTraffic: true,
           mapStyleUrl: 'https://tiles.example.com/day',
           mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
+          mapStyleDark: false,
         ),
       );
 
@@ -738,6 +740,7 @@ void main() {
       expect(calls.first.arguments, {
         'styleJson': '{"version":8,"sources":{},"layers":[]}',
         'fallbackStyleUrl': 'https://tiles.example.com/day',
+        'dark': false,
       });
       expect(calls.last.method, 'updateViewport');
       expect(calls.last.arguments, {
@@ -752,6 +755,7 @@ void main() {
         'riderHorizontalViewportFraction': 2 / 3,
         'leftHandTraffic': true,
         'mapStyleUrl': 'https://tiles.example.com/day',
+        'mapStyleDark': false,
       });
     },
   );
@@ -926,6 +930,7 @@ void main() {
         leftHandTraffic: false,
         mapStyleUrl: 'https://tiles.example.com/day',
         mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
+        mapStyleDark: false,
       ),
     );
     calls.clear();
@@ -1139,6 +1144,40 @@ void main() {
       'dark': false,
     });
   });
+
+  test(
+    'a dark phone still publishes the canonical CarPlay day style',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
+      final bridge = CarPlayBridge(channel: channel);
+      addTearDown(bridge.dispose);
+      const configured = BasemapConfiguration(
+        styleUrl: 'https://tiles.example.com/day',
+        darkStyleUrl: 'https://tiles.example.com/night',
+      );
+
+      await bridge.publish(
+        session: null,
+        riderLocations: const [],
+        routeAlerts: const [],
+        activeHazards: const [],
+        basemap: configured.forBrightness(dark: true),
+        mapStyleJson: '{"version":8,"sources":{},"layers":[]}',
+      );
+
+      expect((received!.arguments as Map)['basemap'], {
+        'styleUrl': 'https://tiles.example.com/day',
+        'darkStyleUrl': 'https://tiles.example.com/night',
+        'selectedStyleUrl': 'https://tiles.example.com/night',
+        'dark': true,
+        'styleJson': '{"version":8,"sources":{},"layers":[]}',
+      });
+    },
+  );
 
   // A build that configures only one style must not leave the car with an
   // empty URL and a blank map in whichever mode it happens to be in.
