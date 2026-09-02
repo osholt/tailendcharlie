@@ -200,14 +200,18 @@ state and no-TEC warning, while creation, joining, route selection and first-tim
 location permission stay on the phone. Dart revalidates leadership, lifecycle
 and location readiness when the native action arrives.
 
-Implementation of #690 began on `codex/issue-690-carplay-projection`. The shared
-snapshot now contains an additive `carplayNavigation` schema V2 with separate
+The projected-navigation foundation for #690 merged in PR #705. The shared
+snapshot contains an additive `carplayNavigation` schema V2 with separate
 ride/navigation phases, stable trip/choice/manoeuvre IDs, typed directions,
 roundabout exits, lanes, traffic side, road/instruction variants, estimates,
 locale and unit metadata. Swift bounds and decodes it and rejects malformed,
 replayed and out-of-order updates, but does not yet activate an Apple navigation
-session. Android's legacy decoder is unchanged and has a compatibility test
-proving the new block cannot affect its result. The incremental compliance
+session. Issue #700 adds a separately versioned `androidAutoNavigation` schema
+V2 with the same Dart-owned domain boundary, an independent strict Kotlin
+decoder, replay/out-of-order protection, separate ride and navigation
+lifecycles, and bounded typed host events. Android V1 snapshots continue to
+decode during the migration, while CarPlay's V2 contract and behavior remain
+unchanged. The incremental compliance
 checker runs in mobile CI and both closed-tester upload workflows; `--strict`
 remains red until all required CarPlay and Android Auto rows have evidence.
 
@@ -228,9 +232,9 @@ CarPlay head-unit run before production support can be claimed. Ride creation,
 joining, route choice and first-time permissions intentionally stay on the
 phone; a leader can start an already-prepared ride from CarPlay.
 
-The original checkout had unrelated signing edits and untracked entitlement
-submission material, so this work lives in the clean worktree
-`/Users/osholt/Projects/Personal/tailendcharlie/.claude/worktrees/chatgpt-agent-continuation-08041e`.
+Continue mandatory CarPlay behavior with #691–#696 and Android Auto behavior
+with #684–#689. Keep #698 and #703 open until their physical head-unit evidence
+gates can truthfully be completed; tester uploads remain explicit manual jobs.
 
 ## Read this first: #132, a device only received when it sent
 

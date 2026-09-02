@@ -101,6 +101,7 @@ internal data class ProjectedRideSnapshot(
     val canPlanRoute: Boolean,
     val canFreeRoam: Boolean,
     val rideStart: ProjectedRideStart?,
+    val androidAutoNavigation: AndroidAutoNavigationProjectionV2?,
     val updatedAtMillis: Long,
 ) {
     /** True while the phone is publishing often enough to be believed. */
@@ -147,6 +148,7 @@ internal data class ProjectedRideSnapshot(
                 canPlanRoute = raw["canPlanRoute"] == true,
                 canFreeRoam = raw["canFreeRoam"] == true,
                 rideStart = rideStart(raw["rideStart"] as? Map<*, *>),
+                androidAutoNavigation = AndroidAutoNavigationProjectionV2.fromSnapshot(raw),
                 updatedAtMillis = (raw["updatedAtMillis"] as? Number)?.toLong()
                     ?: System.currentTimeMillis(),
             )
@@ -258,10 +260,16 @@ internal object AndroidAutoSnapshotStore {
         private set
 
     private val listeners = CopyOnWriteArraySet<Listener>()
+    private val navigationStore = AndroidAutoNavigationProjectionStore()
 
-    fun update(raw: Map<String, Any?>) {
-        latest = ProjectedRideSnapshot.from(raw)
+    fun update(raw: Map<String, Any?>): Boolean {
+        val decoded = ProjectedRideSnapshot.from(raw)
+        if (raw.containsKey("androidAutoNavigation") && !navigationStore.accept(raw)) {
+            return false
+        }
+        latest = decoded.copy(androidAutoNavigation = navigationStore.latest)
         listeners.forEach(Listener::onSnapshotChanged)
+        return true
     }
 
     fun addListener(listener: Listener) {
@@ -274,6 +282,7 @@ internal object AndroidAutoSnapshotStore {
 
     internal fun clearForTesting() {
         latest = null
+        navigationStore.clear()
         listeners.clear()
     }
 }

@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 2,
+  "sourceId": "android-fixture-source",
+  "sequence": 7,
+  "generatedAtMillis": 1788344100000,
+  "rideLifecycle": {
+    "phase": "activeRide"
+  },
+  "navigationLifecycle": {
+    "phase": "navigating",
+    "shouldOwnNavigation": true
+  },
+  "route": {
+    "id": "france-route",
+    "navigationSessionId": "france-route:android-navigation",
+    "restorationId": "france-route",
+    "name": "To Puy Mary",
+    "trafficSide": "right"
+  },
+  "currentManeuver": {
+    "id": "roundabout|45.05200,2.71100|right|3",
+    "kind": "roundabout",
+    "direction": "right",
+    "engineType": "roundabout",
+    "engineModifier": "right",
+    "instructionVariants": [
+      "3rd exit, right",
+      "At the roundabout take the 3rd exit, right"
+    ],
+    "roadNameVariants": [
+      "Route de Salers · D 680",
+      "Route de Salers",
+      "D 680"
+    ],
+    "position": {
+      "latitude": 45.052,
+      "longitude": 2.711
+    },
+    "exitNumber": 3,
+    "trafficSide": "right",
+    "distanceMeters": 400.0,
+    "secondsRemaining": 20.0,
+    "bearingBeforeDegrees": 12.0,
+    "bearingAfterDegrees": 112.0,
+    "departureBearingDegrees": 112.0,
+    "stepCount": 2,
+    "lanes": [
+      {
+        "indications": [
+          "right"
+        ],
+        "valid": true
+      }
+    ]
+  },
+  "followingManeuver": {
+    "id": "turn|45.05300,2.71400|slight right|",
+    "kind": "turn",
+    "direction": "slightRight",
+    "engineType": "turn",
+    "engineModifier": "slight right",
+    "instructionVariants": [
+      "Keep slight right"
+    ],
+    "roadNameVariants": [
+      "D 680"
+    ],
+    "position": {
+      "latitude": 45.053,
+      "longitude": 2.714
+    },
+    "exitNumber": null,
+    "trafficSide": "right",
+    "distanceMeters": 120.0,
+    "secondsRemaining": null,
+    "bearingBeforeDegrees": null,
+    "bearingAfterDegrees": null,
+    "departureBearingDegrees": null,
+    "stepCount": 1,
+    "lanes": []
+  },
+  "journey": {
+    "remainingDistanceMeters": 13700.0,
+    "remainingSeconds": 1644,
+    "arrivalTimeMillis": 1788345744000,
+    "nextWaypointName": "Puy Mary",
+    "nextWaypointDistanceMeters": 13700.0,
+    "nextWaypointArrivalTimeMillis": 1788345744000
+  },
+  "progress": {
+    "travelledMeters": 1200.0,
+    "totalMeters": 14900.0
+  },
+  "units": {
+    "distance": "kilometres",
+    "speed": "kilometresPerHour"
+  },
+  "localeIdentifier": "fr-FR",
+  "camera": {
+    "followRider": true
+  },
+  "actions": {
+    "canPlanRoute": false,
+    "canFreeRoam": false,
+    "canStartPreparedRide": false,
+    "canCancelNavigation": true,
+    "canLeaveRide": true
+  },
+  "alert": {
+    "message": "Gravel: high",
+    "severity": "high"
+  }
+}

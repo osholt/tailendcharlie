@@ -215,6 +215,34 @@ def structural_checks(failures: list[str]) -> None:
     )
     require_text(
         failures,
+        "apps/mobile/lib/services/android_auto_navigation_projection.dart",
+        [
+            "'schemaVersion': 2",
+            "'navigationLifecycle'",
+            "'shouldOwnNavigation'",
+            "'navigationSessionId'",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/AndroidAutoNavigationProjection.kt",
+        [
+            "AndroidAutoNavigationProjectionV2",
+            "AndroidAutoNavigationProjectionStore",
+            "candidate.sequence <= current.sequence",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoNavigationProjectionTest.kt",
+        [
+            "decodes the shared French V2 fixture",
+            "store rejects replay out of order and stale source commands",
+            "does not revive guidance from a rejected command",
+        ],
+    )
+    require_text(
+        failures,
         "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoCompanionTest.kt",
         ["CarPlay V2 block cannot change the legacy Android projection"],
     )

@@ -99,6 +99,7 @@ class AndroidAutoChannelContractTest {
             ProjectedRideChannel.METHOD_PREPARED_RIDE,
             ProjectedRideChannel.METHOD_SEARCH,
             ProjectedRideChannel.METHOD_PLAN,
+            ProjectedRideChannel.METHOD_NAVIGATION_EVENT,
         )
     }
 }
