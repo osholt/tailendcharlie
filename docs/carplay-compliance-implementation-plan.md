@@ -423,8 +423,8 @@ declares the Navigation category, owns the `NavigationManager` lifecycle,
 publishes typed manoeuvres, handles the public navigation-intent and auto-drive
 contracts, and provides bounded Search and List templates. It is not yet a
 compliant release candidate. The remaining software gaps are host-owned
-day/night mode, a road basemap, parked-safe wording and audio ownership; DHU and
-physical-head-unit evidence is tracked separately.
+day/night mode, parked-safe wording and audio ownership are now implemented; a
+road basemap and DHU/physical-head-unit evidence remain.
 
 Google requires Navigation apps used while driving to meet the applicable Car
 optimized (Tier 2) requirements for Play acceptance. Tier 1 cluster-map support
@@ -446,14 +446,14 @@ outside this Android Auto plan.
 | DR-1–DR-3 response/launch/content latency | UNVERIFIED | Instrument and validate two-/ten-second limits in #703. |
 | VD-1 contrast | UNVERIFIED | Road basemap/palettes #701 and evidence #703. |
 | TH-1 custom component theming | NOT APPLICABLE | Current Car App Library is 1.7.0 and no custom host-component theme is applied; reassess before a 1.9+ upgrade. |
-| DD-1 navigation audio only | PARTIAL | Natural audio is classified correctly; align system TTS and ownership in #702. |
+| DD-1 navigation audio only | PARTIAL | #702 gives natural/system speech the same short-lived typed focus lease; validate coexistence in #703. |
 | PA-1 payments | NOT APPLICABLE | No purchase flow is exposed in Android Auto. |
 | IN-1 relevant notifications only | PARTIAL | #684 limits the ongoing notification to active turn guidance; validate rail/HUN behavior in #703. |
 | NF-1 turn-by-turn directions | FAIL | Typed projection #700 and manoeuvre mapping #687. |
 | NF-2 map-only surface/safe area | PARTIAL | #686 keeps pixels inside the intersected stable/visible host area; validate controls in #703. |
 | NF-3 notifications | PARTIAL | #684 publishes an ongoing `CATEGORY_NAVIGATION` notification with `CarAppExtender`; validate in #703. |
 | NF-4 cluster next-turn metadata | PARTIAL | #684 publishes current/following steps and destination estimates through `NavigationManager.updateTrip()`; validate in #703. |
-| NF-5 navigation ownership | PARTIAL | #684 ends trip metadata and notifications on host pre-emption without ending the ride; audio shutdown remains #702 and hardware validation #703. |
+| NF-5 navigation ownership | PARTIAL | #684/#702 end trip metadata, notifications and queued speech on host pre-emption without ending recording; validate in #703. |
 | NF-6 external navigation requests | PARTIAL | #685 parses bounded query/coordinate navigation intents and presents them for in-car confirmation; validate in #703. |
 | NF-7 simulated test drive | PARTIAL | #685 implements `onAutoDriveEnabled` with deterministic host-only trip progress that cannot enter GPS, recording or heat-map data; validate in #703. |
 | MR-1 host day/night map mode | PARTIAL | #689 follows the car host independently of phone theme; validate switching/contrast in #703. |
@@ -641,6 +641,18 @@ theme. DHU/physical switching and road-label contrast remain in #703/#701.
 Impact: Android phone audio behavior changes because the same speech engines are
 used with and without Android Auto. Run phone-only Bluetooth/intercom regressions
 as well as head-unit radio/music/call/Assistant tests.
+
+Implemented in #702: one process-wide bridge grants a transient-may-duck focus
+lease only when a renderer has a complete imminent phrase, classifies navigation
+and safety separately, and abandons the lease after completion, cancellation or
+focus loss. System TTS now uses navigation audio attributes and the same focus
+lease as on-device neural audio. Host pre-emption stops the current utterance,
+invalidates queued speech, and keeps directions suppressed until a new route
+explicitly resumes ownership. Diagnostics record focus, renderer/fallback and
+completion, and a missed neural deadline now falls back for only that prompt
+instead of permanently selecting the robot voice for the rest of the ride.
+Automated Dart and Android policy/contract coverage is complete; Bluetooth,
+DHU and physical-head-unit coexistence evidence remains in #703.
 
 ### A9. Remove unsafe handoffs and dead ends — #688
 

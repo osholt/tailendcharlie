@@ -192,6 +192,21 @@ class RideDiagnosticsRecorder {
     _add('VOICE      $renderer  "$phrase"');
   }
 
+  /// Records the platform audio boundary separately from voice selection.
+  /// This distinguishes a renderer timeout from focus denial/interruption.
+  void recordSpeechLifecycle({
+    required String phrase,
+    required SpokenGuidanceLifecycleEvent event,
+  }) {
+    final detail = switch (event) {
+      SpokenGuidanceLifecycleEvent.focusAcquired => 'focus acquired',
+      SpokenGuidanceLifecycleEvent.focusDenied => 'focus denied',
+      SpokenGuidanceLifecycleEvent.playbackCompleted => 'playback complete',
+      SpokenGuidanceLifecycleEvent.playbackCancelled => 'playback cancelled',
+    };
+    _add('AUDIO      $detail  "$phrase"');
+  }
+
   /// An enforcement warning armed or cleared (#418).
   void recordEnforcementWarning({
     required String hazardType,

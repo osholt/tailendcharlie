@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:ride_relay/services/spoken_audio_mode.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
+import 'package:ride_relay/services/spoken_guidance_audio_focus.dart';
 
 /// The engine is behind an interface so these decisions - what to say, when, and
 /// how often - can be tested without a platform channel. They are the part that
@@ -126,7 +128,57 @@ void main() {
     ]);
     blocking.completeNext();
     expect(await alert, isTrue);
+    expect(blocking.audioClasses, [
+      SpokenAudioClass.navigation,
+      SpokenAudioClass.safety,
+    ]);
   });
+
+  test(
+    'host ownership loss cancels queued speech until explicit resume',
+    () async {
+      final blocking = _BlockingRecordingEngine();
+      final guardedSpeaker = SpokenGuidanceSpeaker(blocking);
+      final direction = guardedSpeaker.speakManoeuvre(
+        key: 'turn-1',
+        phrase: 'Turn right',
+        enabled: true,
+        rideActive: true,
+      );
+      await blocking.waitForCallCount(1);
+      final queuedAlert = guardedSpeaker.speakAlert(
+        key: 'camera-1',
+        phrase: 'Speed camera',
+        enabled: true,
+        rideActive: true,
+      );
+
+      await guardedSpeaker.suspendNavigation();
+
+      expect(await direction, isTrue);
+      expect(await queuedAlert, isFalse);
+      expect(
+        await guardedSpeaker.speakManoeuvre(
+          key: 'turn-2',
+          phrase: 'Turn left',
+          enabled: true,
+          rideActive: true,
+        ),
+        isFalse,
+      );
+
+      guardedSpeaker.resumeNavigation();
+      final resumed = guardedSpeaker.speakManoeuvre(
+        key: 'turn-2',
+        phrase: 'Turn left',
+        enabled: true,
+        rideActive: true,
+      );
+      await blocking.waitForCallCount(2);
+      blocking.completeNext();
+      expect(await resumed, isTrue);
+    },
+  );
 
   test('says nothing at all while the option is off', () async {
     // And touches no engine: a rider who has not asked for audio must not have a
@@ -321,10 +373,56 @@ void main() {
           'Stay on the M4 past Lloyd Way.',
     ]);
   });
+
+  test('system TTS uses one short focus lease without plugin focus', () async {
+    final tts = _VoiceRecordingTts();
+    final focus = _RecordingAudioFocus();
+    final lifecycle = <SpokenGuidanceLifecycleEvent>[];
+    final voiceEngine = FlutterTtsSpokenGuidanceEngine(
+      tts: tts,
+      audioFocus: focus,
+      onLifecycle: (_, event) => lifecycle.add(event),
+    );
+
+    await voiceEngine.speak(
+      'Speed camera',
+      audioClass: SpokenAudioClass.safety,
+    );
+
+    expect(focus.audioClasses, [SpokenAudioClass.safety]);
+    expect(focus.abandonCalls, 1);
+    expect(tts.focusValues, [isFalse]);
+    expect(lifecycle, [
+      SpokenGuidanceLifecycleEvent.focusAcquired,
+      SpokenGuidanceLifecycleEvent.playbackCompleted,
+    ]);
+  });
+
+  test(
+    'system TTS stays silent when another audio owner denies focus',
+    () async {
+      final tts = _VoiceRecordingTts();
+      final lifecycle = <SpokenGuidanceLifecycleEvent>[];
+      final voiceEngine = FlutterTtsSpokenGuidanceEngine(
+        tts: tts,
+        audioFocus: _RecordingAudioFocus(granted: false),
+        onLifecycle: (_, event) => lifecycle.add(event),
+      );
+
+      await expectLater(
+        voiceEngine.speak('Turn right'),
+        throwsA(isA<SpokenGuidanceFocusDenied>()),
+      );
+
+      expect(tts.spoken, isEmpty);
+      expect(lifecycle, [SpokenGuidanceLifecycleEvent.focusDenied]);
+    },
+  );
 }
 
 class _RecordingEngine implements SpokenGuidanceEngine {
   final spoken = <String>[];
+  final audioClasses = <SpokenAudioClass>[];
   int configureCalls = 0;
   bool stopped = false;
 
@@ -334,7 +432,13 @@ class _RecordingEngine implements SpokenGuidanceEngine {
   Future<void> configure() async => configureCalls += 1;
 
   @override
-  Future<void> speak(String phrase) async => spoken.add(phrase);
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
+    spoken.add(phrase);
+    audioClasses.add(audioClass);
+  }
 
   @override
   Future<void> stop() async => stopped = true;
@@ -345,8 +449,12 @@ class _BlockingRecordingEngine extends _RecordingEngine {
   Completer<void> _changed = Completer<void>();
 
   @override
-  Future<void> speak(String phrase) {
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) {
     spoken.add(phrase);
+    audioClasses.add(audioClass);
     final completion = Completer<void>();
     _pending.add(completion);
     _changed.complete();
@@ -371,6 +479,12 @@ class _BlockingRecordingEngine extends _RecordingEngine {
     while (_pending.isNotEmpty) {
       completeNext();
     }
+  }
+
+  @override
+  Future<void> stop() async {
+    stopped = true;
+    completeAll();
   }
 }
 
@@ -404,6 +518,7 @@ class _VoiceRecordingTts extends FlutterTts {
   final voices = <Map<String, String>>[];
   final spoken = <String>[];
   int clearVoiceCalls = 0;
+  final focusValues = <bool>[];
 
   @override
   Future<dynamic> setVoice(Map<String, String> voice) async {
@@ -417,6 +532,30 @@ class _VoiceRecordingTts extends FlutterTts {
   @override
   Future<dynamic> speak(String text, {bool focus = false}) async {
     spoken.add(text);
+    focusValues.add(focus);
     return 1;
   }
+}
+
+class _RecordingAudioFocus implements SpokenGuidanceAudioFocus {
+  _RecordingAudioFocus({this.granted = true});
+
+  final bool granted;
+  final audioClasses = <SpokenAudioClass>[];
+  int abandonCalls = 0;
+
+  @override
+  bool get managesPlatformFocus => true;
+
+  @override
+  Future<bool> acquire({
+    required SpokenAudioClass audioClass,
+    required SpokenGuidanceFocusLost onLost,
+  }) async {
+    audioClasses.add(audioClass);
+    return granted;
+  }
+
+  @override
+  Future<void> abandon() async => abandonCalls += 1;
 }

@@ -6,6 +6,7 @@ import '../services/natural_voice_pack.dart';
 import '../services/neural_spoken_guidance.dart';
 import '../services/spoken_audio_mode.dart';
 import '../services/spoken_guidance.dart';
+import '../services/spoken_guidance_audio_focus.dart';
 
 /// Whether turn instructions are spoken aloud.
 ///
@@ -42,16 +43,25 @@ class SpokenGuidanceController extends ChangeNotifier
   SpokenGuidanceEngine Function() get engine =>
       () => createEngine();
 
-  SpokenGuidanceEngine createEngine({SpokenGuidanceOutputObserver? onOutput}) {
+  SpokenGuidanceEngine createEngine({
+    SpokenGuidanceOutputObserver? onOutput,
+    SpokenGuidanceLifecycleObserver? onLifecycle,
+  }) {
     final override = _engineOverride;
     if (override != null) return override();
+    final audioFocus = PlatformSpokenGuidanceAudioFocus();
     final fallback = FlutterTtsSpokenGuidanceEngine(
       voiceProvider: () => _voice,
+      audioFocus: audioFocus,
+      onLifecycle: onLifecycle,
     );
     return AdaptiveNeuralSpokenGuidanceEngine(
       enabled: () =>
           naturalVoicePack.enabled && naturalVoicePack.modelDirectory != null,
-      neuralFactory: _createNaturalEngine,
+      neuralFactory: () => _createNaturalEngine(
+        audioFocus: audioFocus,
+        onLifecycle: onLifecycle,
+      ),
       fallback: fallback,
       onOutput: onOutput,
     );
@@ -213,7 +223,10 @@ class SpokenGuidanceController extends ChangeNotifier
     if (!naturalVoicePack.installed) return;
     final preview =
         _naturalPreviewEngineOverride?.call() ??
-        _createNaturalEngine(disposePlayerOnStop: true);
+        _createNaturalEngine(
+          disposePlayerOnStop: true,
+          audioFocus: PlatformSpokenGuidanceAudioFocus(),
+        );
     try {
       await preview.configure();
       await preview.speak(voicePreviewPhrase);
@@ -227,6 +240,8 @@ class SpokenGuidanceController extends ChangeNotifier
 
   NeuralSpokenGuidanceEngine _createNaturalEngine({
     bool disposePlayerOnStop = false,
+    SpokenGuidanceAudioFocus? audioFocus,
+    SpokenGuidanceLifecycleObserver? onLifecycle,
   }) {
     final directory = naturalVoicePack.modelDirectory;
     if (directory == null) {
@@ -236,6 +251,8 @@ class SpokenGuidanceController extends ChangeNotifier
       backend: SherpaOnnxNeuralSpeechBackend(modelDirectory: directory),
       voiceProvider: () => naturalVoicePack.voice,
       disposePlayerOnStop: disposePlayerOnStop,
+      audioFocus: audioFocus,
+      onLifecycle: onLifecycle,
     );
   }
 

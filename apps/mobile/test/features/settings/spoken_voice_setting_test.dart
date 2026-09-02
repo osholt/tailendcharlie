@@ -7,6 +7,7 @@ import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
 import 'package:ride_relay/features/settings/unit_settings_sheet.dart';
 import 'package:ride_relay/services/natural_voice_pack.dart';
+import 'package:ride_relay/services/spoken_audio_mode.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -242,7 +243,10 @@ class _RecordingEngine implements SpokenGuidanceEngine {
   Future<void> configure() async => configured = true;
 
   @override
-  Future<void> speak(String phrase) async => spoken.add(phrase);
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async => spoken.add(phrase);
 
   @override
   Future<void> stop() async {}

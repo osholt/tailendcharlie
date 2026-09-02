@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/services/neural_spoken_guidance.dart';
+import 'package:ride_relay/services/spoken_audio_mode.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
 
 void main() {
@@ -47,7 +48,7 @@ void main() {
     },
   );
 
-  test('one missed deadline keeps the rest of the ride on one voice', () async {
+  test('one missed deadline does not disable later natural prompts', () async {
     final neural = _FakeNeuralStarter(neverStarts: true);
     final fallback = _RecordingEngine();
     final outputs = <SpokenGuidanceOutput>[];
@@ -62,8 +63,8 @@ void main() {
     await engine.speak('First prompt');
     await engine.speak('Second prompt');
 
-    expect(neural.phrases, ['First prompt']);
-    expect(neural.cancelCalls, 1);
+    expect(neural.phrases, ['First prompt', 'Second prompt']);
+    expect(neural.cancelCalls, 2);
     expect(fallback.spoken, ['First prompt', 'Second prompt']);
     expect(outputs, [
       SpokenGuidanceOutput.systemFallback,
@@ -190,7 +191,10 @@ class _FakeNeuralStarter implements NeuralSpeechStarter {
   }
 
   @override
-  NeuralSpeechAttempt beginSpeak(String phrase) {
+  NeuralSpeechAttempt beginSpeak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) {
     preparedBeforeFirstPhrase ??= prepared;
     phrases.add(phrase);
     return NeuralSpeechAttempt(
@@ -217,7 +221,10 @@ class _RecordingEngine implements SpokenGuidanceEngine {
   Future<void> configure() async {}
 
   @override
-  Future<void> speak(String phrase) async => spoken.add(phrase);
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async => spoken.add(phrase);
 
   @override
   Future<void> stop() async {}

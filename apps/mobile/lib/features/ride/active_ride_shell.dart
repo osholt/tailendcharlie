@@ -1264,7 +1264,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     widget.rideDiagnostics?.addListener(_onRideDiagnosticsChanged);
     if (widget.enableNativeServices && widget.spokenGuidance != null) {
       _spokenGuidance = SpokenGuidanceSpeaker(
-        widget.spokenGuidance!.createEngine(onOutput: _recordSpeechOutput),
+        widget.spokenGuidance!.createEngine(
+          onOutput: _recordSpeechOutput,
+          onLifecycle: _recordSpeechLifecycle,
+        ),
       );
       widget.spokenGuidance!.addListener(_onSpokenGuidanceChanged);
     }
@@ -2047,7 +2050,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       return;
     }
     _publishingRouteChange = true;
-    if (route != null) _carPlayGuidanceSuppressed = false;
+    if (route != null) {
+      _carPlayGuidanceSuppressed = false;
+      _spokenGuidance?.resumeNavigation();
+    }
     _activeRoute = route;
     try {
       await _replaceAwarenessController(route);
@@ -2093,7 +2099,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       }
     }
     _activeRoute = route;
-    if (route != null) _carPlayGuidanceSuppressed = false;
+    // A leader's relayed route update is not this rider explicitly reclaiming
+    // navigation from another projected app. Keep host suppression in force;
+    // a local route/start action goes through `_handleRouteChanged` above.
     await _replaceAwarenessController(route);
     if (mounted) setState(() {});
   }
@@ -2929,13 +2937,21 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   Future<void> _cancelNavigationFromCarPlay() async {
-    if (_carPlayGuidanceSuppressed) return;
-    _carPlayGuidanceSuppressed = true;
-    _latestNavigationGuidance = null;
+    final newlySuppressed = !_carPlayGuidanceSuppressed;
+    if (newlySuppressed) {
+      _carPlayGuidanceSuppressed = true;
+      _latestNavigationGuidance = null;
+    }
+    await _spokenGuidance?.suspendNavigation();
+    _diagnostics?.recordNote(
+      'projected navigation ownership lost; queued speech cancelled',
+    );
     // Deliberately do not clear the authoritative route or touch RideController:
     // ending vehicle guidance must not leave/end the ride or interrupt its
     // durable location journal.
-    if (mounted) _updateMapOverlays(updateDerivedState: false);
+    if (newlySuppressed && mounted) {
+      _updateMapOverlays(updateDerivedState: false);
+    }
   }
 
   Future<void> _handleAndroidAutoNavigationHostEvent(
@@ -4363,6 +4379,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   void _recordSpeechOutput(String phrase, SpokenGuidanceOutput output) {
     _diagnostics?.recordSpeechDelivery(phrase: phrase, output: output);
+  }
+
+  void _recordSpeechLifecycle(
+    String phrase,
+    SpokenGuidanceLifecycleEvent event,
+  ) {
+    _diagnostics?.recordSpeechLifecycle(phrase: phrase, event: event);
   }
 
   void _recordManoeuvreDiagnostics(NavigationGuidance? guidance) {

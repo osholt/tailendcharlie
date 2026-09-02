@@ -186,7 +186,10 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     }
     if (widget.enableNativeServices && widget.spokenGuidance != null) {
       _spokenGuidance = SpokenGuidanceSpeaker(
-        widget.spokenGuidance!.createEngine(onOutput: _recordSpeechOutput),
+        widget.spokenGuidance!.createEngine(
+          onOutput: _recordSpeechOutput,
+          onLifecycle: _recordSpeechLifecycle,
+        ),
       );
       widget.spokenGuidance!.addListener(_onSpokenGuidanceChanged);
       unawaited(_warmNaturalVoiceIfNeeded());
@@ -383,6 +386,13 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
 
   void _recordSpeechOutput(String phrase, SpokenGuidanceOutput output) {
     _diagnostics?.recordSpeechDelivery(phrase: phrase, output: output);
+  }
+
+  void _recordSpeechLifecycle(
+    String phrase,
+    SpokenGuidanceLifecycleEvent event,
+  ) {
+    _diagnostics?.recordSpeechLifecycle(phrase: phrase, event: event);
   }
 
   void _recordManoeuvreDiagnostics(NavigationGuidance guidance) {

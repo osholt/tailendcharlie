@@ -10,7 +10,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import 'natural_voice_pack.dart';
+import 'spoken_audio_mode.dart';
 import 'spoken_guidance.dart';
+import 'spoken_guidance_audio_focus.dart';
 
 /// Starts neural audio or reports why it could not start. Completion never
 /// carries an error: once the deadline has chosen a fallback, a late worker
@@ -25,7 +27,10 @@ class NeuralSpeechAttempt {
 abstract interface class NeuralSpeechStarter {
   Future<void> prepare();
 
-  NeuralSpeechAttempt beginSpeak(String phrase);
+  NeuralSpeechAttempt beginSpeak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  });
 
   /// Abandons one deadline-losing utterance without unloading the model that a
   /// later prompt can still use.
@@ -167,25 +172,31 @@ class NeuralSpokenGuidanceEngine
     required this.voiceProvider,
     AudioPlayer? player,
     this.disposePlayerOnStop = false,
+    this._audioFocus,
+    this.onLifecycle,
   }) : _player = player ?? AudioPlayer();
 
   final NeuralSpeechBackend backend;
   final NaturalNavigationVoice Function() voiceProvider;
   final AudioPlayer _player;
   final bool disposePlayerOnStop;
+  final SpokenGuidanceAudioFocus? _audioFocus;
+  final SpokenGuidanceLifecycleObserver? onLifecycle;
   int _attemptGeneration = 0;
+  String? _activePhrase;
+  Completer<void>? _playbackCancelled;
 
   @override
-  Future<void> prepare() async {
-    await _configureAudio();
-    await backend.prepare();
-  }
+  Future<void> prepare() => backend.prepare();
 
   @override
   Future<void> configure() => prepare();
 
   @override
-  NeuralSpeechAttempt beginSpeak(String phrase) {
+  NeuralSpeechAttempt beginSpeak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) {
     final started = Completer<void>();
     final completed = Completer<void>();
     final generation = ++_attemptGeneration;
@@ -202,14 +213,51 @@ class NeuralSpokenGuidanceEngine
         if (generation != _attemptGeneration) {
           throw const _NeuralSpeechSuperseded();
         }
+        await _player.setAudioContext(
+          _audioContext(
+            audioClass: audioClass,
+            platformFocusManaged: _audioFocus?.managesPlatformFocus == true,
+          ),
+        );
         await _player.setReleaseMode(ReleaseMode.stop);
         final finished = _player.onPlayerComplete.first;
+        final cancelled = Completer<void>();
+        _playbackCancelled = cancelled;
+        _activePhrase = phrase;
+        final focus = _audioFocus;
+        if (focus != null) {
+          final acquired = await focus.acquire(
+            audioClass: audioClass,
+            onLost: () async {
+              _notifyLifecycle(
+                _activePhrase ?? phrase,
+                SpokenGuidanceLifecycleEvent.playbackCancelled,
+              );
+              if (!cancelled.isCompleted) cancelled.complete();
+              await _player.stop();
+            },
+          );
+          if (!acquired) {
+            _notifyLifecycle(phrase, SpokenGuidanceLifecycleEvent.focusDenied);
+            throw const _NeuralSpeechFocusDenied();
+          }
+          _notifyLifecycle(phrase, SpokenGuidanceLifecycleEvent.focusAcquired);
+        }
         await _player.play(DeviceFileSource(file));
         if (!started.isCompleted) started.complete();
-        await finished;
+        await Future.any([finished, cancelled.future]);
+        if (!cancelled.isCompleted) {
+          _notifyLifecycle(
+            phrase,
+            SpokenGuidanceLifecycleEvent.playbackCompleted,
+          );
+        }
       } on Object catch (error, stackTrace) {
         if (!started.isCompleted) started.completeError(error, stackTrace);
       } finally {
+        _activePhrase = null;
+        _playbackCancelled = null;
+        await _audioFocus?.abandon();
         if (!completed.isCompleted) completed.complete();
       }
     }());
@@ -217,8 +265,11 @@ class NeuralSpokenGuidanceEngine
   }
 
   @override
-  Future<void> speak(String phrase) async {
-    final attempt = beginSpeak(phrase);
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
+    final attempt = beginSpeak(phrase, audioClass: audioClass);
     await attempt.started;
     await attempt.completed;
   }
@@ -226,34 +277,64 @@ class NeuralSpokenGuidanceEngine
   @override
   Future<void> cancelCurrentAttempt() async {
     _attemptGeneration += 1;
+    final cancelled = _playbackCancelled;
+    if (cancelled != null && !cancelled.isCompleted) cancelled.complete();
     await _player.stop();
+    await _audioFocus?.abandon();
   }
 
   @override
   Future<void> stop() async {
     _attemptGeneration += 1;
+    final cancelled = _playbackCancelled;
+    if (cancelled != null && !cancelled.isCompleted) {
+      final activePhrase = _activePhrase;
+      if (activePhrase != null) {
+        _notifyLifecycle(
+          activePhrase,
+          SpokenGuidanceLifecycleEvent.playbackCancelled,
+        );
+      }
+      cancelled.complete();
+    }
     if (disposePlayerOnStop) {
       await _player.dispose();
     } else {
       await _player.stop();
     }
+    await _audioFocus?.abandon();
     await backend.abort();
   }
 
-  static Future<void> _configureAudio() => AudioPlayer.global.setAudioContext(
-    AudioContext(
-      android: const AudioContextAndroid(
-        contentType: AndroidContentType.speech,
-        usageType: AndroidUsageType.assistanceNavigationGuidance,
-        audioFocus: AndroidAudioFocus.gainTransientMayDuck,
-      ),
-      iOS: AudioContextIOS(
-        category: AVAudioSessionCategory.playback,
-        options: const {
-          AVAudioSessionOptions.mixWithOthers,
-          AVAudioSessionOptions.duckOthers,
-        },
-      ),
+  void _notifyLifecycle(String phrase, SpokenGuidanceLifecycleEvent event) {
+    try {
+      onLifecycle?.call(phrase, event);
+    } on Object {
+      // Diagnostics must never interfere with a spoken warning.
+    }
+  }
+
+  static AudioContext _audioContext({
+    required SpokenAudioClass audioClass,
+    required bool platformFocusManaged,
+  }) => AudioContext(
+    android: AudioContextAndroid(
+      contentType: AndroidContentType.speech,
+      usageType: switch (audioClass) {
+        SpokenAudioClass.navigation =>
+          AndroidUsageType.assistanceNavigationGuidance,
+        SpokenAudioClass.safety => AndroidUsageType.assistanceSonification,
+      },
+      audioFocus: platformFocusManaged
+          ? AndroidAudioFocus.none
+          : AndroidAudioFocus.gainTransientMayDuck,
+    ),
+    iOS: AudioContextIOS(
+      category: AVAudioSessionCategory.playback,
+      options: const {
+        AVAudioSessionOptions.mixWithOthers,
+        AVAudioSessionOptions.duckOthers,
+      },
     ),
   );
 }
@@ -277,7 +358,6 @@ class FailSafeNeuralSpokenGuidanceEngine
   final Duration warmedStartDeadline;
   final SpokenGuidanceOutputObserver? onOutput;
   bool _warmed = false;
-  bool _fallbackOnly = false;
   Future<void>? _warming;
 
   @override
@@ -300,25 +380,21 @@ class FailSafeNeuralSpokenGuidanceEngine
   }
 
   @override
-  Future<void> speak(String phrase) async {
-    if (_fallbackOnly) {
-      await fallback.speak(phrase);
-      _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
-      return;
-    }
-    final attempt = neural.beginSpeak(phrase);
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
+    final attempt = neural.beginSpeak(phrase, audioClass: audioClass);
     try {
       await attempt.started.timeout(
         _warmed || _warming != null ? warmedStartDeadline : startDeadline,
       );
     } on Object {
       await neural.cancelCurrentAttempt();
-      // A different voice on alternating prompts is harder to follow through a
-      // helmet than one consistent system voice. Once the natural path misses
-      // its safety deadline, keep this ride on the fail-safe until the engine is
-      // recreated (for example after the rider toggles the voice setting).
-      _fallbackOnly = true;
-      await fallback.speak(phrase);
+      // This prompt must not be late, but one slow generation must not disable
+      // the installed natural voice for the rest of the ride. The model remains
+      // warm and the next independently serialized prompt gets a fresh chance.
+      await fallback.speak(phrase, audioClass: audioClass);
       _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
       return;
     }
@@ -368,18 +444,21 @@ class AdaptiveNeuralSpokenGuidanceEngine
   }
 
   @override
-  Future<void> speak(String phrase) async {
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
     if (!enabled()) {
       final previous = _active;
       _active = null;
       await previous?.neural.stop();
       if (!_fallbackConfigured) await configure();
-      await fallback.speak(phrase);
+      await fallback.speak(phrase, audioClass: audioClass);
       _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
       return;
     }
     await _ensureNatural();
-    await _active!.speak(phrase);
+    await _active!.speak(phrase, audioClass: audioClass);
   }
 
   @override
@@ -559,4 +638,8 @@ class _VoiceWorkerFailure {
 
 class _NeuralSpeechSuperseded implements Exception {
   const _NeuralSpeechSuperseded();
+}
+
+class _NeuralSpeechFocusDenied implements Exception {
+  const _NeuralSpeechFocusDenied();
 }

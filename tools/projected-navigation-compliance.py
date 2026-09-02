@@ -566,6 +566,51 @@ def structural_checks(failures: list[str]) -> None:
         "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoChannelContractTest.kt",
         ["That did not work. When safely parked"],
     )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/SpokenAudioFocusChannel.kt",
+        [
+            "USAGE_ASSISTANCE_NAVIGATION_GUIDANCE",
+            "USAGE_ASSISTANCE_SONIFICATION",
+            "AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK",
+            "METHOD_FOCUS_LOST",
+            "abandonAudioFocusRequest",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/lib/services/spoken_guidance.dart",
+        [
+            "audioClass: SpokenAudioClass.navigation",
+            "audioClass: SpokenAudioClass.safety",
+            "Future<void> suspendNavigation()",
+            "SpokenGuidanceLifecycleEvent.focusAcquired",
+            "SpokenGuidanceLifecycleEvent.playbackCompleted",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/lib/features/ride/active_ride_shell.dart",
+        [
+            "await _spokenGuidance?.suspendNavigation()",
+            "_spokenGuidance?.resumeNavigation()",
+            "queued speech cancelled",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/test/services/neural_spoken_guidance_test.dart",
+        ["one missed deadline does not disable later natural prompts"],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/SpokenAudioFocusPolicyTest.kt",
+        [
+            "navigation prompts request transient ducking navigation focus",
+            "safety alerts remain separate from navigation guidance",
+            "Dart and Android keep the same channel contract",
+        ],
+    )
 
 
 def write_summary(
