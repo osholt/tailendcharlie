@@ -1,7 +1,6 @@
 package me.osholt.ride_relay
 
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 
@@ -27,10 +26,6 @@ internal class ProjectedMapRenderer {
     private val remaining = strokePaint(0xFFFF7A1A.toInt(), 10f)
     private val routeOutline = strokePaint(0xFF10151C.toInt(), 16f)
     private val marker = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-    }
 
     /**
      * @param widthPx/[heightPx] the surface size, which differs per head unit.
@@ -41,17 +36,13 @@ internal class ProjectedMapRenderer {
         snapshot: ProjectedRideSnapshot?,
         widthPx: Float,
         heightPx: Float,
+        visibleArea: ProjectedMapBounds? = null,
+        stableArea: ProjectedMapBounds? = null,
     ): Boolean {
         canvas.drawColor(if (snapshot?.darkMap != false) GROUND_DARK else GROUND_LIGHT)
-        if (snapshot == null) {
-            drawCentredMessage(canvas, "Waiting for the phone", widthPx, heightPx)
-            return false
-        }
-        val camera = camera(snapshot, widthPx, heightPx)
-        if (camera == null) {
-            drawCentredMessage(canvas, snapshot.rideState, widthPx, heightPx)
-            return false
-        }
+        if (snapshot == null) return false
+        val viewport = ProjectedMapBounds.resolve(widthPx, heightPx, visibleArea, stableArea)
+        val camera = camera(snapshot, viewport) ?: return false
         // Ridden first, so the part still to come is drawn over the part behind
         // where they meet.
         drawPath(canvas, camera, snapshot.riddenPoints, ridden)
@@ -84,15 +75,13 @@ internal class ProjectedMapRenderer {
 
     private fun camera(
         snapshot: ProjectedRideSnapshot,
-        widthPx: Float,
-        heightPx: Float,
+        viewport: ProjectedMapBounds?,
     ): ProjectedMapCamera? {
         val local = snapshot.localPoint
         if (snapshot.followRider && local != null) {
             return ProjectedMapCamera.following(
                 rider = local,
-                widthPx = widthPx,
-                heightPx = heightPx,
+                viewport = viewport,
                 metresAcross = FOLLOW_METRES_ACROSS,
             )
         }
@@ -106,7 +95,7 @@ internal class ProjectedMapRenderer {
             snapshot.riders.forEach { rider -> rider.point?.let(::add) }
             local?.let(::add)
         }
-        return ProjectedMapCamera.fitting(framed, widthPx, heightPx, FIT_PADDING_PX)
+        return ProjectedMapCamera.fitting(framed, viewport, FIT_PADDING_PX)
     }
 
     private fun drawPath(
@@ -132,13 +121,13 @@ internal class ProjectedMapRenderer {
         canvas.drawCircle(x, y, RIDER_RADIUS_PX, marker)
         marker.style = Paint.Style.STROKE
         marker.strokeWidth = 3f
-        marker.color = if (rider.needsAttention) ATTENTION else Color.rgb(16, 21, 28)
+        marker.color = if (rider.needsAttention) ATTENTION else GROUND_DARK
         canvas.drawCircle(x, y, RIDER_RADIUS_PX + 3f, marker)
         if (rider.isTec) {
             // The back of the group is the one role a leader scans for.
             marker.style = Paint.Style.STROKE
             marker.strokeWidth = 2f
-            marker.color = Color.WHITE
+            marker.color = 0xFFFFFFFF.toInt()
             canvas.drawCircle(x, y, RIDER_RADIUS_PX + 8f, marker)
         }
     }
@@ -173,25 +162,15 @@ internal class ProjectedMapRenderer {
                 close()
             }
             marker.style = Paint.Style.FILL
-            marker.color = Color.WHITE
+            marker.color = 0xFFFFFFFF.toInt()
             canvas.drawPath(nose, marker)
             canvas.restore()
         }
         marker.style = Paint.Style.FILL
-        marker.color = Color.WHITE
+        marker.color = 0xFFFFFFFF.toInt()
         canvas.drawCircle(x, y, LOCAL_RADIUS_PX + 4f, marker)
         marker.color = 0xFF2F80ED.toInt()
         canvas.drawCircle(x, y, LOCAL_RADIUS_PX, marker)
-    }
-
-    private fun drawCentredMessage(
-        canvas: Canvas,
-        message: String,
-        widthPx: Float,
-        heightPx: Float,
-    ) {
-        text.textSize = 34f
-        canvas.drawText(message, widthPx / 2f, heightPx / 2f, text)
     }
 
     private fun strokePaint(colour: Int, width: Float) = Paint(Paint.ANTI_ALIAS_FLAG).apply {

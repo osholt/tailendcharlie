@@ -22,8 +22,7 @@ internal class ProjectedMapCamera private constructor(
     private val westX: Double,
     private val northY: Double,
     private val scale: Double,
-    val widthPx: Float,
-    val heightPx: Float,
+    val viewport: ProjectedMapBounds,
 ) {
     fun x(point: ProjectedPoint): Float = ((mercatorX(point.longitude) - westX) * scale).toFloat()
 
@@ -33,8 +32,8 @@ internal class ProjectedMapCamera private constructor(
     fun contains(point: ProjectedPoint): Boolean {
         val px = x(point)
         val py = y(point)
-        return px >= -MARGIN_PX && px <= widthPx + MARGIN_PX &&
-            py >= -MARGIN_PX && py <= heightPx + MARGIN_PX
+        return px >= viewport.left - MARGIN_PX && px <= viewport.right + MARGIN_PX &&
+            py >= viewport.top - MARGIN_PX && py <= viewport.bottom + MARGIN_PX
     }
 
     companion object {
@@ -53,8 +52,18 @@ internal class ProjectedMapCamera private constructor(
             widthPx: Float,
             heightPx: Float,
             paddingPx: Float,
+        ): ProjectedMapCamera? = fitting(
+            points = points,
+            viewport = ProjectedMapBounds.full(widthPx, heightPx),
+            paddingPx = paddingPx,
+        )
+
+        fun fitting(
+            points: List<ProjectedPoint>,
+            viewport: ProjectedMapBounds?,
+            paddingPx: Float,
         ): ProjectedMapCamera? {
-            if (points.isEmpty() || widthPx <= 0f || heightPx <= 0f) return null
+            if (points.isEmpty() || viewport == null) return null
             var west = points.minOf { it.longitude }
             var east = points.maxOf { it.longitude }
             var south = points.minOf { it.latitude }
@@ -71,16 +80,18 @@ internal class ProjectedMapCamera private constructor(
                 south = centre - MIN_SPAN_DEGREES / 2
                 north = centre + MIN_SPAN_DEGREES / 2
             }
-            val usableWidth = max(1.0, (widthPx - paddingPx * 2).toDouble())
-            val usableHeight = max(1.0, (heightPx - paddingPx * 2).toDouble())
+            val usableWidth = max(1.0, (viewport.width - paddingPx * 2).toDouble())
+            val usableHeight = max(1.0, (viewport.height - paddingPx * 2).toDouble())
             val spanX = mercatorX(east) - mercatorX(west)
             val spanY = mercatorY(south) - mercatorY(north)
             // The smaller scale of the two, so the longer axis fits rather than
             // running off the side.
             val scale = minOf(usableWidth / spanX, usableHeight / spanY)
-            val centredX = mercatorX(west) - (widthPx - spanX * scale) / 2 / scale
-            val centredY = mercatorY(north) - (heightPx - spanY * scale) / 2 / scale
-            return ProjectedMapCamera(centredX, centredY, scale, widthPx, heightPx)
+            val leftPx = viewport.left + (viewport.width - spanX * scale) / 2
+            val topPx = viewport.top + (viewport.height - spanY * scale) / 2
+            val centredX = mercatorX(west) - leftPx / scale
+            val centredY = mercatorY(north) - topPx / scale
+            return ProjectedMapCamera(centredX, centredY, scale, viewport)
         }
 
         /**
@@ -97,15 +108,29 @@ internal class ProjectedMapCamera private constructor(
             heightPx: Float,
             metresAcross: Double,
             forwardBias: Float = 0.28f,
+        ): ProjectedMapCamera? = following(
+            rider = rider,
+            viewport = ProjectedMapBounds.full(widthPx, heightPx),
+            metresAcross = metresAcross,
+            forwardBias = forwardBias,
+        )
+
+        fun following(
+            rider: ProjectedPoint,
+            viewport: ProjectedMapBounds?,
+            metresAcross: Double,
+            forwardBias: Float = 0.28f,
         ): ProjectedMapCamera? {
-            if (widthPx <= 0f || heightPx <= 0f || metresAcross <= 0.0) return null
+            if (viewport == null || metresAcross <= 0.0) return null
             val metresPerMercator = metresPerMercatorUnit(rider.latitude)
             val spanMercator = metresAcross / metresPerMercator
-            val scale = widthPx / spanMercator
-            val westX = mercatorX(rider.longitude) - (widthPx / 2) / scale
+            val scale = viewport.width / spanMercator
+            val riderX = viewport.left + viewport.width / 2
+            val riderY = viewport.top + viewport.height * (0.5f + forwardBias)
+            val westX = mercatorX(rider.longitude) - riderX / scale
             val northY = mercatorY(rider.latitude) -
-                (heightPx * (0.5f + forwardBias)) / scale
-            return ProjectedMapCamera(westX, northY, scale, widthPx, heightPx)
+                riderY / scale
+            return ProjectedMapCamera(westX, northY, scale, viewport)
         }
 
         fun mercatorX(longitude: Double): Double = longitude / 360.0 + 0.5
@@ -120,6 +145,70 @@ internal class ProjectedMapCamera private constructor(
         private fun metresPerMercatorUnit(latitude: Double): Double {
             val equatorial = 40_075_016.686
             return equatorial * abs(cos(Math.toRadians(latitude.coerceIn(-89.0, 89.0))))
+        }
+    }
+}
+
+/** Host-owned surface rectangle in absolute surface pixels. */
+internal data class ProjectedMapBounds(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+) {
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
+
+    private fun intersect(other: ProjectedMapBounds): ProjectedMapBounds? = bounded(
+        left = maxOf(left, other.left),
+        top = maxOf(top, other.top),
+        right = minOf(right, other.right),
+        bottom = minOf(bottom, other.bottom),
+    )
+
+    companion object {
+        fun full(widthPx: Float, heightPx: Float): ProjectedMapBounds? = bounded(
+            left = 0f,
+            top = 0f,
+            right = widthPx,
+            bottom = heightPx,
+        )
+
+        /**
+         * Uses the live visible area and the always-visible stable area together.
+         * A malformed or temporarily stale callback cannot move content outside
+         * the surface; if two valid callbacks do not overlap, the live area wins.
+         */
+        fun resolve(
+            widthPx: Float,
+            heightPx: Float,
+            visible: ProjectedMapBounds?,
+            stable: ProjectedMapBounds?,
+        ): ProjectedMapBounds? {
+            val surface = full(widthPx, heightPx) ?: return null
+            val visibleOnSurface = visible?.intersect(surface)
+            val stableOnSurface = stable?.intersect(surface)
+            return when {
+                visibleOnSurface != null && stableOnSurface != null ->
+                    visibleOnSurface.intersect(stableOnSurface) ?: visibleOnSurface
+                stableOnSurface != null -> stableOnSurface
+                visibleOnSurface != null -> visibleOnSurface
+                else -> surface
+            }
+        }
+
+        private fun bounded(
+            left: Float,
+            top: Float,
+            right: Float,
+            bottom: Float,
+        ): ProjectedMapBounds? = if (
+            left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite() &&
+            right - left >= 1f && bottom - top >= 1f
+        ) {
+            ProjectedMapBounds(left, top, right, bottom)
+        } else {
+            null
         }
     }
 }

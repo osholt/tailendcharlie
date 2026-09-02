@@ -419,13 +419,12 @@ These features must not change baseline route or ride behavior on older iOS.
 ## Android Auto compliance baseline
 
 The Android implementation has advanced beyond the old text companion: it now
-declares the Navigation category, installs a `NavigationTemplate`, draws a route
-and riders on the host surface, and provides bounded Search and List templates.
-It is not yet a compliant release candidate. In particular, it never registers
-with `NavigationManager`, advertises every manoeuvre as straight, ignores
-navigation intents and auto-drive mode, draws status text on the map surface,
-ignores the supplied visible area, follows the phone rather than the host for
-day/night mode, and has no road basemap.
+declares the Navigation category, owns the `NavigationManager` lifecycle,
+publishes typed manoeuvres, handles the public navigation-intent and auto-drive
+contracts, and provides bounded Search and List templates. It is not yet a
+compliant release candidate. The remaining software gaps are host-owned
+day/night mode, a road basemap, parked-safe wording and audio ownership; DHU and
+physical-head-unit evidence is tracked separately.
 
 Google requires Navigation apps used while driving to meet the applicable Car
 optimized (Tier 2) requirements for Play acceptance. Tier 1 cluster-map support
@@ -451,7 +450,7 @@ outside this Android Auto plan.
 | PA-1 payments | NOT APPLICABLE | No purchase flow is exposed in Android Auto. |
 | IN-1 relevant notifications only | PARTIAL | #684 limits the ongoing notification to active turn guidance; validate rail/HUN behavior in #703. |
 | NF-1 turn-by-turn directions | FAIL | Typed projection #700 and manoeuvre mapping #687. |
-| NF-2 map-only surface/safe area | FAIL | Surface and camera correction #686. |
+| NF-2 map-only surface/safe area | PARTIAL | #686 keeps pixels inside the intersected stable/visible host area; validate controls in #703. |
 | NF-3 notifications | PARTIAL | #684 publishes an ongoing `CATEGORY_NAVIGATION` notification with `CarAppExtender`; validate in #703. |
 | NF-4 cluster next-turn metadata | PARTIAL | #684 publishes current/following steps and destination estimates through `NavigationManager.updateTrip()`; validate in #703. |
 | NF-5 navigation ownership | PARTIAL | #684 ends trip metadata and notifications on host pre-emption without ending the ride; audio shutdown remains #702 and hardware validation #703. |
@@ -585,6 +584,12 @@ tests protect every symbol family. DHU/physical evidence remains in #703.
 Impact: loading or disconnected states move from the canvas into host-styled
 messages. Route and rider geometry becomes less likely to sit underneath the
 turn card, action strip or display cutout.
+
+Implemented in #686: the renderer now emits map pixels only, the screen retains
+both host area callbacks, and all camera coordinates are fitted inside their
+clamped intersection. Native renderer/camera tests cover compact, standard and
+ultrawide surfaces with persistent and transient obstructions. DHU/physical
+evidence remains in #703.
 
 ### A6. Add an offline-capable road basemap — #701
 
