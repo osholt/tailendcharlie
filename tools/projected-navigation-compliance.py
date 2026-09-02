@@ -474,6 +474,28 @@ def structural_checks(failures: list[str]) -> None:
             "rejects non navigation malformed and unsupported requests",
         ],
     )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/AndroidAutoManeuverFactory.kt",
+        [
+            "Maneuver.TYPE_UNKNOWN",
+            "Maneuver.TYPE_U_TURN_LEFT",
+            "Maneuver.TYPE_FORK_LEFT",
+            "Maneuver.TYPE_MERGE_SIDE_UNSPECIFIED",
+            "Maneuver.TYPE_ROUNDABOUT_ENTER_AND_EXIT_CW",
+            "setRoundaboutExitNumber(value.exitNumber)",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoManeuverFactoryTest.kt",
+        [
+            "ParameterizedRobolectricTestRunner",
+            "maps the shared manoeuvre to the Android host type",
+            "roundabouts follow traffic side and retain exit number",
+            "step cue road and icon come from one typed manoeuvre",
+        ],
+    )
 
 
 def write_summary(

@@ -564,6 +564,12 @@ creates a location fix or journal event. Voice/DHU/physical evidence remains in 
 Impact: the host-drawn turn card changes from a generic straight arrow to the
 real manoeuvre. The phone instruction wording and routing algorithm stay intact.
 
+Implemented in #687: the current and following host steps now share one typed
+mapper for turns, ramps, forks, merges, lane choices, traffic-side-aware U-turns
+and roundabouts, with an explicit unknown fallback. The template and
+`NavigationManager` trip consume those same steps, and parameterized native
+tests protect every symbol family. DHU/physical evidence remains in #703.
+
 ### A5. Make the surface map-only and safe-area aware — #686
 
 - Remove `Waiting for the phone` and ride-state text from
