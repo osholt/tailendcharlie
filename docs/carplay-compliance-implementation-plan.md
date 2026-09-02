@@ -439,7 +439,7 @@ outside this Android Auto plan.
 | SA-1 no distracting animation | UNVERIFIED | Bound map updates and validate in #703. |
 | AD-1 and NA-1 no ads | PASS | Preserve the current no-ad surfaces and notifications. |
 | IU-1 permitted image use | PASS | Keep images limited to map/navigation context. |
-| VI-1 safe phone handoff | FAIL | Platform-safe parked wording #688. |
+| VI-1 safe phone handoff | PARTIAL | #688 uses platform-specific neutral/safely-parked wording; validate both hosts in #698/#703. |
 | AC-1 five screens or fewer | PASS | Current navigation, search and group hierarchy is within the limit. |
 | ST-1 no auto-scrolling text | PASS | Preserve host-owned static text behavior. |
 | VC-1 Gemini/Assistant commands | PARTIAL | #685 implements the public `ACTION_NAVIGATE`/`geo` contract in both Session entry points; validate spoken requests in #703. |
@@ -653,6 +653,13 @@ as well as head-unit radio/music/call/Assistant tests.
 
 Impact: only error/setup wording and availability change. Core actions remain,
 but an unavailable action may disappear instead of leading to a phone prompt.
+
+Implemented in #688: shared location readiness now resolves per projected host.
+CarPlay keeps a self-contained refusal, while Android Auto names the phone only
+with explicit safely-parked wording. Android's missing-engine, old-app and empty
+error fallbacks use the same safety boundary, and prepared-ride failures are no
+longer discarded. Unit/contract tests cover both platform messages; display
+evidence remains in #698/#703.
 
 ### A10. Validate Tier 2 and release to closed testers — #703
 

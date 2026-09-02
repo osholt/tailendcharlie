@@ -74,7 +74,7 @@ class AndroidAutoChannelContractTest {
         // A refusal with no message still has to say something a rider can act
         // on, rather than failing silently.
         assertEquals(
-            "That did not work. Try the phone.",
+            "That did not work. When safely parked, check Tail End Charlie on your phone.",
             ProjectedRideChannel.okError(mapOf("ok" to false)),
         )
     }

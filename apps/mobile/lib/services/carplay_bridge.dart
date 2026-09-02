@@ -25,6 +25,23 @@ import 'route_journey_progress.dart';
 
 enum CarPlaySurfaceMode { home, preRide, activeRide, endedRide }
 
+/// The projected host receiving shared ride state.
+enum ProjectedHostPlatform { carPlay, androidAuto }
+
+String projectedLocationUnavailableReason(ProjectedHostPlatform platform) =>
+    switch (platform) {
+      ProjectedHostPlatform.carPlay =>
+        'Location is not ready. This ride cannot start from CarPlay yet.',
+      ProjectedHostPlatform.androidAuto =>
+        'Location is not ready. When safely parked, check Location access in '
+            'Tail End Charlie on your phone.',
+    };
+
+ProjectedHostPlatform _currentProjectedHostPlatform() =>
+    defaultTargetPlatform == TargetPlatform.iOS
+    ? ProjectedHostPlatform.carPlay
+    : ProjectedHostPlatform.androidAuto;
+
 /// A submitted CarPlay search result. Coordinates are carried with the label so
 /// choosing the second of several places with the same name cannot silently
 /// route to the geocoder's first result instead.
@@ -978,6 +995,7 @@ class CarPlayRideStart {
     required bool isGroup,
     required bool hasTec,
     String? routeName,
+    ProjectedHostPlatform? hostPlatform,
   }) {
     if (!hasSession || !isLeader || rideStarted || rideEnded) return null;
     return CarPlayRideStart(
@@ -991,7 +1009,9 @@ class CarPlayRideStart {
           : null,
       unavailableReason: locationReady
           ? (busy ? 'Ride setup is still being saved.' : null)
-          : 'Location is not ready. This ride cannot start yet.',
+          : projectedLocationUnavailableReason(
+              hostPlatform ?? _currentProjectedHostPlatform(),
+            ),
     );
   }
 

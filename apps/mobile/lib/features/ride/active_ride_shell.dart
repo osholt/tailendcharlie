@@ -4569,8 +4569,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         );
       }
       final message = source == 'CarPlay'
-          ? 'CarPlay could not start the ride. Open Tail End Charlie on the '
-                'iPhone and try again.'
+          ? 'The ride could not start from CarPlay. Try again when safely stopped.'
           : 'The ride could not start. Please try again.';
       final added = _warnings.add(message);
       if (added && mounted) setState(() {});

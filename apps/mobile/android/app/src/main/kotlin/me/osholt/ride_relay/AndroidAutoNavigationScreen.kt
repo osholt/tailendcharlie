@@ -225,7 +225,15 @@ internal class AndroidAutoNavigationScreen(
                         if (!rideStart.enabled && refusal != null) {
                             CarToast.makeText(carContext, refusal, CarToast.LENGTH_LONG).show()
                         } else {
-                            ProjectedRideChannel.startPreparedRide {}
+                            ProjectedRideChannel.startPreparedRide { error ->
+                                if (error != null) {
+                                    CarToast.makeText(
+                                        carContext,
+                                        error,
+                                        CarToast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            }
                         }
                     }
                     .build(),
