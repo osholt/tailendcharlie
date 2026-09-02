@@ -14,12 +14,14 @@ import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/services/android_auto_navigation_projection.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/carplay_bridge.dart';
+import 'package:ride_relay/services/carplay_route_preview.dart';
 import 'package:ride_relay/services/carplay_tec_status.dart';
 import 'package:ride_relay/services/leader_ride_status.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
 import 'package:ride_relay/services/navigation_guidance.dart';
 import 'package:ride_relay/services/route_progress.dart';
 import 'package:ride_relay/services/route_journey_progress.dart';
+import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/tec_gap_trend.dart';
 
 void main() {
@@ -1354,6 +1356,101 @@ void main() {
     expect(plans.single.$2, isTrue);
     expect(freeRoam, {'ok': true, 'error': null});
     expect(freeRoamStarts, 1);
+  });
+
+  test('previews, commits, and cancels a CarPlay route transaction', () async {
+    final transaction = CarPlayRoutePreviewTransaction();
+    final commits = <String>[];
+    final cancellations = <String>[];
+    final plan = DestinationRoutePlan(
+      route: ImportedRoute(
+        id: 'route-1',
+        name: 'To Puy Mary',
+        importedAt: DateTime.utc(2026, 9, 2),
+        sourceFileName: 'route-1.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 45.05, longitude: 2.7),
+              GeoPoint(latitude: 45.06, longitude: 2.72),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      ),
+      distanceMeters: 12000,
+      duration: const Duration(minutes: 20),
+    );
+    final bridge = CarPlayBridge(
+      channel: channel,
+      onDestinationPreviewRequested: (destination) async {
+        final preview = CarPlayTripPreview.single(
+          destinationLabel: destination.label,
+          plan: plan,
+        );
+        transaction.replace(preview);
+        return preview;
+      },
+      onDestinationPreviewCommitted: (previewId, routeChoiceId) async {
+        final selected = transaction.commit(
+          previewId: previewId,
+          routeChoiceId: routeChoiceId,
+        );
+        commits.add(selected.route.id);
+      },
+      onDestinationPreviewCancelled: (previewId) async {
+        cancellations.add(previewId);
+        transaction.cancel(previewId);
+      },
+    );
+    addTearDown(bridge.dispose);
+
+    final previewed = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('previewDestination', {
+        'label': 'Puy Mary, France',
+        'latitude': 45.06,
+        'longitude': 2.72,
+      }),
+    );
+    final committed = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('commitDestinationPreview', {
+        'previewId': 'route-1:carplay-preview',
+        'routeChoiceId': 'route-1:primary',
+      }),
+    );
+    final duplicate = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('commitDestinationPreview', {
+        'previewId': 'route-1:carplay-preview',
+        'routeChoiceId': 'route-1:primary',
+      }),
+    );
+    final cancelled = await invokeDartChannel(
+      messenger,
+      channel,
+      const MethodCall('cancelDestinationPreview', {
+        'previewId': 'route-1:carplay-preview',
+      }),
+    );
+
+    final previewMap = previewed as Map;
+    expect(previewMap['error'], isNull);
+    expect((previewMap['preview'] as Map)['id'], 'route-1:carplay-preview');
+    expect(((previewMap['preview'] as Map)['choices'] as List), hasLength(1));
+    expect(committed, {'ok': true, 'error': null});
+    expect(duplicate, {
+      'ok': false,
+      'error': 'That route preview has expired. Choose the destination again.',
+    });
+    expect(cancelled, {'ok': true, 'error': null});
+    expect(commits, ['route-1']);
+    expect(cancellations, ['route-1:carplay-preview']);
   });
 
   test(

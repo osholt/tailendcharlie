@@ -215,6 +215,16 @@ unchanged. The incremental compliance
 checker runs in mobile CI and both closed-tester upload workflows; `--strict`
 remains red until all required CarPlay and Android Auto rows have evidence.
 
+CarPlay destination previews for #691 are implemented on top of that boundary.
+Search still uses the bounded `CPSearchTemplate`, but choosing a result now
+calculates an immutable route preview without changing ride state, presents it
+as a native `CPTrip`, and updates the MapLibre route plus CarPlay estimates as a
+route choice changes. Only the system Go action commits the selected route back
+to Dart, with exact-once guards on both sides. Cancellation and stale planning
+responses cannot create, start, or end a ride. The CarPlay product boundary is
+now explicit: a route started from the home surface creates a solo ride; group
+ride setup remains a pre-drive phone task.
+
 Flutter analysis, the full test suite, an Android debug APK and an unsigned iOS
 simulator build passed on the PR. A signed Profile build also passed with the
 replacement development profile and both CarPlay entitlements stamped into
@@ -228,11 +238,12 @@ The installed iOS 26.5 simulator filters unsigned restricted-entitlement builds
 from its CarPlay catalogue; an ad-hoc entitlement signature is installable but
 cannot launch, exactly as documented. The implementation is therefore ready for
 a signed TestFlight build, but #295 and #328 still require a physical iPhone and
-CarPlay head-unit run before production support can be claimed. Ride creation,
-joining, route choice and first-time permissions intentionally stay on the
-phone; a leader can start an already-prepared ride from CarPlay.
+CarPlay head-unit run before production support can be claimed. Group-ride
+creation, joining, route editing and first-time permissions intentionally stay
+on the phone; CarPlay can preview and commit a solo route, and a leader can
+start an already-prepared ride.
 
-Continue mandatory CarPlay behavior with #691–#696 and Android Auto behavior
+Continue mandatory CarPlay behavior with #692–#696 and Android Auto behavior
 with #684–#689. Keep #698 and #703 open until their physical head-unit evidence
 gates can truthfully be completed; tester uploads remain explicit manual jobs.
 

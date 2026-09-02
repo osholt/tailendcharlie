@@ -15,6 +15,7 @@ import '../features/map/motorcycle_icon.dart';
 import 'android_auto_navigation_projection.dart';
 import 'basemap_configuration.dart';
 import 'carplay_navigation_projection.dart';
+import 'carplay_route_preview.dart';
 import 'guidance_time_remaining.dart';
 import 'carplay_tec_status.dart';
 import 'navigation_camera.dart';
@@ -91,6 +92,13 @@ class CarPlayLocalRider {
 String _readableCarPlayError(Object error, {required String fallback}) =>
     error is FormatException ? error.message : fallback;
 
+String? _boundedIdentifier(Object? raw, {int maximumLength = 220}) {
+  if (raw is! String) return null;
+  final value = raw.trim();
+  if (value.isEmpty || value.length > maximumLength) return null;
+  return value;
+}
+
 /// Publishes projected ride and navigation state to the native CarPlay and
 /// Android Auto scenes, and relays the CarPlay emergency button back to
 /// [onEmergencyTriggered].
@@ -118,6 +126,9 @@ class CarPlayBridge {
     this.onRideStartRequested,
     this.onDestinationSearch,
     this.onDestinationSelected,
+    this.onDestinationPreviewRequested,
+    this.onDestinationPreviewCommitted,
+    this.onDestinationPreviewCancelled,
     this.onFreeRoamRequested,
     this.onStateRequested,
     this.onAndroidAutoNavigationHostEvent,
@@ -179,6 +190,19 @@ class CarPlayBridge {
   /// the home surface and null when a prepared ride is changing its route.
   final Future<void> Function(CarPlayDestination destination, bool? groupRide)?
   onDestinationSelected;
+
+  /// Plans without creating a ride or publishing a route. Swift presents the
+  /// returned immutable choices through `CPTrip` before asking Dart to commit.
+  final Future<CarPlayTripPreview> Function(CarPlayDestination destination)?
+  onDestinationPreviewRequested;
+
+  /// Commits the one route choice the rider confirmed with CarPlay's Go button.
+  /// The screen owns exact-once transaction state and all journal mutations.
+  final Future<void> Function(String previewId, String routeChoiceId)?
+  onDestinationPreviewCommitted;
+
+  /// Drops an uncommitted preview. This must never end or create a ride.
+  final Future<void> Function(String previewId)? onDestinationPreviewCancelled;
 
   /// Creates and starts a route-less solo ride from the home map.
   final Future<void> Function()? onFreeRoamRequested;
@@ -304,6 +328,86 @@ class CarPlayBridge {
             'error': _readableCarPlayError(
               error,
               fallback: 'Could not plan that route.',
+            ),
+          };
+        }
+      case 'previewDestination':
+        final destination = CarPlayDestination.tryParse(call.arguments);
+        final planner = onDestinationPreviewRequested;
+        if (destination == null) {
+          return const {
+            'preview': null,
+            'error': 'That destination is invalid. Search again.',
+          };
+        }
+        if (planner == null) {
+          return const {
+            'preview': null,
+            'error': 'Route previews are unavailable on this screen.',
+          };
+        }
+        try {
+          final preview = await planner(destination);
+          return {'preview': preview.toSnapshot(), 'error': null};
+        } on Object catch (error) {
+          return {
+            'preview': null,
+            'error': _readableCarPlayError(
+              error,
+              fallback: 'Could not preview that route.',
+            ),
+          };
+        }
+      case 'commitDestinationPreview':
+        final arguments = call.arguments;
+        final previewId = arguments is Map
+            ? _boundedIdentifier(arguments['previewId'])
+            : null;
+        final routeChoiceId = arguments is Map
+            ? _boundedIdentifier(arguments['routeChoiceId'])
+            : null;
+        final commit = onDestinationPreviewCommitted;
+        if (previewId == null || routeChoiceId == null) {
+          return const {
+            'ok': false,
+            'error': 'That route preview is invalid. Choose it again.',
+          };
+        }
+        if (commit == null) {
+          return const {
+            'ok': false,
+            'error': 'Route confirmation is unavailable on this screen.',
+          };
+        }
+        try {
+          await commit(previewId, routeChoiceId);
+          return const {'ok': true, 'error': null};
+        } on Object catch (error) {
+          return {
+            'ok': false,
+            'error': _readableCarPlayError(
+              error,
+              fallback: 'Could not start that route.',
+            ),
+          };
+        }
+      case 'cancelDestinationPreview':
+        final arguments = call.arguments;
+        final previewId = arguments is Map
+            ? _boundedIdentifier(arguments['previewId'])
+            : null;
+        if (previewId == null) {
+          return const {'ok': false, 'error': 'That route preview is invalid.'};
+        }
+        try {
+          await onDestinationPreviewCancelled?.call(previewId);
+          return const {'ok': true, 'error': null};
+        } on Object catch (error) {
+          return {
+            'ok': false,
+            'error': _readableCarPlayError(
+              error,
+              fallback: 'Could not close that route preview.',
             ),
           };
         }

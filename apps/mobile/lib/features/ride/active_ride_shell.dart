@@ -55,6 +55,7 @@ import '../../relay/native_nearby_transport.dart';
 import '../../relay/relay_engine.dart';
 import '../../relay/sqlite_relay_queue.dart';
 import '../../services/carplay_bridge.dart';
+import '../../services/carplay_route_preview.dart';
 import '../../services/carplay_tec_status.dart';
 import '../../services/geo_calculations.dart';
 import '../../services/spoken_audio_mode.dart';
@@ -1180,6 +1181,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   String? _carPlayMapStyleJson;
   late final http.Client _carPlayRoutingClient;
   late final DestinationRoutePlanner _carPlayDestinationPlanner;
+  final _carPlayRoutePreview = CarPlayRoutePreviewTransaction();
   ForegroundLocationController? _locationController;
   MarkerAssistanceController? _markerAssistanceController;
   NearbyRelayController? _relayController;
@@ -1324,6 +1326,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       onRideStartRequested: _startPreparedRideFromCarPlay,
       onDestinationSearch: _searchCarPlayDestinations,
       onDestinationSelected: _planCarPlayDestination,
+      onDestinationPreviewRequested: _previewCarPlayDestination,
+      onDestinationPreviewCommitted: _commitCarPlayDestinationPreview,
+      onDestinationPreviewCancelled: _cancelCarPlayDestinationPreview,
       onStateRequested: () async {
         if (!mounted) return;
         _updateMapOverlays(updateDerivedState: false);
@@ -2840,6 +2845,66 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     );
     await _handleRouteChanged(plan.route);
     if (mounted) _updateMapOverlays(updateDerivedState: false);
+  }
+
+  Future<CarPlayTripPreview> _previewCarPlayDestination(
+    CarPlayDestination destination,
+  ) async {
+    final controller = widget.rideController;
+    if (!controller.isLocalRideLeader ||
+        controller.rideStarted ||
+        controller.rideEnded ||
+        controller.busy) {
+      throw const FormatException(
+        'Only the ride leader can plan a route before the ride starts.',
+      );
+    }
+    final origin = _mapPosition.value ?? await _acquireCurrentPosition();
+    if (origin == null) {
+      throw const FormatException(
+        'Allow location access on the iPhone before planning from CarPlay.',
+      );
+    }
+    final plan = await _carPlayDestinationPlanner.planForReview(
+      origin: origin,
+      query: destination.label,
+      selectedDestination: DestinationMatch(
+        label: destination.label,
+        point: destination.point,
+      ),
+      distanceUnit: widget.distanceUnits.value,
+    );
+    final preview = CarPlayTripPreview.single(
+      destinationLabel: destination.label,
+      plan: plan,
+    );
+    _carPlayRoutePreview.replace(preview);
+    return preview;
+  }
+
+  Future<void> _commitCarPlayDestinationPreview(
+    String previewId,
+    String routeChoiceId,
+  ) async {
+    final controller = widget.rideController;
+    if (!controller.isLocalRideLeader ||
+        controller.rideStarted ||
+        controller.rideEnded ||
+        controller.busy) {
+      throw const FormatException(
+        'Only the ride leader can plan a route before the ride starts.',
+      );
+    }
+    final selected = _carPlayRoutePreview.commit(
+      previewId: previewId,
+      routeChoiceId: routeChoiceId,
+    );
+    await _handleRouteChanged(selected.route);
+    if (mounted) _updateMapOverlays(updateDerivedState: false);
+  }
+
+  Future<void> _cancelCarPlayDestinationPreview(String previewId) async {
+    _carPlayRoutePreview.cancel(previewId);
   }
 
   /// Publishes the quick messages the ride map has to present, and returns the

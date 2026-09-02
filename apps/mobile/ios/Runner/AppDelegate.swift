@@ -448,6 +448,75 @@ import UserNotifications
     }
   }
 
+  /// Calculates route choices without creating or mutating a ride. CarPlay
+  /// owns the native preview and asks Dart to commit only after the rider taps
+  /// the system Go button.
+  func previewCarPlayDestination(
+    label: String,
+    latitude: Double,
+    longitude: Double,
+    completion: @escaping ([String: Any]) -> Void
+  ) {
+    guard let carPlayChannel else {
+      completion([
+        "preview": NSNull(),
+        "error": "Route previews are unavailable. Try again later.",
+      ])
+      return
+    }
+    carPlayChannel.invokeMethod(
+      "previewDestination",
+      arguments: [
+        "label": label,
+        "latitude": latitude,
+        "longitude": longitude,
+      ]
+    ) { value in
+      guard let response = value as? [String: Any] else {
+        completion([
+          "preview": NSNull(),
+          "error": "Route previews are unavailable. Try again later.",
+        ])
+        return
+      }
+      completion(response)
+    }
+  }
+
+  func commitCarPlayDestinationPreview(
+    previewID: String,
+    routeChoiceID: String,
+    completion: @escaping (Bool, String?) -> Void
+  ) {
+    guard let carPlayChannel else {
+      completion(false, "Route confirmation is unavailable. Try again later.")
+      return
+    }
+    carPlayChannel.invokeMethod(
+      "commitDestinationPreview",
+      arguments: [
+        "previewId": previewID,
+        "routeChoiceId": routeChoiceID,
+      ]
+    ) { value in
+      guard let response = value as? [String: Any] else {
+        completion(false, "Route confirmation is unavailable. Try again later.")
+        return
+      }
+      completion(
+        (response["ok"] as? NSNumber)?.boolValue ?? false,
+        response["error"] as? String
+      )
+    }
+  }
+
+  func cancelCarPlayDestinationPreview(previewID: String) {
+    carPlayChannel?.invokeMethod(
+      "cancelDestinationPreview",
+      arguments: ["previewId": previewID]
+    )
+  }
+
   func startFreeRoamFromCarPlay(
     completion: @escaping (Bool, String?) -> Void
   ) {

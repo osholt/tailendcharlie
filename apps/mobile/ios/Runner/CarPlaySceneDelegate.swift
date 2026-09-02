@@ -375,6 +375,275 @@ struct CarPlayNavigationProjectionStore {
   }
 }
 
+/// The side-effect-free route choices Dart calculated for a CarPlay preview.
+///
+/// Platform-channel input is deliberately decoded before any CarPlay object is
+/// created. This keeps malformed geometry, unbounded labels, and empty route
+/// arrays away from APIs that assume a valid trip.
+struct CarPlayRoutePreviewPayload: Equatable {
+  struct Coordinate: Equatable {
+    let latitude: Double
+    let longitude: Double
+
+    var clLocationCoordinate: CLLocationCoordinate2D {
+      CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+  }
+
+  struct Choice: Equatable {
+    let id: String
+    let routeID: String
+    let summaryVariants: [String]
+    let additionalInformationVariants: [String]
+    let selectionSummaryVariants: [String]
+    let distanceMeters: Double
+    let durationSeconds: TimeInterval
+    let routePoints: [Coordinate]
+  }
+
+  let id: String
+  let destinationLabel: String
+  let origin: Coordinate
+  let destination: Coordinate
+  let choices: [Choice]
+
+  init?(response: [String: Any]) {
+    guard
+      response["error"] == nil || response["error"] is NSNull,
+      let raw = response["preview"] as? [String: Any],
+      Self.integer(raw["schemaVersion"]) == 1,
+      let id = Self.string(raw["id"], maximumLength: 220),
+      let destinationLabel = Self.string(
+        raw["destinationLabel"],
+        maximumLength: 180
+      ),
+      let rawOrigin = raw["origin"] as? [String: Any],
+      let origin = Self.coordinate(rawOrigin),
+      let rawDestination = raw["destination"] as? [String: Any],
+      let destination = Self.coordinate(rawDestination),
+      let rawChoices = raw["choices"] as? [[String: Any]],
+      (1 ... 3).contains(rawChoices.count)
+    else { return nil }
+
+    var decodedChoices: [Choice] = []
+    var choiceIDs = Set<String>()
+    for rawChoice in rawChoices {
+      guard
+        let choice = Self.choice(rawChoice),
+        choiceIDs.insert(choice.id).inserted
+      else { return nil }
+      decodedChoices.append(choice)
+    }
+
+    self.id = id
+    self.destinationLabel = destinationLabel
+    self.origin = origin
+    self.destination = destination
+    self.choices = decodedChoices
+  }
+
+  private static func choice(_ raw: [String: Any]) -> Choice? {
+    guard
+      let id = string(raw["id"], maximumLength: 220),
+      let routeID = string(raw["routeId"], maximumLength: 180),
+      let summaryVariants = stringArray(
+        raw["summaryVariants"],
+        maximumCount: 3,
+        maximumLength: 160
+      ),
+      !summaryVariants.isEmpty,
+      let additionalInformationVariants = stringArray(
+        raw["additionalInformationVariants"],
+        maximumCount: 3,
+        maximumLength: 160
+      ),
+      !additionalInformationVariants.isEmpty,
+      let selectionSummaryVariants = stringArray(
+        raw["selectionSummaryVariants"],
+        maximumCount: 3,
+        maximumLength: 160
+      ),
+      !selectionSummaryVariants.isEmpty,
+      let distanceMeters = nonNegativeDouble(raw["distanceMeters"]),
+      let durationSeconds = nonNegativeDouble(raw["durationSeconds"]),
+      let rawPoints = raw["routePoints"] as? [[String: Any]],
+      rawPoints.count >= 2,
+      rawPoints.count <= 200_000
+    else { return nil }
+
+    let routePoints = rawPoints.compactMap(coordinate)
+    guard routePoints.count == rawPoints.count else { return nil }
+    return Choice(
+      id: id,
+      routeID: routeID,
+      summaryVariants: summaryVariants,
+      additionalInformationVariants: additionalInformationVariants,
+      selectionSummaryVariants: selectionSummaryVariants,
+      distanceMeters: distanceMeters,
+      durationSeconds: durationSeconds,
+      routePoints: routePoints
+    )
+  }
+
+  private static func coordinate(_ raw: [String: Any]) -> Coordinate? {
+    guard
+      let latitude = finiteDouble(raw["latitude"]),
+      let longitude = finiteDouble(raw["longitude"]),
+      (-90 ... 90).contains(latitude),
+      (-180 ... 180).contains(longitude)
+    else { return nil }
+    return Coordinate(latitude: latitude, longitude: longitude)
+  }
+
+  private static func stringArray(
+    _ raw: Any?,
+    maximumCount: Int,
+    maximumLength: Int
+  ) -> [String]? {
+    guard
+      let values = raw as? [Any],
+      (1 ... maximumCount).contains(values.count)
+    else { return nil }
+    var result: [String] = []
+    for value in values {
+      guard let text = string(value, maximumLength: maximumLength) else {
+        return nil
+      }
+      if !result.contains(text) { result.append(text) }
+    }
+    return result
+  }
+
+  private static func string(_ raw: Any?, maximumLength: Int) -> String? {
+    guard
+      let value = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !value.isEmpty,
+      value.count <= maximumLength
+    else { return nil }
+    return value
+  }
+
+  private static func integer(_ raw: Any?) -> Int? {
+    (raw as? NSNumber)?.intValue ?? raw as? Int
+  }
+
+  private static func finiteDouble(_ raw: Any?) -> Double? {
+    let value = (raw as? NSNumber)?.doubleValue ?? raw as? Double
+    return value?.isFinite == true ? value : nil
+  }
+
+  private static func nonNegativeDouble(_ raw: Any?) -> Double? {
+    guard let value = finiteDouble(raw), value >= 0 else { return nil }
+    return value
+  }
+}
+
+/// Orders asynchronous planning results and consumes the selected choice once.
+/// Dart has its own transaction guard at the persistence boundary; keeping the
+/// same rule here prevents repeated CarPlay delegate callbacks reaching it.
+struct CarPlayRoutePreviewCoordinator {
+  enum Phase: Equatable {
+    case idle
+    case previewing
+    case committing
+    case committed
+  }
+
+  struct Request: Equatable {
+    let generation: Int
+    let supersededPreviewID: String?
+  }
+
+  struct Selection: Equatable {
+    let previewID: String
+    let choice: CarPlayRoutePreviewPayload.Choice
+  }
+
+  private(set) var generation = 0
+  private(set) var phase = Phase.idle
+  private(set) var preview: CarPlayRoutePreviewPayload?
+  private(set) var selectedChoiceID: String?
+
+  var selectedChoice: CarPlayRoutePreviewPayload.Choice? {
+    guard let preview, let selectedChoiceID else { return nil }
+    return preview.choices.first { $0.id == selectedChoiceID }
+  }
+
+  mutating func beginRequest() -> Request {
+    generation &+= 1
+    let supersededPreviewID = phase == .previewing ? preview?.id : nil
+    phase = .idle
+    preview = nil
+    selectedChoiceID = nil
+    return Request(
+      generation: generation,
+      supersededPreviewID: supersededPreviewID
+    )
+  }
+
+  mutating func accept(
+    _ candidate: CarPlayRoutePreviewPayload,
+    generation candidateGeneration: Int
+  ) -> Bool {
+    guard candidateGeneration == generation, phase == .idle else {
+      return false
+    }
+    preview = candidate
+    selectedChoiceID = candidate.choices.first?.id
+    phase = .previewing
+    return true
+  }
+
+  mutating func fail(generation failedGeneration: Int) -> Bool {
+    guard failedGeneration == generation, phase == .idle else { return false }
+    preview = nil
+    selectedChoiceID = nil
+    return true
+  }
+
+  mutating func select(choiceID: String) -> CarPlayRoutePreviewPayload.Choice? {
+    guard
+      phase == .previewing,
+      let choice = preview?.choices.first(where: { $0.id == choiceID })
+    else { return nil }
+    selectedChoiceID = choice.id
+    return choice
+  }
+
+  mutating func beginCommit(
+    previewID: String,
+    choiceID: String
+  ) -> Selection? {
+    guard
+      phase == .previewing,
+      let preview,
+      preview.id == previewID,
+      let choice = preview.choices.first(where: { $0.id == choiceID })
+    else { return nil }
+    selectedChoiceID = choice.id
+    phase = .committing
+    return Selection(previewID: preview.id, choice: choice)
+  }
+
+  mutating func completeCommit(succeeded: Bool) {
+    guard phase == .committing else { return }
+    phase = succeeded ? .committed : .idle
+    if !succeeded {
+      preview = nil
+      selectedChoiceID = nil
+    }
+  }
+
+  mutating func cancel() -> String? {
+    generation &+= 1
+    let cancelledPreviewID = phase == .previewing ? preview?.id : nil
+    phase = .idle
+    preview = nil
+    selectedChoiceID = nil
+    return cancelledPreviewID
+  }
+}
+
 /// Owns the navigation-app CarPlay scene. Navigation apps must use the
 /// window-bearing delegate callback and place a `CPMapTemplate` at the root.
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate,
@@ -397,6 +666,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private weak var interfaceController: CPInterfaceController?
   private var sceneLifecycle = CarPlaySceneLifecycle()
   private var navigationProjectionV2Store = CarPlayNavigationProjectionStore()
+  private var routePreviewCoordinator = CarPlayRoutePreviewCoordinator()
+  private var routePreviewTrip: CPTrip?
 
   /// The request the presented alert is asking about, so the same question is
   /// not raised twice and a question that has gone away takes its alert with
@@ -477,6 +748,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // navigation session or clear its view hierarchy.
     guard self.interfaceController === interfaceController else { return }
     sceneLifecycle.disconnect()
+    cancelRoutePreview(notifyDart: true)
     navigationSession?.cancelTrip()
     navigationSession = nil
     window.rootViewController = nil
@@ -984,7 +1256,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   ) {
     completionHandler()
     guard let destination = item.userInfo as? [String: Any] else { return }
-    presentDestinationChoice(destination)
+    requestDestinationPreview(destination)
   }
 
   private func presentDestinationResults(
@@ -1013,7 +1285,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       item.userInfo = destination
       item.handler = { [weak self] _, completion in
         completion()
-        self?.presentDestinationChoice(destination)
+        self?.requestDestinationPreview(destination)
       }
       return item
     }
@@ -1028,74 +1300,216 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
   }
 
-  private func presentDestinationChoice(_ destination: [String: Any]) {
-    guard
-      sceneLifecycle.rootReady,
-      let interfaceController,
-      let label = nonEmptyString(destination["label"])
-    else { return }
-    let shortLabel = label.split(separator: ",", maxSplits: 1)
-      .first.map(String.init) ?? label
-    let actions: [CPAlertAction]
-    if surfaceMode == "home" {
-      actions = [
-        CPAlertAction(title: "Ride solo", style: .default) { [weak self] _ in
-          self?.requestDestinationPlan(destination, groupRide: false)
-        },
-        CPAlertAction(title: "Create group ride", style: .default) { [weak self] _ in
-          self?.requestDestinationPlan(destination, groupRide: true)
-        },
-        CPAlertAction(title: "Cancel", style: .cancel) { _ in
-          interfaceController.dismissTemplate(animated: true, completion: nil)
-        },
-      ]
-    } else {
-      actions = [
-        CPAlertAction(title: "Use this route", style: .default) { [weak self] _ in
-          self?.requestDestinationPlan(destination, groupRide: nil)
-        },
-        CPAlertAction(title: "Cancel", style: .cancel) { _ in
-          interfaceController.dismissTemplate(animated: true, completion: nil)
-        },
-      ]
-    }
-    let sheet = CPActionSheetTemplate(
-      title: "Ride to \(shortLabel)?",
-      message: label,
-      actions: actions
-    )
-    interfaceController.presentTemplate(sheet, animated: true) { success, error in
-      if !success, let error {
-        NSLog("CarPlay destination choice was not presented: %@", error.localizedDescription)
-      }
-    }
-  }
-
-  private func requestDestinationPlan(
-    _ destination: [String: Any],
-    groupRide: Bool?
-  ) {
+  private func requestDestinationPreview(_ destination: [String: Any]) {
     guard
       let interfaceController,
       let label = nonEmptyString(destination["label"]),
       let latitude = (destination["latitude"] as? NSNumber)?.doubleValue,
-      let longitude = (destination["longitude"] as? NSNumber)?.doubleValue
+      let longitude = (destination["longitude"] as? NSNumber)?.doubleValue,
+      latitude.isFinite,
+      longitude.isFinite,
+      (-90 ... 90).contains(latitude),
+      (-180 ... 180).contains(longitude)
     else { return }
-    interfaceController.dismissTemplate(animated: true) { [weak self] _, _ in
-      guard let self else { return }
-      interfaceController.popToRootTemplate(animated: true) { _, _ in
-        (UIApplication.shared.delegate as? AppDelegate)?.planCarPlayDestination(
+
+    let request = routePreviewCoordinator.beginRequest()
+    if let supersededPreviewID = request.supersededPreviewID {
+      (UIApplication.shared.delegate as? AppDelegate)?
+        .cancelCarPlayDestinationPreview(previewID: supersededPreviewID)
+    }
+    routePreviewTrip = nil
+    mapTemplate?.hideTripPreviews()
+    mapViewController?.clearPreviewRoute()
+
+    interfaceController.popToRootTemplate(animated: true) {
+      [weak self, weak interfaceController] success, error in
+      guard
+        let self,
+        let interfaceController,
+        self.interfaceController === interfaceController,
+        self.sceneLifecycle.rootReady,
+        success
+      else {
+        if let error {
+          NSLog("CarPlay could not return to the map for route preview: %@", error.localizedDescription)
+        }
+        return
+      }
+      (UIApplication.shared.delegate as? AppDelegate)?
+        .previewCarPlayDestination(
           label: label,
           latitude: latitude,
-          longitude: longitude,
-          groupRide: groupRide
-        ) { [weak self] success, error in
-          guard !success else { return }
+          longitude: longitude
+        ) { [weak self, weak interfaceController] response in
           DispatchQueue.main.async {
-            self?.presentCarPlayError(error ?? "Could not plan that route.")
+            guard
+              let self,
+              let interfaceController,
+              self.interfaceController === interfaceController,
+              self.sceneLifecycle.rootReady
+            else { return }
+            if let error = self.nonEmptyString(response["error"]) {
+              guard self.routePreviewCoordinator.fail(
+                generation: request.generation
+              ) else { return }
+              self.presentCarPlayError(error)
+              return
+            }
+            guard
+              let preview = CarPlayRoutePreviewPayload(response: response),
+              self.routePreviewCoordinator.accept(
+                preview,
+                generation: request.generation
+              )
+            else {
+              // A valid result for an older request is expected during rapid
+              // reselection. Only an invalid result for the current request is
+              // actionable; stale results remain invisible.
+              if self.routePreviewCoordinator.fail(
+                generation: request.generation
+              ) {
+                self.presentCarPlayError("No usable route was returned.")
+              }
+              return
+            }
+            self.presentRoutePreview(preview)
           }
         }
       }
+  }
+
+  private func presentRoutePreview(_ preview: CarPlayRoutePreviewPayload) {
+    guard let mapTemplate else { return }
+    let origin = MKMapItem(
+      placemark: MKPlacemark(coordinate: preview.origin.clLocationCoordinate)
+    )
+    origin.name = "Current location"
+    let destination = MKMapItem(
+      placemark: MKPlacemark(coordinate: preview.destination.clLocationCoordinate)
+    )
+    destination.name = preview.destinationLabel
+    let routeChoices = preview.choices.map { choice in
+      let routeChoice = CPRouteChoice(
+        summaryVariants: choice.summaryVariants,
+        additionalInformationVariants: choice.additionalInformationVariants,
+        selectionSummaryVariants: choice.selectionSummaryVariants
+      )
+      routeChoice.userInfo = [
+        "previewId": preview.id,
+        "routeChoiceId": choice.id,
+      ]
+      return routeChoice
+    }
+    let trip = CPTrip(
+      origin: origin,
+      destination: destination,
+      routeChoices: routeChoices
+    )
+    trip.userInfo = ["previewId": preview.id]
+    routePreviewTrip = trip
+    mapTemplate.showTripPreviews(
+      [trip],
+      selectedTrip: trip,
+      textConfiguration: CPTripPreviewTextConfiguration(
+        startButtonTitle: "Go",
+        additionalRoutesButtonTitle: "Routes",
+        overviewButtonTitle: "Overview"
+      )
+    )
+    if let firstChoice = preview.choices.first {
+      showRoutePreviewChoice(firstChoice, trip: trip)
+    }
+  }
+
+  private func showRoutePreviewChoice(
+    _ choice: CarPlayRoutePreviewPayload.Choice,
+    trip: CPTrip
+  ) {
+    mapViewController?.showPreviewRoute(choice.routePoints)
+    mapTemplate?.updateEstimates(
+      CPTravelEstimates(
+        distanceRemaining: Measurement(
+          value: choice.distanceMeters,
+          unit: UnitLength.meters
+        ),
+        timeRemaining: choice.durationSeconds
+      ),
+      for: trip
+    )
+  }
+
+  private func previewIdentifiers(
+    trip: CPTrip,
+    routeChoice: CPRouteChoice
+  ) -> (previewID: String, choiceID: String)? {
+    guard
+      let tripInfo = trip.userInfo as? [String: Any],
+      let routeInfo = routeChoice.userInfo as? [String: Any],
+      let previewID = nonEmptyString(tripInfo["previewId"]),
+      let routePreviewID = nonEmptyString(routeInfo["previewId"]),
+      previewID == routePreviewID,
+      let choiceID = nonEmptyString(routeInfo["routeChoiceId"])
+    else { return nil }
+    return (previewID, choiceID)
+  }
+
+  func mapTemplate(
+    _ mapTemplate: CPMapTemplate,
+    selectedPreviewFor trip: CPTrip,
+    using routeChoice: CPRouteChoice
+  ) {
+    guard
+      let identifiers = previewIdentifiers(trip: trip, routeChoice: routeChoice),
+      identifiers.previewID == routePreviewCoordinator.preview?.id,
+      let choice = routePreviewCoordinator.select(
+        choiceID: identifiers.choiceID
+      )
+    else { return }
+    showRoutePreviewChoice(choice, trip: trip)
+  }
+
+  func mapTemplate(
+    _ mapTemplate: CPMapTemplate,
+    startedTrip trip: CPTrip,
+    using routeChoice: CPRouteChoice
+  ) {
+    guard
+      let identifiers = previewIdentifiers(trip: trip, routeChoice: routeChoice),
+      let selection = routePreviewCoordinator.beginCommit(
+        previewID: identifiers.previewID,
+        choiceID: identifiers.choiceID
+      )
+    else { return }
+
+    mapTemplate.hideTripPreviews()
+    (UIApplication.shared.delegate as? AppDelegate)?
+      .commitCarPlayDestinationPreview(
+        previewID: selection.previewID,
+        routeChoiceID: selection.choice.id
+      ) { [weak self] success, error in
+        DispatchQueue.main.async {
+          guard let self else { return }
+          self.routePreviewCoordinator.completeCommit(succeeded: success)
+          self.routePreviewTrip = nil
+          self.mapViewController?.clearPreviewRoute()
+          guard !success else { return }
+          self.presentCarPlayError(error ?? "Could not start that route.")
+        }
+      }
+  }
+
+  func mapTemplateDidCancelNavigation(_ mapTemplate: CPMapTemplate) {
+    cancelRoutePreview(notifyDart: true)
+  }
+
+  private func cancelRoutePreview(notifyDart: Bool) {
+    let previewID = routePreviewCoordinator.cancel()
+    routePreviewTrip = nil
+    mapTemplate?.hideTripPreviews()
+    mapViewController?.clearPreviewRoute()
+    if notifyDart, let previewID {
+      (UIApplication.shared.delegate as? AppDelegate)?
+        .cancelCarPlayDestinationPreview(previewID: previewID)
     }
   }
 
@@ -1463,6 +1877,7 @@ private final class CarPlayNavigationViewController: UIViewController,
   private let rideActionsView = CarPlayRideActionsView()
   private var routeSource: MLNShapeSource?
   private var routeCoordinates: [CLLocationCoordinate2D] = []
+  private var previewRouteCoordinates: [CLLocationCoordinate2D]?
   private var routeID: String?
   private var routeProjectionKey: String?
   private var riderAnnotations: [CarPlayRiderAnnotation] = []
@@ -1674,9 +2089,8 @@ private final class CarPlayNavigationViewController: UIViewController,
     let incomingRouteID = snapshot["routeId"] as? String
     let progress = (snapshot["routeProgressMeters"] as? NSNumber)?.doubleValue ?? 0
     let routeKey = "\(incomingRouteID ?? "none"):\(Int(progress / 2))"
-    let routeChanged =
-      routeKey != routeProjectionKey
-      || routeSource == nil
+    let routeChanged = previewRouteCoordinates == nil
+      && (routeKey != routeProjectionKey || routeSource == nil)
     if routeChanged {
       updateRoute(
         snapshot["routePoints"],
@@ -1719,8 +2133,28 @@ private final class CarPlayNavigationViewController: UIViewController,
     mapView.showsUserLocation = false
     if requestedRiderFollow, localCoordinate != nil, followsLocalRider {
       recenter()
+    } else if previewRouteCoordinates != nil {
+      showPreviewRouteCoordinates()
     } else if routeChanged || cameraModeChanged {
       showCompleteRoute()
+    }
+  }
+
+  func showPreviewRoute(_ points: [CarPlayRoutePreviewPayload.Coordinate]) {
+    let coordinates = points.map(\.clLocationCoordinate)
+    guard coordinates.count >= 2 else { return }
+    previewRouteCoordinates = coordinates
+    showPreviewRouteCoordinates()
+  }
+
+  func clearPreviewRoute() {
+    guard previewRouteCoordinates != nil else { return }
+    previewRouteCoordinates = nil
+    routeProjectionKey = nil
+    if let latestSnapshot {
+      apply(snapshot: latestSnapshot)
+    } else {
+      updateRemainingRoute([])
     }
   }
 
@@ -2094,7 +2528,11 @@ private final class CarPlayNavigationViewController: UIViewController,
     riderAnnotations = []
     routeID = nil
     routeProjectionKey = nil
-    if let latestSnapshot { apply(snapshot: latestSnapshot) }
+    if let latestSnapshot {
+      apply(snapshot: latestSnapshot)
+    } else if previewRouteCoordinates != nil {
+      showPreviewRouteCoordinates()
+    }
     if let latestViewport { apply(viewport: latestViewport) }
   }
 
@@ -2267,6 +2705,19 @@ private final class CarPlayNavigationViewController: UIViewController,
       &coordinates,
       count: UInt(coordinates.count),
       edgePadding: UIEdgeInsets(top: 60, left: 60, bottom: 60, right: 60),
+      animated: true
+    )
+  }
+
+  private func showPreviewRouteCoordinates() {
+    guard let mapView, var coordinates = previewRouteCoordinates else { return }
+    guard coordinates.count >= 2 else { return }
+    mapView.userTrackingMode = .none
+    updateRemainingRoute(coordinates)
+    mapView.setVisibleCoordinates(
+      &coordinates,
+      count: UInt(coordinates.count),
+      edgePadding: UIEdgeInsets(top: 72, left: 72, bottom: 96, right: 72),
       animated: true
     )
   }
