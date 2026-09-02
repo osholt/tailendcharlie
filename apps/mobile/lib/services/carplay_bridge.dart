@@ -492,7 +492,7 @@ class CarPlayBridge {
         if (viewport != null) {
           // Re-send the style as well as the camera. The native side has just
           // created a new scene even though this Dart bridge is long-lived.
-          _publishedMapStyleJson = null;
+          _publishedMapStyleKey = null;
           await publishViewport(viewport);
         }
     }
@@ -655,6 +655,7 @@ class CarPlayBridge {
         speedMetersPerSecond: localSpeedMetersPerSecond,
       ),
       'distanceUnit': distanceUnit?.name,
+      'localeIdentifier': localeIdentifier,
       'groupStatus': groupStatus,
       'markerStatus': markerStatus,
       'marker': marker?.toSnapshot(),
@@ -677,9 +678,9 @@ class CarPlayBridge {
       'basemap': basemap == null
           ? null
           : {
-              'styleUrl': basemap.styleUrl,
+              'styleUrl': basemap.lightStyleUrl,
               'darkStyleUrl': basemap.darkStyleUrl.isEmpty
-                  ? basemap.styleUrl
+                  ? basemap.lightStyleUrl
                   : basemap.darkStyleUrl,
               'selectedStyleUrl': basemap.styleUrl,
               'dark': basemap.dark,
@@ -769,6 +770,7 @@ class CarPlayBridge {
       await publishMapStyle(
         styleJson: viewport.mapStyleJson,
         fallbackStyleUrl: viewport.mapStyleUrl,
+        dark: viewport.mapStyleDark,
       );
       await _channel.invokeMethod('updateViewport', {
         'latitude': viewport.latitude,
@@ -783,6 +785,7 @@ class CarPlayBridge {
             viewport.riderHorizontalViewportFraction,
         'leftHandTraffic': viewport.leftHandTraffic,
         'mapStyleUrl': viewport.mapStyleUrl,
+        'mapStyleDark': viewport.mapStyleDark,
       });
     } on Object catch (error) {
       if (kDebugMode) debugPrint('Could not publish CarPlay viewport: $error');
@@ -797,20 +800,23 @@ class CarPlayBridge {
   Future<void> publishMapStyle({
     required String styleJson,
     required String fallbackStyleUrl,
+    required bool dark,
   }) async {
-    if (styleJson.isEmpty || styleJson == _publishedMapStyleJson) return;
+    final projectionKey = '$dark|$fallbackStyleUrl|$styleJson';
+    if (styleJson.isEmpty || projectionKey == _publishedMapStyleKey) return;
     try {
       await _channel.invokeMethod('updateMapStyle', {
         'styleJson': styleJson,
         'fallbackStyleUrl': fallbackStyleUrl,
+        'dark': dark,
       });
-      _publishedMapStyleJson = styleJson;
+      _publishedMapStyleKey = projectionKey;
     } on Object catch (error) {
       if (kDebugMode) debugPrint('Could not publish CarPlay map style: $error');
     }
   }
 
-  String? _publishedMapStyleJson;
+  String? _publishedMapStyleKey;
   NavigationCameraViewport? _latestViewport;
 
   List<Map<String, double>> _projectProgressPath(List<List<GeoPoint>>? paths) {

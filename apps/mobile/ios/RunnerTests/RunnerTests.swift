@@ -62,6 +62,41 @@ class RunnerTests: XCTestCase {
     XCTAssertFalse(listsLimited.allowsRiderRows)
   }
 
+  func testCarPlaySafeAreaUsesEveryHostInset() {
+    let safeArea = CarPlayMapSafeArea(
+      viewBounds: CGRect(x: 0, y: 0, width: 800, height: 480),
+      safeFrame: CGRect(x: 80, y: 30, width: 640, height: 400)
+    )
+
+    XCTAssertEqual(safeArea.contentInsets.top, 30)
+    XCTAssertEqual(safeArea.contentInsets.left, 80)
+    XCTAssertEqual(safeArea.contentInsets.bottom, 50)
+    XCTAssertEqual(safeArea.contentInsets.right, 80)
+  }
+
+  func testCarPlayUnitsPreferExplicitChoiceThenLocale() {
+    let france = CarPlayUnitPolicy(
+      distanceUnit: nil,
+      localeIdentifier: "fr-FR"
+    )
+    XCTAssertFalse(france.usesMiles)
+    XCTAssertEqual(france.speedValue(metersPerSecond: 10), 36)
+    XCTAssertEqual(france.spokenSpeedUnit, "kilometres per hour")
+
+    let explicitUKMetric = CarPlayUnitPolicy(
+      distanceUnit: "kilometres",
+      localeIdentifier: "en-GB"
+    )
+    XCTAssertFalse(explicitUKMetric.usesMiles)
+
+    let explicitFrenchMiles = CarPlayUnitPolicy(
+      distanceUnit: "miles",
+      localeIdentifier: "fr-FR"
+    )
+    XCTAssertTrue(explicitFrenchMiles.usesMiles)
+    XCTAssertEqual(explicitFrenchMiles.speedValue(metersPerSecond: 10), 22)
+  }
+
   func testCarPlayListRestrictionKeepsOnlyEssentialRideRows() {
     let snapshot: [String: Any] = [
       "routeName": "D 980 to Salers",

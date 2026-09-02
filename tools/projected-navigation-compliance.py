@@ -293,7 +293,28 @@ def structural_checks(failures: list[str]) -> None:
             "testCarPlayDrivingRestrictionsHideOnlyUnsafeDetail",
             "testCarPlayBaseViewContainsOnlyTheMap",
             "testCarPlayCommandCompletionResolvesExactlyOnce",
+            "testCarPlaySafeAreaUsesEveryHostInset",
+            "testCarPlayUnitsPreferExplicitChoiceThenLocale",
         ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/ios/Runner/CarPlaySceneDelegate.swift",
+        [
+            "CarPlayMapSafeArea",
+            "viewSafeAreaInsetsDidChange",
+            "mapView.contentInset = safeArea.contentInsets",
+            "contentStyleChanged contentStyle",
+            "contentStyleDidChange",
+            "hostContentStyle.contains(.dark)",
+            "CarPlayUnitPolicy",
+            "overviewCoordinates",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/lib/services/basemap_configuration.dart",
+        ["final String lightStyleUrl", "lightStyleUrl: lightStyleUrl"],
     )
     require_text(
         failures,

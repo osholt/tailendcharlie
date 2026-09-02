@@ -97,6 +97,7 @@ class NavigationCameraViewport {
     required this.leftHandTraffic,
     required this.mapStyleUrl,
     required this.mapStyleJson,
+    required this.mapStyleDark,
   });
 
   final double latitude;
@@ -126,6 +127,11 @@ class NavigationCameraViewport {
   /// configured style for legible dark mode. Projected displays must use this
   /// resolved document if their tiles are to match the phone exactly.
   final String mapStyleJson;
+
+  /// Whether the resolved style document is the night variant. CarPlay uses
+  /// this only to decide whether the document matches its host appearance;
+  /// the phone's mode never controls the vehicle display.
+  final bool mapStyleDark;
 }
 
 /// A camera framing for one ride update.

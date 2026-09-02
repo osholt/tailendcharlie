@@ -13,6 +13,7 @@ void main() {
     final dark = configuration.forBrightness(dark: true);
 
     expect(dark.styleUrl, 'https://tiles.example.test/styles/dark');
+    expect(dark.lightStyleUrl, 'https://tiles.example.test/styles/liberty');
     expect(dark.usesMapLibre, isTrue);
   });
 
@@ -30,6 +31,7 @@ void main() {
 
     expect(dark.dark, isTrue);
     expect(light.dark, isFalse);
+    expect(light.styleUrl, 'https://tiles.example.test/styles/liberty');
   });
 
   test('forBrightness can preserve the original daytime style', () {

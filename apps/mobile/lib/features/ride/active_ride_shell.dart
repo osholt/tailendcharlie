@@ -4171,6 +4171,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           bridge.publishMapStyle(
             styleJson: styleJson,
             fallbackStyleUrl: basemap.styleUrl,
+            dark: basemap.dark,
           ),
         );
       },

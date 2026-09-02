@@ -265,8 +265,18 @@ the last complete map/trip projection through protected-data unavailability and
 requests one idempotent Dart refresh after unlock. Physical locked-phone and
 reconnect proof remains #698.
 
-Continue mandatory CarPlay behavior with #695–#696 and Android Auto behavior
-with #684–#689. Keep #698 and #703 open until their physical head-unit evidence
+The #695 display/locale change makes the CarPlay host authoritative for map
+appearance instead of copying the phone theme. Both canonical style URLs remain
+available after phone brightness resolution, while the already-resolved style
+JSON is reused when it matches the host. MapLibre content insets now follow the
+live host safe rectangle; follow and overview fitting include the route, local
+and group riders, plus current/following manoeuvres, and re-run after safe-area
+changes. A single explicit-setting-first, locale-fallback unit policy covers
+CarPlay distances and speed values, with France and UK native tests. Physical
+day/night, display-preset and offline evidence remains #698.
+
+Continue mandatory CarPlay behavior with #696 and Android Auto behavior with
+#684–#689 and #701–#702. Keep #698 and #703 open until their physical head-unit evidence
 gates can truthfully be completed; tester uploads remain explicit manual jobs.
 
 ## Read this first: #132, a device only received when it sent

@@ -4926,6 +4926,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         leftHandTraffic: _routeUsesLeftHandTraffic,
         mapStyleUrl: _basemap.styleUrl,
         mapStyleJson: widget.mapStyleString,
+        mapStyleDark: _basemap.dark,
       ),
     );
     // MapLibre throws out of a C++ constructor on a coordinate that is not

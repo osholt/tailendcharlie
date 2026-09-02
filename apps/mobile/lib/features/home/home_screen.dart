@@ -611,6 +611,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _carPlayBridge.publishMapStyle(
                   styleJson: styleJson,
                   fallbackStyleUrl: basemap.styleUrl,
+                  dark: basemap.dark,
                 ),
               );
               _publishHomeCarPlayState();
