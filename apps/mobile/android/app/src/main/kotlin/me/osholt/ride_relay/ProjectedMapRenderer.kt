@@ -24,7 +24,7 @@ import android.graphics.Path
 internal class ProjectedMapRenderer {
     private val ridden = strokePaint(0xFF56606C.toInt(), 10f)
     private val remaining = strokePaint(0xFFFF7A1A.toInt(), 10f)
-    private val routeOutline = strokePaint(0xFF10151C.toInt(), 16f)
+    private val routeOutline = strokePaint(ProjectedMapPalette.night.routeOutlineArgb, 16f)
     private val marker = Paint(Paint.ANTI_ALIAS_FLAG)
 
     /**
@@ -38,8 +38,11 @@ internal class ProjectedMapRenderer {
         heightPx: Float,
         visibleArea: ProjectedMapBounds? = null,
         stableArea: ProjectedMapBounds? = null,
+        hostDarkMode: Boolean,
     ): Boolean {
-        canvas.drawColor(if (snapshot?.darkMap != false) GROUND_DARK else GROUND_LIGHT)
+        val palette = ProjectedMapPalette.forHost(hostDarkMode)
+        routeOutline.color = palette.routeOutlineArgb
+        canvas.drawColor(palette.groundArgb)
         if (snapshot == null) return false
         val viewport = ProjectedMapBounds.resolve(widthPx, heightPx, visibleArea, stableArea)
         val camera = camera(snapshot, viewport) ?: return false
@@ -56,7 +59,7 @@ internal class ProjectedMapRenderer {
             val point = rider.point ?: continue
             if (rider.isLocal) continue
             if (!camera.contains(point)) continue
-            drawRider(canvas, camera.x(point), camera.y(point), rider)
+            drawRider(canvas, camera.x(point), camera.y(point), rider, palette)
         }
         // The local rider last and on top: on a crowded start line it is the one
         // marker that must not be underneath somebody else.
@@ -67,6 +70,7 @@ internal class ProjectedMapRenderer {
                     camera.x(point),
                     camera.y(point),
                     snapshot.localHeadingDegrees,
+                    palette,
                 )
             }
         }
@@ -115,19 +119,25 @@ internal class ProjectedMapRenderer {
         canvas.drawPath(path, paint)
     }
 
-    private fun drawRider(canvas: Canvas, x: Float, y: Float, rider: ProjectedRider) {
+    private fun drawRider(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        rider: ProjectedRider,
+        palette: ProjectedMapPalette,
+    ) {
         marker.style = Paint.Style.FILL
         marker.color = rider.colourArgb
         canvas.drawCircle(x, y, RIDER_RADIUS_PX, marker)
         marker.style = Paint.Style.STROKE
         marker.strokeWidth = 3f
-        marker.color = if (rider.needsAttention) ATTENTION else GROUND_DARK
+        marker.color = if (rider.needsAttention) ATTENTION else palette.riderOutlineArgb
         canvas.drawCircle(x, y, RIDER_RADIUS_PX + 3f, marker)
         if (rider.isTec) {
             // The back of the group is the one role a leader scans for.
             marker.style = Paint.Style.STROKE
             marker.strokeWidth = 2f
-            marker.color = 0xFFFFFFFF.toInt()
+            marker.color = palette.markerHaloArgb
             canvas.drawCircle(x, y, RIDER_RADIUS_PX + 8f, marker)
         }
     }
@@ -149,6 +159,7 @@ internal class ProjectedMapRenderer {
         x: Float,
         y: Float,
         headingDegrees: Double?,
+        palette: ProjectedMapPalette,
     ) {
         if (headingDegrees != null) {
             canvas.save()
@@ -162,12 +173,12 @@ internal class ProjectedMapRenderer {
                 close()
             }
             marker.style = Paint.Style.FILL
-            marker.color = 0xFFFFFFFF.toInt()
+            marker.color = palette.markerHaloArgb
             canvas.drawPath(nose, marker)
             canvas.restore()
         }
         marker.style = Paint.Style.FILL
-        marker.color = 0xFFFFFFFF.toInt()
+        marker.color = palette.markerHaloArgb
         canvas.drawCircle(x, y, LOCAL_RADIUS_PX + 4f, marker)
         marker.color = 0xFF2F80ED.toInt()
         canvas.drawCircle(x, y, LOCAL_RADIUS_PX, marker)
@@ -182,8 +193,6 @@ internal class ProjectedMapRenderer {
     }
 
     private companion object {
-        const val GROUND_DARK = 0xFF10151C.toInt()
-        const val GROUND_LIGHT = 0xFFE8E4DD.toInt()
         const val ATTENTION = 0xFFFF715B.toInt()
         const val RIDER_RADIUS_PX = 11f
         const val LOCAL_RADIUS_PX = 13f
@@ -197,5 +206,30 @@ internal class ProjectedMapRenderer {
          * and reappears.
          */
         const val FOLLOW_METRES_ACROSS = 900.0
+    }
+}
+
+/** Projected safety palette chosen only from the car host, never the phone theme. */
+internal data class ProjectedMapPalette(
+    val groundArgb: Int,
+    val routeOutlineArgb: Int,
+    val riderOutlineArgb: Int,
+    val markerHaloArgb: Int,
+) {
+    companion object {
+        val night = ProjectedMapPalette(
+            groundArgb = 0xFF10151C.toInt(),
+            routeOutlineArgb = 0xFF10151C.toInt(),
+            riderOutlineArgb = 0xFF10151C.toInt(),
+            markerHaloArgb = 0xFFFFFFFF.toInt(),
+        )
+        val day = ProjectedMapPalette(
+            groundArgb = 0xFFE8E4DD.toInt(),
+            routeOutlineArgb = 0xFFFFFFFF.toInt(),
+            riderOutlineArgb = 0xFF10151C.toInt(),
+            markerHaloArgb = 0xFF10151C.toInt(),
+        )
+
+        fun forHost(darkMode: Boolean): ProjectedMapPalette = if (darkMode) night else day
     }
 }
