@@ -275,8 +275,17 @@ changes. A single explicit-setting-first, locale-fallback unit policy covers
 CarPlay distances and speed values, with France and UK native tests. Physical
 day/night, display-preset and offline evidence remains #698.
 
-Continue mandatory CarPlay behavior with #696 and Android Auto behavior with
-#684–#689 and #701–#702. Keep #698 and #703 open until their physical head-unit evidence
+The #696 lifecycle/Dashboard change now retains the main CarPlay controller and
+window for their complete connection and releases them only after an
+identity-matched disconnect. `Info.plist` declares Dashboard support and the
+Dashboard scene role. Its delegate owns a second map-only window, accepts only
+active/paused typed guidance, and replays AppDelegate's retained snapshot,
+style and viewport without starting a second ride or `CPNavigationSession`.
+Every reconnect requests the same idempotent Dart state refresh. Simulator and
+physical wired/wireless locked-phone proof remains #698.
+
+Continue mandatory Android Auto behavior with #684–#689 and #701–#702. Keep
+#698 and #703 open until their physical head-unit evidence
 gates can truthfully be completed; tester uploads remain explicit manual jobs.
 
 ## Read this first: #132, a device only received when it sent

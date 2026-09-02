@@ -51,10 +51,10 @@ A checked box means the item currently passes. A box stays unchecked for
 |---|---|---|---|---|
 | [x] | CP-SCENE-01 | Declare a `CPTemplateApplicationScene` and handle its window-bearing connect and disconnect callbacks. | PASS | `Info.plist` declares the scene and `CarPlaySceneDelegate` implements both callbacks. |
 | [x] | CP-SCENE-02 | Make `CPMapTemplate` the root template for a navigation app. | PASS | `CarPlaySceneDelegate` installs a `CPMapTemplate` through `setRootTemplate`. |
-| [ ] | CP-SCENE-03 | Retain the interface controller and map-content window for the whole CarPlay session, then release them on disconnect. | PARTIAL | The delegate retains the map controller but stores `CPInterfaceController` weakly and does not store the `CPWindow`. Align the lifecycle with Apple's startup example. |
+| [x] | CP-SCENE-03 | Retain the interface controller and map-content window for the whole CarPlay session, then release them on disconnect. | PASS | Main and Dashboard delegates strongly retain their controller/window pairs, reject stale disconnects by identity, clear the root controller, and release every retained object deterministically. |
 | [x] | CP-SCENE-04 | Ignore stale asynchronous template completions and tear down the connected scene safely. | PASS | `CarPlaySceneLifecycle` generation checks guard root installation and disconnect cleanup. |
-| [ ] | CP-SCENE-05 | Declare and implement the CarPlay Dashboard navigation scene expected by Apple's navigation-app startup guidance. | FAIL | `Info.plist` has no `CPSupportsDashboardNavigationScene` flag or dashboard scene configuration, and there is no dashboard scene delegate. |
-| [ ] | CP-SCENE-06 | Restore an active trip and correct map state after disconnect/reconnect, process suspension, and phone lock. | UNVERIFIED | Exercise a live route through wired and wireless reconnects with the phone locked. |
+| [x] | CP-SCENE-05 | Declare and implement the CarPlay Dashboard navigation scene expected by Apple's navigation-app startup guidance. | PASS | `Info.plist` declares Dashboard support and its scene role; the delegate installs a map-only root, while the main scene's single `CPNavigationSession` supplies system manoeuvres and estimates. |
+| [ ] | CP-SCENE-06 | Restore an active trip and correct map state after disconnect/reconnect, process suspension, and phone lock. | PARTIAL | AppDelegate retains and replays one snapshot/style/viewport to each reconnecting scene, then requests an idempotent Dart refresh. Dashboard accepts only active/paused guidance and never starts a duplicate ride/session. Wired/wireless locked-phone evidence remains #698. |
 
 ## 3. Base map, templates, and driver interaction
 
@@ -121,7 +121,7 @@ them.
 
 | Done | ID | Capability | Status | Tail End Charlie evidence / action |
 |---|---|---|---|---|
-| [ ] | CP-OPT-01 | A second map in CarPlay Dashboard. | OPTIONAL | Not implemented. This becomes part of the release gate if Dashboard support is claimed. |
+| [x] | CP-OPT-01 | A second map in CarPlay Dashboard. | PASS | The declared Dashboard scene installs its own full-window MapLibre controller, reuses the authoritative route/style/viewport projection only during active guidance, and relies on the main scene's navigation session for system content. Physical evidence remains #698. |
 | [ ] | CP-OPT-02 | A second map in an instrument-cluster display. | OPTIONAL | Not implemented; no instrument-cluster scene is declared. |
 | [ ] | CP-OPT-03 | Upcoming manoeuvre and lane metadata for vehicle cluster/HUD on iOS 17.4+. | OPTIONAL | Delegate opt-in exists, but the disabled navigation session means there is no live metadata to validate. |
 | [ ] | CP-OPT-04 | Destination sharing with the vehicle on iOS 26.4+. | OPTIONAL | Not implemented. |

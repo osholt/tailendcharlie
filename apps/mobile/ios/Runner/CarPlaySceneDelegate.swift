@@ -871,7 +871,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var canPlanRoute = false
   private var canFreeRoam = false
   private var submittedSearchText = ""
-  private weak var interfaceController: CPInterfaceController?
+  private var interfaceController: CPInterfaceController?
+  private var carWindow: CPWindow?
   private var sessionConfiguration: CPSessionConfiguration?
   private var limitedUserInterfaces: CPLimitableUserInterface = []
   private var latestSnapshot: [String: Any]?
@@ -902,6 +903,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     self.mapViewController = mapViewController
     self.statusTemplate = statusTemplate
     self.interfaceController = interfaceController
+    carWindow = window
     self.sessionConfiguration = sessionConfiguration
     limitedUserInterfaces = sessionConfiguration.limitedUserInterfaces
     let rideMenuButton = statusButton(
@@ -954,13 +956,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   ) {
     // A delayed disconnect from an earlier scene must not cancel the current
     // navigation session or clear its view hierarchy.
-    guard self.interfaceController === interfaceController else { return }
+    guard
+      self.interfaceController === interfaceController,
+      carWindow === window
+    else { return }
     sceneLifecycle.disconnect()
     cancelRoutePreview(notifyDart: true)
     cancelActiveNavigationSession()
     navigationCoordinator.disconnect()
     window.rootViewController = nil
     self.interfaceController = nil
+    carWindow = nil
     sessionConfiguration = nil
     limitedUserInterfaces = []
     latestSnapshot = nil
@@ -2511,6 +2517,92 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       systemName: name,
       withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .bold)
     )
+  }
+}
+
+/// Dashboard state is intentionally derived from the same ordered projection
+/// as the main navigation session. Route-ready previews and ended rides never
+/// become Dashboard map content; only actual guidance may replace the host's
+/// normal Dashboard widgets.
+struct CarPlayDashboardProjectionState: Equatable {
+  private(set) var activeRouteID: String?
+
+  mutating func accepts(snapshot: [String: Any]) -> Bool {
+    guard
+      let projection = CarPlayNavigationProjectionV2(snapshot: snapshot),
+      ["navigating", "paused"].contains(projection.navigationPhase),
+      let trip = projection.trip
+    else {
+      activeRouteID = nil
+      return false
+    }
+    activeRouteID = trip.id
+    return true
+  }
+}
+
+/// Owns the CarPlay Dashboard's second map window. The main CPMapTemplate owns
+/// the single CPNavigationSession and therefore the system manoeuvre/estimate
+/// presentation; this scene draws only the matching map behind those system
+/// elements and never starts a duplicate ride or navigation session.
+final class CarPlayDashboardSceneDelegate: UIResponder,
+  CPTemplateApplicationDashboardSceneDelegate
+{
+  private var dashboardController: CPDashboardController?
+  private var dashboardWindow: UIWindow?
+  private var mapViewController: CarPlayNavigationViewController?
+  private var projectionState = CarPlayDashboardProjectionState()
+
+  func templateApplicationDashboardScene(
+    _ templateApplicationDashboardScene: CPTemplateApplicationDashboardScene,
+    didConnect dashboardController: CPDashboardController,
+    to window: UIWindow
+  ) {
+    let mapViewController = CarPlayNavigationViewController()
+    self.dashboardController = dashboardController
+    dashboardWindow = window
+    self.mapViewController = mapViewController
+    dashboardController.shortcutButtons = []
+    mapViewController.apply(
+      contentStyle: window.traitCollection.userInterfaceStyle == .dark
+        ? [.dark]
+        : [.light]
+    )
+    window.rootViewController = mapViewController
+    (UIApplication.shared.delegate as? AppDelegate)?
+      .carPlayDashboardDidConnect(self)
+  }
+
+  func templateApplicationDashboardScene(
+    _ templateApplicationDashboardScene: CPTemplateApplicationDashboardScene,
+    didDisconnect dashboardController: CPDashboardController,
+    from window: UIWindow
+  ) {
+    guard
+      self.dashboardController === dashboardController,
+      dashboardWindow === window
+    else { return }
+    (UIApplication.shared.delegate as? AppDelegate)?
+      .carPlayDashboardDidDisconnect(self)
+    window.rootViewController = nil
+    self.dashboardController = nil
+    dashboardWindow = nil
+    mapViewController = nil
+    projectionState = CarPlayDashboardProjectionState()
+  }
+
+  func apply(snapshot: [String: Any]) {
+    guard projectionState.accepts(snapshot: snapshot) else { return }
+    mapViewController?.apply(snapshot: snapshot)
+  }
+
+  func apply(viewport: [String: Any]) {
+    guard projectionState.activeRouteID != nil else { return }
+    mapViewController?.apply(viewport: viewport)
+  }
+
+  func apply(mapStyle: [String: Any]) {
+    mapViewController?.apply(mapStyle: mapStyle)
   }
 }
 /// The app's own map palette, mirrored for the CarPlay canvas.

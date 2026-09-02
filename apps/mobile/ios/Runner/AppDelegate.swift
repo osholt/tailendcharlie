@@ -50,6 +50,7 @@ final class CarPlayCommandCompletion {
   private var pushTokenTimeout: DispatchWorkItem?
   private var backgroundLocationPermissionBridge: BackgroundLocationPermissionBridge?
   weak var carPlaySceneDelegate: CarPlaySceneDelegate?
+  weak var carPlayDashboardSceneDelegate: CarPlayDashboardSceneDelegate?
 
   override func application(
     _ application: UIApplication,
@@ -210,6 +211,7 @@ final class CarPlayCommandCompletion {
           self?.latestCarPlayViewport = nil
         }
         self?.carPlaySceneDelegate?.apply(snapshot: value)
+        self?.carPlayDashboardSceneDelegate?.apply(snapshot: value)
         result(nil)
       case "updateViewport":
         guard let value = call.arguments as? [String: Any] else {
@@ -218,6 +220,7 @@ final class CarPlayCommandCompletion {
         }
         self?.latestCarPlayViewport = value
         self?.carPlaySceneDelegate?.apply(viewport: value)
+        self?.carPlayDashboardSceneDelegate?.apply(viewport: value)
         result(nil)
       case "updateMapStyle":
         guard let value = call.arguments as? [String: Any] else {
@@ -226,6 +229,7 @@ final class CarPlayCommandCompletion {
         }
         self?.latestCarPlayMapStyle = value
         self?.carPlaySceneDelegate?.apply(mapStyle: value)
+        self?.carPlayDashboardSceneDelegate?.apply(mapStyle: value)
         result(nil)
       default:
         result(FlutterMethodNotImplemented)
@@ -438,6 +442,26 @@ final class CarPlayCommandCompletion {
   func carPlayDidDisconnect(_ sceneDelegate: CarPlaySceneDelegate) {
     if carPlaySceneDelegate === sceneDelegate {
       carPlaySceneDelegate = nil
+    }
+  }
+
+  func carPlayDashboardDidConnect(_ sceneDelegate: CarPlayDashboardSceneDelegate) {
+    carPlayDashboardSceneDelegate = sceneDelegate
+    if let mapStyle = latestCarPlayMapStyle {
+      sceneDelegate.apply(mapStyle: mapStyle)
+    }
+    if let snapshot = latestCarPlaySnapshot {
+      sceneDelegate.apply(snapshot: snapshot)
+    }
+    if let viewport = latestCarPlayViewport {
+      sceneDelegate.apply(viewport: viewport)
+    }
+    carPlayChannel?.invokeMethod("requestState", arguments: nil)
+  }
+
+  func carPlayDashboardDidDisconnect(_ sceneDelegate: CarPlayDashboardSceneDelegate) {
+    if carPlayDashboardSceneDelegate === sceneDelegate {
+      carPlayDashboardSceneDelegate = nil
     }
   }
 
