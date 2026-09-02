@@ -114,15 +114,27 @@ internal class AndroidAutoNavigationScreen(
                 .setLoading(true)
                 .build()
         }
+        val typed = snapshot.androidAutoNavigation?.currentManeuver
+        if (typed != null) {
+            return RoutingInfo.Builder()
+                .setCurrentStep(
+                    AndroidAutoManeuverFactory.step(typed),
+                    distance(typed.distanceMeters),
+                )
+                .apply {
+                    snapshot.androidAutoNavigation.followingManeuver?.let {
+                        setNextStep(AndroidAutoManeuverFactory.step(it))
+                    }
+                }
+                .build()
+        }
         val guidance = snapshot.guidance ?: return null
         val step = Step.Builder()
             .setCue(guidance.title)
             .setManeuver(
-                // The library requires a maneuver type and the phone sends a
-                // rendered instruction rather than a classified turn. A generic
-                // "keep going" icon beside honest text beats a confident arrow
-                // pointing the wrong way.
-                Maneuver.Builder(Maneuver.TYPE_STRAIGHT).build(),
+                // A V1 phone has text but no classified turn. Unknown is honest;
+                // claiming straight here used to contradict the spoken instruction.
+                Maneuver.Builder(Maneuver.TYPE_UNKNOWN).build(),
             )
             .apply { guidance.roadName?.let { setRoad(it) } }
             .build()
@@ -130,8 +142,11 @@ internal class AndroidAutoNavigationScreen(
         return builder.build()
     }
 
-    private fun distance(guidance: ProjectedGuidance): Distance {
-        val metres = guidance.distanceMeters ?: 0.0
+    private fun distance(guidance: ProjectedGuidance): Distance =
+        distance(guidance.distanceMeters)
+
+    private fun distance(distanceMeters: Double?): Distance {
+        val metres = distanceMeters ?: 0.0
         return Distance.create(metres.coerceAtLeast(0.0), Distance.UNIT_METERS)
     }
 

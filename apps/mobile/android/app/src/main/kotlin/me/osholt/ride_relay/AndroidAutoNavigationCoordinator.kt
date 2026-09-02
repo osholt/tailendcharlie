@@ -9,8 +9,6 @@ import androidx.car.app.CarContext
 import androidx.car.app.navigation.NavigationManager
 import androidx.car.app.navigation.NavigationManagerCallback
 import androidx.car.app.navigation.model.Destination
-import androidx.car.app.navigation.model.Maneuver
-import androidx.car.app.navigation.model.Step
 import androidx.car.app.navigation.model.TravelEstimate
 import androidx.car.app.navigation.model.Trip
 import androidx.car.app.notification.CarAppExtender
@@ -200,7 +198,7 @@ internal object AndroidAutoTripFactory {
             ?: return Trip.Builder().setLoading(true).build()
         val builder = Trip.Builder()
         builder.addStep(
-            step(current),
+            AndroidAutoManeuverFactory.step(current),
             estimate(
                 distanceMeters = current.distanceMeters,
                 secondsRemaining = current.secondsRemaining,
@@ -209,7 +207,7 @@ internal object AndroidAutoTripFactory {
         )
         projection.followingManeuver?.let { following ->
             builder.addStep(
-                step(following),
+                AndroidAutoManeuverFactory.step(following),
                 estimate(
                     distanceMeters = (current.distanceMeters ?: 0.0) +
                         (following.distanceMeters ?: 0.0),
@@ -248,15 +246,6 @@ internal object AndroidAutoTripFactory {
         }
         return builder.build()
     }
-
-    private fun step(maneuver: AndroidAutoNavigationProjectionV2.Maneuver): Step =
-        Step.Builder()
-            .setCue(maneuver.instructionVariants.first())
-            // #687 maps the complete typed enum. Until then, the cluster gets honest text with
-            // the established neutral icon rather than no next-turn metadata at all.
-            .setManeuver(Maneuver.Builder(Maneuver.TYPE_STRAIGHT).build())
-            .apply { maneuver.roadNameVariants.firstOrNull()?.let { setRoad(it) } }
-            .build()
 
     private fun estimate(
         distanceMeters: Double?,
