@@ -97,6 +97,28 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(explicitFrenchMiles.speedValue(metersPerSecond: 10), 22)
   }
 
+  func testCarPlayDashboardAcceptsOnlyActiveGuidance() {
+    var state = CarPlayDashboardProjectionState()
+
+    XCTAssertTrue(
+      state.accepts(
+        snapshot: carPlayNavigationSnapshot(sourceID: "dart-1", sequence: 1)
+      )
+    )
+    XCTAssertEqual(state.activeRouteID, "france-route")
+
+    XCTAssertFalse(
+      state.accepts(
+        snapshot: carPlayNavigationSnapshot(
+          sourceID: "dart-1",
+          sequence: 2,
+          navigationPhase: "routeReady"
+        )
+      )
+    )
+    XCTAssertNil(state.activeRouteID)
+  }
+
   func testCarPlayListRestrictionKeepsOnlyEssentialRideRows() {
     let snapshot: [String: Any] = [
       "routeName": "D 980 to Salers",

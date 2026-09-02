@@ -295,6 +295,7 @@ def structural_checks(failures: list[str]) -> None:
             "testCarPlayCommandCompletionResolvesExactlyOnce",
             "testCarPlaySafeAreaUsesEveryHostInset",
             "testCarPlayUnitsPreferExplicitChoiceThenLocale",
+            "testCarPlayDashboardAcceptsOnlyActiveGuidance",
         ],
     )
     require_text(
@@ -309,6 +310,29 @@ def structural_checks(failures: list[str]) -> None:
             "hostContentStyle.contains(.dark)",
             "CarPlayUnitPolicy",
             "overviewCoordinates",
+            "CarPlayDashboardSceneDelegate",
+            "CarPlayDashboardProjectionState",
+            "private var carWindow: CPWindow?",
+            "private var dashboardWindow: UIWindow?",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/ios/Runner/Info.plist",
+        [
+            "CPSupportsDashboardNavigationScene",
+            "CPTemplateApplicationDashboardSceneSessionRoleApplication",
+            "CarPlayDashboardSceneDelegate",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/ios/Runner/AppDelegate.swift",
+        [
+            "carPlayDashboardDidConnect",
+            "carPlayDashboardDidDisconnect",
+            "carPlayDashboardSceneDelegate?.apply(snapshot: value)",
+            "carPlayDashboardSceneDelegate?.apply(viewport: value)",
         ],
     )
     require_text(

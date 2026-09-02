@@ -17,6 +17,7 @@ void main() {
   final appDelegateSource = File(
     'ios/Runner/AppDelegate.swift',
   ).readAsStringSync();
+  final infoPlistSource = File('ios/Runner/Info.plist').readAsStringSync();
   final viewControllerSource = source.substring(
     source.indexOf('final class CarPlayNavigationViewController'),
     source.indexOf('private final class CarPlayRiderAnnotation'),
@@ -196,6 +197,45 @@ void main() {
         );
         expect(appDelegateSource, contains('invokeMethod("requestState"'));
         expect(source, contains('performConfirmedAction('));
+      },
+    );
+  });
+
+  group('Dashboard lifecycle', () {
+    test('declares and installs the navigation Dashboard scene', () {
+      expect(infoPlistSource, contains('CPSupportsDashboardNavigationScene'));
+      expect(
+        infoPlistSource,
+        contains('CPTemplateApplicationDashboardSceneSessionRoleApplication'),
+      );
+      expect(infoPlistSource, contains('CarPlayDashboardSceneDelegate'));
+      expect(source, contains('CPTemplateApplicationDashboardSceneDelegate'));
+      expect(source, contains('window.rootViewController = mapViewController'));
+      expect(source, contains('dashboardController.shortcutButtons = []'));
+    });
+
+    test('main and Dashboard windows are retained and cleared by identity', () {
+      expect(source, contains('private var carWindow: CPWindow?'));
+      expect(source, contains('carWindow === window'));
+      expect(source, contains('carWindow = nil'));
+      expect(source, contains('private var dashboardWindow: UIWindow?'));
+      expect(source, contains('dashboardWindow === window'));
+      expect(source, contains('dashboardWindow = nil'));
+    });
+
+    test(
+      'cached projection reaches both scenes without a second ride owner',
+      () {
+        expect(appDelegateSource, contains('carPlayDashboardDidConnect('));
+        expect(
+          appDelegateSource,
+          contains('carPlayDashboardSceneDelegate?.apply(snapshot: value)'),
+        );
+        expect(source, contains('CarPlayDashboardProjectionState'));
+        expect(
+          source,
+          isNot(contains('dashboardController.startNavigationSession')),
+        );
       },
     );
   });
