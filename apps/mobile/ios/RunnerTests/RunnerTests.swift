@@ -120,6 +120,126 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(store.latest?.sourceID, "dart-new")
   }
 
+  func testCarPlayRoutePreviewRejectsNoRoute() {
+    XCTAssertNil(
+      CarPlayRoutePreviewPayload(
+        response: carPlayRoutePreviewResponse(choiceCount: 0)
+      )
+    )
+  }
+
+  func testCarPlayRoutePreviewAcceptsOneRouteAndCommitsItOnce() throws {
+    let preview = try XCTUnwrap(
+      CarPlayRoutePreviewPayload(
+        response: carPlayRoutePreviewResponse(choiceCount: 1)
+      )
+    )
+    var coordinator = CarPlayRoutePreviewCoordinator()
+    let request = coordinator.beginRequest()
+
+    XCTAssertTrue(coordinator.accept(preview, generation: request.generation))
+    XCTAssertEqual(coordinator.selectedChoiceID, "route-choice-1")
+    XCTAssertEqual(
+      coordinator.beginCommit(
+        previewID: "preview-1",
+        choiceID: "route-choice-1"
+      )?.choice.routeID,
+      "route-1"
+    )
+    XCTAssertNil(
+      coordinator.beginCommit(
+        previewID: "preview-1",
+        choiceID: "route-choice-1"
+      ),
+      "a repeated CarPlay start callback must not reach Dart twice"
+    )
+  }
+
+  func testCarPlayRoutePreviewAcceptsAndSelectsThreeRoutes() throws {
+    let preview = try XCTUnwrap(
+      CarPlayRoutePreviewPayload(
+        response: carPlayRoutePreviewResponse(choiceCount: 3)
+      )
+    )
+    var coordinator = CarPlayRoutePreviewCoordinator()
+    let request = coordinator.beginRequest()
+
+    XCTAssertEqual(preview.choices.count, 3)
+    XCTAssertTrue(coordinator.accept(preview, generation: request.generation))
+    XCTAssertEqual(
+      coordinator.select(choiceID: "route-choice-3")?.distanceMeters,
+      30_000
+    )
+    XCTAssertEqual(coordinator.selectedChoiceID, "route-choice-3")
+  }
+
+  func testCarPlayRoutePreviewRejectsStalePlanningResult() throws {
+    let preview = try XCTUnwrap(
+      CarPlayRoutePreviewPayload(
+        response: carPlayRoutePreviewResponse(choiceCount: 1)
+      )
+    )
+    var coordinator = CarPlayRoutePreviewCoordinator()
+    let staleRequest = coordinator.beginRequest()
+    let currentRequest = coordinator.beginRequest()
+
+    XCTAssertFalse(
+      coordinator.accept(preview, generation: staleRequest.generation)
+    )
+    XCTAssertTrue(
+      coordinator.accept(preview, generation: currentRequest.generation)
+    )
+  }
+
+  func testCarPlayRoutePreviewCancellationDoesNotLeaveASelection() throws {
+    let preview = try XCTUnwrap(
+      CarPlayRoutePreviewPayload(
+        response: carPlayRoutePreviewResponse(choiceCount: 1)
+      )
+    )
+    var coordinator = CarPlayRoutePreviewCoordinator()
+    let request = coordinator.beginRequest()
+    XCTAssertTrue(coordinator.accept(preview, generation: request.generation))
+
+    XCTAssertEqual(coordinator.cancel(), "preview-1")
+    XCTAssertEqual(coordinator.phase, .idle)
+    XCTAssertNil(coordinator.preview)
+    XCTAssertNil(
+      coordinator.beginCommit(
+        previewID: "preview-1",
+        choiceID: "route-choice-1"
+      )
+    )
+  }
+
+  private func carPlayRoutePreviewResponse(choiceCount: Int) -> [String: Any] {
+    [
+      "preview": [
+        "schemaVersion": 1,
+        "id": "preview-1",
+        "destinationLabel": "Puy Mary, France",
+        "origin": ["latitude": 45.05, "longitude": 2.70],
+        "destination": ["latitude": 45.06, "longitude": 2.72],
+        "choices": (1 ... max(1, choiceCount)).prefix(choiceCount).map { index in
+          [
+            "id": "route-choice-\(index)",
+            "routeId": "route-\(index)",
+            "summaryVariants": ["Route \(index)"],
+            "additionalInformationVariants": ["Motorcycle route"],
+            "selectionSummaryVariants": ["Use route \(index)"],
+            "distanceMeters": Double(index) * 10_000,
+            "durationSeconds": Double(index) * 900,
+            "routePoints": [
+              ["latitude": 45.05, "longitude": 2.70],
+              ["latitude": 45.06, "longitude": 2.72],
+            ],
+          ] as [String: Any]
+        },
+      ] as [String: Any],
+      "error": NSNull(),
+    ]
+  }
+
   private func carPlayNavigationSnapshot(
     sourceID: String,
     sequence: Int,

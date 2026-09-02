@@ -187,6 +187,41 @@ def structural_checks(failures: list[str]) -> None:
             "CPMapTemplate()",
             "CarPlayNavigationProjectionV2",
             "CarPlayNavigationProjectionStore",
+            "CarPlayRoutePreviewPayload",
+            "showTripPreviews(",
+            "selectedPreviewFor trip:",
+            "startedTrip trip:",
+            "updateEstimates(",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/lib/services/carplay_route_preview.dart",
+        [
+            "class CarPlayTripPreview",
+            "choices.take(3)",
+            "class CarPlayRoutePreviewTransaction",
+            "_pending = null",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/lib/services/carplay_bridge.dart",
+        [
+            "case 'previewDestination':",
+            "case 'commitDestinationPreview':",
+            "case 'cancelDestinationPreview':",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/ios/RunnerTests/RunnerTests.swift",
+        [
+            "testCarPlayRoutePreviewRejectsNoRoute",
+            "testCarPlayRoutePreviewAcceptsOneRouteAndCommitsItOnce",
+            "testCarPlayRoutePreviewAcceptsAndSelectsThreeRoutes",
+            "testCarPlayRoutePreviewRejectsStalePlanningResult",
+            "testCarPlayRoutePreviewCancellationDoesNotLeaveASelection",
         ],
     )
     require_text(

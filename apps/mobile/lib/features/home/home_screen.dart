@@ -35,6 +35,7 @@ import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/carplay_bridge.dart';
+import '../../services/carplay_route_preview.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
@@ -176,6 +177,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _carPlayBridge = CarPlayBridge(
       onDestinationSearch: _searchCarPlayDestinations,
       onDestinationSelected: _planCarPlayDestination,
+      onDestinationPreviewRequested: _previewCarPlayDestination,
+      onDestinationPreviewCommitted: _commitCarPlayDestinationPreview,
+      onDestinationPreviewCancelled: _cancelCarPlayDestinationPreview,
       onFreeRoamRequested: _startCarPlayFreeRoam,
       onStateRequested: () async => _publishHomeCarPlayState(),
     );
@@ -240,6 +244,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// True while a route is being planned, which disables the actions so a rider
   /// cannot start a second ride on top of the one being arranged.
   bool _planningDestination = false;
+  final _carPlayRoutePreview = CarPlayRoutePreviewTransaction();
 
   /// A planned route waiting for the free-roam map to review and take it.
   ///
@@ -387,6 +392,81 @@ class _HomeScreenState extends State<HomeScreen> {
         _publishHomeCarPlayState();
       }
     }
+  }
+
+  Future<CarPlayTripPreview> _previewCarPlayDestination(
+    CarPlayDestination destination,
+  ) async {
+    if (_planningDestination || widget.controller.busy) {
+      throw const FormatException('Ride setup is already in progress.');
+    }
+    final origin = _position.value;
+    if (origin == null) {
+      throw const FormatException(
+        'Show your location on the iPhone before planning from CarPlay.',
+      );
+    }
+    setState(() => _planningDestination = true);
+    _publishHomeCarPlayState();
+    try {
+      final plan = await _destinationPlanner.planForReview(
+        origin: origin,
+        query: destination.label,
+        selectedDestination: DestinationMatch(
+          label: destination.label,
+          point: destination.point,
+        ),
+        distanceUnit: widget.distanceUnits.value,
+      );
+      final preview = CarPlayTripPreview.single(
+        destinationLabel: destination.label,
+        plan: plan,
+      );
+      _carPlayRoutePreview.replace(preview);
+      return preview;
+    } finally {
+      if (mounted) {
+        setState(() => _planningDestination = false);
+        _publishHomeCarPlayState();
+      }
+    }
+  }
+
+  Future<void> _commitCarPlayDestinationPreview(
+    String previewId,
+    String routeChoiceId,
+  ) async {
+    if (_planningDestination || widget.controller.busy) {
+      throw const FormatException('Ride setup is already in progress.');
+    }
+    final selected = _carPlayRoutePreview.commit(
+      previewId: previewId,
+      routeChoiceId: routeChoiceId,
+    );
+    final controller = widget.controller;
+    final profile = widget.riderProfile;
+    setState(() => _planningDestination = true);
+    _publishHomeCarPlayState();
+    try {
+      await controller.createRide(
+        profile.displayName,
+        motorcycleStyle: profile.motorcycleStyle,
+        riderSymbol: profile.riderSymbol,
+        riderColor: profile.riderColor,
+        coordinationMode: RideCoordinationMode.solo,
+        rideName: selected.destinationLabel,
+      );
+      await controller.publishRoute(selected.route);
+    } finally {
+      if (mounted) {
+        setState(() => _planningDestination = false);
+        _publishHomeCarPlayState();
+      }
+    }
+  }
+
+  Future<void> _cancelCarPlayDestinationPreview(String previewId) async {
+    _carPlayRoutePreview.cancel(previewId);
   }
 
   Future<void> _startCarPlayFreeRoam() async {
