@@ -161,6 +161,38 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('CarPlay can end directions without changing the recorded ride', (
+    tester,
+  ) async {
+    final harness = await _harness();
+    addTearDown(harness.dispose);
+    await harness.controller.createRide('Oliver');
+    await harness.controller.startRide();
+    await tester.pumpWidget(harness.app);
+    await tester.pumpAndSettle();
+    final rideId = harness.controller.session!.rideId;
+    final eventsBefore = await harness.eventStore.eventsForRide(rideId);
+
+    const channel = MethodChannel('me.osholt.ride_relay/carplay');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    await messenger.handlePlatformMessage(
+      channel.name,
+      channel.codec.encodeMethodCall(const MethodCall('cancelNavigation')),
+      (_) {},
+    );
+    await tester.pumpAndSettle();
+
+    expect(harness.controller.session?.rideId, rideId);
+    expect(harness.controller.rideStarted, isTrue);
+    expect(harness.controller.rideEnded, isFalse);
+    expect(
+      await harness.eventStore.eventsForRide(rideId),
+      eventsBefore,
+      reason: 'navigation-only cancellation must not write a ride event',
+    );
+  });
+
   testWidgets('a rider who is not the TEC does not satisfy the warning', (
     tester,
   ) async {

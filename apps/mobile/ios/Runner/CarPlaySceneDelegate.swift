@@ -157,7 +157,7 @@ struct CarPlayNavigationProjectionV2: Equatable {
     "home", "preRide", "activeRide", "endedRide",
   ])
   private static let navigationPhases = Set([
-    "inactive", "routeReady", "navigating", "ended",
+    "inactive", "routeReady", "navigating", "paused", "ended",
   ])
   private static let maneuverKinds = Set([
     "depart", "arrive", "roundabout", "turn", "endOfRoad", "merge",
@@ -372,6 +372,146 @@ struct CarPlayNavigationProjectionStore {
     }
     latest = candidate
     return true
+  }
+}
+
+/// Pure navigation lifecycle decisions, kept separate from the ride lifecycle.
+/// In particular, `.cancelled` suppresses replayed snapshots for the same route
+/// while Dart processes the vehicle's End Directions request; it never implies
+/// that the recorded ride has ended.
+struct CarPlayNavigationCoordinator {
+  enum Phase: Equatable {
+    case idle
+    case previewing
+    case loading(String)
+    case navigating(String)
+    case paused(String)
+    case rerouting(String)
+    case arrived(String)
+    case cancelled(String?)
+  }
+
+  enum Action: Equatable {
+    case none
+    case start(routeID: String, paused: Bool)
+    case update
+    case pause
+    case resume
+    case reroute(from: String, to: String)
+    case finish
+    case cancel
+  }
+
+  private(set) var phase: Phase = .idle
+
+  mutating func beginPreview() {
+    guard case .idle = phase else { return }
+    phase = .previewing
+  }
+
+  mutating func beginLoading(routeID: String) -> Bool {
+    switch phase {
+    case .loading(let current) where current == routeID:
+      return false
+    case .navigating(let current) where current == routeID:
+      return false
+    case .paused(let current) where current == routeID:
+      return false
+    default:
+      phase = .loading(routeID)
+      return true
+    }
+  }
+
+  mutating func apply(_ projection: CarPlayNavigationProjectionV2) -> Action {
+    let routeID = projection.trip?.id
+    switch projection.navigationPhase {
+    case "inactive":
+      switch phase {
+      case .idle, .cancelled:
+        return .none
+      case .previewing:
+        phase = .idle
+        return .none
+      default:
+        phase = .cancelled(routeID)
+        return .cancel
+      }
+    case "routeReady":
+      phase = .previewing
+      return .none
+    case "ended":
+      guard let routeID else { return .none }
+      if case .arrived(let current) = phase, current == routeID { return .none }
+      phase = .arrived(routeID)
+      return .finish
+    case "paused":
+      guard let routeID else { return .none }
+      switch phase {
+      case .paused(let current) where current == routeID:
+        return .none
+      case .loading(let current) where current == routeID:
+        return .none
+      case .navigating(let current) where current == routeID:
+        phase = .paused(routeID)
+        return .pause
+      case .cancelled(let current) where current == routeID:
+        return .none
+      default:
+        phase = .paused(routeID)
+        return .start(routeID: routeID, paused: true)
+      }
+    case "navigating":
+      guard let routeID else { return .none }
+      switch phase {
+      case .loading(let current) where current == routeID:
+        phase = .navigating(routeID)
+        return .resume
+      case .paused(let current) where current == routeID:
+        phase = .navigating(routeID)
+        return .resume
+      case .navigating(let current) where current == routeID:
+        return .update
+      case .cancelled(let current) where current == routeID:
+        return .none
+      case .navigating(let previous), .paused(let previous),
+        .loading(let previous), .rerouting(let previous):
+        phase = .rerouting(routeID)
+        return .reroute(from: previous, to: routeID)
+      default:
+        phase = .navigating(routeID)
+        return .start(routeID: routeID, paused: false)
+      }
+    default:
+      return .none
+    }
+  }
+
+  mutating func completeReroute(routeID: String) {
+    guard case .rerouting(let current) = phase, current == routeID else { return }
+    phase = .navigating(routeID)
+  }
+
+  mutating func cancel() -> Action {
+    switch phase {
+    case .cancelled, .idle:
+      return .none
+    default:
+      let routeID: String?
+      switch phase {
+      case .loading(let id), .navigating(let id), .paused(let id),
+        .rerouting(let id), .arrived(let id):
+        routeID = id
+      default:
+        routeID = nil
+      }
+      phase = .cancelled(routeID)
+      return .cancel
+    }
+  }
+
+  mutating func disconnect() {
+    phase = .idle
   }
 }
 
@@ -628,10 +768,8 @@ struct CarPlayRoutePreviewCoordinator {
   mutating func completeCommit(succeeded: Bool) {
     guard phase == .committing else { return }
     phase = succeeded ? .committed : .idle
-    if !succeeded {
-      preview = nil
-      selectedChoiceID = nil
-    }
+    preview = nil
+    selectedChoiceID = nil
   }
 
   mutating func cancel() -> String? {
@@ -653,9 +791,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var mapViewController: CarPlayNavigationViewController?
   private var statusTemplate: CPListTemplate?
   private var navigationSession: CPNavigationSession?
-  private var activeRouteID: String?
-  private var activeManeuverKey: String?
-  private var activeManeuver: CPManeuver?
+  private var activeNavigationTrip: CPTrip?
+  private var navigationCoordinator = CarPlayNavigationCoordinator()
+  private var activeManeuvers: [String: CPManeuver] = [:]
+  private var lastManeuverEstimate: (distance: Double, seconds: Double)?
+  private var lastTripEstimate: (distance: Double, seconds: Double)?
+  private var presentedNavigationAlertKey: String?
   private var rideStartPrompt: [String: Any]?
   private var isShowingPanningInterface = false
   private var rideMenuButton: CPBarButton?
@@ -749,8 +890,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     guard self.interfaceController === interfaceController else { return }
     sceneLifecycle.disconnect()
     cancelRoutePreview(notifyDart: true)
-    navigationSession?.cancelTrip()
-    navigationSession = nil
+    cancelActiveNavigationSession()
+    navigationCoordinator.disconnect()
     window.rootViewController = nil
     self.interfaceController = nil
     mapTemplate = nil
@@ -770,7 +911,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // Decode and order the typed contract now, while the legacy renderer stays
     // active. The navigation coordinator can then migrate without changing the
     // wire format or risking Android Auto's shared V1 decoder (#690).
-    _ = navigationProjectionV2Store.accept(snapshot: snapshot)
+    let candidateNavigationProjection = CarPlayNavigationProjectionV2(
+      snapshot: snapshot
+    )
+    let acceptedNavigationProjection = navigationProjectionV2Store.accept(
+      snapshot: snapshot
+    )
     mapViewController?.apply(snapshot: snapshot)
     if let statusTemplate {
       CarPlayStatusTemplate.apply(snapshot: snapshot, to: statusTemplate)
@@ -780,7 +926,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // same snapshot and replays it after the root completion above.
     guard sceneLifecycle.rootReady else { return }
     updateSurfaceActions(snapshot)
-    updateNavigationSession(snapshot: snapshot)
+    if let projection = navigationProjectionV2Store.latest,
+      acceptedNavigationProjection || candidateNavigationProjection == projection
+    {
+      updateNavigationSession(projection: projection, snapshot: snapshot)
+    }
+    updateNavigationAlert(snapshot["alert"] as? [String: Any])
     updateTecRoleRequest(snapshot["tecRequest"] as? [String: Any])
     updateRideStart(snapshot["rideStart"] as? [String: Any])
   }
@@ -916,183 +1067,441 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     .leadingSymbol
   }
 
-  private func updateNavigationSession(snapshot: [String: Any]) {
-    guard sceneLifecycle.rootReady else { return }
-    // A CPNavigationSession always owns Apple's trip-estimate panel. There is
-    // no supported API to hide that panel while retaining the manoeuvre card,
-    // so the active ride now uses the app-owned guidance and ETA views together
-    // on the map canvas. Cancel a session left by an earlier build/connection.
-    navigationSession?.cancelTrip()
-    navigationSession = nil
-    activeRouteID = nil
-    activeManeuverKey = nil
-    activeManeuver = nil
-    return
-
-    // Retained temporarily below as reference for the dashboard projection;
-    // no execution reaches this Apple-template path.
-    let marker = snapshot["marker"] as? [String: Any]
-    let guidanceTitle = nonEmptyString(marker?["title"])
-      ?? nonEmptyString(snapshot["guidanceTitle"])
-    let terminalGuidance = marker == nil
-      && guidanceTitle?.lowercased().contains("no more turns") == true
-    guard
-      let guidanceTitle,
-      !terminalGuidance,
-      let mapTemplate,
-      let routePoints = snapshot["routePoints"] as? [[String: Any]],
-      let first = coordinate(from: routePoints.first),
-      let last = coordinate(from: routePoints.last),
-      routePoints.count >= 2
-    else {
-      navigationSession?.cancelTrip()
-      navigationSession = nil
-      activeRouteID = nil
-      activeManeuverKey = nil
-      activeManeuver = nil
+  private func updateNavigationSession(
+    projection: CarPlayNavigationProjectionV2,
+    snapshot: [String: Any]
+  ) {
+    guard sceneLifecycle.rootReady, let mapTemplate else { return }
+    let action = navigationCoordinator.apply(projection)
+    var shouldResume = false
+    switch action {
+    case .none:
       return
-    }
-
-    let routeName = nonEmptyString(snapshot["routeName"]) ?? "Current route"
-    let routeID =
-      nonEmptyString(snapshot["routeId"])
-      ?? "\(routePoints.count):\(first.latitude),\(first.longitude):\(last.latitude),\(last.longitude)"
-    if navigationSession == nil || routeID != activeRouteID {
-      navigationSession?.cancelTrip()
-      let origin = MKMapItem(placemark: MKPlacemark(coordinate: first))
-      origin.name = "Ride start"
-      let destination = MKMapItem(placemark: MKPlacemark(coordinate: last))
-      destination.name = routeName
-      let choice = CPRouteChoice(
-        summaryVariants: [routeName],
-        additionalInformationVariants: ["Group motorcycle route"],
-        selectionSummaryVariants: [routeName]
-      )
-      let trip = CPTrip(origin: origin, destination: destination, routeChoices: [choice])
+    case .cancel:
+      cancelActiveNavigationSession()
+      return
+    case .finish:
+      navigationSession?.finishTrip()
+      navigationSession = nil
+      activeNavigationTrip = nil
+      activeManeuvers.removeAll()
+      return
+    case .start(_, let paused):
+      guard let trip = navigationTrip(projection: projection, snapshot: snapshot) else {
+        // A projection can arrive before its route geometry during app/scene
+        // restoration. Leave the coordinator retryable so the next complete
+        // snapshot can start the session.
+        navigationCoordinator.disconnect()
+        return
+      }
+      cancelActiveNavigationSession()
+      activeNavigationTrip = trip
       navigationSession = mapTemplate.startNavigationSession(for: trip)
-      activeRouteID = routeID
-      activeManeuverKey = nil
-      activeManeuver = nil
+      if paused {
+        navigationSession?.pauseTrip(
+          for: .loading,
+          description: "Ride paused",
+          turnCardColor: CarPlayPalette.primaryPanelFill
+        )
+      }
+    case .pause:
+      navigationSession?.pauseTrip(
+        for: .proceedToRoute,
+        description: "Ride paused",
+        turnCardColor: CarPlayPalette.primaryPanelFill
+      )
+      return
+    case .resume:
+      shouldResume = true
+    case .reroute(_, let routeID):
+      navigationSession?.pauseTrip(
+        for: .rerouting,
+        description: "Updating route",
+        turnCardColor: CarPlayPalette.primaryPanelFill
+      )
+      activeManeuvers.removeAll()
+      lastManeuverEstimate = nil
+      lastTripEstimate = nil
+      navigationCoordinator.completeReroute(routeID: routeID)
+      shouldResume = true
+    case .update:
+      break
     }
 
     guard let navigationSession else { return }
-    let title = guidanceTitle
-
-    let markerDetail = nonEmptyString(marker?["detail"])
-    let roadName = markerDetail ?? nonEmptyString(snapshot["guidanceRoadName"])
-    let isMarkerMode = marker != nil
-    let distance = max(0, (snapshot["guidanceDistanceMeters"] as? NSNumber)?.doubleValue ?? 0)
-    let markerStage = nonEmptyString(marker?["stage"])
-    // The key deliberately excludes the distance (#443).
-    //
-    // It used to include `displayTitle`, which carries the formatted distance —
-    // so every position fix produced a new key, a new CPManeuver, and CarPlay
-    // animated the card again. The rider saw the banner wiping constantly rather
-    // than on each new direction.
-    //
-    // The distance now travels as a travel estimate instead, which is the API
-    // CarPlay expects to change continuously, and is also what the instrument
-    // cluster reads — it showed "— km" because nothing ever set it (#447).
-    let maneuverKey = "\(isMarkerMode)|\(markerStage ?? "")|\(title)|\(roadName ?? "")"
-    let maneuver: CPManeuver
-    if activeManeuverKey == maneuverKey, let existing = activeManeuver {
-      maneuver = existing
-    } else {
-      maneuver = CPManeuver()
-      // The instruction alone. The distance used to be prefixed here, which
-      // was fine only because the manoeuvre was rebuilt on every fix — now that
-      // it is built once, a baked-in distance would freeze at its first value.
-      // CarPlay renders the distance from the travel estimate below.
-      maneuver.instructionVariants = [title]
-      let symbol = isMarkerMode
-        ? markerSymbol(for: markerStage)
-        : maneuverSymbol(for: title)
-      maneuver.symbolImage = symbol
-      maneuver.dashboardSymbolImage = symbol
-      maneuver.cardBackgroundColor = CarPlayPalette.primaryPanelFill
-      if #available(iOS 17.4, *) {
-        maneuver.maneuverType = isMarkerMode ? .noTurn : maneuverType(for: title)
-        maneuver.roadFollowingManeuverVariants = roadName.map { [$0] }
-        navigationSession.add([maneuver])
-      }
-      navigationSession.upcomingManeuvers = [maneuver]
-      activeManeuverKey = maneuverKey
-      activeManeuver = maneuver
+    let projectedManeuvers = [
+      projection.currentManeuver,
+      projection.followingManeuver,
+    ].compactMap { $0 }
+    let maneuvers = projectedManeuvers.map { payload -> CPManeuver in
+      if let existing = activeManeuvers[payload.id] { return existing }
+      let created = carPlayManeuver(payload)
+      activeManeuvers[payload.id] = created
+      return created
     }
-    // Every update, not only a new manoeuvre: this is the number the card and the
-    // instrument cluster count down, and it is in the rider's own units so the
-    // car agrees with the phone (#447).
-    if distance > 0, !isMarkerMode {
-      let usesMiles = (snapshot["distanceUnit"] as? String) == "miles"
-      let remaining = usesMiles
-        ? Measurement(value: distance / 1_609.344, unit: UnitLength.miles)
-        : Measurement(value: distance, unit: UnitLength.meters)
-      // `updateEstimates(_:for:)`, not `updateTravelEstimates(...)`. The header
-      // declares the selector `updateTravelEstimates:forManeuver:`, but
-      // CarPlay.apinotes renames it for Swift:
-      //
-      //   Selector:  'updateTravelEstimates:forManeuver:'
-      //   SwiftName: 'updateEstimates(_:for:)'
-      //
-      // Reading the header alone got this wrong twice. The apinotes file is
-      // where a framework's Swift spelling actually lives.
-      //
-      // The time is *not* zero, which is what shipped and what made the car show
-      // an arrival time of the current clock on every update (#452).
-      // CPTravelEstimates.h:
-      //
-      //   A distance value less than 0 or a time remaining value less than 0 will
-      //   render as "--" […] Values less than 0 are distinguished from distance or
-      //   time values equal to 0; your app may display 0 as the user is imminently
-      //   arriving at their destination.
-      //
-      // So zero says "arriving now". Negative is the documented way to say
-      // "unavailable". The estimate itself is computed on the Dart side, where its
-      // edge cases — no speed, stopped at lights, a nonsense fix — are reachable
-      // in a test rather than only by riding.
-      let secondsRemaining =
-        (snapshot["guidanceSecondsRemaining"] as? NSNumber)?.doubleValue ?? -1
-      navigationSession.updateEstimates(
-        CPTravelEstimates(
-          distanceRemaining: remaining,
-          timeRemaining: secondsRemaining
-        ),
-        for: maneuver
-      )
+    guard let currentPayload = projection.currentManeuver,
+      let currentManeuver = maneuvers.first
+    else {
+      navigationSession.upcomingManeuvers = []
+      return
     }
     if #available(iOS 17.4, *) {
-      navigationSession.currentRoadNameVariants = roadName.map { [$0] } ?? []
+      navigationSession.add(maneuvers)
+      navigationSession.currentRoadNameVariants = currentPayload.roadNameVariants
+      navigationSession.maneuverState = maneuverState(
+        distanceMeters: currentPayload.distanceMeters
+      )
+      updateLaneGuidance(currentPayload, session: navigationSession)
+    }
+    navigationSession.upcomingManeuvers = maneuvers
+    updateManeuverEstimate(
+      currentPayload,
+      maneuver: currentManeuver,
+      session: navigationSession,
+      usesMiles: projection.units.distance == "miles"
+    )
+    updateTripEstimate(
+      snapshot: snapshot,
+      trip: activeNavigationTrip,
+      mapTemplate: mapTemplate,
+      usesMiles: projection.units.distance == "miles"
+    )
+    if shouldResume {
+      resumeNavigationSession(
+        session: navigationSession,
+        maneuvers: maneuvers,
+        currentPayload: currentPayload,
+        snapshot: snapshot,
+        usesMiles: projection.units.distance == "miles"
+      )
     }
   }
 
-  private func markerSymbol(for stage: String?) -> UIImage? {
-    switch stage {
-    case "tecApproaching": return navigationSymbol(named: "shield.lefthalf.filled")
-    case "readyToRideOff": return navigationSymbol(named: "play.fill")
-    default: return navigationSymbol(named: "arrow.triangle.branch")
+  private func resumeNavigationSession(
+    session: CPNavigationSession,
+    maneuvers: [CPManeuver],
+    currentPayload: CarPlayNavigationProjectionV2.Maneuver,
+    snapshot: [String: Any],
+    usesMiles: Bool
+  ) {
+    guard #available(iOS 17.4, *), let currentManeuver = maneuvers.first else {
+      // Before iOS 17.4 CarPlay resumes a paused card when the replacement
+      // upcoming manoeuvres arrive; there is no public resume selector.
+      session.upcomingManeuvers = maneuvers
+      return
+    }
+    let maneuverEstimate = CPTravelEstimates(
+      distanceRemaining: distanceMeasurement(
+        currentPayload.distanceMeters ?? -1,
+        usesMiles: usesMiles
+      ),
+      timeRemaining: currentPayload.secondsRemaining ?? -1
+    )
+    let journey = snapshot["journeyProgress"] as? [String: Any]
+    let tripEstimate = CPTravelEstimates(
+      distanceRemaining: distanceMeasurement(
+        (journey?["remainingDistanceMeters"] as? NSNumber)?.doubleValue ?? -1,
+        usesMiles: usesMiles
+      ),
+      timeRemaining:
+        (journey?["remainingSeconds"] as? NSNumber)?.doubleValue ?? -1
+    )
+    let laneGuidance = session.currentLaneGuidance ?? CPLaneGuidance()
+    if laneGuidance.instructionVariants.isEmpty {
+      laneGuidance.instructionVariants = orderedVariants(
+        currentPayload.instructionVariants
+      )
+      laneGuidance.lanes = []
+    }
+    let information = CPRouteInformation(
+      maneuvers: maneuvers,
+      laneGuidances: session.currentLaneGuidance.map { [$0] } ?? [],
+      currentManeuvers: [currentManeuver],
+      currentLaneGuidance: laneGuidance,
+      trip: tripEstimate,
+      maneuverTravelEstimates: maneuverEstimate
+    )
+    session.resumeTrip(updatedRouteInformation: information)
+  }
+
+  private func navigationTrip(
+    projection: CarPlayNavigationProjectionV2,
+    snapshot: [String: Any]
+  ) -> CPTrip? {
+    guard
+      let payload = projection.trip,
+      let routePoints = snapshot["routePoints"] as? [[String: Any]],
+      routePoints.count >= 2,
+      let first = coordinate(from: routePoints.first),
+      let last = coordinate(from: routePoints.last)
+    else { return nil }
+    let origin = MKMapItem(placemark: MKPlacemark(coordinate: first))
+    origin.name = "Ride start"
+    let destination = MKMapItem(placemark: MKPlacemark(coordinate: last))
+    destination.name = payload.name
+    let choice = CPRouteChoice(
+      summaryVariants: [payload.name],
+      additionalInformationVariants: ["Motorcycle route"],
+      selectionSummaryVariants: [payload.name]
+    )
+    choice.userInfo = ["routeChoiceId": payload.routeChoiceID]
+    let trip = CPTrip(origin: origin, destination: destination, routeChoices: [choice])
+    trip.userInfo = ["routeId": payload.id]
+    if #available(iOS 17.4, *) {
+      trip.destinationNameVariants = orderedVariants([payload.name, "Destination"])
+    }
+    return trip
+  }
+
+  private func carPlayManeuver(
+    _ payload: CarPlayNavigationProjectionV2.Maneuver
+  ) -> CPManeuver {
+    let maneuver = CPManeuver()
+    maneuver.instructionVariants = orderedVariants(payload.instructionVariants)
+    maneuver.dashboardInstructionVariants = orderedVariants(
+      payload.instructionVariants
+    )
+    maneuver.notificationInstructionVariants = orderedVariants(
+      payload.instructionVariants
+    )
+    let symbolName = maneuverSymbolName(payload)
+    if let imageSet = navigationImageSet(named: symbolName) {
+      maneuver.symbolSet = imageSet
+      maneuver.symbolImage = adaptiveNavigationImage(named: symbolName)
+      maneuver.dashboardSymbolImage = adaptiveNavigationImage(named: symbolName)
+      maneuver.notificationSymbolImage = adaptiveNavigationImage(named: symbolName)
+    }
+    maneuver.cardBackgroundColor = CarPlayPalette.primaryPanelFill
+    if #available(iOS 17.4, *) {
+      maneuver.maneuverType = maneuverType(payload)
+      maneuver.roadFollowingManeuverVariants = orderedVariants(
+        payload.roadNameVariants
+      )
+      maneuver.trafficSide = payload.trafficSide == "left" ? .left : .right
+    }
+    return maneuver
+  }
+
+  private func orderedVariants(_ values: [String]) -> [String] {
+    Array(Set(values)).sorted {
+      if $0.count == $1.count { return $0 < $1 }
+      return $0.count > $1.count
+    }
+  }
+
+  private func navigationImageSet(named name: String) -> CPImageSet? {
+    guard
+      let base = UIImage(
+        systemName: name,
+        withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .bold)
+      )
+    else { return nil }
+    return CPImageSet(
+      lightContentImage: base.withTintColor(.black, renderingMode: .alwaysOriginal),
+      darkContentImage: base.withTintColor(.white, renderingMode: .alwaysOriginal)
+    )
+  }
+
+  private func adaptiveNavigationImage(named name: String) -> UIImage? {
+    guard
+      let base = UIImage(
+        systemName: name,
+        withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .bold)
+      )
+    else { return nil }
+    return base.withTintColor(.label, renderingMode: .alwaysOriginal)
+  }
+
+  private func maneuverSymbolName(
+    _ payload: CarPlayNavigationProjectionV2.Maneuver
+  ) -> String {
+    switch (payload.kind, payload.direction) {
+    case ("arrive", _): return "flag.checkered"
+    case ("roundabout", _): return "arrow.clockwise.circle"
+    case (_, "sharpLeft"), (_, "left"): return "arrow.turn.up.left"
+    case (_, "slightLeft"): return "arrow.up.left"
+    case (_, "sharpRight"), (_, "right"): return "arrow.turn.up.right"
+    case (_, "slightRight"): return "arrow.up.right"
+    case (_, "uTurn"): return "arrow.uturn.up"
+    default: return "arrow.up"
     }
   }
 
   @available(iOS 17.4, *)
-  private func maneuverType(for title: String) -> CPManeuverType {
-    let lowercased = title.lowercased()
-    if lowercased.contains("keep left") { return .keepLeft }
-    if lowercased.contains("keep right") { return .keepRight }
-    if lowercased.contains("slight left") { return .slightLeftTurn }
-    if lowercased.contains("slight right") { return .slightRightTurn }
-    if lowercased.contains("destination") || lowercased.contains("arrive") {
-      return .arriveAtDestination
+  private func maneuverType(
+    _ payload: CarPlayNavigationProjectionV2.Maneuver
+  ) -> CPManeuverType {
+    if payload.kind == "arrive" { return .arriveAtDestination }
+    if payload.kind == "roundabout" { return .enterRoundabout }
+    if payload.kind == "offRamp" {
+      return payload.direction == "left" ? .highwayOffRampLeft : .highwayOffRampRight
     }
-    // Roundabout before left/right (#447). "Roundabout, 2nd exit, right" matched
-    // `right` first and was handed to the cluster as a plain right turn, so the
-    // car drew a different junction from the phone.
-    if lowercased.contains("roundabout") { return .enterRoundabout }
-    if lowercased.contains("left") { return .leftTurn }
-    if lowercased.contains("right") { return .rightTurn }
-    if lowercased.contains("u-turn") || lowercased.contains("uturn") {
-      return .uTurn
+    if payload.kind == "onRamp" { return .onRamp }
+    return switch payload.direction {
+    case "sharpLeft": .sharpLeftTurn
+    case "left": .leftTurn
+    case "slightLeft": .slightLeftTurn
+    case "slightRight": .slightRightTurn
+    case "right": .rightTurn
+    case "sharpRight": .sharpRightTurn
+    case "uTurn": .uTurn
+    default: .straightAhead
     }
-    return .straightAhead
+  }
+
+  @available(iOS 17.4, *)
+  private func maneuverState(distanceMeters: Double?) -> CPManeuverState {
+    guard let distanceMeters else { return .continue }
+    if distanceMeters <= 35 { return .execute }
+    if distanceMeters <= 180 { return .prepare }
+    if distanceMeters <= 800 { return .initial }
+    return .continue
+  }
+
+  @available(iOS 17.4, *)
+  private func updateLaneGuidance(
+    _ payload: CarPlayNavigationProjectionV2.Maneuver,
+    session: CPNavigationSession
+  ) {
+    guard !payload.lanes.isEmpty else {
+      session.currentLaneGuidance = nil
+      return
+    }
+    let guidance = CPLaneGuidance()
+    guidance.instructionVariants = orderedVariants(payload.instructionVariants)
+    guidance.lanes = payload.lanes.map { payload in
+      let lane = CPLane()
+      lane.status = payload.isValid ? .good : .notGood
+      let angles = payload.indications.map { indication in
+        Measurement(value: laneAngle(indication), unit: UnitAngle.degrees)
+      }
+      lane.primaryAngle = angles.first ?? Measurement(value: 0, unit: .degrees)
+      lane.secondaryAngles = Array(angles.dropFirst())
+      return lane
+    }
+    session.add([guidance])
+    session.currentLaneGuidance = guidance
+  }
+
+  private func laneAngle(_ indication: String) -> Double {
+    switch indication.lowercased().replacingOccurrences(of: "_", with: " ") {
+    case "sharp left": return -120
+    case "left": return -90
+    case "slight left": return -40
+    case "slight right": return 40
+    case "right": return 90
+    case "sharp right": return 120
+    case "uturn", "u-turn": return 180
+    default: return 0
+    }
+  }
+
+  private func updateManeuverEstimate(
+    _ payload: CarPlayNavigationProjectionV2.Maneuver,
+    maneuver: CPManeuver,
+    session: CPNavigationSession,
+    usesMiles: Bool
+  ) {
+    guard let distance = payload.distanceMeters else { return }
+    let seconds = payload.secondsRemaining ?? -1
+    guard estimateChanged(lastManeuverEstimate, distance: distance, seconds: seconds)
+    else { return }
+    lastManeuverEstimate = (distance, seconds)
+    session.updateEstimates(
+      CPTravelEstimates(
+        distanceRemaining: distanceMeasurement(distance, usesMiles: usesMiles),
+        timeRemaining: seconds
+      ),
+      for: maneuver
+    )
+  }
+
+  private func updateTripEstimate(
+    snapshot: [String: Any],
+    trip: CPTrip?,
+    mapTemplate: CPMapTemplate,
+    usesMiles: Bool
+  ) {
+    guard
+      let trip,
+      let journey = snapshot["journeyProgress"] as? [String: Any],
+      let distance = (journey["remainingDistanceMeters"] as? NSNumber)?.doubleValue
+    else { return }
+    let seconds = (journey["remainingSeconds"] as? NSNumber)?.doubleValue ?? -1
+    guard estimateChanged(lastTripEstimate, distance: distance, seconds: seconds)
+    else { return }
+    lastTripEstimate = (distance, seconds)
+    mapTemplate.updateEstimates(
+      CPTravelEstimates(
+        distanceRemaining: distanceMeasurement(distance, usesMiles: usesMiles),
+        timeRemaining: seconds
+      ),
+      for: trip
+    )
+  }
+
+  private func estimateChanged(
+    _ previous: (distance: Double, seconds: Double)?,
+    distance: Double,
+    seconds: Double
+  ) -> Bool {
+    guard let previous else { return true }
+    return abs(previous.distance - distance) >= 5 || abs(previous.seconds - seconds) >= 2
+  }
+
+  private func distanceMeasurement(_ meters: Double, usesMiles: Bool) -> Measurement<UnitLength> {
+    usesMiles
+      ? Measurement(value: meters / 1_609.344, unit: .miles)
+      : Measurement(value: meters, unit: .meters)
+  }
+
+  private func cancelActiveNavigationSession() {
+    navigationSession?.cancelTrip()
+    if presentedNavigationAlertKey != nil {
+      mapTemplate?.dismissNavigationAlert(animated: true) { _ in }
+    }
+    presentedNavigationAlertKey = nil
+    navigationSession = nil
+    activeNavigationTrip = nil
+    activeManeuvers.removeAll()
+    lastManeuverEstimate = nil
+    lastTripEstimate = nil
+  }
+
+  private func updateNavigationAlert(_ rawAlert: [String: Any]?) {
+    guard let mapTemplate else { return }
+    guard
+      navigationSession != nil,
+      let message = nonEmptyString(rawAlert?["message"])
+    else {
+      if presentedNavigationAlertKey != nil {
+        mapTemplate.dismissNavigationAlert(animated: true) { _ in }
+      }
+      presentedNavigationAlertKey = nil
+      return
+    }
+    let severity = nonEmptyString(rawAlert?["severity"]) ?? "alert"
+    let key = "\(severity)|\(message)"
+    guard key != presentedNavigationAlertKey else { return }
+    let present = { [weak self, weak mapTemplate] in
+      guard let self, let mapTemplate else { return }
+      let action = CPAlertAction(title: "OK", style: .default) { _ in }
+      let alert = CPNavigationAlert(
+        titleVariants: self.orderedVariants([message, "Road alert"]),
+        subtitleVariants: [severity.capitalized],
+        image: self.adaptiveNavigationImage(named: "exclamationmark.triangle.fill"),
+        primaryAction: action,
+        secondaryAction: nil,
+        duration: 8
+      )
+      self.presentedNavigationAlertKey = key
+      mapTemplate.present(navigationAlert: alert, animated: true)
+    }
+    if mapTemplate.currentNavigationAlert != nil {
+      mapTemplate.dismissNavigationAlert(animated: true) { _ in present() }
+    } else {
+      present()
+    }
   }
 
   private func recenterButton() -> CPMapButton {
@@ -1380,6 +1789,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
   private func presentRoutePreview(_ preview: CarPlayRoutePreviewPayload) {
     guard let mapTemplate else { return }
+    navigationCoordinator.beginPreview()
     let origin = MKMapItem(
       placemark: MKPlacemark(coordinate: preview.origin.clLocationCoordinate)
     )
@@ -1482,6 +1892,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     else { return }
 
     mapTemplate.hideTripPreviews()
+    if navigationCoordinator.beginLoading(routeID: selection.choice.routeID) {
+      activeNavigationTrip = trip
+      navigationSession = mapTemplate.startNavigationSession(for: trip)
+      navigationSession?.pauseTrip(
+        for: .loading,
+        description: "Preparing route",
+        turnCardColor: CarPlayPalette.primaryPanelFill
+      )
+    }
     (UIApplication.shared.delegate as? AppDelegate)?
       .commitCarPlayDestinationPreview(
         previewID: selection.previewID,
@@ -1493,13 +1912,24 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
           self.routePreviewTrip = nil
           self.mapViewController?.clearPreviewRoute()
           guard !success else { return }
+          _ = self.navigationCoordinator.cancel()
+          self.cancelActiveNavigationSession()
           self.presentCarPlayError(error ?? "Could not start that route.")
         }
       }
   }
 
   func mapTemplateDidCancelNavigation(_ mapTemplate: CPMapTemplate) {
-    cancelRoutePreview(notifyDart: true)
+    // `preview` is retained while the selected route commits, but
+    // `routePreviewTrip` is cleared once navigation owns it. Checking the live
+    // preview trip prevents End Directions from dismissing stale preview state.
+    if routePreviewTrip != nil, navigationSession == nil {
+      cancelRoutePreview(notifyDart: true)
+      return
+    }
+    guard navigationCoordinator.cancel() == .cancel else { return }
+    cancelActiveNavigationSession()
+    (UIApplication.shared.delegate as? AppDelegate)?.cancelCarPlayNavigation()
   }
 
   private func cancelRoutePreview(notifyDart: Bool) {

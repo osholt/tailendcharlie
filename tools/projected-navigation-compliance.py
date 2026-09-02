@@ -192,6 +192,12 @@ def structural_checks(failures: list[str]) -> None:
             "selectedPreviewFor trip:",
             "startedTrip trip:",
             "updateEstimates(",
+            "CarPlayNavigationCoordinator",
+            "startNavigationSession(for: trip)",
+            "upcomingManeuvers = maneuvers",
+            "CPNavigationAlert(",
+            "mapTemplateDidCancelNavigation",
+            "resumeTrip(updatedRouteInformation:",
         ],
     )
     require_text(
@@ -211,6 +217,7 @@ def structural_checks(failures: list[str]) -> None:
             "case 'previewDestination':",
             "case 'commitDestinationPreview':",
             "case 'cancelDestinationPreview':",
+            "case 'cancelNavigation':",
         ],
     )
     require_text(
@@ -222,6 +229,9 @@ def structural_checks(failures: list[str]) -> None:
             "testCarPlayRoutePreviewAcceptsAndSelectsThreeRoutes",
             "testCarPlayRoutePreviewRejectsStalePlanningResult",
             "testCarPlayRoutePreviewCancellationDoesNotLeaveASelection",
+            "testCarPlayNavigationLifecycleIsIdempotent",
+            "testCarPlayNavigationLifecycleReroutesArrivesAndCancelsOnce",
+            "testCarPlayVehicleCancellationSuppressesSameRouteReplay",
         ],
     )
     require_text(

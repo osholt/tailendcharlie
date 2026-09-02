@@ -15,21 +15,30 @@ Map<String, Object?> projectCarPlayNavigationV2({
   required DateTime generatedAt,
   required String ridePhase,
   required ImportedRoute? route,
+  bool navigationEnabled = true,
+  bool navigationPaused = false,
   required NavigationGuidance? guidance,
   required DistanceUnit? distanceUnit,
   required String? localeIdentifier,
   required double? speedMetersPerSecond,
   required RouteJourneyProgress? journeyProgress,
 }) {
-  final navigationPhase = switch ((route, ridePhase)) {
-    (null, _) => 'inactive',
-    (_, 'endedRide') => 'ended',
-    (_, 'activeRide') => 'navigating',
+  final projectedRoute = navigationEnabled ? route : null;
+  final projectedGuidance = navigationEnabled ? guidance : null;
+  final navigationPhase = switch ((
+    projectedRoute,
+    ridePhase,
+    navigationPaused,
+  )) {
+    (null, _, _) => 'inactive',
+    (_, 'endedRide', _) => 'ended',
+    (_, 'activeRide', true) => 'paused',
+    (_, 'activeRide', false) => 'navigating',
     _ => 'routeReady',
   };
   final trafficSide = _trafficSide(
-    guidance?.instruction,
-    route?.maneuvers.firstOrNull,
+    projectedGuidance?.instruction,
+    projectedRoute?.maneuvers.firstOrNull,
   );
 
   return {
@@ -39,33 +48,33 @@ Map<String, Object?> projectCarPlayNavigationV2({
     'generatedAtMillis': generatedAt.millisecondsSinceEpoch,
     'rideLifecycle': {'phase': ridePhase},
     'navigationLifecycle': {'phase': navigationPhase},
-    'trip': route == null
+    'trip': projectedRoute == null
         ? null
         : {
-            'id': route.id,
-            'routeChoiceId': '${route.id}:primary',
-            'name': route.name,
+            'id': projectedRoute.id,
+            'routeChoiceId': '${projectedRoute.id}:primary',
+            'name': projectedRoute.name,
             'trafficSide': trafficSide,
           },
-    'currentManeuver': guidance == null
+    'currentManeuver': projectedGuidance == null
         ? null
         : _maneuverSnapshot(
-            maneuver: guidance.maneuver,
-            instruction: guidance.instruction,
-            distanceMeters: guidance.distanceMeters,
+            maneuver: projectedGuidance.maneuver,
+            instruction: projectedGuidance.instruction,
+            distanceMeters: projectedGuidance.distanceMeters,
             secondsRemaining: guidanceSecondsRemaining(
-              distanceMeters: guidance.distanceMeters,
+              distanceMeters: projectedGuidance.distanceMeters,
               speedMetersPerSecond: speedMetersPerSecond,
             ),
           ),
     'followingManeuver': switch ((
-      guidance?.followingManeuver,
-      guidance?.followingInstruction,
+      projectedGuidance?.followingManeuver,
+      projectedGuidance?.followingInstruction,
     )) {
       (final maneuver?, final instruction?) => _maneuverSnapshot(
         maneuver: maneuver,
         instruction: instruction,
-        distanceMeters: guidance?.followingDistanceMeters,
+        distanceMeters: projectedGuidance?.followingDistanceMeters,
       ),
       _ => null,
     },
