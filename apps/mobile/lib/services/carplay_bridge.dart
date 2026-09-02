@@ -12,6 +12,7 @@ import '../domain/ride_session.dart';
 import '../domain/rider_location.dart';
 import '../domain/route_alert.dart';
 import '../features/map/motorcycle_icon.dart';
+import 'android_auto_navigation_projection.dart';
 import 'basemap_configuration.dart';
 import 'carplay_navigation_projection.dart';
 import 'guidance_time_remaining.dart';
@@ -119,6 +120,7 @@ class CarPlayBridge {
     this.onDestinationSelected,
     this.onFreeRoamRequested,
     this.onStateRequested,
+    this.onAndroidAutoNavigationHostEvent,
     @visibleForTesting MethodChannel? channel,
     @visibleForTesting DateTime Function()? clock,
     @visibleForTesting String? projectionSourceId,
@@ -188,6 +190,12 @@ class CarPlayBridge {
   /// as an explicit read request prevents CarPlay opening with an earlier empty
   /// roster or world-sized camera.
   final Future<void> Function()? onStateRequested;
+
+  /// Receives Android host lifecycle/intent acknowledgements. The typed event
+  /// is deliberately separate from ride commands: losing navigation ownership
+  /// must never imply leaving or ending the recorded ride.
+  final Future<void> Function(AndroidAutoNavigationHostEvent event)?
+  onAndroidAutoNavigationHostEvent;
   DateTime? _lastPublishedAt;
 
   /// The request the head unit was last told about, so a new one can jump the
@@ -319,6 +327,33 @@ class CarPlayBridge {
             ),
           };
         }
+      case 'androidAutoNavigationEvent':
+        final event = AndroidAutoNavigationHostEvent.tryParse(call.arguments);
+        if (event == null) {
+          return const {
+            'ok': false,
+            'error': 'The Android Auto navigation event is invalid.',
+          };
+        }
+        final handler = onAndroidAutoNavigationHostEvent;
+        if (handler == null) {
+          return const {
+            'ok': false,
+            'error': 'Android Auto navigation is unavailable on this screen.',
+          };
+        }
+        try {
+          await handler(event);
+          return const {'ok': true, 'error': null};
+        } on Object catch (error) {
+          return {
+            'ok': false,
+            'error': _readableCarPlayError(
+              error,
+              fallback: 'Could not apply the Android Auto navigation event.',
+            ),
+          };
+        }
       case 'requestState':
         _lastPublishedAt = null;
         await onStateRequested?.call();
@@ -404,6 +439,7 @@ class CarPlayBridge {
     final alertsByRider = {
       for (final alert in routeAlerts) alert.riderId: alert,
     };
+    final topAlert = _topAlertMessage(routeAlerts, activeHazards);
     final snapshot = {
       'routeId': route?.id,
       'routeName': routeName,
@@ -435,6 +471,24 @@ class CarPlayBridge {
         localeIdentifier: localeIdentifier,
         speedMetersPerSecond: localSpeedMetersPerSecond,
         journeyProgress: journeyProgress,
+      ),
+      'androidAutoNavigation': projectAndroidAutoNavigationV2(
+        sourceId: _projectionSourceId,
+        sequence: attempt,
+        generatedAt: now,
+        ridePhase: surfaceMode.name,
+        route: route,
+        guidance: navigationGuidance,
+        distanceUnit: distanceUnit,
+        localeIdentifier: localeIdentifier,
+        speedMetersPerSecond: localSpeedMetersPerSecond,
+        journeyProgress: journeyProgress,
+        routeProgress: routeProgress,
+        followRider: followRider,
+        canPlanRoute: canPlanRoute,
+        canFreeRoam: canFreeRoam,
+        canStartPreparedRide: rideStart?.enabled == true,
+        alert: topAlert,
       ),
       'guidanceTitle': guidanceTitle,
       'guidanceDetail': guidanceDetail,
@@ -529,7 +583,7 @@ class CarPlayBridge {
             'headingDegrees': location.sample.headingDegrees,
           },
       ],
-      'alert': _topAlertMessage(routeAlerts, activeHazards),
+      'alert': topAlert,
     };
     try {
       await _channel.invokeMethod('updateSnapshot', snapshot);

@@ -102,6 +102,10 @@ android {
             }
         }
     }
+
+    sourceSets {
+        getByName("test").resources.srcDir("../../test/fixtures")
+    }
 }
 
 kotlin {

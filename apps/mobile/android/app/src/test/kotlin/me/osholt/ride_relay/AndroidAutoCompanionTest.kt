@@ -96,6 +96,28 @@ class AndroidAutoCompanionTest {
     }
 
     @Test
+    fun `Android Auto V2 block cannot change legacy fields`() {
+        val legacy = mapOf<String, Any?>(
+            "routeName" to "Friday to the Ferry",
+            "rideState" to "Ride in progress",
+            "guidanceTitle" to "Keep right",
+            "distanceUnit" to "miles",
+            "updatedAtMillis" to 123L,
+        )
+        val withMalformedAndroidV2 = legacy + mapOf(
+            "androidAutoNavigation" to mapOf(
+                "schemaVersion" to 999,
+                "sourceId" to "ignored-by-legacy",
+            ),
+        )
+
+        val before = ProjectedRideSnapshot.from(legacy)
+        val after = ProjectedRideSnapshot.from(withMalformedAndroidV2)
+        assertEquals(before.copy(androidAutoNavigation = null), after)
+        assertNull(after.androidAutoNavigation)
+    }
+
+    @Test
     fun `route geometry and the progress split reach the head unit`() {
         // The whole of #602 in one assertion: every one of these fields arrived
         // on every tick and was dropped, which is why the car could only ever

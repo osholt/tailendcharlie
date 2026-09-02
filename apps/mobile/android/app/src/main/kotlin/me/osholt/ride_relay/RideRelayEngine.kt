@@ -83,6 +83,17 @@ object ProjectedRideChannel {
     internal const val METHOD_PREPARED_RIDE = "startPreparedRide"
     internal const val METHOD_SEARCH = "searchDestinations"
     internal const val METHOD_PLAN = "planDestination"
+    internal const val METHOD_NAVIGATION_EVENT = "androidAutoNavigationEvent"
+
+    internal enum class NavigationHostEvent(val wireValue: String) {
+        STARTED("started"),
+        STOPPED("stopped"),
+        EXTERNAL_DESTINATION("externalDestination"),
+        AUTO_DRIVE_ENABLED("autoDriveEnabled"),
+        REROUTE_REQUESTED("rerouteRequested"),
+        ARRIVED("arrived"),
+        RESTORATION_ACKNOWLEDGED("restorationAcknowledged"),
+    }
 
     /**
      * Kept so the car can talk back, not only listen.
@@ -181,6 +192,32 @@ object ProjectedRideChannel {
             put("latitude", destination.latitude)
             put("longitude", destination.longitude)
             if (groupRide != null) put("groupRide", groupRide)
+        },
+    ) { reply -> onDone(okError(reply)) }
+
+    /** Sends a typed host event without changing ride membership or recording. */
+    internal fun navigationEvent(
+        type: NavigationHostEvent,
+        navigationSessionId: String? = null,
+        routeId: String? = null,
+        destination: Destination? = null,
+        reason: String? = null,
+        projectionSequence: Long? = null,
+        onDone: (String?) -> Unit,
+    ) = invoke(
+        METHOD_NAVIGATION_EVENT,
+        buildMap {
+            put("type", type.wireValue)
+            navigationSessionId?.let { put("navigationSessionId", it) }
+            routeId?.let { put("routeId", it) }
+            destination?.let {
+                put(
+                    "destination",
+                    mapOf("latitude" to it.latitude, "longitude" to it.longitude),
+                )
+            }
+            reason?.let { put("reason", it) }
+            projectionSequence?.let { put("projectionSequence", it) }
         },
     ) { reply -> onDone(okError(reply)) }
 

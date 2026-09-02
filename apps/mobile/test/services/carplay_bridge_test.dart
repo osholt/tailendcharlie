@@ -11,6 +11,7 @@ import 'package:ride_relay/domain/geo_point.dart' as presence;
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
+import 'package:ride_relay/services/android_auto_navigation_projection.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/carplay_bridge.dart';
 import 'package:ride_relay/services/carplay_tec_status.dart';
@@ -99,6 +100,38 @@ void main() {
         'journey': null,
         'units': {'distance': null, 'speed': null},
         'localeIdentifier': null,
+      },
+      'androidAutoNavigation': {
+        'schemaVersion': 2,
+        'sourceId': 'test-source',
+        'sequence': 1,
+        'generatedAtMillis': DateTime.utc(
+          2026,
+          7,
+          23,
+          12,
+        ).millisecondsSinceEpoch,
+        'rideLifecycle': {'phase': 'activeRide'},
+        'navigationLifecycle': {
+          'phase': 'inactive',
+          'shouldOwnNavigation': false,
+        },
+        'route': null,
+        'currentManeuver': null,
+        'followingManeuver': null,
+        'journey': null,
+        'progress': {'travelledMeters': null, 'totalMeters': null},
+        'units': {'distance': null, 'speed': null},
+        'localeIdentifier': null,
+        'camera': {'followRider': false},
+        'actions': {
+          'canPlanRoute': false,
+          'canFreeRoam': false,
+          'canStartPreparedRide': false,
+          'canCancelNavigation': false,
+          'canLeaveRide': true,
+        },
+        'alert': null,
       },
       'guidanceTitle': 'turn right',
       'guidanceDetail': '400 m · A27',
@@ -1322,6 +1355,37 @@ void main() {
     expect(freeRoam, {'ok': true, 'error': null});
     expect(freeRoamStarts, 1);
   });
+
+  test(
+    'relays a typed Android Auto host event without a ride command',
+    () async {
+      final events = <AndroidAutoNavigationHostEvent>[];
+      final bridge = CarPlayBridge(
+        channel: channel,
+        onAndroidAutoNavigationHostEvent: (event) async => events.add(event),
+      );
+      addTearDown(bridge.dispose);
+
+      final response = await invokeDartChannel(
+        messenger,
+        channel,
+        const MethodCall('androidAutoNavigationEvent', {
+          'type': 'stopped',
+          'navigationSessionId': 'route-1:android-navigation',
+          'routeId': 'route-1',
+          'reason': 'hostNavigationTookOwnership',
+          'projectionSequence': 8,
+        }),
+      );
+
+      expect(response, {'ok': true, 'error': null});
+      expect(events, hasLength(1));
+      expect(events.single.type, AndroidAutoNavigationHostEventType.stopped);
+      expect(events.single.routeId, 'route-1');
+      expect(events.single.reason, 'hostNavigationTookOwnership');
+      expect(events.single.projectionSequence, 8);
+    },
+  );
 
   test('a retiring surface cannot clear the next surface handler', () async {
     var firstStarts = 0;
