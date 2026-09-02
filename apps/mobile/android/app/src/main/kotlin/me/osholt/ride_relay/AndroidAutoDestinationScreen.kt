@@ -9,6 +9,8 @@ import androidx.car.app.model.ItemList
 import androidx.car.app.model.Row
 import androidx.car.app.model.SearchTemplate
 import androidx.car.app.model.Template
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 
 /**
  * "Where to?" on the head unit.
@@ -22,10 +24,24 @@ import androidx.car.app.model.Template
  * unset rather than sent as false, so the phone applies its own default and a
  * rider who only wants directions is never asked about a ride.
  */
-internal class AndroidAutoDestinationScreen(carContext: CarContext) : Screen(carContext) {
+internal class AndroidAutoDestinationScreen(
+    carContext: CarContext,
+    private val initialIntent: AndroidAutoNavigationIntent? = null,
+) : Screen(carContext) {
     private var results: List<ProjectedRideChannel.Destination> = emptyList()
     private var message: String? = null
     private var searching = false
+    private var consumedInitialIntent = false
+
+    init {
+        lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) {
+                    consumeInitialIntent()
+                }
+            },
+        )
+    }
 
     override fun onGetTemplate(): Template {
         val builder = SearchTemplate.Builder(
@@ -88,6 +104,21 @@ internal class AndroidAutoDestinationScreen(carContext: CarContext) : Screen(car
                 else -> null
             }
             invalidate()
+        }
+    }
+
+    private fun consumeInitialIntent() {
+        val request = initialIntent ?: return
+        if (consumedInitialIntent) return
+        consumedInitialIntent = true
+        val latitude = request.latitude
+        val longitude = request.longitude
+        if (latitude != null && longitude != null && !(latitude == 0.0 && longitude == 0.0)) {
+            results = listOf(ProjectedRideChannel.Destination(request.label, latitude, longitude))
+            message = null
+            invalidate()
+        } else {
+            request.query?.let(::search)
         }
     }
 

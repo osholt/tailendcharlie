@@ -358,7 +358,10 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     if (groupRide == null) {
-      throw const FormatException('Choose a solo or group ride and try again.');
+      await _navigateTo(
+        DestinationChoice(label: destination.label, point: destination.point),
+      );
+      return;
     }
     final controller = widget.controller;
     final profile = widget.riderProfile;

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import androidx.car.app.CarAppService
 import androidx.car.app.Screen
+import androidx.car.app.ScreenManager
 import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -45,7 +46,19 @@ private class TailEndCharlieCarSession : Session() {
     override fun onCreateScreen(intent: Intent): Screen {
         RideRelayEngine.ensure(carContext)
         ensureNavigationCoordinator()
-        return AndroidAutoNavigationScreen(carContext)
+        val navigationIntent = AndroidAutoNavigationIntent.parse(intent)
+        val root = AndroidAutoNavigationScreen(carContext)
+        if (navigationIntent != null) {
+            carContext.getCarService(ScreenManager::class.java)
+                .push(AndroidAutoDestinationScreen(carContext, navigationIntent))
+        }
+        return root
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        val navigationIntent = AndroidAutoNavigationIntent.parse(intent) ?: return
+        carContext.getCarService(ScreenManager::class.java)
+            .push(AndroidAutoDestinationScreen(carContext, navigationIntent))
     }
 
     private fun ensureNavigationCoordinator() {
@@ -54,10 +67,19 @@ private class TailEndCharlieCarSession : Session() {
         val host = AndroidAutoNavigationManagerHost(
             carContext = carContext,
             onStopNavigation = { coordinator?.hostStoppedNavigation() },
+            onAutoDriveEnabled = { coordinator?.hostEnabledAutoDrive() },
+        )
+        val notification = AndroidAutoNavigationNotifier(carContext)
+        val testDrive = AndroidAutoDeterministicTestDrive(
+            publish = { projection ->
+                host.updateTrip(projection)
+                notification.publish(projection)
+            },
         )
         val createdCoordinator = AndroidAutoNavigationCoordinator(
             host = host,
-            notification = AndroidAutoNavigationNotifier(carContext),
+            notification = notification,
+            testDrive = testDrive,
         ) { type, projection, reason ->
             ProjectedRideChannel.navigationEvent(
                 type = type,

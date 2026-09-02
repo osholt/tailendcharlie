@@ -430,6 +430,50 @@ def structural_checks(failures: list[str]) -> None:
             "await _cancelNavigationFromCarPlay()",
         ],
     )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/AndroidManifest.xml",
+        [
+            "androidx.car.app.action.NAVIGATE",
+            'android:scheme="geo"',
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/TailEndCharlieCarAppService.kt",
+        [
+            "AndroidAutoNavigationIntent.parse(intent)",
+            "override fun onNewIntent(intent: Intent)",
+            "onAutoDriveEnabled = { coordinator?.hostEnabledAutoDrive() }",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/AndroidAutoNavigationIntent.kt",
+        [
+            "CAR_ACTION_NAVIGATE",
+            'scheme != "geo" && scheme != "geo.offline"',
+            '"add_a_stop" -> Operation.ADD_STOP',
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/AndroidAutoTestDrive.kt",
+        [
+            "AndroidAutoDeterministicTestDrive",
+            "SIMULATED_SPEED_METERS_PER_SECOND",
+            "It never invents GPS samples",
+        ],
+    )
+    require_text(
+        failures,
+        "apps/mobile/android/app/src/test/kotlin/me/osholt/ride_relay/AndroidAutoNavigationIntentTest.kt",
+        [
+            "parses Assistant query with two wheeler mode",
+            "parses coordinates directions add stop and offline variants",
+            "rejects non navigation malformed and unsupported requests",
+        ],
+    )
 
 
 def write_summary(
