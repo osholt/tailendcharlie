@@ -1,10 +1,12 @@
 # Security threat model and protocol-v2 decision
 
-Status: architecture decision for issue #272. The protocol-v2 work described
-here is **not implemented**. Protocol 1 remains suitable only for invited,
+Status: architecture decision for issue #272. The per-install identity
+foundation is implemented behind the migration gate; the remaining protocol-v2
+layers are **not implemented**. Protocol 1 remains suitable only for invited,
 private field testers who know and trust one another. Public distribution is
-blocked until the implementation and validation gates at the end of this
-document pass.
+blocked until every implementation and validation gate at the end of this
+document passes. See `docs/protocol2-installation-identity.md` for the identity
+storage boundary and its outstanding physical evidence.
 
 ## Scope and assets
 
