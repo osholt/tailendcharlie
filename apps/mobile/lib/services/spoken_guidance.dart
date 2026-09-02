@@ -1,6 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+
+import 'spoken_audio_mode.dart';
+import 'spoken_guidance_audio_focus.dart';
 
 /// One installed English text-to-speech voice.
 class SpokenGuidanceVoice {
@@ -205,7 +209,10 @@ int _voiceQualityRank(String? quality) => switch (quality?.toLowerCase()) {
 /// a way a rider would notice.
 abstract interface class SpokenGuidanceEngine {
   Future<void> configure();
-  Future<void> speak(String phrase);
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  });
   Future<void> stop();
 }
 
@@ -216,6 +223,20 @@ enum SpokenGuidanceOutput { natural, systemFallback }
 
 typedef SpokenGuidanceOutputObserver =
     void Function(String phrase, SpokenGuidanceOutput output);
+
+enum SpokenGuidanceLifecycleEvent {
+  focusAcquired,
+  focusDenied,
+  playbackCompleted,
+  playbackCancelled,
+}
+
+typedef SpokenGuidanceLifecycleObserver =
+    void Function(String phrase, SpokenGuidanceLifecycleEvent event);
+
+class SpokenGuidanceFocusDenied implements Exception {
+  const SpokenGuidanceFocusDenied();
+}
 
 /// Optional work that can be brought forward from the first urgent prompt.
 abstract interface class WarmableSpokenGuidanceEngine {
@@ -242,12 +263,19 @@ abstract interface class WarmableSpokenGuidanceEngine {
 /// running another navigation app in front will not hear these; that is a known
 /// limit, not an oversight.
 class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
-  FlutterTtsSpokenGuidanceEngine({FlutterTts? tts, this.voiceProvider})
-    : _tts = tts ?? FlutterTts();
+  FlutterTtsSpokenGuidanceEngine({
+    FlutterTts? tts,
+    this.voiceProvider,
+    this._audioFocus,
+    this.onLifecycle,
+  }) : _tts = tts ?? FlutterTts();
 
   final FlutterTts _tts;
+  final SpokenGuidanceAudioFocus? _audioFocus;
   final SpokenGuidanceVoice? Function()? voiceProvider;
+  final SpokenGuidanceLifecycleObserver? onLifecycle;
   SpokenGuidanceVoice? _appliedVoice;
+  String? _activePhrase;
 
   @override
   Future<void> configure() async {
@@ -256,6 +284,12 @@ class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
       IosTextToSpeechAudioCategoryOptions.mixWithOthers,
       IosTextToSpeechAudioCategoryOptions.duckOthers,
     ], IosTextToSpeechAudioMode.voicePrompt);
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      // FlutterTTS otherwise uses media attributes. The focus itself is owned
+      // by the app bridge below so a denied call/Assistant request cannot be
+      // ignored by the plugin and spoken over.
+      await _tts.setAudioAttributesForNavigation();
+    }
     // Slightly slower than default: a phrase heard once at 50 mph through a
     // helmet has to land first time.
     await _tts.setSpeechRate(0.48);
@@ -264,7 +298,10 @@ class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
   }
 
   @override
-  Future<void> speak(String phrase) async {
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
     // Settings can change during a ride. Read the selection at the next phrase
     // rather than requiring the ride shell to rebuild its speaker.
     await _applyVoice();
@@ -272,11 +309,64 @@ class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
     // not safe speech input: at least one installed voice read `yd` as "id"
     // (#503). Expand only complete unit tokens here, at the final boundary, so
     // road names such as Lloyd and route names such as M4 remain untouched.
-    await _tts.speak(_expandSpokenAbbreviations(phrase));
+    final focus = _audioFocus;
+    final managesFocus = focus?.managesPlatformFocus == true;
+    if (focus != null) {
+      final acquired = await focus.acquire(
+        audioClass: audioClass,
+        onLost: () async {
+          _notifyLifecycle(
+            _activePhrase ?? phrase,
+            SpokenGuidanceLifecycleEvent.playbackCancelled,
+          );
+          await _tts.stop();
+        },
+      );
+      if (!acquired) {
+        _notifyLifecycle(phrase, SpokenGuidanceLifecycleEvent.focusDenied);
+        throw const SpokenGuidanceFocusDenied();
+      }
+      _notifyLifecycle(phrase, SpokenGuidanceLifecycleEvent.focusAcquired);
+    }
+    _activePhrase = phrase;
+    try {
+      await _tts.speak(
+        _expandSpokenAbbreviations(phrase),
+        // Direct/test engines still use the plugin's short-lived focus. The
+        // production Android engine uses the app bridge, which can reject and
+        // interrupt playback correctly.
+        focus:
+            !managesFocus &&
+            !kIsWeb &&
+            defaultTargetPlatform == TargetPlatform.android,
+      );
+      _notifyLifecycle(phrase, SpokenGuidanceLifecycleEvent.playbackCompleted);
+    } finally {
+      _activePhrase = null;
+      await focus?.abandon();
+    }
   }
 
   @override
-  Future<void> stop() => _tts.stop();
+  Future<void> stop() async {
+    final activePhrase = _activePhrase;
+    if (activePhrase != null) {
+      _notifyLifecycle(
+        activePhrase,
+        SpokenGuidanceLifecycleEvent.playbackCancelled,
+      );
+    }
+    await _tts.stop();
+    await _audioFocus?.abandon();
+  }
+
+  void _notifyLifecycle(String phrase, SpokenGuidanceLifecycleEvent event) {
+    try {
+      onLifecycle?.call(phrase, event);
+    } on Object {
+      // Diagnostics must never interfere with a spoken warning.
+    }
+  }
 
   Future<void> _applyVoice() async {
     final chosen = voiceProvider?.call();
@@ -343,6 +433,8 @@ class SpokenGuidanceSpeaker {
   Future<void>? _configuration;
   bool _speaking = false;
   Completer<void>? _speechIdle;
+  int _queueGeneration = 0;
+  bool _navigationAllowed = true;
 
   /// Whether one complete utterance currently owns the shared speech engine.
   ///
@@ -377,6 +469,7 @@ class SpokenGuidanceSpeaker {
     // the ride has ended, or while still parked at the start, is noise at best
     // and misleading at worst.
     if (!rideActive) return false;
+    if (!_navigationAllowed) return false;
     if (phrase.trim().isEmpty) return false;
     if (key == _lastSpokenKey) return false;
     if (!_claimSpeechSlot()) return false;
@@ -384,8 +477,14 @@ class SpokenGuidanceSpeaker {
     try {
       await _ensureConfigured();
       _lastSpokenKey = key;
-      await _engine.speak(_expandSpokenAbbreviations(phrase));
+      await _engine.speak(
+        _expandSpokenAbbreviations(phrase),
+        audioClass: SpokenAudioClass.navigation,
+      );
       return true;
+    } on SpokenGuidanceFocusDenied {
+      if (_lastSpokenKey == key) _lastSpokenKey = null;
+      return false;
     } finally {
       _releaseSpeechSlot();
     }
@@ -416,11 +515,25 @@ class SpokenGuidanceSpeaker {
     // spoken between two sightings of the same camera would otherwise let the
     // camera be announced twice.
     _spokenAlertKeys.add(key);
-    await _waitForSpeechSlot();
+    final generation = _queueGeneration;
+    if (!await _waitForSpeechSlot(generation)) {
+      _spokenAlertKeys.remove(key);
+      return false;
+    }
     try {
+      if (generation != _queueGeneration) {
+        _spokenAlertKeys.remove(key);
+        return false;
+      }
       await _ensureConfigured();
-      await _engine.speak(_expandSpokenAbbreviations(phrase));
+      await _engine.speak(
+        _expandSpokenAbbreviations(phrase),
+        audioClass: SpokenAudioClass.safety,
+      );
       return true;
+    } on SpokenGuidanceFocusDenied {
+      _spokenAlertKeys.remove(key);
+      return false;
     } finally {
       _releaseSpeechSlot();
     }
@@ -433,6 +546,21 @@ class SpokenGuidanceSpeaker {
   void reset() {
     _lastSpokenKey = null;
     _spokenAlertKeys.clear();
+    _navigationAllowed = true;
+  }
+
+  /// Stops the current utterance and invalidates every queued prompt when the
+  /// projected host gives navigation ownership to another app. Safety alerts
+  /// remain a separate class and may be selected again later; directions stay
+  /// suppressed until a new route explicitly resumes this app's ownership.
+  Future<void> suspendNavigation() async {
+    _navigationAllowed = false;
+    _queueGeneration += 1;
+    await _engine.stop();
+  }
+
+  void resumeNavigation() {
+    _navigationAllowed = true;
   }
 
   /// Loads an optional natural voice before the first safety-critical phrase.
@@ -466,11 +594,15 @@ class SpokenGuidanceSpeaker {
     return true;
   }
 
-  Future<void> _waitForSpeechSlot() async {
+  Future<bool> _waitForSpeechSlot(int generation) async {
     while (!_claimSpeechSlot()) {
+      if (generation != _queueGeneration) return false;
       final idle = _speechIdle;
       if (idle != null) await idle.future;
     }
+    if (generation == _queueGeneration) return true;
+    _releaseSpeechSlot();
+    return false;
   }
 
   void _releaseSpeechSlot() {
@@ -481,5 +613,8 @@ class SpokenGuidanceSpeaker {
     if (idle != null && !idle.isCompleted) idle.complete();
   }
 
-  Future<void> stop() => _engine.stop();
+  Future<void> stop() async {
+    _queueGeneration += 1;
+    await _engine.stop();
+  }
 }

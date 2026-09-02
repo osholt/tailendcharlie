@@ -196,7 +196,10 @@ class _FailingEngine implements SpokenGuidanceEngine {
   Future<void> configure() => Future<void>.error(StateError('no TTS'));
 
   @override
-  Future<void> speak(String phrase) async {}
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {}
 
   @override
   Future<void> stop() async {}

@@ -49,12 +49,13 @@ object RideRelayEngine {
     fun ensure(context: Context): FlutterEngine {
         FlutterEngineCache.getInstance().get(ENGINE_ID)?.let { return it }
         val engine = FlutterEngine(context.applicationContext)
-        engine.dartExecutor.executeDartEntrypoint(
-            DartExecutor.DartEntrypoint.createDefault(),
-        )
         // Registered here, on the engine rather than on an activity, so the car
         // keeps receiving ride state with no phone screen involved.
         ProjectedRideChannel.attach(engine)
+        SpokenAudioFocusChannel.attach(context, engine)
+        engine.dartExecutor.executeDartEntrypoint(
+            DartExecutor.DartEntrypoint.createDefault(),
+        )
         FlutterEngineCache.getInstance().put(ENGINE_ID, engine)
         return engine
     }

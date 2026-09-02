@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/spoken_guidance_controller.dart';
+import 'package:ride_relay/services/spoken_audio_mode.dart';
 import 'package:ride_relay/services/spoken_guidance.dart';
 
 /// Records what it was asked to say, so a test can tell silence from speech.
@@ -11,7 +12,10 @@ class _RecordingEngine implements SpokenGuidanceEngine {
   Future<void> configure() async => configured += 1;
 
   @override
-  Future<void> speak(String phrase) async => spoken.add(phrase);
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async => spoken.add(phrase);
 
   @override
   Future<void> stop() async {}

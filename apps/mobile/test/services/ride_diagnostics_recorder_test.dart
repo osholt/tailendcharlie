@@ -313,6 +313,24 @@ void main() {
       expect(recorder.render(), contains('system fallback'));
     });
 
+    test('records focus and playback lifecycle separately', () {
+      final recorder = RideDiagnosticsRecorder(
+        clock: () => DateTime.utc(2026, 9, 2),
+      );
+
+      recorder.recordSpeechLifecycle(
+        phrase: 'Turn left',
+        event: SpokenGuidanceLifecycleEvent.focusAcquired,
+      );
+      recorder.recordSpeechLifecycle(
+        phrase: 'Turn left',
+        event: SpokenGuidanceLifecycleEvent.playbackCompleted,
+      );
+
+      expect(recorder.render(), contains('focus acquired  "Turn left"'));
+      expect(recorder.render(), contains('playback complete  "Turn left"'));
+    });
+
     test('an enforcement warning records arming and clearing (#418)', () {
       final recorder = RideDiagnosticsRecorder(
         clock: () => DateTime.utc(2026, 8, 10),
