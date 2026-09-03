@@ -81,6 +81,23 @@ struct CarPlayUnitPolicy: Equatable {
     )
   }
 
+  func distanceLabel(meters: Double) -> String {
+    if usesMiles {
+      let miles = meters / 1_609.344
+      if miles < 0.1 {
+        return "\(Int((meters * 1.093_613).rounded())) yd"
+      }
+      return miles < 10
+        ? String(format: "%.1f mi", miles)
+        : "\(Int(miles.rounded())) mi"
+    }
+    if meters < 1_000 { return "\(Int(meters.rounded())) m" }
+    let kilometres = meters / 1_000
+    return kilometres < 10
+      ? String(format: "%.1f km", kilometres)
+      : "\(Int(kilometres.rounded())) km"
+  }
+
   var spokenSpeedUnit: String {
     usesMiles ? "miles per hour" : "kilometres per hour"
   }
@@ -98,6 +115,45 @@ struct CarPlayMapSafeArea: Equatable {
       left: max(0, safeFrame.minX - viewBounds.minX),
       bottom: max(0, viewBounds.maxY - safeFrame.maxY),
       right: max(0, viewBounds.maxX - safeFrame.maxX)
+    )
+  }
+}
+
+/// Normalises the rider positions before MapLibre computes the group camera.
+/// The local rider is normally already present in the annotation collection;
+/// retaining it twice creates a zero-area bounds calculation when it is the
+/// only available fix and some head units respond by zooming out to a region.
+struct CarPlayGroupOverviewGeometry {
+  static func uniqueCoordinates(
+    _ coordinates: [CLLocationCoordinate2D]
+  ) -> [CLLocationCoordinate2D] {
+    coordinates.reduce(into: []) { result, coordinate in
+      guard CLLocationCoordinate2DIsValid(coordinate) else { return }
+      let alreadyPresent = result.contains {
+        abs($0.latitude - coordinate.latitude) < 0.000_001
+          && abs($0.longitude - coordinate.longitude) < 0.000_001
+      }
+      if !alreadyPresent { result.append(coordinate) }
+    }
+  }
+
+  static func clusterCenter(
+    _ coordinates: [CLLocationCoordinate2D]
+  ) -> CLLocationCoordinate2D? {
+    guard !coordinates.isEmpty else { return nil }
+    let latitudeRange = coordinates.map(\.latitude)
+    let longitudeRange = coordinates.map(\.longitude)
+    guard
+      let minLatitude = latitudeRange.min(),
+      let maxLatitude = latitudeRange.max(),
+      let minLongitude = longitudeRange.min(),
+      let maxLongitude = longitudeRange.max(),
+      maxLatitude - minLatitude < 0.000_2,
+      maxLongitude - minLongitude < 0.000_2
+    else { return nil }
+    return CLLocationCoordinate2D(
+      latitude: coordinates.map(\.latitude).reduce(0, +) / Double(coordinates.count),
+      longitude: coordinates.map(\.longitude).reduce(0, +) / Double(coordinates.count)
     )
   }
 }
@@ -995,12 +1051,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       snapshot: snapshot
     )
     mapViewController?.apply(snapshot: snapshot)
-    if let statusTemplate {
+    if let statusTemplate,
+      interfaceController?.topTemplate !== statusTemplate
+    {
       CarPlayStatusTemplate.apply(
         snapshot: snapshot,
         to: statusTemplate,
         listsLimited: !interactionPolicy.allowsRiderRows,
-        onLeave: { [weak self] in self?.presentLeaveConfirmation() }
+        onLeave: { [weak self] in self?.presentLeaveConfirmation() },
+        onShowGroupOverview: { [weak self] in
+          self?.showGroupOverviewFromStatus()
+        }
       )
     }
     // App-owned map/status views can accept data while the root is installing,
@@ -1039,7 +1100,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
           snapshot: snapshot,
           to: statusTemplate,
           listsLimited: !interactionPolicy.allowsRiderRows,
-          onLeave: { [weak self] in self?.presentLeaveConfirmation() }
+          onLeave: { [weak self] in self?.presentLeaveConfirmation() },
+          onShowGroupOverview: { [weak self] in
+            self?.showGroupOverviewFromStatus()
+          }
         )
       }
     }
@@ -1266,9 +1330,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     mapViewController?.endPitchGesture()
   }
 
-  /// Keep the phone's turn/marker symbol visible beside the instruction. The
-  /// default layout is allowed to discard it when the card gets tight, which
-  /// made marker mode look like ordinary navigation on smaller head units.
+  /// Retain both the maneuver symbol and its instruction. CarPlay still chooses
+  /// the longest supplied instruction variant that fits the vehicle display.
   func mapTemplate(
     _ mapTemplate: CPMapTemplate,
     displayStyleFor maneuver: CPManeuver
@@ -1470,13 +1533,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     _ payload: CarPlayNavigationProjectionV2.Maneuver
   ) -> CPManeuver {
     let maneuver = CPManeuver()
-    maneuver.instructionVariants = orderedVariants(payload.instructionVariants)
-    maneuver.dashboardInstructionVariants = orderedVariants(
-      payload.instructionVariants
-    )
-    maneuver.notificationInstructionVariants = orderedVariants(
-      payload.instructionVariants
-    )
+    let variants = orderedVariants(payload.instructionVariants)
+    let attributedVariants = variants.map(NSAttributedString.init(string:))
+    maneuver.instructionVariants = variants
+    maneuver.attributedInstructionVariants = attributedVariants
+    maneuver.dashboardInstructionVariants = variants
+    maneuver.dashboardAttributedInstructionVariants = attributedVariants
+    maneuver.notificationInstructionVariants = variants
+    maneuver.notificationAttributedInstructionVariants = attributedVariants
     let symbolName = maneuverSymbolName(payload)
     if let imageSet = navigationImageSet(named: symbolName) {
       maneuver.symbolSet = imageSet
@@ -1737,7 +1801,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     guard let mapTemplate else { return }
 
     mapTemplate.mapButtons = [
-      panButton(mapTemplate: mapTemplate),
+      compassPanButton(mapTemplate: mapTemplate),
       recenterButton(),
       zoomButton(delta: 1),
       zoomButton(delta: -1),
@@ -1754,6 +1818,26 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       }
       if canFreeRoam { buttons.append(freeRoamBarButton()) }
       mapTemplate.trailingNavigationBarButtons = buttons
+    }
+    updateLeadingNavigationButtons()
+  }
+
+  private func showGroupOverviewFromStatus() {
+    guard sceneLifecycle.rootReady, let interfaceController else { return }
+    interfaceController.popToRootTemplate(animated: true) {
+      [weak self, weak interfaceController] success, error in
+      guard
+        let self,
+        let interfaceController,
+        self.interfaceController === interfaceController,
+        success
+      else {
+        if let error {
+          NSLog("CarPlay could not return to the group overview: %@", error.localizedDescription)
+        }
+        return
+      }
+      self.mapViewController?.showGroupOverview()
     }
   }
 
@@ -1779,14 +1863,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
   }
 
-  private func panButton(mapTemplate: CPMapTemplate) -> CPMapButton {
+  private func compassPanButton(mapTemplate: CPMapTemplate) -> CPMapButton {
     let button = CPMapButton { _ in
       mapTemplate.showPanningInterface(animated: true)
     }
     button.image = mapButtonImage(
-      named: "arrow.up.and.down.and.arrow.left.and.right",
+      named: "safari.fill",
       color: CarPlayPalette.actionInk,
-      accessibilityLabel: "Pan map"
+      accessibilityLabel: "Compass and pan map"
     )
     return button
   }
@@ -2295,10 +2379,84 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       let rideMenuButton,
       !isShowingPanningInterface
     else { return }
+    if surfaceMode == "activeRide", let snapshot = latestSnapshot {
+      mapTemplate.leadingNavigationBarButtons = [
+        tecStatusButton(snapshot),
+        groupOverviewButton(snapshot),
+      ]
+      return
+    }
     let enabled = (rideStartPrompt?["enabled"] as? NSNumber)?.boolValue ?? false
     mapTemplate.leadingNavigationBarButtons = enabled
       ? [rideMenuButton, startRideButton()]
       : [rideMenuButton]
+  }
+
+  private func tecStatusButton(_ snapshot: [String: Any]) -> CPBarButton {
+    let tec = snapshot["tec"] as? [String: Any]
+    let title = nonEmptyString(tec?["headline"]) ?? "Ride"
+    return CPBarButton(title: title) { [weak self] _ in
+      self?.presentRideStatus()
+    }
+  }
+
+  private func groupOverviewButton(_ snapshot: [String: Any]) -> CPBarButton {
+    let title = groupOverviewTitle(snapshot)
+    return CPBarButton(title: title) { [weak self] _ in
+      self?.mapViewController?.showGroupOverview()
+    }
+  }
+
+  private func groupOverviewTitle(_ snapshot: [String: Any]) -> String {
+    let riderCount = (snapshot["riders"] as? [[String: Any]])?.count ?? 0
+    guard let speed = snapshot["speed"] as? [String: Any] else {
+      return riderCount == 1 ? "1 rider" : "\(riderCount) riders"
+    }
+    let unitPolicy = CarPlayUnitPolicy(
+      distanceUnit: snapshot["distanceUnit"] as? String,
+      localeIdentifier: snapshot["localeIdentifier"] as? String
+    )
+    let unit = unitPolicy.usesMiles ? "mph" : "km/h"
+    let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
+    let rawCurrent = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
+    let current = rawCurrent.flatMap {
+      $0.isFinite && $0 >= 0 && !ageing
+        ? unitPolicy.speedValue(metersPerSecond: $0)
+        : nil
+    }
+    let status = speed["limitStatus"] as? String
+    let limit: String?
+    if status == "known",
+      (speed["limitUnlimited"] as? NSNumber)?.boolValue == true
+    {
+      limit = "∞"
+    } else if status == "known",
+      let milesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    {
+      limit = "\(unitPolicy.usesMiles ? milesPerHour : Int((Double(milesPerHour) * 1.609_344).rounded()))"
+    } else {
+      limit = nil
+    }
+    let readings = [current.map(String.init), limit].compactMap { $0 }
+    let speedText = readings.isEmpty
+      ? ""
+      : " · \(readings.joined(separator: "/")) \(unit)"
+    let riderText = riderCount == 1 ? "1 rider" : "\(riderCount) riders"
+    return "\(riderText)\(speedText)"
+  }
+
+  private func presentRideStatus() {
+    guard
+      sceneLifecycle.rootReady,
+      let interfaceController,
+      let statusTemplate
+    else { return }
+    interfaceController.pushTemplate(statusTemplate, animated: true) {
+      success, error in
+      if !success, let error {
+        NSLog("CarPlay ride status was not presented: %@", error.localizedDescription)
+      }
+    }
   }
 
   private func startRideButton() -> CPBarButton {
@@ -2893,6 +3051,33 @@ final class CarPlayNavigationViewController: UIViewController,
       heading: localHeading ?? 0
     )
     mapView.setCamera(camera, animated: true)
+  }
+
+  /// Replaces the retired inset minimap with the same information on the one
+  /// full-screen map Apple permits. The view remains here until the rider taps
+  /// the persistent Recenter control, so it is useful for a real group check
+  /// rather than flashing briefly and returning to follow mode.
+  func showGroupOverview() {
+    followsLocalRider = false
+    guard let mapView else { return }
+    mapView.userTrackingMode = .none
+    var coordinates = riderAnnotations.map(\.coordinate)
+    if let localCoordinate { coordinates.append(localCoordinate) }
+    coordinates = CarPlayGroupOverviewGeometry.uniqueCoordinates(coordinates)
+    if coordinates.isEmpty {
+      coordinates = overviewCoordinates(routeCoordinates)
+    }
+    guard !coordinates.isEmpty else { return }
+    if let coordinate = CarPlayGroupOverviewGeometry.clusterCenter(coordinates) {
+      mapView.setCenter(coordinate, zoomLevel: 14, animated: true)
+      return
+    }
+    mapView.setVisibleCoordinates(
+      &coordinates,
+      count: UInt(coordinates.count),
+      edgePadding: UIEdgeInsets(top: 96, left: 112, bottom: 112, right: 144),
+      animated: true
+    )
   }
 
   func pan(direction: CPMapTemplate.PanDirection) {

@@ -200,7 +200,10 @@ def structural_checks(failures: list[str]) -> None:
             "resumeTrip(updatedRouteInformation:",
             "CPSessionConfiguration(delegate: self)",
             "limitedUserInterfacesChanged",
-            "panButton(mapTemplate: mapTemplate)",
+            "compassPanButton(mapTemplate: mapTemplate)",
+            "showGroupOverview()",
+            "CarPlayGroupOverviewGeometry",
+            "maneuver.attributedInstructionVariants",
             "panBeganWith direction:",
             "mapTemplateDidBeginZoomGesture",
             "mapTemplateDidBeginRotationGesture",
@@ -296,6 +299,8 @@ def structural_checks(failures: list[str]) -> None:
             "testCarPlaySafeAreaUsesEveryHostInset",
             "testCarPlayUnitsPreferExplicitChoiceThenLocale",
             "testCarPlayDashboardAcceptsOnlyActiveGuidance",
+            "testCarPlayGroupOverviewDeduplicatesTheLocalRider",
+            "testCarPlayStatusRetainsJourneyDirectionsAndSpeed",
         ],
     )
     require_text(

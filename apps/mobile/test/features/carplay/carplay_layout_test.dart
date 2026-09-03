@@ -57,7 +57,7 @@ void main() {
 
   group('all driving controls use CarPlay APIs', () {
     test('active ride retains pan, follow, report, SOS, leave, and status', () {
-      expect(source, contains('panButton(mapTemplate: mapTemplate)'));
+      expect(source, contains('compassPanButton(mapTemplate: mapTemplate)'));
       expect(source, contains('recenterButton()'));
       expect(source, contains('reportBarButton()'));
       expect(source, contains('emergencyBarButton()'));
@@ -69,6 +69,13 @@ void main() {
       expect(statusSource, contains('text: "Leave ride"'));
       expect(statusSource, contains('leave.handler ='));
       expect(statusSource, contains('CPBarButton(title: "SOS")'));
+      expect(source, contains('tecStatusButton(snapshot)'));
+      expect(source, contains('groupOverviewButton(snapshot)'));
+      expect(source, contains('func showGroupOverview()'));
+      expect(statusSource, contains('text: "Show all riders on map"'));
+      expect(statusSource, contains('text: "Speed"'));
+      expect(statusSource, contains('text: "Journey"'));
+      expect(statusSource, contains('text: "Then · \\(instruction)"'));
     });
 
     test('home retains route planning and recorded free roam', () {
@@ -87,6 +94,19 @@ void main() {
       expect(source, contains('session.updateEstimates('));
       expect(source, contains('mapTemplate.updateEstimates('));
       expect(source, contains('CPNavigationAlert('));
+      expect(
+        source,
+        contains(') -> CPManeuverDisplayStyle {\n    .leadingSymbol'),
+      );
+      expect(source, contains('maneuver.attributedInstructionVariants ='));
+      expect(
+        source,
+        contains('interfaceController?.topTemplate !== statusTemplate'),
+      );
+      expect(
+        source,
+        contains('CarPlayGroupOverviewGeometry.uniqueCoordinates'),
+      );
     });
   });
 

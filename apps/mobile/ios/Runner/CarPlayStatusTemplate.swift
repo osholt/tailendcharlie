@@ -20,7 +20,8 @@ enum CarPlayStatusTemplate {
     snapshot: [String: Any],
     to template: CPListTemplate,
     listsLimited: Bool = false,
-    onLeave: @escaping () -> Void = {}
+    onLeave: @escaping () -> Void = {},
+    onShowGroupOverview: @escaping () -> Void = {}
   ) {
     var items: [CPListItem] = []
 
@@ -35,6 +36,19 @@ enum CarPlayStatusTemplate {
       )
     )
 
+    if let journey = snapshot["journeyProgress"] as? [String: Any] {
+      let unitPolicy = unitPolicy(snapshot)
+      if let detail = journeyDetail(journey, unitPolicy: unitPolicy) {
+        items.append(CPListItem(text: "Journey", detailText: detail))
+      }
+      if
+        let waypoint = nonEmpty(journey["nextWaypointName"]),
+        let detail = waypointDetail(journey, unitPolicy: unitPolicy)
+      {
+        items.append(CPListItem(text: waypoint, detailText: detail))
+      }
+    }
+
     if !listsLimited, let rideStart = snapshot["rideStart"] as? [String: Any] {
       let enabled = (rideStart["enabled"] as? NSNumber)?.boolValue ?? false
       items.append(
@@ -47,13 +61,34 @@ enum CarPlayStatusTemplate {
       )
     }
 
-    if !listsLimited, let guidance = snapshot["guidanceTitle"] as? String {
-      items.append(
-        CPListItem(
-          text: guidance,
-          detailText: snapshot["guidanceDetail"] as? String
+    if !listsLimited {
+      let navigation = snapshot["carplayNavigation"] as? [String: Any]
+      let current = navigation?["currentManeuver"] as? [String: Any]
+      let currentVariants = current?["instructionVariants"] as? [String]
+      let currentRoadNames = current?["roadNameVariants"] as? [String]
+      let guidance = nonEmpty(snapshot["guidanceTitle"])
+        ?? currentVariants?.first.flatMap(nonEmpty)
+      let guidanceDetail = nonEmpty(snapshot["guidanceDetail"])
+        ?? currentRoadNames?.first.flatMap(nonEmpty)
+      if let guidance {
+        items.append(
+          CPListItem(text: "Now · \(guidance)", detailText: guidanceDetail)
         )
-      )
+      }
+
+      if
+        let following = navigation?["followingManeuver"] as? [String: Any],
+        let variants = following["instructionVariants"] as? [String],
+        let instruction = variants.first.flatMap(nonEmpty)
+      {
+        let roadNames = following["roadNameVariants"] as? [String]
+        items.append(
+          CPListItem(
+            text: "Then · \(instruction)",
+            detailText: roadNames?.first.flatMap(nonEmpty)
+          )
+        )
+      }
     }
 
     if
@@ -83,7 +118,24 @@ enum CarPlayStatusTemplate {
     }
 
     if let groupStatus = snapshot["groupStatus"] as? String {
-      items.append(CPListItem(text: "Group", detailText: groupStatus))
+      let overview = CPListItem(
+        text: "Show all riders on map",
+        detailText: groupStatus
+      )
+      overview.handler = { _, completion in
+        onShowGroupOverview()
+        completion()
+      }
+      items.append(overview)
+    }
+
+    if !listsLimited, let speed = snapshot["speed"] as? [String: Any] {
+      items.append(
+        CPListItem(
+          text: "Speed",
+          detailText: speedDetail(speed, unitPolicy: unitPolicy(snapshot))
+        )
+      )
     }
 
     if snapshot["surfaceMode"] as? String == "activeRide" {
@@ -121,6 +173,109 @@ enum CarPlayStatusTemplate {
       items = [CPListItem(text: "Tail End Charlie", detailText: "Waiting for ride data…")]
     }
 
-    template.updateSections([CPListSection(items: items)])
+    template.updateSections([
+      CPListSection(items: Array(items.prefix(CPListTemplate.maximumItemCount)))
+    ])
+  }
+
+  private static func unitPolicy(_ snapshot: [String: Any]) -> CarPlayUnitPolicy {
+    CarPlayUnitPolicy(
+      distanceUnit: snapshot["distanceUnit"] as? String,
+      localeIdentifier: snapshot["localeIdentifier"] as? String
+    )
+  }
+
+  private static func journeyDetail(
+    _ journey: [String: Any],
+    unitPolicy: CarPlayUnitPolicy
+  ) -> String? {
+    guard
+      let distance = (journey["remainingDistanceMeters"] as? NSNumber)?.doubleValue,
+      distance.isFinite,
+      distance >= 0
+    else { return nil }
+    var parts = ["\(unitPolicy.distanceLabel(meters: distance)) left"]
+    if
+      let seconds = (journey["remainingSeconds"] as? NSNumber)?.doubleValue,
+      seconds.isFinite,
+      seconds >= 0
+    {
+      parts.append(durationLabel(seconds: seconds))
+    }
+    if let arrival = dateLabel(journey["arrivalTimeMillis"]) {
+      parts.append("ETA \(arrival)")
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  private static func waypointDetail(
+    _ journey: [String: Any],
+    unitPolicy: CarPlayUnitPolicy
+  ) -> String? {
+    var parts: [String] = []
+    if
+      let distance = (journey["nextWaypointDistanceMeters"] as? NSNumber)?.doubleValue,
+      distance.isFinite,
+      distance >= 0
+    {
+      parts.append(unitPolicy.distanceLabel(meters: distance))
+    }
+    if let arrival = dateLabel(journey["nextWaypointArrivalTimeMillis"]) {
+      parts.append("ETA \(arrival)")
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+
+  private static func speedDetail(
+    _ speed: [String: Any],
+    unitPolicy: CarPlayUnitPolicy
+  ) -> String {
+    let unit = unitPolicy.usesMiles ? "mph" : "km/h"
+    let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
+    let rawCurrent = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
+    let current = rawCurrent.flatMap {
+      $0.isFinite && $0 >= 0 ? unitPolicy.speedValue(metersPerSecond: $0) : nil
+    }
+    let currentText = ageing || current == nil ? "GPS speed unavailable" : "\(current!) \(unit)"
+
+    let status = speed["limitStatus"] as? String
+    let unlimited = (speed["limitUnlimited"] as? NSNumber)?.boolValue ?? false
+    let milesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    let limitText: String
+    if status == "checking" {
+      limitText = "checking mapped limit"
+    } else if status == "known", unlimited {
+      limitText = "unrestricted road"
+    } else if status == "known", let milesPerHour {
+      let displayed = unitPolicy.usesMiles
+        ? milesPerHour
+        : Int((Double(milesPerHour) * 1.609_344).rounded())
+      limitText = "mapped limit \(displayed) \(unit)"
+    } else {
+      limitText = "mapped limit unavailable"
+    }
+    return "\(currentText) · \(limitText)"
+  }
+
+  private static func durationLabel(seconds: Double) -> String {
+    let minutes = max(1, Int(ceil(seconds / 60)))
+    if minutes < 60 { return "\(minutes) min" }
+    let hours = minutes / 60
+    let remainder = minutes % 60
+    return remainder == 0 ? "\(hours) hr" : "\(hours) hr \(remainder) min"
+  }
+
+  private static func dateLabel(_ raw: Any?) -> String? {
+    guard let milliseconds = (raw as? NSNumber)?.doubleValue else { return nil }
+    let formatter = DateFormatter()
+    formatter.timeStyle = .short
+    formatter.dateStyle = .none
+    return formatter.string(from: Date(timeIntervalSince1970: milliseconds / 1_000))
+  }
+
+  private static func nonEmpty(_ raw: Any?) -> String? {
+    guard let text = raw as? String else { return nil }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
   }
 }

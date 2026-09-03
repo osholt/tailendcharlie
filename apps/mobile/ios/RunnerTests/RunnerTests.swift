@@ -95,6 +95,8 @@ class RunnerTests: XCTestCase {
     )
     XCTAssertTrue(explicitFrenchMiles.usesMiles)
     XCTAssertEqual(explicitFrenchMiles.speedValue(metersPerSecond: 10), 22)
+    XCTAssertEqual(france.distanceLabel(meters: 13_700), "14 km")
+    XCTAssertEqual(explicitFrenchMiles.distanceLabel(meters: 150), "164 yd")
   }
 
   func testCarPlayDashboardAcceptsOnlyActiveGuidance() {
@@ -145,8 +147,72 @@ class RunnerTests: XCTestCase {
     }
     XCTAssertEqual(
       titles,
-      ["D 980 to Salers", "Tail End Charlie", "Group", "Leave ride"]
+      [
+        "D 980 to Salers", "Tail End Charlie", "Show all riders on map",
+        "Leave ride",
+      ]
     )
+  }
+
+  func testCarPlayStatusRetainsJourneyDirectionsAndSpeed() {
+    let snapshot: [String: Any] = [
+      "routeName": "D 980 to Salers",
+      "rideState": "Ride in progress",
+      "surfaceMode": "activeRide",
+      "distanceUnit": "kilometres",
+      "localeIdentifier": "fr-FR",
+      "journeyProgress": [
+        "remainingDistanceMeters": 13_700.0,
+        "remainingSeconds": 1_620,
+        "arrivalTimeMillis": 1_788_214_580_000 as Int64,
+        "nextWaypointName": "Saint-Privat",
+        "nextWaypointDistanceMeters": 13_900.0,
+        "nextWaypointArrivalTimeMillis": 1_788_214_520_000 as Int64,
+      ],
+      "carplayNavigation": [
+        "currentManeuver": [
+          "instructionVariants": ["At the fork, keep right"],
+          "roadNameVariants": ["260 m · D 980"],
+        ],
+        "followingManeuver": [
+          "instructionVariants": ["At the roundabout take the 3rd exit"],
+          "roadNameVariants": ["Rue de Bellevue · D 980"],
+        ]
+      ],
+      "tec": ["detail": "Charlie · 1.3 km · about 3 min"],
+      "groupStatus": "5 riders visible",
+      "speed": [
+        "metresPerSecond": 10.6,
+        "isAgeing": false,
+        "limitStatus": "known",
+        "limitMilesPerHour": 56,
+        "limitUnlimited": false,
+      ],
+      "riders": [],
+    ]
+    let template = CarPlayStatusTemplate.makeTemplate()
+
+    CarPlayStatusTemplate.apply(snapshot: snapshot, to: template)
+
+    let items = template.sections.first?.items.compactMap { $0 as? CPListItem }
+      ?? []
+    XCTAssertEqual(
+      items.compactMap(\.text),
+      [
+        "D 980 to Salers",
+        "Journey",
+        "Saint-Privat",
+        "Now · At the fork, keep right",
+        "Then · At the roundabout take the 3rd exit",
+        "Tail End Charlie",
+        "Show all riders on map",
+        "Speed",
+        "Leave ride",
+      ]
+    )
+    XCTAssertTrue(items[1].detailText?.hasPrefix("14 km left · 27 min · ETA ") == true)
+    XCTAssertTrue(items[2].detailText?.hasPrefix("14 km · ETA ") == true)
+    XCTAssertEqual(items[7].detailText, "38 km/h · mapped limit 90 km/h")
   }
 
   func testCarPlayBaseViewContainsOnlyTheMap() {
@@ -156,6 +222,22 @@ class RunnerTests: XCTestCase {
 
     XCTAssertEqual(controller.view.subviews.count, 1)
     XCTAssertTrue(controller.view.subviews.first is MLNMapView)
+  }
+
+  func testCarPlayGroupOverviewDeduplicatesTheLocalRider() {
+    let local = CLLocationCoordinate2D(latitude: 51.462, longitude: -2.508)
+    let positions = CarPlayGroupOverviewGeometry.uniqueCoordinates([local, local])
+
+    XCTAssertEqual(positions.count, 1)
+    guard let center = CarPlayGroupOverviewGeometry.clusterCenter(positions) else {
+      XCTFail("Expected a centre for a co-located group")
+      return
+    }
+    XCTAssertEqual(
+      center.latitude,
+      local.latitude,
+      accuracy: 0.000_001
+    )
   }
 
   func testCarPlayCommandCompletionResolvesExactlyOnce() {
