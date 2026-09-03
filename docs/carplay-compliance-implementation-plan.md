@@ -722,10 +722,10 @@ phone release; Google recommends a separate release when necessary.
 | Heat map | Retained only as a low-contrast cartographic layer beneath roads/labels; otherwise off in CarPlay. | May look subtler than the phone heat map to protect road legibility. |
 | Custom guidance card | Apple turn card from `CPManeuver`. | Visual style and placement become vehicle-controlled; cluster/HUD and background notification support begin working. |
 | Custom route ETA/progress card | Apple trip-estimate panel; next waypoint can remain in Ride status. | Less bespoke information at once, but ETA/distance are consistent with CarPlay and available outside the foreground app. |
-| Group mini-map | Removed. Rider markers remain on the main map; bounded group details move to Ride. | Loses the simultaneous overview inset. Gains a larger unobstructed navigation map. |
-| Persistent TEC badge | Move to Ride status; use a system alert only for a material, time-sensitive safety state. | TEC state is one action away rather than permanently visible. This is the largest group-coordination visibility trade-off. |
-| Speed-limit and current-speed badge | Remove from center-display base view. Reintroduce only through a permitted cluster/vehicle API where available. | CarPlay no longer duplicates the vehicle speedometer. The phone retains its display. France no longer receives a false mph-only presentation. |
-| App-drawn compass | Remove; use map orientation and supported system panning/rotation behavior. | Less chrome; heading remains visible through the map. |
+| Group mini-map | Replace the prohibited framed inset with a system-button **Group overview** that fits every valid rider on the full map; Recenter returns to guidance. | The group-wide spatial check remains one tap away without adding a second root-view overlay. |
+| Persistent TEC badge | Put the live TEC headline in a CarPlay navigation-bar button that opens the full Ride status; use a system alert for a material, time-sensitive safety state. | TEC remains glanceable and its full state remains one tap away in system-owned UI. |
+| Speed-limit and current-speed badge | Put bounded current/mapped-limit values in the system Group-overview button and the fully labelled values in Ride. | The information remains available without an app-drawn root-view badge and follows the selected units in France. |
+| App-drawn compass | Replace with a compass-labelled system `CPMapButton`, CarPlay panning and host gestures. | Orientation and browsing remain without app-owned chrome. |
 | App-drawn clock | Remove; rely on CarPlay/vehicle system time. | No loss of unique ride functionality. |
 | FOLLOW button | System Recenter `CPMapButton`. | Same outcome with CarPlay-native placement and accessibility. |
 | ALERT/SOS button | System navigation-bar `CPBarButton` plus confirmation alert. | Capability retained; visual style becomes system-controlled. |
