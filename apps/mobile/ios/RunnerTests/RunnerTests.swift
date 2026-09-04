@@ -240,6 +240,196 @@ class RunnerTests: XCTestCase {
     )
   }
 
+  func testCarPlayTecBarPrioritisesTheDistance() {
+    let metric: [String: Any] = [
+      "distanceUnit": "kilometres",
+      "localeIdentifier": "fr-FR",
+      "tec": [
+        "state": "tracking",
+        "distanceMeters": 1_931.0,
+        "headline": "TEC · 1.9 km · ~3 min ↓",
+      ],
+    ]
+    XCTAssertEqual(
+      CarPlayTecBarPresentation.title(snapshot: metric),
+      "TEC 1.9 km"
+    )
+
+    var miles = metric
+    miles["distanceUnit"] = "miles"
+    XCTAssertEqual(
+      CarPlayTecBarPresentation.title(snapshot: miles),
+      "TEC 1.2 mi"
+    )
+  }
+
+  func testCarPlayAutomaticGroupOverviewWaitsForAStableQuietStretch() {
+    var policy = CarPlayAutomaticGroupOverviewPolicy()
+    let start = Date(timeIntervalSince1970: 1_000)
+
+    XCTAssertEqual(
+      policy.update(
+        navigationPhase: "navigating",
+        maneuverID: "turn-2",
+        distanceMeters: 6_000,
+        secondsRemaining: 360,
+        riderCount: 4,
+        hasPriorityEvent: false,
+        now: start
+      ),
+      .none
+    )
+    XCTAssertEqual(
+      policy.update(
+        navigationPhase: "navigating",
+        maneuverID: "turn-2",
+        distanceMeters: 5_900,
+        secondsRemaining: 350,
+        riderCount: 4,
+        hasPriorityEvent: false,
+        now: start.addingTimeInterval(14)
+      ),
+      .none
+    )
+    XCTAssertEqual(
+      policy.update(
+        navigationPhase: "navigating",
+        maneuverID: "turn-2",
+        distanceMeters: 5_850,
+        secondsRemaining: 345,
+        riderCount: 4,
+        hasPriorityEvent: false,
+        now: start.addingTimeInterval(15)
+      ),
+      .showGroupOverview
+    )
+    XCTAssertTrue(policy.isShowingOverview)
+  }
+
+  func testCarPlayAutomaticGroupOverviewReturnsBeforeTheTurn() {
+    var policy = CarPlayAutomaticGroupOverviewPolicy()
+    let start = Date(timeIntervalSince1970: 2_000)
+    _ = policy.update(
+      navigationPhase: "navigating",
+      maneuverID: "turn-2",
+      distanceMeters: 6_000,
+      secondsRemaining: 360,
+      riderCount: 4,
+      hasPriorityEvent: false,
+      now: start
+    )
+    _ = policy.update(
+      navigationPhase: "navigating",
+      maneuverID: "turn-2",
+      distanceMeters: 5_800,
+      secondsRemaining: 340,
+      riderCount: 4,
+      hasPriorityEvent: false,
+      now: start.addingTimeInterval(15)
+    )
+
+    XCTAssertEqual(
+      policy.update(
+        navigationPhase: "navigating",
+        maneuverID: "turn-2",
+        distanceMeters: 2_400,
+        secondsRemaining: 100,
+        riderCount: 4,
+        hasPriorityEvent: false,
+        now: start.addingTimeInterval(120)
+      ),
+      .returnToFollow
+    )
+    XCTAssertFalse(policy.isShowingOverview)
+  }
+
+  func testCarPlayAutomaticGroupOverviewYieldsToPriorityEvents() {
+    var policy = CarPlayAutomaticGroupOverviewPolicy()
+    let start = Date(timeIntervalSince1970: 3_000)
+    _ = policy.update(
+      navigationPhase: "navigating",
+      maneuverID: "turn-2",
+      distanceMeters: 6_000,
+      secondsRemaining: 360,
+      riderCount: 4,
+      hasPriorityEvent: false,
+      now: start
+    )
+    _ = policy.update(
+      navigationPhase: "navigating",
+      maneuverID: "turn-2",
+      distanceMeters: 5_800,
+      secondsRemaining: 340,
+      riderCount: 4,
+      hasPriorityEvent: false,
+      now: start.addingTimeInterval(15)
+    )
+
+    XCTAssertEqual(
+      policy.update(
+        navigationPhase: "navigating",
+        maneuverID: "turn-2",
+        distanceMeters: 5_700,
+        secondsRemaining: 330,
+        riderCount: 4,
+        hasPriorityEvent: true,
+        now: start.addingTimeInterval(20)
+      ),
+      .returnToFollow
+    )
+    XCTAssertEqual(
+      policy.update(
+        navigationPhase: "navigating",
+        maneuverID: "turn-2",
+        distanceMeters: 5_600,
+        secondsRemaining: 320,
+        riderCount: 4,
+        hasPriorityEvent: false,
+        now: start.addingTimeInterval(40)
+      ),
+      .none,
+      "a cleared alert must not restart the overview on the same road"
+    )
+  }
+
+  func testCarPlayAutomaticGroupOverviewRequiresARealGroupAndCountsLocalOnce() {
+    let snapshot: [String: Any] = [
+      "localRider": ["riderId": "leader"],
+      "riders": [
+        ["riderId": "leader"],
+        ["riderId": "tec"],
+      ],
+    ]
+    XCTAssertEqual(
+      CarPlayAutomaticGroupOverviewPolicy.distinctRiderCount(snapshot: snapshot),
+      2
+    )
+
+    var policy = CarPlayAutomaticGroupOverviewPolicy()
+    let start = Date(timeIntervalSince1970: 4_000)
+    _ = policy.update(
+      navigationPhase: "navigating",
+      maneuverID: "turn-2",
+      distanceMeters: 6_000,
+      secondsRemaining: 360,
+      riderCount: 1,
+      hasPriorityEvent: false,
+      now: start
+    )
+    XCTAssertEqual(
+      policy.update(
+        navigationPhase: "navigating",
+        maneuverID: "turn-2",
+        distanceMeters: 5_800,
+        secondsRemaining: 340,
+        riderCount: 1,
+        hasPriorityEvent: false,
+        now: start.addingTimeInterval(30)
+      ),
+      .none
+    )
+  }
+
   func testCarPlayCommandCompletionResolvesExactlyOnce() {
     let completed = expectation(description: "command completed")
     completed.assertForOverFulfill = true

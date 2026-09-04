@@ -72,6 +72,36 @@ void main() {
       expect(source, contains('tecStatusButton(snapshot)'));
       expect(source, contains('groupOverviewButton(snapshot)'));
       expect(source, contains('func showGroupOverview()'));
+      expect(source, contains('CarPlayTecBarPresentation.title'));
+      expect(source, contains('CarPlayAutomaticGroupOverviewPolicy'));
+      expect(source, contains('updateAutomaticGroupOverview('));
+      const activeRideBarPolicy =
+          'mapTemplate.automaticallyHidesNavigationBar = '
+          'surfaceMode != "activeRide"';
+      expect(source, contains(activeRideBarPolicy));
+      final surfaceActions = source.indexOf(
+        'private func updateSurfaceActions',
+      );
+      final barPolicy = source.indexOf(activeRideBarPolicy);
+      final mapButtons = source.indexOf(
+        'mapTemplate.mapButtons = [',
+        surfaceActions,
+      );
+      expect(barPolicy, greaterThan(surfaceActions));
+      expect(barPolicy, lessThan(mapButtons));
+      expect(source, contains('case .showGroupOverview:'));
+      expect(source, contains('case .returnToFollow:'));
+      expect(viewControllerSource, contains('groupOverviewRequested'));
+      expect(
+        viewControllerSource,
+        contains(
+          'if groupOverviewRequested, requestedRiderFollow {\n'
+          '      maintainGroupOverview()\n'
+          '      return\n'
+          '    }',
+        ),
+      );
+      expect(viewControllerSource, contains('riderEscapedMargin'));
       expect(statusSource, contains('text: "Show all riders on map"'));
       expect(statusSource, contains('text: "Speed"'));
       expect(statusSource, contains('text: "Journey"'));
