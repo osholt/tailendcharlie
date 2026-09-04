@@ -1,6 +1,6 @@
 # CarPlay feature-retention rationale
 
-Updated: 2026-09-03
+Updated: 2026-09-04
 
 ## Decision
 
@@ -17,9 +17,21 @@ additional app-drawn UI overlay, irrespective of the fact that its image showed
 a map.
 
 The capability is retained as **Group overview**. A CarPlay-owned button fits
-all valid rider markers into the one full-screen map with margin. The overview
-stays in place until the rider uses the always-present Recenter button. The same
-action is also the first group row in the Ride list.
+all valid rider markers into the one full-screen map with margin. The same
+action is also the first group row in the Ride list. Because reaching for a
+motorcycle display while moving is difficult, the app additionally enters this
+overview without a tap after navigation has remained quiet for 15 seconds with
+at least three miles and three minutes before the next manoeuvre. It returns to
+the navigation camera with at least 1.5 miles or 90 seconds remaining, and
+returns immediately for a road alert, junction-marker instruction or TEC role
+request. Different enter and exit thresholds prevent camera oscillation.
+While the overview is active, live snapshots preserve that camera mode and
+refit only when a rider crosses the reserved margin; ordinary route-progress
+updates cannot replace it with a different route-wide camera.
+
+A manual Group overview stays in place until Recenter, preserving the rider's
+explicit choice. A manual Recenter suppresses automatic overview for the rest
+of that manoeuvre so the next live snapshot cannot undo the rider's action.
 
 Authoritative Apple sources:
 
@@ -41,10 +53,10 @@ Authoritative Apple sources:
 | Previous element | Current implementation | Why this is retained/compliant |
 |---|---|---|
 | Full map, route ahead and rider identities | MapLibre content in the single full-screen root map | These are cartographic map content, not controls or panels. |
-| Group minimap | **Group overview** fits all riders on the full map; Recenter returns to guidance | Preserves the group-wide spatial check without a prohibited second framed view. |
+| Group minimap | **Group overview** fits all riders on the full map; it appears automatically on long quiet stretches and returns before guidance is needed. Manual overview remains available and persistent. | Preserves the no-touch group-wide spatial check without a prohibited second framed view. |
 | Turn card and following turn | `CPNavigationSession` with current and following `CPManeuver`; full “Now” and “Then” text is also in Ride | Apple owns the driving card, Dashboard and notification presentation. No instruction data is discarded if a compact host shortens the card. |
 | Journey ETA, remaining distance and next-stop ETA | `CPTravelEstimates` on the map plus Journey and next-stop rows in Ride | Uses CarPlay's required glanceable estimate surface while retaining the richer route detail. |
-| Persistent TEC state | The first CarPlay navigation-bar button carries the current TEC headline and opens Ride for the full detail | System-owned button, so the safety state remains glanceable without an app-drawn badge. |
+| Persistent TEC state | The first CarPlay navigation-bar button gives the TEC distance priority (for example, `TEC 1.2 mi`) and opens Ride for the full name, ETA, freshness and trend. The system navigation bar stays visible throughout an active ride. | The short system-owned label keeps the most important value ahead of host truncation and avoids requiring a tap to reveal it, without an app-drawn badge. |
 | Group count and GPS speed | The second system navigation-bar button shows rider count and current/mapped-limit values, and opens Group overview | Restores glanceable values in CarPlay-owned chrome. The full labelled speed/limit explanation remains in Ride. |
 | Compass and map browsing | A compass-labelled `CPMapButton` opens CarPlay's panning interface; CarPlay gestures and map orientation remain active | Uses a public map operation instead of an app-drawn compass badge. |
 | Zoom and Follow | System `CPMapButton` controls | Same capabilities and system-sized touch targets. |

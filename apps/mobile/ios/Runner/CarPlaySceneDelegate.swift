@@ -103,6 +103,31 @@ struct CarPlayUnitPolicy: Equatable {
   }
 }
 
+/// Keeps the one fact the product is named for ahead of optional TEC timing
+/// and trend text when a vehicle host has very little navigation-bar width.
+struct CarPlayTecBarPresentation {
+  static func title(snapshot: [String: Any]) -> String {
+    guard let tec = snapshot["tec"] as? [String: Any] else { return "Ride" }
+    if
+      tec["state"] as? String == "tracking",
+      let distance = (tec["distanceMeters"] as? NSNumber)?.doubleValue,
+      distance.isFinite,
+      distance >= 0
+    {
+      let units = CarPlayUnitPolicy(
+        distanceUnit: snapshot["distanceUnit"] as? String,
+        localeIdentifier: snapshot["localeIdentifier"] as? String
+      )
+      return "TEC \(units.distanceLabel(meters: distance))"
+    }
+    let headline = (tec["headline"] as? String)?.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    )
+    if let headline, !headline.isEmpty { return headline }
+    return "Ride"
+  }
+}
+
 /// Converts the host-owned safe rectangle into MapLibre content insets. Kept
 /// independent of any particular head-unit resolution so the same calculation
 /// covers left/right driving layouts, compact displays, and wide screens.
@@ -155,6 +180,134 @@ struct CarPlayGroupOverviewGeometry {
       latitude: coordinates.map(\.latitude).reduce(0, +) / Double(coordinates.count),
       longitude: coordinates.map(\.longitude).reduce(0, +) / Double(coordinates.count)
     )
+  }
+}
+
+/// Automatically trades detailed rider-follow framing for a group-wide view
+/// only while the next instruction is several minutes and several miles away.
+/// Separate enter/exit thresholds prevent camera chatter, while the settling
+/// delay avoids changing the map in the seconds immediately after a junction.
+struct CarPlayAutomaticGroupOverviewPolicy {
+  enum Action: Equatable {
+    case none
+    case showGroupOverview
+    case returnToFollow
+  }
+
+  static let enterDistanceMeters = 4_828.032
+  static let enterSecondsRemaining: TimeInterval = 180
+  static let exitDistanceMeters = 2_414.016
+  static let exitSecondsRemaining: TimeInterval = 90
+  static let quietSettlingInterval: TimeInterval = 15
+
+  private(set) var isShowingOverview = false
+  private var overviewManeuverID: String?
+  private var quietCandidateManeuverID: String?
+  private var quietCandidateSince: Date?
+  private var suppressedManeuverID: String?
+
+  static func distinctRiderCount(snapshot: [String: Any]) -> Int {
+    var riderIDs = Set<String>()
+    if
+      let local = snapshot["localRider"] as? [String: Any],
+      let riderID = local["riderId"] as? String,
+      !riderID.isEmpty
+    {
+      riderIDs.insert(riderID)
+    }
+    for rider in snapshot["riders"] as? [[String: Any]] ?? [] {
+      if let riderID = rider["riderId"] as? String, !riderID.isEmpty {
+        riderIDs.insert(riderID)
+      }
+    }
+    return riderIDs.count
+  }
+
+  mutating func update(
+    navigationPhase: String,
+    maneuverID: String?,
+    distanceMeters: Double?,
+    secondsRemaining: TimeInterval?,
+    riderCount: Int,
+    hasPriorityEvent: Bool,
+    now: Date
+  ) -> Action {
+    let distance = distanceMeters.flatMap {
+      $0.isFinite && $0 >= 0 ? $0 : nil
+    }
+    let seconds = secondsRemaining.flatMap {
+      $0.isFinite && $0 >= 0 ? $0 : nil
+    }
+    let isNavigating = navigationPhase == "navigating"
+    if suppressedManeuverID != maneuverID { suppressedManeuverID = nil }
+
+    if isShowingOverview {
+      let maneuverChanged = maneuverID != overviewManeuverID
+      let approachingGuidance =
+        distance.map { $0 <= Self.exitDistanceMeters } ?? true
+        || seconds.map { $0 <= Self.exitSecondsRemaining } ?? true
+      if
+        !isNavigating || maneuverID == nil || riderCount < 2
+          || hasPriorityEvent || maneuverChanged || approachingGuidance
+      {
+        isShowingOverview = false
+        overviewManeuverID = nil
+        clearQuietCandidate()
+        if hasPriorityEvent { suppressedManeuverID = maneuverID }
+        return .returnToFollow
+      }
+      return .none
+    }
+
+    guard
+      isNavigating,
+      !hasPriorityEvent,
+      riderCount >= 2,
+      let maneuverID,
+      maneuverID != suppressedManeuverID,
+      let distance,
+      distance >= Self.enterDistanceMeters,
+      let seconds,
+      seconds >= Self.enterSecondsRemaining
+    else {
+      clearQuietCandidate()
+      return .none
+    }
+
+    if quietCandidateManeuverID != maneuverID {
+      quietCandidateManeuverID = maneuverID
+      quietCandidateSince = now
+      return .none
+    }
+    guard
+      let quietCandidateSince,
+      now.timeIntervalSince(quietCandidateSince)
+        >= Self.quietSettlingInterval
+    else { return .none }
+
+    isShowingOverview = true
+    overviewManeuverID = maneuverID
+    clearQuietCandidate()
+    return .showGroupOverview
+  }
+
+  /// A manual Recenter or Group overview choice owns the camera until the next
+  /// manoeuvre. This prevents the next one-second snapshot undoing a rider's
+  /// explicit choice on the same long road.
+  mutating func suppressAutomaticOverview(for maneuverID: String?) {
+    isShowingOverview = false
+    overviewManeuverID = nil
+    suppressedManeuverID = maneuverID
+    clearQuietCandidate()
+  }
+
+  mutating func reset() {
+    self = Self()
+  }
+
+  private mutating func clearQuietCandidate() {
+    quietCandidateManeuverID = nil
+    quietCandidateSince = nil
   }
 }
 
@@ -934,6 +1087,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var latestSnapshot: [String: Any]?
   private var sceneLifecycle = CarPlaySceneLifecycle()
   private var navigationProjectionV2Store = CarPlayNavigationProjectionStore()
+  private var automaticGroupOverviewPolicy =
+    CarPlayAutomaticGroupOverviewPolicy()
   private var routePreviewCoordinator = CarPlayRoutePreviewCoordinator()
   private var routePreviewTrip: CPTrip?
 
@@ -1026,6 +1181,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     sessionConfiguration = nil
     limitedUserInterfaces = []
     latestSnapshot = nil
+    automaticGroupOverviewPolicy.reset()
     mapTemplate = nil
     mapViewController = nil
     statusTemplate = nil
@@ -1344,6 +1500,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     snapshot: [String: Any]
   ) {
     guard sceneLifecycle.rootReady, let mapTemplate else { return }
+    updateAutomaticGroupOverview(projection: projection, snapshot: snapshot)
     let unitPolicy = CarPlayUnitPolicy(
       distanceUnit: projection.units.distance,
       localeIdentifier: projection.localeIdentifier
@@ -1783,7 +1940,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
   private func recenterButton() -> CPMapButton {
     let button = CPMapButton { [weak self] _ in
-      self?.mapViewController?.recenter()
+      self?.recenterFromUser()
     }
     button.image = mapButtonImage(
       // The phone's landscape control uses an outlined navigation arrow.
@@ -1799,6 +1956,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     canPlanRoute = (snapshot["canPlanRoute"] as? NSNumber)?.boolValue ?? false
     canFreeRoam = (snapshot["canFreeRoam"] as? NSNumber)?.boolValue ?? false
     guard let mapTemplate else { return }
+
+    // TEC distance is the primary group-safety value on a motorcycle. Keep
+    // CarPlay's own navigation bar visible throughout an active ride so the
+    // distance-first label does not disappear simply because the rider has
+    // (correctly) left the screen untouched. Home and route planning retain
+    // the normal auto-hide behaviour for maximum map space.
+    mapTemplate.automaticallyHidesNavigationBar = surfaceMode != "activeRide"
 
     mapTemplate.mapButtons = [
       compassPanButton(mapTemplate: mapTemplate),
@@ -1837,8 +2001,51 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         return
       }
-      self.mapViewController?.showGroupOverview()
+      self.showManualGroupOverview()
     }
+  }
+
+  private func updateAutomaticGroupOverview(
+    projection: CarPlayNavigationProjectionV2,
+    snapshot: [String: Any]
+  ) {
+    let alert = snapshot["alert"] as? [String: Any]
+    let hasPriorityEvent = nonEmptyString(alert?["message"]) != nil
+      || snapshot["marker"] is [String: Any]
+      || snapshot["tecRequest"] is [String: Any]
+    let action = automaticGroupOverviewPolicy.update(
+      navigationPhase: projection.navigationPhase,
+      maneuverID: projection.currentManeuver?.id,
+      distanceMeters: projection.currentManeuver?.distanceMeters,
+      secondsRemaining: projection.currentManeuver?.secondsRemaining,
+      riderCount: CarPlayAutomaticGroupOverviewPolicy.distinctRiderCount(
+        snapshot: snapshot
+      ),
+      hasPriorityEvent: hasPriorityEvent,
+      now: Date()
+    )
+    switch action {
+    case .none:
+      break
+    case .showGroupOverview:
+      mapViewController?.showGroupOverview()
+    case .returnToFollow:
+      mapViewController?.recenter()
+    }
+  }
+
+  private func recenterFromUser() {
+    automaticGroupOverviewPolicy.suppressAutomaticOverview(
+      for: navigationProjectionV2Store.latest?.currentManeuver?.id
+    )
+    mapViewController?.recenter()
+  }
+
+  private func showManualGroupOverview() {
+    automaticGroupOverviewPolicy.suppressAutomaticOverview(
+      for: navigationProjectionV2Store.latest?.currentManeuver?.id
+    )
+    mapViewController?.showGroupOverview()
   }
 
   private func planRouteBarButton() -> CPBarButton {
@@ -2393,8 +2600,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   private func tecStatusButton(_ snapshot: [String: Any]) -> CPBarButton {
-    let tec = snapshot["tec"] as? [String: Any]
-    let title = nonEmptyString(tec?["headline"]) ?? "Ride"
+    let title = CarPlayTecBarPresentation.title(snapshot: snapshot)
     return CPBarButton(title: title) { [weak self] _ in
       self?.presentRideStatus()
     }
@@ -2403,7 +2609,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private func groupOverviewButton(_ snapshot: [String: Any]) -> CPBarButton {
     let title = groupOverviewTitle(snapshot)
     return CPBarButton(title: title) { [weak self] _ in
-      self?.mapViewController?.showGroupOverview()
+      self?.showManualGroupOverview()
     }
   }
 
@@ -2834,6 +3040,7 @@ final class CarPlayNavigationViewController: UIViewController,
   private var localCoordinate: CLLocationCoordinate2D?
   private var localHeading: CLLocationDirection?
   private var followsLocalRider = true
+  private var groupOverviewRequested = false
   private var snapshotWantsRiderFollow = false
   private var panGestureStartCoordinate: CLLocationCoordinate2D?
   private var directionalPanTimer: Timer?
@@ -2940,6 +3147,11 @@ final class CarPlayNavigationViewController: UIViewController,
       (snapshot["followRider"] as? NSNumber)?.boolValue ?? false
     let cameraModeChanged = requestedRiderFollow != snapshotWantsRiderFollow
     snapshotWantsRiderFollow = requestedRiderFollow
+    if groupOverviewRequested, requestedRiderFollow {
+      maintainGroupOverview()
+      return
+    }
+    if groupOverviewRequested { groupOverviewRequested = false }
     if cameraModeChanged {
       // A ride starting is the one automatic transition back into follow mode.
       // Subsequent snapshots preserve a deliberate pan until the rider taps
@@ -2963,6 +3175,7 @@ final class CarPlayNavigationViewController: UIViewController,
   func showPreviewRoute(_ points: [CarPlayRoutePreviewPayload.Coordinate]) {
     let coordinates = points.map(\.clLocationCoordinate)
     guard coordinates.count >= 2 else { return }
+    groupOverviewRequested = false
     previewRouteCoordinates = coordinates
     showPreviewRouteCoordinates()
   }
@@ -3024,6 +3237,7 @@ final class CarPlayNavigationViewController: UIViewController,
   }
 
   func recenter() {
+    groupOverviewRequested = false
     followsLocalRider = true
     if snapshotWantsRiderFollow, latestViewport != nil {
       applyPhoneViewport(animated: true)
@@ -3054,33 +3268,55 @@ final class CarPlayNavigationViewController: UIViewController,
   }
 
   /// Replaces the retired inset minimap with the same information on the one
-  /// full-screen map Apple permits. The view remains here until the rider taps
-  /// the persistent Recenter control, so it is useful for a real group check
-  /// rather than flashing briefly and returning to follow mode.
+  /// full-screen map Apple permits. A manual overview remains until Recenter;
+  /// an automatic one remains until guidance or a priority event needs the
+  /// rider-follow camera again.
   func showGroupOverview() {
+    groupOverviewRequested = true
     followsLocalRider = false
+    fitGroupOverview(animated: true)
+  }
+
+  private func fitGroupOverview(animated: Bool) {
     guard let mapView else { return }
     mapView.userTrackingMode = .none
-    var coordinates = riderAnnotations.map(\.coordinate)
-    if let localCoordinate { coordinates.append(localCoordinate) }
-    coordinates = CarPlayGroupOverviewGeometry.uniqueCoordinates(coordinates)
-    if coordinates.isEmpty {
-      coordinates = overviewCoordinates(routeCoordinates)
-    }
+    var coordinates = groupOverviewCoordinates()
     guard !coordinates.isEmpty else { return }
     if let coordinate = CarPlayGroupOverviewGeometry.clusterCenter(coordinates) {
-      mapView.setCenter(coordinate, zoomLevel: 14, animated: true)
+      mapView.setCenter(coordinate, zoomLevel: 14, animated: animated)
       return
     }
     mapView.setVisibleCoordinates(
       &coordinates,
       count: UInt(coordinates.count),
       edgePadding: UIEdgeInsets(top: 96, left: 112, bottom: 112, right: 144),
-      animated: true
+      animated: animated
     )
   }
 
+  private func maintainGroupOverview() {
+    guard let mapView else { return }
+    let coordinates = groupOverviewCoordinates()
+    guard !coordinates.isEmpty else { return }
+    let margin = UIEdgeInsets(top: 96, left: 112, bottom: 112, right: 144)
+    let safeFrame = mapView.bounds.inset(by: margin)
+    let riderEscapedMargin = coordinates.contains {
+      !safeFrame.contains(mapView.convert($0, toPointTo: mapView))
+    }
+    if riderEscapedMargin { fitGroupOverview(animated: true) }
+  }
+
+  private func groupOverviewCoordinates() -> [CLLocationCoordinate2D] {
+    var coordinates = riderAnnotations.map(\.coordinate)
+    if let localCoordinate { coordinates.append(localCoordinate) }
+    coordinates = CarPlayGroupOverviewGeometry.uniqueCoordinates(coordinates)
+    return coordinates.isEmpty
+      ? overviewCoordinates(routeCoordinates)
+      : coordinates
+  }
+
   func pan(direction: CPMapTemplate.PanDirection) {
+    groupOverviewRequested = false
     followsLocalRider = false
     guard let mapView else { return }
     mapView.userTrackingMode = .none
@@ -3113,6 +3349,7 @@ final class CarPlayNavigationViewController: UIViewController,
   }
 
   func beginPanGesture() {
+    groupOverviewRequested = false
     followsLocalRider = false
     mapView?.userTrackingMode = .none
     panGestureStartCoordinate = mapView?.centerCoordinate
@@ -3136,12 +3373,14 @@ final class CarPlayNavigationViewController: UIViewController,
   }
 
   func beginZoomGesture() {
+    groupOverviewRequested = false
     followsLocalRider = false
     mapView?.userTrackingMode = .none
     zoomGestureStartLevel = mapView?.zoomLevel
   }
 
   func zoom(by delta: Double) {
+    groupOverviewRequested = false
     followsLocalRider = false
     guard let mapView else { return }
     mapView.userTrackingMode = .none
@@ -3163,6 +3402,7 @@ final class CarPlayNavigationViewController: UIViewController,
   }
 
   func beginRotationGesture() {
+    groupOverviewRequested = false
     followsLocalRider = false
     mapView?.userTrackingMode = .none
     rotationGestureStartHeading = mapView?.direction
@@ -3192,6 +3432,7 @@ final class CarPlayNavigationViewController: UIViewController,
   }
 
   func beginPitchGesture() {
+    groupOverviewRequested = false
     followsLocalRider = false
     mapView?.userTrackingMode = .none
     pitchGestureStart = (nil, mapView?.camera.pitch ?? 0)
