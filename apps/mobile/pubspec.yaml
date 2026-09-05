@@ -57,7 +57,7 @@ dependencies:
   xml: ^7.0.1
   flutter_tts: ^4.2.5
   qr_flutter: ^4.1.0
-  sherpa_onnx: ^1.13.5
+  sherpa_onnx: ^1.13.7
   mobile_scanner: ^7.4.0
 
 dev_dependencies:
