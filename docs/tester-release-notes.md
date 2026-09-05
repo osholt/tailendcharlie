@@ -36,6 +36,64 @@ permissions by design.
 - ...
 ```
 
+## iOS build 88 / Android build 88 — 1.0.1 — 5 September 2026
+
+This build addresses the Android feedback reported after build 76 and removes
+Android Auto from the distributed Android app while that experience remains in
+development.
+
+### What to test
+
+1. On Android, leave the app open on the home map without starting a ride,
+   background it, and check battery use later. The app should obtain one current
+   position without keeping the ride-grade foreground location service or wake
+   lock active.
+2. Reopen the app after location access has already been granted. The home map
+   should restore the bike position automatically without needing **Show my
+   location** and without showing another permission prompt.
+3. Search for a destination, select it, enable **Avoid motorways**, and plan the
+   route. The resulting route should respect that preference.
+4. Open several selected routes on Android. If the native map view cannot load,
+   the route, rider, trails and alerts should reappear on the Flutter map after
+   eight seconds instead of leaving a black screen.
+5. Confirm Tail End Charlie is no longer offered in Android Auto for this
+   build. Normal phone navigation, group rides, ride recording and CarPlay are
+   unchanged.
+6. In France, compare the CarPlay group overview speed with the posted speed
+   sign. Both the live speed and limit should remain in km/h even if personal
+   distance units are set to miles.
+
+### Fixed
+
+- Removed Android Auto permissions, discovery metadata, services, navigation
+  intents and transitive Car App components from the Play bundle. The source
+  implementation and an inactive manifest remain in the repository for future
+  re-enablement.
+- Replaced continuous idle home-map location sampling with a cached-then-current
+  one-shot fix. Continuous background sampling now starts only with active
+  navigation and stops when navigation ends.
+- Restored the current bike position automatically for riders who have already
+  granted location access.
+- Restored route preferences and optional waypoints after selecting a search
+  result rather than immediately planning with defaults.
+- Added an automatic non-native map fallback for Android style, tile and layer
+  failures so a selected route never leaves an empty black ride map.
+- Kept CarPlay group-overview speed and speed-limit values in the road's posted
+  unit.
+- Android testers also receive the France support, natural-voice retry,
+  fine-grained continuous heat map and faster circular-route planning already
+  exercised in recent iOS builds.
+
+### Known limitations
+
+- Android Auto is deliberately unavailable in this tester build. Re-enabling it
+  will require an explicit future build variant and a separate compliance
+  release decision.
+- If both native map rendering and the remote vector style fail, route and rider
+  overlays remain usable but the fallback may not be able to draw road detail.
+- Google controls closed-track processing and review duration after upload; the
+  release bundle itself no longer advertises any car-app capability.
+
 ## iOS build 85 — 1.0.1 — 1 September 2026
 
 This build refines the personal ride heat map after physical-device feedback.
