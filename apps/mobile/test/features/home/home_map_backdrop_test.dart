@@ -111,6 +111,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(platform.permissionRequests, 0);
+    expect(platform.currentPositionRequests, 1);
+    expect(
+      platform.streamSubscriptions,
+      0,
+      reason: 'idle home browsing must not hold the Android ride wake lock',
+    );
   });
 
   testWidgets('free roam preserves the complete navigation fix (#655)', (
@@ -134,6 +140,7 @@ void main() {
             speedLimitDisplay: speedLimitDisplay,
             distanceUnit: DistanceUnit.kilometres,
             locationController: location,
+            navigating: true,
           ),
         ),
       ),
@@ -789,7 +796,7 @@ void main() {
   // recovery control was hidden on `sharing`, which says only that sampling
   // was requested, and nothing restarted the sampler after a background trip.
   group('free roam can be found again without restarting the app', () {
-    testWidgets('resuming from the background restarts the sampler', (
+    testWidgets('resuming idle home refreshes one fix without a ride stream', (
       tester,
     ) async {
       final platform = _RecordingLocationPlatform(
@@ -808,6 +815,7 @@ void main() {
       await pump(tester, location: location);
       await tester.pumpAndSettle();
       expect(location.restarts, 0);
+      expect(location.refreshes, 1);
 
       // Through the binding, so forgetting `addObserver` fails here too.
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -815,20 +823,13 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
 
-      expect(
-        location.restarts,
-        1,
-        reason:
-            'free roam had no lifecycle observer at all, which is why '
-            'only quitting the app recovered a lost position',
-      );
+      expect(location.restarts, 0);
+      expect(location.refreshes, 2);
     });
 
     testWidgets(
-      'a sampler that has produced no fix still offers the way back',
+      'idle home obtains a fix without starting the background sampler',
       (tester) async {
-        // The precise reported state: sharing is on, so the old rule hid the
-        // control, but there is no rider on the map and search will not start.
         final platform = _RecordingLocationPlatform(
           granted: DeviceLocationPermission.always,
         );
@@ -841,12 +842,14 @@ void main() {
         await pump(tester, location: location);
         await tester.pumpAndSettle();
 
-        expect(location.sharing, isTrue, reason: 'the sampler is running');
-        expect(find.byKey(const Key('home-show-my-location')), findsOneWidget);
+        expect(location.sharing, isFalse);
+        expect(location.latestSample, isNotNull);
+        expect(platform.streamSubscriptions, 0);
+        expect(find.byKey(const Key('home-show-my-location')), findsNothing);
       },
     );
 
-    testWidgets('a rider who is on the map is not nagged to be found', (
+    testWidgets('an authorised rider is restored onto the map on launch', (
       tester,
     ) async {
       final platform = _RecordingLocationPlatform(
@@ -876,12 +879,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('home-show-my-location')), findsOneWidget);
-
-      position.value = const GeoPoint(latitude: 51.46, longitude: -2.59);
-      await tester.pumpAndSettle();
-
+      expect(position.value?.latitude, 51.46);
+      expect(position.value?.longitude, -2.59);
       expect(find.byKey(const Key('home-show-my-location')), findsNothing);
+      expect(platform.streamSubscriptions, 0);
     });
   });
 }
@@ -934,9 +935,13 @@ class _RecordingLocationController extends ForegroundLocationController {
   _RecordingLocationController(super.source, super.onSample);
 
   int restarts = 0;
+  int refreshes = 0;
 
   @override
   Future<void> restartAfterForegroundResume() async => restarts += 1;
+
+  @override
+  Future<void> refreshIfAuthorized() async => refreshes += 1;
 }
 
 /// Counts prompts. The test is about *when* a prompt happens, so the count is
@@ -946,6 +951,13 @@ class _RecordingLocationPlatform implements DeviceLocationPlatform {
 
   final DeviceLocationPermission granted;
   int permissionRequests = 0;
+  int currentPositionRequests = 0;
+
+  static final current = LocationSample(
+    position: const rider_domain.GeoPoint(latitude: 51.46, longitude: -2.59),
+    recordedAt: DateTime.utc(2026, 9, 5, 9),
+    accuracyMeters: 5,
+  );
 
   @override
   Future<bool> isServiceEnabled() async => true;
@@ -963,6 +975,15 @@ class _RecordingLocationPlatform implements DeviceLocationPlatform {
   Future<DeviceLocationPermission> requestBackgroundPermission() async {
     permissionRequests += 1;
     return granted;
+  }
+
+  @override
+  Future<LocationSample?> lastKnownPosition() async => null;
+
+  @override
+  Future<LocationSample> currentPosition() async {
+    currentPositionRequests += 1;
+    return current;
   }
 
   /// Counts how many times a native stream was created. A restart is a new

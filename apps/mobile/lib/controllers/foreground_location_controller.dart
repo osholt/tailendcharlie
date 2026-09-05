@@ -30,6 +30,7 @@ class ForegroundLocationController extends ChangeNotifier {
   DeviceLocationStatus get status => _status;
   bool get sharing => status.state == DeviceLocationState.sampling;
   LocationSample? get activeSample => sharing ? status.lastSample : null;
+  LocationSample? get latestSample => status.lastSample;
 
   Future<void> initialize() async {
     _statusSubscription ??= _source.statuses.listen(_handleStatus);
@@ -74,6 +75,20 @@ class ForegroundLocationController extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshIfAuthorized() async {
+    if (_disposed) return;
+    _statusSubscription ??= _source.statuses.listen(_handleStatus);
+    _status = await _source.refreshIfAuthorized();
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> requestOneShot() async {
+    if (_disposed) return;
+    _statusSubscription ??= _source.statuses.listen(_handleStatus);
+    _status = await _source.requestOneShot();
+    if (!_disposed) notifyListeners();
+  }
+
   Future<void> restartAfterForegroundResume() async {
     if (_disposed || !_sharingRequested) return;
     final restarted = await _source.restart();
@@ -93,9 +108,7 @@ class ForegroundLocationController extends ChangeNotifier {
     _status = status;
     notifyListeners();
     final sample = status.lastSample;
-    if (status.state != DeviceLocationState.sampling ||
-        sample == null ||
-        sample.recordedAt == _lastForwardedAt) {
+    if (sample == null || sample.recordedAt == _lastForwardedAt) {
       return;
     }
     _lastForwardedAt = sample.recordedAt;

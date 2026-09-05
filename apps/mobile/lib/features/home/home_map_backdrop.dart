@@ -199,14 +199,19 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     final location = _location;
     if (location != null) {
       location.addListener(_handleLocationChanged);
-      // Resumes only if access was already granted, so opening the app shows
-      // no prompt.
-      location.resumeIfAuthorized();
+      // Browsing the home screen needs one current point, not the ride-grade
+      // Android foreground service and wake lock. Continuous background fixes
+      // are resumed only when navigation is active.
+      if (widget.navigating) {
+        location.resumeIfAuthorized();
+      } else {
+        location.refreshIfAuthorized();
+      }
     }
   }
 
   void _handleLocationChanged() {
-    final sample = _location?.activeSample;
+    final sample = _location?.latestSample;
     if (sample != null &&
         _navigationPosition.value?.recordedAt != sample.recordedAt) {
       _acceptLocationSample(sample);
@@ -512,7 +517,11 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     if (location == null || _requesting) return;
     setState(() => _requesting = true);
     try {
-      await location.requestAndStart();
+      if (widget.navigating) {
+        await location.requestAndStart();
+      } else {
+        await location.requestOneShot();
+      }
     } finally {
       if (mounted) setState(() => _requesting = false);
     }
@@ -529,7 +538,11 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
-      unawaited(_location?.restartAfterForegroundResume());
+      if (widget.navigating) {
+        unawaited(_location?.restartAfterForegroundResume());
+      } else {
+        unawaited(_location?.refreshIfAuthorized());
+      }
     } else {
       _checkpointFreeRoamNavigation();
     }
@@ -539,8 +552,10 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   void didUpdateWidget(covariant HomeMapBackdrop oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!oldWidget.navigating && widget.navigating) {
+      unawaited(_location?.requestAndStart());
       unawaited(_warmNaturalVoiceIfNeeded());
     } else if (oldWidget.navigating && !widget.navigating) {
+      unawaited(_location?.stop());
       _spokenGuidanceKeys.clear();
       _guidanceManeuverIdentity = null;
       _passedManeuverPosition = null;
@@ -576,8 +591,6 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     super.dispose();
   }
 
-  bool get _sharing => _location?.sharing ?? false;
-
   /// Whether to offer the rider a way to be found.
   ///
   /// It used to be `!_sharing` alone, which asks whether sampling was
@@ -593,7 +606,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   /// Judging on whether there is a position to show needs no such guess: if
   /// the rider is on the map they are found, and if they are not they are
   /// offered the way to be.
-  bool get _offerLocation => !_sharing || _position.value == null;
+  bool get _offerLocation => _position.value == null;
 
   @override
   Widget build(BuildContext context) {

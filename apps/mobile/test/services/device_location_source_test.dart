@@ -67,6 +67,49 @@ void main() {
     await platform.dispose();
   });
 
+  test(
+    'home refresh gets a current fix without starting ride stream',
+    () async {
+      final platform = _FakeLocationPlatform(
+        permission: DeviceLocationPermission.whileInUse,
+      );
+      final received = <LocationSample>[];
+      final controller = ForegroundLocationController(
+        DeviceLocationSource(platform),
+        (sample) async => received.add(sample),
+      );
+      await controller.initialize();
+
+      await controller.refreshIfAuthorized();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.sharing, isFalse);
+      expect(controller.latestSample, _sample);
+      expect(received, [_sample]);
+      expect(platform.currentPositionRequests, 1);
+      expect(platform.streamRequests, 0);
+      expect(platform.backgroundPermissionRequests, 0);
+      controller.dispose();
+      await platform.dispose();
+    },
+  );
+
+  test('explicit home fix asks only for foreground permission', () async {
+    final platform = _FakeLocationPlatform(
+      requestedPermission: DeviceLocationPermission.whileInUse,
+    );
+    final source = DeviceLocationSource(platform);
+
+    final status = await source.requestOneShot();
+
+    expect(status.lastSample, _sample);
+    expect(platform.permissionRequests, 1);
+    expect(platform.backgroundPermissionRequests, 0);
+    expect(platform.streamRequests, 0);
+    await source.dispose();
+    await platform.dispose();
+  });
+
   test('explicit request starts foreground stream and can stop it', () async {
     final platform = _FakeLocationPlatform(
       requestedPermission: DeviceLocationPermission.whileInUse,
@@ -347,12 +390,24 @@ class _FakeLocationPlatform implements DeviceLocationPlatform {
   int permissionRequests = 0;
   int backgroundPermissionRequests = 0;
   int streamRequests = 0;
+  LocationSample? cachedPosition;
+  LocationSample current = _sample;
+  int currentPositionRequests = 0;
 
   @override
   Future<DeviceLocationPermission> checkPermission() async => permission;
 
   @override
   Future<bool> isServiceEnabled() async => serviceEnabled;
+
+  @override
+  Future<LocationSample?> lastKnownPosition() async => cachedPosition;
+
+  @override
+  Future<LocationSample> currentPosition() async {
+    currentPositionRequests += 1;
+    return current;
+  }
 
   @override
   Future<DeviceLocationPermission> requestBackgroundPermission() async {
