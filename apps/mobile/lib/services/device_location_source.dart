@@ -54,6 +54,10 @@ abstract interface class DeviceLocationPlatform {
 
   Future<DeviceLocationPermission> requestBackgroundPermission();
 
+  Future<LocationSample?> lastKnownPosition();
+
+  Future<LocationSample> currentPosition();
+
   Stream<LocationSample> positionStream();
 }
 
@@ -93,6 +97,19 @@ class GeolocatorDeviceLocationPlatform implements DeviceLocationPlatform {
       _ => DeviceLocationPermission.denied,
     };
   }
+
+  @override
+  Future<LocationSample?> lastKnownPosition() async {
+    final position = await Geolocator.getLastKnownPosition();
+    return position == null ? null : _mapPosition(position);
+  }
+
+  @override
+  Future<LocationSample> currentPosition() async => _mapPosition(
+    await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+    ),
+  );
 
   /// The platform filter, and deliberately not the reporting threshold.
   ///
@@ -244,6 +261,73 @@ class DeviceLocationSource {
       permission = await _platform.requestBackgroundPermission();
     }
     return _statusForPermission(permission);
+  }
+
+  /// Refreshes the home-map position without starting the ride-grade
+  /// background stream. A cached fix is published immediately when available,
+  /// then replaced by a current fix. This keeps destination search usable on a
+  /// stationary phone without leaving Android's location foreground service
+  /// and wake lock running while the rider is merely browsing the app.
+  Future<DeviceLocationStatus> refreshIfAuthorized() =>
+      _refreshOneShot(requestPermission: false);
+
+  /// Foreground-only location request used by the home map's explicit
+  /// “Show my location” action. Background access is requested only when a
+  /// ride actually starts through [requestAccess].
+  Future<DeviceLocationStatus> requestOneShot() =>
+      _refreshOneShot(requestPermission: true);
+
+  Future<DeviceLocationStatus> _refreshOneShot({
+    required bool requestPermission,
+  }) async {
+    if (!await _platform.isServiceEnabled()) {
+      return _emit(
+        const DeviceLocationStatus(
+          state: DeviceLocationState.serviceDisabled,
+          message: 'Location Services are switched off.',
+        ),
+      );
+    }
+    var permission = await _platform.checkPermission();
+    if (requestPermission && permission == DeviceLocationPermission.denied) {
+      permission = await _platform.requestPermission();
+    }
+    final access = _statusForPermission(permission);
+    if (!access.canSample) return access;
+
+    final cached = await _platform.lastKnownPosition();
+    if (cached != null) {
+      _emit(
+        DeviceLocationStatus(
+          state: DeviceLocationState.ready,
+          message: 'Location is ready.',
+          lastSample: cached,
+          backgroundCapable: access.backgroundCapable,
+        ),
+      );
+    }
+    try {
+      final current = await _platform.currentPosition().timeout(
+        const Duration(seconds: 12),
+      );
+      return _emit(
+        DeviceLocationStatus(
+          state: DeviceLocationState.ready,
+          message: 'Location is ready.',
+          lastSample: current,
+          backgroundCapable: access.backgroundCapable,
+        ),
+      );
+    } on Object {
+      if (cached != null) return _status;
+      return _emit(
+        DeviceLocationStatus(
+          state: DeviceLocationState.failed,
+          message: 'A current location fix is not available yet.',
+          backgroundCapable: access.backgroundCapable,
+        ),
+      );
+    }
   }
 
   Future<DeviceLocationStatus> start() async {

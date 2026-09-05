@@ -191,8 +191,8 @@ void main() {
 
   test('a start point with nothing mapped nearby stops asking', () async {
     // #145: a ride often starts in a car park whose aisle and neighbouring roads
-    // carry no mapped limit at all - the bundled demo route's own start point is
-    // one. That cannot change while the bike is still, so it settles rather than
+    // carry no mapped limit at all. That cannot change while the bike is still,
+    // so it settles rather than
     // re-asking a fair-use service every few seconds, and it resolves on movement.
     final provider = _FakeSpeedLimitProvider(
       results: [

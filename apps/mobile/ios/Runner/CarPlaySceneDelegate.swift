@@ -128,6 +128,54 @@ struct CarPlayTecBarPresentation {
   }
 }
 
+struct CarPlayGroupOverviewBarPresentation {
+  static func title(snapshot: [String: Any]) -> String {
+    let riderCount = (snapshot["riders"] as? [[String: Any]])?.count ?? 0
+    let riderText = riderCount == 1 ? "1 rider" : "\(riderCount) riders"
+    guard let speed = snapshot["speed"] as? [String: Any] else {
+      return riderText
+    }
+    let unitPolicy = CarPlayUnitPolicy(
+      distanceUnit: snapshot["distanceUnit"] as? String,
+      localeIdentifier: snapshot["localeIdentifier"] as? String
+    )
+    let postedUnit = speed["limitUnit"] as? String
+    let usesMiles = postedUnit == "mph"
+      ? true
+      : postedUnit == "km/h" ? false : unitPolicy.usesMiles
+    let unit = usesMiles ? "mph" : "km/h"
+    let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
+    let rawCurrent = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
+    let current = rawCurrent.flatMap {
+      $0.isFinite && $0 >= 0 && !ageing
+        ? Int(($0 * (usesMiles ? 2.236_936_292_1 : 3.6)).rounded())
+        : nil
+    }
+    let status = speed["limitStatus"] as? String
+    let limit: String?
+    if status == "known",
+      (speed["limitUnlimited"] as? NSNumber)?.boolValue == true
+    {
+      limit = "∞"
+    } else if status == "known",
+      let value = (speed["limitValue"] as? NSNumber)?.intValue
+    {
+      limit = "\(value)"
+    } else if status == "known",
+      let legacyMilesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    {
+      limit = "\(usesMiles ? legacyMilesPerHour : Int((Double(legacyMilesPerHour) * 1.609_344).rounded()))"
+    } else {
+      limit = nil
+    }
+    let readings = [current.map(String.init), limit].compactMap { $0 }
+    let speedText = readings.isEmpty
+      ? ""
+      : " · \(readings.joined(separator: "/")) \(unit)"
+    return "\(riderText)\(speedText)"
+  }
+}
+
 /// Converts the host-owned safe rectangle into MapLibre content insets. Kept
 /// independent of any particular head-unit resolution so the same calculation
 /// covers left/right driving layouts, compact displays, and wide screens.
@@ -1074,6 +1122,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private var lastTripEstimate: (distance: Double, seconds: Double)?
   private var presentedNavigationAlertKey: String?
   private var rideStartPrompt: [String: Any]?
+  private var enforcementReportsAllowed = true
   private var isShowingPanningInterface = false
   private var rideMenuButton: CPBarButton?
   private var surfaceMode = "unavailable"
@@ -1206,6 +1255,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     let acceptedNavigationProjection = navigationProjectionV2Store.accept(
       snapshot: snapshot
     )
+    enforcementReportsAllowed =
+      (snapshot["enforcementReportsAllowed"] as? NSNumber)?.boolValue ?? true
     mapViewController?.apply(snapshot: snapshot)
     if let statusTemplate,
       interfaceController?.topTemplate !== statusTemplate
@@ -2607,48 +2658,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   private func groupOverviewButton(_ snapshot: [String: Any]) -> CPBarButton {
-    let title = groupOverviewTitle(snapshot)
+    let title = CarPlayGroupOverviewBarPresentation.title(snapshot: snapshot)
     return CPBarButton(title: title) { [weak self] _ in
       self?.showManualGroupOverview()
     }
-  }
-
-  private func groupOverviewTitle(_ snapshot: [String: Any]) -> String {
-    let riderCount = (snapshot["riders"] as? [[String: Any]])?.count ?? 0
-    guard let speed = snapshot["speed"] as? [String: Any] else {
-      return riderCount == 1 ? "1 rider" : "\(riderCount) riders"
-    }
-    let unitPolicy = CarPlayUnitPolicy(
-      distanceUnit: snapshot["distanceUnit"] as? String,
-      localeIdentifier: snapshot["localeIdentifier"] as? String
-    )
-    let unit = unitPolicy.usesMiles ? "mph" : "km/h"
-    let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
-    let rawCurrent = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
-    let current = rawCurrent.flatMap {
-      $0.isFinite && $0 >= 0 && !ageing
-        ? unitPolicy.speedValue(metersPerSecond: $0)
-        : nil
-    }
-    let status = speed["limitStatus"] as? String
-    let limit: String?
-    if status == "known",
-      (speed["limitUnlimited"] as? NSNumber)?.boolValue == true
-    {
-      limit = "∞"
-    } else if status == "known",
-      let milesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
-    {
-      limit = "\(unitPolicy.usesMiles ? milesPerHour : Int((Double(milesPerHour) * 1.609_344).rounded()))"
-    } else {
-      limit = nil
-    }
-    let readings = [current.map(String.init), limit].compactMap { $0 }
-    let speedText = readings.isEmpty
-      ? ""
-      : " · \(readings.joined(separator: "/")) \(unit)"
-    let riderText = riderCount == 1 ? "1 rider" : "\(riderCount) riders"
-    return "\(riderText)\(speedText)"
   }
 
   private func presentRideStatus() {
@@ -2738,27 +2751,37 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         appDelegate.reportCarPlayHazard(type: type, completion: completion)
       }
     }
+    var actions: [CPAlertAction] = []
+    if enforcementReportsAllowed {
+      actions.append(
+        CPAlertAction(title: "Speed camera", style: .default) { _ in
+          report("speedCamera")
+        }
+      )
+      actions.append(
+        CPAlertAction(title: "Police", style: .default) { _ in
+          report("policeActivity")
+        }
+      )
+    }
+    actions.append(
+      CPAlertAction(title: "Road hazard", style: .default) { _ in
+        report("other")
+      }
+    )
+    actions.append(
+      CPAlertAction(title: "Cancel", style: .cancel) { _ in
+        interfaceController.dismissTemplate(animated: true) { _, error in
+          if let error {
+            NSLog("CarPlay report sheet could not be dismissed: %@", error.localizedDescription)
+          }
+        }
+      }
+    )
     let sheet = CPActionSheetTemplate(
       title: "Report to group",
       message: "Uses your current position",
-      actions: [
-        CPAlertAction(title: "Speed camera", style: .default) { _ in
-          report("speedCamera")
-        },
-        CPAlertAction(title: "Police", style: .default) { _ in
-          report("policeActivity")
-        },
-        CPAlertAction(title: "Road hazard", style: .default) { _ in
-          report("other")
-        },
-        CPAlertAction(title: "Cancel", style: .cancel) { _ in
-          interfaceController.dismissTemplate(animated: true) { _, error in
-            if let error {
-              NSLog("CarPlay report sheet could not be dismissed: %@", error.localizedDescription)
-            }
-          }
-        },
-      ]
+      actions: actions
     )
     interfaceController.presentTemplate(sheet, animated: true) { success, error in
       if !success, let error {
@@ -3606,11 +3629,10 @@ final class CarPlayNavigationViewController: UIViewController,
       max(0.35, (viewport["riderViewportFraction"] as? NSNumber)?.doubleValue ?? 0.64)
     )
     // CarPlay is always landscape even when its attached phone is portrait.
-    // A portrait phone publishes a centred phone anchor, so derive the car's
-    // traffic-side third from the route handedness instead of copying 0.5.
-    let leftHandTraffic =
-      (viewport["leftHandTraffic"] as? NSNumber)?.boolValue ?? true
-    let riderHorizontalFraction = leftHandTraffic ? (2.0 / 3.0) : (1.0 / 3.0)
+    // Its status/action rail stays on the left in every road jurisdiction, so
+    // the rider belongs in the open right third for both driving sides. Mirroring
+    // this anchor in France put the rider underneath that fixed left rail.
+    let riderHorizontalFraction = 2.0 / 3.0
     guard adjustedZoom.isFinite, tilt.isFinite, bearing.isFinite else { return }
 
     // MapLibre's zoom is the scale of 512 px Web Mercator tiles. Convert that
@@ -4804,8 +4826,8 @@ private final class CarPlayRideActionButton: UIButton {
 }
 
 /// The phone's landscape speed-limit sign and current-speed readout, scaled for
-/// CarPlay's shorter map canvas. It follows the same explicit unit policy as
-/// system travel estimates; locale is only a fallback for restored old data.
+/// CarPlay's shorter map canvas. The two numbers always use the posted road
+/// country's unit together, just as on the phone.
 private final class CarPlaySpeedLimitBadge: UIView {
   private let sign = UIView()
   private let limitLabel = UILabel()
@@ -4890,23 +4912,17 @@ private final class CarPlaySpeedLimitBadge: UIView {
     isHidden = false
 
     let status = speed["limitStatus"] as? String
-    let limitMilesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    let limit = (speed["limitValue"] as? NSNumber)?.intValue
+    let usesKilometres = (speed["limitUnit"] as? String) == "km/h"
     let unlimited = (speed["limitUnlimited"] as? NSNumber)?.boolValue ?? false
-    let known = status == "known" && (limitMilesPerHour != nil || unlimited)
+    let known = status == "known" && (limit != nil || unlimited)
     let checking = status == "checking"
-    let unitPolicy = CarPlayUnitPolicy(
-      distanceUnit: distanceUnit,
-      localeIdentifier: localeIdentifier
-    )
-    let displayedLimit = limitMilesPerHour.map {
-      unitPolicy.usesMiles ? $0 : Int((Double($0) * 1.609_344).rounded())
-    }
     limitLabel.isHidden = checking
     if checking {
       spinner.startAnimating()
     } else {
       spinner.stopAnimating()
-      limitLabel.text = known ? (unlimited ? "∞" : "\(displayedLimit!)") : "–"
+      limitLabel.text = known ? (unlimited ? "∞" : "\(limit!)") : "–"
     }
     sign.layer.borderColor = (
       known
@@ -4915,10 +4931,11 @@ private final class CarPlaySpeedLimitBadge: UIView {
     ).cgColor
 
     let metresPerSecond = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
-    let displayedSpeed = metresPerSecond.flatMap { value in
-      value.isFinite && value >= 0 ? unitPolicy.speedValue(metersPerSecond: value) : nil
+    let riderSpeed = metresPerSecond.flatMap { value -> Int? in
+      guard value.isFinite && value >= 0 else { return nil }
+      return Int((value * (usesKilometres ? 3.6 : 2.236_936)).rounded())
     }
-    let currentSpeed = displayedSpeed.map(String.init) ?? "–"
+    let currentSpeed = riderSpeed.map(String.init) ?? "–"
     speedLabel.attributedText = NSAttributedString(
       string: currentSpeed,
       attributes: [
@@ -4931,14 +4948,11 @@ private final class CarPlaySpeedLimitBadge: UIView {
     let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
     speedLabel.alpha = ageing ? 0.55 : 1
 
+    let spokenUnit = usesKilometres ? "kilometres per hour" : "miles per hour"
     let limitDescription = known
-      ? (unlimited
-          ? "unrestricted"
-          : "\(displayedLimit!) \(unitPolicy.spokenSpeedUnit)")
+      ? (unlimited ? "unrestricted" : "\(limit!) \(spokenUnit)")
       : "unavailable"
-    let speedDescription = displayedSpeed.map {
-      "\($0) \(unitPolicy.spokenSpeedUnit)"
-    }
+    let speedDescription = riderSpeed.map { "\($0) \(spokenUnit)" }
       ?? "unavailable"
     accessibilityLabel = "Mapped speed limit \(limitDescription). "
       + "Your GPS speed is \(speedDescription)."

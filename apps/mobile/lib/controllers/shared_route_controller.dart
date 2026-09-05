@@ -7,16 +7,22 @@ import 'package:flutter/widgets.dart';
 import '../internet/plan_directory.dart';
 import '../domain/imported_route.dart';
 import '../services/gpx_import_source.dart';
+import '../services/navigation_export.dart';
 import '../services/planner_link_channel.dart';
 import '../services/shared_gpx_channel.dart';
 
 enum PlannerLinkStatus { idle, loading, error }
 
 class PendingInAppRoute {
-  const PendingInAppRoute({required this.route, this.reviewNotes = const []});
+  const PendingInAppRoute({
+    required this.route,
+    this.reviewNotes = const [],
+    this.handoffTarget,
+  });
 
   final ImportedRoute route;
   final List<String> reviewNotes;
+  final NavigationTarget? handoffTarget;
 }
 
 /// Tracks a GPX file the platform has handed to the app via "Open in..." /

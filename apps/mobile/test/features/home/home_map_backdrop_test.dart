@@ -111,6 +111,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(platform.permissionRequests, 0);
+    expect(platform.currentPositionRequests, 1);
+    expect(
+      platform.streamSubscriptions,
+      0,
+      reason: 'idle home browsing must not hold the Android ride wake lock',
+    );
   });
 
   testWidgets('free roam preserves the complete navigation fix (#655)', (
@@ -134,6 +140,7 @@ void main() {
             speedLimitDisplay: speedLimitDisplay,
             distanceUnit: DistanceUnit.kilometres,
             locationController: location,
+            navigating: true,
           ),
         ),
       ),
@@ -324,6 +331,117 @@ void main() {
       expect(logs, isEmpty);
     }
   });
+
+  testWidgets(
+    'active Where To navigation checkpoints on background and finishes later',
+    (tester) async {
+      final platform = _RecordingLocationPlatform(
+        granted: DeviceLocationPermission.always,
+      );
+      addTearDown(platform.closeStreams);
+      final location = _RecordingLocationController(
+        DeviceLocationSource(platform),
+        (_) async {},
+      );
+      addTearDown(location.dispose);
+      final archive = InMemoryCompletedRideStore();
+      var navigating = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) => HomeMapBackdrop(
+              mapStyleMode: mapStyleMode,
+              speedLimitDisplay: speedLimitDisplay,
+              distanceUnit: DistanceUnit.kilometres,
+              locationController: location,
+              completedRideStore: archive,
+              navigating: navigating,
+              onRouteChanged: (route) =>
+                  setState(() => navigating = route != null),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final map = tester.widget<RideMapFeature>(
+        find.byKey(const Key('home-map')),
+      );
+      map.onRouteChanged!(
+        ImportedRoute(
+          id: 'checkpoint-route',
+          name: 'Checkpoint route',
+          importedAt: DateTime.utc(2026, 8, 31),
+          sourceFileName: 'where-to.gpx',
+          paths: const [
+            RoutePath(
+              kind: RoutePathKind.route,
+              points: [
+                GeoPoint(latitude: 51.4627, longitude: -2.5084),
+                GeoPoint(latitude: 51.4500, longitude: -2.4800),
+              ],
+            ),
+          ],
+          waypoints: const [],
+        ),
+      );
+      await tester.pump();
+
+      final start = DateTime.utc(2026, 8, 31, 20);
+      void emit(double latitude, double longitude, int seconds) {
+        platform.emit(
+          LocationSample(
+            position: rider_domain.GeoPoint(
+              latitude: latitude,
+              longitude: longitude,
+            ),
+            recordedAt: start.add(Duration(seconds: seconds)),
+            accuracyMeters: 4,
+            speedMetersPerSecond: 10,
+            headingDegrees: 120,
+          ),
+        );
+      }
+
+      emit(51.4627, -2.5084, 0);
+      await tester.pump();
+      emit(51.4617, -2.5064, 10);
+      await tester.pump();
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      var stored = await archive.list();
+      expect(stored, hasLength(1));
+      final rideId = stored.single.rideId;
+      expect(stored.single.traveledRoute?.paths.single.points, hasLength(2));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(location.restarts, 1);
+      emit(51.4607, -2.5044, 20);
+      await tester.pump();
+      expect(
+        tester
+            .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+            .navigationPosition
+            ?.value
+            ?.point
+            .latitude,
+        51.4607,
+        reason: 'the resumed sampler must deliver the rest of the ride',
+      );
+      tester
+          .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+          .onRouteChanged!(null);
+      await tester.pump();
+
+      stored = await archive.list();
+      expect(stored, hasLength(1), reason: 'the final save replaces its draft');
+      expect(stored.single.rideId, rideId);
+      expect(stored.single.traveledRoute?.paths.single.points, hasLength(3));
+    },
+  );
 
   testWidgets('diagnostics enabled mid-navigation attach to that navigation', (
     tester,
@@ -678,7 +796,7 @@ void main() {
   // recovery control was hidden on `sharing`, which says only that sampling
   // was requested, and nothing restarted the sampler after a background trip.
   group('free roam can be found again without restarting the app', () {
-    testWidgets('resuming from the background restarts the sampler', (
+    testWidgets('resuming idle home refreshes one fix without a ride stream', (
       tester,
     ) async {
       final platform = _RecordingLocationPlatform(
@@ -697,6 +815,7 @@ void main() {
       await pump(tester, location: location);
       await tester.pumpAndSettle();
       expect(location.restarts, 0);
+      expect(location.refreshes, 1);
 
       // Through the binding, so forgetting `addObserver` fails here too.
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -704,20 +823,13 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
 
-      expect(
-        location.restarts,
-        1,
-        reason:
-            'free roam had no lifecycle observer at all, which is why '
-            'only quitting the app recovered a lost position',
-      );
+      expect(location.restarts, 0);
+      expect(location.refreshes, 2);
     });
 
     testWidgets(
-      'a sampler that has produced no fix still offers the way back',
+      'idle home obtains a fix without starting the background sampler',
       (tester) async {
-        // The precise reported state: sharing is on, so the old rule hid the
-        // control, but there is no rider on the map and search will not start.
         final platform = _RecordingLocationPlatform(
           granted: DeviceLocationPermission.always,
         );
@@ -730,12 +842,14 @@ void main() {
         await pump(tester, location: location);
         await tester.pumpAndSettle();
 
-        expect(location.sharing, isTrue, reason: 'the sampler is running');
-        expect(find.byKey(const Key('home-show-my-location')), findsOneWidget);
+        expect(location.sharing, isFalse);
+        expect(location.latestSample, isNotNull);
+        expect(platform.streamSubscriptions, 0);
+        expect(find.byKey(const Key('home-show-my-location')), findsNothing);
       },
     );
 
-    testWidgets('a rider who is on the map is not nagged to be found', (
+    testWidgets('an authorised rider is restored onto the map on launch', (
       tester,
     ) async {
       final platform = _RecordingLocationPlatform(
@@ -765,12 +879,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('home-show-my-location')), findsOneWidget);
-
-      position.value = const GeoPoint(latitude: 51.46, longitude: -2.59);
-      await tester.pumpAndSettle();
-
+      expect(position.value?.latitude, 51.46);
+      expect(position.value?.longitude, -2.59);
       expect(find.byKey(const Key('home-show-my-location')), findsNothing);
+      expect(platform.streamSubscriptions, 0);
     });
   });
 }
@@ -823,9 +935,13 @@ class _RecordingLocationController extends ForegroundLocationController {
   _RecordingLocationController(super.source, super.onSample);
 
   int restarts = 0;
+  int refreshes = 0;
 
   @override
   Future<void> restartAfterForegroundResume() async => restarts += 1;
+
+  @override
+  Future<void> refreshIfAuthorized() async => refreshes += 1;
 }
 
 /// Counts prompts. The test is about *when* a prompt happens, so the count is
@@ -835,6 +951,13 @@ class _RecordingLocationPlatform implements DeviceLocationPlatform {
 
   final DeviceLocationPermission granted;
   int permissionRequests = 0;
+  int currentPositionRequests = 0;
+
+  static final current = LocationSample(
+    position: const rider_domain.GeoPoint(latitude: 51.46, longitude: -2.59),
+    recordedAt: DateTime.utc(2026, 9, 5, 9),
+    accuracyMeters: 5,
+  );
 
   @override
   Future<bool> isServiceEnabled() async => true;
@@ -852,6 +975,15 @@ class _RecordingLocationPlatform implements DeviceLocationPlatform {
   Future<DeviceLocationPermission> requestBackgroundPermission() async {
     permissionRequests += 1;
     return granted;
+  }
+
+  @override
+  Future<LocationSample?> lastKnownPosition() async => null;
+
+  @override
+  Future<LocationSample> currentPosition() async {
+    currentPositionRequests += 1;
+    return current;
   }
 
   /// Counts how many times a native stream was created. A restart is a new

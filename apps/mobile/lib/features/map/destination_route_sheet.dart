@@ -171,7 +171,7 @@ class _DestinationRouteSheetState extends State<DestinationRouteSheet> {
             TextField(
               key: const Key('destination-field'),
               controller: _destinationController,
-              autofocus: true,
+              autofocus: widget.initialRequest == null,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _submit(),
               decoration: InputDecoration(

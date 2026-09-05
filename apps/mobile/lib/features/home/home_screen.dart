@@ -40,6 +40,7 @@ import '../../services/gpx_import_source.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
 import '../map/ride_map_feature.dart' show HostMapChrome, rideMapToolbarHeight;
+import '../map/destination_route_sheet.dart';
 import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
@@ -105,6 +106,7 @@ class HomeScreen extends StatefulWidget {
     this.openJoinGroup = false,
     this.onJoinGroupOpened,
     this.enableNativeServices = true,
+    this.destinationPlanner,
   });
 
   final RideController controller;
@@ -146,6 +148,9 @@ class HomeScreen extends StatefulWidget {
   /// down rather than waiting on a platform map that will never load.
   final bool enableNativeServices;
 
+  @visibleForTesting
+  final DestinationRoutePlanner? destinationPlanner;
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -184,6 +189,7 @@ class _HomeScreenState extends State<HomeScreen> {
       onStateRequested: () async => _publishHomeCarPlayState(),
     );
     _position.addListener(_publishHomeCarPlayState);
+    _position.addListener(_observeAutomaticUnits);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _publishHomeCarPlayState();
     });
@@ -230,11 +236,23 @@ class _HomeScreenState extends State<HomeScreen> {
   /// be routed from here (#431).
   final _position = ValueNotifier<GeoPoint?>(null);
 
+  void _observeAutomaticUnits() {
+    final position = _position.value;
+    if (position == null) return;
+    unawaited(
+      widget.distanceUnits.observeRoadPosition(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      ),
+    );
+  }
+
   @override
   void dispose() {
     // This screen had nothing to dispose until #431 gave it a notifier it shares
     // with the map and a client it lends to the geocoder.
     _position.removeListener(_publishHomeCarPlayState);
+    _position.removeListener(_observeAutomaticUnits);
     unawaited(_carPlayBridge.dispose());
     _position.dispose();
     _routingClient.close();
@@ -280,6 +298,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _routingClient = http.Client();
 
   late final DestinationRoutePlanner _destinationPlanner = () {
+    if (widget.destinationPlanner case final planner?) return planner;
     final configuration = RoutingConfiguration.fromEnvironment();
     return DestinationRoutePlanner(
       searchService: NominatimDestinationSearchService(
@@ -777,7 +796,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 key: const Key('start-ride-simulator'),
                 leading: const Icon(Icons.science_outlined),
                 title: const Text('Try a simulated ride'),
-                subtitle: const Text('Never shares your location'),
+                subtitle: const Text(
+                  'France: Argentat to Saint-Privat · never shares your location',
+                ),
                 enabled:
                     !widget.controller.busy &&
                     widget.onRetryRestoration == null,
@@ -910,27 +931,33 @@ class _HomeScreenState extends State<HomeScreen> {
   /// once there is a route to bring along, which keeps the #546 ordering:
   /// the route exists before the ride that carries it.
   Future<void> _navigateTo(DestinationChoice choice) async {
+    final request = await DestinationRouteSheet.show(
+      context,
+      initialRequest: DestinationPlanRequest(query: choice.label),
+    );
+    if (request == null || !mounted) return;
     final origin = _position.value;
-    if (origin == null) return;
+    final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
+    if (origin == null && !hasStartQuery) return;
     setState(() => _planningDestination = true);
     try {
       final plan = await _destinationPlanner.planForReview(
         origin: origin,
-        // The label the rider picked, not its coordinates: the service caches by
-        // query so this is the same lookup again, and it keeps the route named
-        // after the place rather than a pair of numbers.
-        query: choice.label,
-        selectedDestination: DestinationMatch(
-          label: choice.label,
-          point: choice.point,
-        ),
+        originQuery: request.startQuery,
+        stopQueries: request.stopQueries,
+        query: request.query,
+        selectedDestination: request.query.trim() == choice.label
+            ? DestinationMatch(label: choice.label, point: choice.point)
+            : null,
         distanceUnit: widget.distanceUnits.value,
+        preferences: request.preferences,
       );
       if (!mounted) return;
       setState(() {
         _freeRoamRoute = PendingInAppRoute(
           route: plan.route,
           reviewNotes: plan.warnings,
+          handoffTarget: request.handoffTarget,
         );
         _freeRoamRouteToken = Object();
       });

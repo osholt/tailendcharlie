@@ -418,6 +418,14 @@ These features must not change baseline route or ride behavior on older iOS.
 
 ## Android Auto compliance baseline
 
+> **Distribution status (5 September 2026): temporarily disabled.** The phone
+> and Play release manifest contains no Android Auto permissions, discovery
+> metadata, car service, Navigation category or Assistant navigation intent.
+> The implementation remains compiled and tested in the repository, and its
+> declarations are preserved in the inactive `src/androidAuto` source set for
+> a future explicitly approved build variant. CI inspects the merged release
+> manifest before every Play upload.
+
 The Android implementation has advanced beyond the old text companion: it now
 declares the Navigation category, owns the `NavigationManager` lifecycle,
 publishes typed manoeuvres, handles the public navigation-intent and auto-drive

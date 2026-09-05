@@ -177,6 +177,7 @@ class RouteManeuver {
     this.ref,
     this.exitNumber,
     this.drivingSide,
+    this.trafficSideConfirmed = false,
     this.bearingBeforeDegrees,
     this.bearingAfterDegrees,
     this.lanes = const [],
@@ -201,6 +202,14 @@ class RouteManeuver {
   /// decides which way round a roundabout ring is drawn; it must never be used
   /// to decide which way the rider turns.
   final String? drivingSide;
+
+  /// True when [drivingSide] was resolved from the manoeuvre's country rather
+  /// than copied from an unverified per-step routing-engine claim.
+  ///
+  /// Old saved routes default to false. That preserves the UK safety fallback
+  /// for the captured OSRM response that incorrectly said `right`, while newly
+  /// planned French routes can safely draw anticlockwise circulation.
+  final bool trafficSideConfirmed;
 
   /// Heading in degrees clockwise from true north immediately before and after
   /// the manoeuvre, as reported by the routing engine.
@@ -241,6 +250,7 @@ class RouteManeuver {
     if (ref != null) 'ref': ref,
     if (exitNumber != null) 'exitNumber': exitNumber,
     if (drivingSide != null) 'drivingSide': drivingSide,
+    if (trafficSideConfirmed) 'trafficSideConfirmed': true,
     if (bearingBeforeDegrees != null)
       'bearingBeforeDegrees': bearingBeforeDegrees,
     if (bearingAfterDegrees != null) 'bearingAfterDegrees': bearingAfterDegrees,
@@ -259,6 +269,7 @@ class RouteManeuver {
     ref: _optionalString(json['ref']),
     exitNumber: (json['exitNumber'] as num?)?.toInt(),
     drivingSide: _optionalString(json['drivingSide']),
+    trafficSideConfirmed: json['trafficSideConfirmed'] == true,
     bearingBeforeDegrees: _optionalBearing(json['bearingBeforeDegrees']),
     bearingAfterDegrees: _optionalBearing(json['bearingAfterDegrees']),
     lanes:

@@ -427,10 +427,10 @@ void main() {
     });
 
     test(
-      'the demo route start point has no mapped limit within tolerance',
+      'an untagged car-park access has no mapped limit within tolerance',
       () async {
-        // Captured at the bundled demo route's first track point, the King's Oak
-        // Academy car park in Kingswood. The aisle underneath is untagged and the
+        // Captured at the former UK demo route's King's Oak Academy car park.
+        // The aisle underneath is untagged and the
         // nearest road, Brook Road, is 42.7 m away and untagged too, so no
         // tolerance can honestly produce a number here.
         final harness = build(
@@ -522,26 +522,35 @@ void main() {
       expect(result.limit, isNull);
     });
 
-    test('reports poor GPS and non-UK positions before any request', () async {
-      final harness = build(trace: traceBody());
+    test(
+      'reports poor GPS and unsupported positions before any request',
+      () async {
+        final harness = build(trace: traceBody());
 
-      final poorAccuracy = await harness.provider.lookup(
-        current: location(51.5, accuracyMeters: 45),
-      );
-      final movingPoorAccuracy = await harness.provider.lookup(
-        previous: location(51.5000),
-        current: location(51.5004, accuracyMeters: 70),
-      );
-      final outsideUk = await harness.provider.lookup(
-        current: location(48.8566, longitude: 2.3522),
-      );
+        final poorAccuracy = await harness.provider.lookup(
+          current: location(51.5, accuracyMeters: 45),
+        );
+        final movingPoorAccuracy = await harness.provider.lookup(
+          previous: location(51.5000),
+          current: location(51.5004, accuracyMeters: 70),
+        );
+        final outsideSupportedBounds = await harness.provider.lookup(
+          current: location(52.52, longitude: 13.405),
+        );
 
-      expect(poorAccuracy.outcome, SpeedLimitLookupOutcome.poorAccuracy);
-      expect(movingPoorAccuracy.outcome, SpeedLimitLookupOutcome.poorAccuracy);
-      expect(outsideUk.outcome, SpeedLimitLookupOutcome.unsupportedRegion);
-      expect(harness.traceRequests, isEmpty);
-      expect(harness.locateRequests, isEmpty);
-    });
+        expect(poorAccuracy.outcome, SpeedLimitLookupOutcome.poorAccuracy);
+        expect(
+          movingPoorAccuracy.outcome,
+          SpeedLimitLookupOutcome.poorAccuracy,
+        );
+        expect(
+          outsideSupportedBounds.outcome,
+          SpeedLimitLookupOutcome.unsupportedRegion,
+        );
+        expect(harness.traceRequests, isEmpty);
+        expect(harness.locateRequests, isEmpty);
+      },
+    );
 
     test('accepts the accuracy a phone reports at a standstill', () async {
       // 40 m is the ceiling: common between buildings, and the snap distance
@@ -635,7 +644,7 @@ void main() {
     );
 
     test(
-      'rejects a matched road whose Valhalla admin is outside the UK',
+      'rejects a matched road whose Valhalla admin is outside supported countries',
       () async {
         final harness = build(trace: traceBody(countryCode: 'IE'));
 
@@ -679,6 +688,25 @@ void main() {
       expect(result.outcome, SpeedLimitLookupOutcome.known);
       expect(harness.locateRequests, hasLength(1));
     });
+  });
+
+  test('keeps French posted limits in kilometres per hour', () async {
+    for (final kilometresPerHour in const [50, 80, 110, 130]) {
+      final harness = build(
+        trace: traceBody(speedLimitKph: kilometresPerHour, countryCode: 'FR'),
+      );
+
+      final result = await harness.provider.lookup(
+        previous: location(48.8560, longitude: 2.3522),
+        current: location(48.8564, longitude: 2.3522),
+      );
+
+      expect(result.outcome, SpeedLimitLookupOutcome.known);
+      expect(result.limit?.kilometresPerHour, kilometresPerHour);
+      expect(result.limit?.milesPerHour, isNull);
+      expect(result.limit?.countryCode, 'FR');
+      expect(result.limit?.speedUnitLabel, 'km/h');
+    }
   });
 
   test('prefetch resolves several roads in one trace request', () async {

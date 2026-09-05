@@ -85,6 +85,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Create a group ride'), findsOneWidget);
     expect(find.text('Try a simulated ride'), findsOneWidget);
+    expect(
+      find.textContaining('France: Argentat to Saint-Privat'),
+      findsOneWidget,
+    );
 
     controller.dispose();
   });

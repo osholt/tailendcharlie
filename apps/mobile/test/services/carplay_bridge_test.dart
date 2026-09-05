@@ -161,6 +161,7 @@ void main() {
       },
       'tecRequest': null,
       'rideStart': null,
+      'enforcementReportsAllowed': true,
       'speed': null,
       'basemap': null,
       'updatedAtMillis': DateTime.utc(2026, 7, 23, 12).millisecondsSinceEpoch,
@@ -187,16 +188,20 @@ void main() {
       localSpeedIsAgeing: true,
       speedLimitEnabled: true,
       speedLimitStatus: 'known',
-      speedLimitMilesPerHour: 30,
+      speedLimitValue: 50,
+      speedLimitUnit: 'km/h',
+      enforcementReportsAllowed: false,
     );
 
     expect((received!.arguments as Map)['speed'], {
       'metresPerSecond': 10.0,
       'isAgeing': true,
       'limitStatus': 'known',
-      'limitMilesPerHour': 30,
+      'limitValue': 50,
+      'limitUnit': 'km/h',
       'limitUnlimited': false,
     });
+    expect((received!.arguments as Map)['enforcementReportsAllowed'], isFalse);
   });
 
   test('projects the phone home map and saved rider identity', () async {

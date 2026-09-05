@@ -45,6 +45,7 @@ abstract interface class NeuralSpeechBackend {
   Future<String> generate({
     required String phrase,
     required NaturalNavigationVoice voice,
+    bool allowCachedAudio = true,
   });
 
   Future<void> abort();
@@ -94,6 +95,7 @@ class SherpaOnnxNeuralSpeechBackend implements NeuralSpeechBackend {
   Future<String> generate({
     required String phrase,
     required NaturalNavigationVoice voice,
+    bool allowCachedAudio = true,
   }) async {
     await prepare();
     final cache = _cacheDirectory!;
@@ -106,10 +108,11 @@ class SherpaOnnxNeuralSpeechBackend implements NeuralSpeechBackend {
         )
         .toString();
     final output = File(path.join(cache.path, '$key.wav'));
-    if (output.existsSync() && output.lengthSync() > 44) {
+    if (allowCachedAudio && output.existsSync() && output.lengthSync() > 44) {
       await output.setLastModified(DateTime.now());
       return output.path;
     }
+    if (output.existsSync()) await output.delete();
     await _worker!.generate(
       phrase: phrase,
       speakerId: voice.speakerId,
@@ -170,24 +173,63 @@ class NeuralSpokenGuidanceEngine
   NeuralSpokenGuidanceEngine({
     required this.backend,
     required this.voiceProvider,
+    // `player` is a public injection point; naming this `this._player` would
+    // make the named parameter private outside this library.
     AudioPlayer? player,
+    Future<void> Function()? audioConfigurator,
     this.disposePlayerOnStop = false,
     this._audioFocus,
     this.onLifecycle,
-  }) : _player = player ?? AudioPlayer();
+    // ignore: prefer_initializing_formals
+  }) : _player = player,
+       _audioConfigurator = audioConfigurator ?? _configureAudio;
 
   final NeuralSpeechBackend backend;
   final NaturalNavigationVoice Function() voiceProvider;
-  final AudioPlayer _player;
+  AudioPlayer? _player;
+  final Future<void> Function() _audioConfigurator;
   final bool disposePlayerOnStop;
   final SpokenGuidanceAudioFocus? _audioFocus;
   final SpokenGuidanceLifecycleObserver? onLifecycle;
   int _attemptGeneration = 0;
   String? _activePhrase;
   Completer<void>? _playbackCancelled;
+  int _preparationGeneration = 0;
+  Future<void>? _preparing;
+  bool _prepared = false;
+
+  static const _warmUpPhrase = 'Ready.';
 
   @override
-  Future<void> prepare() => backend.prepare();
+  Future<void> prepare() async {
+    if (_prepared) return;
+    final generation = _preparationGeneration;
+    final pending = _preparing ??= _prepareAndPrime();
+    try {
+      await pending;
+      if (generation != _preparationGeneration) {
+        throw const _NeuralSpeechSuperseded();
+      }
+      _prepared = true;
+    } finally {
+      if (identical(_preparing, pending)) _preparing = null;
+    }
+  }
+
+  Future<void> _prepareAndPrime() async {
+    await _audioConfigurator();
+    await backend.prepare();
+    // Model loading alone does not exercise the inference path. Generate one
+    // short, silent-to-the-user phrase during ride warm-up so the first real
+    // instruction does not pay the runtime's one-off startup cost.
+    await backend.generate(
+      phrase: _warmUpPhrase,
+      voice: voiceProvider(),
+      // A cached WAV from an earlier ride proves only that inference was warm
+      // then. This run must reach the freshly loaded model.
+      allowCachedAudio: false,
+    );
+  }
 
   @override
   Future<void> configure() => prepare();
@@ -213,14 +255,15 @@ class NeuralSpokenGuidanceEngine
         if (generation != _attemptGeneration) {
           throw const _NeuralSpeechSuperseded();
         }
-        await _player.setAudioContext(
+        final player = _player ??= AudioPlayer();
+        await player.setAudioContext(
           _audioContext(
             audioClass: audioClass,
             platformFocusManaged: _audioFocus?.managesPlatformFocus == true,
           ),
         );
-        await _player.setReleaseMode(ReleaseMode.stop);
-        final finished = _player.onPlayerComplete.first;
+        await player.setReleaseMode(ReleaseMode.stop);
+        final finished = player.onPlayerComplete.first;
         final cancelled = Completer<void>();
         _playbackCancelled = cancelled;
         _activePhrase = phrase;
@@ -234,7 +277,7 @@ class NeuralSpokenGuidanceEngine
                 SpokenGuidanceLifecycleEvent.playbackCancelled,
               );
               if (!cancelled.isCompleted) cancelled.complete();
-              await _player.stop();
+              await player.stop();
             },
           );
           if (!acquired) {
@@ -243,7 +286,7 @@ class NeuralSpokenGuidanceEngine
           }
           _notifyLifecycle(phrase, SpokenGuidanceLifecycleEvent.focusAcquired);
         }
-        await _player.play(DeviceFileSource(file));
+        await player.play(DeviceFileSource(file));
         if (!started.isCompleted) started.complete();
         await Future.any([finished, cancelled.future]);
         if (!cancelled.isCompleted) {
@@ -279,13 +322,16 @@ class NeuralSpokenGuidanceEngine
     _attemptGeneration += 1;
     final cancelled = _playbackCancelled;
     if (cancelled != null && !cancelled.isCompleted) cancelled.complete();
-    await _player.stop();
+    await _player?.stop();
     await _audioFocus?.abandon();
   }
 
   @override
   Future<void> stop() async {
     _attemptGeneration += 1;
+    _preparationGeneration += 1;
+    _prepared = false;
+    _preparing = null;
     final cancelled = _playbackCancelled;
     if (cancelled != null && !cancelled.isCompleted) {
       final activePhrase = _activePhrase;
@@ -297,10 +343,14 @@ class NeuralSpokenGuidanceEngine
       }
       cancelled.complete();
     }
-    if (disposePlayerOnStop) {
-      await _player.dispose();
-    } else {
-      await _player.stop();
+    final player = _player;
+    if (player != null) {
+      if (disposePlayerOnStop) {
+        await player.dispose();
+        _player = null;
+      } else {
+        await player.stop();
+      }
     }
     await _audioFocus?.abandon();
     await backend.abort();
@@ -337,11 +387,18 @@ class NeuralSpokenGuidanceEngine
       },
     ),
   );
+
+  static Future<void> _configureAudio() => AudioPlayer.global.setAudioContext(
+    _audioContext(
+      audioClass: SpokenAudioClass.navigation,
+      platformFocusManaged: false,
+    ),
+  );
 }
 
-/// Gives a warmed neural voice a strict opportunity to start, then preserves
-/// the existing OS speech path. A slow model can improve a prompt; it can never
-/// delay or silence one.
+/// Uses the OS speech path while the neural model is unavailable or genuinely
+/// fails. Once model warm-up succeeds, generation time alone never changes the
+/// rider's selected voice.
 class FailSafeNeuralSpokenGuidanceEngine
     implements SpokenGuidanceEngine, WarmableSpokenGuidanceEngine {
   FailSafeNeuralSpokenGuidanceEngine({
@@ -365,7 +422,9 @@ class FailSafeNeuralSpokenGuidanceEngine
     await fallback.configure();
     // Warming is intentionally not awaited. The first urgent prompt still has
     // an immediately configured OS voice while the model loads in parallel.
-    unawaited(neural.prepare().catchError((Object _) {}));
+    // It is nevertheless tracked, so that prompt receives the longer deadline
+    // reserved for a model whose one-off startup work is already under way.
+    unawaited(warmUp().catchError((Object _) {}));
   }
 
   @override
@@ -386,9 +445,18 @@ class FailSafeNeuralSpokenGuidanceEngine
   }) async {
     final attempt = neural.beginSpeak(phrase, audioClass: audioClass);
     try {
-      await attempt.started.timeout(
-        _warmed || _warming != null ? warmedStartDeadline : startDeadline,
-      );
+      if (_warmed) {
+        // Kokoro generates a complete WAV before playback. Long road names and
+        // following instructions routinely take more than the old 2.5 second
+        // deadline on a phone, even though generation is healthy. Timing that
+        // full render turned the rider's choice into an intermittent system
+        // voice and left the still-running worker blocking the next prompt.
+        await attempt.started;
+      } else {
+        await attempt.started.timeout(
+          _warming != null ? warmedStartDeadline : startDeadline,
+        );
+      }
     } on Object {
       await neural.cancelCurrentAttempt();
       // This prompt must not be late, but one slow generation must not disable

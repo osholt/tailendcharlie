@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/distance_unit_controller.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/services/road_jurisdiction.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -45,4 +46,36 @@ void main() {
     expect(reloaded.value, DistanceUnit.miles);
     expect(reloaded.followsLocale, isTrue);
   });
+
+  test(
+    'a UK phone switches to metric automatically on a French road',
+    () async {
+      final catalogue = RoadJurisdictionCatalogue.parse('''
+      {"type":"FeatureCollection","features":[{
+        "type":"Feature",
+        "properties":{"countryCode":"FR","name":"France","drivingSide":"right","distanceUnit":"kilometres"},
+        "geometry":{"type":"Polygon","coordinates":[[[0,40],[10,40],[10,52],[0,52],[0,40]]]}
+      }]}
+    ''');
+      final controller = DistanceUnitController.forLocale(
+        const Locale('en', 'GB'),
+        readRoadJurisdictions: () async => catalogue,
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.value, DistanceUnit.miles);
+      await controller.observeRoadPosition(
+        latitude: 48.8566,
+        longitude: 2.3522,
+      );
+
+      expect(controller.value, DistanceUnit.kilometres);
+      expect(controller.roadJurisdiction?.countryCode, 'FR');
+
+      await controller.setUnit(DistanceUnit.miles);
+      expect(controller.value, DistanceUnit.miles);
+      await controller.useAutomaticDefault();
+      expect(controller.value, DistanceUnit.kilometres);
+    },
+  );
 }

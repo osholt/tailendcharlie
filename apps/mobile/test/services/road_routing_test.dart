@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/services/navigation_guidance.dart';
+import 'package:ride_relay/services/road_jurisdiction.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_geometry_enricher.dart';
 
@@ -106,6 +108,31 @@ void main() {
     expect(result.maneuvers.last.requiresSecondBikeDrop, isFalse);
   });
 
+  test('OSRM keeps circular shaping controls silent in one request', () async {
+    Uri? requested;
+    final service = OsrmRoadRoutingService(
+      client: MockClient((request) async {
+        requested = request.url;
+        return http.Response(_osrmResponse(), 200);
+      }),
+      baseUrl: Uri.parse('https://routing.example.test'),
+    );
+
+    await service.routeThroughShapingPoints(
+      const [
+        GeoPoint(latitude: 51.46, longitude: -2.51),
+        GeoPoint(latitude: 51.55, longitude: -2.60),
+        GeoPoint(latitude: 51.60, longitude: -2.70),
+        GeoPoint(latitude: 51.65, longitude: -2.65),
+        GeoPoint(latitude: 51.55, longitude: -2.55),
+        GeoPoint(latitude: 51.46, longitude: -2.51),
+      ],
+      shapingPointIndexes: const {1, 2, 4},
+    );
+
+    expect(requested!.queryParameters['waypoints'], '0;3;5');
+  });
+
   test('OSRM constrains only the moving reroute origin bearing', () async {
     final client = MockClient((request) async {
       // OSRM requires one bearings element per coordinate; empty elements keep
@@ -123,6 +150,67 @@ void main() {
       GeoPoint(latitude: 53.01, longitude: -1.01),
       GeoPoint(latitude: 53.02, longitude: -1.02),
     ], originBearingDegrees: 90.6);
+  });
+
+  test('French roundabouts are confirmed as right-hand traffic', () async {
+    final client = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'code': 'Ok',
+          'routes': [
+            {
+              'distance': 100,
+              'duration': 30,
+              'geometry': {
+                'coordinates': [
+                  [2.351, 48.856],
+                  [2.353, 48.857],
+                ],
+              },
+              'legs': [
+                {
+                  'steps': [
+                    {
+                      'driving_side': 'left',
+                      'maneuver': {
+                        'type': 'roundabout',
+                        'exit': 3,
+                        'location': [2.3522, 48.8566],
+                        'bearing_before': 0,
+                        'bearing_after': 90,
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        200,
+      ),
+    );
+    final jurisdictions = RoadJurisdictionCatalogue.parse('''
+{"type":"FeatureCollection","features":[{
+  "type":"Feature",
+  "properties":{"countryCode":"FR","name":"France","drivingSide":"right","distanceUnit":"kilometres"},
+  "geometry":{"type":"Polygon","coordinates":[[[1,41],[10,41],[10,52],[1,52],[1,41]]]}
+}]}
+''');
+    final service = OsrmRoadRoutingService(
+      client: client,
+      baseUrl: Uri.parse('https://routing.example.test'),
+      readMiniRoundabouts: () async => MappedMiniRoundaboutCatalogue.empty,
+      readRoadJurisdictions: () async => jurisdictions,
+    );
+
+    final result = await service.routeThrough(const [
+      GeoPoint(latitude: 48.856, longitude: 2.351),
+      GeoPoint(latitude: 48.857, longitude: 2.353),
+    ]);
+
+    expect(result.maneuvers.single.drivingSide, 'right');
+    expect(result.maneuvers.single.trafficSideConfirmed, isTrue);
+    expect(collapseManeuvers(result.maneuvers).single.leftHandTraffic, isFalse);
   });
 
   test('roundabout steps keep their bearings, exit count and lanes', () async {
@@ -668,6 +756,41 @@ void main() {
       // for it. What changed in #303 is that a response which *does* carry them
       // no longer has them discarded — see the group below.
       expect(result.maneuvers, isEmpty);
+    });
+
+    test('Valhalla uses non-reversing nearby-road shaping controls', () async {
+      List<dynamic>? requestedLocations;
+      final service = ValhallaMotorcycleRoutingService(
+        client: MockClient((request) async {
+          final json = jsonDecode(request.url.queryParameters['json']!) as Map;
+          requestedLocations = json['locations'] as List;
+          return http.Response(_valhallaResponse(), 200);
+        }),
+        routeUrl: Uri.parse('https://valhalla.example.test/route'),
+      );
+
+      await service.routeThroughShapingPoints(
+        const [
+          GeoPoint(latitude: 51.46, longitude: -2.51),
+          GeoPoint(latitude: 51.58, longitude: -2.90),
+          GeoPoint(latitude: 51.70, longitude: -2.70),
+          GeoPoint(latitude: 51.46, longitude: -2.51),
+        ],
+        shapingPointIndexes: const {1, 2},
+        shapingPointSearchRadiusMeters: 1287.4,
+      );
+
+      expect(requestedLocations!.map((location) => location['type']), [
+        'break',
+        'through',
+        'through',
+        'break',
+      ]);
+      expect(requestedLocations![0].containsKey('radius'), isFalse);
+      expect(requestedLocations![1]['radius'], 1287);
+      expect(requestedLocations![1]['rank_candidates'], isFalse);
+      expect(requestedLocations![2]['radius'], 1287);
+      expect(requestedLocations![3].containsKey('radius'), isFalse);
     });
 
     test(

@@ -1,30 +1,24 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/services/demo_route_loader.dart';
-import 'package:ride_relay/services/navigation_guidance.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('bundled demo follows roads from Kings Oak to Cross Hands', () async {
+  test('bundled demo follows the supplied French Day 3 route', () async {
     final route = await const BundledDemoRouteLoader().load();
 
-    expect(route.name, "King's Oak Academy to Cross Hands Hotel");
+    expect(route.name, 'Argentat to Saint-Privat — France');
     expect(route.pathPointCount, greaterThan(450));
     expect(route.waypoints, hasLength(3));
-    expect(route.waypoints.first.name, "King's Oak Academy car park");
-    expect(route.waypoints.last.name, 'Cross Hands Hotel car park');
-    expect(route.maneuvers, hasLength(5));
-    final instructions = collapseManeuvers(route.maneuvers);
-    expect(instructions, hasLength(4));
-    expect(instructions.last.direction, ManeuverDirection.straight);
-    expect(instructions.last.text, '2nd exit, straight on');
-    expect(instructions.last.exitNumber, 2);
+    expect(route.waypoints.first.name, 'Pont Henri IV, Argentat');
+    expect(route.waypoints.last.name, 'Saint-Privat');
+    expect(route.maneuvers, hasLength(4));
 
     final points = route.paths.single.points;
-    expect(points.first.latitude, closeTo(51.462674, 0.00001));
-    expect(points.first.longitude, closeTo(-2.484519, 0.00001));
-    expect(points.last.latitude, closeTo(51.528729, 0.00001));
-    expect(points.last.longitude, closeTo(-2.342245, 0.00001));
+    expect(points.first.latitude, closeTo(45.09125, 0.00001));
+    expect(points.first.longitude, closeTo(1.94011, 0.00001));
+    expect(points.last.latitude, closeTo(45.13701, 0.00001));
+    expect(points.last.longitude, closeTo(2.10279, 0.00001));
   });
 
   test(
@@ -32,14 +26,24 @@ void main() {
     () async {
       final maneuvers = await const BundledDemoRouteLoader().loadManeuvers();
 
-      expect(maneuvers, hasLength(5));
-      expect(maneuvers.first.type, 'end of road');
+      expect(maneuvers, hasLength(4));
+      expect(maneuvers.first.type, 'turn');
       expect(
         maneuvers.map((maneuver) => maneuver.name),
-        contains('Gorse Lane'),
+        contains('Rue de Bellevue'),
       );
-      expect(maneuvers.map((maneuver) => maneuver.type), contains('rotary'));
-      expect(maneuvers.last.type, 'exit rotary');
+      expect(
+        maneuvers.map((maneuver) => maneuver.type),
+        contains('roundabout'),
+      );
+      expect(
+        maneuvers.every((maneuver) => maneuver.drivingSide == 'right'),
+        isTrue,
+      );
+      expect(
+        maneuvers.every((maneuver) => maneuver.trafficSideConfirmed),
+        isTrue,
+      );
     },
   );
 }

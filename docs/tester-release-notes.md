@@ -36,6 +36,210 @@ permissions by design.
 - ...
 ```
 
+## iOS build 88 / Android build 88 — 1.0.1 — 5 September 2026
+
+This build addresses the Android feedback reported after build 76 and removes
+Android Auto from the distributed Android app while that experience remains in
+development.
+
+### What to test
+
+1. On Android, leave the app open on the home map without starting a ride,
+   background it, and check battery use later. The app should obtain one current
+   position without keeping the ride-grade foreground location service or wake
+   lock active.
+2. Reopen the app after location access has already been granted. The home map
+   should restore the bike position automatically without needing **Show my
+   location** and without showing another permission prompt.
+3. Search for a destination, select it, enable **Avoid motorways**, and plan the
+   route. The resulting route should respect that preference.
+4. Open several selected routes on Android. If the native map view cannot load,
+   the route, rider, trails and alerts should reappear on the Flutter map after
+   eight seconds instead of leaving a black screen.
+5. Confirm Tail End Charlie is no longer offered in Android Auto for this
+   build. Normal phone navigation, group rides, ride recording and CarPlay are
+   unchanged.
+6. In France, compare the CarPlay group overview speed with the posted speed
+   sign. Both the live speed and limit should remain in km/h even if personal
+   distance units are set to miles.
+
+### Fixed
+
+- Removed Android Auto permissions, discovery metadata, services, navigation
+  intents and transitive Car App components from the Play bundle. The source
+  implementation and an inactive manifest remain in the repository for future
+  re-enablement.
+- Replaced continuous idle home-map location sampling with a cached-then-current
+  one-shot fix. Continuous background sampling now starts only with active
+  navigation and stops when navigation ends.
+- Restored the current bike position automatically for riders who have already
+  granted location access.
+- Restored route preferences and optional waypoints after selecting a search
+  result rather than immediately planning with defaults.
+- Added an automatic non-native map fallback for Android style, tile and layer
+  failures so a selected route never leaves an empty black ride map.
+- Kept CarPlay group-overview speed and speed-limit values in the road's posted
+  unit.
+- Android testers also receive the France support, natural-voice retry,
+  fine-grained continuous heat map and faster circular-route planning already
+  exercised in recent iOS builds.
+
+### Known limitations
+
+- Android Auto is deliberately unavailable in this tester build. Re-enabling it
+  will require an explicit future build variant and a separate compliance
+  release decision.
+- If both native map rendering and the remote vector style fail, route and rider
+  overlays remain usable but the fallback may not be able to draw road detail.
+- Google controls closed-track processing and review duration after upload; the
+  release bundle itself no longer advertises any car-app capability.
+
+## iOS build 85 — 1.0.1 — 1 September 2026
+
+This build refines the personal ride heat map after physical-device feedback.
+
+### What to test
+
+1. Open the home map with **Personal rides heatmap** enabled and inspect roads
+   at wide, normal and close street zooms.
+2. Coverage should remain a smooth purple/orange hue as you zoom. It should not
+   break into purple dots or switch to large square blocks.
+3. Repeatedly ridden sections should remain warmer than single-pass sections,
+   and the active route, bike and road labels should stay readable above it.
+
+### Fixed
+
+- Increased the private personal-coverage index from z17 to z19, reducing UK
+  and French cells from roughly 190 m to 45–50 m.
+- Replaced the close-zoom filled-cell layer with one continuously scaled
+  MapLibre heat layer, keeping samples blended through every zoom level.
+- Updated the fallback renderer to use overlapping ground-sized coverage
+  circles instead of fixed screen-space dots.
+
+### Known limitations
+
+- The personal heat map is derived only from completed travelled tracks stored
+  on this phone. Planned routes and the live position are never added.
+- The release has automated coverage, an iOS simulator build and visual checks
+  at three zoom levels; physical iPhone confirmation remains requested.
+
+## iOS build 84 — 1.0.1 — 31 August 2026
+
+This build makes the iOS ride map and recorded-ride history more dependable,
+including the group mini-map, natural guidance voice, personal heat map and
+free-roam recording.
+
+### What to test
+
+1. Start a five-rider simulated ride and watch the group mini-map as the bikes
+   spread out. Every bike should remain inside the frame with visible margin.
+2. Navigate through several spoken instructions with the natural voice enabled.
+   A slow first instruction may use the system voice for safety, but later
+   instructions must retry the natural voice rather than staying robotic.
+3. Open the Ride Library. Start and finish markers should remain small enough
+   that the route is clearly visible in every thumbnail.
+4. Start a free-roam **Where to?** navigation, background and reopen the app,
+   continue moving, then stop navigation. My rides should contain one complete
+   travelled track rather than losing it or keeping only the early section.
+5. View the personal rides heat map at the normal close home-map zoom. Covered
+   roads should form a continuous purple/orange hue rather than separate purple
+   dots.
+
+### Fixed
+
+- Corrected the iOS MapLibre zoom scale used by the group mini-map, preserving
+  its intended all-rider margin.
+- Natural speech now primes inference during warm-up and retries after a
+  transient missed deadline instead of permanently switching to the system
+  voice for the rest of the ride.
+- Ride Library endpoint markers now scale down with their 52 px preview rather
+  than covering most of the route.
+- Active free-roam navigation now saves an ordered background checkpoint and
+  replaces it with the complete track when navigation ends. Solo and both group
+  coordination modes retain their existing durable ride archives.
+- Personal ride heat-map coverage changes to contiguous cells at normal
+  street-level zoom, removing the dotted appearance.
+
+### Known limitations
+
+- The system voice remains the per-instruction safety fallback if the natural
+  engine cannot start before an instruction's deadline; the next instruction
+  now retries the natural voice.
+- Opening the free-roam map alone does not record location. Recording begins
+  when a **Where to?** route starts, preserving the app's explicit location and
+  privacy boundary.
+- The fixes have automated coverage and an iOS simulator build, but still need
+  confirmation on a tester's physical iPhone and CarPlay display.
+
+## iOS build 83 — 1.0.1 — 31 August 2026
+
+This build keeps the current rider visible in landscape while riding the
+French simulated route.
+
+### What to test
+
+1. Open **More → Try a simulated ride** and start **Argentat to Saint-Privat —
+   France**.
+2. Rotate the phone to landscape. The current rider should remain in the open
+   right third of the map, clear of the route, TEC and group panels on the
+   left.
+3. Open the same ride on CarPlay. The current rider should use the same right-
+   third framing and remain above the guidance card.
+
+### Fixed
+
+- Right-hand-traffic routes incorrectly mirrored the current rider into the
+  left third even though the app's status and action rail remains fixed on the
+  left.
+- Phone landscape and CarPlay now keep the rider in the open right third in
+  both left- and right-hand-traffic countries.
+
+### Known limitations
+
+- The framing has automated coverage at the reported 2556 × 1179 resolution
+  and has been compiled for the iOS simulator, but still needs confirmation on
+  the tester's physical CarPlay display.
+
+## iOS build 82 / Android build 82 — 1.0.1 — 31 August 2026
+
+This build prepares the app for the group trip to France and adds a French Ride
+Lab route taken from the supplied Day 3 GPX to Puy Mary.
+
+### What to test
+
+1. From the home map, open **More → Try a simulated ride**. Ride Lab should load
+   **Argentat to Saint-Privat — France**, a 17.9 km section of the D 980.
+2. On a UK-configured phone, start that simulation and confirm ride distances
+   switch automatically to kilometres.
+3. At the Saint-Privat roundabout, guidance should use right-hand traffic and
+   show the third exit without reversing the roundabout symbol.
+4. With mapped limits enabled, French limits and GPS speed should use km/h on
+   both the phone and CarPlay.
+5. Camera and police reports should not be offered on the French route. An
+   ordinary road hazard should remain reportable.
+
+### Fixed
+
+- Added offline road-country detection so automatic units follow the road
+  country rather than the phone's locale.
+- Added France to mapped speed-limit support, preserving mapped values in km/h.
+- Confirmed route manoeuvre traffic side from the offline country layer, so
+  French roundabouts use right-hand circulation.
+- Suppressed camera and police reporting and presentation in France while
+  retaining non-enforcement hazards.
+- Updated phone and CarPlay speed displays to keep the sign and rider speed in
+  the same road-country unit.
+- Replaced the generic UK Ride Lab route with a French excerpt of the supplied
+  Day 3 GPX, including a country-confirmed roundabout.
+
+### Known limitations
+
+- This has automated and simulator coverage but has not yet been ridden with
+  live GPS in France.
+- The configured live-traffic incident feed remains UK-only.
+- Plan routes and download their offline maps before departure; creating a new
+  road-snapped route and destination search still require connectivity.
+
 ## iOS build 78 / Android build 78 — 22 August 2026
 
 This build fixes Ride Library preview icons so previous rides show their

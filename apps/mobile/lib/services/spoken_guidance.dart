@@ -217,8 +217,9 @@ abstract interface class SpokenGuidanceEngine {
 }
 
 /// Which renderer actually delivered a prompt. This is deliberately about the
-/// output path, not the rider's preference: a natural voice can miss its safety
-/// deadline and legitimately use the system fail-safe for that one prompt.
+/// output path, not the rider's preference: a natural voice can still be
+/// unavailable during startup or fail, in which case the system voice preserves
+/// that one prompt.
 enum SpokenGuidanceOutput { natural, systemFallback }
 
 typedef SpokenGuidanceOutputObserver =

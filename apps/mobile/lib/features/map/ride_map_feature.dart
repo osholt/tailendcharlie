@@ -120,6 +120,37 @@ enum GroupMiniMapRenderer {
 
 enum _ImportedTrackChoice { cancel, followOriginal, generateNavigable }
 
+/// The first basemap road-geometry layer, used to keep heat colouring under
+/// the roads rather than washing out a dark navigation map.
+@visibleForTesting
+String? heatmapRoadLayerId(String styleJson) {
+  try {
+    final style = jsonDecode(styleJson);
+    if (style is! Map) return null;
+    final layers = style['layers'];
+    if (layers is! List) return null;
+    for (final layer in layers) {
+      if (layer is! Map) continue;
+      final id = layer['id'];
+      final type = layer['type'];
+      if (id is! String || (type != 'line' && type != 'fill')) continue;
+      final normalized = id.toLowerCase();
+      if (normalized.startsWith('road_') ||
+          normalized.startsWith('tunnel_') ||
+          normalized.startsWith('bridge_') ||
+          normalized.contains('highway') ||
+          normalized.contains('motorway') ||
+          normalized.contains('transportation')) {
+        return id;
+      }
+    }
+  } on FormatException {
+    // Style validation owns malformed documents; layer placement can safely
+    // fall back to the top when an injected test/embedder style is incomplete.
+  }
+  return null;
+}
+
 /// Whether to offer to turn an import into a navigable route.
 ///
 /// This required **every** drawable path to be a track, so a file carrying a
@@ -147,12 +178,12 @@ bool canGenerateNavigableRoute(ImportedRoute route) =>
 @visibleForTesting
 const motorcycleDiscoveryMinimumZoom = 12.5;
 
-/// Point-density heatmaps become isolated dots at street zoom. From here the
-/// personal archive is rendered as its contiguous z17 coverage cells instead.
-const personalHeatmapContinuousMinimumZoom = 15.0;
-
-bool personalHeatmapUsesContinuousCells(double zoom) =>
-    zoom >= personalHeatmapContinuousMinimumZoom;
+/// Ground radius for the fallback renderer. z19 cell centres are about 45–50 m
+/// apart at UK and French latitudes, so these circles overlap without turning
+/// a travelled road into the large square bands produced by filled cells.
+@visibleForTesting
+double personalHeatmapGroundRadiusMeters(double weight) =>
+    26 + 10 * weight.clamp(0, 1);
 
 @visibleForTesting
 bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
@@ -1057,9 +1088,6 @@ class RideMapScreen extends StatefulWidget {
 class _RideMapScreenState extends State<RideMapScreen> {
   static const _personalHeatmapSource = 'ride-relay-personal-heatmap';
   static const _personalHeatmapLayer = 'ride-relay-personal-heatmap-layer';
-  static const _personalHeatmapCellSource = 'ride-relay-personal-heatmap-cells';
-  static const _personalHeatmapCellLayer =
-      'ride-relay-personal-heatmap-cells-layer';
   static const _globalHeatmapSource = 'ride-relay-global-heatmap';
   static const _globalHeatmapLayer = 'ride-relay-global-heatmap-layer';
   static const _riddenRouteSource = 'ride-relay-route-ridden';
@@ -1129,6 +1157,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// Null until the probe has answered, and null forever if there was nothing
   /// it could sensibly ask for.
   bool? _basemapTilesReachable;
+  bool _mapLibreLayerPreparationFailed = false;
+  bool _flutterVectorFallbackReady = false;
+  Future<vmt.Style>? _flutterVectorFallbackStyle;
 
   Timer? _basemapViewLoadWatchdog;
 
@@ -1140,7 +1171,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// says it did not. Generous on purpose: a slow, cold device that gets there
   /// eventually must not be accused of failing, because a badge that cries
   /// wolf is the same fault as no badge at all.
-  static const _basemapViewLoadWindow = Duration(seconds: 20);
+  static const _basemapViewLoadWindow = Duration(seconds: 8);
+
+  bool get _usesFlutterVectorFallback =>
+      _basemap.usesMapLibre &&
+      (_basemapViewLoadTimedOut ||
+          _basemapTilesReachable == false ||
+          _mapLibreLayerPreparationFailed);
 
   BasemapStatus get _basemapStatus {
     if (!_basemap.isConfigured) return BasemapStatus.routeOnly;
@@ -1148,6 +1185,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // has no style document, no platform view and none of the observations
     // below. It keeps the behaviour it had.
     if (!_basemap.usesMapLibre) return BasemapStatus.drawing;
+    if (_usesFlutterVectorFallback && _flutterVectorFallbackReady) {
+      return BasemapStatus.drawing;
+    }
     return resolveBasemapStatus(
       styleOutcome: widget.mapStyleOutcome,
       viewLoadedStyle: _basemapViewLoadedStyle,
@@ -1599,6 +1639,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _basemapViewLoadedStyle = false;
     _basemapViewLoadTimedOut = false;
     _basemapTilesReachable = null;
+    _mapLibreLayerPreparationFailed = false;
+    _flutterVectorFallbackReady = false;
+    _flutterVectorFallbackStyle = null;
     // Nothing to wait for. Either there is no platform view on this path, or
     // the style never arrived and the badge already says which.
     if (!_basemap.usesMapLibre ||
@@ -2856,6 +2899,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
                                 status: _speedLimitDisplay.status,
                                 outcome: _speedLimitDisplay.lastOutcome,
                                 limit: _speedLimitDisplay.limit,
+                                distanceUnit: widget.distanceUnit,
                                 riderSpeedMetersPerSecond: riderSpeed?.value,
                                 riderSpeedIsAgeing: riderSpeed?.ageing ?? false,
                                 emphasised: emphasised,
@@ -3230,8 +3274,37 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Widget _buildMap() {
-    if (_basemap.usesMapLibre) return _buildMapLibreMap();
+    if (_basemap.usesMapLibre && !_usesFlutterVectorFallback) {
+      return _buildMapLibreMap();
+    }
+    if (_usesFlutterVectorFallback) {
+      return _buildFlutterVectorFallbackMap();
+    }
+    return _buildFlutterMap();
+  }
 
+  Widget _buildFlutterVectorFallbackMap() {
+    final style = _flutterVectorFallbackStyle ??=
+        vmt.StyleReader(
+          uri: _basemap.styleUrl,
+          httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
+        ).read().timeout(const Duration(seconds: 7)).then((style) {
+          if (mounted && !_flutterVectorFallbackReady) {
+            setState(() => _flutterVectorFallbackReady = true);
+          }
+          return style;
+        });
+    return KeyedSubtree(
+      key: const Key('ride-map-flutter-vector-fallback'),
+      child: FutureBuilder<vmt.Style>(
+        future: style,
+        builder: (context, snapshot) =>
+            _buildFlutterMap(vectorStyle: snapshot.data),
+      ),
+    );
+  }
+
+  Widget _buildFlutterMap({vmt.Style? vectorStyle}) {
     final route = _route;
     final points = route?.allPoints.map(_latLng).toList(growable: false) ?? [];
     // With no route the rider's own position is the framing (#124); the UK-wide
@@ -3259,6 +3332,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
       mapController: _mapController,
       options: options,
       children: [
+        if (vectorStyle != null)
+          vmt.VectorTileLayer(
+            tileProviders: vectorStyle.providers,
+            theme: vectorStyle.theme,
+            sprites: vectorStyle.sprites,
+            maximumZoom: _basemap.maximumNativeZoom.toDouble(),
+            concurrency: 2,
+            fileCacheTtl: Duration.zero,
+            fileCacheMaximumSizeInBytes: 0,
+          ),
         if (_basemap.usesLegacyRaster)
           TileLayer(
             urlTemplate: _basemap.urlTemplate,
@@ -3268,38 +3351,20 @@ class _RideMapScreenState extends State<RideMapScreen> {
               cache: widget.offlineTileCache,
             ),
           ),
-        if (_visiblePersonalHeatmap.cells.isNotEmpty &&
-            !personalHeatmapUsesContinuousCells(_lastViewportZoom))
+        if (_visiblePersonalHeatmap.cells.isNotEmpty)
           CircleLayer(
             key: const Key('personal-rides-heatmap-layer'),
             circles: [
               for (final cell in _visiblePersonalHeatmap.cells)
                 CircleMarker(
                   point: _latLng(cell.centre),
-                  radius: 7 + 5 * cell.weight,
+                  radius: personalHeatmapGroundRadiusMeters(cell.weight),
+                  useRadiusInMeter: true,
                   color: Color.lerp(
                     const Color(0xFF7C3AED),
                     const Color(0xFFF97316),
                     cell.weight,
                   )!.withValues(alpha: 0.16 + 0.24 * cell.weight),
-                ),
-            ],
-          ),
-        if (_visiblePersonalHeatmap.cells.isNotEmpty &&
-            personalHeatmapUsesContinuousCells(_lastViewportZoom))
-          PolygonLayer(
-            key: const Key('personal-rides-heatmap-layer'),
-            polygons: [
-              for (final cell in _visiblePersonalHeatmap.cells)
-                Polygon(
-                  points: cell.polygon.map(_latLng).toList(growable: false),
-                  color: Color.lerp(
-                    const Color(0xFF7C3AED),
-                    const Color(0xFFF97316),
-                    cell.weight,
-                  )!.withValues(alpha: 0.20 + 0.28 * cell.weight),
-                  borderColor: Colors.transparent,
-                  borderStrokeWidth: 0,
                 ),
             ],
           ),
@@ -3863,12 +3928,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   /// Whether this route is ridden on the left.
   ///
-  /// Landscape places the rider two thirds across the frame on the left and one
-  /// third across on the right, so getting this wrong does not degrade the view
-  /// — it mirrors it. Ride 723888, 17 miles around Bristol, came back with 46
-  /// manoeuvres annotated `right` and 23 `left`, so the majority vote this used
-  /// to take concluded right-hand traffic and put the bike in the left third of
-  /// the screen (#613).
+  /// The driving side remains route metadata for projected displays. It no
+  /// longer mirrors the landscape camera: the status/action rail is fixed on
+  /// the left, so both driving sides keep the bike in the open right third.
   ///
   /// The asymmetry below is deliberate, and reads the field as the engine seems
   /// to mean it: `left` is only ever emitted where the data says so, while
@@ -3879,8 +3941,8 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// UK default, as before.
   ///
   /// The cost of this asymmetry is a genuinely right-hand-traffic route carrying
-  /// one spurious `left` step, which would be framed for the UK. That is the
-  /// same failure as having no annotation at all, and a mirrored ride is worse.
+  /// one spurious `left` step being reported as left-hand traffic. Camera
+  /// visibility is unaffected because its anchor is now jurisdiction-neutral.
   bool get _routeUsesLeftHandTraffic {
     var right = 0;
     for (final maneuver in _route?.maneuvers ?? const <RouteManeuver>[]) {
@@ -4491,14 +4553,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   void _updateViewportZoom(double zoom) {
     final wasVisible = motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom);
-    final wasContinuous = personalHeatmapUsesContinuousCells(_lastViewportZoom);
     _lastViewportZoom = zoom;
     final isVisible = motorcycleDiscoveryVisibleAtZoom(zoom);
-    final isContinuous = personalHeatmapUsesContinuousCells(zoom);
-    if (!mounted ||
-        (wasVisible == isVisible && wasContinuous == isContinuous)) {
-      return;
-    }
+    if (!mounted || wasVisible == isVisible) return;
     setState(() {});
     _scheduleMapLibreSync(overlays: true);
   }
@@ -5109,6 +5166,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreStyleReady = false;
     try {
       await _registerMarkerImages(controller);
+      final heatmapBelowLayerId = heatmapRoadLayerId(widget.mapStyleString);
       await controller.addGeoJsonSource(
         _globalHeatmapSource,
         _visibleGlobalHeatmap.toGeoJson(),
@@ -5145,6 +5203,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ],
           heatmapOpacity: 0.42,
         ),
+        belowLayerId: heatmapBelowLayerId,
       );
       await controller.addGeoJsonSource(
         _personalHeatmapSource,
@@ -5162,8 +5221,22 @@ class _RideMapScreenState extends State<RideMapScreen> {
             4,
             12,
             10,
-            17,
+            13,
             18,
+            14,
+            30,
+            15,
+            58,
+            16,
+            114,
+            17,
+            226,
+            18,
+            450,
+            19,
+            898,
+            20,
+            1794,
           ],
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.85,
@@ -5182,30 +5255,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
           ],
           heatmapOpacity: 0.48,
         ),
-        maxzoom: personalHeatmapContinuousMinimumZoom,
-      );
-      await controller.addGeoJsonSource(
-        _personalHeatmapCellSource,
-        _visiblePersonalHeatmap.toCellGeoJson(),
-      );
-      await controller.addFillLayer(
-        _personalHeatmapCellSource,
-        _personalHeatmapCellLayer,
-        const ml.FillLayerProperties(
-          fillAntialias: false,
-          fillColor: [
-            'interpolate',
-            ['linear'],
-            ['get', 'weight'],
-            0,
-            '#7C3AED',
-            1,
-            '#F97316',
-          ],
-          fillOpacity: 0.48,
-        ),
-        minzoom: personalHeatmapContinuousMinimumZoom,
-        enableInteraction: false,
+        belowLayerId: heatmapBelowLayerId,
       );
       await controller.addGeoJsonSource(
         _discoveryLineSource,
@@ -5473,6 +5523,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _fitRoute();
       }
     } on Object catch (error, stackTrace) {
+      if (mounted && !_mapLibreLayerPreparationFailed) {
+        setState(() => _mapLibreLayerPreparationFailed = true);
+      }
       if (kDebugMode) {
         debugPrint(
           'Could not prepare MapLibre ride layers: $error\n$stackTrace',
@@ -5537,10 +5590,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.setGeoJsonSource(
         _personalHeatmapSource,
         _visiblePersonalHeatmap.toGeoJson(),
-      );
-      await controller.setGeoJsonSource(
-        _personalHeatmapCellSource,
-        _visiblePersonalHeatmap.toCellGeoJson(),
       );
       await controller.setGeoJsonSource(
         _discoveryLineSource,
@@ -5641,10 +5690,6 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await controller.setGeoJsonSource(
           _personalHeatmapSource,
           _visiblePersonalHeatmap.toGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _personalHeatmapCellSource,
-          _visiblePersonalHeatmap.toCellGeoJson(),
         );
         await controller.setGeoJsonSource(
           _discoveryLineSource,
@@ -6305,7 +6350,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         if (!_isCircularRideGenerationCurrent(generation)) return;
         _setCircularRideGenerationStage(
           generation,
-          'Routing road sections and checking alternative loop shapes…',
+          'Routing the complete road loop and checking its shape…',
         );
         final planner = CircularRidePlanner(
           routingService: _roadRoutingService,
@@ -7680,9 +7725,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
         content: const Text(
           'When this is on, the app sends your current and recent foreground '
           'GPS positions, plus sampled points up to 1 km ahead on your route '
-          'or heading, to a Valhalla road-matching service. It works in Great '
-          'Britain and the Isle of Man and uses mapped OpenStreetMap limits, '
-          'which may be missing or out of date. Roadside signs always apply.',
+          'or heading, to a Valhalla road-matching service. It works in France, '
+          'Great Britain and the Isle of Man and uses mapped OpenStreetMap '
+          'limits in the road country’s units. They may be missing or out of '
+          'date. Roadside signs always apply.',
         ),
         actions: [
           TextButton(
@@ -7825,12 +7871,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
       if (sharedFile != null) {
         unawaited(_importSharedGpx(sharedFile));
       } else if (inAppRoute != null) {
-        unawaited(
-          _reviewAndActivateRoute(
+        unawaited(() async {
+          final route = await _reviewAndActivateRoute(
             inAppRoute.route,
             warnings: inAppRoute.reviewNotes,
-          ),
-        );
+          );
+          final target = inAppRoute.handoffTarget;
+          if (route != null && target != null && mounted) {
+            await _exportRoute(target, route);
+          }
+        }());
       } else {
         _showChangeRouteSheet();
       }
@@ -8332,8 +8382,8 @@ class _CircularRideGenerationOverlay extends StatelessWidget {
                       Text(stage, textAlign: TextAlign.center),
                       const SizedBox(height: 8),
                       Text(
-                        'Longer rides may take up to a minute while several '
-                        'road combinations are checked.',
+                        'This usually completes in a few seconds. Difficult '
+                        'road constraints may need a second pass.',
                         style: Theme.of(context).textTheme.bodySmall,
                         textAlign: TextAlign.center,
                       ),
@@ -9363,12 +9413,15 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     final controller = _controller;
     if (controller == null) return;
     final centre = ml.LatLng(framing.centre.latitude, framing.centre.longitude);
+    final nativeZoom = framing.zoomForTileSize(
+      GroupMiniMapFraming.mapLibreNativeTileSize,
+    );
     // The mini-map frames the whole group, so one rider reporting a bad
     // position takes the camera - and with it the process - down for everyone
     // watching (#359).
-    if (!mapLibreCameraIsUsable(centre, zoom: framing.zoom)) return;
+    if (!mapLibreCameraIsUsable(centre, zoom: nativeZoom)) return;
     await controller.animateCamera(
-      ml.CameraUpdate.newLatLngZoom(centre, framing.zoom),
+      ml.CameraUpdate.newLatLngZoom(centre, nativeZoom),
       duration: const Duration(milliseconds: 500),
     );
   }
@@ -10640,6 +10693,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
     required this.status,
     required this.outcome,
     required this.limit,
+    required this.distanceUnit,
     required this.riderSpeedMetersPerSecond,
     this.riderSpeedIsAgeing = false,
     this.emphasised = false,
@@ -10658,6 +10712,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
   final SpeedLimitDisplayStatus status;
   final SpeedLimitLookupOutcome? outcome;
   final PostedSpeedLimit? limit;
+  final DistanceUnit distanceUnit;
   final double? riderSpeedMetersPerSecond;
 
   /// True while the number is the last one observed rather than a current
@@ -10676,16 +10731,18 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
     final value = known
         ? reading.unlimited
               ? '∞'
-              : '${reading.milesPerHour}'
+              : '${reading.signValue}'
         : '–';
-    // The readout sits under a UK mph sign, so it stays in mph whatever the
-    // rider's distance-unit preference is. Two units under one sign would
-    // invite a dangerous misread.
+    // The rider-speed readout uses the posted sign's unit. Two units under one
+    // sign would invite a dangerous misread.
     final speed = riderSpeedMetersPerSecond;
-    final riderMilesPerHour = speed != null && speed.isFinite && speed >= 0
-        ? (speed * 2.236936).round()
+    final usesKilometresPerHour =
+        reading?.usesKilometresPerHour ??
+        distanceUnit == DistanceUnit.kilometres;
+    final riderSpeed = speed != null && speed.isFinite && speed >= 0
+        ? (speed * (usesKilometresPerHour ? 3.6 : 2.236936)).round()
         : null;
-    final speedValue = riderMilesPerHour == null ? '–' : '$riderMilesPerHour';
+    final speedValue = riderSpeed == null ? '–' : '$riderSpeed';
     final checkedAt = known
         ? MaterialLocalizations.of(
             context,
@@ -10706,21 +10763,24 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
             },
             _ => switch (outcome) {
               SpeedLimitLookupOutcome.unsupportedRegion =>
-                'Great Britain and Isle of Man only',
+                'France, Great Britain and Isle of Man only',
               SpeedLimitLookupOutcome.noTaggedLimit => 'No mapped limit',
               _ => 'Limit unavailable',
             },
           };
-    final riderSpeedLabel = riderMilesPerHour == null
+    final spokenUnit =
+        reading?.spokenSpeedUnit ??
+        (usesKilometresPerHour ? 'kilometres per hour' : 'miles per hour');
+    final riderSpeedLabel = riderSpeed == null
         ? 'Your speed is unavailable.'
-        : 'You are riding at $riderMilesPerHour miles per hour by GPS.';
+        : 'You are riding at $riderSpeed $spokenUnit by GPS.';
     // Carries what the deleted caption used to say (#125): which number is the
     // sign and which is the rider, that the limit is mapped rather than live,
     // and how stale it is. Removing the caption moved this wording, it did not
     // lose it.
     final semanticLimit = reading?.unlimited == true
         ? 'unrestricted'
-        : '${reading?.milesPerHour} miles per hour';
+        : '${reading?.signValue} $spokenUnit';
     final semanticLabel = known
         ? 'Mapped speed limit $semanticLimit'
               '${reading.roadName == null ? '' : ' on ${reading.roadName}'}. '
@@ -10810,7 +10870,7 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                   shadows: _mapOverlayTextShadows,
                 ),
               ),
-              // No caption (#125). A red-ringed UK sign over a plain number is
+              // No caption (#125). A red-ringed road sign over a plain number is
               // already unambiguous, and nine-point text on a moving bike cost
               // glance time without adding meaning. The wording it carried is
               // not lost: [semanticLabel] and the tooltip above still say which

@@ -160,6 +160,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   RideDiagnosticsRecorder? _diagnostics;
   RideDiagnosticsLogWriter? _diagnosticsWriter;
   String? _diagnosticsRideId;
+  Future<void> _navigationSaveChain = Future<void>.value();
   ForegroundLocationController? _location;
   bool _ownsLocationController = false;
   bool _requesting = false;
@@ -198,14 +199,19 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     final location = _location;
     if (location != null) {
       location.addListener(_handleLocationChanged);
-      // Resumes only if access was already granted, so opening the app shows
-      // no prompt.
-      location.resumeIfAuthorized();
+      // Browsing the home screen needs one current point, not the ride-grade
+      // Android foreground service and wake lock. Continuous background fixes
+      // are resumed only when navigation is active.
+      if (widget.navigating) {
+        location.resumeIfAuthorized();
+      } else {
+        location.refreshIfAuthorized();
+      }
     }
   }
 
   void _handleLocationChanged() {
-    final sample = _location?.activeSample;
+    final sample = _location?.latestSample;
     if (sample != null &&
         _navigationPosition.value?.recordedAt != sample.recordedAt) {
       _acceptLocationSample(sample);
@@ -270,33 +276,76 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     final completed = _freeRoamRideRecorder.finish();
     widget.onRouteChanged?.call(null);
     if (completed != null) {
-      unawaited(
-        _saveCompletedNavigation(
-          completed,
-          diagnosticsWriter: diagnosticsWriter,
-        ),
+      _queueCompletedNavigation(
+        completed,
+        diagnosticsWriter: diagnosticsWriter,
       );
     }
+  }
+
+  /// Serialises checkpoints and the final save for one personal navigation.
+  ///
+  /// They deliberately share a ride id, so the final, longer track replaces
+  /// its background checkpoint. Without ordering, a slower old checkpoint can
+  /// finish last and overwrite the complete ride with its shorter snapshot.
+  void _queueCompletedNavigation(
+    CompletedRide completed, {
+    RideDiagnosticsLogWriter? diagnosticsWriter,
+    bool announce = true,
+    bool reportFailure = true,
+  }) {
+    _navigationSaveChain = _navigationSaveChain.then(
+      (_) => _saveCompletedNavigation(
+        completed,
+        diagnosticsWriter: diagnosticsWriter,
+        announce: announce,
+        reportFailure: reportFailure,
+      ),
+    );
   }
 
   Future<void> _saveCompletedNavigation(
     CompletedRide completed, {
     RideDiagnosticsLogWriter? diagnosticsWriter,
+    bool announce = true,
+    bool reportFailure = true,
   }) async {
-    await diagnosticsWriter?.flush();
+    try {
+      await diagnosticsWriter?.flush();
+    } on Object catch (error) {
+      // A diagnostics write must never make the ride itself disposable.
+      assert(() {
+        debugPrint('Could not flush navigation diagnostics: $error');
+        return true;
+      }());
+    }
     final store = widget.completedRideStore;
     if (store == null) return;
     try {
       await store.save(completed);
-      if (mounted) widget.onNavigationArchived?.call(completed);
+      if (announce && mounted) widget.onNavigationArchived?.call(completed);
     } on Object {
-      if (!mounted) return;
+      if (!reportFailure || !mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('This navigation could not be saved to My rides.'),
         ),
       );
     }
+  }
+
+  void _checkpointFreeRoamNavigation() {
+    final completed = _freeRoamRideRecorder.checkpoint();
+    if (completed == null) {
+      unawaited(_diagnosticsWriter?.flush());
+      return;
+    }
+    _queueCompletedNavigation(
+      completed,
+      diagnosticsWriter: _diagnosticsWriter,
+      announce: false,
+      reportFailure: false,
+    );
   }
 
   void _onSpokenGuidanceChanged() {
@@ -468,7 +517,11 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     if (location == null || _requesting) return;
     setState(() => _requesting = true);
     try {
-      await location.requestAndStart();
+      if (widget.navigating) {
+        await location.requestAndStart();
+      } else {
+        await location.requestOneShot();
+      }
     } finally {
       if (mounted) setState(() => _requesting = false);
     }
@@ -485,9 +538,13 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
-      unawaited(_location?.restartAfterForegroundResume());
+      if (widget.navigating) {
+        unawaited(_location?.restartAfterForegroundResume());
+      } else {
+        unawaited(_location?.refreshIfAuthorized());
+      }
     } else {
-      unawaited(_diagnosticsWriter?.flush());
+      _checkpointFreeRoamNavigation();
     }
   }
 
@@ -495,8 +552,10 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   void didUpdateWidget(covariant HomeMapBackdrop oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!oldWidget.navigating && widget.navigating) {
+      unawaited(_location?.requestAndStart());
       unawaited(_warmNaturalVoiceIfNeeded());
     } else if (oldWidget.navigating && !widget.navigating) {
+      unawaited(_location?.stop());
       _spokenGuidanceKeys.clear();
       _guidanceManeuverIdentity = null;
       _passedManeuverPosition = null;
@@ -514,15 +573,23 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     widget.spokenGuidance?.removeListener(_onSpokenGuidanceChanged);
     widget.rideDiagnostics?.removeListener(_onRideDiagnosticsChanged);
     unawaited(_spokenGuidance?.stop());
-    unawaited(_diagnosticsWriter?.flush());
+    final completed = _freeRoamRideRecorder.finish();
+    if (completed == null) {
+      unawaited(_diagnosticsWriter?.flush());
+    } else {
+      _queueCompletedNavigation(
+        completed,
+        diagnosticsWriter: _diagnosticsWriter,
+        announce: false,
+        reportFailure: false,
+      );
+    }
     if (_ownsLocationController) _location?.dispose();
     _navigationPosition.dispose();
     // Not ours to dispose when the screen above owns it.
     if (_ownsPosition) _position.dispose();
     super.dispose();
   }
-
-  bool get _sharing => _location?.sharing ?? false;
 
   /// Whether to offer the rider a way to be found.
   ///
@@ -539,7 +606,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   /// Judging on whether there is a position to show needs no such guess: if
   /// the rider is on the map they are found, and if they are not they are
   /// offered the way to be.
-  bool get _offerLocation => !_sharing || _position.value == null;
+  bool get _offerLocation => _position.value == null;
 
   @override
   Widget build(BuildContext context) {

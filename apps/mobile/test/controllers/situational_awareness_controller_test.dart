@@ -10,6 +10,7 @@ import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/services/external_hazard_provider.dart';
 import 'package:ride_relay/services/route_deviation_detector.dart';
+import 'package:ride_relay/services/road_jurisdiction.dart';
 import 'package:ride_relay/services/situation_event_factory.dart';
 
 void main() {
@@ -313,6 +314,68 @@ void main() {
 
     expect(controller.activeHazards, hasLength(2));
     expect(await store.eventsForRide(_session.rideId), hasLength(2));
+  });
+
+  test('France disables enforcement alerts but keeps road hazards', () async {
+    final frenchRules = SituationalAwarenessController(
+      store,
+      _session,
+      route: const [],
+      roadJurisdictions: _franceCatalogue,
+      clock: () => now,
+      idFactory: () => 'france-${nextId++}',
+    );
+    addTearDown(frenchRules.dispose);
+    await frenchRules.initialize();
+    const paris = GeoPoint(latitude: 48.8566, longitude: 2.3522);
+
+    for (final type in [HazardType.policeActivity, HazardType.speedCamera]) {
+      await expectLater(
+        frenchRules.reportHazard(
+          type: type,
+          severity: HazardSeverity.serious,
+          position: paris,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('disabled in France'),
+          ),
+        ),
+      );
+    }
+
+    final roadHazard = await frenchRules.reportHazard(
+      type: HazardType.debris,
+      severity: HazardSeverity.caution,
+      position: paris,
+    );
+    expect(roadHazard, isNotNull);
+    expect(frenchRules.activeHazards.single.type, HazardType.debris);
+  });
+
+  test('French enforcement events stay stored but are not presented', () async {
+    const paris = GeoPoint(latitude: 48.8566, longitude: 2.3522);
+    await controller.reportHazard(
+      type: HazardType.speedCamera,
+      severity: HazardSeverity.serious,
+      position: paris,
+    );
+
+    final filtered = SituationalAwarenessController(
+      store,
+      _session,
+      route: const [],
+      roadJurisdictions: _franceCatalogue,
+      clock: () => now,
+      idFactory: () => 'filtered-${nextId++}',
+    );
+    addTearDown(filtered.dispose);
+    await filtered.initialize();
+
+    expect(await store.eventsForRide(_session.rideId), isNotEmpty);
+    expect(filtered.activeHazards, isEmpty);
   });
 
   test('event replay restores active hazards and acknowledgements', () async {
@@ -720,6 +783,25 @@ final _session = RideSession(
   role: RideRole.lead,
   joinedAt: DateTime.utc(2026, 7, 16),
 );
+
+final _franceCatalogue = RoadJurisdictionCatalogue.parse('''
+{
+  "type":"FeatureCollection",
+  "features":[{
+    "type":"Feature",
+    "properties":{
+      "countryCode":"FR",
+      "name":"France",
+      "drivingSide":"right",
+      "distanceUnit":"kilometres"
+    },
+    "geometry":{
+      "type":"Polygon",
+      "coordinates":[[[1,41],[10,41],[10,52],[1,52],[1,41]]]
+    }
+  }]
+}
+''');
 
 LocationSample _sample({required double latitude, required DateTime at}) =>
     LocationSample(

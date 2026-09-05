@@ -7,8 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../domain/completed_ride.dart';
 import '../domain/completed_ride_store.dart';
 import '../domain/imported_route.dart';
+import '../services/recorded_heatmap_continuity.dart';
 
-/// One bounded z17 cell in the private, on-device archive heatmap.
+/// One bounded z19 cell in the private, on-device archive heatmap.
 class PersonalRideHeatmapCell {
   const PersonalRideHeatmapCell({
     required this.x,
@@ -33,7 +34,7 @@ class PersonalRideHeatmapCell {
     return GeoPoint(latitude: latitude, longitude: longitude);
   }
 
-  /// The exact z17 square represented by this cell, clockwise from north-west.
+  /// The exact z19 square represented by this cell, clockwise from north-west.
   /// Adjacent cells therefore share an edge exactly instead of becoming dots
   /// whose radius happens to look joined at one zoom level (#661).
   List<GeoPoint> get polygon {
@@ -118,11 +119,16 @@ class PersonalRideHeatmap {
 ///
 /// Tiling is the rendering bound: 100,000 archived GPS fixes do not become
 /// 100,000 widgets or MapLibre features. Gaps remain gaps because each track
-/// path is rasterised independently, while sparse fixes cannot skip cells.
+/// path is rasterised independently. Nearby fixes fill the cells between them;
+/// distant fixes remain separate real samples instead of becoming a fabricated
+/// straight road.
 class PersonalRideHeatmapBuilder {
   const PersonalRideHeatmapBuilder({this.maximumCells = 20000});
 
-  static const canonicalZoom = 17;
+  // Roughly 45-50 m across at UK latitudes. z17 was about 190 m and made the
+  // close-zoom overlay look like a handful of large coloured map tiles rather
+  // than road coverage (#661).
+  static const canonicalZoom = 19;
   static const _maximumMercatorLatitude = 85.05112878;
 
   final int maximumCells;
@@ -141,18 +147,30 @@ class PersonalRideHeatmapBuilder {
         }
         inputPointCount += path.points.length;
         (int x, int y)? previousCell;
+        void record((int x, int y) cell) {
+          if (cell == previousCell) return;
+          previousCell = cell;
+          if (!visits.containsKey(cell) && visits.length >= maximumCells) {
+            truncated = true;
+            return;
+          }
+          visits.update(cell, (value) => value + 1, ifAbsent: () => 1);
+        }
+
+        record(_cellAt(path.points.first));
         for (var index = 1; index < path.points.length; index += 1) {
-          for (final cell in _cellsBetween(
-            path.points[index - 1],
-            path.points[index],
-          )) {
-            if (cell == previousCell) continue;
-            previousCell = cell;
-            if (!visits.containsKey(cell) && visits.length >= maximumCells) {
-              truncated = true;
-              continue;
-            }
-            visits.update(cell, (value) => value + 1, ifAbsent: () => 1);
+          final start = path.points[index - 1];
+          final end = path.points[index];
+          if (!recordedHeatmapSegmentIsContinuous(start, end)) {
+            // Both endpoints are recorded evidence, but nothing between them
+            // is. Resetting also prevents a repeated tile after a GPS outage
+            // from being merged with the earlier visit.
+            previousCell = null;
+            record(_cellAt(end));
+            continue;
+          }
+          for (final cell in _cellsBetween(start, end)) {
+            record(cell);
           }
         }
       }
@@ -204,6 +222,11 @@ class PersonalRideHeatmapBuilder {
         (a.y + (b.y - a.y) * fraction).floor(),
       );
     }
+  }
+
+  (int x, int y) _cellAt(GeoPoint point) {
+    final coordinate = _tileCoordinate(point);
+    return (coordinate.x.floor(), coordinate.y.floor());
   }
 
   ({double x, double y}) _tileCoordinate(GeoPoint point) {

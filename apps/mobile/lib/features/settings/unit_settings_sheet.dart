@@ -225,19 +225,25 @@ class UnitSettingsSheet extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            controller.followsLocale
-                ? 'Using the device locale default (${controller.localeDefault.label.toLowerCase()}).'
-                : 'Overriding the device locale default (${controller.localeDefault.label.toLowerCase()}).',
+            controller.followsAutomatic
+                ? controller.roadJurisdiction == null
+                      ? 'Automatic: using the device locale default '
+                            '(${controller.localeDefault.label.toLowerCase()}) until your road country is known.'
+                      : 'Automatic for ${controller.roadJurisdiction!.name}: '
+                            '${controller.automaticDefault.label.toLowerCase()}.'
+                : 'Manual override. Automatic is '
+                      '${controller.automaticDefault.label.toLowerCase()}'
+                      '${controller.roadJurisdiction == null ? ' from the device locale' : ' for ${controller.roadJurisdiction!.name}'}.',
             style: const TextStyle(color: Color(0xFF98A3B1)),
           ),
-          if (!controller.followsLocale) ...[
+          if (!controller.followsAutomatic) ...[
             const SizedBox(height: 4),
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton(
                 key: const Key('use-locale-distance-unit'),
-                onPressed: () => unawaited(controller.useLocaleDefault()),
-                child: const Text('Use locale default'),
+                onPressed: () => unawaited(controller.useAutomaticDefault()),
+                child: const Text('Use automatic units'),
               ),
             ),
           ],
@@ -310,9 +316,10 @@ class UnitSettingsSheet extends StatelessWidget {
             title: const Text('Show mapped speed limit'),
             subtitle: const Text(
               'On by default. Matches your position and up to 1 km ahead to '
-              'roads in Great Britain and the Isle of Man using © OpenStreetMap '
-              'contributors via Valhalla. Mapped limits are not live; roadside '
-              'signs always apply. Turning this off is remembered.',
+              'roads in France, Great Britain and the Isle of Man using '
+              '© OpenStreetMap contributors via Valhalla. French signs are '
+              'shown in km/h and British signs in mph. Mapped limits are not '
+              'live; roadside signs always apply. Turning this off is remembered.',
             ),
           ),
           if (routeProgressDisplay case final progressDisplay?) ...[

@@ -58,22 +58,39 @@ void main() {
   });
 
   test(
-    'personal heatmap changes from density to continuous cells at street zoom',
+    'personal heatmap fallback overlaps fine-grid coverage without blocks',
     () {
-      expect(
-        personalHeatmapUsesContinuousCells(
-          personalHeatmapContinuousMinimumZoom - 0.01,
-        ),
-        isFalse,
-      );
-      expect(
-        personalHeatmapUsesContinuousCells(
-          personalHeatmapContinuousMinimumZoom,
-        ),
-        isTrue,
-      );
+      expect(personalHeatmapGroundRadiusMeters(0), 26);
+      expect(personalHeatmapGroundRadiusMeters(1), 36);
+      expect(personalHeatmapGroundRadiusMeters(-1), 26);
+      expect(personalHeatmapGroundRadiusMeters(2), 36);
     },
   );
+
+  test('native heatmaps sit below basemap road geometry', () {
+    final style = jsonEncode({
+      'version': 8,
+      'sources': <String, Object?>{},
+      'layers': [
+        {'id': 'background', 'type': 'background'},
+        {'id': 'landcover', 'type': 'fill'},
+        {'id': 'road_service_track', 'type': 'line'},
+        {'id': 'highway-name-major', 'type': 'symbol'},
+      ],
+    });
+
+    expect(heatmapRoadLayerId(style), 'road_service_track');
+    expect(heatmapRoadLayerId(MapStyleRepository.fallbackStyle), isNull);
+
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+    expect(
+      RegExp('belowLayerId: heatmapBelowLayerId').allMatches(source).length,
+      2,
+      reason: 'both private and global native heatmaps stay beneath roads',
+    );
+  });
 
   test('navigation panels preserve map context and rider clearance', () {
     expect(rideMapPrimaryPanelFill.toARGB32(), 0xD9252E39);
@@ -2626,10 +2643,7 @@ void main() {
     }
 
     expect(find.byKey(const Key('route-review-title')), findsOneWidget);
-    expect(
-      find.text("King's Oak Academy to Cross Hands Hotel"),
-      findsOneWidget,
-    );
+    expect(find.text('Argentat to Saint-Privat — France'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.byKey(const Key('confirm-reviewed-route')),
       250,
@@ -4865,13 +4879,10 @@ void main() {
     }
   });
 
-  // #613. Landscape puts the rider two thirds across the frame on the left and
-  // one third across on the right, so this boolean does not degrade the view —
-  // it mirrors it. Ride 723888, 17 miles around Bristol, came back with 46
-  // manoeuvres annotated `right` and 23 `left`, and the majority vote this
-  // replaces therefore framed a British ride for the continent.
+  // The landscape chrome stays on the left when the route crosses into France.
+  // Driving-side metadata must therefore not mirror the rider underneath it.
   testWidgets(
-    'a British route keeps the bike in the right third of landscape',
+    'a French route keeps the bike in the open right third of landscape',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       final directory = Directory.systemTemp.createTempSync('traffic-side');
@@ -4882,44 +4893,40 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       RouteManeuver step(double longitude, String? side) => RouteManeuver(
-        position: GeoPoint(latitude: 51.45, longitude: longitude),
+        position: GeoPoint(latitude: 45.05, longitude: longitude),
         type: 'turn',
         modifier: 'right',
-        name: 'Cornbrash Park',
+        name: 'Route de Mauriac',
         drivingSide: side,
       );
 
       final route = ImportedRoute(
         id: 'side',
-        name: 'Bristol',
+        name: 'Salers',
         importedAt: DateTime.utc(2026, 8, 19),
-        sourceFileName: 'bristol.gpx',
+        sourceFileName: 'salers.gpx',
         paths: const [
           RoutePath(
             kind: RoutePathKind.track,
             points: [
-              GeoPoint(latitude: 51.45, longitude: -2.6),
-              GeoPoint(latitude: 51.45, longitude: -2.1),
+              GeoPoint(latitude: 45.05, longitude: 2.3),
+              GeoPoint(latitude: 45.05, longitude: 2.8),
             ],
           ),
         ],
         waypoints: const [],
-        // The ride's own proportions: `right` in the clear majority, `left`
-        // stated on a minority of steps.
+        // OSRM's right-hand-traffic metadata for this French route.
         maneuvers: [
-          step(-2.55, 'right'),
-          step(-2.50, 'right'),
-          step(-2.45, 'left'),
-          step(-2.40, 'right'),
-          step(-2.35, 'right'),
-          step(-2.30, 'left'),
-          step(-2.25, 'right'),
+          step(2.35, 'right'),
+          step(2.40, 'right'),
+          step(2.45, 'right'),
+          step(2.50, 'right'),
         ],
       );
 
       final navigation = ValueNotifier<MapNavigationPosition?>(
         MapNavigationPosition(
-          point: const GeoPoint(latitude: 51.45, longitude: -2.4),
+          point: const GeoPoint(latitude: 45.05, longitude: 2.5),
           recordedAt: DateTime.utc(2026, 8, 19, 17),
           speedMetersPerSecond: 13,
           headingDegrees: 90,
@@ -4961,8 +4968,7 @@ void main() {
         viewport!.riderHorizontalViewportFraction,
         closeTo(navigationCameraLandscapeRiderFractionLeftTraffic, 1e-9),
         reason:
-            'one third across is the continental frame, and this ride was in '
-            'Bristol',
+            'France changes the driving side, not the fixed left-hand chrome',
       );
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -6703,7 +6709,7 @@ void main() {
 
         expect(find.byType(FlutterMap), findsOneWidget);
         expect(find.text('Calculating circular route'), findsOneWidget);
-        expect(find.textContaining('road sections'), findsOneWidget);
+        expect(find.textContaining('complete road loop'), findsOneWidget);
         expect(
           find.byKey(const Key('cancel-circular-ride-generation')),
           findsOneWidget,

@@ -599,7 +599,10 @@ ManeuverInstruction _roundaboutInstruction({
     roadName: last.name ?? entry.name,
     roadRef: last.ref ?? entry.ref,
     lanes: entry.lanes,
-    leftHandTraffic: _leftHandTraffic(entry.drivingSide),
+    leftHandTraffic: _leftHandTraffic(
+      entry.drivingSide,
+      confirmed: entry.trafficSideConfirmed,
+    ),
     stepCount: group.length,
     departureBearingDegrees: departure,
   );
@@ -695,7 +698,10 @@ ManeuverInstruction _simpleInstruction(RouteManeuver maneuver) {
     roadName: maneuver.name,
     roadRef: maneuver.ref,
     lanes: maneuver.lanes,
-    leftHandTraffic: _leftHandTraffic(maneuver.drivingSide),
+    leftHandTraffic: _leftHandTraffic(
+      maneuver.drivingSide,
+      confirmed: maneuver.trafficSideConfirmed,
+    ),
   );
 }
 
@@ -784,8 +790,7 @@ bool _isRingExit(String type) {
   return normalized == 'exit roundabout' || normalized == 'exit rotary';
 }
 
-/// Whether the ring should be drawn for left-hand traffic, from what the engine
-/// said — and deliberately **not** believing it when it says right.
+/// Whether the ring should be drawn for left-hand traffic.
 ///
 /// Two screenshots from the 10 August ride settle why. A "3rd exit, right" was
 /// drawn as a short quarter-turn arc. Keeping left, that exit is three quarters
@@ -795,21 +800,21 @@ bool _isRingExit(String type) {
 /// correct — which is exactly why it read as a drawing fault rather than a data
 /// one (#427).
 ///
-/// `right` is therefore treated as unstated, and an unstated driving side draws
-/// clockwise. The reviewed mini-roundabout catalogue still states a rotation
-/// where it has one, and says clockwise for 11,482 of the 11,487 it covers.
-///
-/// **This is a bet on where the app is used**, and it is the wrong bet on a
-/// European tour: a genuine right-hand-traffic roundabout will now be drawn
-/// left-hand. The right answer is to resolve the driving side from where the
-/// route *is* rather than from a per-step claim, which is #408's original
-/// proposal and is not built. Recorded so the next person meets a decision
-/// rather than a puzzle.
-bool? _leftHandTraffic(String? drivingSide) =>
-    switch (drivingSide?.trim().toLowerCase()) {
-      'left' => true,
-      _ => null,
-    };
+/// A raw `right` is still ignored for old routes and raw engine responses, which
+/// preserves the field-proven UK safety fallback. Newly planned routes carry
+/// [RouteManeuver.trafficSideConfirmed] after their manoeuvre position has been
+/// resolved through the bundled country layer, so a French `right` is safe to
+/// honour and draws anticlockwise circulation.
+bool? _leftHandTraffic(String? drivingSide, {required bool confirmed}) {
+  if (!confirmed) {
+    return drivingSide?.trim().toLowerCase() == 'left' ? true : null;
+  }
+  return switch (drivingSide?.trim().toLowerCase()) {
+    'left' => true,
+    'right' => false,
+    _ => null,
+  };
+}
 
 /// The direction a routing engine's `modifier` states, or
 /// [ManeuverDirection.unstated] where it says nothing this app understands.

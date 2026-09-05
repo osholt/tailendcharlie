@@ -141,8 +141,12 @@ dependencies {
         }
     }
 
-    implementation("androidx.car.app:app:1.7.0")
-    implementation("androidx.car.app:app-projected:1.7.0")
+    // Keep the future Android Auto implementation compiling without packaging
+    // Car App Library components into phone/Play builds. The inactive
+    // src/androidAuto manifest is likewise excluded until a dedicated build
+    // variant is approved for car distribution.
+    compileOnly("androidx.car.app:app:1.7.0")
+    compileOnly("androidx.car.app:app-projected:1.7.0")
     implementation("androidx.core:core:1.13.0")
     // The Flutter map plugin already packages this exact MapLibre runtime. An
     // explicit app dependency makes its off-screen snapshotter available to the
@@ -151,6 +155,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
     implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
     implementation("com.google.firebase:firebase-messaging")
+    testImplementation("androidx.car.app:app:1.7.0")
+    testImplementation("androidx.car.app:app-projected:1.7.0")
     testImplementation("androidx.car.app:app-testing:1.7.0")
     testImplementation("junit:junit:4.13.2")
     // The car surface is `Canvas` code, and the head unit is hard to reach: the
