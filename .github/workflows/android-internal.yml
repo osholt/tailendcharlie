@@ -145,6 +145,21 @@ jobs:
             --dart-define=RIDE_RELAY_FIREBASE_MESSAGING_SENDER_ID="$RIDE_RELAY_FIREBASE_MESSAGING_SENDER_ID" \
             --dart-define=RIDE_RELAY_FIREBASE_ANDROID_APP_ID="$RIDE_RELAY_FIREBASE_ANDROID_APP_ID" \
             --dart-define=RIDE_RELAY_RIDE_DIAGNOSTICS=true
+      - name: Verify Android Auto is absent from the Play manifest
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          mapfile -t merged_manifests < <(
+            find apps/mobile/build/app/intermediates \
+              -path '*release*' -name AndroidManifest.xml -type f -print
+          )
+          test "${#merged_manifests[@]}" -gt 0 || {
+            echo "::error::No merged release manifest was produced." >&2
+            exit 1
+          }
+          python3 tools/assert-android-auto-disabled.py \
+            apps/mobile/android/app/src/main/AndroidManifest.xml \
+            "${merged_manifests[@]}"
       - name: Validate Play service account secret
         env:
           SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}

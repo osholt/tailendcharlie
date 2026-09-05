@@ -3,52 +3,48 @@ package me.osholt.ride_relay
 import java.io.File
 import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidAutoDiscoveryContractTest {
+    private val androidNamespace = "http://schemas.android.com/apk/res/android"
+    private val shippedManifest = File("src/main/AndroidManifest.xml")
+    private val preservedManifest = File("src/androidAuto/AndroidManifest.xml")
+
     @Test
-    fun manifestAllowsAndroidAutoToRenderTheNavigationSurface() {
-        val manifest = parseXml(File("src/main/AndroidManifest.xml"))
-        val permissions = manifest.getElementsByTagName("uses-permission")
-        val androidNamespace = "http://schemas.android.com/apk/res/android"
+    fun phoneReleaseDoesNotPublishAndroidAutoCapabilities() {
+        val manifest = parseXml(shippedManifest)
+        val forbidden = setOf(
+            "androidx.car.app.NAVIGATION_TEMPLATES",
+            "androidx.car.app.ACCESS_SURFACE",
+            "com.google.android.gms.car.application",
+            "androidx.car.app.CarAppService",
+            "androidx.car.app.category.NAVIGATION",
+            "androidx.car.app.action.NAVIGATE",
+            "me.osholt.ride_relay.TailEndCharlieCarAppService",
+            ".TailEndCharlieCarAppService",
+        )
 
-        val surfacePermission = (0 until permissions.length)
-            .map { permissions.item(it) }
-            .firstOrNull {
-                it.attributes
-                    ?.getNamedItemNS(androidNamespace, "name")
-                    ?.nodeValue == "androidx.car.app.ACCESS_SURFACE"
-            }
-
-        assertNotNull(
-            "Android Auto navigation surface permission is missing",
-            surfacePermission,
+        assertFalse(
+            "The phone/Play manifest must not expose Android Auto",
+            manifest.allAndroidAttributeValues().any(forbidden::contains),
         )
     }
 
     @Test
-    fun manifestPublishesAndroidAutoTemplateDescriptor() {
-        val manifest = parseXml(File("src/main/AndroidManifest.xml"))
-        val metadata = manifest.getElementsByTagName("meta-data")
-        val androidNamespace = "http://schemas.android.com/apk/res/android"
+    fun futureVariantPreservesAndroidAutoSurfaceAndDiscoveryContract() {
+        val manifest = parseXml(preservedManifest)
+        val values = manifest.allAndroidAttributeValues()
 
-        val discoveryEntry = (0 until metadata.length)
-            .map { metadata.item(it) }
-            .firstOrNull {
-                it.attributes
-                    ?.getNamedItemNS(androidNamespace, "name")
-                    ?.nodeValue == "com.google.android.gms.car.application"
-            }
-
-        assertNotNull("Android Auto discovery metadata is missing", discoveryEntry)
-        assertEquals(
-            "@xml/automotive_app_desc",
-            discoveryEntry!!.attributes
-                ?.getNamedItemNS(androidNamespace, "resource")
-                ?.nodeValue,
-        )
+        assertTrue(values.contains("androidx.car.app.NAVIGATION_TEMPLATES"))
+        assertTrue(values.contains("androidx.car.app.ACCESS_SURFACE"))
+        assertTrue(values.contains("com.google.android.gms.car.application"))
+        assertTrue(values.contains("@xml/automotive_app_desc"))
+        assertTrue(values.contains("androidx.car.app.CarAppService"))
+        assertTrue(values.contains("androidx.car.app.category.NAVIGATION"))
+        assertTrue(values.contains("androidx.car.app.action.NAVIGATE"))
+        assertTrue(values.contains("geo"))
     }
 
     @Test
@@ -60,30 +56,17 @@ class AndroidAutoDiscoveryContractTest {
         assertEquals("template", uses.item(0).attributes.getNamedItem("name").nodeValue)
     }
 
-    @Test
-    fun manifestPublishesTheAssistantNavigationContract() {
-        val manifest = parseXml(File("src/main/AndroidManifest.xml"))
-        val androidNamespace = "http://schemas.android.com/apk/res/android"
-        val filters = manifest.getElementsByTagName("intent-filter")
-        val matchingFilter = (0 until filters.length)
-            .map { filters.item(it) }
-            .firstOrNull { filter ->
-                val actions = filter.childNodes
-                (0 until actions.length).map { actions.item(it) }.any { child ->
-                    child.nodeName == "action" &&
-                        child.attributes?.getNamedItemNS(androidNamespace, "name")?.nodeValue ==
-                        "androidx.car.app.action.NAVIGATE"
-                }
+    private fun org.w3c.dom.Document.allAndroidAttributeValues(): Set<String> {
+        val values = mutableSetOf<String>()
+        val elements = getElementsByTagName("*")
+        for (index in 0 until elements.length) {
+            val attributes = elements.item(index).attributes ?: continue
+            for (attributeIndex in 0 until attributes.length) {
+                val attribute = attributes.item(attributeIndex)
+                if (attribute.namespaceURI == androidNamespace) values += attribute.nodeValue
             }
-
-        assertNotNull("Gemini/Assistant navigation action is missing", matchingFilter)
-        val schemes = matchingFilter!!.childNodes
-        assertTrue(
-            (0 until schemes.length).map { schemes.item(it) }.any { child ->
-                child.nodeName == "data" &&
-                    child.attributes?.getNamedItemNS(androidNamespace, "scheme")?.nodeValue == "geo"
-            },
-        )
+        }
+        return values
     }
 
     private fun parseXml(file: File) =

@@ -51,10 +51,6 @@
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:minSdkVersion="32" />
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" android:minSdkVersion="37" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
-    <!-- Required for a Car App Library navigation app to draw its map onto the
-         Android Auto host surface. Play rejects the bundle without it. -->
-    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
 
     <application
         android:label="Tail End Charlie"
@@ -64,25 +60,6 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="ride_updates" />
-        <meta-data
-            android:name="androidx.car.app.minCarApiLevel"
-            android:value="1" />
-        <!-- Android Auto discovers projected Car App Library apps through
-             this descriptor. Without it the phone app installs normally, but
-             the Android Auto host does not offer the app at all. -->
-        <meta-data
-            android:name="com.google.android.gms.car.application"
-            android:resource="@xml/automotive_app_desc" />
-        <service
-            android:name=".TailEndCharlieCarAppService"
-            android:exported="true"
-            android:label="Tail End Charlie"
-            android:icon="@mipmap/ic_launcher">
-            <intent-filter>
-                <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
-            </intent-filter>
-        </service>
         <service
             android:name=".RideRelayMessagingService"
             android:exported="false">
@@ -113,13 +90,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-            <!-- Public Gemini/Assistant navigation contract. Android Auto delivers the same
-                 intent to Session.onCreateScreen/onNewIntent while connected. -->
-            <intent-filter>
-                <action android:name="androidx.car.app.action.NAVIGATE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="geo" />
             </intent-filter>
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>

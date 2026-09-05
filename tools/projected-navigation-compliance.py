@@ -365,9 +365,10 @@ def structural_checks(failures: list[str]) -> None:
             "'routeChoiceId'",
         ],
     )
+    android_auto_manifest = "apps/mobile/android/app/src/androidAuto/AndroidManifest.xml"
     require_text(
         failures,
-        "apps/mobile/android/app/src/main/AndroidManifest.xml",
+        android_auto_manifest,
         [
             "androidx.car.app.category.NAVIGATION",
             "androidx.car.app.NAVIGATION_TEMPLATES",
@@ -497,12 +498,29 @@ def structural_checks(failures: list[str]) -> None:
     )
     require_text(
         failures,
-        "apps/mobile/android/app/src/main/AndroidManifest.xml",
+        android_auto_manifest,
         [
             "androidx.car.app.action.NAVIGATE",
             'android:scheme="geo"',
         ],
     )
+    shipped_android_manifest = read(
+        "apps/mobile/android/app/src/main/AndroidManifest.xml"
+    )
+    for forbidden in (
+        "androidx.car.app.NAVIGATION_TEMPLATES",
+        "androidx.car.app.ACCESS_SURFACE",
+        "com.google.android.gms.car.application",
+        "androidx.car.app.CarAppService",
+        "androidx.car.app.category.NAVIGATION",
+        "androidx.car.app.action.NAVIGATE",
+        "TailEndCharlieCarAppService",
+    ):
+        if forbidden in shipped_android_manifest:
+            failures.append(
+                "apps/mobile/android/app/src/main/AndroidManifest.xml: "
+                f"disabled Android Auto declaration still shipped: {forbidden!r}"
+            )
     require_text(
         failures,
         "apps/mobile/android/app/src/main/kotlin/me/osholt/ride_relay/TailEndCharlieCarAppService.kt",
@@ -665,7 +683,7 @@ def structural_checks(failures: list[str]) -> None:
     require_text(
         failures,
         "apps/mobile/test/services/neural_spoken_guidance_test.dart",
-        ["one missed deadline does not disable later natural prompts"],
+        ["one missed deadline retries the natural voice on the next prompt"],
     )
     require_text(
         failures,
