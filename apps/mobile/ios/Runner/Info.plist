@@ -104,6 +104,11 @@
 	-->
 	<key>UIBackgroundModes</key>
 	<array>
+		<!-- Navigation guidance is still safety-critical when the rider locks the
+		     phone or puts another app in front. Core Location keeps the route
+		     position current; audio keeps each short spoken prompt eligible to
+		     play from the playback-category session. -->
+		<string>audio</string>
 		<string>location</string>
 	</array>
 	<key>NSCameraUsageDescription</key>

@@ -531,7 +531,7 @@ void main() {
     expect(logs.single.text, contains('personal navigation completed'));
   });
 
-  testWidgets('free-roam navigation speaks the guidance shown on the map', (
+  testWidgets('free-roam navigation speaks while the phone is locked (#726)', (
     tester,
   ) async {
     final engine = _RecordingSpokenEngine();
@@ -563,6 +563,12 @@ void main() {
       ),
     );
     await tester.pump();
+    expect(
+      engine.configured,
+      isTrue,
+      reason:
+          'the selected speech path must be ready before the phone is locked',
+    );
     platform.emit(
       LocationSample(
         position: const rider_domain.GeoPoint(
@@ -596,6 +602,12 @@ void main() {
     );
     final map = tester.widget<RideMapFeature>(
       find.byKey(const Key('home-map')),
+    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
     );
     map.onNavigationGuidanceChanged!(guidance);
     await tester.pump();
@@ -889,9 +901,10 @@ void main() {
 
 class _RecordingSpokenEngine implements SpokenGuidanceEngine {
   final spoken = <String>[];
+  bool configured = false;
 
   @override
-  Future<void> configure() async {}
+  Future<void> configure() async => configured = true;
 
   @override
   Future<void> speak(

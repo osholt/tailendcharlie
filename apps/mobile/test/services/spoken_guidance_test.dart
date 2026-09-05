@@ -55,6 +55,40 @@ void main() {
   });
 
   test(
+    'a temporarily denied prompt remains eligible for the next fix (#726)',
+    () async {
+      final denied = _DenyOnceEngine();
+      final retryingSpeaker = SpokenGuidanceSpeaker(denied);
+      final deliveredKeys = <String>{};
+
+      expect(
+        await retryingSpeaker.speakTrackedManoeuvre(
+          deliveredKeys: deliveredKeys,
+          key: 'turn-1|approach',
+          phrase: 'In 500 yards, turn left',
+          enabled: true,
+          rideActive: true,
+        ),
+        isFalse,
+      );
+      expect(deliveredKeys, isEmpty);
+
+      expect(
+        await retryingSpeaker.speakTrackedManoeuvre(
+          deliveredKeys: deliveredKeys,
+          key: 'turn-1|approach',
+          phrase: 'In 500 yards, turn left',
+          enabled: true,
+          rideActive: true,
+        ),
+        isTrue,
+      );
+      expect(deliveredKeys, {'turn-1|approach'});
+      expect(denied.attempts, 2);
+    },
+  );
+
+  test(
     'a later navigation stage is deferred while a prompt is active',
     () async {
       final blocking = _BlockingRecordingEngine();
@@ -485,6 +519,20 @@ class _BlockingRecordingEngine extends _RecordingEngine {
   Future<void> stop() async {
     stopped = true;
     completeAll();
+  }
+}
+
+class _DenyOnceEngine extends _RecordingEngine {
+  int attempts = 0;
+
+  @override
+  Future<void> speak(
+    String phrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
+    attempts += 1;
+    if (attempts == 1) throw const SpokenGuidanceFocusDenied();
+    await super.speak(phrase, audioClass: audioClass);
   }
 }
 

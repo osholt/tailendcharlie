@@ -305,6 +305,12 @@ void main() {
           contains('if (announcement == null || speaker.isSpeaking) return;'),
           reason: '$path must not consume a prompt the speaker cannot accept',
         );
+        expect(
+          source,
+          contains('speaker.speakTrackedManoeuvre('),
+          reason:
+              '$path must return a temporarily refused stage to the scheduler',
+        );
       }
     });
   });

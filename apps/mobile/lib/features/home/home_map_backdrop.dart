@@ -193,7 +193,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
         ),
       );
       widget.spokenGuidance!.addListener(_onSpokenGuidanceChanged);
-      unawaited(_warmNaturalVoiceIfNeeded());
+      unawaited(_prepareSpokenGuidanceIfNeeded());
     }
     widget.rideDiagnostics?.addListener(_onRideDiagnosticsChanged);
     final location = _location;
@@ -349,25 +349,26 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   }
 
   void _onSpokenGuidanceChanged() {
-    unawaited(_warmNaturalVoiceIfNeeded());
+    unawaited(_prepareSpokenGuidanceIfNeeded());
   }
 
-  Future<void> _warmNaturalVoiceIfNeeded() async {
+  /// Configures the selected audio path before a rider can lock the phone.
+  ///
+  /// This is intentionally not limited to the natural voice. Initialising a new
+  /// iOS playback session only after the app is already backgrounded made the
+  /// first junction depend on a race with suspension (#726).
+  Future<void> _prepareSpokenGuidanceIfNeeded() async {
     final controller = widget.spokenGuidance;
     final speaker = _spokenGuidance;
     if (controller == null || speaker == null) return;
-    final naturalEnabled =
-        controller.naturalVoicePack.enabled &&
-        controller.naturalVoicePack.modelDirectory != null;
     try {
-      await speaker.warmUp(
-        enabled: widget.navigating && controller.enabled && naturalEnabled,
-      );
+      await speaker.warmUp(enabled: widget.navigating && controller.enabled);
     } on Object catch (error, stackTrace) {
-      _diagnostics?.recordNote('Natural voice warm-up failed: $error');
+      _diagnostics?.recordNote('Spoken guidance preparation failed: $error');
       assert(() {
         debugPrint(
-          'Natural voice warm-up failed in free roam: $error\n$stackTrace',
+          'Spoken guidance preparation failed in free roam: '
+          '$error\n$stackTrace',
         );
         return true;
       }());
@@ -418,13 +419,13 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       followingInstructionText: guidance.followingInstruction?.standaloneText,
     );
     if (announcement == null || speaker.isSpeaking) return;
-    _spokenGuidanceKeys.add(announcement.key);
     _diagnostics?.recordSpokenPrompt(
       phrase: announcement.phrase,
       distanceToManoeuvreMeters: guidance.distanceMeters,
     );
     unawaited(
-      speaker.speakManoeuvre(
+      speaker.speakTrackedManoeuvre(
+        deliveredKeys: _spokenGuidanceKeys,
         key: announcement.key,
         phrase: announcement.phrase,
         enabled: true,
@@ -553,7 +554,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     super.didUpdateWidget(oldWidget);
     if (!oldWidget.navigating && widget.navigating) {
       unawaited(_location?.requestAndStart());
-      unawaited(_warmNaturalVoiceIfNeeded());
+      unawaited(_prepareSpokenGuidanceIfNeeded());
     } else if (oldWidget.navigating && !widget.navigating) {
       unawaited(_location?.stop());
       _spokenGuidanceKeys.clear();

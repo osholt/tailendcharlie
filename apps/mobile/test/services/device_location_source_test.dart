@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,12 +8,34 @@ import 'package:ride_relay/controllers/foreground_location_controller.dart';
 import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/services/device_location_source.dart';
+import 'package:xml/xml.dart';
 
 void main() {
   // #205. A plain LocationSettings is foreground-only, so a rider with the phone
   // in a pocket or another navigation app in front contributed nothing to the
   // group and recorded a trail that jumped in a straight line across a bay.
   group('ride location settings keep running in the background', () {
+    test(
+      'iOS keeps both location and spoken audio alive while locked (#726)',
+      () {
+        final document = XmlDocument.parse(
+          File('ios/Runner/Info.plist').readAsStringSync(),
+        );
+        final key = document
+            .findAllElements('key')
+            .singleWhere((element) => element.innerText == 'UIBackgroundModes');
+        final siblings = key.parent!.childElements.toList(growable: false);
+        final value = siblings[siblings.indexOf(key) + 1];
+        final modes = value.childElements
+            .where((element) => element.name.local == 'string')
+            .map((element) => element.innerText)
+            .toSet();
+
+        expect(value.name.local, 'array');
+        expect(modes, containsAll(<String>{'location', 'audio'}));
+      },
+    );
+
     test('iOS asks Core Location not to stop or pause', () {
       final settings = GeolocatorDeviceLocationPlatform.rideLocationSettings(
         TargetPlatform.iOS,
@@ -37,6 +60,12 @@ void main() {
       final config = (settings as AndroidSettings).foregroundNotificationConfig;
       expect(config, isNotNull);
       expect(config!.setOngoing, isTrue);
+      expect(
+        config.enableWakeLock,
+        isTrue,
+        reason:
+            'the navigation isolate must keep processing fixes while locked',
+      );
       // It has to say what is happening and that it ends with the ride.
       expect(config.notificationText, contains('ride'));
       expect(config.notificationText, contains('stops when the ride ends'));

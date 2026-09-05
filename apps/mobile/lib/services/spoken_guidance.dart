@@ -255,14 +255,11 @@ abstract interface class WarmableSpokenGuidanceEngine {
 ///   that kills the music is worse than no prompt.
 /// - **Android must not request audio focus permanently**, for the same reason.
 ///
-/// **Foreground only, deliberately.** iOS would need the `audio` background mode
-/// declared for prompts to continue once the app is not frontmost, and that is not
-/// added here for two reasons. It is a release and review decision rather than a
-/// code one. And #205 means the app does not yet record position in the
-/// background at all - so background prompts would be guidance computed from a
-/// position that had stopped updating, which is worse than silence. A rider
-/// running another navigation app in front will not hear these; that is a known
-/// limit, not an oversight.
+/// **Screen state does not own navigation (#726).** iOS declares both the `location` and
+/// `audio` background modes: Core Location keeps the instruction current and the
+/// playback-category audio session can deliver its short prompt while the phone
+/// is locked or another app is in front. Android's active-ride location service
+/// holds the wake lock needed to keep the same Dart path processing fixes.
 class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
   FlutterTtsSpokenGuidanceEngine({
     FlutterTts? tts,
@@ -488,6 +485,35 @@ class SpokenGuidanceSpeaker {
       return false;
     } finally {
       _releaseSpeechSlot();
+    }
+  }
+
+  /// Delivers a scheduled stage without losing it to a temporary refusal (#726).
+  ///
+  /// The caller's set is provisional while the engine obtains audio focus. A
+  /// lock transition, phone call, Assistant or another navigation app can deny
+  /// that short-lived lease. Removing the key on any non-delivery lets the next
+  /// location fix retry the same useful stage instead of treating silence as if
+  /// the rider heard it.
+  Future<bool> speakTrackedManoeuvre({
+    required Set<String> deliveredKeys,
+    required String key,
+    required String phrase,
+    required bool enabled,
+    required bool rideActive,
+  }) async {
+    if (!deliveredKeys.add(key)) return false;
+    var delivered = false;
+    try {
+      delivered = await speakManoeuvre(
+        key: key,
+        phrase: phrase,
+        enabled: enabled,
+        rideActive: rideActive,
+      );
+      return delivered;
+    } finally {
+      if (!delivered) deliveredKeys.remove(key);
     }
   }
 
