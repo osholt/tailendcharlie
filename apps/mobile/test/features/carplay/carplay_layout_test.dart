@@ -176,11 +176,10 @@ void main() {
       expect(source, contains('riderViewportFraction'));
       expect(source, contains('let riderHorizontalFraction = 2.0 / 3.0'));
       expect(source, isNot(contains('leftHandTraffic ? (2.0 / 3.0)')));
-      expect(source, contains('let riderChromeClearance: CGFloat = 28'));
-      expect(
-        source,
-        contains('guidanceView.frame.minY - riderChromeClearance'),
-      );
+      // Guidance and route-progress chrome are system-owned on the current
+      // compliant surface. The host safe frame below is the clearance contract;
+      // there must not be a stale dependency on the removed custom views.
+      expect(source, isNot(contains('guidanceView.frame.minY')));
       expect(
         source,
         contains('mapView.convert(localCoordinate, toPointTo: mapView)'),

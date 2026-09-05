@@ -230,26 +230,35 @@ enum CarPlayStatusTemplate {
     _ speed: [String: Any],
     unitPolicy: CarPlayUnitPolicy
   ) -> String {
-    let unit = unitPolicy.usesMiles ? "mph" : "km/h"
+    let postedUnit = speed["limitUnit"] as? String
+    let usesMiles = postedUnit == "mph"
+      ? true
+      : postedUnit == "km/h" ? false : unitPolicy.usesMiles
+    let unit = usesMiles ? "mph" : "km/h"
     let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
     let rawCurrent = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
     let current = rawCurrent.flatMap {
-      $0.isFinite && $0 >= 0 ? unitPolicy.speedValue(metersPerSecond: $0) : nil
+      $0.isFinite && $0 >= 0
+        ? Int(($0 * (usesMiles ? 2.236_936_292_1 : 3.6)).rounded())
+        : nil
     }
     let currentText = ageing || current == nil ? "GPS speed unavailable" : "\(current!) \(unit)"
 
     let status = speed["limitStatus"] as? String
     let unlimited = (speed["limitUnlimited"] as? NSNumber)?.boolValue ?? false
-    let milesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    let value = (speed["limitValue"] as? NSNumber)?.intValue
+    let legacyMilesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
     let limitText: String
     if status == "checking" {
       limitText = "checking mapped limit"
     } else if status == "known", unlimited {
       limitText = "unrestricted road"
-    } else if status == "known", let milesPerHour {
-      let displayed = unitPolicy.usesMiles
-        ? milesPerHour
-        : Int((Double(milesPerHour) * 1.609_344).rounded())
+    } else if status == "known", let value {
+      limitText = "mapped limit \(value) \(unit)"
+    } else if status == "known", let legacyMilesPerHour {
+      let displayed = usesMiles
+        ? legacyMilesPerHour
+        : Int((Double(legacyMilesPerHour) * 1.609_344).rounded())
       limitText = "mapped limit \(displayed) \(unit)"
     } else {
       limitText = "mapped limit unavailable"

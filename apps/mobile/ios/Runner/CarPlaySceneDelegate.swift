@@ -128,6 +128,54 @@ struct CarPlayTecBarPresentation {
   }
 }
 
+struct CarPlayGroupOverviewBarPresentation {
+  static func title(snapshot: [String: Any]) -> String {
+    let riderCount = (snapshot["riders"] as? [[String: Any]])?.count ?? 0
+    let riderText = riderCount == 1 ? "1 rider" : "\(riderCount) riders"
+    guard let speed = snapshot["speed"] as? [String: Any] else {
+      return riderText
+    }
+    let unitPolicy = CarPlayUnitPolicy(
+      distanceUnit: snapshot["distanceUnit"] as? String,
+      localeIdentifier: snapshot["localeIdentifier"] as? String
+    )
+    let postedUnit = speed["limitUnit"] as? String
+    let usesMiles = postedUnit == "mph"
+      ? true
+      : postedUnit == "km/h" ? false : unitPolicy.usesMiles
+    let unit = usesMiles ? "mph" : "km/h"
+    let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
+    let rawCurrent = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
+    let current = rawCurrent.flatMap {
+      $0.isFinite && $0 >= 0 && !ageing
+        ? Int(($0 * (usesMiles ? 2.236_936_292_1 : 3.6)).rounded())
+        : nil
+    }
+    let status = speed["limitStatus"] as? String
+    let limit: String?
+    if status == "known",
+      (speed["limitUnlimited"] as? NSNumber)?.boolValue == true
+    {
+      limit = "∞"
+    } else if status == "known",
+      let value = (speed["limitValue"] as? NSNumber)?.intValue
+    {
+      limit = "\(value)"
+    } else if status == "known",
+      let legacyMilesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
+    {
+      limit = "\(usesMiles ? legacyMilesPerHour : Int((Double(legacyMilesPerHour) * 1.609_344).rounded()))"
+    } else {
+      limit = nil
+    }
+    let readings = [current.map(String.init), limit].compactMap { $0 }
+    let speedText = readings.isEmpty
+      ? ""
+      : " · \(readings.joined(separator: "/")) \(unit)"
+    return "\(riderText)\(speedText)"
+  }
+}
+
 /// Converts the host-owned safe rectangle into MapLibre content insets. Kept
 /// independent of any particular head-unit resolution so the same calculation
 /// covers left/right driving layouts, compact displays, and wide screens.
@@ -2610,48 +2658,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   }
 
   private func groupOverviewButton(_ snapshot: [String: Any]) -> CPBarButton {
-    let title = groupOverviewTitle(snapshot)
+    let title = CarPlayGroupOverviewBarPresentation.title(snapshot: snapshot)
     return CPBarButton(title: title) { [weak self] _ in
       self?.showManualGroupOverview()
     }
-  }
-
-  private func groupOverviewTitle(_ snapshot: [String: Any]) -> String {
-    let riderCount = (snapshot["riders"] as? [[String: Any]])?.count ?? 0
-    guard let speed = snapshot["speed"] as? [String: Any] else {
-      return riderCount == 1 ? "1 rider" : "\(riderCount) riders"
-    }
-    let unitPolicy = CarPlayUnitPolicy(
-      distanceUnit: snapshot["distanceUnit"] as? String,
-      localeIdentifier: snapshot["localeIdentifier"] as? String
-    )
-    let unit = unitPolicy.usesMiles ? "mph" : "km/h"
-    let ageing = (speed["isAgeing"] as? NSNumber)?.boolValue ?? false
-    let rawCurrent = (speed["metresPerSecond"] as? NSNumber)?.doubleValue
-    let current = rawCurrent.flatMap {
-      $0.isFinite && $0 >= 0 && !ageing
-        ? unitPolicy.speedValue(metersPerSecond: $0)
-        : nil
-    }
-    let status = speed["limitStatus"] as? String
-    let limit: String?
-    if status == "known",
-      (speed["limitUnlimited"] as? NSNumber)?.boolValue == true
-    {
-      limit = "∞"
-    } else if status == "known",
-      let milesPerHour = (speed["limitMilesPerHour"] as? NSNumber)?.intValue
-    {
-      limit = "\(unitPolicy.usesMiles ? milesPerHour : Int((Double(milesPerHour) * 1.609_344).rounded()))"
-    } else {
-      limit = nil
-    }
-    let readings = [current.map(String.init), limit].compactMap { $0 }
-    let speedText = readings.isEmpty
-      ? ""
-      : " · \(readings.joined(separator: "/")) \(unit)"
-    let riderText = riderCount == 1 ? "1 rider" : "\(riderCount) riders"
-    return "\(riderText)\(speedText)"
   }
 
   private func presentRideStatus() {

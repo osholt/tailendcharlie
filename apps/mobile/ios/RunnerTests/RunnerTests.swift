@@ -185,7 +185,8 @@ class RunnerTests: XCTestCase {
         "metresPerSecond": 10.6,
         "isAgeing": false,
         "limitStatus": "known",
-        "limitMilesPerHour": 56,
+        "limitValue": 90,
+        "limitUnit": "km/h",
         "limitUnlimited": false,
       ],
       "riders": [],
@@ -260,6 +261,27 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(
       CarPlayTecBarPresentation.title(snapshot: miles),
       "TEC 1.2 mi"
+    )
+  }
+
+  func testCarPlayGroupOverviewUsesThePostedRoadUnit() {
+    let snapshot: [String: Any] = [
+      "distanceUnit": "miles",
+      "localeIdentifier": "en-GB",
+      "riders": [["id": "one"], ["id": "two"]],
+      "speed": [
+        "metresPerSecond": 10.6,
+        "isAgeing": false,
+        "limitStatus": "known",
+        "limitValue": 90,
+        "limitUnit": "km/h",
+        "limitUnlimited": false,
+      ],
+    ]
+
+    XCTAssertEqual(
+      CarPlayGroupOverviewBarPresentation.title(snapshot: snapshot),
+      "2 riders · 38/90 km/h"
     )
   }
 

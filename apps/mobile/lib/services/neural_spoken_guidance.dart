@@ -173,11 +173,14 @@ class NeuralSpokenGuidanceEngine
   NeuralSpokenGuidanceEngine({
     required this.backend,
     required this.voiceProvider,
+    // `player` is a public injection point; naming this `this._player` would
+    // make the named parameter private outside this library.
     AudioPlayer? player,
     Future<void> Function()? audioConfigurator,
     this.disposePlayerOnStop = false,
     this._audioFocus,
     this.onLifecycle,
+    // ignore: prefer_initializing_formals
   }) : _player = player,
        _audioConfigurator = audioConfigurator ?? _configureAudio;
 
