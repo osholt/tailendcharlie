@@ -91,9 +91,9 @@ def build_features(
         longitude = node.get("lon")
         if not isinstance(node_id, int):
             continue
-        if not isinstance(latitude, (int, float)):
+        if not isinstance(latitude, int | float):
             continue
-        if not isinstance(longitude, (int, float)):
+        if not isinstance(longitude, int | float):
             continue
         if node_id in seen:
             continue
