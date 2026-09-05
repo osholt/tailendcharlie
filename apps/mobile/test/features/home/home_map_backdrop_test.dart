@@ -563,6 +563,12 @@ void main() {
       ),
     );
     await tester.pump();
+    expect(
+      engine.configured,
+      isTrue,
+      reason:
+          'the selected speech path must be ready before the phone is locked',
+    );
     platform.emit(
       LocationSample(
         position: const rider_domain.GeoPoint(
@@ -895,9 +901,10 @@ void main() {
 
 class _RecordingSpokenEngine implements SpokenGuidanceEngine {
   final spoken = <String>[];
+  bool configured = false;
 
   @override
-  Future<void> configure() async {}
+  Future<void> configure() async => configured = true;
 
   @override
   Future<void> speak(

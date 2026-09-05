@@ -1278,7 +1278,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     }
     _observedRideStarted =
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
-    if (_observedRideStarted) unawaited(_warmNaturalVoiceIfNeeded());
+    if (_observedRideStarted) unawaited(_prepareSpokenGuidanceIfNeeded());
     // Issue #102: advisory off-route rejoin routing. Uses the same documented
     // OSRM configuration as the rest of the app; when it is unreachable the
     // planner degrades to the plain "you are off route by X" message.
@@ -3731,7 +3731,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     // after the start has nothing to be measured against and must report
     // whatever the rider has or has not moved since.
     if (rideJustStarted) _positionReportGate.reset();
-    if (rideJustStarted) unawaited(_warmNaturalVoiceIfNeeded());
+    if (rideJustStarted) unawaited(_prepareSpokenGuidanceIfNeeded());
     if (session != null) {
       _awarenessController?.updateLocalSession(session);
       _observerAccessController?.updateSession(session);
@@ -4421,30 +4421,29 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   void _onSpokenGuidanceChanged() {
-    unawaited(_warmNaturalVoiceIfNeeded());
+    unawaited(_prepareSpokenGuidanceIfNeeded());
   }
 
-  /// Pulls the expensive model load out of the first camera or turn prompt.
-  /// Silent audio and a ride that has not started remain zero-work paths.
-  Future<void> _warmNaturalVoiceIfNeeded() async {
+  /// Prepares speech before the rider can lock the phone (#726).
+  ///
+  /// For a natural voice this also pulls the expensive model load out of the
+  /// first camera or turn prompt. For the system voice it activates the iOS
+  /// playback session while the app is still foregrounded. Silent audio and a
+  /// ride that has not started remain zero-work paths.
+  Future<void> _prepareSpokenGuidanceIfNeeded() async {
     final controller = widget.spokenGuidance;
     final speaker = _spokenGuidance;
     if (controller == null || speaker == null) return;
     final rideActive =
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
-    final naturalEnabled =
-        controller.naturalVoicePack.enabled &&
-        controller.naturalVoicePack.modelDirectory != null;
     try {
-      await speaker.warmUp(
-        enabled: rideActive && controller.enabled && naturalEnabled,
-      );
+      await speaker.warmUp(enabled: rideActive && controller.enabled);
     } on Object catch (error, stackTrace) {
       // OS speech remains configured as the fail-safe. A model-load problem is
       // useful in diagnostics but must never block or end a ride.
-      _diagnostics?.recordNote('Natural voice warm-up failed: $error');
+      _diagnostics?.recordNote('Spoken guidance preparation failed: $error');
       if (kDebugMode) {
-        debugPrint('Natural voice warm-up failed: $error\n$stackTrace');
+        debugPrint('Spoken guidance preparation failed: $error\n$stackTrace');
       }
     }
   }
