@@ -27,6 +27,7 @@ import 'package:ride_relay/features/home/home_screen.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
+import 'package:ride_relay/services/road_routing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Every way into the app, by the words a rider can read (#306).
@@ -93,6 +94,7 @@ void main() {
   Future<void> pumpHome(
     WidgetTester tester, {
     RideDiagnosticsController? rideDiagnostics,
+    DestinationRoutePlanner? destinationPlanner,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -107,6 +109,7 @@ void main() {
           speedLimitDisplay: speedLimitDisplay,
           spokenGuidance: spokenGuidance,
           rideDiagnostics: rideDiagnostics,
+          destinationPlanner: destinationPlanner,
           recordedRoutes: InMemoryRecordedRouteStore(),
           completedRides: completedRides,
           // The home map backdrop is live in production. Without this it would
@@ -415,6 +418,50 @@ void main() {
     );
   });
 
+  testWidgets(
+    'a searched destination asks for routing preferences before planning',
+    (tester) async {
+      final routing = _RecordingRoadRoutingService();
+      final planner = DestinationRoutePlanner(
+        searchService: const _BathDestinationSearch(),
+        routingService: routing,
+      );
+      await pumpHome(tester, destinationPlanner: planner);
+      tester
+          .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+          .position!
+          .value = const GeoPoint(
+        latitude: 51.45,
+        longitude: -2.59,
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('home-search-bar')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('home-search-field')),
+        'bath',
+      );
+      await tester.tap(find.byKey(const Key('home-search-submit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Bath, Somerset'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Route preferences'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('avoid-motorways-switch')),
+      );
+      await tester.tap(find.byKey(const Key('avoid-motorways-switch')));
+      await tester.ensureVisible(
+        find.byKey(const Key('plan-destination-button')),
+      );
+      await tester.tap(find.byKey(const Key('plan-destination-button')));
+      await tester.pumpAndSettle();
+
+      expect(routing.preferences?.avoidMotorways, isTrue);
+    },
+  );
+
   testWidgets('joining by QR is offered in words, not only as an icon', (
     tester,
   ) async {
@@ -474,6 +521,37 @@ class _NullRideCodeDirectory implements RideCodeDirectory {
 
   @override
   void close() {}
+}
+
+class _BathDestinationSearch implements DestinationSearchService {
+  const _BathDestinationSearch();
+
+  @override
+  Future<List<DestinationMatch>> search(String query) async => const [
+    DestinationMatch(
+      label: 'Bath, Somerset',
+      point: GeoPoint(latitude: 51.38, longitude: -2.36),
+    ),
+  ];
+}
+
+class _RecordingRoadRoutingService implements RoadRoutingService {
+  RoutePreferences? preferences;
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    this.preferences = preferences;
+    return RoadRouteResult(
+      points: waypoints,
+      distanceMeters: 24000,
+      duration: const Duration(minutes: 35),
+      preferences: preferences,
+    );
+  }
 }
 
 class _EmptyCompletedRideStore implements CompletedRideStore {

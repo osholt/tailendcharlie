@@ -135,11 +135,16 @@ void main() {
     // The platform view never calls back in a widget test, which is exactly
     // the condition being modelled. It must stay silent while a slow, cold
     // device could still get there.
-    await tester.pump(const Duration(seconds: 19));
+    await tester.pump(const Duration(seconds: 7));
     expect(find.byKey(const Key('basemap-status-badge')), findsNothing);
 
     await tester.pump(const Duration(seconds: 2));
     expect(find.text('MAP DID NOT LOAD'), findsOneWidget);
+    expect(
+      find.byKey(const Key('ride-map-flutter-vector-fallback')),
+      findsOneWidget,
+      reason: 'route and rider overlays must recover from a blank native view',
+    );
 
     await unmount(tester);
   });

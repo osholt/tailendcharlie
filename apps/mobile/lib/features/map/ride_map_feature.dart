@@ -1157,6 +1157,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// Null until the probe has answered, and null forever if there was nothing
   /// it could sensibly ask for.
   bool? _basemapTilesReachable;
+  bool _mapLibreLayerPreparationFailed = false;
+  bool _flutterVectorFallbackReady = false;
+  Future<vmt.Style>? _flutterVectorFallbackStyle;
 
   Timer? _basemapViewLoadWatchdog;
 
@@ -1168,7 +1171,13 @@ class _RideMapScreenState extends State<RideMapScreen> {
   /// says it did not. Generous on purpose: a slow, cold device that gets there
   /// eventually must not be accused of failing, because a badge that cries
   /// wolf is the same fault as no badge at all.
-  static const _basemapViewLoadWindow = Duration(seconds: 20);
+  static const _basemapViewLoadWindow = Duration(seconds: 8);
+
+  bool get _usesFlutterVectorFallback =>
+      _basemap.usesMapLibre &&
+      (_basemapViewLoadTimedOut ||
+          _basemapTilesReachable == false ||
+          _mapLibreLayerPreparationFailed);
 
   BasemapStatus get _basemapStatus {
     if (!_basemap.isConfigured) return BasemapStatus.routeOnly;
@@ -1176,6 +1185,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     // has no style document, no platform view and none of the observations
     // below. It keeps the behaviour it had.
     if (!_basemap.usesMapLibre) return BasemapStatus.drawing;
+    if (_usesFlutterVectorFallback && _flutterVectorFallbackReady) {
+      return BasemapStatus.drawing;
+    }
     return resolveBasemapStatus(
       styleOutcome: widget.mapStyleOutcome,
       viewLoadedStyle: _basemapViewLoadedStyle,
@@ -1627,6 +1639,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _basemapViewLoadedStyle = false;
     _basemapViewLoadTimedOut = false;
     _basemapTilesReachable = null;
+    _mapLibreLayerPreparationFailed = false;
+    _flutterVectorFallbackReady = false;
+    _flutterVectorFallbackStyle = null;
     // Nothing to wait for. Either there is no platform view on this path, or
     // the style never arrived and the badge already says which.
     if (!_basemap.usesMapLibre ||
@@ -3259,8 +3274,37 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Widget _buildMap() {
-    if (_basemap.usesMapLibre) return _buildMapLibreMap();
+    if (_basemap.usesMapLibre && !_usesFlutterVectorFallback) {
+      return _buildMapLibreMap();
+    }
+    if (_usesFlutterVectorFallback) {
+      return _buildFlutterVectorFallbackMap();
+    }
+    return _buildFlutterMap();
+  }
 
+  Widget _buildFlutterVectorFallbackMap() {
+    final style = _flutterVectorFallbackStyle ??=
+        vmt.StyleReader(
+          uri: _basemap.styleUrl,
+          httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
+        ).read().timeout(const Duration(seconds: 7)).then((style) {
+          if (mounted && !_flutterVectorFallbackReady) {
+            setState(() => _flutterVectorFallbackReady = true);
+          }
+          return style;
+        });
+    return KeyedSubtree(
+      key: const Key('ride-map-flutter-vector-fallback'),
+      child: FutureBuilder<vmt.Style>(
+        future: style,
+        builder: (context, snapshot) =>
+            _buildFlutterMap(vectorStyle: snapshot.data),
+      ),
+    );
+  }
+
+  Widget _buildFlutterMap({vmt.Style? vectorStyle}) {
     final route = _route;
     final points = route?.allPoints.map(_latLng).toList(growable: false) ?? [];
     // With no route the rider's own position is the framing (#124); the UK-wide
@@ -3288,6 +3332,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
       mapController: _mapController,
       options: options,
       children: [
+        if (vectorStyle != null)
+          vmt.VectorTileLayer(
+            tileProviders: vectorStyle.providers,
+            theme: vectorStyle.theme,
+            sprites: vectorStyle.sprites,
+            maximumZoom: _basemap.maximumNativeZoom.toDouble(),
+            concurrency: 2,
+            fileCacheTtl: Duration.zero,
+            fileCacheMaximumSizeInBytes: 0,
+          ),
         if (_basemap.usesLegacyRaster)
           TileLayer(
             urlTemplate: _basemap.urlTemplate,
@@ -5469,6 +5523,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _fitRoute();
       }
     } on Object catch (error, stackTrace) {
+      if (mounted && !_mapLibreLayerPreparationFailed) {
+        setState(() => _mapLibreLayerPreparationFailed = true);
+      }
       if (kDebugMode) {
         debugPrint(
           'Could not prepare MapLibre ride layers: $error\n$stackTrace',
@@ -7814,12 +7871,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
       if (sharedFile != null) {
         unawaited(_importSharedGpx(sharedFile));
       } else if (inAppRoute != null) {
-        unawaited(
-          _reviewAndActivateRoute(
+        unawaited(() async {
+          final route = await _reviewAndActivateRoute(
             inAppRoute.route,
             warnings: inAppRoute.reviewNotes,
-          ),
-        );
+          );
+          final target = inAppRoute.handoffTarget;
+          if (route != null && target != null && mounted) {
+            await _exportRoute(target, route);
+          }
+        }());
       } else {
         _showChangeRouteSheet();
       }
