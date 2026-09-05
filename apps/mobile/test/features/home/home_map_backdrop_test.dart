@@ -531,7 +531,7 @@ void main() {
     expect(logs.single.text, contains('personal navigation completed'));
   });
 
-  testWidgets('free-roam navigation speaks the guidance shown on the map', (
+  testWidgets('free-roam navigation speaks while the phone is locked (#726)', (
     tester,
   ) async {
     final engine = _RecordingSpokenEngine();
@@ -596,6 +596,12 @@ void main() {
     );
     final map = tester.widget<RideMapFeature>(
       find.byKey(const Key('home-map')),
+    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      ),
     );
     map.onNavigationGuidanceChanged!(guidance);
     await tester.pump();

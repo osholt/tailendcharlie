@@ -4542,11 +4542,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     );
     if (announcement == null || speaker.isSpeaking) return;
 
-    // Marked spoken before the await, so a slow speech engine cannot let the
-    // same stage fire again on the next fix. A stage found while another prompt
-    // is active is deliberately left unmarked above, so the next position fix
-    // can reconsider whichever stage is then useful (#616).
-    _spokenGuidanceKeys.add(announcement.key);
+    // The tracked delivery marks the stage provisionally before its first
+    // await, then removes it if focus or playback is refused. That prevents both
+    // concurrent duplicates and a locked phone consuming a prompt as silence.
     // #409 is about *when* this is said, so the distance to the junction at the
     // moment it left the speaker is the measurement.
     _diagnostics?.recordSpokenPrompt(
@@ -4554,7 +4552,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       distanceToManoeuvreMeters: guidance.distanceMeters,
     );
     unawaited(
-      speaker.speakManoeuvre(
+      speaker.speakTrackedManoeuvre(
+        deliveredKeys: _spokenGuidanceKeys,
         // Per stage, not per manoeuvre: keyed on the manoeuvre alone, the early
         // prompt would suppress the two after it.
         key: announcement.key,

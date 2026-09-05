@@ -16,20 +16,24 @@ Read this once before your first test ride, then use
 
 **Android (Google Play closed testing)**
 
-The opt-in link is the same for every tester:
+There are two links because Google separates access approval from Play's test
+opt-in:
 
 ```
+https://groups.google.com/g/tail-end-charlie-testers
 https://play.google.com/apps/testing/app.tailendcharlie
 ```
 
-1. Open that link on the phone you will ride with, signed in to the same Google
-   account you gave the maintainer. The invitation is per Google account, so
-   accepting it on a laptop does not enrol the phone's account.
-2. Accept the invitation on that page.
-3. Follow the page's download link ("Download it on Google Play") and install
+1. On the phone you will ride with, sign in to the Google account you use for
+   Google Play.
+2. Open the Google Group link and request to join. Tell the maintainer so the
+   request can be approved.
+3. After approval, open the Play closed-testing link using that same account and
+   tap **Become a tester**.
+4. Follow the page's download link ("Download it on Google Play") and install
    Tail End Charlie.
-4. Keep the link. You need it again after a reinstall, on a new phone, or if you
-   ever leave and rejoin the programme.
+5. Keep the Play link. You need it again after a reinstall, on a new phone, or
+   if you ever leave and rejoin the programme.
 
 Searching the Play Store for Tail End Charlie is not how you get it: until your
 account has opted in, the public listing does not offer you the app at all.
@@ -37,8 +41,8 @@ account has opted in, the public listing does not offer you the app at all.
 **iOS (TestFlight)**
 
 1. Install **TestFlight** from the App Store.
-2. Open the TestFlight invitation the maintainer sends, accept it, and install
-   Tail End Charlie from inside TestFlight.
+2. Open `https://testflight.apple.com/join/HHa3BvtW`, accept the invitation, and
+   install Tail End Charlie from inside TestFlight.
 3. Turn on **Automatic Updates** in TestFlight's settings so new builds install
    themselves.
 

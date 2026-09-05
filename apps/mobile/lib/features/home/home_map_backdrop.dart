@@ -418,13 +418,13 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       followingInstructionText: guidance.followingInstruction?.standaloneText,
     );
     if (announcement == null || speaker.isSpeaking) return;
-    _spokenGuidanceKeys.add(announcement.key);
     _diagnostics?.recordSpokenPrompt(
       phrase: announcement.phrase,
       distanceToManoeuvreMeters: guidance.distanceMeters,
     );
     unawaited(
-      speaker.speakManoeuvre(
+      speaker.speakTrackedManoeuvre(
+        deliveredKeys: _spokenGuidanceKeys,
         key: announcement.key,
         phrase: announcement.phrase,
         enabled: true,
