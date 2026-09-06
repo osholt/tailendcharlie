@@ -480,9 +480,11 @@ journalctl -u relay-self-heal.service --since today
 
 This recovers application, container-daemon and most responsive-guest
 failures. It cannot run inside a completely hung kernel. The external GitHub
-probe therefore runs every five minutes and, after two separate failed runs,
-can issue an OCI `SOFTRESET`. It records each attempt on the alert issue and
-will not try another for 30 minutes.
+probe therefore runs every five minutes and, after two separate failed public
+API probes, can issue an OCI `SOFTRESET`. A deploy-parity mismatch still alerts
+but is never recovery-eligible: rebooting a healthy guest cannot deploy a
+missing commit. The workflow records each recovery attempt on the alert issue
+and will not try another for 30 minutes.
 
 Configure that control-plane recovery with a dedicated OCI user that has only
 `INSTANCE_POWER_ACTIONS` on the relay's compartment. Do not reuse an operator

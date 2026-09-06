@@ -30,7 +30,6 @@ EOF
 chmod +x "$test_root/bin/"*
 
 export RELAY_SELF_HEAL_REPO="$test_root/repo"
-export RELAY_SELF_HEAL_RUNTIME_DIR="$test_root/run"
 export RELAY_SELF_HEAL_STATE_DIR="$test_root/state"
 export RELAY_SELF_HEAL_CURL_BIN="$test_root/bin/curl"
 export RELAY_SELF_HEAL_DOCKER_BIN="$test_root/bin/docker"
@@ -49,22 +48,22 @@ assert_file_contains() {
 }
 
 FAKE_CURL_EXIT=0 "$subject"
-test "$(cat "$test_root/run/consecutive-failures")" = "0" || fail "success did not clear the failure count"
+test "$(cat "$test_root/state/consecutive-failures")" = "0" || fail "success did not clear the failure count"
 test ! -e "$test_root/docker.log" || fail "success attempted Docker recovery"
 
 FAKE_CURL_EXIT=1 "$subject" && fail "the first failed probe reported success"
-test "$(cat "$test_root/run/consecutive-failures")" = "1" || fail "first failure was not recorded"
+test "$(cat "$test_root/state/consecutive-failures")" = "1" || fail "first failure was not recorded"
 assert_file_contains "$test_root/docker.log" "up -d --no-build"
 test ! -e "$test_root/systemctl.log" || fail "first failure escalated too far"
 
 FAKE_CURL_EXIT=1 "$subject" && fail "the second failed probe reported success"
-test "$(cat "$test_root/run/consecutive-failures")" = "2" || fail "second failure was not recorded"
+test "$(cat "$test_root/state/consecutive-failures")" = "2" || fail "second failure was not recorded"
 assert_file_contains "$test_root/systemctl.log" "stop docker.service docker.socket"
 assert_file_contains "$test_root/systemctl.log" "restart containerd.service"
 assert_file_contains "$test_root/systemctl.log" "start docker.service"
 
 FAKE_CURL_EXIT=1 "$subject"
-test "$(cat "$test_root/run/consecutive-failures")" = "3" || fail "third failure was not recorded"
+test "$(cat "$test_root/state/consecutive-failures")" = "3" || fail "third failure was not recorded"
 assert_file_contains "$test_root/systemctl.log" "reboot"
 test -s "$test_root/state/last-reboot-at" || fail "reboot cooldown was not recorded"
 
@@ -74,6 +73,6 @@ after="$(grep -c '^reboot$' "$test_root/systemctl.log")"
 test "$before" = "$after" || fail "the reboot cooldown was ignored"
 
 FAKE_CURL_EXIT=0 "$subject"
-test "$(cat "$test_root/run/consecutive-failures")" = "0" || fail "recovery did not reset the failure count"
+test "$(cat "$test_root/state/consecutive-failures")" = "0" || fail "recovery did not reset the failure count"
 
 echo "relay-self-heal tests passed"
