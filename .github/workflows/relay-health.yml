@@ -2,7 +2,7 @@ name: Relay health monitor
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -83,6 +83,93 @@ jobs:
             exit 1
           fi
           echo "relay healthy at commit $deployed, nothing relay-affecting undeployed"
+
+      - name: Decide whether whole-guest recovery is needed
+        id: recovery-gate
+        if: ${{ steps.probe.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OCI_CLI_USER: ${{ secrets.OCI_RECOVERY_USER }}
+          OCI_CLI_TENANCY: ${{ secrets.OCI_RECOVERY_TENANCY }}
+          OCI_CLI_FINGERPRINT: ${{ secrets.OCI_RECOVERY_FINGERPRINT }}
+          OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_RECOVERY_PRIVATE_KEY }}
+          OCI_CLI_REGION: ${{ secrets.OCI_RECOVERY_REGION }}
+          OCI_INSTANCE_ID: ${{ secrets.OCI_RECOVERY_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+          echo "should_recover=no" >> "$GITHUB_OUTPUT"
+
+          missing=""
+          for value in \
+            "$OCI_CLI_USER" \
+            "$OCI_CLI_TENANCY" \
+            "$OCI_CLI_FINGERPRINT" \
+            "$OCI_CLI_KEY_CONTENT" \
+            "$OCI_CLI_REGION" \
+            "$OCI_INSTANCE_ID"; do
+            test -n "$value" || missing=yes
+          done
+          if test -n "$missing"; then
+            echo "automatic OCI recovery is not configured; see the server runbook"
+            exit 0
+          fi
+
+          # The first failed run opens the alert. Only a later failed run is
+          # allowed to reboot anything, which filters one-runner or transient
+          # Internet failures without leaving a real outage unattended.
+          issue_number="$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "\"$ALERT_TITLE\" in:title" \
+            --json number,title \
+            --jq ".[] | select(.title == \"$ALERT_TITLE\") | .number" \
+            | head -1)"
+          if test -z "$issue_number"; then
+            echo "no earlier failed probe exists; waiting for independent confirmation"
+            exit 0
+          fi
+
+          last_recovery="$(gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/$issue_number/comments?per_page=100" \
+            --jq 'map(.[]) | map(select(.body | startswith("Automatic OCI recovery requested"))) | last | .created_at // ""')"
+          if test -n "$last_recovery"; then
+            last_epoch="$(date -d "$last_recovery" +%s)"
+            now_epoch="$(date +%s)"
+            if ((now_epoch - last_epoch < 1800)); then
+              echo "an OCI recovery was requested within the 30-minute cooldown"
+              exit 0
+            fi
+          fi
+
+          echo "issue_number=$issue_number" >> "$GITHUB_OUTPUT"
+          echo "should_recover=yes" >> "$GITHUB_OUTPUT"
+
+      - name: Request a graceful OCI soft reset
+        id: soft-reset
+        if: ${{ steps.recovery-gate.outputs.should_recover == 'yes' }}
+        uses: oracle-actions/run-oci-cli-command@368cc7991534d1b8074846d10e1d84ac4c0d1a28 # v1.3.2
+        env:
+          OCI_CLI_USER: ${{ secrets.OCI_RECOVERY_USER }}
+          OCI_CLI_TENANCY: ${{ secrets.OCI_RECOVERY_TENANCY }}
+          OCI_CLI_FINGERPRINT: ${{ secrets.OCI_RECOVERY_FINGERPRINT }}
+          OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_RECOVERY_PRIVATE_KEY }}
+          OCI_CLI_REGION: ${{ secrets.OCI_RECOVERY_REGION }}
+        with:
+          command: >-
+            compute instance action
+            --instance-id ${{ secrets.OCI_RECOVERY_INSTANCE_ID }}
+            --action SOFTRESET
+
+      - name: Record the automatic recovery attempt
+        if: ${{ steps.soft-reset.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ steps.recovery-gate.outputs.issue_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body "Automatic OCI recovery requested at $(date -u +%FT%TZ): graceful SOFTRESET after two failed external probes. Run: $RUN_URL"
 
       - name: Open or update an alert issue
         if: ${{ steps.probe.outcome == 'failure' }}

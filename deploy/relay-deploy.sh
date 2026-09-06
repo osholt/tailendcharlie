@@ -183,6 +183,16 @@ docker run --rm --interactive \
   --env "SMOKE_WRITE_PLAN=$(test "$target" = staging && echo 1 || echo 0)" \
   --entrypoint python "$smoke_image" - <deploy/relay-smoke.py
 
+# Pre-production is an internal deployment gate, not a resident environment on
+# this memory-constrained host. Leave its containers and logs available for the
+# next deploy, but stop the duplicate API, database and cleanup worker after a
+# successful smoke test. An operator who explicitly enables the public
+# pre-production proxy can opt out in /etc/relay-deploy.conf.
+if test "$target" = staging && test "${RELAY_DEPLOY_KEEP_STAGING_RUNNING:-}" != "1"; then
+  step "Stopping the pre-production gate after its successful smoke test"
+  "${compose[@]}" stop
+fi
+
 mkdir -p "$state_dir" 2>/dev/null ||
   fail "cannot create $state_dir; create it once, owned by $(id -un)"
 printf '%s\n' "$RIDE_RELAY_BUILD_COMMIT" >"$state_file"

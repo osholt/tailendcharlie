@@ -16,6 +16,23 @@ env:
   SERVER_DIR: apps/server
 
 jobs:
+  operations:
+    name: Deployment recovery guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check deployment shell
+        run: |
+          shellcheck \
+            deploy/relay-deploy.sh \
+            deploy/relay-deploy-command \
+            deploy/relay-self-heal \
+            deploy/install-relay-self-heal.sh \
+            deploy/tests/relay-self-heal-test.sh
+      - name: Exercise automatic recovery thresholds and cooldown
+        run: deploy/tests/relay-self-heal-test.sh
+
   quality:
     name: Lint and test
     runs-on: ubuntu-latest
