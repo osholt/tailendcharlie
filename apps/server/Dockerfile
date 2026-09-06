@@ -20,7 +20,10 @@ RUN useradd --create-home --uid 10001 ride-relay
 USER ride-relay
 
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=2)"]
+# Container execs can be delayed briefly while this small shared host builds a
+# candidate image. The API may still be answering riders throughout, so allow
+# enough scheduling headroom to avoid a false unhealthy state.
+HEALTHCHECK --interval=30s --timeout=15s --start-period=20s --retries=3 \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=10)"]
 
 CMD ["sh", "-c", ".venv/bin/alembic upgrade head && exec .venv/bin/ride-relay-server"]

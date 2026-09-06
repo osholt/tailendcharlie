@@ -101,6 +101,11 @@ case "$target" in
 staging)
   env_file="deploy/.env.preproduction"
   compose=(docker compose --env-file "$env_file" --file deploy/compose.preproduction.yaml)
+  # Staging is only a deployment gate. Building its API and cleanup worker as
+  # separate images used to duplicate the heaviest export/unpack work on the
+  # 954 MB production host, and the cleanup worker is not part of the smoke
+  # test. Start only the database and API needed by the gate.
+  start_services=(db preproduction-server)
   domain_key="RIDE_RELAY_PREPRODUCTION_DOMAIN"
   api_service="preproduction-server"
   # Staging's own containers carry no Caddy: its public route lives in the
@@ -112,6 +117,7 @@ production)
   env_file="deploy/.env"
   compose=(docker compose --env-file "$env_file")
   compose+=(--file deploy/compose.yaml)
+  start_services=()
   caddyfile="deploy/Caddyfile"
   for override in "${production_overrides[@]}"; do
     test -n "$override" || continue
@@ -127,6 +133,26 @@ esac
 
 test -r "$env_file" || fail "missing $repo/$env_file"
 
+# A failed staging build or smoke test must not leave a second API and
+# database consuming memory beside production. Register the cleanup before
+# starting anything so every error path, including SIGTERM from CI, stops the
+# gate. Containers and logs remain available for diagnosis after `stop`.
+staging_cleanup_pending=0
+cleanup_staging_gate() {
+  exit_status=$?
+  trap - EXIT
+  if test "$staging_cleanup_pending" = "1"; then
+    echo >&2
+    echo "==> Stopping the pre-production gate after an incomplete deploy" >&2
+    "${compose[@]}" stop >&2 || true
+  fi
+  exit "$exit_status"
+}
+if test "$target" = staging && test "${RELAY_DEPLOY_KEEP_STAGING_RUNNING:-}" != "1"; then
+  staging_cleanup_pending=1
+  trap cleanup_staging_gate EXIT
+fi
+
 domain="$(sed -n "s/^$domain_key=//p" "$env_file" | head -1)"
 test -n "$domain" || fail "$domain_key is not set in $env_file"
 
@@ -134,7 +160,7 @@ step "Validating the $target compose configuration"
 "${compose[@]}" config >/dev/null
 
 step "Building and starting $target at $RIDE_RELAY_BUILD_COMMIT"
-"${compose[@]}" up -d --build
+"${compose[@]}" up -d --build "${start_services[@]}"
 
 # The Caddyfile is bind-mounted, and `git checkout` replaces it by rename: the
 # running container keeps reading the original inode, so a plain `up -d` leaves
@@ -175,13 +201,34 @@ smoke_network="$(
 {{end}}' "$container" | head -1
 )"
 
-docker run --rm --interactive \
-  --network "$smoke_network" \
-  --env "SMOKE_ORIGIN=http://$api_service:8080" \
-  --env "SMOKE_HOST=$domain" \
-  --env "SMOKE_EXPECTED_COMMIT=$RIDE_RELAY_BUILD_COMMIT" \
-  --env "SMOKE_WRITE_PLAN=$(test "$target" = staging && echo 1 || echo 0)" \
-  --entrypoint python "$smoke_image" - <deploy/relay-smoke.py
+run_smoke() {
+  docker run --rm --interactive \
+    --network "$smoke_network" \
+    --env "SMOKE_ORIGIN=http://$api_service:8080" \
+    --env "SMOKE_HOST=$domain" \
+    --env "SMOKE_EXPECTED_COMMIT=$RIDE_RELAY_BUILD_COMMIT" \
+    --env "SMOKE_WRITE_PLAN=$(test "$target" = staging && echo 1 || echo 0)" \
+    --entrypoint python "$smoke_image" - <deploy/relay-smoke.py
+}
+
+# Compose returning only proves the container was started. On the small relay
+# host the API can need a few seconds to be scheduled after an image build, so
+# let the end-to-end smoke probe establish readiness instead of treating that
+# ordinary startup delay as a failed deployment.
+smoke_attempts=1
+test "$target" = staging && smoke_attempts=12
+smoke_ok=0
+for ((attempt = 1; attempt <= smoke_attempts; attempt += 1)); do
+  if run_smoke; then
+    smoke_ok=1
+    break
+  fi
+  if test "$attempt" -lt "$smoke_attempts"; then
+    echo "smoke: attempt $attempt/$smoke_attempts failed; retrying in 5 seconds" >&2
+    sleep 5
+  fi
+done
+test "$smoke_ok" = "1" || fail "$target smoke test failed after $smoke_attempts attempts"
 
 # Pre-production is an internal deployment gate, not a resident environment on
 # this memory-constrained host. Leave its containers and logs available for the
@@ -191,6 +238,8 @@ docker run --rm --interactive \
 if test "$target" = staging && test "${RELAY_DEPLOY_KEEP_STAGING_RUNNING:-}" != "1"; then
   step "Stopping the pre-production gate after its successful smoke test"
   "${compose[@]}" stop
+  staging_cleanup_pending=0
+  trap - EXIT
 fi
 
 mkdir -p "$state_dir" 2>/dev/null ||

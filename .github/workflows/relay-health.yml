@@ -34,6 +34,10 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          # A deployment-parity failure needs an alert, but rebooting a healthy
+          # guest cannot deploy the missing commit. Only make host recovery
+          # eligible until both public API probes have been validated.
+          echo "recovery_eligible=yes" >> "$GITHUB_OUTPUT"
           live_file="$RUNNER_TEMP/live.json"
           compatibility_file="$RUNNER_TEMP/compatibility.json"
           curl --fail --silent --show-error --max-time 15 \
@@ -60,6 +64,7 @@ jobs:
               raise SystemExit(f"relay reports no usable build commit: {deployed!r}")
           print(deployed)
           PY
+          echo "recovery_eligible=no" >> "$GITHUB_OUTPUT"
           deployed="$(cat "$RUNNER_TEMP/deployed")"
 
           # Parity is not "the relay is on the tip of main". Only apps/server
@@ -86,7 +91,7 @@ jobs:
 
       - name: Decide whether whole-guest recovery is needed
         id: recovery-gate
-        if: ${{ steps.probe.outcome == 'failure' }}
+        if: ${{ steps.probe.outcome == 'failure' && steps.probe.outputs.recovery_eligible == 'yes' }}
         env:
           GH_TOKEN: ${{ github.token }}
           OCI_CLI_USER: ${{ secrets.OCI_RECOVERY_USER }}

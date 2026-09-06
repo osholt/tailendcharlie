@@ -11,9 +11,11 @@ set -u -o pipefail
 repo="${RELAY_SELF_HEAL_REPO:-/opt/tailendcharlie}"
 env_file="${RELAY_SELF_HEAL_ENV_FILE:-$repo/deploy/.env}"
 compose_file="${RELAY_SELF_HEAL_COMPOSE_FILE:-$repo/deploy/compose.yaml}"
-runtime_dir="${RELAY_SELF_HEAL_RUNTIME_DIR:-/run/relay-self-heal}"
 state_dir="${RELAY_SELF_HEAL_STATE_DIR:-/var/lib/relay-self-heal}"
-failure_file="$runtime_dir/consecutive-failures"
+# systemd removes RuntimeDirectory after each oneshot invocation. Keep the
+# counter in StateDirectory so consecutive timer runs can actually escalate
+# from stack recovery to runtime recovery and finally a controlled reboot.
+failure_file="$state_dir/consecutive-failures"
 last_reboot_file="$state_dir/last-reboot-at"
 
 curl_bin="${RELAY_SELF_HEAL_CURL_BIN:-curl}"
@@ -67,7 +69,7 @@ if test -z "$domain" || [[ "$domain" == *[!A-Za-z0-9.-]* ]]; then
   exit 2
 fi
 
-install -d -m 0755 "$runtime_dir" "$state_dir"
+install -d -m 0755 "$state_dir"
 
 if "$curl_bin" \
   --fail \
