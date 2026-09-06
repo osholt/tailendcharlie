@@ -3,7 +3,10 @@ name: ride-relay-preproduction
 services:
   db:
     image: postgres:17-alpine
-    restart: unless-stopped
+    # CI starts this stack only long enough to smoke a candidate. Keeping a
+    # duplicate database/API resident on the 954 MB production host caused
+    # sustained memory pressure and an OOM cascade in September 2026.
+    restart: "no"
     environment:
       POSTGRES_DB: ride_relay
       POSTGRES_USER: ride_relay
@@ -24,7 +27,7 @@ services:
       context: ../apps/server
       args:
         RIDE_RELAY_BUILD_COMMIT: ${RIDE_RELAY_BUILD_COMMIT:-unknown}
-    restart: unless-stopped
+    restart: "no"
     read_only: true
     tmpfs:
       - /tmp
@@ -93,7 +96,7 @@ services:
       context: ../apps/server
       args:
         RIDE_RELAY_BUILD_COMMIT: ${RIDE_RELAY_BUILD_COMMIT:-unknown}
-    restart: unless-stopped
+    restart: "no"
     read_only: true
     tmpfs:
       - /tmp

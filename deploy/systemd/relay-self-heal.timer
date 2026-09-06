@@ -1,0 +1,13 @@
+[Unit]
+Description=Check and recover the Tail End Charlie relay every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=relay-self-heal.service
+
+[Install]
+WantedBy=timers.target

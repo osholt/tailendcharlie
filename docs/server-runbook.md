@@ -236,6 +236,12 @@ Things worth knowing before trusting it:
   explicit `Host` header because the API rejects an untrusted one with a 400.
   Going through the public proxy would test the proxy — which is exactly what
   #398 says is broken — instead of the deploy.
+- **The pre-production stack stops after a successful smoke test.** It is an
+  internal gate, not a second resident service: keeping its duplicate API,
+  PostgreSQL and cleanup worker running helped exhaust the host's 954 MB of
+  memory in September 2026. Set `RELAY_DEPLOY_KEEP_STAGING_RUNNING=1` in the
+  root-owned `/etc/relay-deploy.conf` only if the public pre-production proxy
+  is deliberately enabled and the host has been given enough memory.
 - **The smoke test is a real round trip**, not a health check: it creates a plan
   and reads the GPX back, so the API, the encryption key and PostgreSQL all have
   to agree. It only writes on pre-production; production's database is riders'
@@ -280,6 +286,8 @@ command and verify the style plus representative tiles.
 
 Pre-production can share the VM and public Caddy process without sharing API
 containers, PostgreSQL data, credentials, or Docker volumes with production.
+On the current small host it is an ephemeral CI gate and stops after its smoke
+test; a permanently reachable pre-production service needs additional memory.
 Create an A record such as `preprod-relay.example.com` pointing to the same
 host, then prepare independent secrets:
 
@@ -439,6 +447,58 @@ checked out. `serverBuildCommit` is the only trustworthy answer to "what is
 running", and a redeploy is what makes the two agree again.
 
 Then run the ordinary redeploy above and verify from outside the box.
+
+### Automatic recovery on the host
+
+Install the systemd recovery guard once, and run the same command after a
+merged change to `deploy/relay-self-heal` or its units:
+
+```bash
+ssh oracle-relay \
+  'cd /opt/tailendcharlie && sudo deploy/install-relay-self-heal.sh'
+```
+
+The timer probes the private readiness route through Caddy over loopback once a
+minute, so it tests Caddy, the API and PostgreSQL without depending on DNS or
+the VM's external network. That route remains a 404 from the Internet.
+Docker already restarts a container that exits. For wider failures the guard
+escalates only while readiness remains down:
+
+1. first failed probe: bring the existing stack up with `--no-build`;
+2. second failed probe: restart Docker and containerd cleanly, then bring the
+   existing stack up;
+3. third failed probe: request a controlled guest reboot.
+
+The counter lives in `/run`, so a successful probe or a reboot clears the
+escalation. A persistent timestamp prevents another automatic reboot for 30
+minutes. Inspect it with:
+
+```bash
+systemctl status relay-self-heal.timer relay-self-heal.service
+journalctl -u relay-self-heal.service --since today
+```
+
+This recovers application, container-daemon and most responsive-guest
+failures. It cannot run inside a completely hung kernel. The external GitHub
+probe therefore runs every five minutes and, after two separate failed runs,
+can issue an OCI `SOFTRESET`. It records each attempt on the alert issue and
+will not try another for 30 minutes.
+
+Configure that control-plane recovery with a dedicated OCI user that has only
+`INSTANCE_POWER_ACTIONS` on the relay's compartment. Do not reuse an operator
+or tenancy-administrator key. Store its values as GitHub Actions repository
+secrets:
+
+- `OCI_RECOVERY_USER`
+- `OCI_RECOVERY_TENANCY`
+- `OCI_RECOVERY_FINGERPRINT`
+- `OCI_RECOVERY_PRIVATE_KEY`
+- `OCI_RECOVERY_REGION`
+- `OCI_RECOVERY_INSTANCE_ID`
+
+The workflow uses Oracle's official `run-oci-cli-command` action pinned to a
+reviewed commit. Until all six secrets exist it remains fail-safe: the probe
+still alerts, but no cloud action is attempted.
 
 **What riders see during an outage.** The relay carries group coordination:
 presence, hazards, quick messages and TEC status. Navigation and the map are

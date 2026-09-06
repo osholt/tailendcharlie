@@ -22,6 +22,18 @@
 		reverse_proxy server:8080
 	}
 
+	# Readiness includes the database and is intentionally unavailable from the
+	# Internet. The host recovery guard reaches this one route over loopback so
+	# it can test the complete production path without opening a diagnostic
+	# endpoint publicly.
+	@local_ready {
+		path /health/ready
+		remote_ip 127.0.0.1 ::1
+	}
+	handle @local_ready {
+		reverse_proxy server:8080
+	}
+
 	@private_health path /health/*
 	respond @private_health 404
 

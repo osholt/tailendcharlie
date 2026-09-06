@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Recover the production relay when its local HTTPS readiness probe fails.
+#
+# This is installed as a root-owned program by install-relay-self-heal.sh and
+# run once a minute by systemd. Docker's restart policy handles individual
+# container exits. This guard handles the wider failures that Docker cannot:
+# a missing stack, a stuck daemon, or a guest that needs a controlled reboot.
+
+set -u -o pipefail
+
+repo="${RELAY_SELF_HEAL_REPO:-/opt/tailendcharlie}"
+env_file="${RELAY_SELF_HEAL_ENV_FILE:-$repo/deploy/.env}"
+compose_file="${RELAY_SELF_HEAL_COMPOSE_FILE:-$repo/deploy/compose.yaml}"
+runtime_dir="${RELAY_SELF_HEAL_RUNTIME_DIR:-/run/relay-self-heal}"
+state_dir="${RELAY_SELF_HEAL_STATE_DIR:-/var/lib/relay-self-heal}"
+failure_file="$runtime_dir/consecutive-failures"
+last_reboot_file="$state_dir/last-reboot-at"
+
+curl_bin="${RELAY_SELF_HEAL_CURL_BIN:-curl}"
+docker_bin="${RELAY_SELF_HEAL_DOCKER_BIN:-docker}"
+systemctl_bin="${RELAY_SELF_HEAL_SYSTEMCTL_BIN:-systemctl}"
+timeout_bin="${RELAY_SELF_HEAL_TIMEOUT_BIN:-timeout}"
+
+stack_recovery_threshold="${RELAY_SELF_HEAL_STACK_RECOVERY_THRESHOLD:-1}"
+docker_recovery_threshold="${RELAY_SELF_HEAL_DOCKER_RECOVERY_THRESHOLD:-2}"
+reboot_threshold="${RELAY_SELF_HEAL_REBOOT_THRESHOLD:-3}"
+reboot_cooldown_seconds="${RELAY_SELF_HEAL_REBOOT_COOLDOWN_SECONDS:-1800}"
+command_timeout_seconds="${RELAY_SELF_HEAL_COMMAND_TIMEOUT_SECONDS:-120}"
+runtime_timeout_seconds="${RELAY_SELF_HEAL_RUNTIME_TIMEOUT_SECONDS:-300}"
+
+log() {
+  printf 'relay-self-heal: %s\n' "$*"
+}
+
+is_non_negative_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+for value in \
+  "$stack_recovery_threshold" \
+  "$docker_recovery_threshold" \
+  "$reboot_threshold" \
+  "$reboot_cooldown_seconds" \
+  "$command_timeout_seconds" \
+  "$runtime_timeout_seconds"; do
+  if ! is_non_negative_integer "$value"; then
+    log "invalid numeric configuration: $value"
+    exit 2
+  fi
+done
+
+if ((stack_recovery_threshold < 1 ||
+     docker_recovery_threshold <= stack_recovery_threshold ||
+     reboot_threshold <= docker_recovery_threshold)); then
+  log "thresholds must increase from stack recovery to Docker recovery to reboot"
+  exit 2
+fi
+
+if ! test -r "$env_file" || ! test -r "$compose_file"; then
+  log "deployment configuration is missing; refusing recovery"
+  exit 2
+fi
+
+domain="$(sed -n 's/^RIDE_RELAY_DOMAIN=//p' "$env_file" | head -1)"
+if test -z "$domain" || [[ "$domain" == *[!A-Za-z0-9.-]* ]]; then
+  log "RIDE_RELAY_DOMAIN is missing or invalid; refusing recovery"
+  exit 2
+fi
+
+install -d -m 0755 "$runtime_dir" "$state_dir"
+
+if "$curl_bin" \
+  --fail \
+  --silent \
+  --show-error \
+  --connect-timeout 3 \
+  --max-time 10 \
+  --resolve "$domain:443:127.0.0.1" \
+  "https://$domain/health/ready" >/dev/null; then
+  if test -s "$failure_file" && test "$(cat "$failure_file")" != "0"; then
+    log "readiness recovered"
+  fi
+  printf '0\n' >"$failure_file"
+  exit 0
+fi
+
+failures=0
+if test -r "$failure_file"; then
+  failures="$(cat "$failure_file")"
+  is_non_negative_integer "$failures" || failures=0
+fi
+failures=$((failures + 1))
+printf '%s\n' "$failures" >"$failure_file"
+log "local readiness failed ($failures consecutive failure(s))"
+
+compose=(
+  "$docker_bin" compose
+  --env-file "$env_file"
+  --file "$compose_file"
+)
+
+if ((failures == stack_recovery_threshold)); then
+  log "bringing the existing production stack back up without rebuilding"
+  if ! "$timeout_bin" "$command_timeout_seconds" "${compose[@]}" up -d --no-build; then
+    log "stack recovery command failed; the next probe will escalate"
+  fi
+fi
+
+if ((failures == docker_recovery_threshold)); then
+  log "restarting Docker and containerd, then bringing the existing production stack back up"
+  if "$timeout_bin" "$runtime_timeout_seconds" \
+    "$systemctl_bin" stop docker.service docker.socket && \
+    "$timeout_bin" "$runtime_timeout_seconds" \
+      "$systemctl_bin" restart containerd.service && \
+    "$timeout_bin" "$runtime_timeout_seconds" \
+      "$systemctl_bin" start docker.service; then
+    if ! "$timeout_bin" "$command_timeout_seconds" \
+      "${compose[@]}" up -d --no-build; then
+      log "stack recovery after the container runtime restart failed; the next probe will escalate"
+    fi
+  else
+    log "container runtime restart failed; the next probe will escalate"
+  fi
+fi
+
+if ((failures >= reboot_threshold)); then
+  now="$(date +%s)"
+  last_reboot=0
+  if test -r "$last_reboot_file"; then
+    last_reboot="$(cat "$last_reboot_file")"
+    is_non_negative_integer "$last_reboot" || last_reboot=0
+  fi
+
+  if ((now - last_reboot < reboot_cooldown_seconds)); then
+    log "readiness is still down, but a reboot was attempted within the cooldown; not rebooting again"
+    exit 1
+  fi
+
+  printf '%s\n' "$now" >"$last_reboot_file"
+  log "requesting a controlled reboot after $failures failed readiness probes"
+  "$systemctl_bin" reboot
+  exit $?
+fi
+
+exit 1
