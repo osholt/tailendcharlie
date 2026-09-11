@@ -22,18 +22,6 @@
 		reverse_proxy server:8080
 	}
 
-	# Readiness includes the database and is intentionally unavailable from the
-	# Internet. The host recovery guard reaches this one route over loopback so
-	# it can test the complete production path without opening a diagnostic
-	# endpoint publicly.
-	@local_ready {
-		path /health/ready
-		remote_ip 127.0.0.1 ::1
-	}
-	handle @local_ready {
-		reverse_proxy server:8080
-	}
-
 	@private_health path /health/*
 	respond @private_health 404
 
@@ -112,6 +100,19 @@
 		header X-Robots-Tag "noindex, nofollow, noarchive"
 		header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src blob:; child-src blob:; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 		file_server
+	}
+
+	respond 404
+}
+
+# Docker's port-forwarding makes a request sent to the public HTTPS listener
+# over host loopback appear to Caddy as the bridge gateway, not 127.0.0.1. Keep
+# readiness on a dedicated HTTP listener instead. Compose publishes this port
+# on host loopback only, so it is unavailable from the Internet while the host
+# recovery guard still exercises Caddy, the API and PostgreSQL end to end.
+:2018 {
+	handle /health/ready {
+		reverse_proxy server:8080
 	}
 
 	respond 404

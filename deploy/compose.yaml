@@ -115,6 +115,7 @@ services:
       - 80:80
       - 443:443
       - 443:443/udp
+      - 127.0.0.1:2018:2018
     environment:
       RIDE_RELAY_DOMAIN: ${RIDE_RELAY_DOMAIN:?set RIDE_RELAY_DOMAIN}
     volumes:

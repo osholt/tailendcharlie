@@ -12,6 +12,7 @@ printf 'name: test\n' >"$test_root/repo/deploy/compose.yaml"
 
 cat >"$test_root/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$RELAY_SELF_HEAL_TEST_CURL_LOG"
 exit "${FAKE_CURL_EXIT:-0}"
 EOF
 cat >"$test_root/bin/docker" <<EOF
@@ -35,6 +36,7 @@ export RELAY_SELF_HEAL_CURL_BIN="$test_root/bin/curl"
 export RELAY_SELF_HEAL_DOCKER_BIN="$test_root/bin/docker"
 export RELAY_SELF_HEAL_SYSTEMCTL_BIN="$test_root/bin/systemctl"
 export RELAY_SELF_HEAL_TIMEOUT_BIN="$test_root/bin/timeout"
+export RELAY_SELF_HEAL_TEST_CURL_LOG="$test_root/curl.log"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -50,6 +52,7 @@ assert_file_contains() {
 FAKE_CURL_EXIT=0 "$subject"
 test "$(cat "$test_root/state/consecutive-failures")" = "0" || fail "success did not clear the failure count"
 test ! -e "$test_root/docker.log" || fail "success attempted Docker recovery"
+assert_file_contains "$test_root/curl.log" "http://127.0.0.1:2018/health/ready"
 
 FAKE_CURL_EXIT=1 "$subject" && fail "the first failed probe reported success"
 test "$(cat "$test_root/state/consecutive-failures")" = "1" || fail "first failure was not recorded"

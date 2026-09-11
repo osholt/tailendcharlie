@@ -458,9 +458,10 @@ ssh oracle-relay \
   'cd /opt/tailendcharlie && sudo deploy/install-relay-self-heal.sh'
 ```
 
-The timer probes the private readiness route through Caddy over loopback once a
-minute, so it tests Caddy, the API and PostgreSQL without depending on DNS or
-the VM's external network. That route remains a 404 from the Internet.
+The timer probes `http://127.0.0.1:2018/health/ready` through Caddy once a
+minute. Compose publishes port 2018 on host loopback only, so the probe tests
+Caddy, the API and PostgreSQL without exposing readiness publicly or depending
+on DNS or the VM's external network. That route remains a 404 from the Internet.
 Docker already restarts a container that exits. For wider failures the guard
 escalates only while readiness remains down:
 
