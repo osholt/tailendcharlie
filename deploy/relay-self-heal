@@ -77,8 +77,7 @@ if "$curl_bin" \
   --show-error \
   --connect-timeout 3 \
   --max-time 10 \
-  --resolve "$domain:443:127.0.0.1" \
-  "https://$domain/health/ready" >/dev/null; then
+  "http://127.0.0.1:2018/health/ready" >/dev/null; then
   if test -s "$failure_file" && test "$(cat "$failure_file")" != "0"; then
     log "readiness recovered"
   fi

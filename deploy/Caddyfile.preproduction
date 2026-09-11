@@ -93,6 +93,16 @@
 	respond 404
 }
 
+# Private host-only readiness listener for the production API. The base
+# Compose file publishes this port on 127.0.0.1 only; see deploy/Caddyfile.
+:2018 {
+	handle /health/ready {
+		reverse_proxy server:8080
+	}
+
+	respond 404
+}
+
 {$RIDE_RELAY_PREPRODUCTION_DOMAIN} {
 	encode zstd gzip
 	header X-Robots-Tag "noindex, nofollow"
