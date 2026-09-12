@@ -5623,9 +5623,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
       await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
       await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
     } on Object catch (error) {
-      if (kDebugMode) {
-        debugPrint('Could not refresh MapLibre ride layers: $error');
-      }
+      _recoverFromMapLibreSourceFailure(error);
     }
   }
 
@@ -5716,9 +5714,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
         );
       }
     } on Object catch (error) {
-      if (kDebugMode) {
-        debugPrint('Could not refresh scheduled MapLibre layers: $error');
-      }
+      _recoverFromMapLibreSourceFailure(error);
     } finally {
       _mapLibreSyncRunning = false;
     }
@@ -5726,6 +5722,24 @@ class _RideMapScreenState extends State<RideMapScreen> {
         _mapLibrePositionDirty ||
         _mapLibreOverlaysDirty) {
       _scheduleMapLibreSync();
+    }
+  }
+
+  /// Keeps confirmed routes visible when a native source update is rejected.
+  ///
+  /// MapLibre source errors used to be debug-printed and swallowed. That left
+  /// the source installed but empty, so an imported route could preview
+  /// correctly and then disappear after confirmation (#731). The existing
+  /// Flutter renderer reads the same in-memory geometry and remains usable even
+  /// when the native style cannot accept a source refresh.
+  void _recoverFromMapLibreSourceFailure(Object error) {
+    if (mounted && !_mapLibreLayerPreparationFailed) {
+      setState(() => _mapLibreLayerPreparationFailed = true);
+    }
+    if (kDebugMode) {
+      debugPrint(
+        'Could not refresh MapLibre ride layers; using fallback: $error',
+      );
     }
   }
 
