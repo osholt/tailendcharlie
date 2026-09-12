@@ -46,6 +46,59 @@ import 'package:ride_relay/services/speed_limit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('native source updates follow app visibility on iOS (#732)', () {
+    expect(
+      mapLibreSourceUpdatesShouldPause(AppLifecycleState.resumed),
+      isFalse,
+    );
+    expect(
+      mapLibreSourceUpdatesShouldPause(AppLifecycleState.inactive),
+      isTrue,
+    );
+    expect(mapLibreSourceUpdatesShouldPause(AppLifecycleState.hidden), isTrue);
+    expect(mapLibreSourceUpdatesShouldPause(AppLifecycleState.paused), isTrue);
+    expect(
+      mapLibreSourceUpdatesShouldPause(AppLifecycleState.detached),
+      isTrue,
+    );
+
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+    expect(source, contains('if (_mapLibreSourceUpdatesPaused) return;'));
+    expect(
+      source,
+      contains('_mapLibreSourceUpdatesPaused ||\n        !_mapLibreStyleReady'),
+    );
+    expect(source, contains('!mounted || _mapLibreSourceUpdatesPaused'));
+    expect(
+      source,
+      contains(
+        '_scheduleMapLibreSync(progress: true, position: true, overlays: true)',
+      ),
+    );
+  });
+
+  test('invalid early native cameras are dropped before map calculations', () {
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+    final start = source.indexOf(
+      'void _onMapLibreCameraMove(ml.CameraPosition camera)',
+    );
+    final end = source.indexOf(
+      '\n  MapNavigationPosition? get _navigationFix',
+      start,
+    );
+    final callback = source.substring(start, end);
+
+    expect(callback, contains('!MapCameraCommand.isUsable('));
+    expect(callback, contains('zoom: camera.zoom'));
+    expect(callback, contains('tilt: camera.tilt'));
+    expect(callback, contains('bearing: camera.bearing'));
+    expect(callback, contains('return;'));
+  });
+
   test('motorcycle discovery hides on wide-area views', () {
     expect(
       motorcycleDiscoveryVisibleAtZoom(motorcycleDiscoveryMinimumZoom - 0.01),

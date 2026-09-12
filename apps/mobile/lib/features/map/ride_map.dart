@@ -19,6 +19,7 @@ export 'ride_map_feature.dart'
         groupMiniMapRenderer,
         heatmapRoadLayerId,
         landscapeGuidancePanelWidth,
+        mapLibreSourceUpdatesShouldPause,
         motorcycleDiscoveryMinimumZoom,
         motorcycleDiscoveryVisibleAtZoom,
         personalHeatmapGroundRadiusMeters,
