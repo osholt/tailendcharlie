@@ -91,6 +91,16 @@ import 'smooth_countdown.dart';
 import 'stored_route_picker.dart';
 
 @visibleForTesting
+bool mapLibreSourceUpdatesShouldPause(AppLifecycleState state) =>
+    switch (state) {
+      AppLifecycleState.resumed => false,
+      AppLifecycleState.inactive ||
+      AppLifecycleState.hidden ||
+      AppLifecycleState.paused ||
+      AppLifecycleState.detached => true,
+    };
+
+@visibleForTesting
 GroupMiniMapRenderer groupMiniMapRenderer({
   required bool mapLibreEnabled,
   required TargetPlatform platform,
@@ -1085,7 +1095,8 @@ class RideMapScreen extends StatefulWidget {
   State<RideMapScreen> createState() => _RideMapScreenState();
 }
 
-class _RideMapScreenState extends State<RideMapScreen> {
+class _RideMapScreenState extends State<RideMapScreen>
+    with WidgetsBindingObserver {
   static const _personalHeatmapSource = 'ride-relay-personal-heatmap';
   static const _personalHeatmapLayer = 'ride-relay-personal-heatmap-layer';
   static const _globalHeatmapSource = 'ride-relay-global-heatmap';
@@ -1139,6 +1150,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   double _lastViewportZoom = 14;
   late final GroupPipBridge _groupPipBridge;
   ml.MapLibreMapController? _mapLibreController;
+  // Background location delivery must keep updating route state, but mutating
+  // a hidden iOS platform view races the native renderer as it is suspended.
+  // Dirty source flags stay set while this is true and are flushed on resume.
+  late bool _mapLibreSourceUpdatesPaused;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
   bool _mapLibreStyleReady = false;
 
@@ -1481,6 +1496,10 @@ class _RideMapScreenState extends State<RideMapScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _mapLibreSourceUpdatesPaused =
+        lifecycle != null && mapLibreSourceUpdatesShouldPause(lifecycle);
     // Restored from the shell, which outlives a tab change: see the field
     // comments on RideMapFeature (#282).
     _dismissedEnforcementAlertId = widget.dismissedEnforcementAlertId;
@@ -1657,6 +1676,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _downloadCancellation?.cancel();
     widget.currentPosition?.removeListener(_onPositionChanged);
     widget.navigationPosition?.removeListener(_onPositionChanged);
@@ -1689,6 +1709,18 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _routingClient.close();
     if (widget.disposeOfflineTileCache) widget.offlineTileCache.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final wasPaused = _mapLibreSourceUpdatesPaused;
+    _mapLibreSourceUpdatesPaused = mapLibreSourceUpdatesShouldPause(state);
+    // One coalesced refresh catches the native map up with every position and
+    // overlay change received while iOS kept the Dart process in the background.
+    if (wasPaused && !_mapLibreSourceUpdatesPaused) {
+      _scheduleMapLibreSync(progress: true, position: true, overlays: true);
+    }
   }
 
   void _onEnforcementAlertChanged() {
@@ -3768,6 +3800,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   void _onMapLibreCameraMove(ml.CameraPosition camera) {
+    if (_mapLibreSourceUpdatesPaused ||
+        !MapCameraCommand.isUsable(
+          latitude: camera.target.latitude,
+          longitude: camera.target.longitude,
+          zoom: camera.zoom,
+          tilt: camera.tilt,
+          bearing: camera.bearing,
+        )) {
+      return;
+    }
     _updateViewportZoom(camera.zoom);
     if ((camera.bearing - _mapBearing.value).abs() >= 0.25) {
       _mapBearing.value = camera.bearing;
@@ -5580,48 +5622,32 @@ class _RideMapScreenState extends State<RideMapScreen> {
 
   Future<void> _syncMapLibreSources() async {
     final controller = _mapLibreController;
-    if (!_mapLibreStyleReady || controller == null) return;
+    if (_mapLibreSourceUpdatesPaused ||
+        !_mapLibreStyleReady ||
+        controller == null) {
+      return;
+    }
     try {
       await _ensureRiderSymbolImages(controller);
-      await controller.setGeoJsonSource(
-        _globalHeatmapSource,
-        _visibleGlobalHeatmap.toGeoJson(),
-      );
-      await controller.setGeoJsonSource(
-        _personalHeatmapSource,
-        _visiblePersonalHeatmap.toGeoJson(),
-      );
-      await controller.setGeoJsonSource(
-        _discoveryLineSource,
-        _discoveryLineGeoJson(),
-      );
-      await controller.setGeoJsonSource(
-        _discoveryPointSource,
-        _discoveryPointGeoJson(),
-      );
-      await controller.setGeoJsonSource(
-        _riddenRouteSource,
-        _riddenRouteGeoJson(),
-      );
-      await controller.setGeoJsonSource(
-        _remainingRouteSource,
-        _remainingRouteGeoJson(),
-      );
-      await controller.setGeoJsonSource(
-        _riderTrailSource,
-        _riderTrailGeoJson(),
-      );
-      await controller.setGeoJsonSource(
-        _trailDirectionArrowSource,
-        _trailDirectionArrowGeoJson(),
-      );
-      await controller.setGeoJsonSource(_waypointSource, _waypointGeoJson());
-      await controller.setGeoJsonSource(
-        _markerPlanSource,
-        _markerPlanGeoJson(),
-      );
-      await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
-      await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
+      final updates = <(String, Map<String, dynamic> Function())>[
+        (_globalHeatmapSource, _visibleGlobalHeatmap.toGeoJson),
+        (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
+        (_discoveryLineSource, _discoveryLineGeoJson),
+        (_discoveryPointSource, _discoveryPointGeoJson),
+        (_riddenRouteSource, _riddenRouteGeoJson),
+        (_remainingRouteSource, _remainingRouteGeoJson),
+        (_riderTrailSource, _riderTrailGeoJson),
+        (_trailDirectionArrowSource, _trailDirectionArrowGeoJson),
+        (_waypointSource, _waypointGeoJson),
+        (_markerPlanSource, _markerPlanGeoJson),
+        (_positionSource, _positionGeoJson),
+        (_overlaySource, _overlayGeoJson),
+      ];
+      for (final (sourceId, geoJson) in updates) {
+        if (!await _setMapLibreGeoJsonSource(controller, sourceId, geoJson)) {
+          return;
+        }
+      }
     } on Object catch (error) {
       _recoverFromMapLibreSourceFailure(error);
     }
@@ -5635,7 +5661,9 @@ class _RideMapScreenState extends State<RideMapScreen> {
     _mapLibreProgressDirty |= progress;
     _mapLibrePositionDirty |= position;
     _mapLibreOverlaysDirty |= overlays;
-    if (_mapLibreSyncScheduled || !mounted) return;
+    if (_mapLibreSyncScheduled || !mounted || _mapLibreSourceUpdatesPaused) {
+      return;
+    }
     _mapLibreSyncScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _mapLibreSyncScheduled = false;
@@ -5644,6 +5672,7 @@ class _RideMapScreenState extends State<RideMapScreen> {
   }
 
   Future<void> _flushScheduledMapLibreSync() async {
+    if (_mapLibreSourceUpdatesPaused) return;
     if (_mapLibreSyncRunning) {
       _scheduleMapLibreSync();
       return;
@@ -5662,55 +5691,54 @@ class _RideMapScreenState extends State<RideMapScreen> {
         await _ensureRiderSymbolImages(controller);
       }
       if (progress) {
-        await controller.setGeoJsonSource(
-          _riddenRouteSource,
-          _riddenRouteGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _remainingRouteSource,
-          _remainingRouteGeoJson(),
-        );
+        for (final (sourceId, geoJson) in [
+          (_riddenRouteSource, _riddenRouteGeoJson),
+          (_remainingRouteSource, _remainingRouteGeoJson),
+        ]) {
+          if (!await _setMapLibreGeoJsonSource(controller, sourceId, geoJson)) {
+            return;
+          }
+        }
       }
       if (position) {
-        await controller.setGeoJsonSource(_positionSource, _positionGeoJson());
+        if (!await _setMapLibreGeoJsonSource(
+          controller,
+          _positionSource,
+          _positionGeoJson,
+        )) {
+          return;
+        }
         if (widget.riderTrails == null) {
-          await controller.setGeoJsonSource(
+          if (!await _setMapLibreGeoJsonSource(
+            controller,
             _riderTrailSource,
-            _riderTrailGeoJson(),
-          );
+            _riderTrailGeoJson,
+          )) {
+            return;
+          }
         }
       }
       if (overlays) {
-        await controller.setGeoJsonSource(
-          _globalHeatmapSource,
-          _visibleGlobalHeatmap.toGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _personalHeatmapSource,
-          _visiblePersonalHeatmap.toGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _discoveryLineSource,
-          _discoveryLineGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _discoveryPointSource,
-          _discoveryPointGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _riderTrailSource,
-          _riderTrailGeoJson(),
-        );
-        await controller.setGeoJsonSource(
-          _markerPlanSource,
-          _markerPlanGeoJson(),
-        );
-        await controller.setGeoJsonSource(_overlaySource, _overlayGeoJson());
+        final updates = <(String, Map<String, dynamic> Function())>[
+          (_globalHeatmapSource, _visibleGlobalHeatmap.toGeoJson),
+          (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
+          (_discoveryLineSource, _discoveryLineGeoJson),
+          (_discoveryPointSource, _discoveryPointGeoJson),
+          (_riderTrailSource, _riderTrailGeoJson),
+          (_markerPlanSource, _markerPlanGeoJson),
+          (_overlaySource, _overlayGeoJson),
+        ];
+        for (final (sourceId, geoJson) in updates) {
+          if (!await _setMapLibreGeoJsonSource(controller, sourceId, geoJson)) {
+            return;
+          }
+        }
       }
       if (progress || overlays) {
-        await controller.setGeoJsonSource(
+        await _setMapLibreGeoJsonSource(
+          controller,
           _trailDirectionArrowSource,
-          _trailDirectionArrowGeoJson(),
+          _trailDirectionArrowGeoJson,
         );
       }
     } on Object catch (error) {
@@ -5741,6 +5769,16 @@ class _RideMapScreenState extends State<RideMapScreen> {
         'Could not refresh MapLibre ride layers; using fallback: $error',
       );
     }
+  }
+
+  Future<bool> _setMapLibreGeoJsonSource(
+    ml.MapLibreMapController controller,
+    String sourceId,
+    Map<String, dynamic> Function() geoJson,
+  ) async {
+    if (_mapLibreSourceUpdatesPaused) return false;
+    await controller.setGeoJsonSource(sourceId, geoJson());
+    return !_mapLibreSourceUpdatesPaused;
   }
 
   Map<String, dynamic> _remainingRouteGeoJson() => MapGeoJson.lines(
