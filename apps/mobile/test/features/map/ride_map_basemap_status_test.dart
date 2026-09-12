@@ -171,6 +171,34 @@ void main() {
 
     await unmount(tester);
   });
+
+  test('a rejected native source refresh activates the route fallback', () {
+    final source = File(
+      'lib/features/map/ride_map_feature.dart',
+    ).readAsStringSync();
+    final recoveryStart = source.indexOf(
+      'void _recoverFromMapLibreSourceFailure(Object error)',
+    );
+    final recoveryEnd = source.indexOf(
+      '\n  Map<String, dynamic> _remainingRouteGeoJson()',
+      recoveryStart,
+    );
+    final recovery = source.substring(recoveryStart, recoveryEnd);
+
+    expect(recoveryStart, greaterThanOrEqualTo(0));
+    expect(recoveryEnd, greaterThan(recoveryStart));
+    expect(
+      recovery,
+      contains('setState(() => _mapLibreLayerPreparationFailed = true)'),
+      reason:
+          'the existing Flutter route renderer must replace the empty source',
+    );
+    expect(
+      RegExp(r'_recoverFromMapLibreSourceFailure\(error\);').allMatches(source),
+      hasLength(2),
+      reason: 'both initial activation and later source updates must recover',
+    );
+  });
 }
 
 const _mapLibre = BasemapConfiguration(
