@@ -36,6 +36,43 @@ permissions by design.
 - ...
 ```
 
+## iOS build 89 / Android build 89 — 1.0.1 — 13 September 2026
+
+This build focuses on GPX route visibility and iOS map stability after the app
+has spent time in the background.
+
+### What to test
+
+1. Export a GPX 1.1 route from MyRouteApp, import it on iOS, choose **Follow
+   original line**, and confirm the preview. The confirmed route should remain
+   visible on the ride map.
+2. Remove and import the same file again, choose **Generate navigable route**,
+   and confirm it. The generated route should also remain visible.
+3. With a route open and location active, switch to another app, open Control
+   Centre, and lock and unlock the phone several times. Returning to Tail End
+   Charlie should not crash, and the route and rider position should catch up.
+4. Leave the app backgrounded for a longer period, then open it again. The ride
+   map should reject any incomplete initial camera state and become usable.
+
+### Fixed
+
+- If the native map rejects a route-source refresh after GPX confirmation, the
+  app now activates its Flutter map fallback with the same in-memory route
+  instead of leaving an empty map.
+- Background location delivery continues updating ride state without mutating
+  the hidden native map. Route, position and overlay changes are coalesced into
+  one refresh when the app becomes visible again.
+- Invalid early native camera values are discarded before they can reach route
+  and discovery calculations.
+
+### Known limitations
+
+- No current TestFlight crash report was available on the development Mac, so
+  the background and cold-return safeguards still require repeated physical
+  iPhone validation.
+- If both native map rendering and the remote vector style fail, the fallback
+  keeps route and rider overlays usable but may not be able to draw road detail.
+
 ## iOS build 88 / Android build 88 — 1.0.1 — 5 September 2026
 
 This build addresses the Android feedback reported after build 76 and removes
