@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
@@ -18,7 +21,30 @@ import 'package:ride_relay/services/route_importer.dart';
 /// blob or dot where you are and a tail where you been" — could not be
 /// diagnosed from a screenshot (#281). These hold the map to saying which.
 void main() {
+  final originalMapLibrePlatformFactory = ml.MapLibrePlatform.createInstance;
   late Directory directory;
+
+  setUpAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/maplibre_gl_0'),
+          (_) async => null,
+        );
+    ml.MapLibrePlatform.createInstance = () {
+      final platform = ml.MapLibreMethodChannel();
+      unawaited(platform.initPlatform(0));
+      return platform;
+    };
+  });
+
+  tearDownAll(() {
+    ml.MapLibrePlatform.createInstance = originalMapLibrePlatformFactory;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/maplibre_gl_0'),
+          null,
+        );
+  });
 
   setUp(() {
     directory = Directory.systemTemp.createTempSync('ride-map-basemap-status');

@@ -1721,10 +1721,38 @@ class _RideMapScreenState extends State<RideMapScreen>
     super.didChangeAppLifecycleState(state);
     final wasPaused = _mapLibreSourceUpdatesPaused;
     _mapLibreSourceUpdatesPaused = mapLibreSourceUpdatesShouldPause(state);
+    final controller = _mapLibreController;
+    if (controller != null && wasPaused != _mapLibreSourceUpdatesPaused) {
+      unawaited(
+        _setMapLibreRenderingPaused(
+          controller,
+          paused: _mapLibreSourceUpdatesPaused,
+        ),
+      );
+    }
     // One coalesced refresh catches the native map up with every position and
     // overlay change received while iOS kept the Dart process in the background.
     if (wasPaused && !_mapLibreSourceUpdatesPaused) {
       _scheduleMapLibreSync(progress: true, position: true, overlays: true);
+    }
+  }
+
+  Future<void> _setMapLibreRenderingPaused(
+    ml.MapLibreMapController controller, {
+    required bool paused,
+  }) async {
+    try {
+      if (paused) {
+        await controller.pauseMap();
+      } else {
+        await controller.resumeMap();
+      }
+    } on Object catch (error) {
+      // The platform view may finish disposal while a lifecycle notification
+      // is crossing the channel. There is nothing left to pause in that case.
+      if (kDebugMode) {
+        debugPrint('Could not ${paused ? 'pause' : 'resume'} MapLibre: $error');
+      }
     }
   }
 
@@ -3793,6 +3821,9 @@ class _RideMapScreenState extends State<RideMapScreen>
     previous?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     previous?.removeListener(_scheduleCameraFramingRefresh);
     _mapLibreController = controller;
+    if (_mapLibreSourceUpdatesPaused) {
+      unawaited(_setMapLibreRenderingPaused(controller, paused: true));
+    }
     controller.onFeatureTapped.add(_onMapLibreFeatureTapped);
     // The controller notifies on every camera move, which is how the map's own
     // camera reaches the arrival test (#141). It only ever *reports* that camera
@@ -4554,6 +4585,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   Future<void> _updateMapLibreDiscoveryViewport() async {
+    if (_mapLibreSourceUpdatesPaused) return;
     final controller = _mapLibreController;
     if (controller == null) return;
     try {
@@ -4933,6 +4965,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       _pointAhead(overlay.markerPoint, 180, 360),
     ];
     if (_basemap.usesMapLibre) {
+      if (_mapLibreSourceUpdatesPaused) return;
       final controller = _mapLibreController;
       if (controller == null) return;
       final markerBounds = _mapLibreBounds(cameraPoints);
@@ -4977,6 +5010,10 @@ class _RideMapScreenState extends State<RideMapScreen>
     Duration? transitionDuration,
   }) async {
     if (!_navigationMode) return;
+    // Location fixes continue while iOS is inactive and backgrounded. Never
+    // send those fixes into a suspended native map: camera animations race the
+    // renderer and tile-request teardown during that transition (#732).
+    if (_basemap.usesMapLibre && _mapLibreSourceUpdatesPaused) return;
     final position = _effectivePosition;
     if (position == null) return;
     if (_cameraUpdateInFlight) {
@@ -6985,6 +7022,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     final planned = _route?.allPoints.toList(growable: false) ?? const [];
     final routePoints = planned.isNotEmpty ? planned : [?_effectivePosition];
     if (_basemap.usesMapLibre) {
+      if (_mapLibreSourceUpdatesPaused) return;
       final controller = _mapLibreController;
       if (controller == null || routePoints.isEmpty) return;
       _initialCameraPositioned = true;
