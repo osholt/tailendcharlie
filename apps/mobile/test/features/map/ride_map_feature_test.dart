@@ -517,7 +517,7 @@ void main() {
     });
   });
 
-  test('group mini-map avoids a second MapLibre surface on Android', () {
+  test('group mini-map avoids a second MapLibre surface on mobile', () {
     expect(
       groupMiniMapRenderer(
         mapLibreEnabled: true,
@@ -527,7 +527,7 @@ void main() {
     );
     expect(
       groupMiniMapRenderer(mapLibreEnabled: true, platform: TargetPlatform.iOS),
-      GroupMiniMapRenderer.mapLibre,
+      GroupMiniMapRenderer.flutterVector,
     );
     expect(
       groupMiniMapRenderer(
