@@ -78,6 +78,28 @@ void main() {
         SpokenAudioMode.alertsOnly,
       );
     });
+
+    test('a routed rejoin keeps the rider\'s turn-by-turn choice', () {
+      expect(
+        spokenAudioModeForRejoin(
+          chosen: SpokenAudioMode.everything,
+          hasOffRouteGuidance: true,
+          hasRoutedRejoin: true,
+        ),
+        SpokenAudioMode.everything,
+      );
+    });
+
+    test('a degraded rejoin quietens stale main-route directions', () {
+      expect(
+        spokenAudioModeForRejoin(
+          chosen: SpokenAudioMode.everything,
+          hasOffRouteGuidance: true,
+          hasRoutedRejoin: false,
+        ),
+        SpokenAudioMode.alertsOnly,
+      );
+    });
   });
 
   group('the control on the map says what it is', () {

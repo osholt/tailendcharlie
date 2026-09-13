@@ -563,6 +563,10 @@ class OsrmRoadRoutingService
           originBearingDegrees: originBearingDegrees,
           waypointCount: waypoints.length,
         ),
+        // A usable moving bearing means a U-turn at departure is specifically
+        // the wrong answer. Ask OSRM to continue in that direction as well as
+        // snapping to the matching carriageway.
+        if (originBearingDegrees != null) 'continue_straight': 'true',
       },
     );
     final response = await client

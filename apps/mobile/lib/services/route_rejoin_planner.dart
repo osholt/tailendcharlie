@@ -13,7 +13,11 @@ import 'route_origin_bearing.dart';
 import 'leader_ride_status.dart' show TecAvailability;
 import 'measurement_formatter.dart';
 import 'road_routing.dart'
-    show OsrmRoadRoutingService, RoadRouteManeuver, RoadRoutingService;
+    show
+        OsrmRoadRoutingService,
+        RoadRouteManeuver,
+        RoadRoutingException,
+        RoadRoutingService;
 
 /// Owns the HTTP client used by the active ride's OSRM rejoin planner.
 ///
@@ -683,119 +687,145 @@ class RouteRejoinPlanner {
       if (retained != null) return retained;
     }
 
-    final selection = RouteRejoinGeometry.selectRejoin(
-      route: plannedRoute,
-      riderPosition: sample.position,
-      lastMatchedProgressMeters:
-          state.lastMatchedProgressMeters ??
-          state.lastProjection?.distanceAlongRouteMeters ??
-          0,
-      leaderProgressMeters: leaderProgress,
-      massivelyOffRoute: massivelyOffRoute,
-      thresholds: thresholds,
-    );
-    final candidate = selection.candidate;
-    if (candidate == null) {
-      return degrade(selection.status, switch (selection.status) {
-        RouteRejoinStatus.aheadOfLeaderOnly =>
-          'The only way back onto the route from here is ahead of the ride '
-              'leader, so no rejoin route is being offered. Hold position and '
-              'contact the leader.',
-        RouteRejoinStatus.noRejoinInRange =>
-          'No usable rejoin point is within range.',
-        RouteRejoinStatus.leaderPositionUnknown =>
-          'The ride leader\'s position is unknown, so a rejoin point cannot be '
-              'checked against it.',
-        _ => 'No rejoin point could be selected.',
-      });
-    }
-
     state.lastAttemptAt = evaluatedAt;
     state.lastSeverity = severity;
     state.lastTarget = target;
     state.lastOrigin = sample.position;
     state.lastTargetPosition = targetPosition;
 
-    // Rider, then the chosen rejoin point, then the moving target when it is
-    // somewhere other than the rejoin point itself.
-    final waypoints = <GeoPoint>[
-      sample.position,
-      candidate.point,
-      if (targetPosition != null &&
-          GeoCalculations.distanceMeters(candidate.point, targetPosition) > 50)
-        targetPosition,
-    ];
+    final originBearing = rejoinOriginBearing(
+      headingDegrees: sample.headingDegrees,
+      speedMetersPerSecond: sample.speedMetersPerSecond,
+    );
+    var searchProgress =
+        state.lastMatchedProgressMeters ??
+        state.lastProjection?.distanceAlongRouteMeters ??
+        0;
+    Object? routingError;
+    StackTrace? routingStackTrace;
+    var sawInitialDirectionConflict = false;
 
-    try {
-      _routingCallCount += 1;
-      final originBearing = rejoinOriginBearing(
-        headingDegrees: sample.headingDegrees,
-        speedMetersPerSecond: sample.speedMetersPerSecond,
+    // A nearby junction can be unroutable from the rider's current road, or it
+    // can require turning around. Try a small number of progressively later
+    // forward joins before giving up; successful first attempts still cost one
+    // request and provider outages are never multiplied.
+    for (var attempt = 0; attempt < 3; attempt += 1) {
+      final selection = RouteRejoinGeometry.selectRejoin(
+        route: plannedRoute,
+        riderPosition: sample.position,
+        lastMatchedProgressMeters: searchProgress,
+        leaderProgressMeters: leaderProgress,
+        massivelyOffRoute: massivelyOffRoute,
+        thresholds: thresholds,
       );
-      final result = await routingService.routeThrough(
-        waypoints.map(_toRouteDomain).toList(growable: false),
-        // Which way the rider is pointing (#444). Without it the engine picks a
-        // direction for an ambiguous position on a two-way road, and half the
-        // time it picks the one the rider is not facing — so the first
-        // instruction after going off course is a U-turn dressed up as a turn,
-        // at the moment a rider has least attention to spare.
-        //
-        // Null below a speed floor: a heading from a stationary bike is whatever
-        // the phone was pointing at, and a confidently wrong first instruction
-        // is the defect, not a smaller version of it.
-        originBearingDegrees: originBearing,
-      );
-      if (result.points.length < 2) {
-        throw const FormatException(
-          'Road routing returned no usable geometry.',
-        );
+      final candidate = selection.candidate;
+      if (candidate == null) {
+        if (attempt == 0) {
+          return degrade(selection.status, switch (selection.status) {
+            RouteRejoinStatus.aheadOfLeaderOnly =>
+              'The only way back onto the route from here is ahead of the ride '
+                  'leader, so no rejoin route is being offered. Hold position '
+                  'and contact the leader.',
+            RouteRejoinStatus.noRejoinInRange =>
+              'No usable rejoin point is within range.',
+            RouteRejoinStatus.leaderPositionUnknown =>
+              'The ride leader\'s position is unknown, so a rejoin point cannot '
+                  'be checked against it.',
+            _ => 'No rejoin point could be selected.',
+          });
+        }
+        break;
       }
-      if (originBearing != null &&
-          _beginsAgainstHeading(
-            origin: sample.position,
-            headingDegrees: originBearing,
-            points: result.points,
-          )) {
+
+      // Rider, then the chosen rejoin point, then the moving target when it is
+      // somewhere other than the rejoin point itself.
+      final waypoints = <GeoPoint>[
+        sample.position,
+        candidate.point,
+        if (targetPosition != null &&
+            GeoCalculations.distanceMeters(candidate.point, targetPosition) >
+                50)
+          targetPosition,
+      ];
+
+      try {
+        _routingCallCount += 1;
+        final result = await routingService.routeThrough(
+          waypoints.map(_toRouteDomain).toList(growable: false),
+          // Which way the rider is pointing (#444). Without it the engine picks
+          // a direction for an ambiguous position on a two-way road, and half
+          // the time it picks the one the rider is not facing.
+          originBearingDegrees: originBearing,
+        );
+        if (result.points.length < 2) {
+          throw const FormatException(
+            'Road routing returned no usable geometry.',
+          );
+        }
+        if (originBearing != null &&
+            _beginsAgainstHeading(
+              origin: sample.position,
+              headingDegrees: originBearing,
+              points: result.points,
+            )) {
+          sawInitialDirectionConflict = true;
+          searchProgress = candidate.progressMeters;
+          continue;
+        }
         state.consecutiveFailures = 0;
-        return degrade(
-          RouteRejoinStatus.initialDirectionConflict,
-          'The route back would begin by turning around, so it was rejected. '
-          'Continue safely and directions will retry.',
-        );
-      }
-      state.consecutiveFailures = 0;
-      return state.plan = RouteRejoinPlan(
-        riderId: riderId,
-        severity: severity,
-        status: RouteRejoinStatus.routed,
-        target: target,
-        computedAt: evaluatedAt,
-        guidance: _routedGuidance(
+        return state.plan = RouteRejoinPlan(
+          riderId: riderId,
           severity: severity,
+          status: RouteRejoinStatus.routed,
           target: target,
-          requiresBacktracking: candidate.requiresBacktracking,
+          computedAt: evaluatedAt,
+          guidance: _routedGuidance(
+            severity: severity,
+            target: target,
+            requiresBacktracking: candidate.requiresBacktracking,
+            distanceMeters: result.distanceMeters,
+            distanceFromRoute: distanceFromRoute,
+          ),
+          breadcrumb: List.unmodifiable(result.points.map(_fromRouteDomain)),
+          maneuvers: List.unmodifiable(result.maneuvers),
+          rejoinPoint: candidate.point,
           distanceMeters: result.distanceMeters,
-          distanceFromRoute: distanceFromRoute,
-        ),
-        breadcrumb: List.unmodifiable(result.points.map(_fromRouteDomain)),
-        maneuvers: List.unmodifiable(result.maneuvers),
-        rejoinPoint: candidate.point,
-        distanceMeters: result.distanceMeters,
-        duration: result.duration,
-        requiresBacktracking: candidate.requiresBacktracking,
-        distanceFromRouteMeters: distanceFromRoute,
-        timeOffRoute: timeOffRoute,
-      );
-    } on Object catch (error, stackTrace) {
-      state.consecutiveFailures += 1;
-      if (kDebugMode) {
-        debugPrint('Rejoin routing failed for $riderId: $error\n$stackTrace');
+          duration: result.duration,
+          requiresBacktracking: candidate.requiresBacktracking,
+          distanceFromRouteMeters: distanceFromRoute,
+          timeOffRoute: timeOffRoute,
+        );
+      } on RoadRoutingException catch (error, stackTrace) {
+        routingError = error;
+        routingStackTrace = stackTrace;
+        if (!error.routeNotFound) break;
+        searchProgress = candidate.progressMeters;
+      } on Object catch (error, stackTrace) {
+        routingError = error;
+        routingStackTrace = stackTrace;
+        break;
       }
+    }
+
+    if (sawInitialDirectionConflict) {
+      state.consecutiveFailures = 0;
       return degrade(
-        RouteRejoinStatus.routingUnavailable,
-        'Rejoin routing is unavailable, so no route back is being drawn.',
+        RouteRejoinStatus.initialDirectionConflict,
+        'The available routes back would begin by turning around, so they were '
+        'rejected. Continue safely and directions will retry.',
       );
     }
+    state.consecutiveFailures += 1;
+    if (kDebugMode && routingError != null) {
+      debugPrint(
+        'Rejoin routing failed for $riderId: $routingError\n'
+        '$routingStackTrace',
+      );
+    }
+    return degrade(
+      RouteRejoinStatus.routingUnavailable,
+      'Rejoin routing is unavailable, so no route back is being drawn.',
+    );
   }
 
   static bool _beginsAgainstHeading({

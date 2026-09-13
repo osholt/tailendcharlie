@@ -138,6 +138,7 @@ void main() {
       // OSRM requires one bearings element per coordinate; empty elements keep
       // the normal snap at later rejoin waypoints.
       expect(request.url.queryParameters['bearings'], '91,60;;');
+      expect(request.url.queryParameters['continue_straight'], 'true');
       return http.Response(_osrmResponse(), 200);
     });
     final service = OsrmRoadRoutingService(
