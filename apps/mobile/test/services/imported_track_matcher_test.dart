@@ -5,7 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/features/map/maneuver_symbol.dart';
 import 'package:ride_relay/services/imported_track_matcher.dart';
+import 'package:ride_relay/services/navigation_guidance.dart';
+import 'package:ride_relay/services/road_jurisdiction.dart';
 
 /// #575. This suite was written against OSRM's `/match`, which the app can
 /// never reach: the configured demo server accepts ten trace coordinates and
@@ -45,6 +48,48 @@ void main() {
     expect(result.reviewWarnings.join(' '), contains('imported length'));
     expect(result.reviewWarnings.join(' '), contains('shown in grey'));
   });
+
+  test(
+    'a matched French roundabout uses confirmed right-hand traffic',
+    () async {
+      final matcher = ValhallaImportedTrackMatcher(
+        client: MockClient(
+          (_) async =>
+              http.Response(jsonEncode(_traceResponse(maneuverType: 26)), 200),
+        ),
+        traceUrl: Uri.parse('https://valhalla.example.test/trace_route'),
+        readRoadJurisdictions: () async => RoadJurisdictionCatalogue.parse('''
+        {
+          "type":"FeatureCollection",
+          "features":[{
+            "type":"Feature",
+            "properties":{
+              "countryCode":"FR",
+              "name":"France",
+              "drivingSide":"right",
+              "distanceUnit":"kilometres"
+            },
+            "geometry":{
+              "type":"Polygon",
+              "coordinates":[[
+                [-3,50],[-1,50],[-1,52],[-3,52],[-3,50]
+              ]]
+            }
+          }]
+        }
+      '''),
+      );
+
+      final result = await matcher.match(_track());
+      final maneuver = result.route.maneuvers.single;
+      final instruction = collapseManeuvers(result.route.maneuvers).single;
+      final symbol = maneuverSymbolFor(instruction) as RoundaboutSymbol;
+
+      expect(maneuver.drivingSide, 'right');
+      expect(maneuver.trafficSideConfirmed, isTrue);
+      expect(symbol.leftHandTraffic, isFalse);
+    },
+  );
 
   test('a long track is split by distance, not by a point budget', () {
     // The measured service limit is path distance. A 90-point cap was the old
@@ -392,6 +437,7 @@ List<GeoPoint> _straightTrack({
 Map<String, Object?> _traceResponse({
   List<List<double>>? shape,
   double lengthKm = 0.13,
+  int maneuverType = 10,
 }) {
   final points =
       shape ??
@@ -407,7 +453,7 @@ Map<String, Object?> _traceResponse({
           'shape': _encodeValhallaShape(points),
           'maneuvers': [
             {
-              'type': 10,
+              'type': maneuverType,
               'begin_shape_index': 1,
               'end_shape_index': 2,
               'street_names': ['Test Road'],

@@ -621,7 +621,7 @@ class OsrmRoadRoutingService
       points: chosen.points,
       distanceMeters: chosen.distanceMeters,
       duration: chosen.duration,
-      maneuvers: _confirmTrafficSides(enriched, jurisdictions),
+      maneuvers: confirmTrafficSides(enriched, jurisdictions),
       twistinessScore: chosen.twistinessScore,
       preferences: preferences,
     );
@@ -1062,7 +1062,7 @@ class ValhallaMotorcycleRoutingService
       points: List.unmodifiable(points),
       distanceMeters: distanceMeters,
       duration: Duration(milliseconds: (seconds.toDouble() * 1000).round()),
-      maneuvers: _confirmTrafficSides(enriched, jurisdictions),
+      maneuvers: confirmTrafficSides(enriched, jurisdictions),
       twistinessScore: RouteTwistiness.score(
         points,
         distanceMeters: distanceMeters,
@@ -1648,7 +1648,7 @@ class DestinationRoutePlan {
 /// `right` for a UK roundabout; Valhalla returns no traffic side at all. The
 /// same offline country layer fixes both without special-casing a junction or
 /// assuming the phone locale is where the route will be ridden.
-List<RoadRouteManeuver> _confirmTrafficSides(
+List<RoadRouteManeuver> confirmTrafficSides(
   List<RoadRouteManeuver> maneuvers,
   RoadJurisdictionCatalogue jurisdictions,
 ) => List.unmodifiable([

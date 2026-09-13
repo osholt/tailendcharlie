@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 import '../domain/imported_route.dart';
+import 'road_jurisdiction.dart';
 import 'road_routing.dart';
 import 'route_progress.dart';
 
@@ -93,6 +94,7 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
     this.maximumPointDeviationMeters = 150,
     this.uuid = const Uuid(),
     this.readMiniRoundabouts = bundledMiniRoundabouts,
+    this.readRoadJurisdictions = bundledRoadJurisdictions,
   }) : assert(maximumChunkMeters > 0 && maximumChunkMeters <= 190000),
        assert(maximumChunkPoints >= 2);
 
@@ -135,6 +137,7 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
 
   /// Reads the bundled mini-roundabout layer; see [bundledMiniRoundabouts].
   final Future<MappedMiniRoundaboutCatalogue> Function() readMiniRoundabouts;
+  final Future<RoadJurisdictionCatalogue> Function() readRoadJurisdictions;
 
   @override
   Future<ImportedTrackMatch> match(ImportedRoute original) async {
@@ -152,6 +155,7 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
     }
 
     final miniRoundabouts = await readMiniRoundabouts();
+    final roadJurisdictions = await readRoadJurisdictions();
     final matchedPaths = <RoutePath>[];
     final maneuvers = <RouteManeuver>[];
     final samples = <GeoPoint>[];
@@ -224,7 +228,10 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
         ),
       );
       maneuvers.addAll(
-        miniRoundabouts.enrich(route: pathPoints, maneuvers: pathManeuvers),
+        confirmTrafficSides(
+          miniRoundabouts.enrich(route: pathPoints, maneuvers: pathManeuvers),
+          roadJurisdictions,
+        ),
       );
     }
 
