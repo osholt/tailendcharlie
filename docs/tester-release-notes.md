@@ -36,6 +36,43 @@ permissions by design.
 - ...
 ```
 
+## iOS build 91 / Android build 91 — 1.0.1 — 13 September 2026
+
+This build makes route ETA stable, corrects slight-left and slight-right
+roundabout instructions, and stops stale rider positions distorting the group
+minimap.
+
+### What to test
+
+1. Navigate a timed planned or generated route, then vary speed or stop briefly.
+   The ETA should remain plausible rather than swinging with current speed. An
+   original track without planned timing can still show no ETA.
+2. Import the supplied MyRouteApp GPX for France, choose **Generate navigable
+   route**, and confirm it. A slight-left roundabout exit should be spoken and
+   shown as left, a slight-right exit as right, and a genuinely forward exit as
+   straight ahead.
+3. Open the group minimap with a remote rider whose last position becomes stale
+   for more than 60 seconds, preferably with that last fix some distance away.
+   The stale rider should remain labelled on the roster and main map, but should
+   disappear from the compact minimap and no longer control its bounds. Live
+   and ageing riders should remain visible.
+
+### Fixed
+
+- ETA now uses the router-planned duration rather than current GPS speed.
+- Slight roundabout exits retain their left or right direction in speech and
+  symbols.
+- The compact group minimap excludes stale rider fixes while the main map keeps
+  their labelled last-known position.
+
+### Known limitations
+
+- Automated regression and mutation tests, plus Android and iOS builds, cover
+  these changes; physical ride validation is still required.
+- **Follow original line** has no turn prompts or ETA when the GPX supplies no
+  planned duration. Choose **Generate navigable route** to test roundabout
+  guidance and ETA.
+
 ## iOS build 90 / Android build 90 — 1.0.1 — 13 September 2026
 
 This build fixes the iOS group minimap freezing during a journey and confirms
