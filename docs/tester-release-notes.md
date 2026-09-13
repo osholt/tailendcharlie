@@ -36,6 +36,51 @@ permissions by design.
 - ...
 ```
 
+## iOS build 92 / Android build 92 — 1.0.1 — 13 September 2026
+
+This build hardens the iOS map lifecycle, keeps slow-town speed visible, fits
+three-digit speed limits, and makes off-course directions usable from the
+reroute through to the planned route.
+
+### What to test
+
+1. Start a ride with the live map open on iOS, switch to another app or lock
+   the phone, then return several times while moving and while stopped. The app
+   should remain running and the map should resume updating.
+2. Ride slowly in town. The rider-speed value may dim between
+   distance-filtered GPS fixes, but it should not repeatedly disappear. A real
+   prolonged signal loss should still retire it, and a stop should settle to
+   zero.
+3. Encounter or simulate a 110 km/h mapped limit. The complete number must stay
+   on one line inside the circular sign.
+4. Leave a navigable route while already moving. The advisory reroute should
+   avoid asking for an immediate U-turn, try a later forward rejoin when the
+   nearest one cannot be routed, and show and speak its own turns.
+5. Follow that advisory route back onto the planned route. The first displayed
+   and spoken instruction afterwards should be the next real turn, not the
+   instruction for the junction just completed.
+
+### Fixed
+
+- Upgraded the iOS map package past its native tile-cancellation race and pause
+  the platform map while the app is backgrounded.
+- Rider speed now remains available for the time a 10 m location filter can
+  legitimately take at town speeds.
+- Three-digit speed limits scale down as one line within the sign.
+- Moving reroutes constrain departure against U-turns and try up to three
+  progressively later forward rejoin points after an impossible or reversing
+  result.
+- Valid reroute manoeuvres retain turn-by-turn speech, and completing a reroute
+  no longer resurrects the planned-route instruction at the rejoin junction.
+
+### Known limitations
+
+- Automated regression and mutation tests, plus Android and unsigned iOS
+  builds, cover these changes; the background crash and reroute behaviour still
+  require physical ride validation.
+- With no network and no usable cached road route, off-course guidance still
+  falls back to the distance-from-route warning and the route line.
+
 ## iOS build 91 / Android build 91 — 1.0.1 — 13 September 2026
 
 This build makes route ETA stable, corrects slight-left and slight-right
