@@ -948,10 +948,10 @@ String _instructionText({
           ? null
           : _ordinal(exitNumber);
       // Four words, not eight (#427). A UK direction sign names each exit by
-      // where it points and does not distinguish a slight right from a right,
-      // because a rider approaching does not either. It also absorbs most of
-      // #412's "one off" error before it reaches the rider: slight and straight
-      // now say the same thing.
+      // where it points and does not distinguish slight, normal and sharp
+      // turns on the same side. The geometry classifier has already allowed
+      // for the ring's offset; flattening `slight left` into straight here hid
+      // genuine left exits on the supplied French ride (#743).
       final bucket = roundaboutExitBucket(direction);
       final roundaboutLabel = bucket?.label ?? label;
       // Beside the banner and the all-turns list is a drawn roundabout, so the
