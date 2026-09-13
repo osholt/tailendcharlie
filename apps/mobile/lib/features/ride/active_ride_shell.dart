@@ -4418,7 +4418,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// explicit choice outranks an automatic one (#415).
   SpokenAudioMode get _spokenAudioMode {
     final chosen = widget.spokenGuidance?.mode ?? SpokenAudioMode.silent;
-    return _rejoinGuidance == null ? chosen : spokenAudioModeOffRoute(chosen);
+    return spokenAudioModeForRejoin(
+      chosen: chosen,
+      hasOffRouteGuidance: _rejoinGuidance != null,
+      hasRoutedRejoin: _rejoinNavigationRoute.value != null,
+    );
   }
 
   void _onSpokenGuidanceChanged() {

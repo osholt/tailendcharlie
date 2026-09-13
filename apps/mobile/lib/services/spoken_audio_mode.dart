@@ -63,6 +63,18 @@ SpokenAudioMode spokenAudioModeOffRoute(SpokenAudioMode chosen) =>
       _ => SpokenAudioMode.alertsOnly,
     };
 
+/// Applies the off-route safety rule without muting valid reroute directions.
+///
+/// A routed rejoin has its own geometry and manoeuvres, so its turn-by-turn is
+/// current. Only the degraded distance-only fallback must quieten navigation.
+SpokenAudioMode spokenAudioModeForRejoin({
+  required SpokenAudioMode chosen,
+  required bool hasOffRouteGuidance,
+  required bool hasRoutedRejoin,
+}) => !hasOffRouteGuidance || hasRoutedRejoin
+    ? chosen
+    : spokenAudioModeOffRoute(chosen);
+
 /// What the control on the map says it will do next, so a rider pressing it by
 /// feel knows what they are getting.
 String spokenAudioModeLabel(SpokenAudioMode mode) => switch (mode) {

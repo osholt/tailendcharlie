@@ -376,6 +376,73 @@ void main() {
       expect(routing.calls, hasLength(1));
     });
 
+    test(
+      'tries a later forward join when the nearest has no road route',
+      () async {
+        final routing = _NoRouteThenForwardRouting();
+        final planner = RouteRejoinPlanner(routingService: routing);
+
+        await planner.update(
+          riderId: 'rider',
+          sample: _sample(51, -0.96, start),
+          assessment: _onRoute(start),
+          plannedRoute: route,
+        );
+        final plan = await planner.update(
+          riderId: 'rider',
+          sample: _sample(51.01, -0.95, start.add(const Duration(minutes: 1))),
+          assessment: _offRoute(
+            at: start.add(const Duration(minutes: 1)),
+            distance: 1112,
+            since: start.add(const Duration(seconds: 30)),
+          ),
+          plannedRoute: route,
+        );
+
+        expect(plan.status, RouteRejoinStatus.routed);
+        expect(routing.calls, hasLength(2));
+        expect(
+          progressOf(_fromRoutingPoint(routing.calls[1][1])),
+          greaterThan(progressOf(_fromRoutingPoint(routing.calls[0][1]))),
+        );
+      },
+    );
+
+    test('tries a later forward join instead of returning a U-turn', () async {
+      final routing = _BackwardThenForwardRouting();
+      final planner = RouteRejoinPlanner(routingService: routing);
+
+      await planner.update(
+        riderId: 'rider',
+        sample: _sample(51, -0.96, start),
+        assessment: _onRoute(start),
+        plannedRoute: route,
+      );
+      final plan = await planner.update(
+        riderId: 'rider',
+        sample: _sample(
+          51.01,
+          -0.95,
+          start.add(const Duration(minutes: 1)),
+          headingDegrees: 180,
+          speedMetersPerSecond: 12,
+        ),
+        assessment: _offRoute(
+          at: start.add(const Duration(minutes: 1)),
+          distance: 1112,
+          since: start.add(const Duration(seconds: 30)),
+        ),
+        plannedRoute: route,
+      );
+
+      expect(plan.status, RouteRejoinStatus.routed);
+      expect(routing.calls, hasLength(2));
+      expect(
+        progressOf(_fromRoutingPoint(routing.calls[1][1])),
+        greaterThan(progressOf(_fromRoutingPoint(routing.calls[0][1]))),
+      );
+    });
+
     test('rejects a provider route that starts against travel', () async {
       final routing = _BackwardRouting();
       final planner = RouteRejoinPlanner(routingService: routing);
@@ -838,6 +905,62 @@ class _BackwardRouting implements RoadRoutingService {
     duration: const Duration(minutes: 3),
   );
 }
+
+class _NoRouteThenForwardRouting implements RoadRoutingService {
+  final List<List<route_domain.GeoPoint>> calls = [];
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<route_domain.GeoPoint> waypoints, {
+    route_domain.RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    calls.add(List.unmodifiable(waypoints));
+    if (calls.length == 1) {
+      throw const RoadRoutingException(
+        'No route to the nearest join.',
+        routeNotFound: true,
+      );
+    }
+    return _forwardResult(waypoints);
+  }
+}
+
+class _BackwardThenForwardRouting implements RoadRoutingService {
+  final List<List<route_domain.GeoPoint>> calls = [];
+
+  @override
+  Future<RoadRouteResult> routeThrough(
+    List<route_domain.GeoPoint> waypoints, {
+    route_domain.RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) async {
+    calls.add(List.unmodifiable(waypoints));
+    if (calls.length > 1) return _forwardResult(waypoints);
+    return RoadRouteResult(
+      points: [
+        waypoints.first,
+        route_domain.GeoPoint(
+          latitude: waypoints.first.latitude + 0.001,
+          longitude: waypoints.first.longitude,
+        ),
+        waypoints.last,
+      ],
+      distanceMeters: 1234,
+      duration: const Duration(minutes: 3),
+    );
+  }
+}
+
+RoadRouteResult _forwardResult(List<route_domain.GeoPoint> waypoints) =>
+    RoadRouteResult(
+      points: [waypoints.first, ...waypoints.skip(1)],
+      distanceMeters: 1234,
+      duration: const Duration(minutes: 3),
+    );
+
+GeoPoint _fromRoutingPoint(route_domain.GeoPoint point) =>
+    GeoPoint(latitude: point.latitude, longitude: point.longitude);
 
 class _FailingRouting implements RoadRoutingService {
   int calls = 0;
