@@ -62,8 +62,8 @@ reroute through to the planned route.
 
 ### Fixed
 
-- Upgraded the iOS map package past its native tile-cancellation race and pause
-  the platform map while the app is backgrounded.
+- The iOS map package now includes its native tile-cancellation race fix, and
+  the platform map pauses while the app is backgrounded.
 - Rider speed now remains available for the time a 10 m location filter can
   legitimately take at town speeds.
 - Three-digit speed limits scale down as one line within the sign.
