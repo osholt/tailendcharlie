@@ -169,6 +169,33 @@ void main() {
     await worker.close();
   });
 
+  test('a ride-capacity response never quarantines a rider event', () async {
+    final eventStore = InMemoryEventStore();
+    await eventStore.append(_event(id: 'local', createdAt: _base));
+    final api = _RejectingApi(
+      const InternetRelayException(
+        'Ride storage quota exceeded',
+        code: 'ride_capacity',
+        statusCode: 413,
+      ),
+    );
+    final worker = InternetRelayWorker(
+      api: api,
+      eventStore: eventStore,
+      cursorStore: InMemoryInternetCursorStore(),
+      pollInterval: const Duration(days: 1),
+    );
+    final failed = worker.statuses.firstWhere(
+      (status) => status.phase == InternetRelayPhase.failed,
+    );
+
+    await worker.start(_session);
+    await failed.timeout(const Duration(seconds: 2));
+
+    expect(worker.quarantinedEventIds, isEmpty);
+    await worker.close();
+  });
+
   test('events a newer peer sent are counted as a named limitation', () async {
     final api = _FixedResultApi(
       const InternetSyncResult(

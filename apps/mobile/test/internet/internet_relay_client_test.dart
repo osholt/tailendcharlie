@@ -175,6 +175,38 @@ void main() {
       client.close();
     });
 
+    test(
+      'treats a legacy relay quota response as retryable capacity',
+      () async {
+        final client = HttpInternetRelayClient(
+          configuration: InternetRelayConfiguration(
+            baseUri: Uri.parse('https://relay.example'),
+          ),
+          client: MockClient(
+            (_) async => http.Response(
+              jsonEncode({'error': 'Ride replay quota exceeded'}),
+              413,
+              headers: {'content-type': 'application/json'},
+            ),
+          ),
+        );
+
+        await expectLater(
+          client.synchronize(
+            session: _session,
+            cursor: null,
+            events: [_event(id: 'local-event')],
+          ),
+          throwsA(
+            isA<InternetRelayException>()
+                .having((error) => error.code, 'code', 'ride_capacity')
+                .having((error) => error.retryable, 'retryable', isTrue),
+          ),
+        );
+        client.close();
+      },
+    );
+
     test('bounds the wait for response headers', () async {
       final client = HttpInternetRelayClient(
         configuration: InternetRelayConfiguration(

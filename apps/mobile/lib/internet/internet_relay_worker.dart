@@ -227,22 +227,40 @@ class InternetRelayWorker {
           );
         }
       }
-      final pending = await _eventStore.pendingEvents(session.rideId);
-      final offerable = pending
-          .where((event) => !_quarantinedEventIds.contains(event.id))
-          .toList(growable: false);
-      _unsupportedUploadCount = offerable
-          .where((event) => !_serverSupportsEvent(event))
-          .length;
+      final pendingCount = await _eventStore.pendingEventCount(session.rideId);
+      final offerableCount = max(0, pendingCount - _quarantinedEventIds.length);
       final downloadOnly = _downloadOnlyNextAttempt;
       _downloadOnlyNextAttempt = false;
       uploadLimit = downloadOnly
           ? 0
           : (_uploadProbeSize ?? _api.configuration.maximumUploadEvents);
-      upload = offerable
-          .where(_serverSupportsEvent)
-          .take(uploadLimit)
+      var candidates = uploadLimit == 0
+          ? const <RideEvent>[]
+          : await _eventStore.pendingEvents(
+              session.rideId,
+              limit: min(
+                pendingCount,
+                uploadLimit + _quarantinedEventIds.length,
+              ),
+            );
+      var offerable = candidates
+          .where((event) => !_quarantinedEventIds.contains(event.id))
           .toList(growable: false);
+      var supported = offerable.where(_serverSupportsEvent).toList();
+      // An older relay can leave an unsupported event at the queue head. Fall
+      // back to the complete pending set only in that compatibility case; the
+      // normal long-ride path remains bounded to one upload batch.
+      if (supported.length < uploadLimit && candidates.length < pendingCount) {
+        candidates = await _eventStore.pendingEvents(session.rideId);
+        offerable = candidates
+            .where((event) => !_quarantinedEventIds.contains(event.id))
+            .toList(growable: false);
+        supported = offerable.where(_serverSupportsEvent).toList();
+      }
+      _unsupportedUploadCount = offerable
+          .where((event) => !_serverSupportsEvent(event))
+          .length;
+      upload = supported.take(uploadLimit).toList(growable: false);
       if (!_isCurrent(generation, session)) return;
       _emit(
         InternetRelayStatus(
@@ -251,16 +269,13 @@ class InternetRelayWorker {
               ? 'Receiving ride updates while a refused update is isolated'
               : 'Synchronizing queued ride events',
           lastSuccessfulSync: _status.lastSuccessfulSync,
-          pendingEventCount: offerable.length,
+          pendingEventCount: offerableCount,
           quarantinedEventCount: _quarantinedEventIds.length,
           ignoredEventCount: _ignoredEventCount,
           unsupportedUploadCount: _unsupportedUploadCount,
           limitations: _limitations(),
         ),
       );
-      final knownEventIds = (await _eventStore.eventsForRide(
-        session.rideId,
-      )).map((event) => event.id).toSet();
       final result = await _api.synchronize(
         session: session,
         cursor: await _cursorStore.load(session.rideId),
@@ -276,10 +291,12 @@ class InternetRelayWorker {
           );
         }
       }
-      for (final eventId in result.acceptedEventIds) {
-        if (!_isCurrent(generation, session)) return;
-        await _eventStore.markAcknowledged(eventId);
-      }
+      final knownEventIds = await _eventStore.existingEventIds(
+        session.rideId,
+        result.events.map((event) => event.id),
+      );
+      if (!_isCurrent(generation, session)) return;
+      await _eventStore.markAcknowledgedAll(result.acceptedEventIds);
       for (final event in result.events) {
         if (!_isCurrent(generation, session)) return;
         if (!knownEventIds.add(event.id)) continue;
@@ -299,22 +316,24 @@ class InternetRelayWorker {
       // and the isolation would never converge.
       if (upload.isNotEmpty) _uploadProbeSize = null;
       _ignoredEventCount += result.ignoredEventCount;
-      final remaining = (await _eventStore.pendingEvents(session.rideId))
-          .where((event) => !_quarantinedEventIds.contains(event.id))
-          .toList(growable: false);
+      final remaining = max(
+        0,
+        await _eventStore.pendingEventCount(session.rideId) -
+            _quarantinedEventIds.length,
+      );
       _emit(
         InternetRelayStatus(
           phase: InternetRelayPhase.synced,
           message: 'Last server sync succeeded',
           lastSuccessfulSync: _clock(),
-          pendingEventCount: remaining.length,
+          pendingEventCount: remaining,
           quarantinedEventCount: _quarantinedEventIds.length,
           ignoredEventCount: _ignoredEventCount,
           unsupportedUploadCount: _unsupportedUploadCount,
           limitations: _limitations(),
         ),
       );
-      if (remaining.isNotEmpty &&
+      if (remaining > 0 &&
           (result.acceptedEventIds.isNotEmpty || uploadLimit == 0)) {
         nextDelay = Duration.zero;
       }
@@ -405,6 +424,7 @@ class InternetRelayWorker {
     if (error.code == 'update_required' ||
         error.code == 'server_upgrade_required' ||
         error.code == 'invalid_cursor' ||
+        error.code == 'ride_capacity' ||
         error.code == 'temporarily_unavailable') {
       return false;
     }

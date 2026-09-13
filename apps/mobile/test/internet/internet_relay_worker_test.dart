@@ -171,6 +171,37 @@ void main() {
   });
 
   test(
+    'drains a large queue without loading the complete ride journal',
+    () async {
+      final eventStore = _BoundedReadEventStore();
+      for (var index = 0; index < 65; index += 1) {
+        await eventStore.append(_event(id: 'local-$index'));
+      }
+      final api = _AcceptingApi();
+      final worker = InternetRelayWorker(
+        api: api,
+        eventStore: eventStore,
+        cursorStore: InMemoryInternetCursorStore(),
+        pollInterval: const Duration(days: 1),
+      );
+      final drained = worker.statuses.firstWhere(
+        (status) =>
+            status.phase == InternetRelayPhase.synced &&
+            status.pendingEventCount == 0,
+      );
+
+      await worker.start(_session);
+      await drained.timeout(const Duration(seconds: 2));
+
+      expect(api.uploadSizes, [20, 20, 20, 5]);
+      expect(eventStore.completeJournalReads, 0);
+      expect(eventStore.pendingReadLimits, [20, 20, 20, 5]);
+      expect(eventStore.acknowledgementBatchSizes, [20, 20, 20, 5]);
+      await worker.close();
+    },
+  );
+
+  test(
     'clears an expired cursor and replays the ride from the start',
     () async {
       final cursorStore = InMemoryInternetCursorStore();
@@ -361,6 +392,58 @@ class _RecoveringApi implements InternetRelayApi {
 
   @override
   void close() {}
+}
+
+class _AcceptingApi implements InternetRelayApi {
+  final List<int> uploadSizes = [];
+  var _cursor = 0;
+
+  @override
+  InternetRelayConfiguration get configuration =>
+      InternetRelayConfiguration(baseUri: Uri.parse('https://relay.example'));
+
+  @override
+  Future<InternetSyncResult> synchronize({
+    required RideSession session,
+    required String? cursor,
+    required List<RideEvent> events,
+  }) async {
+    uploadSizes.add(events.length);
+    _cursor += 1;
+    return InternetSyncResult(
+      cursor: 'cursor-$_cursor',
+      acceptedEventIds: events.map((event) => event.id).toSet(),
+      events: const [],
+    );
+  }
+
+  @override
+  void close() {}
+}
+
+class _BoundedReadEventStore extends InMemoryEventStore {
+  var completeJournalReads = 0;
+  final List<int?> pendingReadLimits = [];
+  final List<int> acknowledgementBatchSizes = [];
+
+  @override
+  Future<List<RideEvent>> eventsForRide(String rideId) {
+    completeJournalReads += 1;
+    return super.eventsForRide(rideId);
+  }
+
+  @override
+  Future<List<RideEvent>> pendingEvents(String rideId, {int? limit}) {
+    pendingReadLimits.add(limit);
+    return super.pendingEvents(rideId, limit: limit);
+  }
+
+  @override
+  Future<void> markAcknowledgedAll(Iterable<String> eventIds) {
+    final ids = eventIds.toList(growable: false);
+    acknowledgementBatchSizes.add(ids.length);
+    return super.markAcknowledgedAll(ids);
+  }
 }
 
 class _ExpiredCursorApi implements InternetRelayApi {

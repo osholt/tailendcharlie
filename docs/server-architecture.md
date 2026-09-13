@@ -83,11 +83,13 @@ sybil-resistant; the aggregation rule may promote a candidate but never removes
 one.
 
 Default capacity bounds are 100 active rides, 5,000 retained events and 25 MiB
-of encrypted event bodies per ride, 5,000 replay records and 25 MiB of encrypted
-replay bodies per ride, 100,000 in-memory limiter identities, and 64 KiB per
-request. Operators can lower the persistent quotas to match the host volume and
-expected field group size. Per-ride writes lock their ride row so concurrent
-phones cannot race the storage checks.
+of encrypted event bodies per ride, a rolling cache of 5,000 replay records and
+25 MiB of encrypted replay bodies per ride, 100,000 in-memory limiter identities,
+and 64 KiB per request. The replay bounds evict the oldest cached response rather
+than refusing a new upload: event identity and its stored body hash remain the
+durable idempotency boundary after eviction. Operators can lower the persistent
+quotas to match the host volume and expected field group size. Per-ride writes
+lock their ride row so concurrent phones cannot race the storage checks.
 
 ## Reliability and scale
 

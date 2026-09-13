@@ -35,6 +35,12 @@ class InMemoryEventStore implements EventStore {
   }
 
   @override
+  Future<Set<String>> existingEventIds(
+    String rideId,
+    Iterable<String> eventIds,
+  ) async => eventIds.where((id) => _events[id]?.rideId == rideId).toSet();
+
+  @override
   Future<void> markAcknowledged(String eventId) async {
     final event = _events[eventId];
     if (event != null) {
@@ -43,8 +49,24 @@ class InMemoryEventStore implements EventStore {
   }
 
   @override
-  Future<List<RideEvent>> pendingEvents(String rideId) async {
-    final events = await eventsForRide(rideId);
-    return events.where((event) => !event.acknowledged).toList();
+  Future<void> markAcknowledgedAll(Iterable<String> eventIds) async {
+    for (final eventId in eventIds) {
+      await markAcknowledged(eventId);
+    }
+  }
+
+  @override
+  Future<int> pendingEventCount(String rideId) async => _events.values
+      .where((event) => event.rideId == rideId && !event.acknowledged)
+      .length;
+
+  @override
+  Future<List<RideEvent>> pendingEvents(String rideId, {int? limit}) async {
+    final result = _events.values
+        .where((event) => event.rideId == rideId && !event.acknowledged)
+        .toList();
+    result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    if (limit == null || result.length <= limit) return result;
+    return result.take(limit).toList(growable: false);
   }
 }

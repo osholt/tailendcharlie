@@ -961,6 +961,15 @@ class HttpInternetRelayClient
           code = 'invalid_cursor';
           retryable = true;
         }
+        // Builds released before the relay cache became evicting returned a
+        // 413 for temporary per-ride capacity. That is not a malformed event:
+        // isolating it one at a time turned a recoverable long-ride backlog into
+        // thousands of valid updates permanently set aside.
+        if (serverMessage == 'Ride replay quota exceeded' ||
+            serverMessage == 'Ride storage quota exceeded') {
+          code = 'ride_capacity';
+          retryable = true;
+        }
       }
     } on Object {
       // A bounded but invalid error body falls back to the safe status text.
