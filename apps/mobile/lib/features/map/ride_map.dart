@@ -16,6 +16,7 @@ export 'ride_map_feature.dart'
         describeQuickMessageOrigin,
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
+        groupMiniMapRiders,
         groupMiniMapRenderer,
         heatmapRoadLayerId,
         landscapeGuidancePanelWidth,

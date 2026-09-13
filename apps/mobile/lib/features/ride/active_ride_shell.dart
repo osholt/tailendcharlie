@@ -2619,6 +2619,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               riderSymbol: location.riderSymbol,
               riderDisplayName: location.displayName,
               color: baseColor,
+              positionFreshness: freshness,
             );
           }),
     ];
