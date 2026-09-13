@@ -30,6 +30,7 @@ import '../../domain/rider_color.dart';
 import '../../domain/route_authority.dart';
 import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
+import '../../relay/live_presence.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/basemap_status.dart';
 import '../../services/biker_place_catalogue.dart';
@@ -3274,9 +3275,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     required double width,
     required double height,
   }) {
-    final groupRiders = overlays
-        .where((marker) => marker.id.startsWith('rider-'))
-        .toList(growable: false);
+    final groupRiders = groupMiniMapRiders(overlays);
     final inferredGroupSize =
         groupRiders.length + (_effectivePosition == null ? 0 : 1);
     // The participant count is a snapshot supplied by the ride shell, while
@@ -8278,6 +8277,7 @@ class MapOverlayMarker {
     this.motorcycleStyle,
     this.riderSymbol = riderSymbolDefault,
     this.riderDisplayName,
+    this.positionFreshness = PresenceFreshness.live,
     this.hazardSymbol,
   });
 
@@ -8293,6 +8293,12 @@ class MapOverlayMarker {
   final RiderSymbol riderSymbol;
   final String? riderDisplayName;
 
+  /// Whether this rider position is recent enough for the compact live view.
+  ///
+  /// Stale positions remain useful on the main map as last-known locations,
+  /// but must not draw or control the camera on the group mini-map (#744).
+  final PresenceFreshness positionFreshness;
+
   /// A reported hazard's decided symbol: shape, glyph, fill and freshness (#135).
   ///
   /// The one field both renderers read for hazard artwork. When it is set, the
@@ -8303,6 +8309,17 @@ class MapOverlayMarker {
   /// marker still gets.
   final HazardMapSymbol? hazardSymbol;
 }
+
+/// Rider positions that are recent enough to draw and frame on the mini-map.
+///
+/// This filter is intentionally applied before [_GroupMiniMap] receives its
+/// snapshot, so the same list drives its dots, route window and camera bounds.
+List<MapOverlayMarker> groupMiniMapRiders(
+  Iterable<MapOverlayMarker> overlays,
+) => overlays
+    .where((marker) => marker.id.startsWith('rider-'))
+    .where((marker) => marker.positionFreshness.isTrackedAsContact)
+    .toList(growable: false);
 
 LatLng _latLng(GeoPoint point) => LatLng(point.latitude, point.longitude);
 

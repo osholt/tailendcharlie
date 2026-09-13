@@ -26,6 +26,7 @@ import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/hazard_map_symbol.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
+import 'package:ride_relay/relay/live_presence.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/biker_place_catalogue.dart';
 import 'package:ride_relay/services/enforcement_alert_detector.dart';
@@ -46,6 +47,44 @@ import 'package:ride_relay/services/speed_limit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  test('stale rider positions cannot draw or frame the group mini-map', () {
+    const overlays = [
+      MapOverlayMarker(
+        id: 'rider-live',
+        point: GeoPoint(latitude: 51.45, longitude: -2.59),
+        label: 'Live rider',
+      ),
+      MapOverlayMarker(
+        id: 'rider-ageing',
+        point: GeoPoint(latitude: 51.46, longitude: -2.58),
+        label: 'Ageing rider',
+        positionFreshness: PresenceFreshness.ageing,
+      ),
+      MapOverlayMarker(
+        id: 'rider-stale-far-away',
+        point: GeoPoint(latitude: 55.95, longitude: -3.19),
+        label: 'Stale rider · 2 min ago · Stale',
+        positionFreshness: PresenceFreshness.stale,
+      ),
+      MapOverlayMarker(
+        id: 'hazard-nearby',
+        point: GeoPoint(latitude: 51.47, longitude: -2.57),
+        label: 'Hazard',
+      ),
+    ];
+
+    final riders = groupMiniMapRiders(overlays);
+
+    expect(riders.map((marker) => marker.id), ['rider-live', 'rider-ageing']);
+    expect(
+      overlays
+          .singleWhere((marker) => marker.id == 'rider-stale-far-away')
+          .label,
+      contains('Stale'),
+      reason: 'the last-known position remains available to the main map',
+    );
+  });
+
   test('native source updates follow app visibility on iOS (#732)', () {
     expect(
       mapLibreSourceUpdatesShouldPause(AppLifecycleState.resumed),
