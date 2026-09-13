@@ -32,24 +32,22 @@ class RouteJourneyProgress {
   };
 }
 
-/// Maintains a stable ETA without pretending that standing still means arrival.
+/// Maintains an ETA from the routing engine's planned duration.
 ///
-/// App-planned routes retain the routing engine's duration, which seeds an ETA
-/// before movement. Valid moving fixes then refine that expected average speed
-/// exponentially; a zero-speed fix at lights leaves the last estimate in place.
-/// Imported tracks with neither planned timing nor movement remain unavailable
-/// rather than receiving an invented estimate.
+/// A GPS speed is instantaneous: junctions, traffic and short bursts make it a
+/// poor estimate for the whole route. It is accepted by [update] because the
+/// map and vehicle projections share this API, but it never changes the ETA.
+/// Imported tracks without planned timing remain unavailable rather than
+/// receiving an invented estimate from one speed reading.
 class RouteJourneyProgressTracker {
-  RouteJourneyProgressTracker({this.minimumEtaSpeedMetersPerSecond = 3});
-
-  final double minimumEtaSpeedMetersPerSecond;
+  RouteJourneyProgressTracker();
 
   String? _routeFingerprint;
-  double? _estimatedSpeedMetersPerSecond;
+  double? _plannedAverageSpeedMetersPerSecond;
 
   void reset() {
     _routeFingerprint = null;
-    _estimatedSpeedMetersPerSecond = null;
+    _plannedAverageSpeedMetersPerSecond = null;
   }
 
   RouteJourneyProgress? update({
@@ -68,26 +66,16 @@ class RouteJourneyProgressTracker {
     if (_routeFingerprint != fingerprint) {
       _routeFingerprint = fingerprint;
       final plannedSeconds = route.plannedDuration?.inMilliseconds;
-      _estimatedSpeedMetersPerSecond =
+      _plannedAverageSpeedMetersPerSecond =
           plannedSeconds == null || plannedSeconds <= 0
           ? null
           : geometry.totalMeters / (plannedSeconds / 1000);
     }
 
-    if (speedMetersPerSecond != null &&
-        speedMetersPerSecond.isFinite &&
-        speedMetersPerSecond >= minimumEtaSpeedMetersPerSecond &&
-        speedMetersPerSecond <= 70) {
-      final previous = _estimatedSpeedMetersPerSecond;
-      _estimatedSpeedMetersPerSecond = previous == null
-          ? speedMetersPerSecond
-          : previous * 0.8 + speedMetersPerSecond * 0.2;
-    }
-
     final remaining = math
         .max(0.0, geometry.totalMeters - geometry.progressMeters)
         .toDouble();
-    final speed = _estimatedSpeedMetersPerSecond;
+    final speed = _plannedAverageSpeedMetersPerSecond;
     final remainingTime = speed == null
         ? null
         : Duration(seconds: (remaining / speed).round());
