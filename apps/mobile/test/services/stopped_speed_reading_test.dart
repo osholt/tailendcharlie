@@ -78,4 +78,33 @@ void main() {
       expect(stoppedSpeedSilence, greaterThan(const Duration(seconds: 3)));
     });
   });
+
+  group('speed freshness follows the location distance filter (#285)', () {
+    test('slow town riding remains fresh until the next expected fix', () {
+      final windows = riderSpeedSilenceWindows(
+        lastObservedSpeedMetersPerSecond: 1.5,
+      );
+
+      expect(windows.freshFor, const Duration(seconds: 10));
+      expect(windows.resolveAfter, const Duration(seconds: 11));
+    });
+
+    test('normal road speed keeps the short lost-signal bound', () {
+      final windows = riderSpeedSilenceWindows(
+        lastObservedSpeedMetersPerSecond: 8,
+      );
+
+      expect(windows.freshFor, const Duration(seconds: 3));
+      expect(windows.resolveAfter, stoppedSpeedSilence);
+    });
+
+    test('the freshness window stays bounded', () {
+      final windows = riderSpeedSilenceWindows(
+        lastObservedSpeedMetersPerSecond: 0.1,
+      );
+
+      expect(windows.freshFor, const Duration(seconds: 12));
+      expect(windows.resolveAfter, const Duration(seconds: 13));
+    });
+  });
 }

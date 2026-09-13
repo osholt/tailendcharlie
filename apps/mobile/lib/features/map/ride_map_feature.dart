@@ -3926,8 +3926,11 @@ class _RideMapScreenState extends State<RideMapScreen>
   /// Restarts the silence window. Called for **every** fix, with or without a
   /// speed, because a fix arriving is evidence the platform is still tracking.
   void _markRiderTrackingObserved() {
+    final windows = riderSpeedSilenceWindows(
+      lastObservedSpeedMetersPerSecond: _lastObservedRiderSpeed,
+    );
     _riderSpeedStalenessTimer?.cancel();
-    _riderSpeedStalenessTimer = Timer(_riderSpeedFreshness, _clearRiderSpeed);
+    _riderSpeedStalenessTimer = Timer(windows.freshFor, _retireRiderSpeed);
     // A second, longer timer that decides what silence *means* (#445).
     //
     // The window above retires the number; this one asks whether the rider
@@ -3935,7 +3938,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     // questions and a stopped rider must be able to read zero rather than a
     // blank where their speed used to be.
     _riderStoppedTimer?.cancel();
-    _riderStoppedTimer = Timer(stoppedSpeedSilence, _resolveSilentSpeed);
+    _riderStoppedTimer = Timer(windows.resolveAfter, _resolveSilentSpeed);
   }
 
   /// Decides whether continued silence means the bike stopped, or that tracking
@@ -3944,11 +3947,16 @@ class _RideMapScreenState extends State<RideMapScreen>
     if (!mounted) return;
     final reading = stoppedSpeedReading(
       lastObservedSpeedMetersPerSecond: _lastObservedRiderSpeed,
-      silence: stoppedSpeedSilence,
+      silence: riderSpeedSilenceWindows(
+        lastObservedSpeedMetersPerSecond: _lastObservedRiderSpeed,
+      ).resolveAfter,
     );
-    if (reading != StoppedSpeedReading.stopped) return;
-    // Not `ageing`: this is a current, believed reading rather than a held one.
-    _riderSpeed.value = (value: 0, ageing: false);
+    _riderSpeed.value = switch (reading) {
+      // Not `ageing`: this is a current, believed reading rather than a held
+      // one.
+      StoppedSpeedReading.stopped => (value: 0, ageing: false),
+      StoppedSpeedReading.unknown => null,
+    };
   }
 
   /// Marks a held value as no longer current once it is older than the freshness
@@ -3962,17 +3970,19 @@ class _RideMapScreenState extends State<RideMapScreen>
     }
   }
 
-  /// Clears the readout and the smoother together.
+  /// Ages the readout and clears the smoother together.
   ///
   /// Leaving the smoother primed with the last moving value would blend it back
   /// in on the first fix after a stop, so a rider pulling away would watch the
   /// number climb out of a stale one instead of reading their real speed.
-  void _clearRiderSpeed() {
+  void _retireRiderSpeed() {
     _riderSpeedStalenessTimer?.cancel();
     _riderSpeedStalenessTimer = null;
     _riderSpeedObservedAt = null;
     _smoothedNavigationSpeedMetersPerSecond = null;
-    _riderSpeed.value = null;
+    if (_riderSpeed.value case final current? when !current.ageing) {
+      _riderSpeed.value = (value: current.value, ageing: true);
+    }
   }
 
   /// The rotation deadband tightens inside this distance so the map bearing
@@ -4329,7 +4339,6 @@ class _RideMapScreenState extends State<RideMapScreen>
       // Any fix, with or without a speed, proves the platform is still tracking,
       // so it restarts the silence window that #210 relies on.
       final at = navigationFix.recordedAt;
-      _markRiderTrackingObserved();
       if (navigationFix.speedMetersPerSecond case final speed?
           when speed.isFinite) {
         final boundedSpeed = speed.clamp(0.0, 50.0);
@@ -4353,6 +4362,9 @@ class _RideMapScreenState extends State<RideMapScreen>
         // instead, and genuine silence still retires it above.
         _ageRiderSpeedIfStale(at);
       }
+      // The timer is speed-aware: with a 10 m platform distance filter, a slow
+      // town fix is expected to take longer than a motorway fix (#285).
+      _markRiderTrackingObserved();
     }
     // The camera follows a smoothed bearing, never the raw per-fix course. The
     // marker keeps the raw heading: it is only drawn rotated while the map is
