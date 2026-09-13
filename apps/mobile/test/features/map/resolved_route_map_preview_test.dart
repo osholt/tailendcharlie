@@ -1,10 +1,38 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/map/resolved_route_map_preview.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 
 void main() {
+  final originalMapLibrePlatformFactory = ml.MapLibrePlatform.createInstance;
+
+  setUpAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/maplibre_gl_0'),
+          (_) async => null,
+        );
+    ml.MapLibrePlatform.createInstance = () {
+      final platform = ml.MapLibreMethodChannel();
+      unawaited(platform.initPlatform(0));
+      return platform;
+    };
+  });
+
+  tearDownAll(() {
+    ml.MapLibrePlatform.createInstance = originalMapLibrePlatformFactory;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/maplibre_gl_0'),
+          null,
+        );
+  });
+
   test('the whole route is fitted once after the native map becomes ready', () {
     expect(
       routePreviewNeedsInitialFit(styleReady: false, initialFitComplete: false),
