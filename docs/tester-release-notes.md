@@ -36,6 +36,37 @@ permissions by design.
 - ...
 ```
 
+## iOS build 90 / Android build 90 — 1.0.1 — 13 September 2026
+
+This build fixes the iOS group minimap freezing during a journey and confirms
+roundabout circulation from the route's country for imported GPX navigation.
+
+### What to test
+
+1. On iOS, join or start a group ride with at least two riders and turn the
+   phone landscape so the group minimap is visible. Have a passenger observe,
+   or use a safe controlled test, to confirm the bike, rider and route positions
+   continue updating throughout the journey and after backgrounding the app.
+2. Import a MyRouteApp GPX in France, choose **Generate navigable route**, and
+   confirm it. At French roundabouts, confirm the symbol shows anticlockwise
+   circulation for right-hand traffic.
+3. If the route crosses a border, confirm each roundabout follows the traffic
+   side of the country it is in.
+
+### Fixed
+
+- The iOS group minimap now uses the Flutter vector renderer, avoiding a second
+  native MapLibre refresh queue that could stall permanently.
+- Imported GPX matching now applies the same offline country driving-side lookup
+  as ordinary planned routes, after router and mapped mini-roundabout enrichment.
+
+### Known limitations
+
+- Automated tests cover renderer selection and the country-to-symbol pipeline;
+  a physical iPhone journey and a route in France still require validation.
+- **Follow original line** preserves the exact offline geometry without turn
+  prompts. Choose **Generate navigable route** when testing roundabout symbols.
+
 ## iOS build 89 / Android build 89 — 1.0.1 — 13 September 2026
 
 This build focuses on GPX route visibility and iOS map stability after the app
