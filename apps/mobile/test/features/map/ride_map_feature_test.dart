@@ -1814,7 +1814,7 @@ void main() {
     );
     addTearDown(navigation.dispose);
     final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
-      provider: _WidgetSpeedLimitProvider(),
+      provider: const _WidgetSpeedLimitProvider(kilometresPerHour: 110),
       clock: () => now,
     );
     addTearDown(speedLimitDisplay.dispose);
@@ -1843,7 +1843,12 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const Key('posted-speed-limit-badge')), findsOneWidget);
-    expect(find.text('30'), findsOneWidget);
+    expect(find.text('110'), findsOneWidget);
+    final limitText = tester.widget<Text>(
+      find.byKey(const Key('posted-speed-limit-value')),
+    );
+    expect(limitText.maxLines, 1);
+    expect(limitText.softWrap, isFalse);
     // The caption is gone from the visual layer and its wording lives in the
     // accessibility label (#125).
     expect(find.byKey(const Key('posted-speed-limit-caption')), findsNothing);
@@ -1853,16 +1858,16 @@ void main() {
           .properties
           .label,
       allOf(
-        contains('Mapped speed limit 30 miles per hour'),
+        contains('Mapped speed limit 110 kilometres per hour'),
         contains('Mapped, not live'),
-        contains('You are riding at 45 miles per hour by GPS'),
+        contains('You are riding at 72 kilometres per hour by GPS'),
       ),
     );
-    // 20 m/s is 45 mph, shown below the sign at the sign's own font size.
+    // 20 m/s is 72 km/h, shown below the sign at the sign's own font size.
     final riderSpeed = tester.widget<Text>(
       find.byKey(const Key('posted-speed-limit-rider-speed')),
     );
-    expect(riderSpeed.data, '45');
+    expect(riderSpeed.data, '72');
     expect(riderSpeed.style?.fontSize, 26);
 
     // This fix is moving, and since #124 a moving rider is followed with or
@@ -7940,9 +7945,13 @@ class _RouteStartRoutingService implements RoadRoutingService {
 }
 
 class _WidgetSpeedLimitProvider implements SpeedLimitProvider {
-  const _WidgetSpeedLimitProvider({this.unlimited = false});
+  const _WidgetSpeedLimitProvider({
+    this.unlimited = false,
+    this.kilometresPerHour,
+  });
 
   final bool unlimited;
+  final int? kilometresPerHour;
 
   @override
   Future<SpeedLimitLookupResult> lookup({
@@ -7954,6 +7963,14 @@ class _WidgetSpeedLimitProvider implements SpeedLimitProvider {
             source: 'Test',
             checkedAt: current.recordedAt,
             matchDistanceMeters: 2,
+          )
+        : kilometresPerHour != null
+        ? PostedSpeedLimit.kilometresPerHour(
+            kilometresPerHour: kilometresPerHour!,
+            source: 'Test',
+            checkedAt: current.recordedAt,
+            matchDistanceMeters: 2,
+            countryCode: 'FR',
           )
         : PostedSpeedLimit(
             milesPerHour: 30,
