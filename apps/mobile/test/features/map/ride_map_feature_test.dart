@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -47,6 +48,50 @@ import 'package:ride_relay/services/speed_limit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  final originalMapLibrePlatformFactory = ml.MapLibrePlatform.createInstance;
+
+  setUpAll(() {
+    // Widget tests do not create a native platform view. maplibre_gl 0.27.1
+    // correctly disposes even a view whose creation never completed, so give
+    // that test-only platform object the channel a real platform view would
+    // initialise before it is torn down.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/maplibre_gl_0'),
+          (_) async => null,
+        );
+    ml.MapLibrePlatform.createInstance = () {
+      final platform = ml.MapLibreMethodChannel();
+      unawaited(platform.initPlatform(0));
+      return platform;
+    };
+  });
+
+  tearDownAll(() {
+    ml.MapLibrePlatform.createInstance = originalMapLibrePlatformFactory;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/maplibre_gl_0'),
+          null,
+        );
+  });
+
+  test('iOS map dependency contains the tile-request race fix (#732)', () {
+    final lock = File('pubspec.lock').readAsStringSync();
+    expect(
+      lock,
+      contains(
+        '  maplibre_gl:\n'
+        '    dependency: "direct main"\n'
+        '    description:\n'
+        '      name: maplibre_gl\n',
+      ),
+    );
+    final start = lock.indexOf('  maplibre_gl:');
+    final end = lock.indexOf('\n  maplibre_gl_platform_interface:', start);
+    expect(lock.substring(start, end), contains('version: "0.27.1"'));
+  });
+
   test('stale rider positions cannot draw or frame the group mini-map', () {
     const overlays = [
       MapOverlayMarker(
@@ -114,6 +159,14 @@ void main() {
       source,
       contains(
         '_scheduleMapLibreSync(progress: true, position: true, overlays: true)',
+      ),
+    );
+    expect(source, contains('await controller.pauseMap();'));
+    expect(source, contains('await controller.resumeMap();'));
+    expect(
+      source,
+      contains(
+        'if (_basemap.usesMapLibre && _mapLibreSourceUpdatesPaused) return;',
       ),
     );
   });
