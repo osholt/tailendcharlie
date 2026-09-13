@@ -15,22 +15,17 @@ import 'navigation_guidance.dart';
 /// by where it points — left, ahead, right. It does not distinguish a slight
 /// right from a right, because a rider approaching does not either.
 ///
-/// **It absorbs the error that is actually being made.** #412 reports the
-/// direction as "either correct or one off". Eight buckets means a one-off error
-/// changes the word a rider hears; four means most one-off errors land in the
-/// same bucket and change nothing. Collapsing does not fix #412, but it stops
-/// most of it reaching the rider.
+/// **It does not erase the side.** The geometry classifier already has a wide
+/// straight band for a roundabout. Once an exit is outside that band, `slight`
+/// means the route genuinely leaves to that side; collapsing it back to straight
+/// made left exits on a French ride both speak and draw as straight (#743).
 ///
-/// ## Where the boundaries sit, and why slight is straight
+/// ## Where the boundaries sit
 ///
-/// A "slight" exit at a roundabout is one a rider would call straight on. The
-/// arms of a roundabout are offset by the ring itself, so a genuinely straight
-/// crossing routinely shows 25–35° of heading change from geometry alone — which
-/// is why `_roundaboutStraightBandDegrees` is already 38 rather than 20. Treating
-/// slight as straight follows the same reasoning one step further.
-///
-/// Sharp turns stay with their side: a sharp left is unambiguously a left, and
-/// nothing about the ring makes it read as straight on.
+/// Ring offset is handled before this function: heading changes through 38° are
+/// classified as [ManeuverDirection.straight]. Slight, normal and sharp exits
+/// therefore keep their side here while still sharing one simple left/right
+/// word and symbol arm.
 enum RoundaboutExitBucket {
   left('left'),
   straightOn('straight on'),
@@ -53,12 +48,10 @@ enum RoundaboutExitBucket {
 RoundaboutExitBucket? roundaboutExitBucket(ManeuverDirection direction) =>
     switch (direction) {
       ManeuverDirection.sharpLeft ||
-      ManeuverDirection.left => RoundaboutExitBucket.left,
-      // Slight is straight on. See the note above: the ring's own geometry puts
-      // 25-35 degrees on a crossing that a rider would call straight.
-      ManeuverDirection.slightLeft ||
-      ManeuverDirection.straight ||
-      ManeuverDirection.slightRight => RoundaboutExitBucket.straightOn,
+      ManeuverDirection.left ||
+      ManeuverDirection.slightLeft => RoundaboutExitBucket.left,
+      ManeuverDirection.straight => RoundaboutExitBucket.straightOn,
+      ManeuverDirection.slightRight ||
       ManeuverDirection.right ||
       ManeuverDirection.sharpRight => RoundaboutExitBucket.right,
       ManeuverDirection.uTurn => RoundaboutExitBucket.back,
