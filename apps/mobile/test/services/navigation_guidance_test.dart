@@ -43,6 +43,18 @@ void main() {
     expect(guidance?.distanceMeters, 0);
   });
 
+  test('a reroute handoff skips the planned turn it already completed', () {
+    final guidance = planner.plan(
+      route: _route(),
+      position: const GeoPoint(latitude: 0, longitude: 0.0101),
+      progressMeters: 1123,
+      minimumManeuverProgressMeters: 1150,
+    );
+
+    expect(guidance?.maneuver.name, 'Second Road');
+    expect(guidance?.distanceMeters, closeTo(1100, 25));
+  });
+
   test('hides guidance when the rider is clearly away from the route', () {
     final guidance = planner.plan(
       route: _route(),

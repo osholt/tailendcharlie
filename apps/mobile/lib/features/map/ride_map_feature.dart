@@ -1365,6 +1365,8 @@ class _RideMapScreenState extends State<RideMapScreen>
   RouteProgressGeometry _progressGeometry = const RouteProgressGeometry.empty();
   RouteProgressGeometry _rejoinProgressGeometry =
       const RouteProgressGeometry.empty();
+  bool _hadExternalRejoinRoute = false;
+  double? _mainRouteGuidanceFloorMeters;
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
   MotorcycleDiscoveryCatalogue _discoveryCatalogue =
@@ -1561,6 +1563,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.riderTrails?.addListener(_onOverlayDataChanged);
     widget.rejoinNavigationRoute?.addListener(_onRejoinNavigationRouteChanged);
+    _hadExternalRejoinRoute = _externalRejoinRoute != null;
     widget.leaderStatus?.addListener(_onGroupPipDataChanged);
     widget.junctionMarkerOverlay?.addListener(_onJunctionMarkerChanged);
     widget.enforcementAlert?.addListener(_onEnforcementAlertChanged);
@@ -1774,6 +1777,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       if (!mounted) return;
       setState(() {
         _route = route;
+        _mainRouteGuidanceFloorMeters = null;
         _setRouteStartConnector(null);
         _rejoinProgressTracker.reset();
         _rejoinProgressGeometry = _rejoinProgressTracker.update(
@@ -4478,6 +4482,9 @@ class _RideMapScreenState extends State<RideMapScreen>
       route: navigationRoute,
       position: position,
       progressMeters: _navigationProgressGeometry.progressMeters,
+      minimumManeuverProgressMeters: _rejoinRoute == null
+          ? _mainRouteGuidanceFloorMeters
+          : null,
     );
     final current = _navigationGuidance.value;
     final visibilityChanged = current.isVisible != next.isVisible;
@@ -4500,6 +4507,16 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   void _onRejoinNavigationRouteChanged() {
+    final hasExternalRejoinRoute = _externalRejoinRoute != null;
+    if (_hadExternalRejoinRoute && !hasExternalRejoinRoute) {
+      // The advisory route has just delivered the rider through its rejoin
+      // junction. Do not immediately resurrect the planned-route instruction
+      // for that same junction; continue with the first genuinely later turn.
+      _mainRouteGuidanceFloorMeters =
+          _progressGeometry.progressMeters +
+          _navigationGuidancePlanner.passedToleranceMeters;
+    }
+    _hadExternalRejoinRoute = hasExternalRejoinRoute;
     if (_externalRejoinRoute != null && _routeStartConnector != null) {
       setState(() {
         _setRouteStartConnector(null);
@@ -6854,6 +6871,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _routeProgressTracker.reset();
     setState(() {
       _route = activeRoute;
+      _mainRouteGuidanceFloorMeters = null;
       _setRouteStartConnector(null);
       _rejoinProgressTracker.reset();
       _rejoinProgressGeometry = _rejoinProgressTracker.update(
@@ -7863,6 +7881,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _routeProgressTracker.reset();
     setState(() {
       _route = null;
+      _mainRouteGuidanceFloorMeters = null;
       _setRouteStartConnector(null);
       _rejoinProgressTracker.reset();
       _rejoinProgressGeometry = _rejoinProgressTracker.update(

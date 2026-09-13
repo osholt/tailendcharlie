@@ -340,16 +340,24 @@ class NavigationGuidancePlanner {
     required ImportedRoute? route,
     required GeoPoint? position,
     required double progressMeters,
+    double? minimumManeuverProgressMeters,
   }) => assess(
     route: route,
     position: position,
     progressMeters: progressMeters,
+    minimumManeuverProgressMeters: minimumManeuverProgressMeters,
   ).guidance;
 
   NavigationGuidanceAssessment assess({
     required ImportedRoute? route,
     required GeoPoint? position,
     required double progressMeters,
+
+    /// A handoff boundary after an advisory route rejoins this route.
+    ///
+    /// Manoeuvres at or behind it belonged to the junction the advisory route
+    /// just completed and must not become the first instruction afterwards.
+    double? minimumManeuverProgressMeters,
   }) {
     if (route == null) {
       return const NavigationGuidanceAssessment.noRoute();
@@ -400,6 +408,10 @@ class NavigationGuidancePlanner {
         <({ManeuverInstruction instruction, double remaining})>[];
     for (final step in instructions(route)) {
       if (step.distanceFromRouteMeters > maximumDistanceFromRouteMeters) {
+        continue;
+      }
+      if (minimumManeuverProgressMeters != null &&
+          step.distanceFromStartMeters <= minimumManeuverProgressMeters) {
         continue;
       }
       final remaining = step.distanceFromStartMeters - progressMeters;

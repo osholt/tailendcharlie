@@ -722,11 +722,25 @@ void main() {
           kind: RoutePathKind.track,
           points: [
             GeoPoint(latitude: 51, longitude: -2),
-            GeoPoint(latitude: 51, longitude: -1.98),
+            GeoPoint(latitude: 51, longitude: -1.96),
           ],
         ),
       ],
       waypoints: const [],
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 51, longitude: -1.98),
+          type: 'turn',
+          modifier: 'left',
+          name: 'Stale Main Road',
+        ),
+        RouteManeuver(
+          position: GeoPoint(latitude: 51, longitude: -1.97),
+          type: 'turn',
+          modifier: 'right',
+          name: 'Next Main Road',
+        ),
+      ],
     );
     final rejoinRoute = ImportedRoute(
       id: 'rejoin-route',
@@ -789,10 +803,20 @@ void main() {
     expect(find.byKey(const Key('navigation-guidance-banner')), findsOneWidget);
     expect(find.text('Rejoin Road'), findsOneWidget);
 
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 51, longitude: -1.98),
+      recordedAt: DateTime.utc(2026, 7, 29, 10, 6),
+      speedMetersPerSecond: 8,
+      headingDegrees: 90,
+      accuracyMeters: 5,
+    );
+    await tester.pump();
     rejoin.value = null;
     await tester.pump();
 
-    expect(find.byKey(const Key('navigation-guidance-banner')), findsNothing);
+    expect(find.byKey(const Key('navigation-guidance-banner')), findsOneWidget);
+    expect(find.text('Stale Main Road'), findsNothing);
+    expect(find.text('Next Main Road'), findsOneWidget);
   });
 
   testWidgets('pre-start map keeps riding controls and guidance hidden', (
