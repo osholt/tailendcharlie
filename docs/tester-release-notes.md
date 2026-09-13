@@ -36,6 +36,38 @@ permissions by design.
 - ...
 ```
 
+## iOS build 93 / Android build 93 — 1.0.1 — 14 September 2026
+
+This build restores relay delivery after the long-ride replay cache fills and
+drains a large saved queue without repeatedly loading the complete ride journal.
+
+### What to test
+
+1. Reopen yesterday's ended ride and leave the app open with internet access.
+   The relay queue should fall rather than turn each pending update into another
+   item "set aside". The final marker and ride-ended event should be delivered.
+2. On a new group ride, keep several phones connected for a long journey. Relay
+   synchronization should continue beyond the point where yesterday's ride
+   stopped, with current positions, joins and alerts still arriving.
+3. Background and foreground the app while a sizeable queue is draining. The
+   app should remain responsive and the pending count should continue to fall.
+
+### Fixed
+
+- The relay replay limit is now a rolling cache: reaching 5,000 entries evicts
+  the oldest cached response instead of refusing every later ride event.
+- Temporary ride-storage capacity is reported as retryable, so installed builds
+  wait for expiring positions rather than permanently setting valid events aside.
+- Older relay quota responses are also recognised as retryable by the app.
+- Queue draining now reads and acknowledges bounded batches instead of decoding
+  the full local journal several times for every 20-event upload.
+
+### Known limitations
+
+- Automated regression and mutation tests cover quota rollover, idempotent
+  retries, capacity handling and bounded queue draining. A multi-phone long ride
+  remains the field validation for sustained relay operation.
+
 ## iOS build 92 / Android build 92 — 1.0.1 — 13 September 2026
 
 This build hardens the iOS map lifecycle, keeps slow-town speed visible, fits

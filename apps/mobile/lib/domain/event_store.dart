@@ -5,9 +5,19 @@ abstract interface class EventStore {
 
   Future<List<RideEvent>> eventsForRide(String rideId);
 
-  Future<List<RideEvent>> pendingEvents(String rideId);
+  Future<List<RideEvent>> pendingEvents(String rideId, {int? limit});
+
+  Future<int> pendingEventCount(String rideId);
+
+  /// Returns only IDs already present in this ride's journal.
+  Future<Set<String>> existingEventIds(
+    String rideId,
+    Iterable<String> eventIds,
+  );
 
   Future<void> markAcknowledged(String eventId);
+
+  Future<void> markAcknowledgedAll(Iterable<String> eventIds);
 
   Future<void> deleteRide(String rideId);
 

@@ -10,7 +10,7 @@ from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import func, select
 
 from ride_relay_server.app import create_app
-from ride_relay_server.models import Ride, StoredEvent
+from ride_relay_server.models import IdempotencyReplay, Ride, StoredEvent
 from ride_relay_server.rate_limit import SlidingWindowRateLimiter
 from ride_relay_server.service import purge_expired
 
@@ -91,7 +91,11 @@ def test_non_finite_payload_number_is_rejected(client, synchronize, make_event) 
     assert "finite" in response.json()["error"].lower()
 
 
-def test_per_ride_event_quota_is_atomic(settings, synchronize, make_event) -> None:
+def test_per_ride_event_capacity_is_atomic_and_retryable(
+    settings,
+    synchronize,
+    make_event,
+) -> None:
     bounded = settings.model_copy(update={"maximum_events_per_ride": 100})
     ride_id = "ride-quota"
     with TestClient(create_app(bounded)) as client:
@@ -114,7 +118,7 @@ def test_per_ride_event_quota_is_atomic(settings, synchronize, make_event) -> No
             events=[make_event(ride_id, "event-100")],
         )
 
-    assert rejected.status_code == 413
+    assert rejected.status_code == 429
     assert rejected.json() == {"error": "Ride storage quota exceeded"}
 
 
@@ -269,30 +273,77 @@ def test_active_ride_capacity_rejects_new_claims(settings, synchronize) -> None:
     assert rejected.json() == {"error": "Relay ride capacity reached"}
 
 
-def test_per_ride_replay_quota_is_atomic(settings, synchronize, make_event) -> None:
+def test_per_ride_replay_quota_evicts_oldest_cache_entry(
+    settings,
+    synchronize,
+    make_event,
+) -> None:
     bounded = settings.model_copy(update={"maximum_replays_per_ride": 1})
     ride_id = "ride-replay-quota"
-    # Only an upload is replay-protected, so only an upload consumes the quota.
+    event_a = make_event(ride_id, "event-a")
     with TestClient(create_app(bounded)) as client:
         assert (
             synchronize(
                 client,
                 ride_id=ride_id,
                 secret=SECRET,
-                events=[make_event(ride_id, "event-a")],
+                events=[event_a],
             ).status_code
             == 200
         )
-        rejected = synchronize(
+        second = synchronize(
             client,
             ride_id=ride_id,
             secret=SECRET,
             device_id="device-b",
             events=[make_event(ride_id, "event-b", device_id="device-b")],
         )
+        assert second.status_code == 200
+        assert second.json()["acceptedEventIds"] == ["event-b"]
 
-    assert rejected.status_code == 413
-    assert rejected.json() == {"error": "Ride replay quota exceeded"}
+        with client.app.state.session_factory() as session:
+            replay = session.scalar(
+                select(IdempotencyReplay).where(IdempotencyReplay.ride_id == ride_id)
+            )
+            assert replay is not None
+            cached = client.app.state.service._cipher.decrypt_json(
+                replay.response_ciphertext,
+                associated_data=f"replay:{ride_id}:{replay.idempotency_key}".encode(),
+            )
+            assert cached["acceptedEventIds"] == ["event-b"]
+            assert (
+                session.scalar(
+                    select(func.count(StoredEvent.sequence)).where(StoredEvent.ride_id == ride_id)
+                )
+                == 2
+            )
+
+        # Event identity is itself idempotent. Retrying the evicted request must
+        # acknowledge the original event without storing a duplicate.
+        retried = synchronize(
+            client,
+            ride_id=ride_id,
+            secret=SECRET,
+            events=[event_a],
+        )
+        assert retried.status_code == 200
+        assert retried.json()["acceptedEventIds"] == ["event-a"]
+
+        with client.app.state.session_factory() as session:
+            assert (
+                session.scalar(
+                    select(func.count(IdempotencyReplay.id)).where(
+                        IdempotencyReplay.ride_id == ride_id
+                    )
+                )
+                == 1
+            )
+            assert (
+                session.scalar(
+                    select(func.count(StoredEvent.sequence)).where(StoredEvent.ride_id == ride_id)
+                )
+                == 2
+            )
 
 
 def test_rate_limit_returns_bounded_retry_after(settings, synchronize) -> None:

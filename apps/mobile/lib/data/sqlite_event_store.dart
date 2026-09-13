@@ -102,6 +102,24 @@ class SqliteEventStore implements EventStore {
   }
 
   @override
+  Future<Set<String>> existingEventIds(
+    String rideId,
+    Iterable<String> eventIds,
+  ) async {
+    final ids = eventIds.toList(growable: false);
+    if (ids.isEmpty) return {};
+    final db = await _db;
+    final rows = await db.query(
+      'ride_events',
+      columns: const ['id'],
+      where:
+          'ride_id = ? AND id IN (${List.filled(ids.length, '?').join(',')})',
+      whereArgs: [rideId, ...ids],
+    );
+    return rows.map((row) => row['id']! as String).toSet();
+  }
+
+  @override
   Future<void> markAcknowledged(String eventId) async {
     final db = await _db;
     await db.update(
@@ -113,13 +131,40 @@ class SqliteEventStore implements EventStore {
   }
 
   @override
-  Future<List<RideEvent>> pendingEvents(String rideId) async {
+  Future<void> markAcknowledgedAll(Iterable<String> eventIds) async {
+    final ids = eventIds.toList(growable: false);
+    if (ids.isEmpty) return;
+    final db = await _db;
+    await db.update(
+      'ride_events',
+      {'acknowledged': 1},
+      where: 'id IN (${List.filled(ids.length, '?').join(',')})',
+      whereArgs: ids,
+    );
+  }
+
+  @override
+  Future<int> pendingEventCount(String rideId) async {
+    final db = await _db;
+    return Sqflite.firstIntValue(
+          await db.rawQuery(
+            'SELECT COUNT(*) FROM ride_events '
+            'WHERE ride_id = ? AND acknowledged = 0',
+            [rideId],
+          ),
+        ) ??
+        0;
+  }
+
+  @override
+  Future<List<RideEvent>> pendingEvents(String rideId, {int? limit}) async {
     final db = await _db;
     final rows = await db.query(
       'ride_events',
       where: 'ride_id = ? AND acknowledged = 0',
       whereArgs: [rideId],
       orderBy: 'created_at ASC',
+      limit: limit,
     );
     return rows.map(_decodeRow).toList(growable: false);
   }

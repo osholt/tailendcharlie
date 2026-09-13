@@ -687,12 +687,40 @@ class RelayService:
             )
             or 0
         )
+        replay_size = len(response_ciphertext)
+        # A replay is only a cache of the acknowledgement response. Event IDs
+        # and their body hashes remain the durable idempotency boundary, so an
+        # old cache entry may be evicted without making its upload repeat or
+        # conflict. Refusing the *new* upload here stranded every later event on
+        # a long ride once 5,000 otherwise harmless cache rows accumulated.
+        if replay_size > self._settings.maximum_replay_bytes_per_ride:
+            return
         if (
             replay_count + 1 > self._settings.maximum_replays_per_ride
-            or replay_bytes + len(response_ciphertext)
-            > self._settings.maximum_replay_bytes_per_ride
+            or replay_bytes + replay_size > self._settings.maximum_replay_bytes_per_ride
         ):
-            raise RelayServiceError(413, "Ride replay quota exceeded")
+            oldest = session.execute(
+                select(
+                    IdempotencyReplay.id,
+                    func.length(IdempotencyReplay.response_ciphertext),
+                )
+                .where(IdempotencyReplay.ride_id == ride_id)
+                .order_by(IdempotencyReplay.created_at, IdempotencyReplay.id)
+            ).all()
+            evicted_ids: list[int] = []
+            for replay_id, stored_size in oldest:
+                evicted_ids.append(replay_id)
+                replay_count -= 1
+                replay_bytes -= int(stored_size or 0)
+                if (
+                    replay_count + 1 <= self._settings.maximum_replays_per_ride
+                    and replay_bytes + replay_size <= self._settings.maximum_replay_bytes_per_ride
+                ):
+                    break
+            if evicted_ids:
+                session.execute(
+                    delete(IdempotencyReplay).where(IdempotencyReplay.id.in_(evicted_ids))
+                )
         session.add(
             IdempotencyReplay(
                 ride_id=ride_id,
@@ -795,7 +823,11 @@ class RelayService:
                 ride.stored_event_count + 1 > self._settings.maximum_events_per_ride
                 or projected_bytes > self._settings.maximum_stored_bytes_per_ride
             ):
-                raise RelayServiceError(413, "Ride storage quota exceeded")
+                # Retained positions expire and release this capacity. A 429 is
+                # therefore a retry signal, not evidence that one event is
+                # malformed. Existing mobile builds already back off on 429;
+                # they quarantined valid events when this was a permanent 413.
+                raise RelayServiceError(429, "Ride storage quota exceeded")
             session.add(
                 StoredEvent(
                     ride_id=ride.id,
