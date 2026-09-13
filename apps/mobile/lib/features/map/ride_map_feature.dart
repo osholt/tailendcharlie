@@ -10960,13 +10960,19 @@ class _PostedSpeedLimitBadge extends StatelessWidget {
                           color: Color(0xFF30343B),
                         ),
                       )
-                    : Text(
-                        value,
-                        style: TextStyle(
-                          color: const Color(0xFF111111),
-                          fontSize: 26 * scale,
-                          height: 1,
-                          fontWeight: FontWeight.w900,
+                    : FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          value,
+                          key: const Key('posted-speed-limit-value'),
+                          maxLines: 1,
+                          softWrap: false,
+                          style: TextStyle(
+                            color: const Color(0xFF111111),
+                            fontSize: 26 * scale,
+                            height: 1,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
               ),
