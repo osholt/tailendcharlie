@@ -154,6 +154,24 @@ void main() {
     expect(symbol.side, ManeuverSide.right);
   });
 
+  test('a slight-left roundabout is spoken and drawn left', () {
+    final instruction = _instruction(
+      type: 'roundabout',
+      modifier: null,
+      side: 'right',
+      bearings: true,
+      withRingExit: true,
+      exitTurnDegrees: -55,
+      exitNumber: 3,
+    );
+    final symbol = maneuverSymbolFor(instruction) as RoundaboutSymbol;
+
+    expect(instruction.direction, ManeuverDirection.slightLeft);
+    expect(instruction.text, '3rd exit, left');
+    expect(instruction.standaloneText, 'Roundabout, 3rd exit, left');
+    expect(symbol.side, ManeuverSide.left);
+  });
+
   testWidgets('a roundabout is drawn rather than borrowed from a glyph', (
     tester,
   ) async {

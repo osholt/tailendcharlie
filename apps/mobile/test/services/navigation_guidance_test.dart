@@ -583,7 +583,7 @@ void main() {
     expect(instruction.exitNumber, isNull);
   });
 
-  test('ride 392725 slight-left geometry speaks the straight-on bucket', () {
+  test('slight-left roundabout geometry keeps the left instruction', () {
     final instruction = collapseManeuvers(const [
       RouteManeuver(
         position: GeoPoint(latitude: 51.46705, longitude: -2.50050),
@@ -601,8 +601,8 @@ void main() {
     ]).single;
 
     expect(instruction.direction, ManeuverDirection.slightLeft);
-    expect(instruction.text, 'Take the exit straight on');
-    expect(instruction.standaloneText, 'Roundabout, take the exit straight on');
+    expect(instruction.text, 'Take the exit left');
+    expect(instruction.standaloneText, 'Roundabout, take the exit left');
   });
 
   test('merged gyratory rings do not invent a combined exit count', () {

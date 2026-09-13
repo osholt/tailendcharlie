@@ -17,15 +17,13 @@ void main() {
       expect(buckets[ManeuverDirection.uTurn], RoundaboutExitBucket.back);
     });
 
-    test('slight is straight on, both ways', () {
-      // The ring offsets its own arms, so a crossing a rider calls straight
-      // routinely shows 25-35 degrees of heading change from geometry alone —
-      // which is why the roundabout straight band is already 38 rather than 20.
-      // This follows the same reasoning one step further, and it is what absorbs
-      // most of #412's "one off" error before it reaches a rider.
+    test('slight retains its side while true straight remains ahead', () {
+      // The geometry classifier has already absorbed ring offset into its 38°
+      // straight band. A slight direction is outside that band and must not be
+      // flattened back to straight by the rider-facing simplification (#743).
       expect(
         roundaboutExitBucket(ManeuverDirection.slightLeft),
-        RoundaboutExitBucket.straightOn,
+        RoundaboutExitBucket.left,
       );
       expect(
         roundaboutExitBucket(ManeuverDirection.straight),
@@ -33,7 +31,7 @@ void main() {
       );
       expect(
         roundaboutExitBucket(ManeuverDirection.slightRight),
-        RoundaboutExitBucket.straightOn,
+        RoundaboutExitBucket.right,
       );
     });
 
@@ -43,21 +41,16 @@ void main() {
       expect(roundaboutExitBucket(ManeuverDirection.unstated), isNull);
     });
 
-    test(
-      'a one-bucket error between slight and straight now changes nothing',
-      () {
-        // #412's reported shape: the direction is "either correct or one off". This
-        // is the property that makes four buckets worth having.
-        expect(
-          roundaboutExitBucket(ManeuverDirection.slightRight),
-          roundaboutExitBucket(ManeuverDirection.straight),
-        );
-        expect(
-          roundaboutExitBucket(ManeuverDirection.sharpLeft),
-          roundaboutExitBucket(ManeuverDirection.left),
-        );
-      },
-    );
+    test('severity is simplified without changing side', () {
+      expect(
+        roundaboutExitBucket(ManeuverDirection.sharpLeft),
+        roundaboutExitBucket(ManeuverDirection.slightLeft),
+      );
+      expect(
+        roundaboutExitBucket(ManeuverDirection.sharpRight),
+        roundaboutExitBucket(ManeuverDirection.slightRight),
+      );
+    });
 
     test('a one-bucket error across a boundary still changes the word', () {
       // Honest about what this does not fix: straight against right is a real
