@@ -2112,20 +2112,37 @@ void main() {
     // No further fix arrives, because the bike has not moved 10 m.
     await tester.pump(const Duration(seconds: 4));
 
+    expect(
+      readout().data,
+      '18',
+      reason: 'the last speed is dimmed before silence is resolved',
+    );
+
+    await tester.pump(const Duration(seconds: 3));
     expect(readout().data, '–');
 
-    // Pulling away reads the real speed straight away rather than climbing out
-    // of the value that was held while stopped.
+    // Pulling away slowly reads the real speed straight away rather than
+    // climbing out of the value that was held while stopped.
     navigation.value = MapNavigationPosition(
       point: const GeoPoint(latitude: 54.1508, longitude: -4.48),
       recordedAt: now.add(const Duration(seconds: 6)),
       accuracyMeters: 5,
       headingDegrees: 0,
-      speedMetersPerSecond: 4,
+      speedMetersPerSecond: 1.5,
     );
     await tester.pump();
 
-    expect(readout().data, '9');
+    expect(readout().data, '3');
+
+    // At 1.5 m/s the 10 m platform filter legitimately takes about 6.7 s to
+    // produce another fix. The old fixed timer guaranteed a dash first.
+    await tester.pump(const Duration(seconds: 7));
+    expect(readout().data, '3');
+
+    // With no eventual fix, low-speed silence resolves to a stop rather than a
+    // permanent stale number.
+    await tester.pump(const Duration(seconds: 4));
+    expect(readout().data, '0');
 
     await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox.shrink());

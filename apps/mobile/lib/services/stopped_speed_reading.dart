@@ -49,6 +49,36 @@ const stoppedSpeedThresholdMetersPerSecond = 3.0;
 /// decides to *replace* the number, which is a stronger claim than dimming it.
 const stoppedSpeedSilence = Duration(seconds: 6);
 
+/// How long a speed may be held, and when silence can be interpreted.
+///
+/// The location stream has a 10 m distance filter. At 5 km/h a legitimate next
+/// fix is more than seven seconds away, so a fixed three-second freshness timer
+/// guarantees a dash during slow town riding (#285). The last measured speed
+/// tells us how long that distance should take. The buffer absorbs irregular
+/// GPS delivery and is capped so a lost receiver still becomes visibly unknown.
+({Duration freshFor, Duration resolveAfter}) riderSpeedSilenceWindows({
+  required double? lastObservedSpeedMetersPerSecond,
+  double distanceFilterMeters = 10,
+}) {
+  const minimumFreshness = Duration(seconds: 3);
+  const maximumFreshness = Duration(seconds: 12);
+  final speed = lastObservedSpeedMetersPerSecond;
+  var freshFor = minimumFreshness;
+  if (speed != null && speed.isFinite && speed > 0) {
+    final expectedMilliseconds = distanceFilterMeters / speed * 1000;
+    freshFor = Duration(
+      milliseconds: (expectedMilliseconds * 1.5).round().clamp(
+        minimumFreshness.inMilliseconds,
+        maximumFreshness.inMilliseconds,
+      ),
+    );
+  }
+  final resolveAfter = freshFor >= stoppedSpeedSilence
+      ? freshFor + const Duration(seconds: 1)
+      : stoppedSpeedSilence;
+  return (freshFor: freshFor, resolveAfter: resolveAfter);
+}
+
 /// What to show, given how the rider was last seen moving.
 ///
 /// [lastObservedSpeedMetersPerSecond] is null when no speed was ever seen, which
