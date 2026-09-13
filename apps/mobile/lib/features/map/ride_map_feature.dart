@@ -106,9 +106,11 @@ GroupMiniMapRenderer groupMiniMapRenderer({
   required TargetPlatform platform,
 }) {
   if (!mapLibreEnabled) return GroupMiniMapRenderer.local;
-  return platform == TargetPlatform.android
-      ? GroupMiniMapRenderer.flutterVector
-      : GroupMiniMapRenderer.mapLibre;
+  return switch (platform) {
+    TargetPlatform.android ||
+    TargetPlatform.iOS => GroupMiniMapRenderer.flutterVector,
+    _ => GroupMiniMapRenderer.mapLibre,
+  };
 }
 
 @visibleForTesting
@@ -116,13 +118,15 @@ enum GroupMiniMapRenderer {
   /// Route and riders on the deliberately simple offline overview.
   local,
 
-  /// The existing native MapLibre mini-map used on iOS.
+  /// The native MapLibre mini-map retained for non-mobile platforms.
   mapLibre,
 
-  /// A Flutter-rendered copy of the configured vector style on Android.
+  /// A Flutter-rendered copy of the configured vector style on mobile.
   ///
   /// Android cannot reliably composite two MapLibre platform views on one
-  /// screen (#29). Rendering the same vector source through Flutter keeps the
+  /// screen (#29). On iOS, a stalled source update on the second native view
+  /// leaves its serial refresh queue permanently busy (#737). Rendering the
+  /// same vector source through Flutter keeps the
   /// mini-map inside the Flutter layer tree instead of mounting a second native
   /// surface.
   flutterVector,
