@@ -59,7 +59,7 @@ void main() {
     );
   });
 
-  test('holds the moving estimate through a stop instead of saying now', () {
+  test('holds the planned estimate through a stop instead of saying now', () {
     final tracker = RouteJourneyProgressTracker();
     final now = DateTime.utc(2026, 8, 14, 12);
     tracker.update(
@@ -115,7 +115,26 @@ void main() {
     );
   });
 
-  test('keeps imported untimed routes honest until movement', () {
+  test('instantaneous speed cannot distort the route ETA', () {
+    RouteJourneyProgress at(double speed) =>
+        RouteJourneyProgressTracker().update(
+          route: route,
+          geometry: const RouteProgressGeometry(
+            riddenPaths: [],
+            remainingPaths: [],
+            progressMeters: 300,
+            totalMeters: 2001.5,
+          ),
+          speedMetersPerSecond: speed,
+          now: DateTime.utc(2026, 8, 14, 12),
+        )!;
+
+    expect(at(3).remainingTime, const Duration(seconds: 170));
+    expect(at(50).remainingTime, const Duration(seconds: 170));
+    expect(at(3).arrivalTime, at(50).arrivalTime);
+  });
+
+  test('keeps imported untimed routes unavailable despite movement', () {
     final untimed = ImportedRoute(
       id: route.id,
       name: route.name,
@@ -132,7 +151,7 @@ void main() {
         progressMeters: 300,
         totalMeters: 2001.5,
       ),
-      speedMetersPerSecond: 1,
+      speedMetersPerSecond: 50,
       now: DateTime.utc(2026, 8, 14, 12),
     )!;
 
