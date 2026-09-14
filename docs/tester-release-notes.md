@@ -36,6 +36,36 @@ permissions by design.
 - ...
 ```
 
+## iOS build 94 / Android build 94 — 1.0.1 — 14 September 2026
+
+This build removes the native iOS map-renderer crash path that was still active
+when a selected route received location updates while the app lost focus.
+
+### What to test
+
+1. Select a route on iOS, start navigating, then switch to another app, lock the
+   phone and return several times. The app should remain running and the map
+   should resume following the rider.
+2. Confirm that the planned route, travelled route, rider marker, group riders,
+   hazards and turn guidance still update on the live iOS map.
+3. Repeat the same ride on Android and confirm its existing map behaviour is
+   unchanged.
+
+### Fixed
+
+- The live iOS ride map now draws through the Flutter vector renderer instead
+  of repeatedly replacing route GeoJSON inside MapLibre's native Metal view.
+  This removes the native renderer path implicated in the route-selected focus
+  crash while retaining the app-owned route, rider, guidance and safety layers.
+- Renderer-specific camera and lifecycle work now follows the renderer that is
+  actually mounted, so iOS no longer queues native map source or camera calls.
+
+### Known limitations
+
+- Five repeated full lifecycle cycles are covered by an automated selected-route
+  regression. A physical iPhone ride remains the final confirmation that the
+  operating-system crash no longer occurs in the field.
+
 ## iOS build 93 / Android build 93 — 1.0.1 — 14 September 2026
 
 This build restores relay delivery after the long-ride replay cache fills and
