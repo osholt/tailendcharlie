@@ -101,6 +101,21 @@ bool mapLibreSourceUpdatesShouldPause(AppLifecycleState state) =>
       AppLifecycleState.detached => true,
     };
 
+/// Whether the live ride surface may use MapLibre's native platform view.
+///
+/// Replacing a GeoJSON source can still crash inside MapLibre's iOS Metal
+/// renderer (upstream flutter-maplibre-gl #509). A selected route makes that
+/// path unusually hot because progress rewrites both the travelled and
+/// remaining route sources on every accepted fix. The existing Flutter vector
+/// renderer draws the same route, rider, guidance and safety overlays without
+/// a native platform view, so iOS uses it for the live ride surface. Android
+/// keeps MapLibre, including its platform-specific composition setup.
+@visibleForTesting
+bool rideMapUsesMapLibreRenderer({
+  required bool mapLibreConfigured,
+  required TargetPlatform platform,
+}) => mapLibreConfigured && platform != TargetPlatform.iOS;
+
 @visibleForTesting
 GroupMiniMapRenderer groupMiniMapRenderer({
   required bool mapLibreEnabled,
@@ -1193,9 +1208,15 @@ class _RideMapScreenState extends State<RideMapScreen>
   /// wolf is the same fault as no badge at all.
   static const _basemapViewLoadWindow = Duration(seconds: 8);
 
+  bool get _usesMapLibreRenderer => rideMapUsesMapLibreRenderer(
+    mapLibreConfigured: _basemap.usesMapLibre,
+    platform: defaultTargetPlatform,
+  );
+
   bool get _usesFlutterVectorFallback =>
       _basemap.usesMapLibre &&
-      (_basemapViewLoadTimedOut ||
+      (!_usesMapLibreRenderer ||
+          _basemapViewLoadTimedOut ||
           _basemapTilesReachable == false ||
           _mapLibreLayerPreparationFailed);
 
@@ -1671,7 +1692,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _flutterVectorFallbackStyle = null;
     // Nothing to wait for. Either there is no platform view on this path, or
     // the style never arrived and the badge already says which.
-    if (!_basemap.usesMapLibre ||
+    if (!_usesMapLibreRenderer ||
         widget.mapStyleOutcome == MapStyleOutcome.unavailable ||
         widget.mapStyleOutcome == MapStyleOutcome.unconfigured) {
       return;
@@ -3341,7 +3362,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   Widget _buildMap() {
-    if (_basemap.usesMapLibre && !_usesFlutterVectorFallback) {
+    if (_usesMapLibreRenderer && !_usesFlutterVectorFallback) {
       return _buildMapLibreMap();
     }
     if (_usesFlutterVectorFallback) {
@@ -4165,7 +4186,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     // MapLibre is tilted, so the bias is the perspective look-ahead the plan
     // solved. FlutterMap is flat, so it is a straight ground offset at that
     // renderer's own scale.
-    final lookAhead = _basemap.usesMapLibre
+    final lookAhead = _usesMapLibreRenderer
         ? plan.lookAheadMeters
         : NavigationCameraPlanner.flatLookAheadMetersFor(
             zoom: plan.zoom,
@@ -4176,7 +4197,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       zoom: plan.zoom,
       lateralBiasPixels: plan.lateralBiasPixels,
       latitudeDegrees: position.latitude,
-      tileSize: _basemap.usesMapLibre ? 512 : 256,
+      tileSize: _usesMapLibreRenderer ? 512 : 256,
     );
     var target = lookAhead == 0
         ? position
@@ -4255,7 +4276,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     // Follow mode has not driven the camera anywhere yet, so there is no
     // viewport to be locked into.
     if (commanded == null) return false;
-    if (_basemap.usesMapLibre) {
+    if (_usesMapLibreRenderer) {
       final camera = _mapLibreController?.cameraPosition;
       // A camera the platform has not reported is not an arrival. #133 read the
       // unknown case as "framed" and hid the control on the strength of it.
@@ -4388,7 +4409,7 @@ class _RideMapScreenState extends State<RideMapScreen>
             const Duration(milliseconds: 400);
     if (refreshProgress) _lastProgressUpdateAt = progressNow;
     final refreshMapLibrePosition =
-        !_basemap.usesMapLibre ||
+        !_usesMapLibreRenderer ||
         _lastMapLibrePositionSyncAt == null ||
         progressNow.difference(_lastMapLibrePositionSyncAt!) >=
             const Duration(milliseconds: 250);
@@ -4421,7 +4442,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     // MapLibre receives sources directly. Keep its platform view mounted while
     // the simulation is running; only FlutterMap needs a widget rebuild for
     // fresh route-progress geometry.
-    if (!_basemap.usesMapLibre ||
+    if (!_usesMapLibreRenderer ||
         enableNavigationMode ||
         activateNavigationCanvas) {
       setState(() {
@@ -4536,7 +4557,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     if (!mounted) return;
     // The mini-map listens to rider updates itself. Rebuilding the parent
     // platform map here can resize it and briefly bring the top chrome back.
-    if (!_basemap.usesMapLibre) setState(() {});
+    if (!_usesMapLibreRenderer) setState(() {});
     _scheduleMapLibreSync(overlays: true);
     unawaited(_publishGroupPipSnapshot());
   }
@@ -4755,7 +4776,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     // starts, and each tick of that animation sets the camera outright - so a pan
     // begun during a follow transition was silently dragged back onto the rider.
     // Handing the camera over means letting go of it.
-    if (!_basemap.usesMapLibre) {
+    if (!_usesMapLibreRenderer) {
       try {
         _mapController.stopAnimationRaw();
       } on Object {
@@ -4993,7 +5014,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       _pointAhead(overlay.markerPoint, 0, 360),
       _pointAhead(overlay.markerPoint, 180, 360),
     ];
-    if (_basemap.usesMapLibre) {
+    if (_usesMapLibreRenderer) {
       if (_mapLibreSourceUpdatesPaused) return;
       final controller = _mapLibreController;
       if (controller == null) return;
@@ -5042,7 +5063,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     // Location fixes continue while iOS is inactive and backgrounded. Never
     // send those fixes into a suspended native map: camera animations race the
     // renderer and tile-request teardown during that transition (#732).
-    if (_basemap.usesMapLibre && _mapLibreSourceUpdatesPaused) return;
+    if (_usesMapLibreRenderer && _mapLibreSourceUpdatesPaused) return;
     final position = _effectivePosition;
     if (position == null) return;
     if (_cameraUpdateInFlight) {
@@ -5084,7 +5105,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         latitude: framing.target.latitude,
         longitude: framing.target.longitude,
         zoom: cameraPlan.zoom,
-        tilt: _basemap.usesMapLibre ? cameraPlan.tilt : 0,
+        tilt: _usesMapLibreRenderer ? cameraPlan.tilt : 0,
         bearing: cameraBearing,
         sourceViewportHeightPixels: _mapViewportHeightPixels,
         sourceViewportWidthPixels: _mapViewportWidthPixels,
@@ -5113,7 +5134,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       return;
     }
     try {
-      if (_basemap.usesMapLibre) {
+      if (_usesMapLibreRenderer) {
         final controller = _mapLibreController;
         if (controller == null) return;
         // maplibre_gl exposes no camera padding, so the anchor is applied by
@@ -5691,7 +5712,8 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   Future<void> _syncMapLibreSources() async {
     final controller = _mapLibreController;
-    if (_mapLibreSourceUpdatesPaused ||
+    if (!_usesMapLibreRenderer ||
+        _mapLibreSourceUpdatesPaused ||
         !_mapLibreStyleReady ||
         controller == null) {
       return;
@@ -5727,6 +5749,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     bool position = false,
     bool overlays = false,
   }) {
+    if (!_usesMapLibreRenderer) return;
     _mapLibreProgressDirty |= progress;
     _mapLibrePositionDirty |= position;
     _mapLibreOverlaysDirty |= overlays;
@@ -7051,7 +7074,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   void _fitRoute() {
     final planned = _route?.allPoints.toList(growable: false) ?? const [];
     final routePoints = planned.isNotEmpty ? planned : [?_effectivePosition];
-    if (_basemap.usesMapLibre) {
+    if (_usesMapLibreRenderer) {
       if (_mapLibreSourceUpdatesPaused) return;
       final controller = _mapLibreController;
       if (controller == null || routePoints.isEmpty) return;

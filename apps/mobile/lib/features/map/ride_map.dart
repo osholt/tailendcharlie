@@ -29,6 +29,7 @@ export 'ride_map_feature.dart'
         portraitRideMenuTopOffset,
         portraitBottomChromeKey,
         rideMapPrimaryPanelFill,
+        rideMapUsesMapLibreRenderer,
         rideMapToolbarHeight,
         waypointCircleStyle,
         quickMessageIcon;

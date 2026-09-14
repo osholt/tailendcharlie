@@ -166,10 +166,111 @@ void main() {
     expect(
       source,
       contains(
-        'if (_basemap.usesMapLibre && _mapLibreSourceUpdatesPaused) return;',
+        'if (_usesMapLibreRenderer && _mapLibreSourceUpdatesPaused) return;',
       ),
     );
   });
+
+  test('the live iOS ride map avoids the native GeoJSON renderer (#732)', () {
+    expect(
+      rideMapUsesMapLibreRenderer(
+        mapLibreConfigured: true,
+        platform: TargetPlatform.iOS,
+      ),
+      isFalse,
+    );
+    expect(
+      rideMapUsesMapLibreRenderer(
+        mapLibreConfigured: true,
+        platform: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+    expect(
+      rideMapUsesMapLibreRenderer(
+        mapLibreConfigured: false,
+        platform: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+  });
+
+  testWidgets(
+    'a routed iOS ride survives repeated focus loss without a platform map',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final directory = Directory.systemTemp.createTempSync(
+        'ios-route-focus-cycle',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(
+          styleUrl: 'https://127.0.0.1:1/style',
+          attribution: 'OpenFreeMap contributors',
+        ),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final route = ImportedRoute(
+        id: 'focus-route',
+        name: 'Focus route',
+        importedAt: DateTime.utc(2026, 9, 14),
+        sourceFileName: 'focus-route.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.route,
+            points: [
+              GeoPoint(latitude: 51.45, longitude: -2.59),
+              GeoPoint(latitude: 51.47, longitude: -2.57),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(route),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(ml.MapLibreMap), findsNothing);
+      expect(find.byType(FlutterMap), findsOneWidget);
+      expect(
+        find.byKey(const Key('ride-map-flutter-vector-fallback')),
+        findsOneWidget,
+      );
+
+      for (var cycle = 0; cycle < 5; cycle += 1) {
+        for (final state in const [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+          AppLifecycleState.hidden,
+          AppLifecycleState.inactive,
+          AppLifecycleState.resumed,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+          await tester.pump();
+          expect(tester.takeException(), isNull);
+        }
+      }
+
+      expect(find.byType(ml.MapLibreMap), findsNothing);
+      expect(find.byType(FlutterMap), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      debugDefaultTargetPlatformOverride = null;
+    },
+  );
 
   test('invalid early native cameras are dropped before map calculations', () {
     final source = File(
@@ -316,7 +417,7 @@ void main() {
     expect(source, contains('_trailPolylines(dashed: false)'));
     expect(
       source,
-      contains('tileSize: _basemap.usesMapLibre ? 512 : 256'),
+      contains('tileSize: _usesMapLibreRenderer ? 512 : 256'),
       reason: 'both renderer camera targets must carry the lateral intent',
     );
   });
