@@ -479,26 +479,26 @@ void main() {
       tester
           .widget<RideMapFeature>(find.byKey(const Key('home-map')))
           .onRouteChanged!(
-            ImportedRoute(
-              id: 'mra-long-route',
-              name: 'Day 1 To Chateauroux',
-              importedAt: DateTime.utc(2026, 9, 15),
-              sourceFileName: '1-Day-1-To-Chateauroux.gpx',
-              paths: [
-                RoutePath(
-                  kind: RoutePathKind.track,
-                  points: List.generate(
-                    5490,
-                    (index) => GeoPoint(
-                      latitude: 46.80 + index * 0.00001,
-                      longitude: 1.70 + index * 0.00001,
-                    ),
-                  ),
+        ImportedRoute(
+          id: 'mra-long-route',
+          name: 'Day 1 To Chateauroux',
+          importedAt: DateTime.utc(2026, 9, 15),
+          sourceFileName: '1-Day-1-To-Chateauroux.gpx',
+          paths: [
+            RoutePath(
+              kind: RoutePathKind.track,
+              points: List.generate(
+                5490,
+                (index) => GeoPoint(
+                  latitude: 46.80 + index * 0.00001,
+                  longitude: 1.70 + index * 0.00001,
                 ),
-              ],
-              waypoints: const [],
+              ),
             ),
-          );
+          ],
+          waypoints: const [],
+        ),
+      );
       await tester.pump();
 
       for (final state in const [
@@ -528,7 +528,11 @@ void main() {
         tester.binding.handleAppLifecycleStateChanged(state);
         await tester.pump();
       }
-      expect(archive.saveCalls, 2, reason: 'a later departure needs a new save');
+      expect(
+        archive.saveCalls,
+        2,
+        reason: 'a later departure needs a new save',
+      );
 
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();

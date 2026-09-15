@@ -164,12 +164,7 @@ void main() {
     );
     expect(source, contains('await controller.pauseMap();'));
     expect(source, contains('await controller.resumeMap();'));
-    expect(
-      source,
-      contains(
-        'if (_mapRenderingPaused) return;',
-      ),
-    );
+    expect(source, contains('if (_mapRenderingPaused) return;'));
   });
 
   test('the live iOS ride map avoids the native GeoJSON renderer (#732)', () {

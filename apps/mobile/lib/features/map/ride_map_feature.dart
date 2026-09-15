@@ -1748,10 +1748,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     final controller = _mapLibreController;
     if (controller != null && wasPaused != _mapRenderingPaused) {
       unawaited(
-        _setMapLibreRenderingPaused(
-          controller,
-          paused: _mapRenderingPaused,
-        ),
+        _setMapLibreRenderingPaused(controller, paused: _mapRenderingPaused),
       );
     }
     if (!wasPaused && _mapRenderingPaused && !_usesMapLibreRenderer) {
