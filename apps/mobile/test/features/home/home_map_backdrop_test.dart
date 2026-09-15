@@ -443,6 +443,102 @@ void main() {
     },
   );
 
+  testWidgets(
+    'one iOS background transition writes one long-route checkpoint',
+    (tester) async {
+      final platform = _RecordingLocationPlatform(
+        granted: DeviceLocationPermission.always,
+      );
+      addTearDown(platform.closeStreams);
+      final location = _RecordingLocationController(
+        DeviceLocationSource(platform),
+        (_) async {},
+      );
+      addTearDown(location.dispose);
+      final archive = _RecordingCompletedRideStore();
+      var navigating = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) => HomeMapBackdrop(
+              mapStyleMode: mapStyleMode,
+              speedLimitDisplay: speedLimitDisplay,
+              distanceUnit: DistanceUnit.kilometres,
+              locationController: location,
+              completedRideStore: archive,
+              navigating: navigating,
+              onRouteChanged: (route) =>
+                  setState(() => navigating = route != null),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      tester
+          .widget<RideMapFeature>(find.byKey(const Key('home-map')))
+          .onRouteChanged!(
+        ImportedRoute(
+          id: 'mra-long-route',
+          name: 'Day 1 To Chateauroux',
+          importedAt: DateTime.utc(2026, 9, 15),
+          sourceFileName: '1-Day-1-To-Chateauroux.gpx',
+          paths: [
+            RoutePath(
+              kind: RoutePathKind.track,
+              points: List.generate(
+                5490,
+                (index) => GeoPoint(
+                  latitude: 46.80 + index * 0.00001,
+                  longitude: 1.70 + index * 0.00001,
+                ),
+              ),
+            ),
+          ],
+          waypoints: const [],
+        ),
+      );
+      await tester.pump();
+
+      for (final state in const [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+        await tester.pump();
+      }
+
+      expect(
+        archive.saveCalls,
+        1,
+        reason:
+            'iOS reports inactive, hidden and paused for one departure; the '
+            '5,490-point route must only be serialized and flushed once',
+      );
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      for (final state in const [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+        await tester.pump();
+      }
+      expect(
+        archive.saveCalls,
+        2,
+        reason: 'a later departure needs a new save',
+      );
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+    },
+  );
+
   testWidgets('diagnostics enabled mid-navigation attach to that navigation', (
     tester,
   ) async {
@@ -938,6 +1034,23 @@ class _BlockingDiagnosticsStore implements RideDiagnosticsLogStore {
 
   @override
   Future<RideDiagnosticsLog?> latest() => _inner.latest();
+}
+
+class _RecordingCompletedRideStore implements CompletedRideStore {
+  final _inner = InMemoryCompletedRideStore();
+  int saveCalls = 0;
+
+  @override
+  Future<void> save(CompletedRide ride) async {
+    saveCalls += 1;
+    await _inner.save(ride);
+  }
+
+  @override
+  Future<List<CompletedRide>> list() => _inner.list();
+
+  @override
+  Future<void> delete(String rideId) => _inner.delete(rideId);
 }
 
 /// Records that the backdrop asked for a restart, without standing up the
