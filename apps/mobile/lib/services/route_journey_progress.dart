@@ -38,7 +38,10 @@ class RouteJourneyProgress {
 /// poor estimate for the whole route. It is accepted by [update] because the
 /// map and vehicle projections share this API, but it never changes the ETA.
 /// Imported tracks without planned timing remain unavailable rather than
-/// receiving an invented estimate from one speed reading.
+/// receiving an invented estimate from one speed reading. Road-matched routes
+/// created before build 95 are the narrow exception: those builds discarded
+/// timing that the matcher had returned, so they use a stable mixed-road
+/// planning speed until the route is matched again.
 class RouteJourneyProgressTracker {
   RouteJourneyProgressTracker();
 
@@ -68,7 +71,9 @@ class RouteJourneyProgressTracker {
       final plannedSeconds = route.plannedDuration?.inMilliseconds;
       _plannedAverageSpeedMetersPerSecond =
           plannedSeconds == null || plannedSeconds <= 0
-          ? null
+          ? (_isLegacyRoadMatch(route)
+                ? _legacyRoadMatchPlanningSpeedMetersPerSecond
+                : null)
           : geometry.totalMeters / (plannedSeconds / 1000);
     }
 
@@ -103,6 +108,19 @@ class RouteJourneyProgressTracker {
     );
   }
 }
+
+/// Conservative fixed planning speed for the historical road-match timing gap.
+///
+/// It is deliberately independent of GPS speed. Fifty kilometres per hour is
+/// representative of a mixed town/country motorcycle route without claiming
+/// to reconstruct the exact duration that old builds failed to persist.
+const double _legacyRoadMatchPlanningSpeedMetersPerSecond = 50 / 3.6;
+
+bool _isLegacyRoadMatch(ImportedRoute route) =>
+    route.plannedDuration == null &&
+    route.sourceFileName.startsWith('matched-') &&
+    route.description?.contains('Road-matched from ') == true &&
+    route.maneuvers.isNotEmpty;
 
 _WaypointProgress? _nextWaypoint(
   ImportedRoute route, {

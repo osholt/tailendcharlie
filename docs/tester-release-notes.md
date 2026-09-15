@@ -36,6 +36,38 @@ permissions by design.
 - ...
 ```
 
+## iOS build 95 / Android build 95 — 1.0.1 — 15 September 2026
+
+This build corrects the iOS navigation orientation introduced by build 94 and
+restores ETA for navigable routes generated from MyRouteApp tracks.
+
+### What to test
+
+1. In direction-of-travel mode in France, ride through changes of heading. The
+   road ahead should remain at the top; in landscape the bike should remain in
+   the open right side rather than moving under the left-hand controls.
+2. Reopen the existing navigable version of **Day 1 To Chateauroux**. Route ETA
+   should be populated and should remain stable through stops and changes of
+   current speed.
+3. Generate a new navigable route from an imported track and confirm its review
+   and live navigation screens both show the routing service's planned time.
+
+### Fixed
+
+- FlutterMap camera rotation now converts from clockwise compass bearings to
+  its opposite rotation convention, including a shortest-path transition when
+  crossing north. The compass still reports the real travel bearing.
+- Road matching now retains and sums the routing service's planned duration
+  instead of discarding it after producing the geometry and turn directions.
+- Navigable routes saved by earlier builds receive a conservative fixed
+  mixed-road estimate, independent of live GPS speed, so existing generated
+  routes no longer show a blank ETA.
+
+### Known limitations
+
+- An original imported line that has never been made navigable still has no
+  trustworthy journey timing in its GPX and continues to show ETA unavailable.
+
 ## iOS build 94 / Android build 94 — 1.0.1 — 14 September 2026
 
 This build removes the native iOS map-renderer crash path that was still active
