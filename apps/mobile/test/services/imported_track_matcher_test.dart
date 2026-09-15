@@ -42,6 +42,11 @@ void main() {
     expect(result.route.sourceFileName, 'matched-run.gpx');
     expect(result.route.paths.single.kind, RoutePathKind.track);
     expect(result.route.maneuvers, isNotEmpty);
+    expect(
+      result.route.plannedDuration,
+      const Duration(minutes: 5),
+      reason: 'the road matcher returned timing as well as geometry',
+    );
     expect(result.route.waypoints.single.name, 'Start');
     expect(result.lengthRatio, closeTo(1, 0.2));
     expect(result.meanDeviationMeters, lessThan(35));

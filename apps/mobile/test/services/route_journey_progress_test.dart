@@ -159,6 +159,41 @@ void main() {
     expect(progress.arrivalTime, isNull);
   });
 
+  test('legacy road matches use a stable planned fallback, not live speed', () {
+    final legacyMatched = ImportedRoute(
+      id: route.id,
+      name: '${route.name} (navigable)',
+      description: 'Road-matched from imported.gpx.',
+      importedAt: route.importedAt,
+      sourceFileName: 'matched-imported.gpx',
+      paths: route.paths,
+      waypoints: route.waypoints,
+      maneuvers: const [
+        RouteManeuver(
+          position: GeoPoint(latitude: 0, longitude: 0.009),
+          type: 'turn',
+          modifier: 'left',
+        ),
+      ],
+    );
+    RouteJourneyProgress at(double speed) =>
+        RouteJourneyProgressTracker().update(
+          route: legacyMatched,
+          geometry: const RouteProgressGeometry(
+            riddenPaths: [],
+            remainingPaths: [],
+            progressMeters: 300,
+            totalMeters: 2001.5,
+          ),
+          speedMetersPerSecond: speed,
+          now: DateTime.utc(2026, 9, 15, 12),
+        )!;
+
+    expect(at(3).remainingTime, isNotNull);
+    expect(at(3).remainingTime, at(50).remainingTime);
+    expect(at(3).arrivalTime, at(50).arrivalTime);
+  });
+
   test('moves to the following stop after passing a waypoint', () {
     final progress = RouteJourneyProgressTracker().update(
       route: route,

@@ -9,6 +9,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/controllers/global_ride_heatmap_controller.dart';
@@ -396,6 +397,38 @@ void main() {
       ),
       287,
     );
+  });
+
+  test('FlutterMap rotates opposite the travel bearing (#760)', () {
+    expect(
+      flutterMapRotationForBearing(
+        bearingDegrees: 90,
+        currentRotationDegrees: 0,
+      ),
+      -90,
+      reason: 'an eastbound road must rotate to the top, not the bottom',
+    );
+    expect(
+      flutterMapRotationForBearing(
+        bearingDegrees: 1,
+        currentRotationDegrees: -359,
+      ),
+      -361,
+      reason: 'crossing north must keep turning two degrees, not spin 358',
+    );
+    expect(compassBearingForFlutterMapRotation(-90), 90);
+    expect(compassBearingForFlutterMapRotation(-361), 1);
+
+    final camera = MapCamera(
+      crs: const Epsg3857(),
+      center: const LatLng(45.051, 2.501),
+      zoom: 14,
+      rotation: -90,
+      nonRotatedSize: const Size(840, 390),
+    );
+    final rider = camera.latLngToScreenOffset(const LatLng(45.05, 2.5));
+    expect(rider.dx, greaterThan(420), reason: 'bike stays right of centre');
+    expect(rider.dy, greaterThan(195), reason: 'bike stays below centre');
   });
 
   test('the group mini-map does not repeat the provider banner', () {

@@ -4607,8 +4607,9 @@ class _RideMapScreenState extends State<RideMapScreen>
   void _onFlutterMapEvent(MapEvent event) {
     if (event.source == MapEventSource.nonRotatedSizeChange) return;
     _updateViewportZoom(event.camera.zoom);
-    if ((event.camera.rotation - _mapBearing.value).abs() >= 0.25) {
-      _mapBearing.value = event.camera.rotation;
+    final bearing = compassBearingForFlutterMapRotation(event.camera.rotation);
+    if (shortestBearingDeltaDegrees(bearing, _mapBearing.value).abs() >= 0.25) {
+      _mapBearing.value = bearing;
     }
     if (_navigationMode &&
         event.source != MapEventSource.mapController &&
@@ -5167,7 +5168,10 @@ class _RideMapScreenState extends State<RideMapScreen>
       _mapController.moveAndRotateAnimatedRaw(
         _latLng(framing.target),
         cameraPlan.zoom,
-        cameraBearing,
+        flutterMapRotationForBearing(
+          bearingDegrees: cameraBearing,
+          currentRotationDegrees: _mapController.camera.rotation,
+        ),
         offset: Offset.zero,
         duration: cameraDuration,
         curve: transitionDuration == null
@@ -6770,7 +6774,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         comparisonRoute = route;
         route = match.route;
         distanceMeters = routeLengthMeters(route);
-        duration = null;
+        duration = route.plannedDuration;
         warnings = [...warnings, ...match.reviewWarnings];
       }
     }
@@ -8238,6 +8242,27 @@ double navigationCameraBearingFor({
   required double travelBearingDegrees,
 }) =>
     orientation == NavigationMapOrientation.northUp ? 0 : travelBearingDegrees;
+
+/// Converts a clockwise compass bearing into FlutterMap's map rotation.
+///
+/// MapLibre accepts the compass bearing directly. FlutterMap rotates its map in
+/// the opposite direction: an eastbound course needs `-90` degrees to place the
+/// road ahead at the top of the screen. Keeping the result nearest the current
+/// rotation also prevents a 358 degree spin as the course crosses north.
+@visibleForTesting
+double flutterMapRotationForBearing({
+  required double bearingDegrees,
+  required double currentRotationDegrees,
+}) {
+  final desiredRotation = -normaliseBearingDegrees(bearingDegrees);
+  return currentRotationDegrees +
+      shortestBearingDeltaDegrees(desiredRotation, currentRotationDegrees);
+}
+
+/// Restores a clockwise compass bearing from FlutterMap's opposite rotation.
+@visibleForTesting
+double compassBearingForFlutterMapRotation(double rotationDegrees) =>
+    normaliseBearingDegrees(-rotationDegrees);
 
 enum MapJunctionMarkerStage { waitingForRiders, tecApproaching, readyToRideOff }
 

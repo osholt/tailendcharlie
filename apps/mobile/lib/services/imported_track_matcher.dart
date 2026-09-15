@@ -160,6 +160,7 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
     final maneuvers = <RouteManeuver>[];
     final samples = <GeoPoint>[];
     var matchedLength = 0.0;
+    var matchedDuration = Duration.zero;
     var originalLength = 0.0;
 
     for (final sourcePath in sourcePaths) {
@@ -190,6 +191,7 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
         final reached = _traceIndexNearest(window, result.points.last);
         if (result.points.length >= 2 && reached >= 1) {
           matchedLength += result.distanceMeters;
+          matchedDuration += result.duration;
           pathManeuvers.addAll(result.maneuvers);
           pathPoints.addAll(
             pathPoints.isEmpty ? result.points : result.points.skip(1),
@@ -259,6 +261,7 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
       waypoints: original.waypoints,
       maneuvers: List.unmodifiable(maneuvers),
       preferences: original.preferences,
+      plannedDuration: matchedDuration > Duration.zero ? matchedDuration : null,
     );
     final deviations = [
       for (final point in samples) distanceToRouteMeters(candidate, point),
