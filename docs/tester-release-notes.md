@@ -36,6 +36,44 @@ permissions by design.
 - ...
 ```
 
+## iOS build 96 / Android build 96 — 1.0.1 — 16 September 2026
+
+This build removes background map work that continued after a route lost focus
+and stops a merely prepared ride from holding ride-grade GPS before it starts.
+
+### What to test
+
+1. Start route navigation, switch to another app or lock the phone, then return
+   several times. Guidance and group tracking should continue, the app should
+   remain running, and the map should catch up when it becomes visible.
+2. Prepare a ride but do not press **Start ride**. Put TEC in the background for
+   several minutes. iOS should not keep its blue location indicator and Android
+   should not retain the active-ride location notification or wake lock.
+3. Before starting a ride, use **Follow me**, then background and reopen TEC. The
+   continuous foreground follow should stop in the background; reopening should
+   obtain one fresh position without starting background sharing.
+4. Start the ride and repeat the background test. Navigation, ride recording and
+   group positions must keep updating because a started ride still needs GPS.
+
+### Fixed
+
+- Route-map rendering, camera animation and source updates now stop immediately
+  while the app is inactive, hidden or paused, then perform one catch-up update
+  on resume.
+- A long personal route is checkpointed once per background trip instead of at
+  each iOS lifecycle stage.
+- A waiting-to-start ride now takes one foreground location fix instead of
+  opening iOS background location or Android's location service and CPU wake
+  lock indefinitely.
+- A pre-start **Follow me** stream is stopped when the app loses focus, ended
+  rides never reacquire location, and leaving a ride stops location explicitly.
+
+### Known limitations
+
+- Automated lifecycle, mutation and long-route tests cover the workload and GPS
+  boundaries. A physical ride is still required to confirm the phone's
+  temperature, battery consumption and crash behavior in the field.
+
 ## iOS build 95 / Android build 95 — 1.0.1 — 15 September 2026
 
 This build corrects the iOS navigation orientation introduced by build 94 and

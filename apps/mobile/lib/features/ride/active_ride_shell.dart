@@ -16,6 +16,7 @@ import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/ride_location_lifecycle_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
@@ -1250,6 +1251,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   bool _localRideStartInProgress = false;
   bool _rideStartFlowInProgress = false;
   RideRole? _lastPushRole;
+  RideLocationLifecycleController? _rideLocationLifecycle;
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
 
@@ -1599,6 +1601,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         },
       );
       _locationController = locationController;
+      _rideLocationLifecycle = RideLocationLifecycleController(
+        locationController.stop,
+        locationController.refreshIfAuthorized,
+        locationController.restartAfterForegroundResume,
+      );
       locationController.addListener(_onDeviceLocationChanged);
       try {
         await locationController.initialize();
@@ -1609,7 +1616,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           !widget.rideController.rideEnded) {
         await _resumeLocationForActiveRide();
       } else {
-        await _startLocationForPreStartMap();
+        await _refreshLocationForPreStartMap();
       }
 
       if (session != null) {
@@ -3755,7 +3762,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _schedulePublish();
   }
 
-  /// Starts location for the map before the ride does, so a rider can see
+  /// Gets one location for the map before the ride starts, so a rider can see
   /// themselves while the group is still gathering (#300).
   ///
   /// Location used to start only once the ride had, which left the pre-start map
@@ -3764,27 +3771,30 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// Gathering is exactly when a group is checking who has arrived and where
   /// they are.
   ///
-  /// **Starting the stream does not start recording.** Fixes reach the map
-  /// through `_onDeviceLocationChanged`, which only redraws overlays;
+  /// **Getting this fix does not start recording.** It reaches the map through
+  /// `_onDeviceLocationChanged`, which only redraws overlays;
   /// `SituationalAwarenessController.recordLocalLocation` refuses every sample
-  /// until `rideStarted`, and relay publishing is driven by the event journal
-  /// rather than by fixes. So nothing is journalled or shared before Start ride,
-  /// which is the half of the request that must not be broken.
+  /// until `rideStarted`. The current fix may be shared through ephemeral
+  /// presence so the gathering map can show who has arrived, but it never
+  /// becomes a pre-start trail or durable location event.
   ///
-  /// Deliberately not [_resumeLocationForActiveRide]: that resets the
-  /// position-report gate, which paces *sharing*, and there is nothing to pace
-  /// yet. A failure here is also silent rather than a warning banner - #262 asks
-  /// for a calmer pre-start screen, and Follow me still surfaces a genuine
-  /// permission problem when the rider asks for it.
-  Future<void> _startLocationForPreStartMap() async {
+  /// This must remain a one-shot request. The ride-grade stream enables iOS
+  /// background location and Android's foreground service plus wake lock; merely
+  /// preparing a ride must not keep those running indefinitely (#763). A failure
+  /// here is silent rather than a warning banner - #262 asks for a calmer
+  /// pre-start screen, and Follow me still surfaces a genuine permission problem
+  /// when the rider asks for it.
+  Future<void> _refreshLocationForPreStartMap() async {
     final locationController = _locationController;
+    final locationLifecycle = _rideLocationLifecycle;
     if (locationController == null ||
+        locationLifecycle == null ||
         widget.rideController.rideStarted ||
         widget.rideController.rideEnded) {
       return;
     }
     try {
-      await locationController.resumeIfAuthorized();
+      await locationLifecycle.prepareWaitingRideMap();
     } on Object catch (error, stackTrace) {
       if (kDebugMode) {
         debugPrint('Could not start GPS before the ride: $error\n$stackTrace');
@@ -3939,9 +3949,18 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       // be reclaimed, so the log is written out here rather than trusted to a
       // tidy end-of-ride that may never arrive (#456).
       unawaited(_diagnosticsWriter?.flush());
-      return;
     }
-    unawaited(_locationController?.restartAfterForegroundResume());
+    // Follow me can start a foreground stream while the group is gathering.
+    // The lifecycle controller stops that optional map aid before it can
+    // promote itself into background GPS, but preserves a started ride's
+    // navigation and group tracking (#763).
+    unawaited(
+      _rideLocationLifecycle?.transition(
+        state,
+        rideStarted: widget.rideController.rideStarted,
+        rideEnded: widget.rideController.rideEnded,
+      ),
+    );
   }
 
   void _schedulePublish() {
@@ -5862,6 +5881,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   Future<void> _leaveRide() async {
     _simulationController?.pause();
+    await _locationController?.stop();
     await _preStartPresenceController?.stop();
     await _pushNotificationController?.stop();
     final rideId = widget.rideController.session?.rideId;
