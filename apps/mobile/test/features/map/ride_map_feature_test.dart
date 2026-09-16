@@ -150,12 +150,12 @@ void main() {
     final source = File(
       'lib/features/map/ride_map_feature.dart',
     ).readAsStringSync();
-    expect(source, contains('if (_mapLibreSourceUpdatesPaused) return;'));
+    expect(source, contains('if (_mapRenderingPaused) return;'));
     expect(
       source,
-      contains('_mapLibreSourceUpdatesPaused ||\n        !_mapLibreStyleReady'),
+      contains('_mapRenderingPaused ||\n        !_mapLibreStyleReady'),
     );
-    expect(source, contains('!mounted || _mapLibreSourceUpdatesPaused'));
+    expect(source, contains('!mounted || _mapRenderingPaused'));
     expect(
       source,
       contains(
@@ -164,12 +164,7 @@ void main() {
     );
     expect(source, contains('await controller.pauseMap();'));
     expect(source, contains('await controller.resumeMap();'));
-    expect(
-      source,
-      contains(
-        'if (_usesMapLibreRenderer && _mapLibreSourceUpdatesPaused) return;',
-      ),
-    );
+    expect(source, contains('if (_mapRenderingPaused) return;'));
   });
 
   test('the live iOS ride map avoids the native GeoJSON renderer (#732)', () {
@@ -197,7 +192,7 @@ void main() {
   });
 
   testWidgets(
-    'a routed iOS ride survives repeated focus loss without a platform map',
+    'a routed iOS ride suspends phone camera work across focus loss',
     (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -230,6 +225,17 @@ void main() {
         ],
         waypoints: const [],
       );
+      final navigation = ValueNotifier<MapNavigationPosition?>(
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 51.45, longitude: -2.59),
+          recordedAt: DateTime.utc(2026, 9, 15, 9),
+          speedMetersPerSecond: 0,
+          headingDegrees: 45,
+          accuracyMeters: 5,
+        ),
+      );
+      addTearDown(navigation.dispose);
+      var viewportUpdates = 0;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -237,11 +243,14 @@ void main() {
             routeStore: InMemoryRouteStore(route),
             routeImporter: RouteImporter(source: const _NoFileSource()),
             offlineTileCache: cache,
+            navigationPosition: navigation,
+            navigating: true,
+            onNavigationViewportChanged: (_) => viewportUpdates += 1,
           ),
         ),
       );
       await tester.pump();
-      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
 
       expect(find.byType(ml.MapLibreMap), findsNothing);
       expect(find.byType(FlutterMap), findsOneWidget);
@@ -249,25 +258,65 @@ void main() {
         find.byKey(const Key('ride-map-flutter-vector-fallback')),
         findsOneWidget,
       );
+      expect(find.byKey(const Key('navigation-follow-button')), findsOneWidget);
 
-      for (var cycle = 0; cycle < 5; cycle += 1) {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      final beforeBackgroundCommand = viewportUpdates;
+      tester
+          .widget<FloatingActionButton>(
+            find.byKey(const Key('navigation-follow-button')),
+          )
+          .onPressed!();
+      await tester.pump();
+      expect(
+        viewportUpdates,
+        beforeBackgroundCommand,
+        reason: 'an inactive iOS phone must not receive camera commands',
+      );
+      for (final state in const [
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      }
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(
+        viewportUpdates,
+        greaterThan(beforeBackgroundCommand),
+        reason: 'foreground resume catches the camera up to the latest fix',
+      );
+
+      for (var cycle = 0; cycle < 4; cycle += 1) {
         for (final state in const [
           AppLifecycleState.inactive,
           AppLifecycleState.hidden,
           AppLifecycleState.paused,
           AppLifecycleState.hidden,
           AppLifecycleState.inactive,
-          AppLifecycleState.resumed,
         ]) {
           tester.binding.handleAppLifecycleStateChanged(state);
           await tester.pump();
           expect(tester.takeException(), isNull);
         }
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
       }
 
       expect(find.byType(ml.MapLibreMap), findsNothing);
       expect(find.byType(FlutterMap), findsOneWidget);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
       await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
       debugDefaultTargetPlatformOverride = null;
     },

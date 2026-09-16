@@ -164,6 +164,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   ForegroundLocationController? _location;
   bool _ownsLocationController = false;
   bool _requesting = false;
+  bool _checkpointedForBackground = false;
 
   @override
   void initState() {
@@ -539,14 +540,22 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
+      _checkpointedForBackground = false;
       if (widget.navigating) {
         unawaited(_location?.restartAfterForegroundResume());
       } else {
         unawaited(_location?.refreshIfAuthorized());
       }
-    } else {
-      _checkpointFreeRoamNavigation();
+      return;
     }
+
+    // iOS reports inactive -> hidden -> paused for one trip to the background.
+    // A checkpoint contains the complete planned route and is flushed to disk,
+    // so treating those as three departures needlessly serializes and fsyncs a
+    // long GPX three times during the short suspension window (#732).
+    if (_checkpointedForBackground) return;
+    _checkpointedForBackground = true;
+    _checkpointFreeRoamNavigation();
   }
 
   @override

@@ -1170,10 +1170,10 @@ class _RideMapScreenState extends State<RideMapScreen>
   double _lastViewportZoom = 14;
   late final GroupPipBridge _groupPipBridge;
   ml.MapLibreMapController? _mapLibreController;
-  // Background location delivery must keep updating route state, but mutating
-  // a hidden iOS platform view races the native renderer as it is suspended.
-  // Dirty source flags stay set while this is true and are flushed on resume.
-  late bool _mapLibreSourceUpdatesPaused;
+  // Background location delivery must keep updating route state, but phone-map
+  // camera and source work cannot be rendered while iOS is suspending either
+  // the native or Flutter map. Dirty work is coalesced and flushed on resume.
+  late bool _mapRenderingPaused;
   late final MapLibreOfflineManager _mapLibreOfflineManager;
   bool _mapLibreStyleReady = false;
 
@@ -1526,7 +1526,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    _mapLibreSourceUpdatesPaused =
+    _mapRenderingPaused =
         lifecycle != null && mapLibreSourceUpdatesShouldPause(lifecycle);
     // Restored from the shell, which outlives a tab change: see the field
     // comments on RideMapFeature (#282).
@@ -1743,21 +1743,38 @@ class _RideMapScreenState extends State<RideMapScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    final wasPaused = _mapLibreSourceUpdatesPaused;
-    _mapLibreSourceUpdatesPaused = mapLibreSourceUpdatesShouldPause(state);
+    final wasPaused = _mapRenderingPaused;
+    _mapRenderingPaused = mapLibreSourceUpdatesShouldPause(state);
     final controller = _mapLibreController;
-    if (controller != null && wasPaused != _mapLibreSourceUpdatesPaused) {
+    if (controller != null && wasPaused != _mapRenderingPaused) {
       unawaited(
-        _setMapLibreRenderingPaused(
-          controller,
-          paused: _mapLibreSourceUpdatesPaused,
-        ),
+        _setMapLibreRenderingPaused(controller, paused: _mapRenderingPaused),
       );
     }
-    // One coalesced refresh catches the native map up with every position and
+    if (!wasPaused && _mapRenderingPaused && !_usesMapLibreRenderer) {
+      try {
+        // The iOS fallback map may be midway through an animated follow when
+        // focus is lost. Stop its ticker before frames are suspended; leaving
+        // it active makes every later background trip retain more camera work.
+        _mapController.stopAnimationRaw();
+      } on Object {
+        // The first lifecycle notification can beat map attachment.
+      }
+    }
+    // One coalesced refresh catches the phone map up with every position and
     // overlay change received while iOS kept the Dart process in the background.
-    if (wasPaused && !_mapLibreSourceUpdatesPaused) {
+    if (wasPaused && !_mapRenderingPaused) {
+      // A post-frame callback does not request a frame by itself. Rebuild the
+      // retained Flutter map with the latest background fix and guarantee the
+      // catch-up camera command has a frame on which to run.
+      if (mounted) setState(() {});
       _scheduleMapLibreSync(progress: true, position: true, overlays: true);
+      _scheduleCameraFramingRefresh();
+      if (_navigationMode && _effectivePosition != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_followNavigationCamera(force: true));
+        });
+      }
     }
   }
 
@@ -3846,7 +3863,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     previous?.onFeatureTapped.remove(_onMapLibreFeatureTapped);
     previous?.removeListener(_scheduleCameraFramingRefresh);
     _mapLibreController = controller;
-    if (_mapLibreSourceUpdatesPaused) {
+    if (_mapRenderingPaused) {
       unawaited(_setMapLibreRenderingPaused(controller, paused: true));
     }
     controller.onFeatureTapped.add(_onMapLibreFeatureTapped);
@@ -3859,7 +3876,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   void _onMapLibreCameraMove(ml.CameraPosition camera) {
-    if (_mapLibreSourceUpdatesPaused ||
+    if (_mapRenderingPaused ||
         !MapCameraCommand.isUsable(
           latitude: camera.target.latitude,
           longitude: camera.target.longitude,
@@ -4323,7 +4340,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   /// can arrive from inside a build or layout pass, where `BuildContext.size`
   /// throws.
   void _scheduleCameraFramingRefresh() {
-    if (_cameraFramingRefreshScheduled) return;
+    if (_mapRenderingPaused || _cameraFramingRefreshScheduled) return;
     _cameraFramingRefreshScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _cameraFramingRefreshScheduled = false;
@@ -4457,7 +4474,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       progress: refreshProgress,
       position: refreshMapLibrePosition,
     );
-    if (_navigationMode && position != null) {
+    if (_navigationMode && position != null && !_mapRenderingPaused) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_followNavigationCamera());
       });
@@ -4636,7 +4653,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   Future<void> _updateMapLibreDiscoveryViewport() async {
-    if (_mapLibreSourceUpdatesPaused) return;
+    if (_mapRenderingPaused) return;
     final controller = _mapLibreController;
     if (controller == null) return;
     try {
@@ -5016,7 +5033,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       _pointAhead(overlay.markerPoint, 180, 360),
     ];
     if (_usesMapLibreRenderer) {
-      if (_mapLibreSourceUpdatesPaused) return;
+      if (_mapRenderingPaused) return;
       final controller = _mapLibreController;
       if (controller == null) return;
       final markerBounds = _mapLibreBounds(cameraPoints);
@@ -5062,9 +5079,9 @@ class _RideMapScreenState extends State<RideMapScreen>
   }) async {
     if (!_navigationMode) return;
     // Location fixes continue while iOS is inactive and backgrounded. Never
-    // send those fixes into a suspended native map: camera animations race the
-    // renderer and tile-request teardown during that transition (#732).
-    if (_usesMapLibreRenderer && _mapLibreSourceUpdatesPaused) return;
+    // animate either phone renderer then: the native map races suspension, and
+    // Flutter camera callbacks otherwise accumulate until the next frame.
+    if (_mapRenderingPaused) return;
     final position = _effectivePosition;
     if (position == null) return;
     if (_cameraUpdateInFlight) {
@@ -5717,7 +5734,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   Future<void> _syncMapLibreSources() async {
     final controller = _mapLibreController;
     if (!_usesMapLibreRenderer ||
-        _mapLibreSourceUpdatesPaused ||
+        _mapRenderingPaused ||
         !_mapLibreStyleReady ||
         controller == null) {
       return;
@@ -5757,7 +5774,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _mapLibreProgressDirty |= progress;
     _mapLibrePositionDirty |= position;
     _mapLibreOverlaysDirty |= overlays;
-    if (_mapLibreSyncScheduled || !mounted || _mapLibreSourceUpdatesPaused) {
+    if (_mapLibreSyncScheduled || !mounted || _mapRenderingPaused) {
       return;
     }
     _mapLibreSyncScheduled = true;
@@ -5768,7 +5785,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   Future<void> _flushScheduledMapLibreSync() async {
-    if (_mapLibreSourceUpdatesPaused) return;
+    if (_mapRenderingPaused) return;
     if (_mapLibreSyncRunning) {
       _scheduleMapLibreSync();
       return;
@@ -5872,9 +5889,9 @@ class _RideMapScreenState extends State<RideMapScreen>
     String sourceId,
     Map<String, dynamic> Function() geoJson,
   ) async {
-    if (_mapLibreSourceUpdatesPaused) return false;
+    if (_mapRenderingPaused) return false;
     await controller.setGeoJsonSource(sourceId, geoJson());
-    return !_mapLibreSourceUpdatesPaused;
+    return !_mapRenderingPaused;
   }
 
   Map<String, dynamic> _remainingRouteGeoJson() => MapGeoJson.lines(
@@ -7079,7 +7096,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     final planned = _route?.allPoints.toList(growable: false) ?? const [];
     final routePoints = planned.isNotEmpty ? planned : [?_effectivePosition];
     if (_usesMapLibreRenderer) {
-      if (_mapLibreSourceUpdatesPaused) return;
+      if (_mapRenderingPaused) return;
       final controller = _mapLibreController;
       if (controller == null || routePoints.isEmpty) return;
       _initialCameraPositioned = true;
