@@ -569,6 +569,7 @@ class _HomeScreenState extends State<HomeScreen> {
             hostChrome: HostMapChrome(
               bottomInset: 0,
               onMore: () => unawaited(_showMoreActions(context)),
+              onOpenRideLibrary: () => unawaited(_openRideLibrary(context)),
               title: HomeSearchBar(
                 onTap: () => unawaited(_searchDestination()),
                 expanded: _searching,
@@ -840,20 +841,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     widget.controller.reopenEndedRide();
                   },
                 ),
-              ListTile(
-                key: const Key('ride-library-button'),
-                leading: const Icon(Icons.route_outlined),
-                title: const Text('Ride library'),
-                subtitle: Text(
-                  widget.completedRides.rides.isEmpty
-                      ? 'Recorded routes and previous rides'
-                      : 'Recorded routes and ${widget.completedRides.rides.length} previous ride${widget.completedRides.rides.length == 1 ? '' : 's'}',
-                ),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  unawaited(_openRideLibrary(context));
-                },
-              ),
               const Divider(height: 8),
               ListTile(
                 key: const Key('home-build-identity'),

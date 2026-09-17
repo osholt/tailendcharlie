@@ -571,10 +571,10 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
       // no basemap to snapshot and the recap falls back to the outline (#157).
       basemapConfiguration: BasemapConfiguration.fromEnvironment(),
       summary: summary,
-      routePoints:
-          ride.traveledRoute?.paths.expand((path) => path.points).toList() ??
-          ride.plannedRoute?.paths.expand((path) => path.points).toList() ??
-          const [],
+      routePoints: rideRecapRoutePoints(
+        traveledRoute: ride.traveledRoute,
+        plannedRoute: ride.plannedRoute,
+      ),
       distanceUnit: widget.distanceUnits.value,
     );
   }

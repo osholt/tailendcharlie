@@ -15,7 +15,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
-import 'package:ride_relay/domain/imported_route.dart' show GeoPoint;
+import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/features/ride/ride_recap_card.dart';
 import 'package:ride_relay/features/ride/ride_recap_screen.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
@@ -40,6 +40,24 @@ void main() {
     GeoPoint(latitude: 51.47, longitude: -2.49),
     GeoPoint(latitude: 51.48, longitude: -2.47),
   ];
+
+  test('recap geometry preserves every GPS segment', () {
+    final points = rideRecapRoutePoints(
+      traveledRoute: ImportedRoute(
+        id: 'segmented',
+        name: 'Segmented ride',
+        importedAt: DateTime.utc(2026, 9, 17),
+        sourceFileName: 'recorded.gpx',
+        paths: [
+          RoutePath(kind: RoutePathKind.track, points: [route[0], route[1]]),
+          RoutePath(kind: RoutePathKind.track, points: [route[2]]),
+        ],
+        waypoints: const [],
+      ),
+    );
+
+    expect(points, route);
+  });
 
   Future<void> pumpScreen(
     WidgetTester tester, {

@@ -43,6 +43,8 @@ void main() {
 
     await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ride-library-recorded-tab')));
+    await tester.pumpAndSettle();
 
     expect(find.text('Ride library'), findsWidgets);
     expect(find.text('RECORDED ROUTES'), findsOneWidget);
@@ -93,6 +95,8 @@ void main() {
     // has to be offered there too.
     await tester.tap(find.byKey(const Key('use-stored-route-sheet-item')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
+    await tester.pumpAndSettle();
 
     expect(find.text('PREVIOUS RIDES'), findsOneWidget);
     expect(find.text('Sunday run'), findsOneWidget);
@@ -127,6 +131,8 @@ void main() {
     await _pumpMap(tester, store: store, rides: rides);
 
     await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
     await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const Key('stored-route-candidate-ride:ride-1:track')),
@@ -177,6 +183,8 @@ void main() {
       );
 
       await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
       await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const Key('stored-route-candidate-ride:ride-392725:track')),
@@ -245,6 +253,8 @@ void main() {
     await _pumpMap(tester, store: store, recorded: recorded);
 
     await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ride-library-recorded-tab')));
     await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const Key('stored-route-candidate-recorded:scouted')),

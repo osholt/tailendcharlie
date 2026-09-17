@@ -6,13 +6,28 @@ import 'package:flutter/rendering.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../domain/distance_unit.dart';
-import '../../domain/imported_route.dart' show GeoPoint;
+import '../../domain/imported_route.dart' show GeoPoint, ImportedRoute;
 import '../../services/recap_basemap_snapshot.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/trail_display_simplifier.dart';
 import '../map/flutter_vector_route_preview.dart';
 import 'ride_recap_card.dart';
+
+/// Chooses the best geometry for a recap and preserves every recorded segment.
+///
+/// A real ride can contain several paths when GPS resumes after a gap. The
+/// ended-ride screen used to require exactly one path, so opening its recap
+/// threw before the share screen appeared. Saved rides already flattened the
+/// same segments; keeping the rule here makes both entry points identical.
+List<GeoPoint> rideRecapRoutePoints({
+  ImportedRoute? traveledRoute,
+  ImportedRoute? plannedRoute,
+}) =>
+    (traveledRoute ?? plannedRoute)?.paths
+        .expand((path) => path.points)
+        .toList(growable: false) ??
+    const [];
 
 /// Shows [RideRecapCard] full-screen and shares it as a PNG - a purpose-made
 /// image for social media, separate from the text/CSV/GPX ride summary

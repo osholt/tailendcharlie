@@ -101,6 +101,35 @@ bool mapLibreSourceUpdatesShouldPause(AppLifecycleState state) =>
       AppLifecycleState.detached => true,
     };
 
+/// Bounds the route work retained for spoken guidance while the map is hidden.
+///
+/// Location recording and relay presence live above the map and continue at
+/// their normal cadence. A suspended map only needs occasional route progress
+/// for a timely spoken instruction; rebuilding presentation on every GPS fix
+/// wastes background CPU and can trip iOS's resource watchdog.
+@visibleForTesting
+class BackgroundNavigationRefreshGate {
+  BackgroundNavigationRefreshGate({
+    this.minimumInterval = const Duration(seconds: 2),
+  });
+
+  final Duration minimumInterval;
+  DateTime? _lastAcceptedAt;
+
+  bool accept(DateTime at) {
+    final previous = _lastAcceptedAt;
+    if (previous != null &&
+        !at.isBefore(previous) &&
+        at.difference(previous) < minimumInterval) {
+      return false;
+    }
+    _lastAcceptedAt = at;
+    return true;
+  }
+
+  void reset() => _lastAcceptedAt = null;
+}
+
 /// Whether the live ride surface may use MapLibre's native platform view.
 ///
 /// Replacing a GeoJSON source can still crash inside MapLibre's iOS Metal
@@ -215,6 +244,39 @@ const motorcycleDiscoveryMinimumZoom = 12.5;
 double personalHeatmapGroundRadiusMeters(double weight) =>
     26 + 10 * weight.clamp(0, 1);
 
+/// MapLibre heatmap radius in screen pixels, calibrated to one z19 heat cell.
+///
+/// Personal history is stored in z19 cells. At riding latitudes a 26–36 metre
+/// ground radius is roughly 0.6 of that cell, or 307 px at z19 on MapLibre's
+/// 512 px tiles. The previous expression reached 898 px at z19 and made each
+/// observation cover about three cells, visibly changing the map's scale.
+@visibleForTesting
+const List<Object> personalHeatmapRadiusExpression = [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  5,
+  1,
+  12,
+  2.4,
+  13,
+  4.8,
+  14,
+  9.6,
+  15,
+  19.2,
+  16,
+  38.4,
+  17,
+  76.8,
+  18,
+  153.6,
+  19,
+  307.2,
+  20,
+  614.4,
+];
+
 @visibleForTesting
 bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
     zoom >= motorcycleDiscoveryMinimumZoom;
@@ -237,6 +299,7 @@ class HostMapChrome {
     this.actions = const [],
     this.bottomInset = 0,
     this.onMore,
+    this.onOpenRideLibrary,
   });
 
   /// Height the host's own chrome occupies at the bottom of this map.
@@ -258,6 +321,9 @@ class HostMapChrome {
 
   /// Opens host-owned secondary actions from the map's existing overflow.
   final VoidCallback? onMore;
+
+  /// Opens the Ride Library directly from the map's top-right menu.
+  final VoidCallback? onOpenRideLibrary;
 }
 
 /// Height of the map's own toolbar, by orientation.
@@ -1151,6 +1217,10 @@ class _RideMapScreenState extends State<RideMapScreen>
   final RiderTrailRecorder _localTrailRecorder = RiderTrailRecorder();
   final ValueNotifier<NavigationGuidanceAssessment> _navigationGuidance =
       ValueNotifier(const NavigationGuidanceAssessment.noRoute());
+  final BackgroundNavigationRefreshGate _backgroundNavigationRefreshGate =
+      BackgroundNavigationRefreshGate();
+  NavigationGuidanceAssessment _backgroundNavigationGuidance =
+      const NavigationGuidanceAssessment.noRoute();
   final Map<int, Offset> _mapPointerOrigins = {};
   late final http.Client _routingClient;
   late final RoadRoutingService _roadRoutingService;
@@ -1764,6 +1834,10 @@ class _RideMapScreenState extends State<RideMapScreen>
     // One coalesced refresh catches the phone map up with every position and
     // overlay change received while iOS kept the Dart process in the background.
     if (wasPaused && !_mapRenderingPaused) {
+      _backgroundNavigationRefreshGate.reset();
+      _lastHandledNavigationFix = null;
+      _lastHandledCurrentPosition = null;
+      _onPositionChanged();
       // A post-frame callback does not request a frame by itself. Rebuild the
       // retained Flutter map with the latest background fix and guarantee the
       // catch-up camera command has a frame on which to run.
@@ -1964,7 +2038,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   void _onPersonalRideHeatmapChanged() {
-    if (!mounted) return;
+    if (!mounted || _mapRenderingPaused) return;
     setState(() {});
     _scheduleMapLibreSync(overlays: true);
   }
@@ -2016,7 +2090,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   void _onGlobalRideHeatmapChanged() {
-    if (!mounted) return;
+    if (!mounted || _mapRenderingPaused) return;
     setState(() {});
     _scheduleMapLibreSync(overlays: true);
   }
@@ -2268,6 +2342,12 @@ class _RideMapScreenState extends State<RideMapScreen>
                       : const EdgeInsets.all(8),
                   onSelected: _handleMenuAction,
                   itemBuilder: (context) => [
+                    if (hostChrome?.onOpenRideLibrary != null)
+                      const PopupMenuItem(
+                        key: Key('home-ride-library'),
+                        value: _MapAction.rideLibrary,
+                        child: Text('Ride library'),
+                      ),
                     if (hostChrome?.onMore != null) ...[
                       const PopupMenuItem(
                         key: Key('home-more-actions'),
@@ -4364,6 +4444,17 @@ class _RideMapScreenState extends State<RideMapScreen>
       _lastHandledCurrentPosition = position;
       _lastHandledNavigationFix = null;
     }
+    if (_mapRenderingPaused) {
+      final observedAt = navigationFix?.recordedAt ?? DateTime.now();
+      if (!_backgroundNavigationRefreshGate.accept(observedAt)) return;
+      _progressGeometry = _routeProgressTracker.update(_route, position);
+      _rejoinProgressGeometry = _rejoinProgressTracker.update(
+        _rejoinRoute,
+        position,
+      );
+      _updateBackgroundNavigationGuidance(position);
+      return;
+    }
     _recordLocalTrail(position, navigationFix?.recordedAt);
     _finishRouteStartConnectorIfReached(position);
     final suppliedHeading = _navigationFix?.headingDegrees;
@@ -4515,25 +4606,12 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   void _updateNavigationGuidance(GeoPoint? position) {
-    final navigationRoute = _rejoinRoute ?? _route;
-    final next = _navigationGuidancePlanner.assess(
-      route: navigationRoute,
-      position: position,
-      progressMeters: _navigationProgressGeometry.progressMeters,
-      minimumManeuverProgressMeters: _rejoinRoute == null
-          ? _mainRouteGuidanceFloorMeters
-          : null,
-    );
+    final next = _assessNavigationGuidance(position);
+    _backgroundNavigationGuidance = next;
     final current = _navigationGuidance.value;
     final visibilityChanged = current.isVisible != next.isVisible;
     final stateChanged = current.state != next.state;
-    final unchanged =
-        current.guidance?.maneuver == next.guidance?.maneuver &&
-        current.guidance != null &&
-        next.guidance != null &&
-        (current.guidance!.distanceMeters - next.guidance!.distanceMeters)
-                .abs() <
-            5;
+    final unchanged = _sameNavigationGuidance(current, next);
     if (!unchanged) {
       _navigationGuidance.value = next;
       widget.onNavigationGuidanceChanged?.call(next.guidance);
@@ -4542,6 +4620,48 @@ class _RideMapScreenState extends State<RideMapScreen>
       }
       if ((visibilityChanged || stateChanged) && mounted) setState(() {});
     }
+  }
+
+  NavigationGuidanceAssessment _assessNavigationGuidance(GeoPoint? position) {
+    final navigationRoute = _rejoinRoute ?? _route;
+    return _navigationGuidancePlanner.assess(
+      route: navigationRoute,
+      position: position,
+      progressMeters: _navigationProgressGeometry.progressMeters,
+      minimumManeuverProgressMeters: _rejoinRoute == null
+          ? _mainRouteGuidanceFloorMeters
+          : null,
+    );
+  }
+
+  void _updateBackgroundNavigationGuidance(GeoPoint? position) {
+    final next = _assessNavigationGuidance(position);
+    final unchanged = _sameNavigationGuidance(
+      _backgroundNavigationGuidance,
+      next,
+    );
+    if (!unchanged) {
+      _backgroundNavigationGuidance = next;
+      // Speech and CarPlay are owned by the shell and remain useful while the
+      // phone is locked. Do not touch the map's ValueNotifier or call setState:
+      // both are presentation work for a suspended Flutter surface.
+      widget.onNavigationGuidanceChanged?.call(next.guidance);
+    }
+  }
+
+  static bool _sameNavigationGuidance(
+    NavigationGuidanceAssessment current,
+    NavigationGuidanceAssessment next,
+  ) {
+    if (current.state != next.state) return false;
+    final currentGuidance = current.guidance;
+    final nextGuidance = next.guidance;
+    if (currentGuidance == null || nextGuidance == null) {
+      return currentGuidance == null && nextGuidance == null;
+    }
+    return currentGuidance.maneuver == nextGuidance.maneuver &&
+        (currentGuidance.distanceMeters - nextGuidance.distanceMeters).abs() <
+            5;
   }
 
   void _onRejoinNavigationRouteChanged() {
@@ -4571,7 +4691,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   void _onOverlayDataChanged() {
-    if (!mounted) return;
+    if (!mounted || _mapRenderingPaused) return;
     // The mini-map listens to rider updates itself. Rebuilding the parent
     // platform map here can resize it and briefly bring the top chrome back.
     if (!_usesMapLibreRenderer) setState(() {});
@@ -5366,31 +5486,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _personalHeatmapSource,
         _personalHeatmapLayer,
         const ml.HeatmapLayerProperties(
-          heatmapRadius: [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            5,
-            4,
-            12,
-            10,
-            13,
-            18,
-            14,
-            30,
-            15,
-            58,
-            16,
-            114,
-            17,
-            226,
-            18,
-            450,
-            19,
-            898,
-            20,
-            1794,
-          ],
+          heatmapRadius: personalHeatmapRadiusExpression,
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.85,
           heatmapColor: [
@@ -7675,6 +7771,8 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   Future<void> _handleMenuAction(_MapAction action) async {
     switch (action) {
+      case _MapAction.rideLibrary:
+        widget.hostChrome?.onOpenRideLibrary?.call();
       case _MapAction.hostMore:
         widget.hostChrome?.onMore?.call();
       case _MapAction.importGpx:
@@ -8190,6 +8288,7 @@ class _RideMapScreenState extends State<RideMapScreen>
 }
 
 enum _MapAction {
+  rideLibrary,
   hostMore,
   importGpx,
   loadDemo,

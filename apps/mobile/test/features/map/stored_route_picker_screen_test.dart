@@ -35,7 +35,7 @@ void main() {
     await _pump(tester, recorded: recorded, places: places);
 
     expect(find.text('Ride library'), findsOneWidget);
-    expect(find.text('RECORDED ROUTES'), findsOneWidget);
+    expect(find.text('IMPORTED ROUTES'), findsOneWidget);
     expect(find.text('Ride 392725'), findsOneWidget);
     expect(find.textContaining('Kingswood to Chippenham'), findsOneWidget);
     expect(find.text('Test offline places'), findsOneWidget);
@@ -48,15 +48,28 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final recorded = InMemoryRecordedRouteStore();
     for (var index = 0; index < 30; index += 1) {
-      await recorded.save(_route(id: '$index', name: 'Saved route $index'));
+      await recorded.save(
+        _route(
+          id: '$index',
+          name: 'Saved route $index',
+          sourceFileName: 'recorded.gpx',
+        ),
+      );
     }
 
     await _pump(tester, recorded: recorded, places: places);
+    await tester.tap(find.byKey(const Key('ride-library-recorded-tab')));
+    await tester.pumpAndSettle();
     final last = find.byKey(const Key('stored-route-candidate-recorded:0'));
     await tester.scrollUntilVisible(
       last,
       500,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find.descendant(
+        of: find.byKey(
+          const PageStorageKey<String>('ride-library-Recorded routes'),
+        ),
+        matching: find.byType(Scrollable),
+      ),
     );
 
     expect(last, findsOneWidget);
@@ -134,11 +147,60 @@ void main() {
       find.byKey(const Key('ride-library-details-and-exports')),
       findsNothing,
     );
+    await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('ride-library-record-ride-209271')));
     await tester.pump();
 
     expect(opened, 1);
   });
+
+  testWidgets(
+    'imports, recorder tracks and completed rides have separate tabs',
+    (tester) async {
+      final recorded = InMemoryRecordedRouteStore();
+      await recorded.save(
+        _route(id: '21', name: 'Imported GPX', sourceFileName: 'tour.gpx'),
+      );
+      await recorded.save(
+        _route(
+          id: '22',
+          name: 'Phone recording',
+          sourceFileName: 'recorded.gpx',
+        ),
+      );
+      final completed = InMemoryCompletedRideStore();
+      await completed.save(_completedRide());
+
+      await _pump(
+        tester,
+        recorded: recorded,
+        completed: completed,
+        places: places,
+        openPreviousRide: (_, _) async => null,
+      );
+
+      expect(find.text('Imported GPX'), findsOneWidget);
+      expect(find.text('Phone recording'), findsNothing);
+      expect(
+        find.byKey(const Key('ride-library-record-ride-209271')),
+        findsNothing,
+      );
+
+      await tester.tap(find.byKey(const Key('ride-library-recorded-tab')));
+      await tester.pumpAndSettle();
+      expect(find.text('Phone recording'), findsOneWidget);
+      expect(find.text('Imported GPX'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('ride-library-record-ride-209271')),
+        findsOneWidget,
+      );
+      expect(find.text('Phone recording'), findsNothing);
+    },
+  );
 }
 
 Future<void> _pump(
@@ -168,27 +230,26 @@ Future<void> _pump(
   await tester.pumpAndSettle();
 }
 
-ImportedRoute _route({required String id, required String name}) =>
-    ImportedRoute(
-      id: id,
-      name: name,
-      importedAt: DateTime.utc(
-        2026,
-        8,
-        13,
-      ).add(Duration(minutes: int.parse(id))),
-      sourceFileName: 'recorded.gpx',
-      paths: const [
-        RoutePath(
-          kind: RoutePathKind.track,
-          points: [
-            GeoPoint(latitude: 51.45, longitude: -2.1),
-            GeoPoint(latitude: 51.458, longitude: -1.5),
-          ],
-        ),
+ImportedRoute _route({
+  required String id,
+  required String name,
+  String sourceFileName = 'tour.gpx',
+}) => ImportedRoute(
+  id: id,
+  name: name,
+  importedAt: DateTime.utc(2026, 8, 13).add(Duration(minutes: int.parse(id))),
+  sourceFileName: sourceFileName,
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 51.45, longitude: -2.1),
+        GeoPoint(latitude: 51.458, longitude: -1.5),
       ],
-      waypoints: const [],
-    );
+    ),
+  ],
+  waypoints: const [],
+);
 
 CompletedRide _completedRide() => CompletedRide(
   rideId: 'ride-209271',

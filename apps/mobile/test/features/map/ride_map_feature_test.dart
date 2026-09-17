@@ -235,6 +235,13 @@ void main() {
         ),
       );
       addTearDown(navigation.dispose);
+      var now = DateTime.utc(2026, 9, 15, 9);
+      final speedProvider = _CountingWidgetSpeedLimitProvider();
+      final speedLimitDisplay = SpeedLimitDisplayController.inMemory(
+        provider: speedProvider,
+        clock: () => now,
+      );
+      addTearDown(speedLimitDisplay.dispose);
       var viewportUpdates = 0;
 
       await tester.pumpWidget(
@@ -245,12 +252,14 @@ void main() {
             offlineTileCache: cache,
             navigationPosition: navigation,
             navigating: true,
+            speedLimitDisplay: speedLimitDisplay,
             onNavigationViewportChanged: (_) => viewportUpdates += 1,
           ),
         ),
       );
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
+      await speedLimitDisplay.waitForIdle();
 
       expect(find.byType(ml.MapLibreMap), findsNothing);
       expect(find.byType(FlutterMap), findsOneWidget);
@@ -263,6 +272,26 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       await tester.pump();
       final beforeBackgroundCommand = viewportUpdates;
+      final beforeBackgroundSpeedLookups = speedProvider.calls;
+      for (var fix = 1; fix <= 4; fix += 1) {
+        now = now.add(const Duration(seconds: 20));
+        navigation.value = MapNavigationPosition(
+          point: GeoPoint(
+            latitude: 51.45 + fix / 1000,
+            longitude: -2.59 + fix / 1000,
+          ),
+          recordedAt: now,
+          speedMetersPerSecond: 10,
+          headingDegrees: 45,
+          accuracyMeters: 5,
+        );
+        await tester.pump();
+      }
+      expect(
+        speedProvider.calls,
+        beforeBackgroundSpeedLookups,
+        reason: 'a suspended map must not run road lookups for hidden chrome',
+      );
       tester
           .widget<FloatingActionButton>(
             find.byKey(const Key('navigation-follow-button')),
@@ -286,10 +315,16 @@ void main() {
       }
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump(const Duration(milliseconds: 700));
+      await speedLimitDisplay.waitForIdle();
       expect(
         viewportUpdates,
         greaterThan(beforeBackgroundCommand),
         reason: 'foreground resume catches the camera up to the latest fix',
+      );
+      expect(
+        speedProvider.calls,
+        greaterThan(beforeBackgroundSpeedLookups),
+        reason: 'the latest retained fix is applied once on resume',
       );
 
       for (var cycle = 0; cycle < 4; cycle += 1) {
@@ -362,6 +397,26 @@ void main() {
       expect(personalHeatmapGroundRadiusMeters(2), 36);
     },
   );
+
+  test('native personal heatmap stays close to one z19 coverage cell', () {
+    expect(personalHeatmapRadiusExpression, containsAllInOrder([18, 153.6]));
+    expect(personalHeatmapRadiusExpression, containsAllInOrder([19, 307.2]));
+    expect(personalHeatmapRadiusExpression, isNot(contains(898)));
+  });
+
+  test('background navigation work is throttled and resets on resume', () {
+    final gate = BackgroundNavigationRefreshGate();
+    final start = DateTime.utc(2026, 9, 17, 10);
+
+    expect(gate.accept(start), isTrue);
+    expect(gate.accept(start.add(const Duration(milliseconds: 500))), isFalse);
+    expect(gate.accept(start.add(const Duration(seconds: 2))), isTrue);
+    gate.reset();
+    expect(
+      gate.accept(start.add(const Duration(seconds: 2, milliseconds: 1))),
+      isTrue,
+    );
+  });
 
   test('native heatmaps sit below basemap road geometry', () {
     final style = jsonEncode({
@@ -6762,6 +6817,7 @@ void main() {
       bool started = false,
       bool navigating = false,
       VoidCallback? onMore,
+      VoidCallback? onOpenRideLibrary,
     }) async {
       SharedPreferences.setMockInitialValues({});
       final directory = Directory.systemTemp.createTempSync('chrome-owner');
@@ -6800,6 +6856,7 @@ void main() {
                 ? HostMapChrome(
                     title: const Text('Where to?'),
                     onMore: onMore,
+                    onOpenRideLibrary: onOpenRideLibrary,
                     actions: [
                       IconButton(
                         key: const Key('host-emergency'),
@@ -6890,6 +6947,24 @@ void main() {
       await tester.tap(find.byKey(const Key('map-layer-actions')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('home-more-actions')));
+      await tester.pumpAndSettle();
+
+      expect(opened, 1);
+    });
+
+    testWidgets('Ride library is direct in the top overflow', (tester) async {
+      var opened = 0;
+      await pumpWithChrome(
+        tester,
+        hosted: true,
+        onMore: () {},
+        onOpenRideLibrary: () => opened += 1,
+      );
+
+      await tester.tap(find.byKey(const Key('map-layer-actions')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('home-ride-library')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('home-ride-library')));
       await tester.pumpAndSettle();
 
       expect(opened, 1);
@@ -8214,6 +8289,29 @@ class _DeferredWidgetSpeedLimitProvider implements SpeedLimitProvider {
       ),
     ),
   );
+
+  @override
+  void close() {}
+}
+
+class _CountingWidgetSpeedLimitProvider implements SpeedLimitProvider {
+  int calls = 0;
+
+  @override
+  Future<SpeedLimitLookupResult> lookup({
+    required SpeedLimitLocation current,
+    SpeedLimitLocation? previous,
+  }) async {
+    calls += 1;
+    return SpeedLimitLookupResult.known(
+      PostedSpeedLimit(
+        milesPerHour: 30,
+        source: 'Test',
+        checkedAt: current.recordedAt,
+        matchDistanceMeters: 2,
+      ),
+    );
+  }
 
   @override
   void close() {}
