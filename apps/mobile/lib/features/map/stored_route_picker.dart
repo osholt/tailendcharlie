@@ -138,11 +138,17 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
           return const _EmptyLibrary();
         }
         final places = data.places!;
-        final recordings = candidates
+        final savedRoutes = candidates
             .where(
               (candidate) =>
                   candidate.origin == StoredRouteOrigin.recordedRoute,
             )
+            .toList(growable: false);
+        final importedRoutes = savedRoutes
+            .where((candidate) => !storedRouteWasRecordedOnDevice(candidate))
+            .toList(growable: false);
+        final recordings = savedRoutes
+            .where(storedRouteWasRecordedOnDevice)
             .toList(growable: false);
         final routeCandidatesFromRides = candidates
             .where(
@@ -159,48 +165,119 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
         final deleted = data.rides
             .where((ride) => ride.libraryStatus == RideLibraryStatus.deleted)
             .toList(growable: false);
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
-          children: [
-            const Text(
-              'Routes already on this phone. No file, no export step, and '
-              'nothing leaves the phone to use one. Approximate place names '
-              'come from the offline index.',
-              style: TextStyle(color: Color(0xFFABB5C1), height: 1.4),
-            ),
-            if (recordings.isNotEmpty) ...[
-              const _SectionHeading('Recorded routes'),
-              for (final candidate in recordings) _tile(candidate, places),
-            ],
-            if (widget.openPreviousRide == null &&
-                routeCandidatesFromRides.isNotEmpty) ...[
-              const _SectionHeading('Previous rides'),
-              for (final candidate in routeCandidatesFromRides)
-                _tile(candidate, places),
-            ],
-            if (widget.openPreviousRide != null && rides.isNotEmpty) ...[
-              const _SectionHeading('Previous rides'),
-              for (final ride in rides) _rideTile(ride, places),
-            ],
-            if (widget.openPreviousRide != null && archived.isNotEmpty) ...[
-              const _SectionHeading('Archived'),
-              for (final ride in archived) _rideTile(ride, places),
-            ],
-            if (widget.openPreviousRide != null && deleted.isNotEmpty) ...[
-              const _SectionHeading('Recently deleted'),
-              for (final ride in deleted) _rideTile(ride, places),
-            ],
-            if (candidates.isNotEmpty || data.rides.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text(
-                places.attribution,
-                style: const TextStyle(color: Color(0xFF778391), fontSize: 11),
+        return DefaultTabController(
+          length: 3,
+          child: Column(
+            children: [
+              const TabBar(
+                tabs: [
+                  Tab(key: Key('ride-library-imported-tab'), text: 'Imported'),
+                  Tab(key: Key('ride-library-recorded-tab'), text: 'Recorded'),
+                  Tab(key: Key('ride-library-rides-tab'), text: 'Rides'),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _routeList(
+                      candidates: importedRoutes,
+                      places: places,
+                      heading: 'Imported routes',
+                      emptyTitle: 'No imported routes',
+                      emptyBody:
+                          'GPX files and routes shared with Tail End Charlie '
+                          'will appear here.',
+                    ),
+                    _routeList(
+                      candidates: recordings,
+                      places: places,
+                      heading: 'Recorded routes',
+                      emptyTitle: 'No recorded routes',
+                      emptyBody:
+                          'Use “Record a route” from the home menu to save one.',
+                    ),
+                    widget.openPreviousRide == null
+                        ? _routeList(
+                            candidates: routeCandidatesFromRides,
+                            places: places,
+                            heading: 'Previous rides',
+                            emptyTitle: 'No previous rides',
+                            emptyBody:
+                                'Completed rides with route geometry will '
+                                'appear here.',
+                          )
+                        : _rideList(
+                            rides: rides,
+                            archived: archived,
+                            deleted: deleted,
+                            places: places,
+                          ),
+                  ],
+                ),
               ),
             ],
-          ],
+          ),
         );
       },
     ),
+  );
+
+  Widget _routeList({
+    required List<StoredRouteCandidate> candidates,
+    required ApproximatePlaceIndex places,
+    required String heading,
+    required String emptyTitle,
+    required String emptyBody,
+  }) => ListView(
+    key: PageStorageKey<String>('ride-library-$heading'),
+    padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+    children: [
+      if (candidates.isEmpty)
+        _InlineEmpty(title: emptyTitle, body: emptyBody)
+      else ...[
+        _SectionHeading(heading),
+        for (final candidate in candidates) _tile(candidate, places),
+      ],
+      const SizedBox(height: 10),
+      Text(
+        places.attribution,
+        style: const TextStyle(color: Color(0xFF778391), fontSize: 11),
+      ),
+    ],
+  );
+
+  Widget _rideList({
+    required List<CompletedRide> rides,
+    required List<CompletedRide> archived,
+    required List<CompletedRide> deleted,
+    required ApproximatePlaceIndex places,
+  }) => ListView(
+    key: const PageStorageKey<String>('ride-library-rides'),
+    padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+    children: [
+      if (rides.isEmpty && archived.isEmpty && deleted.isEmpty)
+        const _InlineEmpty(
+          title: 'No recorded rides',
+          body: 'Rides will appear here as soon as they finish.',
+        ),
+      if (rides.isNotEmpty) ...[
+        const _SectionHeading('Previous rides'),
+        for (final ride in rides) _rideTile(ride, places),
+      ],
+      if (archived.isNotEmpty) ...[
+        const _SectionHeading('Archived'),
+        for (final ride in archived) _rideTile(ride, places),
+      ],
+      if (deleted.isNotEmpty) ...[
+        const _SectionHeading('Recently deleted'),
+        for (final ride in deleted) _rideTile(ride, places),
+      ],
+      const SizedBox(height: 10),
+      Text(
+        places.attribution,
+        style: const TextStyle(color: Color(0xFF778391), fontSize: 11),
+      ),
+    ],
   );
 
   Widget _tile(StoredRouteCandidate candidate, ApproximatePlaceIndex places) =>
@@ -632,6 +709,14 @@ String storedRouteKindLabel(StoredRouteOrigin origin) => switch (origin) {
   StoredRouteOrigin.previousRideTrack => 'Previous ride · recorded track',
 };
 
+/// Whether this route came from TEC's dedicated route recorder.
+///
+/// Recorded-route storage predates origin metadata, so the recorder's stable
+/// source name is the backwards-compatible distinction for existing libraries.
+bool storedRouteWasRecordedOnDevice(StoredRouteCandidate candidate) =>
+    candidate.origin == StoredRouteOrigin.recordedRoute &&
+    candidate.geometry.sourceFileName.toLowerCase() == 'recorded.gpx';
+
 class _SectionHeading extends StatelessWidget {
   const _SectionHeading(this.label);
 
@@ -662,6 +747,34 @@ class _EmptyLibrary extends StatelessWidget {
         'Record one with "Record a route" on the home screen, or finish a ride '
         'and it will appear here. A ride whose geometry has been deleted is '
         'not listed, because there is nothing left to ride.',
+  );
+}
+
+class _InlineEmpty extends StatelessWidget {
+  const _InlineEmpty({required this.title, required this.body});
+
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 44, horizontal: 14),
+    child: Column(
+      children: [
+        const Icon(Icons.route_outlined, size: 42, color: Color(0xFF7F8A98)),
+        const SizedBox(height: 14),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          body,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Color(0xFFABB5C1), height: 1.4),
+        ),
+      ],
+    ),
   );
 }
 

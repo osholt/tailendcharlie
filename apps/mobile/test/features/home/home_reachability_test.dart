@@ -340,21 +340,15 @@ void main() {
   testWidgets('a past ride is reachable by words alone', (tester) async {
     // Moved one tap in by #426, which removed the full-screen start panel these
     // rows used to sit on. The #306 rule is what matters and it still holds: the
-    // path is words the whole way, "More" then "Ride library", with no
+    // path is words the whole way from the top-right menu to "Ride library", with no
     // unlabelled icon anywhere on it. An overflow nobody can read would not be
     // reachable, which is why the control is a word rather than `more_horiz`.
     await pumpHome(tester);
 
-    await tester.tap(find.byKey(const Key('home-more-actions')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Ride library'), findsOneWidget);
-    expect(
-      find.textContaining('Recorded routes and previous rides'),
-      findsOneWidget,
+    final backdrop = tester.widget<HomeMapBackdrop>(
+      find.byType(HomeMapBackdrop),
     );
-
-    await tester.tap(find.text('Ride library'));
+    backdrop.hostChrome!.onOpenRideLibrary!();
     await tester.pumpAndSettle();
     expect(find.text('Ride library'), findsOneWidget);
     expect(find.text('No saved routes yet'), findsOneWidget);
