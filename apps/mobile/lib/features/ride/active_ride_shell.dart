@@ -2549,6 +2549,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                     .map(
                       (location) => (
                         riderId: location.riderId,
+                        headingDegrees: location.sample.headingDegrees,
+                        speedMetersPerSecond:
+                            location.sample.speedMetersPerSecond,
                         displayName: location.displayName,
                         role: location.role,
                         motorcycleStyle: location.motorcycleStyle,
@@ -2566,6 +2569,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                     .map(
                       (rider) => (
                         riderId: rider.id,
+                        headingDegrees: rider.headingDegrees,
+                        speedMetersPerSecond: rider.speedMetersPerSecond,
                         displayName: rider.displayName,
                         role: rider.role,
                         motorcycleStyle: rider.motorcycleStyle,
@@ -2628,6 +2633,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               riderDisplayName: location.displayName,
               color: baseColor,
               positionFreshness: freshness,
+              headingDegrees: riderTravelHeading(
+                headingDegrees: location.headingDegrees,
+                speedMetersPerSecond: location.speedMetersPerSecond,
+                fresh: freshness == PresenceFreshness.live,
+              ),
             );
           }),
     ];

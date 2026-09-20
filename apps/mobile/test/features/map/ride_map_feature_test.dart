@@ -465,8 +465,6 @@ void main() {
     expect(source, contains('compassEnabled: false'));
     expect(source, contains("Key('speed-compass-cluster')"));
     expect(source, contains("Key('ride-compass-position')"));
-    expect(source, contains("properties: {'bearing': _lastHeadingDegrees}"));
-    expect(source, contains("iconRotate: ['get', 'bearing']"));
     expect(source, contains("iconRotationAlignment: 'map'"));
   });
 
