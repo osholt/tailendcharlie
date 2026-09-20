@@ -10,6 +10,18 @@ class MeasurementFormatter {
     DistanceUnit.kilometres => _metricDistance(meters),
   };
 
+  /// Speech uses memorable distances; the visual countdown retains its precision.
+  String spokenDistance(double meters) {
+    if (unit == DistanceUnit.miles) return distance(meters);
+    if (meters < 1000) {
+      final step = meters < 500 ? 50 : 100;
+      final rounded = ((meters / step).round() * step).clamp(50, 1000);
+      return rounded == 1000 ? '1 km' : '$rounded m';
+    }
+    final km = (meters / 1000).toStringAsFixed(1);
+    return '${km.endsWith('.0') ? km.substring(0, km.length - 2) : km} km';
+  }
+
   String speed(double metersPerSecond) => switch (unit) {
     DistanceUnit.miles => '${(metersPerSecond * 2.236936).round()} mph',
     DistanceUnit.kilometres => '${(metersPerSecond * 3.6).round()} km/h',

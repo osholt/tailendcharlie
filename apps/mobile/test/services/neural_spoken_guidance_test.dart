@@ -25,6 +25,57 @@ void main() {
     expect(backend.allowCachedAudio, [isFalse]);
   });
 
+  test(
+    'stale neural distance is replaced before playback with current speech',
+    () async {
+      var phrase = 'In 400 metres, turn left';
+      final backend = _RecordingBackend()
+        ..onGenerate = (text) {
+          if (text != 'Ready.') phrase = 'In 300 metres, turn left';
+        };
+      final natural = NeuralSpokenGuidanceEngine(
+        backend: backend,
+        voiceProvider: () => NaturalNavigationVoice.george,
+        audioConfigurator: () async {},
+      );
+      final fallback = _RecordingEngine();
+      final engine = FailSafeNeuralSpokenGuidanceEngine(
+        neural: natural,
+        fallback: fallback,
+      );
+      await engine.configure();
+      await engine.warmUp();
+      await engine.speakFresh(() => phrase);
+      expect(backend.generatedPhrases, contains('In 400 metres, turn left'));
+      expect(fallback.spoken, ['In 300 metres, turn left']);
+    },
+  );
+
+  test('a passed turn is silent when neural synthesis completes', () async {
+    String? phrase = 'In 400 metres, turn left';
+    final backend = _RecordingBackend()
+      ..onGenerate = (text) {
+        if (text != 'Ready.') phrase = null;
+      };
+    final natural = NeuralSpokenGuidanceEngine(
+      backend: backend,
+      voiceProvider: () => NaturalNavigationVoice.george,
+      audioConfigurator: () async {},
+    );
+    final fallback = _RecordingEngine();
+    final engine = FailSafeNeuralSpokenGuidanceEngine(
+      neural: natural,
+      fallback: fallback,
+    );
+    await engine.configure();
+    await engine.warmUp();
+    await expectLater(
+      engine.speakFresh(() => phrase),
+      throwsA(isA<SpokenGuidanceSuperseded>()),
+    );
+    expect(fallback.spoken, isEmpty);
+  });
+
   test('a neural utterance that starts in time is used whole', () async {
     final neural = _FakeNeuralStarter();
     final fallback = _RecordingEngine();
@@ -317,6 +368,7 @@ class _RecordingEngine implements SpokenGuidanceEngine {
 }
 
 class _RecordingBackend implements NeuralSpeechBackend {
+  void Function(String)? onGenerate;
   int prepareCalls = 0;
   final generatedPhrases = <String>[];
   final allowCachedAudio = <bool>[];
@@ -331,6 +383,7 @@ class _RecordingBackend implements NeuralSpeechBackend {
     bool allowCachedAudio = true,
   }) async {
     generatedPhrases.add(phrase);
+    onGenerate?.call(phrase);
     this.allowCachedAudio.add(allowCachedAudio);
     return '/tmp/natural-voice-prime.wav';
   }
