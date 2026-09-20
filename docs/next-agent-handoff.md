@@ -1,6 +1,30 @@
 # Next-agent handoff
 
-Updated: 2026-08-12
+Updated: 2026-09-20
+
+## France feedback release — build 98
+
+The 20 September France-trip feedback is tracked by #781 and #732, #772–#780.
+The individually reviewed issue PRs are combined in
+`codex/issue-781-france-release`; its final PR requires the full protected-main
+checks. The user explicitly authorised pushing this work to testers.
+
+See [France feedback validation](france-feedback-validation.md) for the evidence
+matrix and [tester release notes](tester-release-notes.md) for build 98. The
+native protected-data crash is reproduced and fixed, including a mutation that
+restores the exact exception. Missing source speed tags and disputed roundabout
+exit counts remain limitations. Do not close the field-validation tickets on
+unit-test evidence alone.
+
+Release procedure: merge the combined release only after checks pass, deploy
+the relay at that main commit, verify `serverBuildCommit`, then dispatch iOS
+TestFlight and Android alpha with explicit build number **98**. Android
+notification mode is `dry-run` because separate tester email was not requested.
+Record actual workflow/store availability on #781; these instructions are not
+evidence that a build has already shipped.
+
+The historical handoffs below describe earlier builds.
+
 
 ## Current state: build 52 with testers, waiting on a ride
 

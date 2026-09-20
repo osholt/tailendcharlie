@@ -36,6 +36,66 @@ permissions by design.
 - ...
 ```
 
+## iOS build 98 / Android build 98 — 1.0.1 — 20 September 2026
+
+This build brings together the feedback from the France trip.
+
+### What to test
+
+1. Without CarPlay, start navigation, go Home, lock and unlock the phone, then
+   return to TEC several times. Repeat while recording and while idle. Check
+   that the ride remains active and the recorded track stays continuous.
+2. Choose **Settings → Riding display size → Small, Medium or Large**. Compare
+   turn directions in portrait and landscape. Small retains the original size;
+   enlarged modes prioritise the direction over extra road text.
+3. Check side roads on the dark map in daylight. Check moving riders' pointed
+   markers while the map rotates; initials and emoji should remain upright.
+4. Listen to metric prompts: distances should use 50/100-metre steps, whole
+   kilometres should sound natural, and a delayed prompt should use the current
+   distance. British hundreds should include “and”.
+5. In **Ride Library**, switch between **Imported**, **Recorded** and **Rides**.
+   Try the map view, tap a route, search a name or place, and filter by length
+   or ride rating. Pan the map and choose **In this area** to narrow the list.
+6. Check heatmap continuity at riding zoom and coverage at country scale. Revisit
+   the French roundabouts, ambiguous straight junctions and missing speed-limit
+   stretches with ride diagnostics enabled.
+
+### Changed
+
+- Removes the iOS protected-data callback's invalid superclass call. This is
+  the exact exception found in the build 97 crash reports, including phones
+  without CarPlay.
+- Three riding guidance sizes, shorter enlarged directions, brighter and wider
+  dark-map roads, and direction-aware rider markers.
+- Spoken distances refresh before output, use simpler metric steps and British
+  hundreds, and suppress stale prompts after a turn has passed.
+- Nearby turns no longer distort a roundabout's exit direction. Explicit
+  straight instructions and ambiguous forward forks receive guidance.
+- Speed-limit lookahead uses the local tangent of a curved matched road instead
+  of rejecting it because the road's far end points elsewhere.
+- The tabbed library gains interactive route selection, name/place, distance,
+  rating and visible-area filters, plus offline French place labels.
+- Heatmap samples blend continuously, and the relay accepts bounded country
+  views covering Britain and France.
+
+### Known limitations
+
+- Physical ride validation is still required. Automated tests and a reproduced
+  native exception do not establish that every background crash is resolved.
+- Some French roads have no posted speed limit in the routing data. These still
+  show a dash. A speed bump alone is not treated as cancelling a signed limit;
+  the app does not invent a limit from an assumed town boundary or road type.
+- The reported roundabout exit-count error is still under investigation.
+  Reconstructed recordings show provider disagreements around service-road
+  exits; this build does not subtract exits without supporting evidence.
+- A marker only points when a recent moving fix supplies a valid course. At
+  rest or with stale data, it uses a neutral shape.
+- Rating filters apply to completed rides with ratings. Imported routes can be
+  filtered by name/place, length and map area. Uncached basemaps need a network
+  connection; saved route geometry remains selectable offline.
+- Public heatmaps still require enough distinct contributors and preserve their
+  privacy trimming and daily snapshot schedule. Sparse areas can remain empty.
+
 ## iOS build 96 / Android build 96 — 1.0.1 — 16 September 2026
 
 This build removes background map work that continued after a route lost focus
