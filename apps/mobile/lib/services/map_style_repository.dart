@@ -281,13 +281,13 @@ class MapStyleRepository {
   // night did not.
   static const _roadPath = '#22272C';
   static const _roadRail = '#2A2F35';
-  static const _roadService = '#A4ADB6';
-  static const _roadMinor = '#BDC7D1';
-  static const _roadTertiary = '#CBD4DD';
-  static const _roadSecondary = '#D6DFE8';
-  static const _roadPrimary = '#E4EAF0';
-  static const _roadTrunk = '#F2F5F8';
-  static const _roadMotorway = '#FFFFFF';
+  static const _roadService = '#343A42';
+  static const _roadMinor = '#484F58';
+  static const _roadTertiary = '#545A64';
+  static const _roadSecondary = '#5D646D';
+  static const _roadPrimary = '#676D77';
+  static const _roadTrunk = '#71767F';
+  static const _roadMotorway = '#7A7F86';
 
   /// Roads read as slabs with a dark edge rather than as outlines. The fetched
   /// style did the opposite: a light casing around a black or near-black inner
@@ -600,106 +600,74 @@ class MapStyleRepository {
     'aeroway-runway': {'line-color': _groundAerowayRunway},
     'aeroway-runway-casing': {'line-color': _groundAerowayCasing},
     'aeroway-taxiway': {'line-color': _groundAerowayTaxiway},
+    // Original provider widths also replace the widened build-98/99 values
+    // in cached styles, so an offline upgrade restores the road hierarchy.
     // Roads.
     'highway_path': {'line-color': _roadPath},
     'highway_minor': {
       'line-color': _minorClassColor,
       'line-opacity': 1,
       'line-width': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        12,
-        1.5,
-        14,
-        3.5,
-        16,
-        7,
-        18,
+        "interpolate",
+        ["exponential", 1.55],
+        ["zoom"],
         13,
+        1.8,
         20,
-        26,
+        20,
       ],
     },
     'highway_major_casing': {
       'line-color': _roadCasing,
       'line-width': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        8,
-        2.5,
-        12,
-        4.5,
-        14,
-        7,
-        16,
-        11,
-        18,
-        19,
+        "interpolate",
+        ["exponential", 1.3],
+        ["zoom"],
+        10,
+        3,
         20,
-        32,
+        23,
       ],
     },
     'highway_major_inner': {
       'line-color': _majorClassColor,
       'line-width': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        8,
-        1.5,
-        12,
-        3,
-        14,
-        5,
-        16,
-        9,
-        18,
-        16,
+        "interpolate",
+        ["exponential", 1.3],
+        ["zoom"],
+        10,
+        2,
         20,
-        28,
+        20,
       ],
     },
     'highway_major_subtle': {'line-color': _roadSecondary},
     'highway_motorway_casing': {
       'line-color': _roadCasing,
       'line-width': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
+        "interpolate",
+        ["exponential", 1.4],
+        ["zoom"],
+        5.8,
+        0,
         6,
-        2.5,
-        10,
-        4,
-        14,
-        8,
-        16,
-        13,
-        18,
-        26,
+        3,
         20,
-        44,
+        40,
       ],
     },
     'highway_motorway_inner': {
       'line-color': _roadMotorway,
       'line-width': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
+        "interpolate",
+        ["exponential", 1.4],
+        ["zoom"],
+        4,
+        2,
         6,
-        1.5,
-        10,
-        2.5,
-        14,
-        6,
-        16,
-        10,
-        18,
-        22,
+        1.3,
         20,
-        38,
+        30,
       ],
     },
     'highway_motorway_subtle': {'line-color': _roadMotorway},
