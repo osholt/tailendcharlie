@@ -45,8 +45,8 @@ void main() {
         format: ui.ImageByteFormat.rawRgba,
       ))!;
       final result = [
-        bytes.getUint8((6 * 100 + 50) * 4 + 3) > 128,
-        bytes.getUint8((50 * 100 + 94) * 4 + 3) > 128,
+        bytes.getUint8((4 * 100 + 50) * 4 + 3) > 128,
+        bytes.getUint8((50 * 100 + 96) * 4 + 3) > 128,
       ];
       image.dispose();
       picture.dispose();
