@@ -10,6 +10,96 @@ import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/features/map/rider_symbol_picker.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('travel arrows require a current moving fix with a valid course', () {
+    double? heading(double? course, double? speed, {bool fresh = true}) =>
+        riderTravelHeading(
+          headingDegrees: course,
+          speedMetersPerSecond: speed,
+          fresh: fresh,
+        );
+    expect(heading(0, 10), 0);
+    expect(heading(270, 10), 270);
+    expect(heading(45, 1.5), 45);
+    for (final course in [null, -1.0, 360.0, double.nan, double.infinity]) {
+      expect(heading(course, 10), isNull);
+    }
+    for (final speed in [null, -1.0, 0.0, 1.4, double.nan]) {
+      expect(heading(90, speed), isNull);
+    }
+    expect(heading(90, 20, fresh: false), isNull);
+  });
+
+  test('point follows travel relative to the map bearing', () async {
+    Future<List<bool>> tips(double? heading, double mapBearing) async {
+      final recorder = ui.PictureRecorder();
+      RiderMarkerShapePainter(
+        color: Colors.red,
+        borderWidth: 0,
+        headingDegrees: heading,
+        mapBearingDegrees: mapBearing,
+      ).paint(Canvas(recorder), const Size.square(100));
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(100, 100);
+      final bytes = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
+      final result = [
+        bytes.getUint8((6 * 100 + 50) * 4 + 3) > 128,
+        bytes.getUint8((50 * 100 + 94) * 4 + 3) > 128,
+      ];
+      image.dispose();
+      picture.dispose();
+      return result;
+    }
+
+    expect(await tips(0, 0), [true, false]);
+    expect(await tips(90, 0), [false, true]);
+    expect(await tips(90, 90), [true, false]);
+    expect(await tips(null, 0), [false, false]);
+  });
+
+  testWidgets('map badge rotates its background and keeps identity upright', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Center(
+          child: RiderMarkerBadge(
+            style: MotorcycleIconStyle.scrambler,
+            badgeColor: Colors.teal,
+            symbol: RiderSymbol.initials(),
+            displayName: 'Keith Simmonds',
+            mapMarker: true,
+            headingDegrees: 90,
+            mapBearingDegrees: 30,
+          ),
+        ),
+      ),
+    );
+    final text = find.text('KS');
+    expect(text, findsOneWidget);
+    expect(
+      find.ancestor(of: text, matching: find.byType(Transform)),
+      findsNothing,
+    );
+    final paint = tester.widget<CustomPaint>(
+      find
+          .ancestor(
+            of: text,
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is CustomPaint &&
+                  widget.painter is RiderMarkerShapePainter,
+            ),
+          )
+          .first,
+    );
+    final painter = paint.painter! as RiderMarkerShapePainter;
+    expect(painter.headingDegrees, 90);
+    expect(painter.mapBearingDegrees, 30);
+  });
+
   test('initials use first and last names, or two letters from one name', () {
     expect(riderInitials('Keith Simmonds'), 'KS');
     expect(riderInitials('  Katherine   L  '), 'KL');
