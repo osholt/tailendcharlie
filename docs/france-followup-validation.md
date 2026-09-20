@@ -24,7 +24,12 @@ Automated evidence below is distinct from physical ride validation.
 ## Verification scope
 
 Each issue received focused unit/widget tests and applicable analysis. The
-combined full-suite/build results and release run links are recorded on #802.
+combined local suite passes 2,248 mobile tests (24 existing skips), 163 server
+tests and 92 website tests. Flutter analysis and server lint/format checks pass.
+Migration 0012 upgrades, downgrades and upgrades again on a disposable database,
+and Alembic reports no missing model migration. The full PostgreSQL migration,
+native iOS, Android and container checks run on the protected release PR.
+Build results and release run links are recorded on #802.
 The iOS live map uses Flutter to avoid the prior native-renderer crash. Its downloader and live renderer now share a persistent resource cache; a fresh cache instance reloads styles, TileJSON, PBFs and sprites without any network calls. Native Android uses MapLibre regions. The new server schema is additive. Migration 0012 creates only the coarse ETA
 profile table; profile deletion and 90-day expiry have server tests.
 
