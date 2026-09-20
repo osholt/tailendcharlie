@@ -229,6 +229,9 @@ void main() {
       basemapConfiguration: basemap,
     );
 
+    // An unavailable filesystem must release the live preview fallback.
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
     expect(find.byType(FlutterVectorRoutePreview), findsOneWidget);
     await tester.tap(
       find.byKey(const Key('stored-route-candidate-recorded:12')),
