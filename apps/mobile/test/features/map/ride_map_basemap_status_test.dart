@@ -85,6 +85,46 @@ void main() {
     await tester.pump();
   }
 
+  testWidgets('changing day/night appearance reloads the map dependencies', (
+    tester,
+  ) async {
+    final store = InMemoryRouteStore();
+    final cache = cacheFor(_mapLibre);
+    addTearDown(cache.dispose);
+    var resolutions = 0;
+    Future<void> show(BasemapConfiguration configuration) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapFeature(
+            routeStore: store,
+            offlineTileCache: cache,
+            mapStyleString: MapStyleRepository.fallbackStyle,
+            basemapConfiguration: configuration,
+            onMapStyleResolved: (_) => resolutions++,
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    const day = BasemapConfiguration(
+      styleUrl: 'https://example.test/day.json',
+      darkStyleUrl: 'https://example.test/night.json',
+      attribution: 'Test map',
+    );
+    await show(day);
+    expect(resolutions, 1);
+    await show(day.forBrightness(dark: true));
+    expect(
+      resolutions,
+      2,
+      reason: 'a theme change must not keep the previous resolved style',
+    );
+    await show(day.forBrightness(dark: false, restrainedLightStyle: false));
+    expect(resolutions, 3);
+    await unmount(tester);
+  });
+
   testWidgets('a style that could not be fetched says so on the map', (
     tester,
   ) async {

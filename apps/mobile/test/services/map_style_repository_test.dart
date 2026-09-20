@@ -530,13 +530,13 @@ void main() {
         'motorway': 2.32,
       };
       const after = <String, double>{
-        'service/track': 2.78,
-        'minor': 4.45,
-        'tertiary': 5.23,
-        'secondary': 6.12,
-        'primary': 7.1,
-        'trunk': 8.18,
-        'motorway': 9.36,
+        'service/track': 8.19,
+        'minor': 10.87,
+        'tertiary': 12.42,
+        'secondary': 13.82,
+        'primary': 15.37,
+        'trunk': 17.02,
+        'motorway': 18.63,
       };
 
       expect(after.keys, MapStyleRepository.darkBasemapRoadRamp);

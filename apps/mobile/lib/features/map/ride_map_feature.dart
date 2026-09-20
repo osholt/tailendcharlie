@@ -733,7 +733,11 @@ class _RideMapFeatureState extends State<RideMapFeature> {
   @override
   void didUpdateWidget(RideMapFeature oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.routeStore, widget.routeStore) ||
+    if (oldWidget.basemapConfiguration.styleUrl !=
+            widget.basemapConfiguration.styleUrl ||
+        oldWidget.basemapConfiguration.restrainedLightStyle !=
+            widget.basemapConfiguration.restrainedLightStyle ||
+        !identical(oldWidget.routeStore, widget.routeStore) ||
         !identical(oldWidget.offlineTileCache, widget.offlineTileCache) ||
         oldWidget.mapStyleString != widget.mapStyleString ||
         !identical(
