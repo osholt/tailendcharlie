@@ -36,6 +36,73 @@ permissions by design.
 - ...
 ```
 
+## iOS build 99 / Android build 99 — 1.0.1 — 20 September 2026
+
+This follow-up addresses the second set of France-trip feedback. The background
+crash fix from build 98 has now been confirmed by the reporter.
+
+### What to test
+
+1. View the personal heatmap over England and France, then zoom into old and
+   recent rides. The complete saved history should remain represented.
+2. Check the brighter dark roads and place labels. Fuel appears from zoom 11,
+   food from zoom 12, and lodging/parking/toilets from zoom 13 on the default map;
+   labels still avoid collisions. Stationary bikes are round, moving bikes point.
+3. Prepare a route while connected. Open its offline-map status and wait for
+   completion before going offline. Test both appearances along the route and
+   within the two-kilometre corridor. Retry an interrupted download.
+4. In **Ride Library**, use **Imported**, **Rides**, and **Bin**. Rename entries,
+   move them to the bin and restore them. Add tags, folders and map colours;
+   use the folder/tag filters. Recorded and completed rides share one tab.
+5. Open a completed ride to compare planned and actual tracks, distance, elapsed
+   time and estimated travel time excluding long breaks. Legacy rides can be
+   linked explicitly to an imported GPX with **Link imported GPX**.
+6. Choose **Make a corrected copy**, mark two points on its map and try trimming,
+   removing stationary wander, or replacing a section by road. Save the copy;
+   the original remains available. Road replacement requires connectivity.
+7. Revisit library thumbnails offline after viewing them online. Pan the full
+   ride preview and check its start/end markers stay attached to the track.
+8. Choose Medium or Large riding text and check the ETA card too. Use the direct
+   ride menu and the section shortcuts on the single Settings page.
+
+### Changed
+
+- The heatmap adapts its resolution to retain older history instead of stopping
+  after the first 20,000 high-resolution cells.
+- Automatic route-map preparation downloads day/night maps at navigation zooms
+  through overlapping sections, with a nearby buffer, progress, cancellation,
+  retry and removal. Completed sections are reused after interruption.
+- The library preserves organisation, bin state and original-plan links across
+  recording checkpoints and replay. Share links omit personal organisation.
+- Static library previews save their rendered image on the phone after map
+  resources finish loading, with bounded storage and refresh when the route,
+  colour or appearance changes.
+- Reusing a saved route retains its original routing-service duration. Personal
+  ETA learning uses suitable completed rides and excludes long breaks, major
+  detours and recordings with excessive unknown time. Settings can disable or
+  reset personal learning.
+- Anonymous motorcycle ETA contribution is a separate switch, **off by default**.
+  Only coarse ratios are shared; public adjustments require at least 20 profiles.
+  No raw routes or trip times are uploaded for this feature.
+
+### Known limitations
+
+- Offline maps need a completed download first. Very long tours may need daily
+  sections; downloads are bounded by tile count and 500 MB per operation, with a 1 GB total Flutter map cache. Map
+  downloads do not add an offline routing engine: searching, new road routing,
+  and major reroutes can still need a connection. Custom providers need offline
+  permission. Field validation remains necessary on both platforms.
+- Library thumbnail images are cached; interactive full-screen maps still use
+  map resources. Existing missing history cannot be reconstructed if its source
+  recording has already been removed from the device.
+- The two supplied recordings include substantial GPS gaps. Their diagnostic
+  timing comparison is documented, but they are excluded from automatic ETA
+  training. Learning starts after three suitable rides in a road-mix band and
+  adjusts conservatively; there is no claim of Waze-equivalent traffic modelling.
+- The earlier unresolved provider exit-count and missing speed-limit-data
+  limitations remain. Direct-sunlight readability and moving navigation require
+  another physical ride to validate.
+
 ## iOS build 98 / Android build 98 — 1.0.1 — 20 September 2026
 
 This build brings together the feedback from the France trip.
