@@ -126,6 +126,46 @@ void main() {
     },
   );
 
+  test(
+    'dark roads stay wide at riding zoom and cached upgrades work offline',
+    () async {
+      final repository = MapStyleRepository(
+        directory: directory,
+        configuration: _darkConfiguration,
+        client: MockClient(
+          (_) async => http.Response(jsonEncode(_darkStyleFixture), 200),
+        ),
+      );
+      final live = await repository.resolve();
+      final cachedFile = (await directory.list().toList())
+          .whereType<File>()
+          .single;
+      // Simulate an older cached paint document, retaining real sources.
+      final old = jsonDecode(live.style) as Map<String, dynamic>;
+      final minor = (old['layers'] as List).cast<Map>().singleWhere(
+        (l) => l['id'] == 'highway_minor',
+      );
+      (minor['paint'] as Map)['line-width'] = 1;
+      (minor['paint'] as Map)['line-color'] = '#484F58';
+      await cachedFile.writeAsString(jsonEncode(old));
+      final offline = MapStyleRepository(
+        directory: directory,
+        configuration: _darkConfiguration,
+        client: MockClient((_) async => throw StateError('Offline')),
+      );
+      final cached = await offline.resolve();
+      expect(cached.outcome, MapStyleOutcome.cached);
+      final layers = (jsonDecode(cached.style)['layers'] as List).cast<Map>();
+      Map paintOf(String id) =>
+          layers.singleWhere((l) => l['id'] == id)['paint'] as Map;
+      final width = paintOf('highway_minor')['line-width'] as List;
+      expect(_linearWidthAt(width, 14), greaterThanOrEqualTo(3));
+      expect(_linearWidthAt(width, 16), greaterThanOrEqualTo(6));
+      expect(paintOf('highway_minor')['line-color'], isNot('#484F58'));
+      expect(jsonDecode(cached.style)['sources'], old['sources']);
+    },
+  );
+
   test('splits the one major-road layer back into a class ramp', () async {
     // The fetched dark style paints trunk, primary, secondary and tertiary from
     // a single layer in a single colour, so an A road and a country lane looked
@@ -490,13 +530,13 @@ void main() {
         'motorway': 2.32,
       };
       const after = <String, double>{
-        'service/track': 1.62,
-        'minor': 2.25,
-        'tertiary': 2.68,
-        'secondary': 3.11,
-        'primary': 3.57,
-        'trunk': 4.08,
-        'motorway': 4.62,
+        'service/track': 2.78,
+        'minor': 4.45,
+        'tertiary': 5.23,
+        'secondary': 6.12,
+        'primary': 7.1,
+        'trunk': 8.18,
+        'motorway': 9.36,
       };
 
       expect(after.keys, MapStyleRepository.darkBasemapRoadRamp);
@@ -866,3 +906,15 @@ const _lightConfiguration = BasemapConfiguration(
   cacheNamespace: BasemapConfiguration.defaultCacheNamespace,
   persistentCachingAllowed: true,
 );
+
+double _linearWidthAt(List expression, double zoom) {
+  for (var i = 3; i < expression.length - 2; i += 2) {
+    final z0 = (expression[i] as num).toDouble();
+    final z1 = (expression[i + 2] as num).toDouble();
+    if (zoom > z1) continue;
+    final v0 = (expression[i + 1] as num).toDouble();
+    final v1 = (expression[i + 3] as num).toDouble();
+    return v0 + (v1 - v0) * ((zoom - z0) / (z1 - z0)).clamp(0, 1);
+  }
+  return (expression.last as num).toDouble();
+}

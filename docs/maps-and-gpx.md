@@ -438,6 +438,20 @@ parsed layers in hand. Two things about the fetched style caused this:
   (`rgba(60,60,60,0.8)`) around a black or near-black inner fill
   (`hsl(0,0%,7%)`, interpolating to `#000` for motorways).
 
+#### France sunlight follow-up (#776)
+
+The September field ride showed that the earlier palette still lost side roads
+in direct sunlight. The road ramp now runs from `#535D67` for service roads to
+`#AFB9C3` for motorways, with residential/unclassified roads at `#737D87`.
+Minor roads are 3.5 px at zoom 14 and 7 px at zoom 16; major roads retain wider
+fills and dark casings. Road labels use `#EDF1F6` with dark halos. The light
+style and saturated route/hazard colours are unchanged.
+
+The same paint is applied to existing cached dark styles, preserving offline
+availability. Palette contrast and width/cache regression tests cover the
+change; mounted-phone sunlight readability still requires physical validation.
+The tables and screenshots below describe the earlier July audit.
+
 #### Two bands
 
 Every surface now belongs to a **ground band** or a **road band**, and the bands
