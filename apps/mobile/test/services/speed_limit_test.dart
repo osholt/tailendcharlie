@@ -691,7 +691,7 @@ void main() {
   });
 
   test('keeps French posted limits in kilometres per hour', () async {
-    for (final kilometresPerHour in const [50, 80, 110, 130]) {
+    for (final kilometresPerHour in const [20, 30, 50, 80, 110, 130]) {
       final harness = build(
         trace: traceBody(speedLimitKph: kilometresPerHour, countryCode: 'FR'),
       );
@@ -765,6 +765,55 @@ void main() {
     expect(results.map((result) => result.roadId).toSet(), hasLength(3));
   });
 
+  test('prefetch uses the local tangent of a curved French road', () async {
+    // Northbound approach, followed by an eastbound bend on the same edge.
+    final body = jsonDecode(
+      traceBody(speedLimitKph: 30, countryCode: 'FR', heading: 90),
+    );
+    body['shape'] = _encodeShape(const [
+      [48, 2],
+      [48.001, 2],
+      [48.001, 2.002],
+    ]);
+    body['edges'][0].addAll({
+      'way_id': 101,
+      'begin_shape_index': 0,
+      'end_shape_index': 2,
+      'begin_heading': 0,
+    });
+    final harness = build(trace: jsonEncode(body));
+    final results = await harness.provider.prefetch(
+      locations: [
+        location(48.0005, longitude: 2, headingDegrees: 0),
+        location(48.001, longitude: 2.001, headingDegrees: 90),
+      ],
+    );
+    expect(results, hasLength(2));
+    expect(results.map((r) => r.result.limit?.kilometresPerHour), [30, 30]);
+    expect(results.map((r) => r.headingDegrees), [
+      closeTo(0, 1),
+      closeTo(90, 1),
+    ]);
+    final attributes =
+        (harness.traceRequests.single['filters'] as Map)['attributes'] as List;
+    expect(
+      attributes,
+      containsAll(['shape', 'edge.begin_shape_index', 'edge.end_shape_index']),
+    );
+
+    final opposite = await harness.provider.prefetch(
+      locations: [
+        location(48.0005, longitude: 2, headingDegrees: 180),
+        location(48.001, longitude: 2.001, headingDegrees: 270),
+      ],
+    );
+    expect(
+      opposite,
+      isEmpty,
+      reason: 'the opposite carriageway must still be rejected',
+    );
+  });
+
   test('derives the candidate endpoint from the configured lookup URL', () {
     expect(
       const ValhallaSpeedLimitConfiguration(lookupUri: null).candidateUri,
@@ -783,4 +832,27 @@ void main() {
       Uri.parse('https://host.example/valhalla/locate'),
     );
   });
+}
+
+String _encodeShape(List<List<double>> points) {
+  final output = StringBuffer();
+  var lastLat = 0, lastLon = 0;
+  void write(int difference) {
+    var value = difference < 0 ? ~(difference << 1) : difference << 1;
+    while (value >= 0x20) {
+      output.writeCharCode((0x20 | (value & 0x1f)) + 63);
+      value >>= 5;
+    }
+    output.writeCharCode(value + 63);
+  }
+
+  for (final point in points) {
+    final latitude = (point[0] * 1e6).round(),
+        longitude = (point[1] * 1e6).round();
+    write(latitude - lastLat);
+    write(longitude - lastLon);
+    lastLat = latitude;
+    lastLon = longitude;
+  }
+  return output.toString();
 }

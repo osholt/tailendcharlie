@@ -7,6 +7,17 @@ import XCTest
 
 class RunnerTests: XCTestCase {
 
+  @MainActor
+  func testProtectedDataAvailableWithoutCarPlayOrFlutterEngine() {
+    let delegate = AppDelegate()
+    // Exercise the callback iOS delivers when protected data becomes available.
+    // The old super call raises an Objective-C exception and kills this host.
+    for _ in 0..<3 {
+      delegate.applicationProtectedDataDidBecomeAvailable(UIApplication.shared)
+    }
+    XCTAssertNil(delegate.carPlaySceneDelegate)
+  }
+
   func testExample() {
     // If you add code to the Runner application, consider adding tests here.
     // See https://developer.apple.com/documentation/xctest for more information about using XCTest.
