@@ -330,7 +330,12 @@ class UnitSettingsSheet extends StatelessWidget {
                   .map(
                     (mode) => ButtonSegment<MapStyleMode>(
                       value: mode,
-                      label: Text(mode.label),
+                      tooltip: mode.label,
+                      label: Text(switch (mode) {
+                        MapStyleMode.system => 'Device',
+                        MapStyleMode.sunriseSunset => 'Sun',
+                        _ => mode.label,
+                      }),
                     ),
                   )
                   .toList(growable: false),
