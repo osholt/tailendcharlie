@@ -1382,6 +1382,10 @@ class _RideMapScreenState extends State<RideMapScreen>
   // out frame so the camera's forward bias is derived from the real geometry
   // rather than from assumed overlay heights.
   final GlobalKey _mapViewportKey = GlobalKey();
+  final GlobalKey _etaOcclusionKey = GlobalKey();
+  final GlobalKey _speedOcclusionKey = GlobalKey();
+  final GlobalKey _miniMapOcclusionKey = GlobalKey();
+  String _lastOcclusionLayout = '';
   final GlobalKey _bottomChromeKey = GlobalKey();
   final GlobalKey _landscapeGuidanceKey = GlobalKey();
   double? _smoothedNavigationSpeedMetersPerSecond;
@@ -2851,13 +2855,16 @@ class _RideMapScreenState extends State<RideMapScreen>
               trend: widget.tecGapTrend?.value ?? TecGapTrend.unknown,
             )
           : null;
-      final miniMap = canShowGroupMiniMap
+      final groupMiniMap = canShowGroupMiniMap
           ? _buildGroupMiniMap(
               overlays: overlays,
               width: groupMiniMapWidth,
               height: groupMiniMapHeight,
             )
           : null;
+      final miniMap = groupMiniMap == null
+          ? null
+          : KeyedSubtree(key: _miniMapOcclusionKey, child: groupMiniMap);
       final routeProgressPanel =
           !widget.showRouteProgress ||
               markerOverviewActive ||
@@ -2881,21 +2888,25 @@ class _RideMapScreenState extends State<RideMapScreen>
                 );
                 return progress == null
                     ? const SizedBox.shrink()
-                    : RouteProgressPanel(
-                        progress: progress,
-                        distanceUnit: widget.distanceUnit,
-                        displaySize: widget.ridingDisplaySize,
-                        // The time is now a consistent map label in both
-                        // orientations rather than changing hierarchy with the
-                        // ETA card.
-                        showClock: false,
-                        // Free roam only. A ride's route belongs to the group
-                        // and leaves through LEAVE / the ride menu; out here
-                        // the route is the rider's own and the card that says
-                        // "you are navigating" carries the way to stop (#615).
-                        onStop: widget.hostChrome != null && widget.canEditRoute
-                            ? () => unawaited(_stopFreeRoamNavigation())
-                            : null,
+                    : KeyedSubtree(
+                        key: _etaOcclusionKey,
+                        child: RouteProgressPanel(
+                          progress: progress,
+                          distanceUnit: widget.distanceUnit,
+                          displaySize: widget.ridingDisplaySize,
+                          // The time is now a consistent map label in both
+                          // orientations rather than changing hierarchy with the
+                          // ETA card.
+                          showClock: false,
+                          // Free roam only. A ride's route belongs to the group
+                          // and leaves through LEAVE / the ride menu; out here
+                          // the route is the rider's own and the card that says
+                          // "you are navigating" carries the way to stop (#615).
+                          onStop:
+                              widget.hostChrome != null && widget.canEditRoute
+                              ? () => unawaited(_stopFreeRoamNavigation())
+                              : null,
+                        ),
                       );
               },
             );
@@ -3208,15 +3219,18 @@ class _RideMapScreenState extends State<RideMapScreen>
             );
       final speedCluster = speedLimit == null
           ? null
-          : Row(
-              key: const Key('speed-compass-cluster'),
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ?compass,
-                if (compass != null) const SizedBox(width: 8),
-                speedLimit,
-              ],
+          : KeyedSubtree(
+              key: _speedOcclusionKey,
+              child: Row(
+                key: const Key('speed-compass-cluster'),
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ?compass,
+                  if (compass != null) const SizedBox(width: 8),
+                  speedLimit,
+                ],
+              ),
             );
       final followMe = showFollowMe
           ? FloatingActionButton.extended(
@@ -4291,6 +4305,23 @@ class _RideMapScreenState extends State<RideMapScreen>
   void _recordBottomChromeHeight() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // Initial fitting owns the first camera move. Starting a second move
+      // before FlutterMap finishes that fit gets overwritten and throttles the
+      // real follow request. Reframe changed chrome only after arrival.
+      final layout = _navigationOcclusions.toString();
+      if (layout != _lastOcclusionLayout) {
+        _lastOcclusionLayout = layout;
+        if (_navigationMode &&
+            _cameraArrivedAtCommandedViewport &&
+            _effectivePosition != null) {
+          unawaited(
+            _followNavigationCamera(
+              force: true,
+              transitionDuration: Duration.zero,
+            ),
+          );
+        }
+      }
       final measured = _bottomChromeHeightPixels;
       if (measured == _measuredBottomChromeHeight) return;
       setState(() => _measuredBottomChromeHeight = measured);
@@ -4325,6 +4356,24 @@ class _RideMapScreenState extends State<RideMapScreen>
   /// Height of the wider bottom-right landscape guidance rail, including its
   /// margin from the display edge. The camera uses this exactly as portrait
   /// uses its bottom band whenever the card extends beneath the rider anchor.
+  List<Rect> get _navigationOcclusions {
+    final viewport = _mapViewportKey.currentContext?.findRenderObject();
+    if (viewport is! RenderBox || !viewport.hasSize) return const [];
+    final origin = viewport.localToGlobal(Offset.zero);
+    return [
+      for (final key in [
+        _bottomChromeKey,
+        _landscapeGuidanceKey,
+        _etaOcclusionKey,
+        _speedOcclusionKey,
+        _miniMapOcclusionKey,
+      ])
+        if (key.currentContext?.findRenderObject() case final RenderBox box
+            when box.hasSize)
+          (box.localToGlobal(Offset.zero) - origin) & box.size,
+    ];
+  }
+
   double get _landscapeGuidanceHeightPixels {
     final height = _landscapeGuidanceKey.currentContext?.size?.height;
     return height == null ? 0 : height + 10;
@@ -4359,6 +4408,8 @@ class _RideMapScreenState extends State<RideMapScreen>
                     _overlayBottomInsetPixels) /
                 viewportHeight,
       leftHandTraffic: _routeUsesLeftHandTraffic,
+      occlusions: _navigationOcclusions,
+      topInsetPixels: MediaQuery.paddingOf(context).top,
     );
     // MapLibre is tilted, so the bias is the perspective look-ahead the plan
     // solved. FlutterMap is flat, so it is a straight ground offset at that
@@ -5391,6 +5442,18 @@ class _RideMapScreenState extends State<RideMapScreen>
       // scale. It goes into the target rather than into the call's screen-space
       // `offset`, which is silently dropped whenever the bearing has not
       // changed - the common case once the rotation deadband is holding.
+      if (cameraDuration == Duration.zero) {
+        _mapController.stopAnimationRaw();
+        _mapController.moveAndRotate(
+          _latLng(framing.target),
+          cameraPlan.zoom,
+          flutterMapRotationForBearing(
+            bearingDegrees: cameraBearing,
+            currentRotationDegrees: _mapController.camera.rotation,
+          ),
+        );
+        return;
+      }
       _mapController.moveAndRotateAnimatedRaw(
         _latLng(framing.target),
         cameraPlan.zoom,
