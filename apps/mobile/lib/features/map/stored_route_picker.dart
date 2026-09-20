@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'ride_library_browser.dart';
+
 import '../../domain/completed_ride.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
@@ -228,6 +230,87 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     required String heading,
     required String emptyTitle,
     required String emptyBody,
+  }) => RideLibraryBrowser(
+    key: ValueKey('browser-$heading'),
+    distanceUnit: widget.distanceUnit,
+    basemap: widget.basemapConfiguration,
+    entries: [
+      for (final candidate in candidates)
+        RideLibraryEntry(
+          id: candidate.id,
+          title: candidate.title,
+          locationLabel: approximateEndpointLabel(
+            index: places,
+            start: candidate.startPoint,
+            end: candidate.endPoint,
+          ),
+          distanceMeters: routeLengthMeters(candidate.geometry),
+          paths: [for (final path in candidate.geometry.paths) path.points],
+          open: () => _chooseOptions(candidate),
+        ),
+    ],
+    listBuilder: (ids, filtered) => _routeListBody(
+      candidates: candidates
+          .where((candidate) => ids.contains(candidate.id))
+          .toList(),
+      places: places,
+      heading: heading,
+      emptyTitle: emptyTitle,
+      emptyBody: emptyBody,
+    ),
+  );
+
+  Widget _rideList({
+    required List<CompletedRide> rides,
+    required List<CompletedRide> archived,
+    required List<CompletedRide> deleted,
+    required ApproximatePlaceIndex places,
+  }) => RideLibraryBrowser(
+    key: const ValueKey('browser-previous-rides'),
+    distanceUnit: widget.distanceUnit,
+    basemap: widget.basemapConfiguration,
+    allowRating: true,
+    entries: [
+      for (final ride in rides)
+        RideLibraryEntry(
+          id: ride.rideId,
+          title: ride.title,
+          rating: ride.rating,
+          locationLabel: _rideLocation(ride, places),
+          distanceMeters: ride.totalDistanceMeters,
+          paths: [
+            for (final path
+                in (ride.traveledRoute ?? ride.plannedRoute)?.paths ?? [])
+              path.points,
+          ],
+          open: () => _openRide(ride),
+        ),
+    ],
+    listBuilder: (ids, filtered) => _rideListBody(
+      rides: rides.where((ride) => ids.contains(ride.rideId)).toList(),
+      archived: filtered ? [] : archived,
+      deleted: filtered ? [] : deleted,
+      places: places,
+    ),
+  );
+
+  String _rideLocation(CompletedRide ride, ApproximatePlaceIndex places) {
+    final paths = (ride.traveledRoute ?? ride.plannedRoute)?.paths
+        .where((path) => path.points.isNotEmpty)
+        .toList();
+    return approximateEndpointLabel(
+      index: places,
+      start: paths?.firstOrNull?.points.first,
+      end: paths?.lastOrNull?.points.last,
+    );
+  }
+
+  Widget _routeListBody({
+    required List<StoredRouteCandidate> candidates,
+    required ApproximatePlaceIndex places,
+    required String heading,
+    required String emptyTitle,
+    required String emptyBody,
   }) => ListView(
     key: PageStorageKey<String>('ride-library-$heading'),
     padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
@@ -246,7 +329,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     ],
   );
 
-  Widget _rideList({
+  Widget _rideListBody({
     required List<CompletedRide> rides,
     required List<CompletedRide> archived,
     required List<CompletedRide> deleted,
