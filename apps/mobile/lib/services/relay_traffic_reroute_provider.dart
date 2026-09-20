@@ -233,6 +233,8 @@ class RelayTrafficRerouteProvider {
     final destinationPoint = alternative.points.last;
     final route = ImportedRoute(
       id: _idFactory(),
+      sourceRouteId: original.sourceRouteId ?? original.id,
+      organisation: original.organisation,
       name: '${original.name} · traffic alternative',
       description:
           'Leader-reviewed TomTom traffic alternative calculated '

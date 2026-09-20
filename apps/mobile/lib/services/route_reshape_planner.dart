@@ -45,6 +45,8 @@ class RouteReshapePlanner {
         .firstOrNull;
     final reshaped = ImportedRoute(
       id: route.id,
+      sourceRouteId: route.sourceRouteId ?? route.id,
+      organisation: route.organisation,
       name: route.name,
       description: route.description,
       importedAt: route.importedAt,

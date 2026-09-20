@@ -51,6 +51,7 @@ class CompletedRide {
     required this.markerSessions,
     required this.plannedRoute,
     required this.traveledRoute,
+    this.sourceRoute,
     this.libraryName,
     this.rating,
     this.notes,
@@ -75,6 +76,11 @@ class CompletedRide {
   final List<CompletedMarkerSession> markerSessions;
   final ImportedRoute? plannedRoute;
   final ImportedRoute? traveledRoute;
+
+  /// Local snapshot of the original GPX; library edits or binning cannot
+  /// change the historical planned/actual comparison.
+  final ImportedRoute? sourceRoute;
+  ImportedRoute? get comparisonPlan => sourceRoute ?? plannedRoute;
   final String? libraryName;
   final int? rating;
   final String? notes;
@@ -101,7 +107,7 @@ class CompletedRide {
       1;
 
   Iterable<GeoPoint> get mapPoints sync* {
-    if (plannedRoute case final route?) yield* route.allPoints;
+    if (comparisonPlan case final route?) yield* route.allPoints;
     if (traveledRoute case final route?) yield* route.allPoints;
   }
 
@@ -119,6 +125,7 @@ class CompletedRide {
     'eventCount': eventCount,
     'totalDistanceMeters': totalDistanceMeters,
     'markerSessions': markerSessions.map((value) => value.toJson()).toList(),
+    if (sourceRoute != null) 'sourceRoute': sourceRoute!.toJson(),
     if (plannedRoute != null) 'plannedRoute': plannedRoute!.toJson(),
     if (traveledRoute != null) 'traveledRoute': traveledRoute!.toJson(),
     if (libraryName != null) 'libraryName': libraryName,
@@ -161,6 +168,7 @@ class CompletedRide {
               .toList(growable: false),
         _ => const [],
       },
+      sourceRoute: _optionalRoute(json['sourceRoute']),
       plannedRoute: _optionalRoute(json['plannedRoute']),
       traveledRoute: _optionalRoute(json['traveledRoute']),
       libraryName: json['libraryName'] as String?,
@@ -176,6 +184,8 @@ class CompletedRide {
   }
 
   CompletedRide copyWith({
+    ImportedRoute? sourceRoute,
+    ImportedRoute? plannedRoute,
     String? libraryName,
     bool clearLibraryName = false,
     int? rating,
@@ -199,7 +209,8 @@ class CompletedRide {
     eventCount: eventCount,
     totalDistanceMeters: totalDistanceMeters,
     markerSessions: markerSessions,
-    plannedRoute: plannedRoute,
+    sourceRoute: sourceRoute ?? this.sourceRoute,
+    plannedRoute: plannedRoute ?? this.plannedRoute,
     traveledRoute: traveledRoute,
     libraryName: clearLibraryName ? null : libraryName ?? this.libraryName,
     rating: clearRating ? null : rating ?? this.rating,

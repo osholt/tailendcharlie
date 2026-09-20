@@ -74,7 +74,9 @@ void main() {
     now = now.add(const Duration(seconds: 10));
     recorder.record(_point(51.4627, -2.5064, now));
 
+    recorder.start(_route('Rerouted remainder'));
     final checkpoint = recorder.checkpoint()!;
+    expect(checkpoint.plannedRoute?.name, 'Checkpointed ride');
 
     expect(recorder.active, isTrue);
     expect(checkpoint.traveledRoute?.paths.single.points, hasLength(2));

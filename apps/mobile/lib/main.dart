@@ -107,6 +107,7 @@ Future<void> main() async {
     const NearbyBridge(),
     installationId: riderProfile.installationId,
     completedRideStore: completedRides,
+    recordedRouteStore: recordedRoutes,
   );
 
   // The registry is created unconditionally - it is one nullable field - but the

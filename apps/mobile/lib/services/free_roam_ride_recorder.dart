@@ -41,7 +41,7 @@ class FreeRoamRideRecorder {
   bool get active => _plannedRoute != null;
   String? get activeRideId => _rideId;
 
-  /// Starts recording, or updates the plan without splitting an underway trip.
+  /// Starts recording; rerouting preserves the original comparison plan.
   void start(ImportedRoute route, {GeoPoint? initialPosition}) {
     if (!active) {
       _rideId = 'free-roam-${_idFactory()}';
@@ -51,7 +51,7 @@ class FreeRoamRideRecorder {
       _totalDistanceMeters = 0;
       _sampleCount = 0;
     }
-    _plannedRoute = route;
+    _plannedRoute ??= route;
     if (initialPosition != null) record(initialPosition);
   }
 

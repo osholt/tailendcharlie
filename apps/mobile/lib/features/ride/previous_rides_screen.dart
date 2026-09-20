@@ -9,6 +9,9 @@ import '../map/map_camera_guard.dart';
 import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../domain/completed_ride.dart';
+import '../../domain/recorded_route_store.dart';
+import '../../data/json_file_recorded_route_store.dart';
+import '../map/route_review_screen.dart' show routeLengthMeters;
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/completed_ride_sharer.dart';
@@ -168,12 +171,14 @@ class PreviousRideDetailScreen extends StatefulWidget {
     required this.completedRides,
     required this.distanceUnits,
     this.sharer = const SystemCompletedRideSharer(),
+    this.recordedRoutes,
   });
 
   final CompletedRide ride;
   final CompletedRidesController completedRides;
   final DistanceUnitController distanceUnits;
   final CompletedRideSharer sharer;
+  final RecordedRouteStore? recordedRoutes;
 
   static Future<StoredRouteSelection?> show(
     BuildContext context, {
@@ -251,7 +256,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(18),
                     child: ArchivedRideMap(
-                      plannedRoute: ride.plannedRoute,
+                      plannedRoute: ride.comparisonPlan,
                       traveledRoute: ride.traveledRoute,
                     ),
                   ),
@@ -392,6 +397,63 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
             ),
           ),
           const SizedBox(height: 18),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Planned vs actual',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (ride.sourceRoute case final source?)
+                    Text('GPX: ${source.name} · ${source.sourceFileName}')
+                  else
+                    const Text(
+                      'Link the original GPX to compare it with your recorded trail.',
+                    ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 24,
+                    runSpacing: 14,
+                    children: [
+                      if (ride.comparisonPlan case final plan?)
+                        _Metric(
+                          label: 'Planned distance',
+                          value: formatter.distance(routeLengthMeters(plan)),
+                        ),
+                      _Metric(
+                        label: 'Ridden distance',
+                        value: formatter.distance(ride.totalDistanceMeters),
+                      ),
+                      if (ride.plannedRoute?.plannedDuration
+                          case final duration?)
+                        _Metric(
+                          label: 'Original estimate',
+                          value: _duration(duration),
+                        ),
+                      _Metric(
+                        label: 'Elapsed, including stops',
+                        value: _duration(ride.duration),
+                      ),
+                    ],
+                  ),
+                  TextButton.icon(
+                    key: const Key('link-imported-plan'),
+                    onPressed: _linkImportedPlan,
+                    icon: const Icon(Icons.link),
+                    label: Text(
+                      ride.sourceRoute == null
+                          ? 'Link imported GPX'
+                          : 'Change linked GPX',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
           FilledButton.icon(
             onPressed: _sharing ? null : () => _shareSummary(),
             icon: const Icon(Icons.ios_share),
@@ -426,6 +488,57 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _linkImportedPlan() async {
+    try {
+      final store =
+          widget.recordedRoutes ??
+          await JsonFileRecordedRouteStore.openDefault();
+      final routes = (await store.list())
+          .where((route) => route.libraryStatus == RideLibraryStatus.active)
+          .toList();
+      if (!mounted) return;
+      final selected = await showDialog<ImportedRoute>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Choose the original GPX'),
+          children: [
+            if (routes.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('Import the GPX into Ride Library first.'),
+              ),
+            for (final route in routes)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, route),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(route.name),
+                    Text(
+                      route.sourceFileName,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+      if (selected == null) return;
+      final updated = _ride.copyWith(sourceRoute: selected);
+      await widget.completedRides.save(updated);
+      if (mounted) setState(() => _ride = updated);
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('The GPX link could not be saved. Try again.'),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _shareSummary() => _runShare(
@@ -572,7 +685,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
       summary: summary,
       routePoints: rideRecapRoutePoints(
         traveledRoute: ride.traveledRoute,
-        plannedRoute: ride.plannedRoute,
+        plannedRoute: ride.comparisonPlan,
       ),
       distanceUnit: widget.distanceUnits.value,
     );
@@ -720,7 +833,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
       builder: (_) => Scaffold(
         appBar: AppBar(title: Text(_ride.title)),
         body: ArchivedRideMap(
-          plannedRoute: _ride.plannedRoute,
+          plannedRoute: _ride.comparisonPlan,
           traveledRoute: _ride.traveledRoute,
         ),
       ),
@@ -1048,7 +1161,7 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
 /// decides whether a line exists at all; the two have to move together.
 @visibleForTesting
 ({bool planned, bool traveled}) archivedRideLegend(CompletedRide ride) => (
-  planned: _hasDrawableLine(ride.plannedRoute),
+  planned: _hasDrawableLine(ride.comparisonPlan),
   traveled: _hasDrawableLine(ride.traveledRoute),
 );
 
