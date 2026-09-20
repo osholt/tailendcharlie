@@ -110,6 +110,81 @@ void main() {
     expect(const PersonalRideHeatmapBuilder().build(const []).cells, isEmpty);
   });
 
+  test('a long recent tour cannot displace older country coverage', () {
+    final rides = _tourAndOlderRide();
+    const builder = PersonalRideHeatmapBuilder(maximumCells: 64);
+    final forward = builder.build(rides);
+    final reverse = builder.build(rides.reversed);
+
+    expect(forward.cells.length, lessThanOrEqualTo(64));
+    expect(forward.truncated, isFalse);
+    expect(forward.resolution, lessThan(19));
+    expect(forward.inputPointCount, 1002);
+    expect(
+      forward.cells.any((cell) => cell.centre.latitude > 51),
+      isTrue,
+      reason: 'the older English ride must survive the long France tour',
+    );
+    expect(forward.cells.any((cell) => cell.centre.latitude < 48), isTrue);
+    expect(
+      forward.toGeoJson(),
+      reverse.toGeoJson(),
+      reason: 'archive order must not determine geographical coverage',
+    );
+    final feature = (forward.toGeoJson()['features'] as List).first as Map;
+    expect((feature['properties'] as Map)['resolution'], forward.resolution);
+  });
+
+  test('zooming into old coverage restores original street detail', () async {
+    final store = InMemoryCompletedRideStore();
+    for (final ride in _tourAndOlderRide()) {
+      await store.save(ride);
+    }
+    final controller = await PersonalRideHeatmapController.load(
+      store: store,
+      builder: const PersonalRideHeatmapBuilder(maximumCells: 64),
+    );
+    addTearDown(controller.dispose);
+    expect(controller.heatmap.resolution, lessThan(19));
+    controller.setViewport(const [
+      GeoPoint(latitude: 51.449, longitude: -2.591),
+      GeoPoint(latitude: 51.452, longitude: -2.587),
+    ]);
+    expect(controller.visibleHeatmap.resolution, 19);
+    expect(controller.visibleHeatmap.cells, isNotEmpty);
+    expect(
+      controller.visibleHeatmap.cells.every(
+        (cell) => cell.centre.latitude > 51,
+      ),
+      isTrue,
+    );
+    expect(
+      controller.heatmap.cells.any((cell) => cell.centre.latitude < 48),
+      isTrue,
+      reason: 'circular-route planning retains the complete archive index',
+    );
+
+    controller.setViewport(const [
+      GeoPoint(latitude: 46, longitude: -5),
+      GeoPoint(latitude: 53, longitude: 3),
+    ]);
+    expect(
+      controller.visibleHeatmap.cells.any((cell) => cell.centre.latitude > 51),
+      isTrue,
+    );
+    expect(
+      controller.visibleHeatmap.cells.any((cell) => cell.centre.latitude < 48),
+      isTrue,
+    );
+  });
+
+  test('zero cell budget is rejected instead of looping forever', () {
+    expect(
+      () => const PersonalRideHeatmapBuilder(maximumCells: 0).build([]),
+      throwsArgumentError,
+    );
+  });
+
   test('adjacent coverage cells share a complete edge (#661)', () {
     const left = PersonalRideHeatmapCell(
       x: 64600,
@@ -233,6 +308,22 @@ void main() {
     expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)));
   });
 }
+
+List<CompletedRide> _tourAndOlderRide() => [
+  _ride(
+    'france',
+    travelled: _route([
+      RoutePath(
+        kind: RoutePathKind.track,
+        points: [
+          for (var i = 0; i < 1000; i++)
+            GeoPoint(latitude: 47, longitude: 1 + i * 0.001),
+        ],
+      ),
+    ]),
+  ),
+  _ride('england', travelled: _route([_path(51.45, -2.59, 51.4501, -2.5899)])),
+];
 
 Future<void> _settleAsyncRefresh() async {
   await Future<void>.delayed(Duration.zero);

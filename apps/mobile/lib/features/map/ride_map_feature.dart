@@ -1996,6 +1996,9 @@ class _RideMapScreenState extends State<RideMapScreen>
       }
       _ownsPersonalRideHeatmap = supplied == null;
       _personalRideHeatmap = controller;
+      if (_discoveryViewportCorners case final corners?) {
+        controller.setViewport(corners);
+      }
       controller.addListener(_onPersonalRideHeatmapChanged);
       setState(() {});
       _scheduleMapLibreSync(overlays: true);
@@ -2015,7 +2018,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   PersonalRideHeatmap get _visiblePersonalHeatmap {
     final controller = _personalRideHeatmap;
     return controller?.visible == true
-        ? controller!.heatmap
+        ? controller!.visibleHeatmap
         : PersonalRideHeatmap.empty;
   }
 
@@ -2053,8 +2056,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _showMessage(
       cells == 0
           ? 'Personal rides is on. No travelled tracks are saved yet.'
-          : 'Personal rides is on · $cells covered area${cells == 1 ? '' : 's'}.'
-                '${controller.heatmap.truncated ? ' The oldest coverage was capped for performance.' : ''}',
+          : 'Personal rides is on · $cells covered area${cells == 1 ? '' : 's'}.',
     );
   }
 
@@ -3510,7 +3512,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         if (_visiblePersonalHeatmap.cells.isNotEmpty)
           RideHeatmapLayer(
             key: const Key('personal-rides-heatmap-layer'),
-            resolution: PersonalRideHeatmapBuilder.canonicalZoom,
+            resolution: _visiblePersonalHeatmap.resolution,
             points: [
               for (final cell in _visiblePersonalHeatmap.cells)
                 RideHeatPoint(_latLng(cell.centre), cell.weight),
@@ -4766,6 +4768,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       return;
     }
     if (!mounted) return;
+    _personalRideHeatmap?.setViewport(corners);
     setState(() => _discoveryViewportCorners = corners);
     _scheduleMapLibreSync(overlays: true);
     _scheduleGlobalHeatmapRefresh();
@@ -5440,7 +5443,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _personalHeatmapSource,
         _personalHeatmapLayer,
         ml.HeatmapLayerProperties(
-          heatmapRadius: heatmapRadiusExpression(resolution: 19),
+          heatmapRadius: heatmapRadiusExpression(),
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.85,
           heatmapColor: [
