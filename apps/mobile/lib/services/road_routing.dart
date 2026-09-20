@@ -733,6 +733,19 @@ class OsrmRoadRoutingService
                 : lanesAtManeuver,
           ),
         );
+        // Some straight forks live only in OSRM's intersection topology.
+        // Surface the choice without making any claim about right of way.
+        if (type != 'roundabout' && type != 'rotary') {
+          maneuvers.addAll(
+            _ambiguousStraightJunctions(
+              step,
+              start: maneuverPosition,
+              end: index + 1 < rawSteps.length
+                  ? _maneuverPosition(rawSteps[index + 1])
+                  : null,
+            ),
+          );
+        }
         approachingLanes = index + 1 < rawSteps.length
             ? _parseApproachingLanes(
                 step['intersections'],
@@ -743,6 +756,78 @@ class OsrmRoadRoutingService
       }
     }
     return List.unmodifiable(maneuvers);
+  }
+
+  static Iterable<RoadRouteManeuver> _ambiguousStraightJunctions(
+    Map<String, Object?> step, {
+    required GeoPoint start,
+    GeoPoint? end,
+  }) sync* {
+    final intersections = step['intersections'];
+    if (intersections is! List) return;
+    GeoPoint? previous;
+    for (final raw in intersections.whereType<Map>()) {
+      final location = raw['location'];
+      final bearings = raw['bearings'];
+      final entry = raw['entry'];
+      final incoming = raw['in'];
+      final outgoing = raw['out'];
+      if (location is! List ||
+          location.length != 2 ||
+          location.any((value) => value is! num || !value.isFinite) ||
+          bearings is! List ||
+          entry is! List ||
+          bearings.length != entry.length ||
+          bearings.any((value) => value is! num || !value.isFinite) ||
+          entry.any((value) => value is! bool) ||
+          incoming is! int ||
+          outgoing is! int ||
+          incoming == outgoing ||
+          incoming < 0 ||
+          outgoing < 0 ||
+          incoming >= bearings.length ||
+          outgoing >= bearings.length ||
+          entry[outgoing] != true) {
+        continue;
+      }
+      final point = GeoPoint(
+        latitude: (location[1] as num).toDouble(),
+        longitude: (location[0] as num).toDouble(),
+      );
+      if (point.latitude.abs() > 90 ||
+          point.longitude.abs() > 180 ||
+          _distanceMeters(start, point) < 25 ||
+          (end != null && _distanceMeters(end, point) < 25) ||
+          (previous != null && _distanceMeters(previous, point) < 35)) {
+        continue;
+      }
+      final forward = ((bearings[incoming] as num).toDouble() + 180) % 360;
+      double delta(num bearing) => ((bearing - forward + 540) % 360) - 180;
+      final taken = delta(bearings[outgoing] as num);
+      // A competing forward branch creates a real choice. A lone bend,
+      // side road at right angles or incoming-only split carriageway does not.
+      if (taken.abs() > 30) continue;
+      final competing = List.generate(bearings.length, (index) => index).any(
+        (index) =>
+            index != incoming &&
+            index != outgoing &&
+            entry[index] == true &&
+            delta(bearings[index] as num).abs() <= 60,
+      );
+      if (!competing) continue;
+      yield RoadRouteManeuver(
+        position: point,
+        type: 'fork',
+        modifier: 'straight',
+        name: step['name'] as String?,
+        ref: step['ref'] as String?,
+        drivingSide: step['driving_side'] as String?,
+        bearingBeforeDegrees: forward,
+        bearingAfterDegrees: (bearings[outgoing] as num).toDouble(),
+        lanes: _parseIntersectionLanes(raw),
+      );
+      previous = point;
+    }
   }
 
   /// OSRM reports `bearing_before`/`bearing_after` in whole degrees clockwise

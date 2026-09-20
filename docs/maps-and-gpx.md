@@ -438,6 +438,20 @@ parsed layers in hand. Two things about the fetched style caused this:
   (`rgba(60,60,60,0.8)`) around a black or near-black inner fill
   (`hsl(0,0%,7%)`, interpolating to `#000` for motorways).
 
+#### France sunlight follow-up (#776)
+
+The September field ride showed that the earlier palette still lost side roads
+in direct sunlight. The road ramp now runs from `#535D67` for service roads to
+`#AFB9C3` for motorways, with residential/unclassified roads at `#737D87`.
+Minor roads are 3.5 px at zoom 14 and 7 px at zoom 16; major roads retain wider
+fills and dark casings. Road labels use `#EDF1F6` with dark halos. The light
+style and saturated route/hazard colours are unchanged.
+
+The same paint is applied to existing cached dark styles, preserving offline
+availability. Palette contrast and width/cache regression tests cover the
+change; mounted-phone sunlight readability still requires physical validation.
+The tables and screenshots below describe the earlier July audit.
+
 #### Two bands
 
 Every surface now belongs to a **ground band** or a **road band**, and the bands
@@ -1094,3 +1108,16 @@ and coverage edges remain part of the field-test matrix.
 - [GPX 1.1 schema](https://www.topografix.com/GPX/1/1/)
 - [OSRM route service](https://project-osrm.org/docs/)
 - [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/)
+
+### Browsing saved rides (#779)
+
+Imported routes, recorder tracks and completed rides retain their own tabs in the
+ride library. Each tab now has list/map views, a name or approximate endpoint
+place search, length filters in the rider's units, and a map viewport filter.
+Completed rides additionally support a minimum rating. Selecting a line or start
+marker shows a card opening the existing details/options; overlapping routes
+offer a chooser. Archive and deleted-ride recovery controls remain in the
+unfiltered list. The route geometry stays selectable if the basemap is offline.
+Endpoint names are bundled for Great Britain and metropolitan France/Corsica;
+other locations can be selected geographically without reverse-geocoding a
+private ride. French data provenance and regeneration are in `tools/places`.

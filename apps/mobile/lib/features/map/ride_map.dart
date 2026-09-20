@@ -26,8 +26,6 @@ export 'ride_map_feature.dart'
         mapLibreSourceUpdatesShouldPause,
         motorcycleDiscoveryMinimumZoom,
         motorcycleDiscoveryVisibleAtZoom,
-        personalHeatmapGroundRadiusMeters,
-        personalHeatmapRadiusExpression,
         navigationCameraBearingFor,
         portraitNavigationHeaderTopOffset,
         portraitRideMenuTopOffset,

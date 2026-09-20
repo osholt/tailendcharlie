@@ -28,8 +28,18 @@ class ApproximatePlaceIndex {
     return _defaultIndex ??= _load(rootBundle);
   }
 
-  static Future<ApproximatePlaceIndex> _load(AssetBundle bundle) async =>
-      fromJson(await bundle.loadString(assetKey));
+  static Future<ApproximatePlaceIndex> _load(AssetBundle bundle) async {
+    final indexes = await Future.wait([
+      for (final key in [assetKey, 'assets/route_places_fr.json'])
+        bundle.loadString(key).then(fromJson),
+    ]);
+    final places = indexes.expand((index) => index._places).toList()
+      ..sort((left, right) => left.latitudeE5.compareTo(right.latitudeE5));
+    return ApproximatePlaceIndex._(
+      List.unmodifiable(places),
+      indexes.map((index) => index.attribution).join('; '),
+    );
+  }
 
   static ApproximatePlaceIndex fromJson(String source) {
     final decoded = jsonDecode(source);
@@ -70,7 +80,7 @@ class ApproximatePlaceIndex {
     return ApproximatePlaceIndex._(List.unmodifiable(places), attribution);
   }
 
-  /// Nearest named settlement within 50 km, or null outside Great Britain.
+  /// Nearest named settlement within 50 km, or null outside indexed coverage.
   String? nearestName(GeoPoint point) {
     if (_places.isEmpty) return null;
     final latitudeE5 = (point.latitude * 100000).round();

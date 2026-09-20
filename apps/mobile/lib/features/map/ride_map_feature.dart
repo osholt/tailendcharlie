@@ -1,3 +1,4 @@
+import 'ride_heatmap_layer.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -21,6 +22,7 @@ import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/distance_unit.dart';
+import '../../domain/riding_display_size.dart';
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart';
 import '../../domain/quick_message.dart';
@@ -236,46 +238,6 @@ bool canGenerateNavigableRoute(ImportedRoute route) =>
 /// threshold while preserving every saved layer choice.
 @visibleForTesting
 const motorcycleDiscoveryMinimumZoom = 12.5;
-
-/// Ground radius for the fallback renderer. z19 cell centres are about 45–50 m
-/// apart at UK and French latitudes, so these circles overlap without turning
-/// a travelled road into the large square bands produced by filled cells.
-@visibleForTesting
-double personalHeatmapGroundRadiusMeters(double weight) =>
-    26 + 10 * weight.clamp(0, 1);
-
-/// MapLibre heatmap radius in screen pixels, calibrated to one z19 heat cell.
-///
-/// Personal history is stored in z19 cells. At riding latitudes a 26–36 metre
-/// ground radius is roughly 0.6 of that cell, or 307 px at z19 on MapLibre's
-/// 512 px tiles. The previous expression reached 898 px at z19 and made each
-/// observation cover about three cells, visibly changing the map's scale.
-@visibleForTesting
-const List<Object> personalHeatmapRadiusExpression = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  5,
-  1,
-  12,
-  2.4,
-  13,
-  4.8,
-  14,
-  9.6,
-  15,
-  19.2,
-  16,
-  38.4,
-  17,
-  76.8,
-  18,
-  153.6,
-  19,
-  307.2,
-  20,
-  614.4,
-];
 
 @visibleForTesting
 bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
@@ -494,6 +456,7 @@ class RideMapFeature extends StatefulWidget {
     this.personalRideHeatmap,
     this.globalRideHeatmap,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
     this.showRouteProgress = true,
     this.basemapConfiguration = const BasemapConfiguration(),
@@ -561,6 +524,7 @@ class RideMapFeature extends StatefulWidget {
     bool? navigating,
     HostMapChrome? hostChrome,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
+    RidingDisplaySize ridingDisplaySize = RidingDisplaySize.small,
     SpeedLimitDisplayController? speedLimitDisplay,
     bool showRouteProgress = true,
     bool darkMapStyle = false,
@@ -626,6 +590,7 @@ class RideMapFeature extends StatefulWidget {
     navigating: navigating,
     hostChrome: hostChrome,
     distanceUnit: distanceUnit,
+    ridingDisplaySize: ridingDisplaySize,
     speedLimitDisplay: speedLimitDisplay,
     showRouteProgress: showRouteProgress,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
@@ -743,6 +708,7 @@ class RideMapFeature extends StatefulWidget {
   final PersonalRideHeatmapController? personalRideHeatmap;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final DistanceUnit distanceUnit;
+  final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool showRouteProgress;
   final BasemapConfiguration basemapConfiguration;
@@ -910,6 +876,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
         distanceUnit: widget.distanceUnit,
+        ridingDisplaySize: widget.ridingDisplaySize,
         speedLimitDisplay: widget.speedLimitDisplay,
         showRouteProgress: widget.showRouteProgress,
         localMotorcycleStyle: widget.localMotorcycleStyle,
@@ -1015,6 +982,7 @@ class RideMapScreen extends StatefulWidget {
     this.discoveryCatalogueLoader,
     this.bikerPlaceCatalogueLoader,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
     this.showRouteProgress = true,
     this.disposeOfflineTileCache = false,
@@ -1169,6 +1137,7 @@ class RideMapScreen extends StatefulWidget {
   final Future<BikerPlaceCatalogue> Function()? bikerPlaceCatalogueLoader;
 
   final DistanceUnit distanceUnit;
+  final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool showRouteProgress;
   final bool disposeOfflineTileCache;
@@ -2123,7 +2092,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         final east = math.max(corners[0].longitude, corners[1].longitude);
         final south = math.min(corners[0].latitude, corners[1].latitude);
         final north = math.max(corners[0].latitude, corners[1].latitude);
-        if (east - west > 8 || north - south > 8) return;
+
         unawaited(
           controller!.refresh(
             west: west,
@@ -2782,10 +2751,11 @@ class _RideMapScreenState extends State<RideMapScreen>
                         assessment: assessment,
                         compact: landscape,
                       )
-                    : _NavigationGuidanceBanner(
+                    : NavigationGuidanceBanner(
                         guidance: guidance,
                         distanceUnit: widget.distanceUnit,
                         compact: landscape,
+                        displaySize: widget.ridingDisplaySize,
                       );
               },
             )
@@ -3538,36 +3508,22 @@ class _RideMapScreenState extends State<RideMapScreen>
             ),
           ),
         if (_visiblePersonalHeatmap.cells.isNotEmpty)
-          CircleLayer(
+          RideHeatmapLayer(
             key: const Key('personal-rides-heatmap-layer'),
-            circles: [
+            resolution: PersonalRideHeatmapBuilder.canonicalZoom,
+            points: [
               for (final cell in _visiblePersonalHeatmap.cells)
-                CircleMarker(
-                  point: _latLng(cell.centre),
-                  radius: personalHeatmapGroundRadiusMeters(cell.weight),
-                  useRadiusInMeter: true,
-                  color: Color.lerp(
-                    const Color(0xFF7C3AED),
-                    const Color(0xFFF97316),
-                    cell.weight,
-                  )!.withValues(alpha: 0.16 + 0.24 * cell.weight),
-                ),
+                RideHeatPoint(_latLng(cell.centre), cell.weight),
             ],
           ),
         if (_visibleGlobalHeatmap.cells.isNotEmpty)
-          CircleLayer(
+          RideHeatmapLayer(
             key: const Key('global-rides-heatmap-layer'),
-            circles: [
+            resolution: _visibleGlobalHeatmap.resolution,
+            global: true,
+            points: [
               for (final cell in _visibleGlobalHeatmap.cells)
-                CircleMarker(
-                  point: _latLng(cell.point),
-                  radius: 7 + 5 * cell.weight,
-                  color: Color.lerp(
-                    const Color(0xFF0EA5E9),
-                    const Color(0xFFF59E0B),
-                    cell.weight,
-                  )!.withValues(alpha: 0.14 + 0.22 * cell.weight),
-                ),
+                RideHeatPoint(_latLng(cell.point), cell.weight),
             ],
           ),
         if (_visibleDiscoveryFeatures.any((feature) => !feature.isPoint))
@@ -5455,18 +5411,8 @@ class _RideMapScreenState extends State<RideMapScreen>
       await controller.addHeatmapLayer(
         _globalHeatmapSource,
         _globalHeatmapLayer,
-        const ml.HeatmapLayerProperties(
-          heatmapRadius: [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            5,
-            4,
-            12,
-            10,
-            17,
-            18,
-          ],
+        ml.HeatmapLayerProperties(
+          heatmapRadius: heatmapRadiusExpression(),
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.8,
           heatmapColor: [
@@ -5493,8 +5439,8 @@ class _RideMapScreenState extends State<RideMapScreen>
       await controller.addHeatmapLayer(
         _personalHeatmapSource,
         _personalHeatmapLayer,
-        const ml.HeatmapLayerProperties(
-          heatmapRadius: personalHeatmapRadiusExpression,
+        ml.HeatmapLayerProperties(
+          heatmapRadius: heatmapRadiusExpression(resolution: 19),
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.85,
           heatmapColor: [
@@ -11462,8 +11408,10 @@ double _nativeMarkerPixelRatio(BuildContext context) =>
     ? MediaQuery.devicePixelRatioOf(context)
     : 1;
 
-class _NavigationGuidanceBanner extends StatelessWidget {
-  const _NavigationGuidanceBanner({
+class NavigationGuidanceBanner extends StatelessWidget {
+  const NavigationGuidanceBanner({
+    super.key,
+    this.displaySize = RidingDisplaySize.small,
     required this.guidance,
     required this.distanceUnit,
     required this.compact,
@@ -11472,9 +11420,12 @@ class _NavigationGuidanceBanner extends StatelessWidget {
   final NavigationGuidance guidance;
   final DistanceUnit distanceUnit;
   final bool compact;
+  final RidingDisplaySize displaySize;
 
   @override
   Widget build(BuildContext context) {
+    final scale = displaySize.scale;
+    final enlarged = displaySize != RidingDisplaySize.small;
     final formatter = MeasurementFormatter(distanceUnit);
     final distance = formatter.distance(guidance.distanceMeters);
     final instruction = guidance.instruction;
@@ -11524,7 +11475,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
               children: [
                 ManeuverSymbolView(
                   instruction: instruction,
-                  size: compact ? 40 : 50,
+                  size: (compact ? 40 : 50) * scale,
                   color: const Color(0xFF68A9FF),
                 ),
                 const SizedBox(width: 10),
@@ -11558,7 +11509,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                           formatter.distance(meters),
                           maxLines: 1,
                           style: TextStyle(
-                            fontSize: compact ? 26 : 30,
+                            fontSize: (compact ? 26 : 30) * scale,
                             fontWeight: FontWeight.w900,
                             // Tight leading: the number is one line and every
                             // point of height here is paid for out of the band
@@ -11568,11 +11519,19 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        instruction.text,
-                        maxLines: 2,
+                        enlarged
+                            ? _enlargedInstructionText(instruction)
+                            : instruction.text,
+                        // Never ellipsize the action in an enlarged display.
+                        // Long roundabout exit wording can occupy three lines
+                        // on a narrow phone with larger accessibility text.
+                        maxLines: enlarged ? null : 2,
+                        overflow: enlarged
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
                         softWrap: true,
                         style: TextStyle(
-                          fontSize: compact ? 16 : 18,
+                          fontSize: (compact ? 16 : 18) * scale,
                           fontWeight: FontWeight.w800,
                           height: 1.1,
                         ),
@@ -11600,7 +11559,8 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                                 'Then'
                                 '${followingDistance == null ? '' : ' in $followingDistance'} · '
                                 '${following.text}',
-                                maxLines: 2,
+                                maxLines: enlarged ? 1 : 2,
+                                overflow: TextOverflow.ellipsis,
                                 softWrap: true,
                                 style: TextStyle(
                                   fontSize: compact ? 14 : 15,
@@ -11612,15 +11572,16 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                           ],
                         ),
                       ],
-                      Text(
-                        guidance.roadLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: compact ? 13 : 14,
-                          color: const Color(0xFFB7C2CF),
+                      if (!enlarged)
+                        Text(
+                          guidance.roadLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: compact ? 13 : 14,
+                            color: const Color(0xFFB7C2CF),
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),
@@ -11631,6 +11592,18 @@ class _NavigationGuidanceBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The symbol supplies the junction shape; enlarged text prioritises direction.
+/// Roundabouts retain the exit number, and unstated directions stay unstated.
+String _enlargedInstructionText(ManeuverInstruction instruction) {
+  if (!instruction.direction.isStated ||
+      instruction.isRoundabout ||
+      instruction.kind == ManeuverKind.arrive) {
+    return instruction.text;
+  }
+  final label = instruction.direction.label;
+  return '${label[0].toUpperCase()}${label.substring(1)}';
 }
 
 class _NavigationGuidanceStatusBanner extends StatelessWidget {

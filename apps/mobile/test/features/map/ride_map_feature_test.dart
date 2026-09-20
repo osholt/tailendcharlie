@@ -388,22 +388,6 @@ void main() {
     );
   });
 
-  test(
-    'personal heatmap fallback overlaps fine-grid coverage without blocks',
-    () {
-      expect(personalHeatmapGroundRadiusMeters(0), 26);
-      expect(personalHeatmapGroundRadiusMeters(1), 36);
-      expect(personalHeatmapGroundRadiusMeters(-1), 26);
-      expect(personalHeatmapGroundRadiusMeters(2), 36);
-    },
-  );
-
-  test('native personal heatmap stays close to one z19 coverage cell', () {
-    expect(personalHeatmapRadiusExpression, containsAllInOrder([18, 153.6]));
-    expect(personalHeatmapRadiusExpression, containsAllInOrder([19, 307.2]));
-    expect(personalHeatmapRadiusExpression, isNot(contains(898)));
-  });
-
   test('background navigation work is throttled and resets on resume', () {
     final gate = BackgroundNavigationRefreshGate();
     final start = DateTime.utc(2026, 9, 17, 10);

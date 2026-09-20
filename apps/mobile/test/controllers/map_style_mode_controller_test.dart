@@ -3,10 +3,28 @@ import 'dart:ui' show Brightness;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/map_style_mode_controller.dart';
 import 'package:ride_relay/domain/map_style_mode.dart';
+import 'package:ride_relay/domain/riding_display_size.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test('riding sizes keep the old default and survive restart', () async {
+    final controller = await MapStyleModeController.load(
+      locationSource: () async => null,
+    );
+    addTearDown(controller.dispose);
+    expect(controller.ridingDisplaySize, RidingDisplaySize.small);
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    await controller.setRidingDisplaySize(RidingDisplaySize.large);
+    expect(notifications, 1);
+    final restored = await MapStyleModeController.load(
+      locationSource: () async => null,
+    );
+    addTearDown(restored.dispose);
+    expect(restored.ridingDisplaySize, RidingDisplaySize.large);
+  });
 
   test('resolveDark follows the platform when in system mode', () {
     expect(MapStyleMode.system.resolveDark(Brightness.dark), isTrue);

@@ -26,6 +26,21 @@ void main() {
     expect(metric.distance(49), '50 m');
   });
 
+  test('metric speech rounds independently of the visible countdown', () {
+    const metric = MeasurementFormatter(DistanceUnit.kilometres);
+    expect(metric.spokenDistance(234), '250 m');
+    expect(metric.spokenDistance(476), '500 m');
+    expect(metric.spokenDistance(641), '600 m');
+    expect(metric.spokenDistance(985), '1 km');
+    expect(metric.spokenDistance(1000), '1 km');
+    expect(metric.spokenDistance(2000), '2 km');
+    expect(metric.spokenDistance(1300), '1.3 km');
+    expect(metric.spokenDistance(12), '50 m');
+    expect(metric.distance(234), '230 m');
+    const imperial = MeasurementFormatter(DistanceUnit.miles);
+    expect(imperial.spokenDistance(50), imperial.distance(50));
+  });
+
   test('single-unit precision remains below ten', () {
     const metric = MeasurementFormatter(DistanceUnit.kilometres);
     const imperial = MeasurementFormatter(DistanceUnit.miles);

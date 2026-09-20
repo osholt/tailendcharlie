@@ -216,6 +216,43 @@ abstract interface class SpokenGuidanceEngine {
   Future<void> stop();
 }
 
+/// A navigation phrase may change while configuration or synthesis is pending.
+/// Null cancels a turn which has been passed or whose ride has ended.
+typedef CurrentSpokenPhrase = String? Function();
+
+abstract interface class FreshSpokenGuidanceEngine {
+  Future<void> speakFresh(
+    CurrentSpokenPhrase currentPhrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  });
+}
+
+class SpokenGuidanceSuperseded implements Exception {
+  const SpokenGuidanceSuperseded();
+}
+
+String requireCurrentSpokenPhrase(CurrentSpokenPhrase currentPhrase) {
+  final phrase = currentPhrase();
+  if (phrase == null || phrase.trim().isEmpty) {
+    throw const SpokenGuidanceSuperseded();
+  }
+  return _expandSpokenAbbreviations(phrase);
+}
+
+Future<void> deliverCurrentSpokenPhrase(
+  SpokenGuidanceEngine engine,
+  CurrentSpokenPhrase currentPhrase, {
+  SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+}) => engine is FreshSpokenGuidanceEngine
+    ? (engine as FreshSpokenGuidanceEngine).speakFresh(
+        currentPhrase,
+        audioClass: audioClass,
+      )
+    : engine.speak(
+        requireCurrentSpokenPhrase(currentPhrase),
+        audioClass: audioClass,
+      );
+
 /// Which renderer actually delivered a prompt. This is deliberately about the
 /// output path, not the rider's preference: a natural voice can still be
 /// unavailable during startup or fail, in which case the system voice preserves
@@ -260,7 +297,8 @@ abstract interface class WarmableSpokenGuidanceEngine {
 /// playback-category audio session can deliver its short prompt while the phone
 /// is locked or another app is in front. Android's active-ride location service
 /// holds the wake lock needed to keep the same Dart path processing fixes.
-class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
+class FlutterTtsSpokenGuidanceEngine
+    implements SpokenGuidanceEngine, FreshSpokenGuidanceEngine {
   FlutterTtsSpokenGuidanceEngine({
     FlutterTts? tts,
     this.voiceProvider,
@@ -300,6 +338,15 @@ class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
     String phrase, {
     SpokenAudioClass audioClass = SpokenAudioClass.navigation,
   }) async {
+    await speakFresh(() => phrase, audioClass: audioClass);
+  }
+
+  @override
+  Future<void> speakFresh(
+    CurrentSpokenPhrase currentPhrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
+    var phrase = requireCurrentSpokenPhrase(currentPhrase);
     // Settings can change during a ride. Read the selection at the next phrase
     // rather than requiring the ride shell to rebuild its speaker.
     await _applyVoice();
@@ -326,8 +373,9 @@ class FlutterTtsSpokenGuidanceEngine implements SpokenGuidanceEngine {
       }
       _notifyLifecycle(phrase, SpokenGuidanceLifecycleEvent.focusAcquired);
     }
-    _activePhrase = phrase;
     try {
+      phrase = requireCurrentSpokenPhrase(currentPhrase);
+      _activePhrase = phrase;
       await _tts.speak(
         _expandSpokenAbbreviations(phrase),
         // Direct/test engines still use the plugin's short-lived focus. The
@@ -404,14 +452,63 @@ String _expandSpokenAbbreviations(String phrase) {
     final abbreviation = RegExp.escape(unit.abbreviation);
     expanded = expanded.replaceAllMapped(
       RegExp('\\b(1(?:\\.0+)?)\\s+$abbreviation\\b', caseSensitive: false),
-      (match) => '${match.group(1)} ${unit.singular}',
+      (match) => '1 ${unit.singular}',
     );
     expanded = expanded.replaceAll(
       RegExp('\\b$abbreviation\\b', caseSensitive: false),
       unit.plural,
     );
   }
-  return expanded;
+  // Expand only measurement numbers, never route references (A205), house
+  // numbers or road names. Explicit British wording also works with neural TTS.
+  return expanded.replaceAllMapped(
+    RegExp(r'\b([1-9][0-9]{2})\s+(metres?|yards?|feet|kilometres?|miles?)\b'),
+    (match) {
+      final value = int.parse(match.group(1)!);
+      final remainder = value % 100;
+      if (remainder == 0) return match.group(0)!;
+      return '${_smallNumber(value ~/ 100)} hundred and ${_smallNumber(remainder)} ${match.group(2)}';
+    },
+  );
+}
+
+String _smallNumber(int value) {
+  const small = [
+    'zero',
+    'one',
+    'two',
+    'three',
+    'four',
+    'five',
+    'six',
+    'seven',
+    'eight',
+    'nine',
+    'ten',
+    'eleven',
+    'twelve',
+    'thirteen',
+    'fourteen',
+    'fifteen',
+    'sixteen',
+    'seventeen',
+    'eighteen',
+    'nineteen',
+  ];
+  const tens = [
+    '',
+    '',
+    'twenty',
+    'thirty',
+    'forty',
+    'fifty',
+    'sixty',
+    'seventy',
+    'eighty',
+    'ninety',
+  ];
+  if (value < 20) return small[value];
+  return '${tens[value ~/ 10]}${value % 10 == 0 ? '' : ' ${small[value % 10]}'}';
 }
 
 /// Decides what is worth saying, and refuses to say it twice.
@@ -459,6 +556,7 @@ class SpokenGuidanceSpeaker {
     required String phrase,
     required bool enabled,
     required bool rideActive,
+    CurrentSpokenPhrase? currentPhrase,
   }) async {
     // Off means silent, with no engine work at all: a rider who has not asked for
     // audio must not have a speech engine initialised behind their back.
@@ -472,14 +570,23 @@ class SpokenGuidanceSpeaker {
     if (key == _lastSpokenKey) return false;
     if (!_claimSpeechSlot()) return false;
 
+    final generation = _queueGeneration;
+    String? resolve() => generation == _queueGeneration && _navigationAllowed
+        ? (currentPhrase == null ? phrase : currentPhrase())
+        : null;
     try {
       await _ensureConfigured();
       _lastSpokenKey = key;
-      await _engine.speak(
-        _expandSpokenAbbreviations(phrase),
+      await deliverCurrentSpokenPhrase(
+        _engine,
+        resolve,
         audioClass: SpokenAudioClass.navigation,
       );
+
       return true;
+    } on SpokenGuidanceSuperseded {
+      if (_lastSpokenKey == key) _lastSpokenKey = null;
+      return false;
     } on SpokenGuidanceFocusDenied {
       if (_lastSpokenKey == key) _lastSpokenKey = null;
       return false;
@@ -501,6 +608,7 @@ class SpokenGuidanceSpeaker {
     required String phrase,
     required bool enabled,
     required bool rideActive,
+    CurrentSpokenPhrase? currentPhrase,
   }) async {
     if (!deliveredKeys.add(key)) return false;
     var delivered = false;
@@ -510,6 +618,7 @@ class SpokenGuidanceSpeaker {
         phrase: phrase,
         enabled: enabled,
         rideActive: rideActive,
+        currentPhrase: currentPhrase,
       );
       return delivered;
     } finally {

@@ -379,3 +379,21 @@ archive, heatmap credential, consent mode or endpoint-trim preference.
 - #493 — contribution, storage, suppression, revocation and public aggregate API
 - #494 — mobile global overlay and contribution UX
 - #495 — web planner global overlay
+
+
+## France field update (September 2026, #780)
+
+Phone fallback heat uses soft overlapping kernels instead of solid circles.
+Both renderers preserve a minimum 8 pixel radius at national scale, using 0.8
+of a source cell locally. The Flutter canvas bins samples into 3 pixel screen
+cells and clips to the viewport; it never creates connections across recording
+gaps. Native radius expressions use the source aggregation resolution, supported
+by [MapLibre heatmap styling](https://maplibre.org/maplibre-style-spec/layers/#heatmap-radius).
+
+The service region now covers the UK and France including Corsica
+(12°W–10°E, 41–62°N), superseding the UK-only boundary above. Views at zoom 6–8
+may query this bounded region at public resolution 8. Higher zooms retain the
+8°/25-square-degree request bound and every response retains the 5,000-cell cap.
+Public cells still require three distinct contributors; privacy trimming,
+snapshot publication and contribution quotas are unchanged. Older archived
+French rides can be shared using the existing history contribution control.

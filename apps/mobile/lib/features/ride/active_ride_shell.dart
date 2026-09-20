@@ -1107,6 +1107,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// Kept so "am I clear of the junction I just went through" can be answered
   /// without new progress plumbing: it is the straight-line distance from here to
   /// there, which is what #429's clearance rule needs.
+  NavigationGuidance? _currentGuidanceForSpeech;
   String? _guidanceManeuverIdentity;
   route_domain.GeoPoint? _passedManeuverPosition;
   route_domain.GeoPoint? _lastGuidanceManeuverPosition;
@@ -4331,6 +4332,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
       showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
+      ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
       ),
@@ -4523,6 +4525,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// exactly what audio is. A roundabout says so out loud, where the banner can
   /// leave it to the drawn glyph.
   void _speakGuidance(NavigationGuidance? guidance) {
+    _currentGuidanceForSpeech = guidance;
     if (guidance == null) return;
     final controller = widget.rideController;
     final identity = guidance.instruction.maneuver.identity;
@@ -4567,7 +4570,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       metersSincePreviousManeuver: metersSincePrevious,
       distanceFormatter: MeasurementFormatter(
         widget.distanceUnits.value,
-      ).distance,
+      ).spokenDistance,
       // The pair the banner is already showing (#163). Speech was given this and
       // ignored it, which is why a junction close behind another was only ever
       // announced at the junction itself (#460).
@@ -4591,6 +4594,39 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         // prompt would suppress the two after it.
         key: announcement.key,
         phrase: announcement.phrase,
+        currentPhrase: () {
+          if (!mounted ||
+              !(controller.rideStarted &&
+                  !controller.rideEnded &&
+                  !controller.ridePaused &&
+                  spokenAudioAllows(
+                    _spokenAudioMode,
+                    SpokenAudioClass.navigation,
+                  ))) {
+            return null;
+          }
+          final current = _currentGuidanceForSpeech;
+          if (current == null ||
+              current.instruction.maneuver.identity != identity) {
+            return null;
+          }
+          final refreshed = nextGuidanceAnnouncement(
+            maneuverIdentity: identity,
+            instructionText: current.instruction.standaloneText,
+            distanceToManeuverMeters: current.distanceMeters,
+            speedMetersPerSecond:
+                _mapNavigationPosition.value?.speedMetersPerSecond,
+            alreadySpokenKeys: {..._spokenGuidanceKeys}
+              ..remove(announcement.key),
+            metersSincePreviousManeuver: metersSincePrevious,
+            distanceFormatter: MeasurementFormatter(
+              widget.distanceUnits.value,
+            ).spokenDistance,
+            followingInstructionText:
+                current.followingInstruction?.standaloneText,
+          );
+          return refreshed?.key == announcement.key ? refreshed?.phrase : null;
+        },
         // Navigation, so alerts-only silences this and keeps the warnings.
         enabled: spokenAudioAllows(
           _spokenAudioMode,

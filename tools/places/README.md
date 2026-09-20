@@ -20,11 +20,28 @@ uv run --with pyproj tools/places/generate_route_places.py \
 ```
 
 The source download is about 100 MB compressed and is not committed. The app
-asset is Great Britain-only. A route outside the index receives neutral copy;
+asset covers Great Britain. A route outside the indexes receives neutral copy;
 it never falls back to a network reverse geocoder.
 
 Run the generator unit test from the repository root with:
 
 ```bash
 python3 -m unittest tools/places/test_generate_route_places.py
+```
+
+French place search uses a separate `route_places_fr.json` asset generated from
+the [official commune API](https://geo.api.gouv.fr/decoupage-administratif/communes).
+It contains metropolitan France and Corsica, using town-hall positions rather
+than the centres of large commune polygons. Population only chooses a recognisable
+town over a nearby tiny settlement. The source dataset is published under
+[ODbL 1.0](https://www.data.gouv.fr/datasets/contours-administratifs); the derived
+asset is distributed under that licence here, separately from the OS asset.
+Both source attributions appear in the library. Neither index makes runtime
+location requests.
+
+```bash
+curl -fL 'https://geo.api.gouv.fr/communes?fields=nom,code,mairie,population&format=json' -o /tmp/fr-communes.json
+python3 tools/places/generate_french_route_places.py /tmp/fr-communes.json \
+  apps/mobile/assets/route_places_fr.json --source-version 2026-09-20
+python3 -m unittest tools/places/test_generate_french_route_places.py
 ```
