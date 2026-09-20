@@ -70,7 +70,7 @@ class FlutterVectorOfflineManager extends MapLibreOfflineManager {
       final keys = (jsonDecode(utf8.decode(data)) as List).cast<String>();
       if (keys.isEmpty) return false;
       for (final key in keys) {
-        if (await store.read(key) == null) return false;
+        if (!await store.containsOnDisk(key)) return false;
       }
       return true;
     } on Object {

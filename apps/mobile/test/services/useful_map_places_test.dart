@@ -74,6 +74,7 @@ void main() {
           style.theme.layers.any((l) => l.id.startsWith('tec-place-')),
           false,
         );
+        await cache.flushed;
         final cached = jsonDecode(utf8.decode((await cache.read(key))!));
         expect(
           (cached['layers'] as List).any(
