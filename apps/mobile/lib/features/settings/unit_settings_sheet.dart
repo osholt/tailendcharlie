@@ -326,6 +326,12 @@ class UnitSettingsSheet extends StatelessWidget {
             const SizedBox(height: 10),
             SegmentedButton<MapStyleMode>(
               key: const Key('map-style-mode-selector'),
+              showSelectedIcon: false,
+              style: const ButtonStyle(
+                padding: WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 8),
+                ),
+              ),
               segments: MapStyleMode.values
                   .map(
                     (mode) => ButtonSegment<MapStyleMode>(
