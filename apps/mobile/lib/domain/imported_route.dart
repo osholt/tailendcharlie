@@ -434,6 +434,7 @@ class ImportedRoute {
     this.description,
     this.preferences,
     this.plannedDuration,
+    this.sourceRouteId,
     this.libraryStatus = RideLibraryStatus.active,
     this.deletedAt,
     this.organisation = const RideLibraryOrganisation(),
@@ -457,6 +458,10 @@ class ImportedRoute {
   /// timing. Keeping this on the persisted route lets ETA exist before the
   /// first moving GPS fix and after an app restart (#413).
   final Duration? plannedDuration;
+
+  /// Stable library identity of the original plan, retained by road matching
+  /// and rerouting. The original geometry is kept locally with the ride.
+  final String? sourceRouteId;
   final RideLibraryStatus libraryStatus;
   final DateTime? deletedAt;
   final RideLibraryOrganisation organisation;
@@ -478,6 +483,7 @@ class ImportedRoute {
     markerReview: markerReview,
     preferences: preferences,
     plannedDuration: plannedDuration,
+    sourceRouteId: sourceRouteId,
     libraryStatus: status ?? libraryStatus,
     organisation: organisation ?? this.organisation,
     deletedAt: status == RideLibraryStatus.deleted
@@ -503,6 +509,7 @@ class ImportedRoute {
     markerReview: review,
     preferences: preferences,
     plannedDuration: plannedDuration,
+    sourceRouteId: sourceRouteId,
     libraryStatus: libraryStatus,
     organisation: organisation,
     deletedAt: deletedAt,
@@ -544,6 +551,7 @@ class ImportedRoute {
         markerReview: markerReview,
         preferences: preferences,
         plannedDuration: plannedDuration,
+        sourceRouteId: sourceRouteId,
         libraryStatus: libraryStatus,
         organisation: organisation,
         deletedAt: deletedAt,
@@ -556,6 +564,7 @@ class ImportedRoute {
     if (description != null) 'description': description,
     'importedAt': importedAt.toUtc().toIso8601String(),
     'sourceFileName': sourceFileName,
+    if (sourceRouteId != null) 'sourceRouteId': sourceRouteId,
     'organisation': organisation.toJson(),
     if (libraryStatus != RideLibraryStatus.active)
       'libraryStatus': libraryStatus.name,
@@ -649,6 +658,7 @@ class ImportedRoute {
       description: description,
       importedAt: DateTime.parse(_requiredString(json, 'importedAt')).toUtc(),
       sourceFileName: sourceFileName,
+      sourceRouteId: _optionalString(json['sourceRouteId']),
       libraryStatus: RideLibraryStatus.parse(json['libraryStatus']),
       organisation: RideLibraryOrganisation.fromJson(json['organisation']),
       deletedAt: _optionalDateTime(json['deletedAt']),

@@ -38,6 +38,7 @@ void main() {
     expect(body['shape_match'], 'map_snap');
     expect((body['shape']! as List), hasLength(3));
     expect(result.route.id, isNot('source-track'));
+    expect(result.route.sourceRouteId, 'source-track');
     expect(result.route.name, 'Imported run (navigable)');
     expect(result.route.sourceFileName, 'matched-run.gpx');
     expect(result.route.paths.single.kind, RoutePathKind.track);

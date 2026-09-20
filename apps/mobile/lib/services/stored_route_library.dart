@@ -249,6 +249,16 @@ class StoredRouteLibrary {
         // A fresh identity: this is a new route for a new ride, and
         // `RouteProgressTracker` keys its progress on it.
         id: _idFactory(),
+        sourceRouteId:
+            candidate.geometry.sourceRouteId ?? candidate.geometry.id,
+        preferences: candidate.geometry.preferences,
+        organisation: candidate.geometry.organisation,
+        shapingPoints: selection.reversed
+            ? const []
+            : candidate.geometry.shapingPoints,
+        plannedDuration: selection.reversed
+            ? null
+            : candidate.geometry.plannedDuration,
         name: selection.reversed
             ? '${candidate.title} (reversed)'
             : candidate.title,

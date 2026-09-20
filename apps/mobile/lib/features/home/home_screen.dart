@@ -544,6 +544,7 @@ class _HomeScreenState extends State<HomeScreen> {
             rideDiagnostics: widget.rideDiagnostics,
             distanceUnit: widget.distanceUnits.value,
             completedRideStore: widget.completedRides,
+            recordedRouteStore: widget.recordedRoutes,
             globalRideHeatmap: widget.globalRideHeatmap,
             enableNativeServices: widget.enableNativeServices,
             bottomInset: 0,
