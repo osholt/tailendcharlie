@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'ride_library_browser.dart';
 import 'route_correction_screen.dart';
+import 'cached_route_preview.dart';
 
 import '../../domain/completed_ride.dart';
 import '../../domain/distance_unit.dart';
@@ -840,6 +841,17 @@ class StoredRouteMapPreview extends StatelessWidget {
       for (final path in orderedPaths)
         reversed ? path.points.reversed.toList(growable: false) : path.points,
     ];
+    if (!interactive) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: CachedRoutePreview(
+          paths: paths,
+          configuration: basemapConfiguration,
+          colour: Color(candidate.geometry.organisation.colourArgb),
+          fallback: StoredRouteShapePreview(candidate: candidate),
+        ),
+      );
+    }
     final map = Stack(
       fit: StackFit.expand,
       children: [
