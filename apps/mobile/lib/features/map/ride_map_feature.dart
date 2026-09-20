@@ -34,6 +34,7 @@ import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
 import '../../relay/live_presence.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/flutter_vector_style.dart';
 import '../../services/basemap_status.dart';
 import '../../services/biker_place_catalogue.dart';
 import '../../services/circular_ride_planner.dart';
@@ -3448,10 +3449,7 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   Widget _buildFlutterVectorFallbackMap() {
     final style = _flutterVectorFallbackStyle ??=
-        vmt.StyleReader(
-          uri: _basemap.styleUrl,
-          httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-        ).read().timeout(const Duration(seconds: 7)).then((style) {
+        readFlutterVectorStyle(_basemap).then((style) {
           if (mounted && !_flutterVectorFallbackReady) {
             setState(() => _flutterVectorFallbackReady = true);
           }
@@ -9240,10 +9238,13 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     _vectorStyle =
         widget.renderer == GroupMiniMapRenderer.flutterVector &&
             widget.mapStyleUrl.trim().isNotEmpty
-        ? vmt.StyleReader(
-            uri: widget.mapStyleUrl,
-            httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-          ).read().timeout(const Duration(seconds: 7))
+        ? readFlutterVectorStyle(
+            BasemapConfiguration(
+              styleUrl: widget.mapStyleUrl,
+              darkStyleUrl: BasemapConfiguration.defaultDarkStyleUrl,
+              attribution: 'OpenFreeMap © OpenMapTiles Data from OpenStreetMap',
+            ),
+          )
         : null;
   }
 
