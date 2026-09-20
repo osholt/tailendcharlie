@@ -1,8 +1,10 @@
 import 'dart:convert';
 
 import 'route_preferences.dart';
+import 'ride_library_status.dart';
 
 export 'route_preferences.dart';
+export 'ride_library_status.dart';
 
 enum RoutePathKind { track, route }
 
@@ -431,6 +433,8 @@ class ImportedRoute {
     this.description,
     this.preferences,
     this.plannedDuration,
+    this.libraryStatus = RideLibraryStatus.active,
+    this.deletedAt,
   });
 
   static const schemaVersion = 1;
@@ -451,6 +455,30 @@ class ImportedRoute {
   /// timing. Keeping this on the persisted route lets ETA exist before the
   /// first moving GPS fix and after an app restart (#413).
   final Duration? plannedDuration;
+  final RideLibraryStatus libraryStatus;
+  final DateTime? deletedAt;
+
+  ImportedRoute withLibraryDetails({String? name, RideLibraryStatus? status}) =>
+      ImportedRoute(
+        id: id,
+        name: name ?? this.name,
+        description: description,
+        importedAt: importedAt,
+        sourceFileName: sourceFileName,
+        paths: paths,
+        waypoints: waypoints,
+        shapingPoints: shapingPoints,
+        maneuvers: maneuvers,
+        markerReview: markerReview,
+        preferences: preferences,
+        plannedDuration: plannedDuration,
+        libraryStatus: status ?? libraryStatus,
+        deletedAt: status == RideLibraryStatus.deleted
+            ? DateTime.now().toUtc()
+            : status == RideLibraryStatus.active
+            ? null
+            : deletedAt,
+      );
 
   /// Which suggested marking positions a person has rejected or added.
   final MarkerPlanReview markerReview;
@@ -468,6 +496,8 @@ class ImportedRoute {
     markerReview: review,
     preferences: preferences,
     plannedDuration: plannedDuration,
+    libraryStatus: libraryStatus,
+    deletedAt: deletedAt,
   );
 
   /// The route character this route was planned for, when it was planned rather
@@ -506,6 +536,8 @@ class ImportedRoute {
         markerReview: markerReview,
         preferences: preferences,
         plannedDuration: plannedDuration,
+        libraryStatus: libraryStatus,
+        deletedAt: deletedAt,
       );
 
   Map<String, Object?> toJson() => {
@@ -515,6 +547,9 @@ class ImportedRoute {
     if (description != null) 'description': description,
     'importedAt': importedAt.toUtc().toIso8601String(),
     'sourceFileName': sourceFileName,
+    if (libraryStatus != RideLibraryStatus.active)
+      'libraryStatus': libraryStatus.name,
+    if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
     'paths': paths.map((path) => path.toJson()).toList(),
     'waypoints': waypoints.map((waypoint) => waypoint.toJson()).toList(),
     if (shapingPoints.isNotEmpty)
@@ -604,6 +639,8 @@ class ImportedRoute {
       description: description,
       importedAt: DateTime.parse(_requiredString(json, 'importedAt')).toUtc(),
       sourceFileName: sourceFileName,
+      libraryStatus: RideLibraryStatus.parse(json['libraryStatus']),
+      deletedAt: _optionalDateTime(json['deletedAt']),
       paths: paths,
       waypoints: waypoints,
       shapingPoints: shapingPoints,

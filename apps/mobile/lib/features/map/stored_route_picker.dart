@@ -79,10 +79,8 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
   bool _backupBusy = false;
 
   Future<_StoredRoutePickerData> _load() async {
-    final candidates = await widget.library.list();
-    final rides = widget.openPreviousRide == null
-        ? const <CompletedRide>[]
-        : await widget.library.completedRides.list();
+    final candidates = await widget.library.list(includeInactive: true);
+    final rides = await widget.library.completedRides.list();
     if (candidates.isEmpty && rides.isEmpty) {
       return _StoredRoutePickerData(
         candidates: candidates,
@@ -147,15 +145,17 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
             )
             .toList(growable: false);
         final importedRoutes = savedRoutes
-            .where((candidate) => !storedRouteWasRecordedOnDevice(candidate))
-            .toList(growable: false);
-        final recordings = savedRoutes
-            .where(storedRouteWasRecordedOnDevice)
-            .toList(growable: false);
-        final routeCandidatesFromRides = candidates
             .where(
               (candidate) =>
-                  candidate.origin != StoredRouteOrigin.recordedRoute,
+                  !storedRouteWasRecordedOnDevice(candidate) &&
+                  candidate.geometry.libraryStatus == RideLibraryStatus.active,
+            )
+            .toList(growable: false);
+        final recordings = savedRoutes
+            .where(
+              (candidate) =>
+                  storedRouteWasRecordedOnDevice(candidate) &&
+                  candidate.geometry.libraryStatus == RideLibraryStatus.active,
             )
             .toList(growable: false);
         final rides = data.rides
@@ -174,8 +174,8 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
               const TabBar(
                 tabs: [
                   Tab(key: Key('ride-library-imported-tab'), text: 'Imported'),
-                  Tab(key: Key('ride-library-recorded-tab'), text: 'Recorded'),
                   Tab(key: Key('ride-library-rides-tab'), text: 'Rides'),
+                  Tab(key: Key('ride-library-bin-tab'), text: 'Bin'),
                 ],
               ),
               Expanded(
@@ -190,30 +190,25 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
                           'GPX files and routes shared with Tail End Charlie '
                           'will appear here.',
                     ),
-                    _routeList(
-                      candidates: recordings,
+                    _rideList(
+                      rides: rides,
+                      recordings: recordings,
+                      archived: archived,
                       places: places,
-                      heading: 'Recorded routes',
-                      emptyTitle: 'No recorded routes',
-                      emptyBody:
-                          'Use “Record a route” from the home menu to save one.',
                     ),
-                    widget.openPreviousRide == null
-                        ? _routeList(
-                            candidates: routeCandidatesFromRides,
-                            places: places,
-                            heading: 'Previous rides',
-                            emptyTitle: 'No previous rides',
-                            emptyBody:
-                                'Completed rides with route geometry will '
-                                'appear here.',
+                    _rideList(
+                      rides: deleted,
+                      recordings: savedRoutes
+                          .where(
+                            (candidate) =>
+                                candidate.geometry.libraryStatus ==
+                                RideLibraryStatus.deleted,
                           )
-                        : _rideList(
-                            rides: rides,
-                            archived: archived,
-                            deleted: deleted,
-                            places: places,
-                          ),
+                          .toList(),
+                      archived: const [],
+                      places: places,
+                      bin: true,
+                    ),
                   ],
                 ),
               ),
@@ -263,14 +258,28 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
   Widget _rideList({
     required List<CompletedRide> rides,
     required List<CompletedRide> archived,
-    required List<CompletedRide> deleted,
+    required List<StoredRouteCandidate> recordings,
     required ApproximatePlaceIndex places,
+    bool bin = false,
   }) => RideLibraryBrowser(
-    key: const ValueKey('browser-previous-rides'),
+    key: ValueKey(bin ? 'browser-bin' : 'browser-previous-rides'),
     distanceUnit: widget.distanceUnit,
     basemap: widget.basemapConfiguration,
     allowRating: true,
     entries: [
+      for (final candidate in recordings)
+        RideLibraryEntry(
+          id: candidate.id,
+          title: candidate.title,
+          locationLabel: approximateEndpointLabel(
+            index: places,
+            start: candidate.startPoint,
+            end: candidate.endPoint,
+          ),
+          distanceMeters: routeLengthMeters(candidate.geometry),
+          paths: [for (final path in candidate.geometry.paths) path.points],
+          open: () => _chooseOptions(candidate),
+        ),
       for (final ride in rides)
         RideLibraryEntry(
           id: ride.rideId,
@@ -289,7 +298,10 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     listBuilder: (ids, filtered) => _rideListBody(
       rides: rides.where((ride) => ids.contains(ride.rideId)).toList(),
       archived: filtered ? [] : archived,
-      deleted: filtered ? [] : deleted,
+      recordings: recordings
+          .where((candidate) => ids.contains(candidate.id))
+          .toList(),
+      bin: bin,
       places: places,
     ),
   );
@@ -332,36 +344,46 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
   Widget _rideListBody({
     required List<CompletedRide> rides,
     required List<CompletedRide> archived,
-    required List<CompletedRide> deleted,
+    required List<StoredRouteCandidate> recordings,
     required ApproximatePlaceIndex places,
-  }) => ListView(
-    key: const PageStorageKey<String>('ride-library-rides'),
-    padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
-    children: [
-      if (rides.isEmpty && archived.isEmpty && deleted.isEmpty)
-        const _InlineEmpty(
-          title: 'No recorded rides',
-          body: 'Rides will appear here as soon as they finish.',
-        ),
-      if (rides.isNotEmpty) ...[
-        const _SectionHeading('Previous rides'),
-        for (final ride in rides) _rideTile(ride, places),
-      ],
-      if (archived.isNotEmpty) ...[
-        const _SectionHeading('Archived'),
-        for (final ride in archived) _rideTile(ride, places),
-      ],
-      if (deleted.isNotEmpty) ...[
-        const _SectionHeading('Recently deleted'),
-        for (final ride in deleted) _rideTile(ride, places),
-      ],
-      const SizedBox(height: 10),
-      Text(
-        places.attribution,
-        style: const TextStyle(color: Color(0xFF778391), fontSize: 11),
+    bool bin = false,
+  }) {
+    final rows = <({DateTime time, Widget tile})>[
+      for (final ride in rides)
+        (time: ride.startedAt, tile: _rideTile(ride, places)),
+      for (final recording in recordings)
+        (time: recording.storedAt, tile: _tile(recording, places)),
+    ]..sort((a, b) => b.time.compareTo(a.time));
+    return ListView(
+      key: PageStorageKey<String>(
+        bin ? 'ride-library-bin' : 'ride-library-rides',
       ),
-    ],
-  );
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+      children: [
+        if (rows.isEmpty && archived.isEmpty)
+          _InlineEmpty(
+            title: bin ? 'Bin is empty' : 'No recorded rides',
+            body: bin
+                ? 'Removed rides and GPX files can be restored here.'
+                : 'Your rides and recordings appear here when you save them.',
+          ),
+        if (rows.isNotEmpty) ...[
+          _SectionHeading(bin ? 'Bin' : 'Rides'),
+          for (final row in rows) row.tile,
+        ],
+        if (archived.isNotEmpty)
+          ExpansionTile(
+            title: const Text('Archived'),
+            children: [for (final ride in archived) _rideTile(ride, places)],
+          ),
+        const SizedBox(height: 10),
+        Text(
+          places.attribution,
+          style: const TextStyle(color: Color(0xFF778391), fontSize: 11),
+        ),
+      ],
+    );
+  }
 
   Widget _tile(StoredRouteCandidate candidate, ApproximatePlaceIndex places) =>
       Padding(
@@ -376,6 +398,11 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
           distanceUnit: widget.distanceUnit,
           basemapConfiguration: widget.basemapConfiguration,
           onTap: () => _chooseOptions(candidate),
+          trailing: _entryMenu(
+            'route-${candidate.geometry.id}',
+            candidate.geometry.libraryStatus,
+            (action) => _manageRoute(candidate, action),
+          ),
         ),
       );
 
@@ -424,7 +451,11 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
             '${ride.riderCount} rider${ride.riderCount == 1 ? '' : 's'}$rating',
           ),
           isThreeLine: true,
-          trailing: const Icon(Icons.chevron_right),
+          trailing: _entryMenu(
+            'ride-${ride.rideId}',
+            ride.libraryStatus,
+            (action) => _manageRide(ride, action),
+          ),
           onTap: () => _openRide(ride),
         ),
       ),
@@ -432,6 +463,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
   }
 
   Future<void> _chooseOptions(StoredRouteCandidate candidate) async {
+    if (candidate.geometry.libraryStatus == RideLibraryStatus.deleted) return;
     final selection = await showModalBottomSheet<StoredRouteSelection>(
       context: context,
       isScrollControlled: true,
@@ -447,6 +479,25 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
   }
 
   Future<void> _openRide(CompletedRide ride) async {
+    if (widget.openPreviousRide == null) {
+      if (ride.libraryStatus == RideLibraryStatus.deleted) return;
+      final geometry = ride.traveledRoute ?? ride.plannedRoute;
+      if (geometry != null) {
+        await _chooseOptions(
+          StoredRouteCandidate(
+            id: 'ride:${ride.rideId}:track',
+            origin: ride.traveledRoute != null
+                ? StoredRouteOrigin.previousRideTrack
+                : StoredRouteOrigin.previousRidePlan,
+            title: ride.title,
+            storedAt: ride.startedAt,
+            geometry: geometry,
+            rideCode: ride.rideCode,
+          ),
+        );
+      }
+      return;
+    }
     final selection = await widget.openPreviousRide!(context, ride);
     if (!mounted) return;
     if (selection != null) {
@@ -454,6 +505,151 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
       return;
     }
     await _reload();
+  }
+
+  Widget _entryMenu(
+    String id,
+    RideLibraryStatus status,
+    ValueChanged<_EntryAction> onSelected,
+  ) => PopupMenuButton<_EntryAction>(
+    key: Key('library-actions-$id'),
+    tooltip: 'Manage ride',
+    onSelected: onSelected,
+    itemBuilder: (_) => [
+      const PopupMenuItem(value: _EntryAction.rename, child: Text('Rename')),
+      if (status == RideLibraryStatus.active)
+        const PopupMenuItem(value: _EntryAction.bin, child: Text('Move to Bin'))
+      else
+        const PopupMenuItem(
+          value: _EntryAction.restore,
+          child: Text('Restore'),
+        ),
+      if (status == RideLibraryStatus.deleted)
+        const PopupMenuItem(
+          value: _EntryAction.delete,
+          child: Text('Delete permanently'),
+        ),
+    ],
+  );
+
+  Future<String?> _rename(String title) async {
+    var name = title;
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename'),
+        content: TextFormField(
+          key: const Key('library-name-field'),
+          initialValue: title,
+          autofocus: true,
+          maxLength: 120,
+          onChanged: (value) => name = value,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (name.trim().isNotEmpty) Navigator.pop(context, name.trim());
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _confirmDelete(String title) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Delete permanently?'),
+          content: Text(
+            '“$title” will be removed from this phone. This cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete permanently'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  Future<void> _manageRoute(
+    StoredRouteCandidate candidate,
+    _EntryAction action,
+  ) async {
+    final route = candidate.geometry;
+    await _mutate(() async {
+      if (action == _EntryAction.delete) {
+        if (await _confirmDelete(route.name)) {
+          await widget.library.recordedRoutes.delete(route.id);
+        }
+        return;
+      }
+      final name = action == _EntryAction.rename
+          ? await _rename(route.name)
+          : null;
+      if (action == _EntryAction.rename && name == null) return;
+      await widget.library.recordedRoutes.save(
+        route.withLibraryDetails(
+          name: name,
+          status: switch (action) {
+            _EntryAction.bin => RideLibraryStatus.deleted,
+            _EntryAction.restore => RideLibraryStatus.active,
+            _ => null,
+          },
+        ),
+      );
+    });
+  }
+
+  Future<void> _manageRide(CompletedRide ride, _EntryAction action) async {
+    await _mutate(() async {
+      if (action == _EntryAction.delete) {
+        if (await _confirmDelete(ride.title)) {
+          await widget.library.completedRides.delete(ride.rideId);
+        }
+        return;
+      }
+      final name = action == _EntryAction.rename
+          ? await _rename(ride.title)
+          : null;
+      if (action == _EntryAction.rename && name == null) return;
+      await widget.library.completedRides.save(
+        ride.copyWith(
+          libraryName: name,
+          libraryStatus: switch (action) {
+            _EntryAction.bin => RideLibraryStatus.deleted,
+            _EntryAction.restore => RideLibraryStatus.active,
+            _ => null,
+          },
+          deletedAt: action == _EntryAction.bin ? DateTime.now().toUtc() : null,
+          clearDeletedAt: action == _EntryAction.restore,
+        ),
+      );
+    });
+  }
+
+  Future<void> _mutate(Future<void> Function() change) async {
+    try {
+      await change();
+      if (mounted) await _reload();
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update the library: $error')),
+        );
+      }
+    }
   }
 
   Future<void> _reload() async {
@@ -505,6 +701,8 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
 
 enum _RideLibraryAction { backup, restore }
 
+enum _EntryAction { rename, bin, restore, delete }
+
 /// One choosable stored route: its shape, what it is, when it was ridden and
 /// how far it goes. A list of dates is not choosable.
 class StoredRouteCandidateTile extends StatelessWidget {
@@ -515,6 +713,7 @@ class StoredRouteCandidateTile extends StatelessWidget {
     required this.distanceUnit,
     this.basemapConfiguration = const BasemapConfiguration(),
     required this.onTap,
+    this.trailing,
   });
 
   final StoredRouteCandidate candidate;
@@ -522,6 +721,7 @@ class StoredRouteCandidateTile extends StatelessWidget {
   final DistanceUnit distanceUnit;
   final BasemapConfiguration basemapConfiguration;
   final VoidCallback onTap;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -546,7 +746,7 @@ class StoredRouteCandidateTile extends StatelessWidget {
         '${candidate.rideCode == null ? '' : ' · ride ${candidate.rideCode}'}',
       ),
       isThreeLine: true,
-      trailing: const Icon(Icons.chevron_right),
+      trailing: trailing ?? const Icon(Icons.chevron_right),
       onTap: onTap,
     ),
   );
