@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 
 import '../domain/imported_route.dart';
+import 'road_routing.dart' show ValhallaMotorcycleRoutingService;
 
 enum SpeedLimitLookupOutcome {
   known,
@@ -376,6 +377,7 @@ class ValhallaSpeedLimitProvider
     final edges = decoded['edges'] as List;
     final admins = decoded['admins'] as List;
     final matches = decoded['matched_points'] as List;
+    final shape = _matchedTraceShape(decoded['shape']);
     final prefetched = <PrefetchedSpeedLimit>[];
     for (
       var index = 0;
@@ -413,7 +415,11 @@ class ValhallaSpeedLimitProvider
       }
       final countryCode =
           (admins[adminIndex.toInt()] as Map)['country_code'] as String;
-      final edgeHeading = edge['end_heading'] ?? edge['begin_heading'];
+      final edgeHeading = _matchedEdgeHeading(
+        edge,
+        shape,
+        locations[index].point,
+      );
       final expectedHeading = locations[index].headingDegrees;
       if (expectedHeading != null &&
           (edgeHeading is! num ||
@@ -557,6 +563,9 @@ class ValhallaSpeedLimitProvider
                   'edge.speed_limit',
                   'edge.begin_heading',
                   'edge.end_heading',
+                  'edge.begin_shape_index',
+                  'edge.end_shape_index',
+                  'shape',
                   'node.admin_index',
                   'admin.country_code',
                   'matched.edge_index',
@@ -1033,6 +1042,57 @@ class _MappedSpeedLimit {
 
   @override
   int get hashCode => Object.hash(kilometresPerHour, unlimited);
+}
+
+/// The heading at the sampled position, not at a bend farther along the edge.
+/// A look-ahead trace can contain a long curved edge: comparing every sample
+/// with its final heading rejected valid posted limits on the approach (#772).
+num? _matchedEdgeHeading(Map edge, List<GeoPoint> shape, GeoPoint point) {
+  final begin = edge['begin_shape_index'];
+  final end = edge['end_shape_index'];
+  double? heading;
+  var nearest = double.infinity;
+  if (begin is int &&
+      end is int &&
+      begin >= 0 &&
+      end > begin &&
+      end < shape.length) {
+    final scale = math.cos(point.latitude * math.pi / 180);
+    for (var index = begin; index < end; index++) {
+      final a = shape[index], b = shape[index + 1];
+      final ax = (a.longitude - point.longitude) * scale;
+      final ay = a.latitude - point.latitude;
+      final dx = (b.longitude - a.longitude) * scale;
+      final dy = b.latitude - a.latitude;
+      final length = dx * dx + dy * dy;
+      if (length < 1e-14) continue;
+      final fraction = (-(ax * dx + ay * dy) / length).clamp(0.0, 1.0);
+      final x = ax + fraction * dx, y = ay + fraction * dy;
+      final distance = x * x + y * y;
+      if (distance < nearest) {
+        nearest = distance;
+        heading = _bearingDegrees(a, b);
+      }
+    }
+  }
+  if (heading != null) return heading;
+  final fallback = edge['end_heading'] ?? edge['begin_heading'];
+  return fallback is num ? fallback : null;
+}
+
+List<GeoPoint> _matchedTraceShape(Object? encoded) {
+  try {
+    final points = ValhallaMotorcycleRoutingService.decodeValhallaShape(
+      encoded,
+    );
+    return points.every(
+          (p) => p.latitude.abs() <= 90 && p.longitude.abs() <= 180,
+        )
+        ? points
+        : const [];
+  } on FormatException {
+    return const [];
+  }
 }
 
 /// Parses Valhalla's posted-limit field without confusing two different absences.
