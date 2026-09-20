@@ -6728,7 +6728,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _circularRideGenerationStage =
             'Preparing your road preferences and suggested stops…';
       });
-      CircularRideRequest? retryRequest;
+      String? failureMessage;
       try {
         final preparedRequest = await _withSuggestedDayRideStops(requestedRide);
         if (!_isCircularRideGenerationCurrent(generation)) return;
@@ -6795,12 +6795,10 @@ class _RideMapScreenState extends State<RideMapScreen>
         return;
       } on FormatException catch (error) {
         if (!_isCircularRideGenerationCurrent(generation)) return;
-        _showMessage(error.message);
-        retryRequest = requestedRide;
+        failureMessage = error.message;
       } on Object catch (error) {
         if (!_isCircularRideGenerationCurrent(generation)) return;
-        _showMessage('Could not generate the circular ride: $error');
-        retryRequest = requestedRide;
+        failureMessage = 'Could not generate the circular ride: $error';
       } finally {
         if (_isCircularRideGenerationCurrent(generation)) {
           setState(() {
@@ -6810,11 +6808,50 @@ class _RideMapScreenState extends State<RideMapScreen>
         }
       }
       if (!mounted) return;
+      final recovery = await showDialog<RouteReviewAction>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Circular route unavailable'),
+          content: Text(
+            failureMessage ??
+                'No suitable road loop was found. Try another direction or distance.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, RouteReviewAction.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              key: const Key('edit-failed-circular-route'),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, RouteReviewAction.edit),
+              child: const Text('Edit route'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, RouteReviewAction.another),
+              child: const Text('Try another loop'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted ||
+          recovery == null ||
+          recovery == RouteReviewAction.cancel) {
+        return;
+      }
+      if (recovery == RouteReviewAction.another) {
+        // The planner already tried four variants. Advance beyond those instead
+        // of sending the same unsuccessful requests on every tap.
+        request = requestedRide.withVariant(requestedRide.variant + 4);
+        continue;
+      }
       request = await CircularRideSheet.show(
         context,
         start: origin,
         distanceUnit: widget.distanceUnit,
-        initialRequest: retryRequest,
+        initialRequest: requestedRide,
         personalHeatmapCells: _personalCircularHeatCells,
         globalHeatmapCells: _globalCircularHeatCells,
       );
