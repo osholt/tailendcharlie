@@ -6,11 +6,48 @@ import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_role.dart';
+import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/features/ride/previous_rides_screen.dart';
 import 'package:ride_relay/services/stored_route_library.dart';
 import 'package:ride_relay/services/trail_direction_arrows.dart';
 
 void main() {
+  testWidgets('legacy ride can link the original GPX and draws its snapshot', (
+    tester,
+  ) async {
+    final ride = _ride(plannedRoute: null, traveledRoute: _line());
+    final store = InMemoryCompletedRideStore();
+    await store.save(ride);
+    final completed = await CompletedRidesController.load(store);
+    final library = InMemoryRecordedRouteStore();
+    await library.save(_line().withLibraryDetails(name: 'Original GPX'));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PreviousRideDetailScreen(
+          ride: ride,
+          completedRides: completed,
+          recordedRoutes: library,
+          distanceUnits: DistanceUnitController.forLocale(
+            const Locale('en', 'GB'),
+          ),
+        ),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('link-imported-plan')),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const Key('link-imported-plan')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Original GPX'));
+    await tester.pumpAndSettle();
+    expect(completed.allRides.single.sourceRoute?.name, 'Original GPX');
+    expect(completed.allRides.single.plannedRoute, isNull);
+    expect(archivedRideLegend(completed.allRides.single).planned, isTrue);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('archived map bounds include sparse and self-crossing geometry', () {
     final bounds = archivedRideBounds(const [
       GeoPoint(latitude: 54.1, longitude: -2.3),

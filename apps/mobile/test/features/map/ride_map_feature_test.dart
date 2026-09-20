@@ -350,6 +350,7 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       await tester.pump();
       await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 11));
       await tester.pump();
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
@@ -908,6 +909,7 @@ void main() {
     );
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 11));
     await tester.pump();
     debugDefaultTargetPlatformOverride = null;
   });
@@ -6799,6 +6801,7 @@ void main() {
       bool started = false,
       bool navigating = false,
       VoidCallback? onMore,
+      List<HostMapMenuAction> menuActions = const [],
       VoidCallback? onOpenRideLibrary,
     }) async {
       SharedPreferences.setMockInitialValues({});
@@ -6838,6 +6841,7 @@ void main() {
                 ? HostMapChrome(
                     title: const Text('Where to?'),
                     onMore: onMore,
+                    menuActions: menuActions,
                     onOpenRideLibrary: onOpenRideLibrary,
                     actions: [
                       IconButton(
@@ -6931,6 +6935,30 @@ void main() {
       await tester.tap(find.byKey(const Key('home-more-actions')));
       await tester.pumpAndSettle();
 
+      expect(opened, 1);
+    });
+
+    testWidgets('host ride actions are direct, with no More actions submenu', (
+      tester,
+    ) async {
+      var opened = 0;
+      await pumpWithChrome(
+        tester,
+        hosted: true,
+        menuActions: [
+          HostMapMenuAction(
+            id: 'create-group-direct',
+            label: 'Create a group ride',
+            icon: Icons.groups,
+            onSelected: () => opened++,
+          ),
+        ],
+      );
+      await tester.tap(find.byKey(const Key('map-layer-actions')));
+      await tester.pumpAndSettle();
+      expect(find.text('More actions'), findsNothing);
+      await tester.tap(find.byKey(const Key('create-group-direct')));
+      await tester.pumpAndSettle();
       expect(opened, 1);
     });
 

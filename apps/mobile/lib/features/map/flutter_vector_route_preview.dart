@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
+import 'package:vector_tile_renderer/vector_tile_renderer.dart' as vtr;
 
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/flutter_vector_style.dart';
+import '../../services/preview_tile_readiness.dart';
 import 'route_trail_style.dart';
 
 const _routePreviewCameraInset = 30.0;
@@ -75,6 +79,7 @@ class FlutterVectorRoutePreview extends StatefulWidget {
     this.interactive = true,
     this.onReady,
     this.onFailure,
+    this.routeColour,
   });
 
   final List<List<GeoPoint>> paths;
@@ -82,6 +87,7 @@ class FlutterVectorRoutePreview extends StatefulWidget {
   final bool interactive;
   final VoidCallback? onReady;
   final ValueChanged<Object>? onFailure;
+  final Color? routeColour;
 
   @override
   State<FlutterVectorRoutePreview> createState() =>
@@ -91,8 +97,11 @@ class FlutterVectorRoutePreview extends StatefulWidget {
 class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
   static final Map<String, Future<vmt.Style>> _styleCache = {};
   late Future<vmt.Style> _style = _loadStyle();
-  Timer? _paintSettledTimer;
-  bool _reportedReady = false;
+  late PreviewTileReadiness _readiness = PreviewTileReadiness(
+    onReady: () {
+      if (mounted) widget.onReady?.call();
+    },
+  );
   bool _reportedFailure = false;
 
   List<LatLng> get _points => widget.paths
@@ -104,9 +113,15 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
   void didUpdateWidget(FlutterVectorRoutePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.basemapConfiguration.styleUrl !=
-        widget.basemapConfiguration.styleUrl) {
-      _paintSettledTimer?.cancel();
-      _reportedReady = false;
+            widget.basemapConfiguration.styleUrl ||
+        oldWidget.basemapConfiguration.restrainedLightStyle !=
+            widget.basemapConfiguration.restrainedLightStyle) {
+      _readiness.dispose();
+      _readiness = PreviewTileReadiness(
+        onReady: () {
+          if (mounted) widget.onReady?.call();
+        },
+      );
       _reportedFailure = false;
       _style = _loadStyle();
     }
@@ -114,39 +129,49 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
 
   @override
   void dispose() {
-    _paintSettledTimer?.cancel();
+    _readiness.dispose();
     super.dispose();
   }
 
   Future<vmt.Style> _loadStyle() {
-    final url = widget.basemapConfiguration.styleUrl;
-    return _styleCache[url] ??= _readStyle(url);
+    final configuration = widget.basemapConfiguration;
+    final key =
+        '${configuration.styleUrl}:${configuration.restrainedLightStyle}';
+    final readiness = _readiness;
+    return (_styleCache[key] ??= _readStyle(key, configuration)).then(
+      (style) => vmt.Style(
+        name: style.name,
+        theme: style.theme,
+        center: style.center,
+        zoom: style.zoom,
+        providers: vmt.TileProviders({
+          for (final entry in style.providers.tileProviderBySource.entries)
+            entry.key: _PreviewProvider(entry.value, readiness),
+        }),
+        sprites: style.sprites == null
+            ? null
+            : vmt.SpriteStyle(
+                index: style.sprites!.index,
+                atlasProvider: () =>
+                    readiness.track(style.sprites!.atlasProvider, tile: false),
+              ),
+      ),
+    );
   }
 
-  static Future<vmt.Style> _readStyle(String url) async {
+  static Future<vmt.Style> _readStyle(
+    String key,
+    BasemapConfiguration configuration,
+  ) async {
     try {
-      return await vmt.StyleReader(
-        uri: url,
-        httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-      ).read().timeout(const Duration(seconds: 7));
+      return await readFlutterVectorStyle(configuration);
     } on Object {
-      _styleCache.remove(url);
+      _styleCache.remove(key);
       rethrow;
     }
   }
 
-  void _mapReady() {
-    if (_reportedReady) return;
-    // Map ready means the camera exists; vector tiles are requested during the
-    // following frames. A short quiet window keeps Share disabled while those
-    // first tile paints settle, without ever blocking the UI or the fallback.
-    _paintSettledTimer?.cancel();
-    _paintSettledTimer = Timer(const Duration(milliseconds: 700), () {
-      if (!mounted || _reportedReady) return;
-      _reportedReady = true;
-      widget.onReady?.call();
-    });
-  }
+  void _mapReady() => _readiness.cameraReady();
 
   void _reportFailure(Object error) {
     if (_reportedFailure) return;
@@ -205,7 +230,10 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
                 theme: style.theme,
                 sprites: style.sprites,
                 maximumZoom: 16,
-                concurrency: 2,
+                concurrency: widget.interactive ? 2 : 0,
+                layerMode: widget.interactive
+                    ? vmt.VectorTileLayerMode.raster
+                    : vmt.VectorTileLayerMode.vector,
                 fileCacheTtl: Duration.zero,
                 fileCacheMaximumSizeInBytes: 0,
               ),
@@ -220,7 +248,9 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
                                   LatLng(point.latitude, point.longitude),
                             )
                             .toList(growable: false),
-                        color: RouteTrailStyle.routeAhead.color,
+                        color:
+                            widget.routeColour ??
+                            RouteTrailStyle.routeAhead.color,
                         strokeWidth: RouteTrailStyle.routeAhead.widthPixels,
                         borderColor: RouteTrailStyle.casing,
                         borderStrokeWidth:
@@ -273,4 +303,26 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
       );
     },
   );
+}
+
+class _PreviewProvider extends vmt.VectorTileProvider {
+  _PreviewProvider(this.delegate, this.readiness);
+  final vmt.VectorTileProvider delegate;
+  final PreviewTileReadiness readiness;
+  @override
+  Future<Uint8List> provide(vmt.TileIdentity tile) => readiness.track(() async {
+    final bytes = await delegate.provide(tile);
+    if (delegate.type == vmt.TileProviderType.vector) {
+      vtr.VectorTileReader().read(bytes);
+    }
+    return bytes;
+  });
+  @override
+  int get maximumZoom => delegate.maximumZoom;
+  @override
+  int get minimumZoom => delegate.minimumZoom;
+  @override
+  vmt.TileOffset get tileOffset => delegate.tileOffset;
+  @override
+  vmt.TileProviderType get type => delegate.type;
 }

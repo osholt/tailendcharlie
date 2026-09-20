@@ -1,8 +1,11 @@
 import 'dart:convert';
 
 import 'route_preferences.dart';
+import 'ride_library_status.dart';
+import 'ride_library_organisation.dart';
 
 export 'route_preferences.dart';
+export 'ride_library_status.dart';
 
 enum RoutePathKind { track, route }
 
@@ -431,6 +434,11 @@ class ImportedRoute {
     this.description,
     this.preferences,
     this.plannedDuration,
+    this.sourceRouteId,
+    this.derivedFromRouteId,
+    this.libraryStatus = RideLibraryStatus.active,
+    this.deletedAt,
+    this.organisation = const RideLibraryOrganisation(),
   });
 
   static const schemaVersion = 1;
@@ -452,6 +460,44 @@ class ImportedRoute {
   /// first moving GPS fix and after an app restart (#413).
   final Duration? plannedDuration;
 
+  /// Stable library identity of the original plan, retained by road matching
+  /// and rerouting. The original geometry is kept locally with the ride.
+  final String? sourceRouteId;
+
+  /// Provenance of a corrected plan, distinct from its original navigation GPX.
+  final String? derivedFromRouteId;
+  final RideLibraryStatus libraryStatus;
+  final DateTime? deletedAt;
+  final RideLibraryOrganisation organisation;
+
+  ImportedRoute withLibraryDetails({
+    String? name,
+    RideLibraryStatus? status,
+    RideLibraryOrganisation? organisation,
+  }) => ImportedRoute(
+    id: id,
+    name: name ?? this.name,
+    description: description,
+    importedAt: importedAt,
+    sourceFileName: sourceFileName,
+    paths: paths,
+    waypoints: waypoints,
+    shapingPoints: shapingPoints,
+    maneuvers: maneuvers,
+    markerReview: markerReview,
+    preferences: preferences,
+    plannedDuration: plannedDuration,
+    sourceRouteId: sourceRouteId,
+    derivedFromRouteId: derivedFromRouteId,
+    libraryStatus: status ?? libraryStatus,
+    organisation: organisation ?? this.organisation,
+    deletedAt: status == RideLibraryStatus.deleted
+        ? DateTime.now().toUtc()
+        : status == RideLibraryStatus.active
+        ? null
+        : deletedAt,
+  );
+
   /// Which suggested marking positions a person has rejected or added.
   final MarkerPlanReview markerReview;
 
@@ -468,6 +514,11 @@ class ImportedRoute {
     markerReview: review,
     preferences: preferences,
     plannedDuration: plannedDuration,
+    sourceRouteId: sourceRouteId,
+    derivedFromRouteId: derivedFromRouteId,
+    libraryStatus: libraryStatus,
+    organisation: organisation,
+    deletedAt: deletedAt,
   );
 
   /// The route character this route was planned for, when it was planned rather
@@ -506,6 +557,11 @@ class ImportedRoute {
         markerReview: markerReview,
         preferences: preferences,
         plannedDuration: plannedDuration,
+        sourceRouteId: sourceRouteId,
+        derivedFromRouteId: derivedFromRouteId,
+        libraryStatus: libraryStatus,
+        organisation: organisation,
+        deletedAt: deletedAt,
       );
 
   Map<String, Object?> toJson() => {
@@ -515,6 +571,12 @@ class ImportedRoute {
     if (description != null) 'description': description,
     'importedAt': importedAt.toUtc().toIso8601String(),
     'sourceFileName': sourceFileName,
+    if (sourceRouteId != null) 'sourceRouteId': sourceRouteId,
+    if (derivedFromRouteId != null) 'derivedFromRouteId': derivedFromRouteId,
+    'organisation': organisation.toJson(),
+    if (libraryStatus != RideLibraryStatus.active)
+      'libraryStatus': libraryStatus.name,
+    if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
     'paths': paths.map((path) => path.toJson()).toList(),
     'waypoints': waypoints.map((waypoint) => waypoint.toJson()).toList(),
     if (shapingPoints.isNotEmpty)
@@ -604,6 +666,11 @@ class ImportedRoute {
       description: description,
       importedAt: DateTime.parse(_requiredString(json, 'importedAt')).toUtc(),
       sourceFileName: sourceFileName,
+      sourceRouteId: _optionalString(json['sourceRouteId']),
+      derivedFromRouteId: _optionalString(json['derivedFromRouteId']),
+      libraryStatus: RideLibraryStatus.parse(json['libraryStatus']),
+      organisation: RideLibraryOrganisation.fromJson(json['organisation']),
+      deletedAt: _optionalDateTime(json['deletedAt']),
       paths: paths,
       waypoints: waypoints,
       shapingPoints: shapingPoints,

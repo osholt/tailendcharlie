@@ -234,6 +234,32 @@
         <a href="mailto:privacy@tailendcharlie.app">privacy@tailendcharlie.app</a>.
       </p>
 
+      <h3 id="arrival-estimates">Personal and shared arrival estimates</h3>
+      <p>
+        Personal arrival-time learning uses suitable completed rides on your
+        phone, excluding long breaks and uncertain recordings. You can disable
+        or reset it in Settings. It does not upload your ride history.
+      </p>
+      <p>
+        <strong>Contribute to motorcycle estimates</strong> is a separate,
+        optional setting, off by default. It sends up to three rounded timing
+        ratios for broad road types, using a separate random credential. No
+        route, trip date, duration, distance, absolute speed, account identity
+        or heatmap credential is included. The relay stores a hash of that
+        credential, the coarse ratios and a 90-day expiry date. Normal network
+        request handling still applies as described below.
+      </p>
+      <p>
+        Public trends require at least 20 contributor profiles per road type
+        and contain no individual profiles or exact contributor counts.
+        Switching sharing off removes your profile; if offline, the phone keeps
+        the deletion credential and retries when connected. Resetting personal
+        learning also replaces the shared profile when sharing is enabled.
+        Expired profiles are excluded and removed by regular cleanup. Other
+        phones can retain previously downloaded public trends for up to seven
+        days. Your original ride records stay on your phone.
+      </p>
+
       <h3 id="website-planner-storage">Website ride planner</h3>
       <p>
         To provide the save-and-return feature you request by using the

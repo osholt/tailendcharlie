@@ -1,3 +1,4 @@
+import 'eta_settings_section.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -45,6 +46,7 @@ class UnitSettingsSheet extends StatelessWidget {
     this.globalRideHeatmap,
     this.completedRideStore,
     this.embedded = false,
+    this.showTitle = true,
   });
 
   final DistanceUnitController controller;
@@ -58,6 +60,7 @@ class UnitSettingsSheet extends StatelessWidget {
   /// a dismissible sheet. Nested editors must not pop the active ride when
   /// Settings occupies the bottom-bar slot (#306).
   final bool embedded;
+  final bool showTitle;
 
   /// Whether turn instructions are spoken. Off by default: most riders already
   /// have an intercom carrying music or another app's prompts, and a second
@@ -97,24 +100,28 @@ class UnitSettingsSheet extends StatelessWidget {
     RideDiagnosticsController? rideDiagnostics,
     GlobalRideHeatmapController? globalRideHeatmap,
     CompletedRideStore? completedRideStore,
-  }) => showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
-    useSafeArea: true,
-    builder: (_) => UnitSettingsSheet(
-      controller: controller,
-      mapStyleMode: mapStyleMode,
-      riderProfile: riderProfile,
-      speedLimitDisplay: speedLimitDisplay,
-      routeProgressDisplay: routeProgressDisplay,
-      currentRideActive: currentRideActive,
-      lastRelaySync: lastRelaySync,
-      buildIdentity: buildIdentity,
-      testControl: testControl,
-      spokenGuidance: spokenGuidance,
-      rideDiagnostics: rideDiagnostics,
-      globalRideHeatmap: globalRideHeatmap,
-      completedRideStore: completedRideStore,
+  }) => Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('Settings')),
+        body: UnitSettingsSheet(
+          embedded: true,
+          showTitle: false,
+          controller: controller,
+          mapStyleMode: mapStyleMode,
+          riderProfile: riderProfile,
+          speedLimitDisplay: speedLimitDisplay,
+          routeProgressDisplay: routeProgressDisplay,
+          currentRideActive: currentRideActive,
+          lastRelaySync: lastRelaySync,
+          buildIdentity: buildIdentity,
+          testControl: testControl,
+          spokenGuidance: spokenGuidance,
+          rideDiagnostics: rideDiagnostics,
+          globalRideHeatmap: globalRideHeatmap,
+          completedRideStore: completedRideStore,
+        ),
+      ),
     ),
   );
 
@@ -123,447 +130,495 @@ class UnitSettingsSheet extends StatelessWidget {
     animation: Listenable.merge([
       controller,
       mapStyleMode,
+      riderProfile,
       speedLimitDisplay,
       ?routeProgressDisplay,
       ?globalRideHeatmap,
     ]),
-    builder: (context, _) => SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 20),
-          Text(
-            'Riding display size',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Larger turn arrows, directions and distances. Small keeps the original size.',
-          ),
-          const SizedBox(height: 8),
-          SegmentedButton<RidingDisplaySize>(
-            key: const Key('riding-display-size'),
-            segments: [
-              for (final size in RidingDisplaySize.values)
-                ButtonSegment(value: size, label: Text(size.label)),
-            ],
-            selected: {mapStyleMode.ridingDisplaySize},
-            onSelectionChanged: (sizes) =>
-                unawaited(mapStyleMode.setRidingDisplaySize(sizes.single)),
-          ),
-          const SizedBox(height: 20),
-          // Near the top, and here rather than only on the map's overflow
-          // menu, because that menu does not exist during a ride: `hideChrome`
-          // removes the whole app bar once the navigation canvas is up, so
-          // there was no way to change a layer mid-ride at all (#593).
-          Text(
-            'MAP LAYERS',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF8D98A7),
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 6),
-          ListTile(
-            key: const Key('open-discovery-layers'),
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.layers_outlined),
-            title: const Text('Café and road layers'),
-            subtitle: const Text('Which optional layers appear on the map'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              final appContext = Navigator.of(
-                context,
-                rootNavigator: true,
-              ).context;
-              if (!embedded) Navigator.of(context).pop();
-              unawaited(DiscoveryLayersScreen.show(appContext));
-            },
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'RIDER PROFILE',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF8D98A7),
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 6),
-          ListTile(
-            key: const Key('open-rider-profile'),
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.two_wheeler),
-            title: Text(
-              riderProfile.displayName.isEmpty
-                  ? 'Set up rider profile'
-                  : riderProfile.displayName,
-            ),
-            subtitle: Text(
-              '${riderProfile.riderSymbol.label(riderProfile.displayName, riderProfile.motorcycleStyle)} · ${riderProfile.riderColor.label}',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              final appContext = Navigator.of(
-                context,
-                rootNavigator: true,
-              ).context;
-              if (!embedded) Navigator.of(context).pop();
-              unawaited(
-                RiderProfileSheet.show(
-                  appContext,
-                  riderProfile,
-                  currentRideActive: currentRideActive,
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'DISTANCE UNITS',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF8D98A7),
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 10),
-          SegmentedButton<DistanceUnit>(
-            key: const Key('distance-unit-selector'),
-            segments: DistanceUnit.values
-                .map(
-                  (unit) => ButtonSegment<DistanceUnit>(
-                    value: unit,
-                    label: Text(unit.label),
-                  ),
-                )
-                .toList(growable: false),
-            selected: {controller.value},
-            onSelectionChanged: (selection) {
-              unawaited(controller.setUnit(selection.single));
-            },
-          ),
-          const SizedBox(height: 12),
-          Text(
-            controller.followsAutomatic
-                ? controller.roadJurisdiction == null
-                      ? 'Automatic: using the device locale default '
-                            '(${controller.localeDefault.label.toLowerCase()}) until your road country is known.'
-                      : 'Automatic for ${controller.roadJurisdiction!.name}: '
-                            '${controller.automaticDefault.label.toLowerCase()}.'
-                : 'Manual override. Automatic is '
-                      '${controller.automaticDefault.label.toLowerCase()}'
-                      '${controller.roadJurisdiction == null ? ' from the device locale' : ' for ${controller.roadJurisdiction!.name}'}.',
-            style: const TextStyle(color: Color(0xFF98A3B1)),
-          ),
-          if (!controller.followsAutomatic) ...[
-            const SizedBox(height: 4),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                key: const Key('use-locale-distance-unit'),
-                onPressed: () => unawaited(controller.useAutomaticDefault()),
-                child: const Text('Use automatic units'),
+    builder: (context, _) {
+      final riding = GlobalKey(),
+          map = GlobalKey(),
+          sharing = GlobalKey(),
+          profile = GlobalKey(),
+          about = GlobalKey();
+      Widget shortcut(String label, GlobalKey key) => ActionChip(
+        label: Text(label),
+        onPressed: () {
+          final target = key.currentContext;
+          if (target != null) {
+            Scrollable.ensureVisible(
+              target,
+              duration: const Duration(milliseconds: 250),
+            );
+          }
+        },
+      );
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (showTitle)
+              Text(
+                'Settings',
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
+            Wrap(
+              spacing: 8,
+              children: [
+                shortcut('Riding', riding),
+                shortcut('Map', map),
+                if (globalRideHeatmap != null) shortcut('Sharing', sharing),
+                shortcut('Profile', profile),
+                shortcut('About', about),
+              ],
             ),
-          ],
-          const SizedBox(height: 22),
-          Text(
-            'MAP APPEARANCE',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF8D98A7),
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 10),
-          SegmentedButton<MapStyleMode>(
-            key: const Key('map-style-mode-selector'),
-            segments: MapStyleMode.values
-                .map(
-                  (mode) => ButtonSegment<MapStyleMode>(
-                    value: mode,
-                    label: Text(mode.label),
-                  ),
-                )
-                .toList(growable: false),
-            selected: {mapStyleMode.value},
-            onSelectionChanged: (selection) {
-              unawaited(mapStyleMode.setMode(selection.single));
-            },
-          ),
-          const SizedBox(height: 12),
-          Text(
-            _mapAppearanceStatus(context, mapStyleMode),
-            style: const TextStyle(color: Color(0xFF98A3B1)),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            'DAYTIME MAP',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF8D98A7),
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 10),
-          SegmentedButton<DayMapStyle>(
-            key: const Key('day-map-style-selector'),
-            segments: DayMapStyle.values
-                .map(
-                  (style) => ButtonSegment<DayMapStyle>(
-                    value: style,
-                    label: Text(style.label),
-                  ),
-                )
-                .toList(growable: false),
-            selected: {mapStyleMode.dayStyle},
-            onSelectionChanged: (selection) {
-              unawaited(mapStyleMode.setDayStyle(selection.single));
-            },
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'Restrained uses the quieter road-first daytime palette. Original '
-            'keeps the OpenFreeMap Liberty colours. This applies whenever the '
-            'map is in light or sun-based daytime mode.',
-            style: TextStyle(color: Color(0xFF98A3B1)),
-          ),
-          const SizedBox(height: 18),
-          SwitchListTile.adaptive(
-            key: const Key('posted-speed-limit-toggle'),
-            contentPadding: EdgeInsets.zero,
-            value: speedLimitDisplay.enabled,
-            onChanged: speedLimitDisplay.setEnabled,
-            title: const Text('Show mapped speed limit'),
-            subtitle: const Text(
-              'On by default. Matches your position and up to 1 km ahead to '
-              'roads in France, Great Britain and the Isle of Man using '
-              '© OpenStreetMap contributors via Valhalla. French signs are '
-              'shown in km/h and British signs in mph. Mapped limits are not '
-              'live; roadside signs always apply. Turning this off is remembered.',
-            ),
-          ),
-          if (routeProgressDisplay case final progressDisplay?) ...[
-            const SizedBox(height: 8),
-            SwitchListTile.adaptive(
-              key: const Key('route-progress-display-toggle'),
-              contentPadding: EdgeInsets.zero,
-              value: progressDisplay.enabled,
-              onChanged: progressDisplay.setEnabled,
-              title: const Text('Show route time and distance'),
-              subtitle: const Text(
-                'Shows the current time, total distance and estimated time '
-                'remaining, plus the next named stop and its ETA. Estimates '
-                'use your recent riding speed and stay blank until you move.',
-              ),
-            ),
-          ],
-          const SizedBox(height: 22),
-          Text(
-            'MAP DATA',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF8D98A7),
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            BasemapConfiguration.fromEnvironment().attribution,
-            style: const TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
-          ),
-          const SizedBox(height: 22),
-          if (globalRideHeatmap case final heatmap?) ...[
+            const SizedBox(height: 20),
             Text(
-              'GLOBAL RIDES',
+              'Riding display size',
+              key: riding,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Larger turn arrows, directions and distances. Small keeps the original size.',
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<RidingDisplaySize>(
+              key: const Key('riding-display-size'),
+              segments: [
+                for (final size in RidingDisplaySize.values)
+                  ButtonSegment(value: size, label: Text(size.label)),
+              ],
+              selected: {mapStyleMode.ridingDisplaySize},
+              onSelectionChanged: (sizes) =>
+                  unawaited(mapStyleMode.setRidingDisplaySize(sizes.single)),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'DISTANCE UNITS',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: const Color(0xFF8D98A7),
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SegmentedButton<DistanceUnit>(
+              key: const Key('distance-unit-selector'),
+              segments: DistanceUnit.values
+                  .map(
+                    (unit) => ButtonSegment<DistanceUnit>(
+                      value: unit,
+                      label: Text(unit.label),
+                    ),
+                  )
+                  .toList(growable: false),
+              selected: {controller.value},
+              onSelectionChanged: (selection) {
+                unawaited(controller.setUnit(selection.single));
+              },
+            ),
+            const SizedBox(height: 12),
+            Text(
+              controller.followsAutomatic
+                  ? controller.roadJurisdiction == null
+                        ? 'Automatic: using the device locale default '
+                              '(${controller.localeDefault.label.toLowerCase()}) until your road country is known.'
+                        : 'Automatic for ${controller.roadJurisdiction!.name}: '
+                              '${controller.automaticDefault.label.toLowerCase()}.'
+                  : 'Manual override. Automatic is '
+                        '${controller.automaticDefault.label.toLowerCase()}'
+                        '${controller.roadJurisdiction == null ? ' from the device locale' : ' for ${controller.roadJurisdiction!.name}'}.',
+              style: const TextStyle(color: Color(0xFF98A3B1)),
+            ),
+            if (!controller.followsAutomatic) ...[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  key: const Key('use-locale-distance-unit'),
+                  onPressed: () => unawaited(controller.useAutomaticDefault()),
+                  child: const Text('Use automatic units'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 22),
+            SwitchListTile.adaptive(
+              key: const Key('posted-speed-limit-toggle'),
+              contentPadding: EdgeInsets.zero,
+              value: speedLimitDisplay.enabled,
+              onChanged: speedLimitDisplay.setEnabled,
+              title: const Text('Show mapped speed limit'),
+              subtitle: const Text(
+                'Mapped limits in local road units. Roadside signs always apply.',
+              ),
+            ),
+            if (routeProgressDisplay case final progressDisplay?) ...[
+              const SizedBox(height: 8),
+              SwitchListTile.adaptive(
+                key: const Key('route-progress-display-toggle'),
+                contentPadding: EdgeInsets.zero,
+                value: progressDisplay.enabled,
+                onChanged: progressDisplay.setEnabled,
+                title: const Text('Show route time and distance'),
+                subtitle: const Text(
+                  'Distance remaining, arrival time and the next stop. Uses the '
+                  'route estimate with suitable ride history when available.',
+                ),
+              ),
+            ],
+            const SizedBox(height: 22),
+            Text(
+              'GUIDANCE',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: const Color(0xFF8D98A7),
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (spokenGuidance case final spoken?)
+              Column(
+                children: [
+                  AnimatedBuilder(
+                    animation: spoken,
+                    builder: (context, _) => SwitchListTile.adaptive(
+                      key: const Key('spoken-guidance-toggle'),
+                      contentPadding: EdgeInsets.zero,
+                      value: spoken.enabled,
+                      onChanged: spoken.setEnabled,
+                      title: const Text('Speak turn instructions'),
+                      subtitle: const Text(
+                        'Reads the next turn aloud so you do not have to look '
+                        'down. Mixes with music or an intercom rather than '
+                        'stopping it.',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _NaturalVoicePackSetting(controller: spoken),
+                  const SizedBox(height: 18),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'PHONE VOICE FALLBACK',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: const Color(0xFF8D98A7),
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  _SpokenVoiceSetting(controller: spoken),
+                ],
+              ),
+            const SizedBox(height: 20),
+            const EtaSettingsSection(),
+            const SizedBox(height: 20),
+            Text(
+              'MAP APPEARANCE',
+              key: map,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: const Color(0xFF8D98A7),
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SegmentedButton<MapStyleMode>(
+              key: const Key('map-style-mode-selector'),
+              showSelectedIcon: false,
+              style: const ButtonStyle(
+                padding: WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 8),
+                ),
+              ),
+              segments: MapStyleMode.values
+                  .map(
+                    (mode) => ButtonSegment<MapStyleMode>(
+                      value: mode,
+                      tooltip: mode.label,
+                      label: Text(switch (mode) {
+                        MapStyleMode.system => 'Device',
+                        MapStyleMode.sunriseSunset => 'Sun',
+                        _ => mode.label,
+                      }),
+                    ),
+                  )
+                  .toList(growable: false),
+              selected: {mapStyleMode.value},
+              onSelectionChanged: (selection) {
+                unawaited(mapStyleMode.setMode(selection.single));
+              },
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _mapAppearanceStatus(context, mapStyleMode),
+              style: const TextStyle(color: Color(0xFF98A3B1)),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              'DAYTIME MAP',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: const Color(0xFF8D98A7),
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SegmentedButton<DayMapStyle>(
+              key: const Key('day-map-style-selector'),
+              segments: DayMapStyle.values
+                  .map(
+                    (style) => ButtonSegment<DayMapStyle>(
+                      value: style,
+                      label: Text(style.label),
+                    ),
+                  )
+                  .toList(growable: false),
+              selected: {mapStyleMode.dayStyle},
+              onSelectionChanged: (selection) {
+                unawaited(mapStyleMode.setDayStyle(selection.single));
+              },
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Restrained uses the quieter road-first daytime palette. Original '
+              'keeps the OpenFreeMap Liberty colours. This applies whenever the '
+              'map is in light or sun-based daytime mode.',
+              style: TextStyle(color: Color(0xFF98A3B1)),
+            ),
+            const SizedBox(height: 18),
+            // Near the top, and here rather than only on the map's overflow
+            // menu, because that menu does not exist during a ride: `hideChrome`
+            // removes the whole app bar once the navigation canvas is up, so
+            // there was no way to change a layer mid-ride at all (#593).
+            Text(
+              'MAP LAYERS',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: const Color(0xFF8D98A7),
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            ListTile(
+              key: const Key('open-discovery-layers'),
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.layers_outlined),
+              title: const Text('Café and road layers'),
+              subtitle: const Text('Which optional layers appear on the map'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                final appContext = Navigator.of(
+                  context,
+                  rootNavigator: true,
+                ).context;
+                unawaited(DiscoveryLayersScreen.show(appContext));
+              },
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'MAP DATA',
               style: Theme.of(context).textTheme.labelLarge?.copyWith(
                 color: const Color(0xFF8D98A7),
                 letterSpacing: 1.1,
               ),
             ),
             const SizedBox(height: 8),
-            DropdownButtonFormField<HeatmapContributionConsent>(
-              key: const Key('global-heatmap-consent'),
-              initialValue: heatmap.consent,
-              decoration: const InputDecoration(
-                labelText: 'Contribute completed rides',
+            Text(
+              BasemapConfiguration.fromEnvironment().attribution,
+              style: const TextStyle(color: Color(0xFF98A3B1), fontSize: 12),
+            ),
+            const SizedBox(height: 22),
+            if (globalRideHeatmap case final heatmap?) ...[
+              Text(
+                'GLOBAL RIDES',
+                key: sharing,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: const Color(0xFF8D98A7),
+                  letterSpacing: 1.1,
+                ),
               ),
-              items: const [
-                DropdownMenuItem(
-                  value: HeatmapContributionConsent.never,
-                  child: Text('Never'),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<HeatmapContributionConsent>(
+                key: const Key('global-heatmap-consent'),
+                initialValue: heatmap.consent,
+                decoration: const InputDecoration(
+                  labelText: 'Contribute completed rides',
                 ),
-                DropdownMenuItem(
-                  value: HeatmapContributionConsent.askAfterEachRide,
-                  child: Text('Ask after each ride'),
+                items: const [
+                  DropdownMenuItem(
+                    value: HeatmapContributionConsent.never,
+                    child: Text('Never'),
+                  ),
+                  DropdownMenuItem(
+                    value: HeatmapContributionConsent.askAfterEachRide,
+                    child: Text('Ask after each ride'),
+                  ),
+                  DropdownMenuItem(
+                    value: HeatmapContributionConsent.always,
+                    child: Text('Always after a ride'),
+                  ),
+                ],
+                onChanged: (value) async {
+                  if (value == null || value == heatmap.consent) return;
+                  if (value != HeatmapContributionConsent.never &&
+                      !await _confirmHeatmapContribution(context, heatmap)) {
+                    return;
+                  }
+                  await heatmap.setConsent(value);
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                key: const Key('global-heatmap-trim'),
+                initialValue: heatmap.trimMeters,
+                decoration: const InputDecoration(
+                  labelText: 'Hide at each end',
                 ),
-                DropdownMenuItem(
-                  value: HeatmapContributionConsent.always,
-                  child: Text('Always after a ride'),
+                items: const [
+                  DropdownMenuItem(value: 0, child: Text('Nothing')),
+                  DropdownMenuItem(value: 500, child: Text('500 m')),
+                  DropdownMenuItem(
+                    value: 1000,
+                    child: Text('1 km (recommended)'),
+                  ),
+                  DropdownMenuItem(value: 2000, child: Text('2 km')),
+                ],
+                onChanged: heatmap.consent == HeatmapContributionConsent.never
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          unawaited(heatmap.setTrimMeters(value));
+                        }
+                      },
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'The phone removes both ends, converts the travelled track to an '
+                'unordered set of coarse cells, and sends no ride name, route '
+                'order, time, speed, rider identity or ride code. Public cells '
+                'appear only after at least three contributors. Viewing the map '
+                'layer never opts you in.',
+                style: TextStyle(color: Color(0xFF98A3B1), height: 1.4),
+              ),
+              if (heatmap.consent != HeatmapContributionConsent.never) ...[
+                const SizedBox(height: 8),
+                if (completedRideStore case final rides?)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      key: const Key('global-heatmap-share-history'),
+                      onPressed: heatmap.sharingHistory
+                          ? null
+                          : () => unawaited(
+                              _shareHeatmapHistory(context, heatmap, rides),
+                            ),
+                      icon: heatmap.sharingHistory
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.cloud_upload_outlined),
+                      label: Text(
+                        heatmap.sharingHistory
+                            ? 'Sharing saved coverage…'
+                            : 'Share existing ride history',
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const Key('global-heatmap-remove-data'),
+                    onPressed: () => unawaited(
+                      _removeHeatmapContributions(context, heatmap),
+                    ),
+                    icon: const Icon(Icons.delete_sweep_outlined),
+                    label: const Text('Stop contributing and remove my data'),
+                  ),
                 ),
               ],
-              onChanged: (value) async {
-                if (value == null || value == heatmap.consent) return;
-                if (value != HeatmapContributionConsent.never &&
-                    !await _confirmHeatmapContribution(context, heatmap)) {
-                  return;
-                }
-                await heatmap.setConsent(value);
+              const SizedBox(height: 22),
+            ],
+            Text(
+              'RIDER PROFILE',
+              key: profile,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: const Color(0xFF8D98A7),
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 6),
+            ListTile(
+              key: const Key('open-rider-profile'),
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.two_wheeler),
+              title: Text(
+                riderProfile.displayName.isEmpty
+                    ? 'Set up rider profile'
+                    : riderProfile.displayName,
+              ),
+              subtitle: Text(
+                '${riderProfile.riderSymbol.label(riderProfile.displayName, riderProfile.motorcycleStyle)} · ${riderProfile.riderColor.label}',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                final appContext = Navigator.of(
+                  context,
+                  rootNavigator: true,
+                ).context;
+                unawaited(
+                  RiderProfileSheet.show(
+                    appContext,
+                    riderProfile,
+                    currentRideActive: currentRideActive,
+                  ),
+                );
               },
             ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
-              key: const Key('global-heatmap-trim'),
-              initialValue: heatmap.trimMeters,
-              decoration: const InputDecoration(labelText: 'Hide at each end'),
-              items: const [
-                DropdownMenuItem(value: 0, child: Text('Nothing')),
-                DropdownMenuItem(value: 500, child: Text('500 m')),
-                DropdownMenuItem(
-                  value: 1000,
-                  child: Text('1 km (recommended)'),
-                ),
-                DropdownMenuItem(value: 2000, child: Text('2 km')),
-              ],
-              onChanged: heatmap.consent == HeatmapContributionConsent.never
-                  ? null
-                  : (value) {
-                      if (value != null) {
-                        unawaited(heatmap.setTrimMeters(value));
-                      }
-                    },
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'The phone removes both ends, converts the travelled track to an '
-              'unordered set of coarse cells, and sends no ride name, route '
-              'order, time, speed, rider identity or ride code. Public cells '
-              'appear only after at least three contributors. Viewing the map '
-              'layer never opts you in.',
-              style: TextStyle(color: Color(0xFF98A3B1), height: 1.4),
-            ),
-            if (heatmap.consent != HeatmapContributionConsent.never) ...[
-              const SizedBox(height: 8),
-              if (completedRideStore case final rides?)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    key: const Key('global-heatmap-share-history'),
-                    onPressed: heatmap.sharingHistory
-                        ? null
-                        : () => unawaited(
-                            _shareHeatmapHistory(context, heatmap, rides),
-                          ),
-                    icon: heatmap.sharingHistory
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cloud_upload_outlined),
-                    label: Text(
-                      heatmap.sharingHistory
-                          ? 'Sharing saved coverage…'
-                          : 'Share existing ride history',
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  key: const Key('global-heatmap-remove-data'),
-                  onPressed: () =>
-                      unawaited(_removeHeatmapContributions(context, heatmap)),
-                  icon: const Icon(Icons.delete_sweep_outlined),
-                  label: const Text('Stop contributing and remove my data'),
-                ),
+            const SizedBox(height: 16),
+            Text(
+              'ABOUT',
+              key: about,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: const Color(0xFF8D98A7),
+                letterSpacing: 1.1,
               ),
-            ],
-            const SizedBox(height: 22),
+            ),
+            const SizedBox(height: 4),
+            if (testControl case final testControl?)
+              TestControlSection(controller: testControl),
+            if (rideDiagnostics case final diagnostics?)
+              RideDiagnosticsSection(controller: diagnostics),
+            _AboutBuildTile(
+              identity: buildIdentity ?? BuildIdentity.fromEnvironment(),
+              lastRelaySync: lastRelaySync,
+              dismissSettingsBeforeOpening: false,
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                spacing: 4,
+                children: [
+                  TextButton(
+                    key: const Key('open-privacy-policy'),
+                    onPressed: () =>
+                        unawaited(_openLegalPage(context, 'privacy.html')),
+                    child: const Text('Privacy Policy'),
+                  ),
+                  TextButton(
+                    key: const Key('open-terms-of-use'),
+                    onPressed: () =>
+                        unawaited(_openLegalPage(context, 'terms.html')),
+                    child: const Text('Terms of Use'),
+                  ),
+                ],
+              ),
+            ),
           ],
-          Text(
-            'GUIDANCE',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF8D98A7),
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 6),
-          if (spokenGuidance case final spoken?)
-            Column(
-              children: [
-                AnimatedBuilder(
-                  animation: spoken,
-                  builder: (context, _) => SwitchListTile.adaptive(
-                    key: const Key('spoken-guidance-toggle'),
-                    contentPadding: EdgeInsets.zero,
-                    value: spoken.enabled,
-                    onChanged: spoken.setEnabled,
-                    title: const Text('Speak turn instructions'),
-                    subtitle: const Text(
-                      'Reads the next turn aloud so you do not have to look '
-                      'down. Mixes with music or an intercom rather than '
-                      'stopping it.',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _NaturalVoicePackSetting(controller: spoken),
-                const SizedBox(height: 18),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'PHONE VOICE FALLBACK',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: const Color(0xFF8D98A7),
-                      letterSpacing: 1.1,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                _SpokenVoiceSetting(controller: spoken),
-              ],
-            ),
-          const SizedBox(height: 20),
-          Text(
-            'ABOUT',
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF8D98A7),
-              letterSpacing: 1.1,
-            ),
-          ),
-          const SizedBox(height: 4),
-          if (testControl case final testControl?)
-            TestControlSection(controller: testControl),
-          if (rideDiagnostics case final diagnostics?)
-            RideDiagnosticsSection(controller: diagnostics),
-          _AboutBuildTile(
-            identity: buildIdentity ?? BuildIdentity.fromEnvironment(),
-            lastRelaySync: lastRelaySync,
-            dismissSettingsBeforeOpening: !embedded,
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Wrap(
-              spacing: 4,
-              children: [
-                TextButton(
-                  key: const Key('open-privacy-policy'),
-                  onPressed: () =>
-                      unawaited(_openLegalPage(context, 'privacy.html')),
-                  child: const Text('Privacy Policy'),
-                ),
-                TextButton(
-                  key: const Key('open-terms-of-use'),
-                  onPressed: () =>
-                      unawaited(_openLegalPage(context, 'terms.html')),
-                  child: const Text('Terms of Use'),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
+        ),
+      );
+    },
   );
 
   static Future<bool> _confirmHeatmapContribution(

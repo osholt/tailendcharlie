@@ -147,9 +147,14 @@ class StoredRouteLibrary {
   /// dies with the ride's own archive entry: a ride whose geometry was never
   /// captured, was damaged on disk, or has been deleted simply produces no
   /// candidate, so it cannot be selected.
-  Future<List<StoredRouteCandidate>> list() async {
+  Future<List<StoredRouteCandidate>> list({
+    bool includeInactive = false,
+  }) async {
     final candidates = <StoredRouteCandidate>[];
     for (final route in await recordedRoutes.list()) {
+      if (!includeInactive && route.libraryStatus != RideLibraryStatus.active) {
+        continue;
+      }
       if (!_hasRidableGeometry(route)) continue;
       candidates.add(
         StoredRouteCandidate(
@@ -244,6 +249,17 @@ class StoredRouteLibrary {
         // A fresh identity: this is a new route for a new ride, and
         // `RouteProgressTracker` keys its progress on it.
         id: _idFactory(),
+        sourceRouteId:
+            candidate.geometry.sourceRouteId ?? candidate.geometry.id,
+        preferences: candidate.geometry.preferences,
+        organisation: candidate.geometry.organisation,
+        derivedFromRouteId: candidate.geometry.derivedFromRouteId,
+        shapingPoints: selection.reversed
+            ? const []
+            : candidate.geometry.shapingPoints,
+        plannedDuration: selection.reversed
+            ? null
+            : candidate.geometry.plannedDuration,
         name: selection.reversed
             ? '${candidate.title} (reversed)'
             : candidate.title,

@@ -4,6 +4,7 @@ import logging
 
 from .config import get_settings
 from .database import create_database_engine, create_session_factory
+from .eta import cleanup_eta
 from .heatmap import cleanup_heatmap, rebuild_public_snapshot
 from .service import purge_expired
 
@@ -16,6 +17,7 @@ def main() -> None:
         events, replays, rides, join_codes, plans, observers, pre_start_positions = purge_expired(
             session
         )
+        cleanup_eta(session)
         heatmap = cleanup_heatmap(session)
         snapshot = rebuild_public_snapshot(session)
     logging.basicConfig(level=logging.INFO)

@@ -1,7 +1,7 @@
+import '../../services/ride_timing_analysis.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
@@ -10,6 +10,9 @@ import '../map/map_camera_guard.dart';
 import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../domain/completed_ride.dart';
+import '../../domain/recorded_route_store.dart';
+import '../../data/json_file_recorded_route_store.dart';
+import '../map/route_review_screen.dart' show routeLengthMeters;
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/completed_ride_sharer.dart';
@@ -169,12 +172,14 @@ class PreviousRideDetailScreen extends StatefulWidget {
     required this.completedRides,
     required this.distanceUnits,
     this.sharer = const SystemCompletedRideSharer(),
+    this.recordedRoutes,
   });
 
   final CompletedRide ride;
   final CompletedRidesController completedRides;
   final DistanceUnitController distanceUnits;
   final CompletedRideSharer sharer;
+  final RecordedRouteStore? recordedRoutes;
 
   static Future<StoredRouteSelection?> show(
     BuildContext context, {
@@ -252,7 +257,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(18),
                     child: ArchivedRideMap(
-                      plannedRoute: ride.plannedRoute,
+                      plannedRoute: ride.comparisonPlan,
                       traveledRoute: ride.traveledRoute,
                     ),
                   ),
@@ -393,6 +398,79 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
             ),
           ),
           const SizedBox(height: 18),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Planned vs actual',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  if (ride.sourceRoute case final source?)
+                    Text('GPX: ${source.name} · ${source.sourceFileName}')
+                  else
+                    const Text(
+                      'Link the original GPX to compare it with your recorded trail.',
+                    ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 24,
+                    runSpacing: 14,
+                    children: [
+                      if (ride.comparisonPlan case final plan?)
+                        _Metric(
+                          label: 'Planned distance',
+                          value: formatter.distance(routeLengthMeters(plan)),
+                        ),
+                      _Metric(
+                        label: 'Ridden distance',
+                        value: formatter.distance(ride.totalDistanceMeters),
+                      ),
+                      if (ride.plannedRoute?.plannedDuration
+                          case final duration?)
+                        _Metric(
+                          label: 'Original estimate',
+                          value: _duration(duration),
+                        ),
+                      if (RideTimingAnalysis.fromRoute(ride.traveledRoute)
+                          case final timing?) ...[
+                        _Metric(
+                          label: 'Travel, excluding long breaks',
+                          value: _duration(timing.travelling),
+                        ),
+                        _Metric(
+                          label: 'Breaks, including probable gaps',
+                          value: _duration(timing.breaks),
+                        ),
+                        if (timing.unknownGaps > Duration.zero)
+                          _Metric(
+                            label: 'Uncertain recording gaps',
+                            value: _duration(timing.unknownGaps),
+                          ),
+                      ],
+                      _Metric(
+                        label: 'Elapsed, including stops',
+                        value: _duration(ride.duration),
+                      ),
+                    ],
+                  ),
+                  TextButton.icon(
+                    key: const Key('link-imported-plan'),
+                    onPressed: _linkImportedPlan,
+                    icon: const Icon(Icons.link),
+                    label: Text(
+                      ride.sourceRoute == null
+                          ? 'Link imported GPX'
+                          : 'Change linked GPX',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
           FilledButton.icon(
             onPressed: _sharing ? null : () => _shareSummary(),
             icon: const Icon(Icons.ios_share),
@@ -427,6 +505,57 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _linkImportedPlan() async {
+    try {
+      final store =
+          widget.recordedRoutes ??
+          await JsonFileRecordedRouteStore.openDefault();
+      final routes = (await store.list())
+          .where((route) => route.libraryStatus == RideLibraryStatus.active)
+          .toList();
+      if (!mounted) return;
+      final selected = await showDialog<ImportedRoute>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Choose the original GPX'),
+          children: [
+            if (routes.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('Import the GPX into Ride Library first.'),
+              ),
+            for (final route in routes)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, route),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(route.name),
+                    Text(
+                      route.sourceFileName,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+      if (selected == null) return;
+      final updated = _ride.copyWith(sourceRoute: selected);
+      await widget.completedRides.save(updated);
+      if (mounted) setState(() => _ride = updated);
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('The GPX link could not be saved. Try again.'),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _shareSummary() => _runShare(
@@ -573,7 +702,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
       summary: summary,
       routePoints: rideRecapRoutePoints(
         traveledRoute: ride.traveledRoute,
-        plannedRoute: ride.plannedRoute,
+        plannedRoute: ride.comparisonPlan,
       ),
       distanceUnit: widget.distanceUnits.value,
     );
@@ -721,7 +850,7 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
       builder: (_) => Scaffold(
         appBar: AppBar(title: Text(_ride.title)),
         body: ArchivedRideMap(
-          plannedRoute: _ride.plannedRoute,
+          plannedRoute: _ride.comparisonPlan,
           traveledRoute: _ride.traveledRoute,
         ),
       ),
@@ -785,10 +914,10 @@ class ArchivedRideMap extends StatefulWidget {
 class _ArchivedRideMapState extends State<ArchivedRideMap> {
   static const _plannedSource = 'archived-planned-source';
   static const _trackSource = 'archived-track-source';
+  static const _endpointSource = 'archived-endpoint-source';
   static const _directionSource = 'archived-direction-source';
   static const _directionImage = 'archived-direction-arrow';
   ml.MapLibreMapController? _controller;
-  List<_ArchivedEndpointScreenMarker> _endpointMarkers = const [];
   bool _styleReady = false;
   bool _initialFitComplete = false;
   late final Future<String> _mapStyle = _resolveMapStyle();
@@ -839,8 +968,6 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
                 ),
                 onMapCreated: (controller) => _controller = controller,
                 onStyleLoadedCallback: () => unawaited(_prepareStyle()),
-                onCameraMove: (_) => _hideEndpointMarkers(),
-                onCameraIdle: () => unawaited(_updateEndpointMarkers()),
                 onMapIdle: () => unawaited(_fitInitialRide()),
                 gestureRecognizers: embeddedMapGestureRecognizers,
                 logoEnabled: false,
@@ -851,17 +978,6 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
                 ),
               ),
             ),
-            for (final marker in _endpointMarkers)
-              Positioned(
-                left: marker.position.dx - 17,
-                top: marker.position.dy - 34,
-                child: IgnorePointer(
-                  child: _ArchivedMapEndpointMarker(
-                    color: marker.color,
-                    label: marker.label,
-                  ),
-                ),
-              ),
             const Positioned(
               right: 6,
               bottom: 5,
@@ -951,6 +1067,38 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
       );
       final overlay = _directionOverlay;
       if (overlay != null) {
+        // The camera owns these points, just as it owns the track. Projecting
+        // them into a separate Flutter overlay left stale positions during
+        // gestures and raced camera-idle callbacks (#801).
+        await controller.addGeoJsonSource(
+          _endpointSource,
+          archivedRideEndpointGeoJson(overlay),
+        );
+        await controller.addCircleLayer(
+          _endpointSource,
+          'archived-endpoint-circles',
+          const ml.CircleLayerProperties(
+            circleRadius: 10,
+            circleColor: ['get', 'color'],
+            circleStrokeColor: '#10151C',
+            circleStrokeWidth: 2,
+            circlePitchAlignment: 'map',
+          ),
+          enableInteraction: false,
+        );
+        await controller.addSymbolLayer(
+          _endpointSource,
+          'archived-endpoint-labels',
+          const ml.SymbolLayerProperties(
+            textField: ['get', 'letter'],
+            textFont: ['Noto Sans Regular'],
+            textSize: 12,
+            textColor: '#10151C',
+            textAllowOverlap: true,
+            textIgnorePlacement: true,
+          ),
+          enableInteraction: false,
+        );
         await controller.addImage(
           _directionImage,
           await rasterizeIconGlyphPng(Icons.navigation_rounded),
@@ -986,54 +1134,10 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
     }
   }
 
-  void _hideEndpointMarkers() {
-    if (_endpointMarkers.isEmpty || !mounted) return;
-    setState(() => _endpointMarkers = const []);
-  }
-
   Future<void> _fitInitialRide() async {
     if (!_styleReady || _initialFitComplete || !mounted) return;
     _initialFitComplete = true;
     await _fit();
-  }
-
-  Future<void> _updateEndpointMarkers() async {
-    final controller = _controller;
-    final overlay = _directionOverlay;
-    if (controller == null || overlay == null || !mounted) return;
-    try {
-      final locations = await controller.toScreenLocationBatch([
-        ml.LatLng(overlay.start.latitude, overlay.start.longitude),
-        ml.LatLng(overlay.finish.latitude, overlay.finish.longitude),
-      ]);
-      if (!mounted || locations.length != 2) return;
-      final pixelScale = defaultTargetPlatform == TargetPlatform.android
-          ? MediaQuery.devicePixelRatioOf(context)
-          : 1.0;
-      setState(
-        () => _endpointMarkers = [
-          _ArchivedEndpointScreenMarker(
-            position: Offset(
-              locations[0].x / pixelScale,
-              locations[0].y / pixelScale,
-            ),
-            color: const Color(0xFF63D98B),
-            label: 'Start',
-          ),
-          _ArchivedEndpointScreenMarker(
-            position: Offset(
-              locations[1].x / pixelScale,
-              locations[1].y / pixelScale,
-            ),
-            color: const Color(0xFFFF6470),
-            label: 'Finish',
-          ),
-        ],
-      );
-    } on Object {
-      // Direction arrows and the endpoint legend remain available if the
-      // platform cannot project an annotation into Flutter coordinates.
-    }
   }
 
   Future<void> _fit() async {
@@ -1061,43 +1165,7 @@ class _ArchivedRideMapState extends State<ArchivedRideMap> {
       ),
       duration: const Duration(milliseconds: 450),
     );
-    await _updateEndpointMarkers();
   }
-}
-
-class _ArchivedEndpointScreenMarker {
-  const _ArchivedEndpointScreenMarker({
-    required this.position,
-    required this.color,
-    required this.label,
-  });
-
-  final Offset position;
-  final Color color;
-  final String label;
-}
-
-class _ArchivedMapEndpointMarker extends StatelessWidget {
-  const _ArchivedMapEndpointMarker({required this.color, required this.label});
-
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    label: label,
-    child: Stack(
-      alignment: Alignment.topCenter,
-      children: [
-        const Icon(
-          Icons.location_on_rounded,
-          size: 34,
-          color: Color(0xFF10151C),
-        ),
-        Icon(Icons.location_on_rounded, size: 28, color: color),
-      ],
-    ),
-  );
 }
 
 /// Which legend keys the archived-ride map warrants.
@@ -1110,7 +1178,7 @@ class _ArchivedMapEndpointMarker extends StatelessWidget {
 /// decides whether a line exists at all; the two have to move together.
 @visibleForTesting
 ({bool planned, bool traveled}) archivedRideLegend(CompletedRide ride) => (
-  planned: _hasDrawableLine(ride.plannedRoute),
+  planned: _hasDrawableLine(ride.comparisonPlan),
   traveled: _hasDrawableLine(ride.traveledRoute),
 );
 
@@ -1165,6 +1233,21 @@ List<List<GeoPoint>> _drawablePaths(ImportedRoute? route) =>
     const [];
 
 @visibleForTesting
+Map<String, dynamic> archivedRideEndpointGeoJson(
+  ArchivedRideDirectionOverlay overlay,
+) => MapGeoJson.points([
+  MapGeoJsonPoint(
+    id: 'start',
+    point: overlay.start,
+    properties: {'color': '#63D98B', 'letter': 'S'},
+  ),
+  MapGeoJsonPoint(
+    id: 'finish',
+    point: overlay.finish,
+    properties: {'color': '#FF6470', 'letter': 'F'},
+  ),
+]);
+
 Map<String, dynamic> archivedRideDirectionGeoJson(
   ArchivedRideDirectionOverlay overlay,
 ) => MapGeoJson.points(

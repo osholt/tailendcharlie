@@ -478,3 +478,12 @@ class HeatmapPublicCell(Base):
     y: Mapped[int] = mapped_column(Integer, primary_key=True)
     contributor_bucket: Mapped[str] = mapped_column(String(8), nullable=False)
     intensity_bucket: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class EtaProfile(Base):
+    """A separate random ETA credential and three coarse calibration ratios."""
+
+    __tablename__ = "eta_profiles"
+    credential_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    bands: Mapped[dict[str, float]] = mapped_column(JSON, nullable=False)
+    expires_on: Mapped[date] = mapped_column(Date, nullable=False, index=True)

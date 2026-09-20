@@ -1,3 +1,4 @@
+import '../../controllers/eta_calibration_controller.dart';
 import 'ride_heatmap_layer.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -6,6 +7,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
@@ -34,6 +36,7 @@ import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
 import '../../relay/live_presence.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/flutter_vector_style.dart';
 import '../../services/basemap_status.dart';
 import '../../services/biker_place_catalogue.dart';
 import '../../services/circular_ride_planner.dart';
@@ -56,6 +59,8 @@ import '../../services/tec_gap_trend.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
+import '../../services/flutter_vector_offline_manager.dart';
+import '../../services/map_places.dart';
 import '../../services/map_camera_command.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
@@ -92,6 +97,11 @@ import 'route_progress_panel.dart';
 import 'route_trail_style.dart';
 import 'smooth_countdown.dart';
 import 'stored_route_picker.dart';
+
+MapLibreOfflineManager _offlineManagerFor(BasemapConfiguration configuration) =>
+    defaultTargetPlatform == TargetPlatform.iOS
+    ? FlutterVectorOfflineManager(configuration: configuration)
+    : MapLibreOfflineManager(configuration: configuration);
 
 @visibleForTesting
 bool mapLibreSourceUpdatesShouldPause(AppLifecycleState state) =>
@@ -255,6 +265,21 @@ bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
 /// Supplying them here gives the top band exactly one owner. Nothing about the
 /// host's arrangement is inferred: it says what it wants shown, and the map
 /// composes it with its own actions in one row.
+/// A direct action supplied by the map's owning screen. Keeping these in the
+/// same menu removes the former More actions → second menu navigation.
+class HostMapMenuAction {
+  const HostMapMenuAction({
+    required this.id,
+    required this.label,
+    required this.icon,
+    required this.onSelected,
+  });
+  final String id;
+  final String label;
+  final IconData icon;
+  final VoidCallback? onSelected;
+}
+
 class HostMapChrome {
   const HostMapChrome({
     required this.title,
@@ -262,6 +287,7 @@ class HostMapChrome {
     this.bottomInset = 0,
     this.onMore,
     this.onOpenRideLibrary,
+    this.menuActions = const [],
   });
 
   /// Height the host's own chrome occupies at the bottom of this map.
@@ -286,6 +312,7 @@ class HostMapChrome {
 
   /// Opens the Ride Library directly from the map's top-right menu.
   final VoidCallback? onOpenRideLibrary;
+  final List<HostMapMenuAction> menuActions;
 }
 
 /// Height of the map's own toolbar, by orientation.
@@ -733,7 +760,11 @@ class _RideMapFeatureState extends State<RideMapFeature> {
   @override
   void didUpdateWidget(RideMapFeature oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.routeStore, widget.routeStore) ||
+    if (oldWidget.basemapConfiguration.styleUrl !=
+            widget.basemapConfiguration.styleUrl ||
+        oldWidget.basemapConfiguration.restrainedLightStyle !=
+            widget.basemapConfiguration.restrainedLightStyle ||
+        !identical(oldWidget.routeStore, widget.routeStore) ||
         !identical(oldWidget.offlineTileCache, widget.offlineTileCache) ||
         oldWidget.mapStyleString != widget.mapStyleString ||
         !identical(
@@ -762,7 +793,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         cache: suppliedCache,
         mapLibreOfflineManager:
             widget.mapLibreOfflineManager ??
-            MapLibreOfflineManager(configuration: widget.basemapConfiguration),
+            _offlineManagerFor(widget.basemapConfiguration),
         mapStyleString: suppliedStyle,
         // An embedder handing over a style vouches for it; there is no fetch
         // here whose outcome could be reported.
@@ -784,7 +815,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
             await OfflineTileCache.openDefault(widget.basemapConfiguration),
         mapLibreOfflineManager:
             widget.mapLibreOfflineManager ??
-            MapLibreOfflineManager(configuration: widget.basemapConfiguration),
+            _offlineManagerFor(widget.basemapConfiguration),
         mapStyleString: resolution.style,
         mapStyleOutcome: resolution.outcome,
       );
@@ -818,6 +849,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         routeImporter: RouteImporter(source: const SystemGpxImportSource()),
         offlineTileCache: dependencies.cache,
         mapLibreOfflineManager: dependencies.mapLibreOfflineManager,
+        prepareOfflineMaps: true,
         mapStyleString: dependencies.mapStyleString,
         mapStyleOutcome: dependencies.mapStyleOutcome,
         completedRideStore: widget.completedRideStore,
@@ -913,6 +945,7 @@ class RideMapScreen extends StatefulWidget {
     this.planDirectory,
     required this.offlineTileCache,
     this.mapLibreOfflineManager,
+    this.prepareOfflineMaps = false,
     this.mapStyleString = MapStyleRepository.fallbackStyle,
     this.mapStyleOutcome = MapStyleOutcome.live,
     this.basemapTileProbe = const BasemapTileProbe(),
@@ -997,6 +1030,9 @@ class RideMapScreen extends StatefulWidget {
   final PlanDirectory? planDirectory;
   final OfflineTileCache offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
+
+  /// The production feature prepares maps; standalone map embedders opt in.
+  final bool prepareOfflineMaps;
   final String mapStyleString;
 
   /// Where [mapStyleString] came from, so the map can tell a rider that its
@@ -1177,6 +1213,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
   static const _discoveryLineSource = 'ride-relay-discovery-lines';
   static const _discoveryPointSource = 'ride-relay-discovery-points';
+  static const _mapPlacesSource = 'ride-relay-map-places';
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
@@ -1429,6 +1466,10 @@ class _RideMapScreenState extends State<RideMapScreen>
   double? _mainRouteGuidanceFloorMeters;
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
+  Future<void>? _offlineDownloadTask;
+  bool _offlineMapReady = false;
+  bool _automaticOfflineMaps = true;
+  String? _offlineMapError;
   MotorcycleDiscoveryCatalogue _discoveryCatalogue =
       const MotorcycleDiscoveryCatalogue([]);
   final Set<MotorcycleDiscoveryCategory> _enabledDiscoveryCategories = {
@@ -1441,6 +1482,67 @@ class _RideMapScreenState extends State<RideMapScreen>
   List<String> _discoveryLayerFailures = const [];
   bool _bikerCafesVisible = true;
   List<GeoPoint>? _discoveryViewportCorners;
+  MapPlacesService? _mapPlacesService;
+  List<MapPlace> _mapPlaces = const [];
+  Timer? _mapPlacesTimer;
+  int _mapPlacesGeneration = 0;
+  String? _mapPlacesQuery;
+
+  List<MapPlace> get _visibleMapPlaces => selectMapPlaces(
+    _mapPlaces,
+    _discoveryViewportCorners ?? const [],
+    _lastViewportZoom,
+  );
+
+  Map<String, dynamic> _mapPlacesGeoJson() => {
+    'type': 'FeatureCollection',
+    'features': [
+      for (final place in _visibleMapPlaces)
+        {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'Point',
+            'coordinates': [place.point.longitude, place.point.latitude],
+          },
+          'properties': {'label': place.label, 'priority': place.kind.index},
+        },
+    ],
+  };
+
+  void _scheduleMapPlaces() {
+    final corners = _discoveryViewportCorners;
+    final service = _mapPlacesService ??= MapPlacesService(_basemap);
+    if (_mapRenderingPaused ||
+        !service.supported ||
+        corners == null ||
+        _lastViewportZoom < 11 ||
+        _lastViewportZoom >= 14) {
+      _mapPlacesTimer?.cancel();
+      _mapPlacesGeneration++;
+      _mapPlacesQuery = null;
+      return;
+    }
+    final key = (MapPlacesService.tilesFor(
+      corners,
+    ).map((t) => t.key()).toList()..sort()).join('|');
+    if (_mapPlacesQuery == key) return;
+    _mapPlacesTimer?.cancel();
+    _mapPlacesQuery = key;
+    final generation = ++_mapPlacesGeneration;
+    _mapPlacesTimer = Timer(const Duration(milliseconds: 650), () async {
+      bool current() =>
+          mounted && !_mapRenderingPaused && generation == _mapPlacesGeneration;
+      try {
+        final places = await service.load(corners, keepGoing: current);
+        if (!current()) return;
+        setState(() => _mapPlaces = places);
+        if (places.isEmpty) _mapPlacesQuery = null;
+        _scheduleMapLibreSync(overlays: true);
+      } on Object {
+        if (current()) _mapPlacesQuery = null;
+      }
+    });
+  }
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
@@ -1615,8 +1717,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         widget.speedLimitDisplay ?? SpeedLimitDisplayController.inMemory();
     _groupPipBridge = GroupPipBridge();
     _mapLibreOfflineManager =
-        widget.mapLibreOfflineManager ??
-        MapLibreOfflineManager(configuration: _basemap);
+        widget.mapLibreOfflineManager ?? _offlineManagerFor(_basemap);
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
     _recordLocalTrail(_effectivePosition, _navigationFix?.recordedAt);
@@ -1746,6 +1847,8 @@ class _RideMapScreenState extends State<RideMapScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _downloadCancellation?.cancel();
+    _mapPlacesTimer?.cancel();
+    _mapPlacesGeneration++;
     widget.currentPosition?.removeListener(_onPositionChanged);
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
@@ -1784,6 +1887,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     super.didChangeAppLifecycleState(state);
     final wasPaused = _mapRenderingPaused;
     _mapRenderingPaused = mapLibreSourceUpdatesShouldPause(state);
+    _scheduleMapPlaces();
     final controller = _mapLibreController;
     if (controller != null && wasPaused != _mapRenderingPaused) {
       unawaited(
@@ -1908,6 +2012,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       // A route loaded on a standing bike frames the whole route, not the rider,
       // so the way back has to be offered from the first frame (#133).
       _scheduleCameraFramingRefresh();
+      unawaited(_prepareOfflineRoute());
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -1996,6 +2101,9 @@ class _RideMapScreenState extends State<RideMapScreen>
       }
       _ownsPersonalRideHeatmap = supplied == null;
       _personalRideHeatmap = controller;
+      if (_discoveryViewportCorners case final corners?) {
+        controller.setViewport(corners);
+      }
       controller.addListener(_onPersonalRideHeatmapChanged);
       setState(() {});
       _scheduleMapLibreSync(overlays: true);
@@ -2015,7 +2123,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   PersonalRideHeatmap get _visiblePersonalHeatmap {
     final controller = _personalRideHeatmap;
     return controller?.visible == true
-        ? controller!.heatmap
+        ? controller!.visibleHeatmap
         : PersonalRideHeatmap.empty;
   }
 
@@ -2053,8 +2161,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _showMessage(
       cells == 0
           ? 'Personal rides is on. No travelled tracks are saved yet.'
-          : 'Personal rides is on · $cells covered area${cells == 1 ? '' : 's'}.'
-                '${controller.heatmap.truncated ? ' The oldest coverage was capped for performance.' : ''}',
+          : 'Personal rides is on · $cells covered area${cells == 1 ? '' : 's'}.',
     );
   }
 
@@ -2303,20 +2410,44 @@ class _RideMapScreenState extends State<RideMapScreen>
                 // bare `...` between the search field and Join. Nothing covered
                 // it and it worked; it was simply not where a menu is looked for,
                 // which is #306's complaint arriving by a new route (#606).
-                PopupMenuButton<_MapAction>(
+                PopupMenuButton<Object>(
+                  tooltip: 'Ride and map',
                   key: const Key('map-layer-actions'),
                   iconSize: landscape ? 22 : 24,
                   padding: landscape
                       ? EdgeInsets.zero
                       : const EdgeInsets.all(8),
-                  onSelected: _handleMenuAction,
-                  itemBuilder: (context) => [
+                  onSelected: (action) {
+                    if (action is HostMapMenuAction) {
+                      action.onSelected?.call();
+                    } else {
+                      unawaited(_handleMenuAction(action as _MapAction));
+                    }
+                  },
+                  itemBuilder: (context) => <PopupMenuEntry<Object>>[
                     if (hostChrome?.onOpenRideLibrary != null)
                       const PopupMenuItem(
                         key: Key('home-ride-library'),
                         value: _MapAction.rideLibrary,
                         child: Text('Ride library'),
                       ),
+                    for (final action
+                        in hostChrome?.menuActions ??
+                            const <HostMapMenuAction>[])
+                      PopupMenuItem<Object>(
+                        key: Key(action.id),
+                        value: action,
+                        enabled: action.onSelected != null,
+                        child: Row(
+                          children: [
+                            Icon(action.icon, size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(child: Text(action.label)),
+                          ],
+                        ),
+                      ),
+                    if (hostChrome?.menuActions.isNotEmpty == true)
+                      const PopupMenuDivider(),
                     if (hostChrome?.onMore != null) ...[
                       const PopupMenuItem(
                         key: Key('home-more-actions'),
@@ -2443,7 +2574,9 @@ class _RideMapScreenState extends State<RideMapScreen>
                             _downloadProgress == null,
                         child: Text(
                           _basemap.canDownloadOffline
-                              ? 'Download map for offline use'
+                              ? (_offlineMapReady
+                                    ? 'Offline map ready'
+                                    : 'Offline route map')
                               : 'Offline map download unavailable',
                         ),
                       ),
@@ -2790,6 +2923,10 @@ class _RideMapScreenState extends State<RideMapScreen>
               builder: (context, riderSpeed, _) {
                 final progress = _routeJourneyProgressTracker.update(
                   route: _route,
+                  durationFactor: _route == null
+                      ? 1
+                      : EtaCalibrationScope.of(context)?.factorFor(_route!) ??
+                            1,
                   geometry: _progressGeometry,
                   speedMetersPerSecond: riderSpeed?.ageing == false
                       ? riderSpeed!.value
@@ -2801,6 +2938,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                     : RouteProgressPanel(
                         progress: progress,
                         distanceUnit: widget.distanceUnit,
+                        displaySize: widget.ridingDisplaySize,
                         // The time is now a consistent map label in both
                         // orientations rather than changing hierarchy with the
                         // ETA card.
@@ -3161,6 +3299,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                 key: const Key('map-landscape-left-rail'),
                 alignment: CrossAxisAlignment.start,
                 children: [
+                  ?_offlineMapControl,
                   if (downloadProgress != null)
                     Card(
                       child: _DownloadProgress(
@@ -3297,6 +3436,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                 key: _bottomChromeKey,
                 alignment: CrossAxisAlignment.stretch,
                 children: [
+                  ?_offlineMapControl,
                   if (downloadProgress != null)
                     Card(
                       child: _DownloadProgress(
@@ -3441,10 +3581,7 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   Widget _buildFlutterVectorFallbackMap() {
     final style = _flutterVectorFallbackStyle ??=
-        vmt.StyleReader(
-          uri: _basemap.styleUrl,
-          httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-        ).read().timeout(const Duration(seconds: 7)).then((style) {
+        readFlutterVectorStyle(_basemap).then((style) {
           if (mounted && !_flutterVectorFallbackReady) {
             setState(() => _flutterVectorFallbackReady = true);
           }
@@ -3510,7 +3647,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         if (_visiblePersonalHeatmap.cells.isNotEmpty)
           RideHeatmapLayer(
             key: const Key('personal-rides-heatmap-layer'),
-            resolution: PersonalRideHeatmapBuilder.canonicalZoom,
+            resolution: _visiblePersonalHeatmap.resolution,
             points: [
               for (final cell in _visiblePersonalHeatmap.cells)
                 RideHeatPoint(_latLng(cell.centre), cell.weight),
@@ -3524,6 +3661,64 @@ class _RideMapScreenState extends State<RideMapScreen>
             points: [
               for (final cell in _visibleGlobalHeatmap.cells)
                 RideHeatPoint(_latLng(cell.point), cell.weight),
+            ],
+          ),
+        if (_visibleMapPlaces.isNotEmpty)
+          MarkerLayer(
+            markers: [
+              for (final place in _visibleMapPlaces)
+                Marker(
+                  point: _latLng(place.point),
+                  width: 140,
+                  height: 34,
+                  rotate: true,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: _basemap.dark
+                            ? const Color(0xEE151A21)
+                            : const Color(0xF2FFFFFF),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 3,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              switch (place.kind) {
+                                MapPlaceKind.fuel => Icons.local_gas_station,
+                                MapPlaceKind.food => Icons.restaurant,
+                                MapPlaceKind.stop => Icons.place,
+                              },
+                              size: 18,
+                              color: _basemap.dark
+                                  ? Colors.white
+                                  : const Color(0xFF17212B),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                place.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: _basemap.dark
+                                      ? Colors.white
+                                      : const Color(0xFF17212B),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         if (_visibleDiscoveryFeatures.any((feature) => !feature.isPoint))
@@ -4762,18 +4957,27 @@ class _RideMapScreenState extends State<RideMapScreen>
               (previous[index].longitude - corners[index].longitude).abs() <
                   0.001,
         ).every((same) => same)) {
+      _scheduleMapPlaces();
       _scheduleGlobalHeatmapRefresh();
       return;
     }
     if (!mounted) return;
+    _personalRideHeatmap?.setViewport(corners);
     setState(() => _discoveryViewportCorners = corners);
+    _scheduleMapPlaces();
     _scheduleMapLibreSync(overlays: true);
     _scheduleGlobalHeatmapRefresh();
   }
 
   void _updateViewportZoom(double zoom) {
     final wasVisible = motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom);
+    final oldPlacesBand = _lastViewportZoom.floor();
     _lastViewportZoom = zoom;
+    if (oldPlacesBand != zoom.floor()) {
+      _scheduleMapPlaces();
+      if (mounted) setState(() {});
+      _scheduleMapLibreSync(overlays: true);
+    }
     final isVisible = motorcycleDiscoveryVisibleAtZoom(zoom);
     if (!mounted || wasVisible == isVisible) return;
     setState(() {});
@@ -5440,7 +5644,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _personalHeatmapSource,
         _personalHeatmapLayer,
         ml.HeatmapLayerProperties(
-          heatmapRadius: heatmapRadiusExpression(resolution: 19),
+          heatmapRadius: heatmapRadiusExpression(),
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.85,
           heatmapColor: [
@@ -5459,6 +5663,22 @@ class _RideMapScreenState extends State<RideMapScreen>
           heatmapOpacity: 0.48,
         ),
         belowLayerId: heatmapBelowLayerId,
+      );
+      await controller.addGeoJsonSource(_mapPlacesSource, _mapPlacesGeoJson());
+      await controller.addSymbolLayer(
+        _mapPlacesSource,
+        'ride-relay-map-places-labels',
+        ml.SymbolLayerProperties(
+          textField: ['get', 'label'],
+          textSize: 12,
+          textFont: ['Noto Sans Regular'],
+          textColor: _basemap.dark ? '#FFFFFF' : '#17212B',
+          textHaloColor: _basemap.dark ? '#151A21' : '#FFFFFF',
+          textHaloWidth: 2,
+          textAllowOverlap: false,
+          symbolSortKey: ['get', 'priority'],
+        ),
+        enableInteraction: false,
       );
       await controller.addGeoJsonSource(
         _discoveryLineSource,
@@ -5789,6 +6009,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
         (_discoveryLineSource, _discoveryLineGeoJson),
         (_discoveryPointSource, _discoveryPointGeoJson),
+        (_mapPlacesSource, _mapPlacesGeoJson),
         (_riddenRouteSource, _riddenRouteGeoJson),
         (_remainingRouteSource, _remainingRouteGeoJson),
         (_riderTrailSource, _riderTrailGeoJson),
@@ -5880,6 +6101,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
           (_discoveryLineSource, _discoveryLineGeoJson),
           (_discoveryPointSource, _discoveryPointGeoJson),
+          (_mapPlacesSource, _mapPlacesGeoJson),
           (_riderTrailSource, _riderTrailGeoJson),
           (_markerPlanSource, _markerPlanGeoJson),
           (_overlaySource, _overlayGeoJson),
@@ -7041,19 +7263,141 @@ class _RideMapScreenState extends State<RideMapScreen>
     if (_navigationMode) unawaited(_followNavigationCamera());
     widget.onRouteChanged?.call(activeRoute);
     widget.onRouteCommitted?.call(activeRoute);
-    _showMessage(
-      '${activeRoute.name}: confirmed and stored offline '
-      '(${activeRoute.pathPointCount} points).',
-    );
+    _showMessage('${activeRoute.name}: route saved on this phone.');
+    unawaited(_prepareOfflineRoute());
     return activeRoute;
   }
 
-  Future<void> _downloadOfflineMap() async {
+  Future<void> _prepareOfflineRoute() async {
+    if (!widget.prepareOfflineMaps ||
+        !_basemap.canDownloadOffline ||
+        !_basemap.usesMapLibre) {
+      return;
+    }
+    final route = _route;
+    _downloadCancellation?.cancel();
+    await _offlineDownloadTask;
+    if (!mounted || route == null || !identical(route, _route)) return;
+    setState(() {
+      _offlineMapReady = false;
+      _offlineMapError = null;
+    });
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final automatic =
+          preferences.getBool('automatic_offline_route_maps') ?? true;
+      final ready = await _mapLibreOfflineManager.isRouteReady(route);
+      if (!mounted || !identical(route, _route)) return;
+      setState(() {
+        _offlineMapReady = ready;
+        _automaticOfflineMaps = automatic;
+      });
+      if (!ready && automatic) await _downloadOfflineMap();
+    } on Object catch (error) {
+      if (mounted && identical(route, _route)) {
+        setState(() => _offlineMapError = '$error');
+      }
+    }
+  }
+
+  Future<void> _showOfflineMapDetails() => showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => StatefulBuilder(
+      builder: (context, refresh) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Offline route map',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Downloads the whole route plus 2 km on either side, from overview to riding zoom, in day and night colours. Keep TEC open until it says Ready. New routes beyond that area still need a connection.',
+              ),
+              SwitchListTile(
+                title: const Text('Download maps when choosing a route'),
+                subtitle: const Text(
+                  'Uses your current connection. You can cancel a download.',
+                ),
+                value: _automaticOfflineMaps,
+                onChanged: (value) async {
+                  final preferences = await SharedPreferences.getInstance();
+                  await preferences.setBool(
+                    'automatic_offline_route_maps',
+                    value,
+                  );
+                  if (!mounted) return;
+                  setState(() => _automaticOfflineMaps = value);
+                  if (!value) _downloadCancellation?.cancel();
+                  if (context.mounted) refresh(() {});
+                },
+              ),
+              if (_offlineMapError != null)
+                Text('Map not ready: $_offlineMapError'),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                icon: Icon(
+                  _offlineMapReady ? Icons.offline_pin : Icons.download,
+                ),
+                label: Text(
+                  _offlineMapReady
+                      ? 'Ready for offline riding'
+                      : 'Download full route map',
+                ),
+                onPressed: _downloadProgress != null || _offlineMapReady
+                    ? null
+                    : () {
+                        Navigator.pop(context);
+                        unawaited(_downloadOfflineMap());
+                      },
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget? get _offlineMapControl =>
+      !widget.prepareOfflineMaps ||
+          _route == null ||
+          !_basemap.canDownloadOffline ||
+          !_basemap.usesMapLibre ||
+          widget.isNavigating ||
+          _isMoving
+      ? null
+      : TextButton.icon(
+          key: const Key('offline-route-status'),
+          onPressed: _showOfflineMapDetails,
+          icon: Icon(
+            _offlineMapReady
+                ? Icons.offline_pin
+                : Icons.download_for_offline_outlined,
+          ),
+          label: Text(
+            _offlineMapReady
+                ? 'Offline map ready'
+                : _downloadProgress != null
+                ? 'Downloading route map…'
+                : 'Offline map not ready',
+          ),
+        );
+
+  Future<void> _downloadOfflineMap() => _offlineDownloadTask ??=
+      _runOfflineDownload().whenComplete(() => _offlineDownloadTask = null);
+
+  Future<void> _runOfflineDownload() async {
     final route = _route;
     if (route == null || !_basemap.canDownloadOffline) return;
     final cancellation = TileDownloadCancellationToken();
     setState(() {
       _downloadCancellation = cancellation;
+      _offlineMapReady = false;
+      _offlineMapError = null;
       _downloadProgress = const TileDownloadProgress(
         completedTiles: 0,
         totalTiles: 1,
@@ -7083,8 +7427,13 @@ class _RideMapScreenState extends State<RideMapScreen>
             ? '${summary.totalTiles} offline map resources ready.'
             : '${summary.totalTiles} offline tiles ready (${summary.reusedTiles} already cached).',
       );
-      if (mounted) setState(() {});
+      if (mounted && identical(route, _route)) {
+        setState(() => _offlineMapReady = !summary.cancelled);
+      }
     } catch (error) {
+      if (mounted && identical(route, _route)) {
+        setState(() => _offlineMapError = '$error');
+      }
       _showMessage('Offline map download stopped: $error');
     } finally {
       if (mounted) {
@@ -7812,13 +8161,14 @@ class _RideMapScreenState extends State<RideMapScreen>
       case _MapAction.groupPip:
         await _openGroupPip();
       case _MapAction.downloadOffline:
-        await _downloadOfflineMap();
+        await _showOfflineMapDetails();
       case _MapAction.removeRoute:
         if (!widget.canEditRoute || !await _confirmRemoveRoute()) return;
         await _clearActiveRouteAndState();
       case _MapAction.clearOfflineTiles:
         await _mapLibreOfflineManager.clearAll();
         await widget.offlineTileCache.clearAll();
+        if (mounted) setState(() => _offlineMapReady = false);
         _showMessage('Offline map data cleared.');
     }
   }
@@ -9232,10 +9582,13 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     _vectorStyle =
         widget.renderer == GroupMiniMapRenderer.flutterVector &&
             widget.mapStyleUrl.trim().isNotEmpty
-        ? vmt.StyleReader(
-            uri: widget.mapStyleUrl,
-            httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-          ).read().timeout(const Duration(seconds: 7))
+        ? readFlutterVectorStyle(
+            BasemapConfiguration(
+              styleUrl: widget.mapStyleUrl,
+              darkStyleUrl: BasemapConfiguration.defaultDarkStyleUrl,
+              attribution: 'OpenFreeMap © OpenMapTiles Data from OpenStreetMap',
+            ),
+          )
         : null;
   }
 
@@ -12308,7 +12661,10 @@ class _DownloadProgress extends StatelessWidget {
       children: [
         Expanded(child: LinearProgressIndicator(value: progress.fraction)),
         const SizedBox(width: 10),
-        Text('${progress.completedTiles}/${progress.totalTiles}'),
+        Text(
+          '${(progress.fraction.clamp(0.0, 1.0) * 100).round()}% · '
+          '${(progress.downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} MB',
+        ),
         TextButton(onPressed: onCancel, child: const Text('Cancel')),
       ],
     ),

@@ -10,6 +10,8 @@ import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../domain/completed_ride.dart';
+import '../../domain/recorded_route_store.dart';
+import '../../services/completed_ride_plan_link.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/geo_point.dart' as awareness_geo;
@@ -56,6 +58,7 @@ class HomeMapBackdrop extends StatefulWidget {
     this.bottomInset = 0,
     this.position,
     this.completedRideStore,
+    this.recordedRouteStore,
     this.globalRideHeatmap,
     this.onMapStyleResolved,
     this.hostChrome,
@@ -89,6 +92,7 @@ class HomeMapBackdrop extends StatefulWidget {
   final RideDiagnosticsController? rideDiagnostics;
   final DistanceUnit distanceUnit;
   final CompletedRideStore? completedRideStore;
+  final RecordedRouteStore? recordedRouteStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final ValueChanged<String>? onMapStyleResolved;
 
@@ -324,8 +328,16 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
     final store = widget.completedRideStore;
     if (store == null) return;
     try {
-      await store.save(completed);
-      if (announce && mounted) widget.onNavigationArchived?.call(completed);
+      final existing = (await store.list())
+          .where((ride) => ride.rideId == completed.rideId)
+          .firstOrNull;
+      final linked = await completeRidePlanLink(
+        completed,
+        existing: existing,
+        library: widget.recordedRouteStore,
+      );
+      await store.save(linked);
+      if (announce && mounted) widget.onNavigationArchived?.call(linked);
     } on Object {
       if (!reportFailure || !mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -712,7 +724,32 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
                     title: chrome.title,
                     actions: [
                       ...chrome.actions,
-                      if (chrome.onMore != null)
+                      if (chrome.menuActions.isNotEmpty)
+                        PopupMenuButton<HostMapMenuAction>(
+                          key: const Key('home-more-actions'),
+                          tooltip: 'Ride and map',
+                          onSelected: (action) => action.onSelected?.call(),
+                          itemBuilder: (_) => [
+                            if (chrome.onOpenRideLibrary != null)
+                              PopupMenuItem(
+                                value: HostMapMenuAction(
+                                  id: 'home-ride-library',
+                                  label: 'Ride library',
+                                  icon: Icons.route,
+                                  onSelected: chrome.onOpenRideLibrary,
+                                ),
+                                child: const Text('Ride library'),
+                              ),
+                            for (final action in chrome.menuActions)
+                              PopupMenuItem(
+                                key: Key(action.id),
+                                value: action,
+                                enabled: action.onSelected != null,
+                                child: Text(action.label),
+                              ),
+                          ],
+                        )
+                      else if (chrome.onMore != null)
                         IconButton(
                           key: const Key('home-more-actions'),
                           tooltip: 'More',

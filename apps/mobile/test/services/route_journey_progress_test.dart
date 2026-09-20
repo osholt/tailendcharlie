@@ -33,6 +33,28 @@ void main() {
     plannedDuration: const Duration(seconds: 200),
   );
 
+  test(
+    'calibration changes ETA without overwriting baseline or using live speed',
+    () {
+      final tracker = RouteJourneyProgressTracker();
+      final now = DateTime.utc(2026);
+      final progress = tracker.update(
+        route: route,
+        geometry: const RouteProgressGeometry(
+          riddenPaths: [],
+          remainingPaths: [],
+          progressMeters: 0,
+          totalMeters: 2000,
+        ),
+        speedMetersPerSecond: 100,
+        now: now,
+        durationFactor: .9,
+      )!;
+      expect(progress.remainingTime, const Duration(seconds: 180));
+      expect(route.plannedDuration, const Duration(seconds: 200));
+    },
+  );
+
   test('shows route remaining and the next deliberate stop', () {
     final tracker = RouteJourneyProgressTracker();
     final now = DateTime.utc(2026, 8, 14, 12);

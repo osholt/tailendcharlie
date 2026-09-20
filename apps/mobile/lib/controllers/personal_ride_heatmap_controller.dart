@@ -9,37 +9,44 @@ import '../domain/completed_ride_store.dart';
 import '../domain/imported_route.dart';
 import '../services/recorded_heatmap_continuity.dart';
 
-/// One bounded z19 cell in the private, on-device archive heatmap.
+typedef PersonalHeatmapBounds = ({
+  double west,
+  double south,
+  double east,
+  double north,
+});
+
+/// One bounded spatial cell in the private, on-device archive heatmap.
 class PersonalRideHeatmapCell {
   const PersonalRideHeatmapCell({
     required this.x,
     required this.y,
     required this.visits,
     required this.weight,
+    this.resolution = PersonalRideHeatmapBuilder.canonicalZoom,
   });
 
   final int x;
   final int y;
   final int visits;
+  final int resolution;
 
   /// Log-scaled 0..1 intensity so one very familiar road does not flatten all
   /// the other roads to the same faint colour.
   final double weight;
 
   GeoPoint get centre {
-    const zoom = PersonalRideHeatmapBuilder.canonicalZoom;
-    final scale = 1 << zoom;
+    final scale = 1 << resolution;
     final longitude = (x + 0.5) / scale * 360 - 180;
     final latitude = _latitudeAtTileY(y + 0.5, scale);
     return GeoPoint(latitude: latitude, longitude: longitude);
   }
 
-  /// The exact z19 square represented by this cell, clockwise from north-west.
+  /// The exact square represented by this cell, clockwise from north-west.
   /// Adjacent cells therefore share an edge exactly instead of becoming dots
   /// whose radius happens to look joined at one zoom level (#661).
   List<GeoPoint> get polygon {
-    const zoom = PersonalRideHeatmapBuilder.canonicalZoom;
-    final scale = 1 << zoom;
+    final scale = 1 << resolution;
     final west = x / scale * 360 - 180;
     final east = (x + 1) / scale * 360 - 180;
     final north = _latitudeAtTileY(y.toDouble(), scale);
@@ -65,6 +72,7 @@ class PersonalRideHeatmap {
     required this.cells,
     required this.inputPointCount,
     required this.truncated,
+    this.resolution = PersonalRideHeatmapBuilder.canonicalZoom,
   });
 
   static const empty = PersonalRideHeatmap(
@@ -76,6 +84,7 @@ class PersonalRideHeatmap {
   final List<PersonalRideHeatmapCell> cells;
   final int inputPointCount;
   final bool truncated;
+  final int resolution;
 
   Map<String, dynamic> toGeoJson() => {
     'type': 'FeatureCollection',
@@ -84,7 +93,11 @@ class PersonalRideHeatmap {
         {
           'type': 'Feature',
           'id': 'personal-${cell.x}-${cell.y}',
-          'properties': {'visits': cell.visits, 'weight': cell.weight},
+          'properties': {
+            'visits': cell.visits,
+            'weight': cell.weight,
+            'resolution': cell.resolution,
+          },
           'geometry': {
             'type': 'Point',
             'coordinates': [cell.centre.longitude, cell.centre.latitude],
@@ -100,7 +113,11 @@ class PersonalRideHeatmap {
         {
           'type': 'Feature',
           'id': 'personal-cell-${cell.x}-${cell.y}',
-          'properties': {'visits': cell.visits, 'weight': cell.weight},
+          'properties': {
+            'visits': cell.visits,
+            'weight': cell.weight,
+            'resolution': cell.resolution,
+          },
           'geometry': {
             'type': 'Polygon',
             'coordinates': [
@@ -133,7 +150,46 @@ class PersonalRideHeatmapBuilder {
 
   final int maximumCells;
 
-  PersonalRideHeatmap build(Iterable<CompletedRide> rides) {
+  PersonalRideHeatmap build(
+    Iterable<CompletedRide> rides, {
+    PersonalHeatmapBounds? bounds,
+  }) {
+    if (maximumCells < 1) {
+      throw ArgumentError.value(maximumCells, 'maximumCells');
+    }
+    // Reduce precision, never the set of trips. Starting with the newest trips
+    // and dropping later cells erased older countries after a long tour (#780).
+    for (var zoom = canonicalZoom; zoom >= 0; zoom--) {
+      final result = _buildAtResolution(rides, zoom, bounds);
+      if (!result.truncated) return result;
+    }
+    throw StateError('A world cell must fit a positive cell budget.');
+  }
+
+  PersonalRideHeatmap _buildAtResolution(
+    Iterable<CompletedRide> rides,
+    int zoom,
+    PersonalHeatmapBounds? bounds,
+  ) {
+    final northwest = bounds == null
+        ? null
+        : _tileCoordinate(
+            GeoPoint(latitude: bounds.north, longitude: bounds.west),
+            zoom,
+          );
+    final southeast = bounds == null
+        ? null
+        : _tileCoordinate(
+            GeoPoint(latitude: bounds.south, longitude: bounds.east),
+            zoom,
+          );
+    bool inBounds((int x, int y) cell) =>
+        northwest == null ||
+        southeast == null ||
+        (cell.$1 >= northwest.x.floor() &&
+            cell.$1 <= southeast.x.floor() &&
+            cell.$2 >= northwest.y.floor() &&
+            cell.$2 <= southeast.y.floor());
     final visits = <(int x, int y), int>{};
     var inputPointCount = 0;
     var truncated = false;
@@ -148,7 +204,7 @@ class PersonalRideHeatmapBuilder {
         inputPointCount += path.points.length;
         (int x, int y)? previousCell;
         void record((int x, int y) cell) {
-          if (cell == previousCell) return;
+          if (cell == previousCell || !inBounds(cell)) return;
           previousCell = cell;
           if (!visits.containsKey(cell) && visits.length >= maximumCells) {
             truncated = true;
@@ -157,7 +213,7 @@ class PersonalRideHeatmapBuilder {
           visits.update(cell, (value) => value + 1, ifAbsent: () => 1);
         }
 
-        record(_cellAt(path.points.first));
+        record(_cellAt(path.points.first, zoom));
         for (var index = 1; index < path.points.length; index += 1) {
           final start = path.points[index - 1];
           final end = path.points[index];
@@ -166,20 +222,25 @@ class PersonalRideHeatmapBuilder {
             // is. Resetting also prevents a repeated tile after a GPS outage
             // from being merged with the earlier visit.
             previousCell = null;
-            record(_cellAt(end));
+            record(_cellAt(end, zoom));
             continue;
           }
-          for (final cell in _cellsBetween(start, end)) {
+          for (final cell in _cellsBetween(start, end, zoom)) {
             record(cell);
+            if (truncated) break;
           }
+          if (truncated) break;
         }
+        if (truncated) break;
       }
+      if (truncated) break;
     }
     if (visits.isEmpty) {
       return PersonalRideHeatmap(
         cells: const [],
         inputPointCount: inputPointCount,
         truncated: truncated,
+        resolution: zoom,
       );
     }
     // Absolute rather than normalised-to-this-archive: otherwise one ride and
@@ -193,6 +254,7 @@ class PersonalRideHeatmapBuilder {
                 x: entry.key.$1,
                 y: entry.key.$2,
                 visits: entry.value,
+                resolution: zoom,
                 weight: (math.log(entry.value + 1) / denominator).clamp(0, 1),
               ),
             )
@@ -205,12 +267,17 @@ class PersonalRideHeatmapBuilder {
       cells: List.unmodifiable(cells),
       inputPointCount: inputPointCount,
       truncated: truncated,
+      resolution: zoom,
     );
   }
 
-  Iterable<(int x, int y)> _cellsBetween(GeoPoint start, GeoPoint end) sync* {
-    final a = _tileCoordinate(start);
-    final b = _tileCoordinate(end);
+  Iterable<(int x, int y)> _cellsBetween(
+    GeoPoint start,
+    GeoPoint end,
+    int zoom,
+  ) sync* {
+    final a = _tileCoordinate(start, zoom);
+    final b = _tileCoordinate(end, zoom);
     final steps = math.max(
       1,
       (math.max((b.x - a.x).abs(), (b.y - a.y).abs()) * 2).ceil(),
@@ -224,13 +291,13 @@ class PersonalRideHeatmapBuilder {
     }
   }
 
-  (int x, int y) _cellAt(GeoPoint point) {
-    final coordinate = _tileCoordinate(point);
+  (int x, int y) _cellAt(GeoPoint point, int zoom) {
+    final coordinate = _tileCoordinate(point, zoom);
     return (coordinate.x.floor(), coordinate.y.floor());
   }
 
-  ({double x, double y}) _tileCoordinate(GeoPoint point) {
-    final scale = (1 << canonicalZoom).toDouble();
+  ({double x, double y}) _tileCoordinate(GeoPoint point, int zoom) {
+    final scale = (1 << zoom).toDouble();
     final latitude = point.latitude.clamp(
       -_maximumMercatorLatitude,
       _maximumMercatorLatitude,
@@ -271,6 +338,9 @@ class PersonalRideHeatmapController extends ChangeNotifier {
   bool _visible;
   bool _loading = false;
   PersonalRideHeatmap _heatmap = PersonalRideHeatmap.empty;
+  PersonalRideHeatmap? _viewportHeatmap;
+  PersonalHeatmapBounds? _viewportBounds;
+  List<CompletedRide> _rides = const [];
   int _refreshGeneration = 0;
   Listenable? _listenableStore;
 
@@ -298,6 +368,30 @@ class PersonalRideHeatmapController extends ChangeNotifier {
   bool get visible => _visible;
   bool get loading => _loading;
   PersonalRideHeatmap get heatmap => _heatmap;
+  PersonalRideHeatmap get visibleHeatmap => _viewportHeatmap ?? _heatmap;
+
+  /// Restore street detail from original tracks as the viewport narrows. The
+  /// padded area keeps coverage on screen during the next gesture; native and
+  /// Flutter maps call this after camera movement, never on every GPS fix.
+  void setViewport(List<GeoPoint> corners) {
+    if (corners.length < 2) return;
+    final west = corners.map((p) => p.longitude).reduce(math.min);
+    final east = corners.map((p) => p.longitude).reduce(math.max);
+    final south = corners.map((p) => p.latitude).reduce(math.min);
+    final north = corners.map((p) => p.latitude).reduce(math.max);
+    final dx = math.max(0.002, (east - west) / 2);
+    final dy = math.max(0.002, (north - south) / 2);
+    final bounds = (
+      west: (west - dx).clamp(-180.0, 180.0),
+      east: (east + dx).clamp(-180.0, 180.0),
+      south: (south - dy).clamp(-85.0, 85.0),
+      north: (north + dy).clamp(-85.0, 85.0),
+    );
+    if (bounds == _viewportBounds) return;
+    _viewportBounds = bounds;
+    _viewportHeatmap = _builder.build(_rides, bounds: bounds);
+    notifyListeners();
+  }
 
   Future<void> setVisible(bool visible) async {
     if (_visible == visible) return;
@@ -315,7 +409,11 @@ class PersonalRideHeatmapController extends ChangeNotifier {
       final rides = await _store.list();
       final next = _builder.build(rides);
       if (generation != _refreshGeneration) return;
+      _rides = rides;
       _heatmap = next;
+      _viewportHeatmap = _viewportBounds == null
+          ? null
+          : _builder.build(rides, bounds: _viewportBounds);
     } finally {
       if (generation == _refreshGeneration) {
         _loading = false;

@@ -1,7 +1,7 @@
 import 'imported_route.dart';
 import 'ride_role.dart';
-
-enum RideLibraryStatus { active, archived, deleted }
+import 'ride_library_organisation.dart';
+export 'ride_library_status.dart';
 
 class CompletedMarkerSession {
   const CompletedMarkerSession({
@@ -51,11 +51,14 @@ class CompletedRide {
     required this.markerSessions,
     required this.plannedRoute,
     required this.traveledRoute,
+    this.recordingComplete = true,
+    this.sourceRoute,
     this.libraryName,
     this.rating,
     this.notes,
     this.libraryStatus = RideLibraryStatus.active,
     this.deletedAt,
+    this.organisation = const RideLibraryOrganisation(),
   });
 
   static const schemaVersion = 2;
@@ -74,11 +77,18 @@ class CompletedRide {
   final List<CompletedMarkerSession> markerSessions;
   final ImportedRoute? plannedRoute;
   final ImportedRoute? traveledRoute;
+
+  /// Local snapshot of the original GPX; library edits or binning cannot
+  /// change the historical planned/actual comparison.
+  final bool recordingComplete;
+  final ImportedRoute? sourceRoute;
+  ImportedRoute? get comparisonPlan => sourceRoute ?? plannedRoute;
   final String? libraryName;
   final int? rating;
   final String? notes;
   final RideLibraryStatus libraryStatus;
   final DateTime? deletedAt;
+  final RideLibraryOrganisation organisation;
 
   String get title {
     final renamed = libraryName?.trim();
@@ -99,12 +109,13 @@ class CompletedRide {
       1;
 
   Iterable<GeoPoint> get mapPoints sync* {
-    if (plannedRoute case final route?) yield* route.allPoints;
+    if (comparisonPlan case final route?) yield* route.allPoints;
     if (traveledRoute case final route?) yield* route.allPoints;
   }
 
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
+    'recordingComplete': recordingComplete,
     'rideId': rideId,
     'rideCode': rideCode,
     if (rideName != null) 'rideName': rideName,
@@ -117,12 +128,14 @@ class CompletedRide {
     'eventCount': eventCount,
     'totalDistanceMeters': totalDistanceMeters,
     'markerSessions': markerSessions.map((value) => value.toJson()).toList(),
+    if (sourceRoute != null) 'sourceRoute': sourceRoute!.toJson(),
     if (plannedRoute != null) 'plannedRoute': plannedRoute!.toJson(),
     if (traveledRoute != null) 'traveledRoute': traveledRoute!.toJson(),
     if (libraryName != null) 'libraryName': libraryName,
     if (rating != null) 'rating': rating,
     if (notes != null) 'notes': notes,
     'libraryStatus': libraryStatus.name,
+    'organisation': organisation.toJson(),
     if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
   };
 
@@ -134,6 +147,7 @@ class CompletedRide {
       );
     }
     return CompletedRide(
+      recordingComplete: json['recordingComplete'] != false,
       rideId: json['rideId']! as String,
       rideCode: json['rideCode']! as String,
       rideName: json['rideName'] as String?,
@@ -158,12 +172,14 @@ class CompletedRide {
               .toList(growable: false),
         _ => const [],
       },
+      sourceRoute: _optionalRoute(json['sourceRoute']),
       plannedRoute: _optionalRoute(json['plannedRoute']),
       traveledRoute: _optionalRoute(json['traveledRoute']),
       libraryName: json['libraryName'] as String?,
       rating: _rating(json['rating']),
       notes: json['notes'] as String?,
       libraryStatus: _libraryStatus(json['libraryStatus']),
+      organisation: RideLibraryOrganisation.fromJson(json['organisation']),
       deletedAt: switch (json['deletedAt']) {
         final String value => DateTime.tryParse(value)?.toUtc(),
         _ => null,
@@ -172,6 +188,8 @@ class CompletedRide {
   }
 
   CompletedRide copyWith({
+    ImportedRoute? sourceRoute,
+    ImportedRoute? plannedRoute,
     String? libraryName,
     bool clearLibraryName = false,
     int? rating,
@@ -181,7 +199,9 @@ class CompletedRide {
     RideLibraryStatus? libraryStatus,
     DateTime? deletedAt,
     bool clearDeletedAt = false,
+    RideLibraryOrganisation? organisation,
   }) => CompletedRide(
+    recordingComplete: recordingComplete,
     rideId: rideId,
     rideCode: rideCode,
     rideName: rideName,
@@ -194,13 +214,15 @@ class CompletedRide {
     eventCount: eventCount,
     totalDistanceMeters: totalDistanceMeters,
     markerSessions: markerSessions,
-    plannedRoute: plannedRoute,
+    sourceRoute: sourceRoute ?? this.sourceRoute,
+    plannedRoute: plannedRoute ?? this.plannedRoute,
     traveledRoute: traveledRoute,
     libraryName: clearLibraryName ? null : libraryName ?? this.libraryName,
     rating: clearRating ? null : rating ?? this.rating,
     notes: clearNotes ? null : notes ?? this.notes,
     libraryStatus: libraryStatus ?? this.libraryStatus,
     deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
+    organisation: organisation ?? this.organisation,
   );
 
   static RideLibraryStatus _libraryStatus(Object? value) {

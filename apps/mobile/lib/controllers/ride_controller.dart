@@ -38,6 +38,8 @@ import '../services/rider_contact_share.dart';
 import '../services/situation_event_factory.dart';
 import '../services/tec_role_assignment.dart';
 import '../internet/internet_relay_client.dart';
+import '../domain/recorded_route_store.dart';
+import '../services/completed_ride_plan_link.dart';
 
 typedef Clock = DateTime Function();
 typedef IdFactory = String Function();
@@ -100,6 +102,7 @@ class RideController extends ChangeNotifier {
     Random? random,
     RideCodeDirectory? rideCodeDirectory,
     this._completedRideStore,
+    this._recordedRouteStore,
     this._installationId,
   }) : _clock = clock ?? DateTime.now,
        _idFactory = idFactory ?? const Uuid().v7,
@@ -116,6 +119,7 @@ class RideController extends ChangeNotifier {
   final IdFactory _idFactory;
   final Random _random;
   final CompletedRideStore? _completedRideStore;
+  final RecordedRouteStore? _recordedRouteStore;
   final String? _installationId;
   final RideCodeDirectory _rideCodeDirectory;
 
@@ -2006,7 +2010,26 @@ class RideController extends ChangeNotifier {
     // purge after it is a privacy obligation, and it must not be skipped
     // because a file could not be written (#299).
     try {
-      await store.save(snapshot);
+      // Ended journals are replayed after restart. Refresh their geometry
+      // without erasing edits the rider has already made in the library.
+      final existing = (await store.list())
+          .where((ride) => ride.rideId == snapshot.rideId)
+          .firstOrNull;
+      final initialPlan = const RideRouteReducer()
+          .fromEvents(
+            rideId: activeSession.rideId,
+            inviteSecret: activeSession.inviteSecret,
+            events: _events.where(
+              (event) => !event.createdAt.isAfter(snapshot.startedAt),
+            ),
+          )
+          .route;
+      final linked = await completeRidePlanLink(
+        snapshot.copyWith(plannedRoute: initialPlan),
+        existing: existing,
+        library: _recordedRouteStore,
+      );
+      await store.save(linked);
       _rideArchiveError = null;
     } on Object catch (error, stackTrace) {
       _rideArchiveError = rideArchiveFailedMessage;

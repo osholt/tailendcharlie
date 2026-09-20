@@ -2,6 +2,25 @@
 
 Updated: 2026-09-20
 
+## France follow-up release — build 99
+
+Follow-up feedback and release evidence are tracked by #802. Issue branches cover
+#780, #776, #777, #775, #801, #793–#800 and #306, combined in
+`codex/issue-802-followup-release`. The user explicitly authorised tester release.
+The background crash #732 is closed on the reporter's field confirmation; other
+field-dependent issues must remain ready for validation until ridden.
+
+See [follow-up validation](france-followup-validation.md),
+[ETA analysis](eta-calibration.md) and [tester notes](tester-release-notes.md).
+Deploy relay migration 0012 and the privacy page with this release. Anonymous ETA
+contribution defaults off and uses a separate removable credential. Raw GPXs and
+screenshots remain private; none are committed.
+
+Release only after the combined protected-main checks pass. Verify the deployed
+`serverBuildCommit`, then explicitly dispatch build 99 to TestFlight internal
+and Android alpha (`notification_mode=dry-run`). Check #802 for actual upload and
+store availability; these instructions alone do not establish distribution.
+
 ## France feedback release — build 98
 
 The 20 September France-trip feedback is tracked by #781 and #732, #772–#780.

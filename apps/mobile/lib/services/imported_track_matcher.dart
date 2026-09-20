@@ -248,6 +248,9 @@ class ValhallaImportedTrackMatcher implements ImportedTrackMatcher {
 
     final candidate = ImportedRoute(
       id: uuid.v4(),
+      sourceRouteId: original.sourceRouteId ?? original.id,
+      organisation: original.organisation,
+      derivedFromRouteId: original.derivedFromRouteId,
       name: '${original.name} (navigable)',
       description: [
         if (original.description?.trim() case final description?

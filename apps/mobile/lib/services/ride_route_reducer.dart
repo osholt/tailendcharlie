@@ -33,7 +33,13 @@ class RideRouteEncoder {
   final int maximumChunkCharacters;
 
   EncodedRideRoute encode(ImportedRoute route) {
-    final compressed = gzip.encode(utf8.encode(route.toJsonString()));
+    // Organisation belongs to this phone's library, not to the shared plan.
+    final shared = route.toJson()
+      ..remove('organisation')
+      ..remove('derivedFromRouteId')
+      ..remove('libraryStatus')
+      ..remove('deletedAt');
+    final compressed = gzip.encode(utf8.encode(jsonEncode(shared)));
     final encoded = base64Url.encode(compressed);
     final chunks = <String>[];
     for (

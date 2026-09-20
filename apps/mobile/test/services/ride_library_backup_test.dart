@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
+import 'package:ride_relay/domain/ride_library_organisation.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
@@ -10,8 +11,15 @@ void main() {
   test('backs up and restores rides, routes and local-only metadata', () async {
     final sourceRides = InMemoryCompletedRideStore();
     final sourceRoutes = InMemoryRecordedRouteStore();
-    await sourceRides.save(_ride());
-    await sourceRoutes.save(_route('recorded'));
+    final organisation = RideLibraryOrganisation.fromInput(
+      tags: '#Fun #wet, fun',
+      folder: 'Trips/France',
+      colourArgb: 0xFFAB73EF,
+    );
+    await sourceRides.save(_ride().copyWith(organisation: organisation));
+    await sourceRoutes.save(
+      _route('recorded').withLibraryDetails(organisation: organisation),
+    );
     final source = RideLibraryBackupService(
       completedRides: sourceRides,
       recordedRoutes: sourceRoutes,
@@ -34,6 +42,11 @@ void main() {
     expect(ride.rating, 5);
     expect(ride.notes, 'Great in the morning.');
     expect(ride.libraryStatus, RideLibraryStatus.archived);
+    expect(ride.organisation.toJson(), organisation.toJson());
+    expect(
+      (await targetRoutes.list()).single.organisation.toJson(),
+      organisation.toJson(),
+    );
     expect((await targetRoutes.list()).single.id, 'recorded');
 
     final duplicate = await target.restore(

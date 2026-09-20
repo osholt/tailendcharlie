@@ -202,6 +202,16 @@ class MapStyleRepository {
       sources[entry.key] = source;
     }
     style['sources'] = sources;
+    applyPresentation(style, configuration);
+    return jsonEncode(style);
+  }
+
+  /// Shared by native maps and Flutter previews. Also applied to cached styles
+  /// so an offline upgrade gets the current palette and useful stop labels.
+  static void applyPresentation(
+    Map<String, dynamic> style,
+    BasemapConfiguration configuration,
+  ) {
     if (configuration.styleUrl == configuration.darkStyleUrl &&
         configuration.styleUrl.isNotEmpty) {
       _repaintForLegibleDarkMode(style);
@@ -209,7 +219,83 @@ class MapStyleRepository {
         configuration.styleUrl == BasemapConfiguration.defaultLightStyleUrl) {
       _repaintForRestrainedLightMode(style);
     }
-    return jsonEncode(style);
+    _addUsefulPlaces(style, configuration);
+  }
+
+  static void _addUsefulPlaces(
+    Map<String, dynamic> style,
+    BasemapConfiguration configuration,
+  ) {
+    // OpenMapTiles' documented schema. Do not assume a custom provider uses it.
+    if (configuration.styleUrl != BasemapConfiguration.defaultLightStyleUrl &&
+        configuration.styleUrl != BasemapConfiguration.defaultDarkStyleUrl) {
+      return;
+    }
+    if ((style['sources'] as Map)['openmaptiles'] is! Map) return;
+    final layers = (style['layers'] as List)
+        .where(
+          (layer) =>
+              layer is! Map ||
+              !(layer['id'] as String? ?? '').startsWith('tec-place-'),
+        )
+        .toList();
+    final dark =
+        configuration.styleUrl == BasemapConfiguration.defaultDarkStyleUrl;
+    for (final category in [
+      (id: 'fuel', classes: ['fuel'], zoom: 11, label: 'Fuel'),
+      (
+        id: 'food',
+        classes: ['cafe', 'restaurant', 'fast_food'],
+        zoom: 12,
+        label: 'Food / café',
+      ),
+      (
+        id: 'stops',
+        classes: ['lodging', 'hospital', 'parking', 'toilets'],
+        zoom: 13,
+        label: 'Stop',
+      ),
+    ]) {
+      layers.add({
+        'id': 'tec-place-${category.id}',
+        'type': 'symbol',
+        'source': 'openmaptiles',
+        'source-layer': 'poi',
+        'minzoom': category.zoom,
+        'filter': [
+          'any',
+          ['in', 'class', ...category.classes],
+          ['in', 'subclass', ...category.classes],
+        ],
+        'layout': {
+          'text-field': [
+            'concat',
+            '• ',
+            [
+              'coalesce',
+              ['get', 'name'],
+              category.label,
+            ],
+          ],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 13,
+          'text-max-width': 9,
+          'text-padding': 6,
+          'text-allow-overlap': false,
+          'symbol-sort-key': [
+            'coalesce',
+            ['get', 'rank'],
+            100,
+          ],
+        },
+        'paint': {
+          'text-color': dark ? '#FFE2A8' : '#594018',
+          'text-halo-color': dark ? '#0F1319' : '#F3F2ED',
+          'text-halo-width': 1.5,
+        },
+      });
+    }
+    style['layers'] = layers;
   }
 
   // The dark basemap palette, as one table, because the thing that made the
@@ -252,13 +338,13 @@ class MapStyleRepository {
   // night did not.
   static const _roadPath = '#22272C';
   static const _roadRail = '#2A2F35';
-  static const _roadService = '#535D67';
-  static const _roadMinor = '#737D87';
-  static const _roadTertiary = '#7F8993';
-  static const _roadSecondary = '#8B959F';
-  static const _roadPrimary = '#97A1AB';
-  static const _roadTrunk = '#A3ADB7';
-  static const _roadMotorway = '#AFB9C3';
+  static const _roadService = '#A4ADB6';
+  static const _roadMinor = '#BDC7D1';
+  static const _roadTertiary = '#CBD4DD';
+  static const _roadSecondary = '#D6DFE8';
+  static const _roadPrimary = '#E4EAF0';
+  static const _roadTrunk = '#F2F5F8';
+  static const _roadMotorway = '#FFFFFF';
 
   /// Roads read as slabs with a dark edge rather than as outlines. The fetched
   /// style did the opposite: a light casing around a black or near-black inner
@@ -272,8 +358,8 @@ class MapStyleRepository {
   // the road they are on is the road they wanted.
   static const _labelRoad = '#EDF1F6';
   static const _labelMotorway = '#EDF1F6';
-  static const _labelPlace = '#B1B7BF';
-  static const _labelWater = '#748DB1';
+  static const _labelPlace = '#F4F7FA';
+  static const _labelWater = '#BBCFE8';
   static const _labelHalo = '#0B0E12';
   static const _labelHaloSoft = 'rgba(11,14,18,0.85)';
 
@@ -856,13 +942,9 @@ class MapStyleRepository {
           decoded['layers'] is List) {
         // Reapply idempotent paint on cached documents too: riders upgrading
         // offline keep their tiles and receive the improved road visibility.
-        if (configuration.styleUrl == configuration.darkStyleUrl &&
-            configuration.styleUrl.isNotEmpty) {
-          final style = Map<String, dynamic>.from(decoded);
-          _repaintForLegibleDarkMode(style);
-          return jsonEncode(style);
-        }
-        return value;
+        final style = Map<String, dynamic>.from(decoded);
+        applyPresentation(style, configuration);
+        return jsonEncode(style);
       }
     } on Object {
       // A damaged cache must never hide the locally rendered route.

@@ -1,3 +1,5 @@
+import 'controllers/eta_calibration_controller.dart';
+import 'services/eta_population_client.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -107,6 +109,7 @@ Future<void> main() async {
     const NearbyBridge(),
     installationId: riderProfile.installationId,
     completedRideStore: completedRides,
+    recordedRouteStore: recordedRoutes,
   );
 
   // The registry is created unconditionally - it is one nullable field - but the
@@ -124,26 +127,36 @@ Future<void> main() async {
   // are not optional for a multi-device run.
   TestControlSession(testControl, testControlServer).start();
 
+  final eta = await EtaCalibrationController.load(
+    rides: completedRides,
+    client: EtaPopulationClient(
+      baseUri: InternetRelayConfiguration.fromEnvironment().baseUri,
+    ),
+  );
+  unawaited(eta.refresh());
   runApp(
-    RideRelayApp(
-      controller: controller,
-      distanceUnits: distanceUnits,
-      mapStyleMode: mapStyleMode,
-      rideCodePreference: rideCodePreference,
-      riderProfile: riderProfile,
-      sharedRoutes: sharedRoutes,
-      speedLimitDisplay: speedLimitDisplay,
-      routeProgressDisplay: routeProgressDisplay,
-      recordedRoutes: recordedRoutes,
-      completedRides: completedRides,
-      globalRideHeatmap: globalRideHeatmap,
-      rideInvitationLinks: rideInvitationLinks,
-      roadRatings: roadRatings,
-      testControl: testControl,
-      testControlRegistry: testControlRegistry,
-      spokenGuidance: spokenGuidance,
-      rideDiagnostics: rideDiagnostics,
-      initializeController: controller.initialize,
+    EtaCalibrationScope(
+      controller: eta,
+      child: RideRelayApp(
+        controller: controller,
+        distanceUnits: distanceUnits,
+        mapStyleMode: mapStyleMode,
+        rideCodePreference: rideCodePreference,
+        riderProfile: riderProfile,
+        sharedRoutes: sharedRoutes,
+        speedLimitDisplay: speedLimitDisplay,
+        routeProgressDisplay: routeProgressDisplay,
+        recordedRoutes: recordedRoutes,
+        completedRides: completedRides,
+        globalRideHeatmap: globalRideHeatmap,
+        rideInvitationLinks: rideInvitationLinks,
+        roadRatings: roadRatings,
+        testControl: testControl,
+        testControlRegistry: testControlRegistry,
+        spokenGuidance: spokenGuidance,
+        rideDiagnostics: rideDiagnostics,
+        initializeController: controller.initialize,
+      ),
     ),
   );
 }

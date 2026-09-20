@@ -58,6 +58,7 @@ class RouteJourneyProgressTracker {
     required RouteProgressGeometry geometry,
     required double? speedMetersPerSecond,
     required DateTime now,
+    double durationFactor = 1,
   }) {
     if (route == null || geometry.totalMeters <= 0) {
       reset();
@@ -80,7 +81,11 @@ class RouteJourneyProgressTracker {
     final remaining = math
         .max(0.0, geometry.totalMeters - geometry.progressMeters)
         .toDouble();
-    final speed = _plannedAverageSpeedMetersPerSecond;
+    final baselineSpeed = _plannedAverageSpeedMetersPerSecond;
+    final factor = durationFactor.isFinite
+        ? durationFactor.clamp(.8, 1.2)
+        : 1.0;
+    final speed = baselineSpeed == null ? null : baselineSpeed / factor;
     final remainingTime = speed == null
         ? null
         : Duration(seconds: (remaining / speed).round());

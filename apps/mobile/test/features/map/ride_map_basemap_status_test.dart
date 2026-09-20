@@ -8,6 +8,9 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:ride_relay/domain/route_store.dart';
+import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/services/maplibre_offline_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
@@ -82,8 +85,121 @@ void main() {
   /// Every test tears the map down so the load watchdog cannot outlive it.
   Future<void> unmount(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 11));
     await tester.pump();
   }
+
+  for (final automatic in [true, false]) {
+    testWidgets(
+      'offline map preparation respects saved automatic=$automatic and completion',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'automatic_offline_route_maps': automatic,
+        });
+        final manager = _OfflineManager();
+        final cache = cacheFor(_mapLibre);
+        addTearDown(cache.dispose);
+        final route = ImportedRoute(
+          id: 'offline',
+          name: 'Offline test',
+          importedAt: DateTime.utc(2026),
+          sourceFileName: 'offline.gpx',
+          paths: const [
+            RoutePath(
+              kind: RoutePathKind.track,
+              points: [
+                GeoPoint(latitude: 51, longitude: -1),
+                GeoPoint(latitude: 51.01, longitude: -1),
+              ],
+            ),
+          ],
+          waypoints: const [],
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: RideMapScreen(
+              routeStore: InMemoryRouteStore(route),
+              routeImporter: RouteImporter(source: const _NoFileSource()),
+              offlineTileCache: cache,
+              mapLibreOfflineManager: manager,
+              prepareOfflineMaps: true,
+              rideStarted: false,
+            ),
+          ),
+        );
+        for (var i = 0; i < 5; i++) {
+          await tester.pump();
+        }
+        expect(find.text('Offline map ready'), findsNothing);
+        expect(manager.downloads, automatic ? 1 : 0);
+        if (automatic) {
+          expect(find.text('Downloading route map…'), findsOneWidget);
+          manager.finished.complete(
+            const TileDownloadSummary(
+              totalTiles: 100,
+              downloadedTiles: 100,
+              reusedTiles: 0,
+              downloadedBytes: 1024,
+              cancelled: false,
+            ),
+          );
+          for (var i = 0; i < 3; i++) {
+            await tester.pump();
+          }
+          expect(find.text('Offline map ready'), findsOneWidget);
+        } else {
+          expect(find.text('Offline map not ready'), findsOneWidget);
+          await tester.tap(find.byKey(const Key('offline-route-status')));
+          await tester.pumpAndSettle();
+          expect(
+            tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+            isFalse,
+          );
+        }
+        await unmount(tester);
+      },
+    );
+  }
+
+  testWidgets('changing day/night appearance reloads the map dependencies', (
+    tester,
+  ) async {
+    final store = InMemoryRouteStore();
+    final cache = cacheFor(_mapLibre);
+    addTearDown(cache.dispose);
+    var resolutions = 0;
+    Future<void> show(BasemapConfiguration configuration) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RideMapFeature(
+            routeStore: store,
+            offlineTileCache: cache,
+            mapStyleString: MapStyleRepository.fallbackStyle,
+            basemapConfiguration: configuration,
+            onMapStyleResolved: (_) => resolutions++,
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    const day = BasemapConfiguration(
+      styleUrl: 'https://example.test/day.json',
+      darkStyleUrl: 'https://example.test/night.json',
+      attribution: 'Test map',
+    );
+    await show(day);
+    expect(resolutions, 1);
+    await show(day.forBrightness(dark: true));
+    expect(
+      resolutions,
+      2,
+      reason: 'a theme change must not keep the previous resolved style',
+    );
+    await show(day.forBrightness(dark: false, restrainedLightStyle: false));
+    expect(resolutions, 3);
+    await unmount(tester);
+  });
 
   testWidgets('a style that could not be fetched says so on the map', (
     tester,
@@ -237,4 +353,25 @@ class _NoFileSource implements GpxImportSource {
 
   @override
   Future<PickedGpxFile?> pickGpxFile() async => null;
+}
+
+class _OfflineManager extends MapLibreOfflineManager {
+  _OfflineManager() : super(configuration: _mapLibre);
+  final finished = Completer<TileDownloadSummary>();
+  int downloads = 0;
+  @override
+  Future<bool> isRouteReady(ImportedRoute route) async => false;
+  @override
+  Future<TileDownloadSummary> downloadRouteRegion(
+    ImportedRoute route, {
+    int minimumZoom = 0,
+    int maximumZoom = 18,
+    int maximumTiles = 20000,
+    int maximumBytes = 500 * 1024 * 1024,
+    TileDownloadProgressCallback? onProgress,
+    TileDownloadCancellationToken? cancellationToken,
+  }) {
+    downloads++;
+    return finished.future;
+  }
 }
