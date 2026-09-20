@@ -252,13 +252,13 @@ class MapStyleRepository {
   // night did not.
   static const _roadPath = '#22272C';
   static const _roadRail = '#2A2F35';
-  static const _roadService = '#535D67';
-  static const _roadMinor = '#737D87';
-  static const _roadTertiary = '#7F8993';
-  static const _roadSecondary = '#8B959F';
-  static const _roadPrimary = '#97A1AB';
-  static const _roadTrunk = '#A3ADB7';
-  static const _roadMotorway = '#AFB9C3';
+  static const _roadService = '#A4ADB6';
+  static const _roadMinor = '#BDC7D1';
+  static const _roadTertiary = '#CBD4DD';
+  static const _roadSecondary = '#D6DFE8';
+  static const _roadPrimary = '#E4EAF0';
+  static const _roadTrunk = '#F2F5F8';
+  static const _roadMotorway = '#FFFFFF';
 
   /// Roads read as slabs with a dark edge rather than as outlines. The fetched
   /// style did the opposite: a light casing around a black or near-black inner
@@ -272,8 +272,8 @@ class MapStyleRepository {
   // the road they are on is the road they wanted.
   static const _labelRoad = '#EDF1F6';
   static const _labelMotorway = '#EDF1F6';
-  static const _labelPlace = '#B1B7BF';
-  static const _labelWater = '#748DB1';
+  static const _labelPlace = '#F4F7FA';
+  static const _labelWater = '#BBCFE8';
   static const _labelHalo = '#0B0E12';
   static const _labelHaloSoft = 'rgba(11,14,18,0.85)';
 
