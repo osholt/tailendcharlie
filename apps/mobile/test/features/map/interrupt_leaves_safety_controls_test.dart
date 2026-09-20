@@ -12,6 +12,8 @@
 
 import 'dart:io';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/geo_point.dart' as awareness_geo;
@@ -28,6 +30,7 @@ import 'package:ride_relay/services/received_quick_message.dart';
 import 'package:ride_relay/services/route_importer.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   TestWidgetsFlutterBinding.ensureInitialized();
 
   RideQuickMessageAlert interrupting(String eventId) => RideQuickMessageAlert(

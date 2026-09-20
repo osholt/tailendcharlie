@@ -1048,6 +1048,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   final _mapOverlays = ValueNotifier<List<MapOverlayMarker>>(const []);
   final _riderTrails = ValueNotifier<List<MapOverlayTrace>>(const []);
   final _carPlayRouteProgressTracker = RouteProgressTracker();
+  final _carPlayRejoinProgressTracker = RouteProgressTracker();
   final _carPlayJourneyProgressTracker = RouteJourneyProgressTracker();
   final _trailSimplifier = const TrailDisplaySimplifier();
   final _leaderStatus = ValueNotifier<LeaderRideStatus?>(null);
@@ -2774,7 +2775,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           );
     final navigationRoute = _rejoinNavigationRoute.value ?? _activeRoute;
     final routeProgress = _carPlayRouteProgressTracker.update(
-      navigationRoute,
+      _activeRoute,
+      _mapPosition.value,
+      recordedAt: _mapNavigationPosition.value?.recordedAt,
+      accuracyMeters: _mapNavigationPosition.value?.accuracyMeters,
+    );
+    final rejoinProgress = _carPlayRejoinProgressTracker.update(
+      _rejoinNavigationRoute.value,
       _mapPosition.value,
     );
     final selectedBasemap = BasemapConfiguration.fromEnvironment()
@@ -2794,12 +2801,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final journeyProgress = widget.routeProgressDisplay?.enabled == false
         ? null
         : _carPlayJourneyProgressTracker.update(
-            route: navigationRoute,
-            durationFactor: navigationRoute == null
+            route: _activeRoute,
+            rejoinRoute: _rejoinNavigationRoute.value,
+            rejoinGeometry: rejoinProgress,
+            durationFactor: _activeRoute == null
                 ? 1
-                : EtaCalibrationScope.read(
-                        context,
-                      )?.factorFor(navigationRoute) ??
+                : EtaCalibrationScope.read(context)?.factorFor(_activeRoute!) ??
                       1,
             geometry: routeProgress,
             speedMetersPerSecond: localSpeedIsAgeing

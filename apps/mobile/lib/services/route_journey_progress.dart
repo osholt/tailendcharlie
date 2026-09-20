@@ -7,6 +7,8 @@ import 'route_progress.dart';
 class RouteJourneyProgress {
   const RouteJourneyProgress({
     required this.remainingDistanceMeters,
+    this.travelledDistanceMeters = 0,
+    this.awaitingRejoin = false,
     required this.remainingTime,
     required this.arrivalTime,
     required this.nextWaypointName,
@@ -15,6 +17,8 @@ class RouteJourneyProgress {
   });
 
   final double remainingDistanceMeters;
+  final double travelledDistanceMeters;
+  final bool awaitingRejoin;
   final Duration? remainingTime;
   final DateTime? arrivalTime;
   final String? nextWaypointName;
@@ -59,6 +63,8 @@ class RouteJourneyProgressTracker {
     required double? speedMetersPerSecond,
     required DateTime now,
     double durationFactor = 1,
+    ImportedRoute? rejoinRoute,
+    RouteProgressGeometry? rejoinGeometry,
   }) {
     if (route == null || geometry.totalMeters <= 0) {
       reset();
@@ -78,33 +84,78 @@ class RouteJourneyProgressTracker {
           : geometry.totalMeters / (plannedSeconds / 1000);
     }
 
-    final remaining = math
-        .max(0.0, geometry.totalMeters - geometry.progressMeters)
-        .toDouble();
+    var alongProgress = geometry.progressMeters;
+    var connectorDistance = 0.0;
+    var awaitingRejoin = geometry.distanceOffRouteMeters > 150;
+    Duration? connectorTime;
+    if (rejoinRoute != null &&
+        rejoinGeometry != null &&
+        geometry.distanceOffRouteMeters > 50) {
+      final endpoint = rejoinRoute.paths.lastOrNull?.points.lastOrNull;
+      final join = endpoint == null
+          ? null
+          : routeRejoinProgress(route, endpoint, alongProgress);
+      if (join != null &&
+          join.distanceMeters <= 150 &&
+          join.progressMeters >= alongProgress - 30) {
+        awaitingRejoin = false;
+        alongProgress = math.max(alongProgress, join.progressMeters);
+        connectorDistance = math.max(
+          0,
+          rejoinGeometry.totalMeters - rejoinGeometry.progressMeters,
+        );
+        final duration = rejoinRoute.plannedDuration;
+        if (duration != null && rejoinGeometry.totalMeters > 0) {
+          connectorTime = Duration(
+            milliseconds:
+                (duration.inMilliseconds *
+                        connectorDistance /
+                        rejoinGeometry.totalMeters)
+                    .round(),
+          );
+        }
+      }
+    }
+    final plannedRemaining = math.max(
+      0.0,
+      geometry.totalMeters - alongProgress,
+    );
+    final remaining = plannedRemaining + connectorDistance;
     final baselineSpeed = _plannedAverageSpeedMetersPerSecond;
     final factor = durationFactor.isFinite
         ? durationFactor.clamp(.8, 1.2)
         : 1.0;
     final speed = baselineSpeed == null ? null : baselineSpeed / factor;
-    final remainingTime = speed == null
+    final remainingTime = speed == null || awaitingRejoin
         ? null
-        : Duration(seconds: (remaining / speed).round());
+        : Duration(
+            seconds:
+                (plannedRemaining / speed +
+                        (connectorTime?.inSeconds ?? connectorDistance / speed))
+                    .round(),
+          );
     final next = _nextWaypoint(
       route,
-      progressMeters: geometry.progressMeters,
+      progressMeters: alongProgress,
       totalMeters: geometry.totalMeters,
     );
     final nextDistance = next == null
         ? null
-        : math
-              .max(0.0, next.progressMeters - geometry.progressMeters)
-              .toDouble();
-    final nextTime = speed == null || nextDistance == null
+        : math.max(0.0, next.progressMeters - alongProgress).toDouble() +
+              connectorDistance;
+    final nextTime = speed == null || nextDistance == null || awaitingRejoin
         ? null
-        : Duration(seconds: (nextDistance / speed).round());
+        : Duration(
+            seconds:
+                ((nextDistance - connectorDistance) / speed +
+                        (connectorTime?.inSeconds ?? connectorDistance / speed))
+                    .round(),
+          );
 
     return RouteJourneyProgress(
       remainingDistanceMeters: remaining,
+      travelledDistanceMeters: geometry.travelledMeters,
+      awaitingRejoin: awaitingRejoin,
       remainingTime: remainingTime,
       arrivalTime: remainingTime == null ? null : now.add(remainingTime),
       nextWaypointName: next?.name,

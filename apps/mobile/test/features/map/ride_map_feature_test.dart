@@ -29,6 +29,7 @@ import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/hazard_map_symbol.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
+import 'package:ride_relay/features/map/route_progress_panel.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/relay/live_presence.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
@@ -51,6 +52,7 @@ import 'package:ride_relay/services/speed_limit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   final originalMapLibrePlatformFactory = ml.MapLibrePlatform.createInstance;
 
   setUpAll(() {
@@ -265,6 +267,94 @@ void main() {
           expect(tester.takeException(), isNull);
         }
       }
+    },
+  );
+
+  testWidgets(
+    'reopening off route restores the travelled and remaining distances (#822)',
+    (tester) async {
+      final directory = Directory.systemTemp.createTempSync('progress-restore');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final route = _testRoute(
+        id: 'persisted-journey',
+        name: 'Persisted journey',
+      );
+      final now = DateTime.now();
+      final position = ValueNotifier(
+        MapNavigationPosition(
+          point: route.paths.first.points.first,
+          recordedAt: now,
+          speedMetersPerSecond: 10,
+          accuracyMeters: 5,
+        ),
+      );
+      addTearDown(position.dispose);
+      Future<void> open() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: RideMapScreen(
+              routeStore: InMemoryRouteStore(route),
+              routeImporter: RouteImporter(source: const _NoFileSource()),
+              offlineTileCache: cache,
+              navigationPosition: position,
+              navigating: true,
+              discoveryCatalogueLoader: () async =>
+                  const MotorcycleDiscoveryCatalogue([]),
+              bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await open();
+      position.value = MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.455, longitude: -2.585),
+        recordedAt: now.add(const Duration(seconds: 30)),
+        speedMetersPerSecond: 10,
+        accuracyMeters: 5,
+      );
+      await tester.pumpAndSettle();
+      final onRoad = tester
+          .widget<RouteProgressPanel>(find.byType(RouteProgressPanel))
+          .progress;
+      expect(onRoad.travelledDistanceMeters, greaterThan(600));
+      position.value = MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.458, longitude: -2.585),
+        recordedAt: now.add(const Duration(seconds: 60)),
+        speedMetersPerSecond: 0,
+        accuracyMeters: 5,
+      );
+      await tester.pumpAndSettle();
+      final atCafe = tester
+          .widget<RouteProgressPanel>(find.byType(RouteProgressPanel))
+          .progress;
+      expect(atCafe.awaitingRejoin, true);
+      expect(
+        atCafe.remainingDistanceMeters,
+        closeTo(onRoad.remainingDistanceMeters, 1),
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await open();
+      final reopened = tester
+          .widget<RouteProgressPanel>(find.byType(RouteProgressPanel))
+          .progress;
+      expect(
+        reopened.travelledDistanceMeters,
+        closeTo(atCafe.travelledDistanceMeters, 1),
+      );
+      expect(
+        reopened.remainingDistanceMeters,
+        closeTo(atCafe.remainingDistanceMeters, 1),
+      );
+      expect(find.byKey(const Key('eta-travelled-distance')), findsOneWidget);
     },
   );
 
