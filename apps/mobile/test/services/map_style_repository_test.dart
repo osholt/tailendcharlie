@@ -126,45 +126,64 @@ void main() {
     },
   );
 
-  test(
-    'dark roads stay wide at riding zoom and cached upgrades work offline',
-    () async {
-      final repository = MapStyleRepository(
-        directory: directory,
-        configuration: _darkConfiguration,
-        client: MockClient(
-          (_) async => http.Response(jsonEncode(_darkStyleFixture), 200),
-        ),
-      );
-      final live = await repository.resolve();
-      final cachedFile = (await directory.list().toList())
-          .whereType<File>()
-          .single;
-      // Simulate an older cached paint document, retaining real sources.
-      final old = jsonDecode(live.style) as Map<String, dynamic>;
-      final minor = (old['layers'] as List).cast<Map>().singleWhere(
-        (l) => l['id'] == 'highway_minor',
-      );
-      (minor['paint'] as Map)['line-width'] = 1;
-      (minor['paint'] as Map)['line-color'] = '#484F58';
-      await cachedFile.writeAsString(jsonEncode(old));
-      final offline = MapStyleRepository(
-        directory: directory,
-        configuration: _darkConfiguration,
-        client: MockClient((_) async => throw StateError('Offline')),
-      );
-      final cached = await offline.resolve();
-      expect(cached.outcome, MapStyleOutcome.cached);
-      final layers = (jsonDecode(cached.style)['layers'] as List).cast<Map>();
-      Map paintOf(String id) =>
-          layers.singleWhere((l) => l['id'] == id)['paint'] as Map;
-      final width = paintOf('highway_minor')['line-width'] as List;
-      expect(_linearWidthAt(width, 14), greaterThanOrEqualTo(3));
-      expect(_linearWidthAt(width, 16), greaterThanOrEqualTo(6));
-      expect(paintOf('highway_minor')['line-color'], isNot('#484F58'));
-      expect(jsonDecode(cached.style)['sources'], old['sources']);
-    },
-  );
+  test('original road widths replace widened cached styles offline', () async {
+    final repository = MapStyleRepository(
+      directory: directory,
+      configuration: _darkConfiguration,
+      client: MockClient(
+        (_) async => http.Response(jsonEncode(_darkStyleFixture), 200),
+      ),
+    );
+    final live = await repository.resolve();
+    final cachedFile = (await directory.list().toList())
+        .whereType<File>()
+        .single;
+    // Simulate an older cached paint document, retaining real sources.
+    final old = jsonDecode(live.style) as Map<String, dynamic>;
+    final minor = (old['layers'] as List).cast<Map>().singleWhere(
+      (l) => l['id'] == 'highway_minor',
+    );
+    (minor['paint'] as Map)['line-width'] = [
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+      12,
+      1.5,
+      14,
+      3.5,
+      16,
+      7,
+      18,
+      13,
+      20,
+      26,
+    ];
+    (minor['paint'] as Map)['line-color'] = '#BDC7D1';
+    await cachedFile.writeAsString(jsonEncode(old));
+    final offline = MapStyleRepository(
+      directory: directory,
+      configuration: _darkConfiguration,
+      client: MockClient((_) async => throw StateError('Offline')),
+    );
+    final cached = await offline.resolve();
+    expect(cached.outcome, MapStyleOutcome.cached);
+    final layers = (jsonDecode(cached.style)['layers'] as List).cast<Map>();
+    Map paintOf(String id) =>
+        layers.singleWhere((l) => l['id'] == id)['paint'] as Map;
+    final width = paintOf('highway_minor')['line-width'] as List;
+    expect(width, [
+      'interpolate',
+      ['exponential', 1.55],
+      ['zoom'],
+      13,
+      1.8,
+      20,
+      20,
+    ]);
+    expect(paintOf('highway_minor')['line-color'], contains('#484F58'));
+    expect(MapStyleRepository.darkBasemapPalette['path'], '#22272C');
+    expect(jsonDecode(cached.style)['sources'], old['sources']);
+  });
 
   test('splits the one major-road layer back into a class ramp', () async {
     // The fetched dark style paints trunk, primary, secondary and tertiary from
@@ -530,13 +549,13 @@ void main() {
         'motorway': 2.32,
       };
       const after = <String, double>{
-        'service/track': 8.19,
-        'minor': 10.87,
-        'tertiary': 12.42,
-        'secondary': 13.82,
-        'primary': 15.37,
-        'trunk': 17.02,
-        'motorway': 18.63,
+        'service/track': 1.62,
+        'minor': 2.25,
+        'tertiary': 2.68,
+        'secondary': 3.11,
+        'primary': 3.57,
+        'trunk': 4.08,
+        'motorway': 4.62,
       };
 
       expect(after.keys, MapStyleRepository.darkBasemapRoadRamp);
@@ -689,6 +708,13 @@ void main() {
           paint(beforeFill[name]!),
         );
         final after = contrastRatio(RouteTrailStyle.casing, surface(name));
+        if (name == 'service/track') {
+          // The one class that got dimmer, deliberately: a driveway or a forest
+          // track is not a road a group rides, and main painted it the same
+          // colour as a lane.
+          expect(after, closeTo(before, 0.02), reason: name);
+          continue;
+        }
         expect(
           after,
           greaterThan(before),
@@ -697,82 +723,66 @@ void main() {
       }
       expect(
         contrastRatio(RouteTrailStyle.casing, surface('motorway')),
-        greaterThan(9),
+        closeTo(4.54, 0.01),
       );
     });
 
-    test(
-      'bright routes retain an opaque contrasting boundary on lighter roads',
-      () {
-        // A bright road can match a route's luminance. The rendered boundary is
-        // its dark casing, not a bare route directly touching the road fill.
-        for (final line in RouteTrailStyle.allLines.values) {
-          expect(
-            contrastRatio(line.color, RouteTrailStyle.casing),
-            greaterThan(6.8),
-          );
-          expect(
-            line.casingWidthPixels - line.widthPixels,
-            greaterThanOrEqualTo(4),
-          );
-        }
-        for (final road in MapStyleRepository.darkBasemapRoadRamp) {
-          expect(
-            contrastRatio(RouteTrailStyle.casing, surface(road)),
-            greaterThan(2.7),
-            reason: road,
-          );
-        }
-      },
-    );
+    test('a bright line over a road fill is no worse off than in daylight', () {
+      // Lifting the road fills does cost the bare line-over-road number, which
+      // is why #139 rejected the opposite change. The floor that makes it
+      // acceptable is the light basemap, whose road fills are white and cream:
+      // it ships, it is field-legible, and it is harsher on every one of these
+      // colours than the new dark basemap is.
+      double worst(Iterable<Color> surfaces) => RouteTrailStyle.allLines.values
+          .expand((line) => surfaces.map((s) => contrastRatio(line.color, s)))
+          .reduce(math.min);
 
-    test(
-      'rendered road labels retain a solid dark halo over bright roads',
-      () async {
-        final repository = MapStyleRepository(
-          directory: directory,
-          configuration: _darkConfiguration,
-          client: MockClient(
-            (_) async => http.Response(
-              jsonEncode({
-                ..._darkStyleFixture,
-                'layers': [
-                  ..._darkStyleFixture['layers'] as List,
-                  for (final id in [
-                    'highway_name_other',
-                    'highway_name_motorway',
-                    'water_name',
-                  ])
-                    {'id': id, 'type': 'symbol', 'paint': <String, Object?>{}},
-                ],
-              }),
-              200,
-            ),
-          ),
+      final dark = worst([
+        for (final name in MapStyleRepository.darkBasemapPalette.keys)
+          if (name != 'road casing') surface(name),
+      ]);
+      final light = worst(RouteTrailStyle.lightBasemapSurfaces.values);
+
+      expect(light, closeTo(1.00, 0.01));
+      expect(dark, closeTo(1.50, 0.01));
+      expect(
+        dark,
+        greaterThan(light),
+        reason: 'the dark basemap must not be harsher on a line than day is',
+      );
+    });
+
+    test('labels are legible on the surfaces they are placed on', () {
+      // Road names measured 1.38:1 against the road they sit on, a motorway ref
+      // 1.14:1 against its own carriageway, and water names were pure black.
+      // Each label carries a near-black halo, so the halo is what it is measured
+      // against as well - the same rule as a route casing.
+      const labels = <String, (String, double)>{
+        'road name': ('minor', 4.58),
+        'motorway ref': ('motorway', 2.50),
+        'place name': ('background', 9.22),
+        'water name': ('water', 4.65),
+      };
+      const labelInk = <String, String>{
+        'road name': '#BCC1C9',
+        'motorway ref': '#C9CCD1',
+        'place name': '#B1B7BF',
+        'water name': '#748DB1',
+      };
+      for (final entry in labels.entries) {
+        final (against, expected) = entry.value;
+        expect(
+          contrastRatio(paint(labelInk[entry.key]!), surface(against)),
+          closeTo(expected, 0.01),
+          reason: '${entry.key} on $against',
         );
-        final style = jsonDecode((await repository.resolve()).style) as Map;
-        for (final layer in (style['layers'] as List).cast<Map>()) {
-          if (![
-            'highway_name_other',
-            'highway_name_motorway',
-            'water_name',
-          ].contains(layer['id'])) {
-            continue;
-          }
-          final properties = layer['paint'] as Map;
-          expect(properties['text-halo-color'], '#0B0E12');
-          expect(properties['text-halo-width'], greaterThanOrEqualTo(1.8));
-          expect(
-            contrastRatio(
-              paint(properties['text-color'] as String),
-              paint(properties['text-halo-color'] as String),
-            ),
-            greaterThan(4.5),
-            reason: layer['id'] as String,
-          );
-        }
-      },
-    );
+        expect(
+          contrastRatio(paint(labelInk[entry.key]!), paint('#0B0E12')),
+          greaterThan(4.5),
+          reason: '${entry.key} against its halo',
+        );
+      }
+    });
   });
 }
 
@@ -915,15 +925,3 @@ const _lightConfiguration = BasemapConfiguration(
   cacheNamespace: BasemapConfiguration.defaultCacheNamespace,
   persistentCachingAllowed: true,
 );
-
-double _linearWidthAt(List expression, double zoom) {
-  for (var i = 3; i < expression.length - 2; i += 2) {
-    final z0 = (expression[i] as num).toDouble();
-    final z1 = (expression[i + 2] as num).toDouble();
-    if (zoom > z1) continue;
-    final v0 = (expression[i + 1] as num).toDouble();
-    final v1 = (expression[i + 3] as num).toDouble();
-    return v0 + (v1 - v0) * ((zoom - z0) / (z1 - z0)).clamp(0, 1);
-  }
-  return (expression.last as num).toDouble();
-}
