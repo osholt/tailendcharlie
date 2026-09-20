@@ -68,6 +68,7 @@ void main() {
         findsOneWidget,
       );
 
+      await tester.ensureVisible(consent);
       await tester.tap(consent);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Never').last);
@@ -75,6 +76,7 @@ void main() {
       expect(heatmap.consent, HeatmapContributionConsent.never);
       expect(heatmap.visible, isFalse);
 
+      await tester.ensureVisible(consent);
       await tester.tap(consent);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Ask after each ride').last);

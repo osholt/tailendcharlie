@@ -724,7 +724,32 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
                     title: chrome.title,
                     actions: [
                       ...chrome.actions,
-                      if (chrome.onMore != null)
+                      if (chrome.menuActions.isNotEmpty)
+                        PopupMenuButton<HostMapMenuAction>(
+                          key: const Key('home-more-actions'),
+                          tooltip: 'Ride and map',
+                          onSelected: (action) => action.onSelected?.call(),
+                          itemBuilder: (_) => [
+                            if (chrome.onOpenRideLibrary != null)
+                              PopupMenuItem(
+                                value: HostMapMenuAction(
+                                  id: 'home-ride-library',
+                                  label: 'Ride library',
+                                  icon: Icons.route,
+                                  onSelected: chrome.onOpenRideLibrary,
+                                ),
+                                child: const Text('Ride library'),
+                              ),
+                            for (final action in chrome.menuActions)
+                              PopupMenuItem(
+                                key: Key(action.id),
+                                value: action,
+                                enabled: action.onSelected != null,
+                                child: Text(action.label),
+                              ),
+                          ],
+                        )
+                      else if (chrome.onMore != null)
                         IconButton(
                           key: const Key('home-more-actions'),
                           tooltip: 'More',
