@@ -7221,6 +7221,34 @@ void main() {
       },
     );
 
+    testWidgets(
+      'a successful circular request reaches review without reopening setup',
+      (tester) async {
+        final routing = _BlockingRoadRoutingService()..release.complete();
+        final position = ValueNotifier(
+          const GeoPoint(latitude: 51.45, longitude: -2.59),
+        );
+        addTearDown(position.dispose);
+        await pumpMap(
+          tester,
+          started: false,
+          authority: RouteAuthority.personal,
+          currentPosition: position,
+          roadRoutingService: routing,
+          circularRideRequestToken: Object(),
+        );
+        await tester.ensureVisible(
+          find.byKey(const Key('generate-circular-ride')),
+        );
+        await tester.tap(find.byKey(const Key('generate-circular-ride')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('confirm-reviewed-route')), findsOneWidget);
+        expect(find.text('Create a circular ride'), findsNothing);
+        expect(find.text('Circular route unavailable'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('a failed circular route keeps its chosen parameters', (
       tester,
     ) async {
@@ -7245,6 +7273,11 @@ void main() {
       await tester.tap(find.byKey(const Key('generate-circular-ride')));
       await tester.pumpAndSettle();
 
+      expect(find.text('Create a circular ride'), findsNothing);
+      expect(find.text('Circular route unavailable'), findsOneWidget);
+      expect(find.textContaining('routing unavailable'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('edit-failed-circular-route')));
+      await tester.pumpAndSettle();
       expect(find.text('Create a circular ride'), findsOneWidget);
       final distance = tester.widget<TextFormField>(
         find.byKey(const Key('circular-distance')),
