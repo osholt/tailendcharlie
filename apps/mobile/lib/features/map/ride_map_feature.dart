@@ -258,6 +258,21 @@ bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
 /// Supplying them here gives the top band exactly one owner. Nothing about the
 /// host's arrangement is inferred: it says what it wants shown, and the map
 /// composes it with its own actions in one row.
+/// A direct action supplied by the map's owning screen. Keeping these in the
+/// same menu removes the former More actions → second menu navigation.
+class HostMapMenuAction {
+  const HostMapMenuAction({
+    required this.id,
+    required this.label,
+    required this.icon,
+    required this.onSelected,
+  });
+  final String id;
+  final String label;
+  final IconData icon;
+  final VoidCallback? onSelected;
+}
+
 class HostMapChrome {
   const HostMapChrome({
     required this.title,
@@ -265,6 +280,7 @@ class HostMapChrome {
     this.bottomInset = 0,
     this.onMore,
     this.onOpenRideLibrary,
+    this.menuActions = const [],
   });
 
   /// Height the host's own chrome occupies at the bottom of this map.
@@ -289,6 +305,7 @@ class HostMapChrome {
 
   /// Opens the Ride Library directly from the map's top-right menu.
   final VoidCallback? onOpenRideLibrary;
+  final List<HostMapMenuAction> menuActions;
 }
 
 /// Height of the map's own toolbar, by orientation.
@@ -2322,20 +2339,44 @@ class _RideMapScreenState extends State<RideMapScreen>
                 // bare `...` between the search field and Join. Nothing covered
                 // it and it worked; it was simply not where a menu is looked for,
                 // which is #306's complaint arriving by a new route (#606).
-                PopupMenuButton<_MapAction>(
+                PopupMenuButton<Object>(
+                  tooltip: 'Ride and map',
                   key: const Key('map-layer-actions'),
                   iconSize: landscape ? 22 : 24,
                   padding: landscape
                       ? EdgeInsets.zero
                       : const EdgeInsets.all(8),
-                  onSelected: _handleMenuAction,
-                  itemBuilder: (context) => [
+                  onSelected: (action) {
+                    if (action is HostMapMenuAction) {
+                      action.onSelected?.call();
+                    } else {
+                      unawaited(_handleMenuAction(action as _MapAction));
+                    }
+                  },
+                  itemBuilder: (context) => <PopupMenuEntry<Object>>[
                     if (hostChrome?.onOpenRideLibrary != null)
                       const PopupMenuItem(
                         key: Key('home-ride-library'),
                         value: _MapAction.rideLibrary,
                         child: Text('Ride library'),
                       ),
+                    for (final action
+                        in hostChrome?.menuActions ??
+                            const <HostMapMenuAction>[])
+                      PopupMenuItem<Object>(
+                        key: Key(action.id),
+                        value: action,
+                        enabled: action.onSelected != null,
+                        child: Row(
+                          children: [
+                            Icon(action.icon, size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(child: Text(action.label)),
+                          ],
+                        ),
+                      ),
+                    if (hostChrome?.menuActions.isNotEmpty == true)
+                      const PopupMenuDivider(),
                     if (hostChrome?.onMore != null) ...[
                       const PopupMenuItem(
                         key: Key('home-more-actions'),

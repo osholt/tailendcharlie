@@ -85,10 +85,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Create a group ride'), findsOneWidget);
     expect(find.text('Try a simulated ride'), findsOneWidget);
-    expect(
-      find.textContaining('France: Argentat to Saint-Privat'),
-      findsOneWidget,
-    );
+    expect(find.text('More actions'), findsNothing);
 
     controller.dispose();
   });
@@ -165,7 +162,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       expect(
         tester
-            .widget<ListTile>(find.byKey(const Key('home-create-ride')))
+            .widget<PopupMenuItem>(find.byKey(const Key('home-create-ride')))
             .enabled,
         isFalse,
       );
@@ -704,6 +701,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('DISTANCE UNITS'), findsOneWidget);
 
+    await tester.ensureVisible(find.byKey(const Key('open-rider-profile')));
     await tester.tap(find.byKey(const Key('open-rider-profile')));
     await tester.pumpAndSettle();
     expect(find.text('Rider profile'), findsOneWidget);

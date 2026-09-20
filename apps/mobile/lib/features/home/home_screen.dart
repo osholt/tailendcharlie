@@ -39,13 +39,14 @@ import '../../services/carplay_route_preview.dart';
 import '../../services/gpx_import_source.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
-import '../map/ride_map_feature.dart' show HostMapChrome, rideMapToolbarHeight;
+import '../map/ride_map_feature.dart'
+    show HostMapChrome, HostMapMenuAction, rideMapToolbarHeight;
 import '../map/destination_route_sheet.dart';
 import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
-import '../settings/about_build_sheet.dart';
 import '../settings/unit_settings_sheet.dart';
+import '../settings/about_build_sheet.dart';
 
 /// Runs the stateful half of a destination-search handoff in the only safe
 /// order: the route belongs to the ride that has just been created.
@@ -576,7 +577,49 @@ class _HomeScreenState extends State<HomeScreen> {
             // row, with one hit test.
             hostChrome: HostMapChrome(
               bottomInset: 0,
-              onMore: () => unawaited(_showMoreActions(context)),
+              menuActions: [
+                HostMapMenuAction(
+                  id: 'home-create-ride',
+                  label: 'Create a group ride',
+                  icon: Icons.groups_2_outlined,
+                  onSelected: _rideEntryEnabled
+                      ? () => unawaited(_showRideSheet(context, creating: true))
+                      : null,
+                ),
+                HostMapMenuAction(
+                  id: 'record-a-route-button',
+                  label: 'Record a route',
+                  icon: Icons.fiber_manual_record_outlined,
+                  onSelected: () => unawaited(
+                    RouteRecorderScreen.show(context, widget.recordedRoutes),
+                  ),
+                ),
+                HostMapMenuAction(
+                  id: 'home-more-settings',
+                  label: 'Settings',
+                  icon: Icons.settings_outlined,
+                  onSelected: () => unawaited(_openSettings()),
+                ),
+                if (widget.controller.rideSetAside &&
+                    widget.controller.session != null)
+                  HostMapMenuAction(
+                    id: 'home-rejoin-set-aside-ride',
+                    label: 'Rejoin ride ${widget.controller.session!.rideCode}',
+                    icon: Icons.restore,
+                    onSelected: widget.controller.reopenEndedRide,
+                  ),
+                HostMapMenuAction(
+                  id: 'start-ride-simulator',
+                  label: 'Try a simulated ride',
+                  icon: Icons.science_outlined,
+                  onSelected:
+                      !widget.controller.busy &&
+                          widget.onRetryRestoration == null
+                      ? () =>
+                            unawaited(widget.controller.createSimulationRide())
+                      : null,
+                ),
+              ],
               onOpenRideLibrary: () => unawaited(_openRideLibrary(context)),
               title: HomeSearchBar(
                 onTap: () => unawaited(_searchDestination()),
@@ -618,19 +661,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       IconButton(
                         tooltip: 'Settings',
-                        onPressed: () => UnitSettingsSheet.show(
-                          context,
-                          widget.distanceUnits,
-                          widget.mapStyleMode,
-                          widget.riderProfile,
-                          speedLimitDisplay: widget.speedLimitDisplay,
-                          routeProgressDisplay: widget.routeProgressDisplay,
-                          testControl: widget.testControl,
-                          spokenGuidance: widget.spokenGuidance,
-                          rideDiagnostics: widget.rideDiagnostics,
-                          globalRideHeatmap: widget.globalRideHeatmap,
-                          completedRideStore: widget.completedRides,
-                        ),
+                        onPressed: _openSettings,
                         icon: const Icon(Icons.settings_outlined),
                       ),
                     ],
@@ -737,140 +768,19 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// The occasional actions, behind one button.
-  ///
-  /// Each of these was a permanent row on the old panel. None is used often enough
-  /// to be worth a strip of map, and together they were most of what made the
-  /// panel full-screen.
-  Future<void> _showMoreActions(BuildContext context) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      backgroundColor: const Color(0xFF171D25),
-      // Scrollable, and `isScrollControlled` so it may exceed half the screen.
-      // This was a bare Column: it fitted until #594 added the way back to a
-      // set-aside ride, and then overflowed by 35 pixels on a short viewport.
-      // A menu that grows by one entry should not start clipping.
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Settings by name, at the top, because a ride reaches it by
-              // name from a named list — the "Settings" tab, and the same word
-              // in the ride menu behind it. Free roam offered only the gear in
-              // the top band, so the way to it changed the moment a ride
-              // existed and changed back when it ended (#600).
-              //
-              // The gear stays for riders who have learned it. That is the
-              // same call as the QR icon in `home_reachability_test.dart`:
-              // adding the words is the fix, removing the icon is a second,
-              // unrelated change to a control people already use.
-              ListTile(
-                key: const Key('home-more-settings'),
-                leading: const Icon(Icons.settings_outlined),
-                title: const Text('Settings'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  unawaited(
-                    UnitSettingsSheet.show(
-                      context,
-                      widget.distanceUnits,
-                      widget.mapStyleMode,
-                      widget.riderProfile,
-                      speedLimitDisplay: widget.speedLimitDisplay,
-                      routeProgressDisplay: widget.routeProgressDisplay,
-                      testControl: widget.testControl,
-                      spokenGuidance: widget.spokenGuidance,
-                      rideDiagnostics: widget.rideDiagnostics,
-                      globalRideHeatmap: widget.globalRideHeatmap,
-                      completedRideStore: widget.completedRides,
-                    ),
-                  );
-                },
-              ),
-              const Divider(height: 1),
-              ListTile(
-                key: const Key('home-create-ride'),
-                leading: const Icon(Icons.groups_2_outlined),
-                title: const Text('Create a group ride'),
-                enabled: _rideEntryEnabled,
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  unawaited(_showRideSheet(context, creating: true));
-                },
-              ),
-              ListTile(
-                key: const Key('start-ride-simulator'),
-                leading: const Icon(Icons.science_outlined),
-                title: const Text('Try a simulated ride'),
-                subtitle: const Text(
-                  'France: Argentat to Saint-Privat · never shares your location',
-                ),
-                enabled:
-                    !widget.controller.busy &&
-                    widget.onRetryRestoration == null,
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  widget.controller.createSimulationRide();
-                },
-              ),
-              ListTile(
-                key: const Key('record-a-route-button'),
-                leading: const Icon(Icons.fiber_manual_record_outlined),
-                title: const Text('Record a route'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  unawaited(
-                    RouteRecorderScreen.show(context, widget.recordedRoutes),
-                  );
-                },
-              ),
-              // The way back from a set-aside ride (#594). Stepping away from a
-              // recovered ride keeps it and its journal intact but takes the
-              // rider off it entirely — no banner, nothing on the map — so the
-              // route back has to be somewhere they can find it.
-              if (widget.controller.rideSetAside &&
-                  widget.controller.session != null)
-                ListTile(
-                  key: const Key('home-rejoin-set-aside-ride'),
-                  leading: const Icon(Icons.restore),
-                  title: Text(
-                    'Rejoin ride ${widget.controller.session!.rideCode}',
-                  ),
-                  subtitle: Text(
-                    widget.controller.rideEnded
-                        ? 'Its summary and recap are still here'
-                        : 'Still running, and set aside on this phone',
-                  ),
-                  onTap: () {
-                    Navigator.of(sheetContext).pop();
-                    widget.controller.reopenEndedRide();
-                  },
-                ),
-              const Divider(height: 8),
-              ListTile(
-                key: const Key('home-build-identity'),
-                leading: const Icon(Icons.info_outline),
-                title: Text(
-                  '${_buildIdentity.versionLabel} · '
-                  '${_buildIdentity.track.label}',
-                ),
-                subtitle: const Text('No account required'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  unawaited(
-                    AboutBuildSheet.show(context, identity: _buildIdentity),
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Future<void> _openSettings() => UnitSettingsSheet.show(
+    context,
+    widget.distanceUnits,
+    widget.mapStyleMode,
+    widget.riderProfile,
+    speedLimitDisplay: widget.speedLimitDisplay,
+    routeProgressDisplay: widget.routeProgressDisplay,
+    testControl: widget.testControl,
+    spokenGuidance: widget.spokenGuidance,
+    rideDiagnostics: widget.rideDiagnostics,
+    globalRideHeatmap: widget.globalRideHeatmap,
+    completedRideStore: widget.completedRides,
+  );
 
   /// Search for somewhere to ride to, then arrange the ride around it (#431).
   ///

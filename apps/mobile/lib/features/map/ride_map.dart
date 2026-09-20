@@ -7,6 +7,7 @@ export 'ride_map_feature.dart'
         MapEmergencyContact,
         GroupMiniMapRenderer,
         HostMapChrome,
+        HostMapMenuAction,
         MapOverlayMarker,
         MapOverlayTrace,
         RideMapFeature,
