@@ -207,7 +207,7 @@ class MapStyleRepository {
   }
 
   /// Shared by native maps and Flutter previews. Also applied to cached styles
-  /// so an offline upgrade gets the current palette and useful stop labels.
+  /// so an offline upgrade gets the current map presentation.
   static void applyPresentation(
     Map<String, dynamic> style,
     BasemapConfiguration configuration,
@@ -219,83 +219,26 @@ class MapStyleRepository {
         configuration.styleUrl == BasemapConfiguration.defaultLightStyleUrl) {
       _repaintForRestrainedLightMode(style);
     }
-    _addUsefulPlaces(style, configuration);
+    _removeBusinessLabels(style, configuration);
   }
 
-  static void _addUsefulPlaces(
+  static void _removeBusinessLabels(
     Map<String, dynamic> style,
     BasemapConfiguration configuration,
   ) {
-    // OpenMapTiles' documented schema. Do not assume a custom provider uses it.
     if (configuration.styleUrl != BasemapConfiguration.defaultLightStyleUrl &&
         configuration.styleUrl != BasemapConfiguration.defaultDarkStyleUrl) {
       return;
     }
-    if ((style['sources'] as Map)['openmaptiles'] is! Map) return;
-    final layers = (style['layers'] as List)
+    // Remove labels added by build 99 even when upgrading entirely offline.
+    // Provider labels and curated motorcycle discovery icons are unchanged.
+    style['layers'] = (style['layers'] as List)
         .where(
           (layer) =>
               layer is! Map ||
               !(layer['id'] as String? ?? '').startsWith('tec-place-'),
         )
         .toList();
-    final dark =
-        configuration.styleUrl == BasemapConfiguration.defaultDarkStyleUrl;
-    for (final category in [
-      (id: 'fuel', classes: ['fuel'], zoom: 11, label: 'Fuel'),
-      (
-        id: 'food',
-        classes: ['cafe', 'restaurant', 'fast_food'],
-        zoom: 12,
-        label: 'Food / café',
-      ),
-      (
-        id: 'stops',
-        classes: ['lodging', 'hospital', 'parking', 'toilets'],
-        zoom: 13,
-        label: 'Stop',
-      ),
-    ]) {
-      layers.add({
-        'id': 'tec-place-${category.id}',
-        'type': 'symbol',
-        'source': 'openmaptiles',
-        'source-layer': 'poi',
-        'minzoom': category.zoom,
-        'filter': [
-          'any',
-          ['in', 'class', ...category.classes],
-          ['in', 'subclass', ...category.classes],
-        ],
-        'layout': {
-          'text-field': [
-            'concat',
-            '• ',
-            [
-              'coalesce',
-              ['get', 'name'],
-              category.label,
-            ],
-          ],
-          'text-font': ['Noto Sans Regular'],
-          'text-size': 13,
-          'text-max-width': 9,
-          'text-padding': 6,
-          'text-allow-overlap': false,
-          'symbol-sort-key': [
-            'coalesce',
-            ['get', 'rank'],
-            100,
-          ],
-        },
-        'paint': {
-          'text-color': dark ? '#FFE2A8' : '#594018',
-          'text-halo-color': dark ? '#0F1319' : '#F3F2ED',
-          'text-halo-width': 1.5,
-        },
-      });
-    }
-    style['layers'] = layers;
   }
 
   // The dark basemap palette, as one table, because the thing that made the

@@ -60,7 +60,6 @@ import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
 import '../../services/flutter_vector_offline_manager.dart';
-import '../../services/map_places.dart';
 import '../../services/map_camera_command.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
@@ -1213,7 +1212,6 @@ class _RideMapScreenState extends State<RideMapScreen>
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
   static const _discoveryLineSource = 'ride-relay-discovery-lines';
   static const _discoveryPointSource = 'ride-relay-discovery-points';
-  static const _mapPlacesSource = 'ride-relay-map-places';
 
   final MapControllerImpl _mapController = MapControllerImpl();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
@@ -1482,67 +1480,6 @@ class _RideMapScreenState extends State<RideMapScreen>
   List<String> _discoveryLayerFailures = const [];
   bool _bikerCafesVisible = true;
   List<GeoPoint>? _discoveryViewportCorners;
-  MapPlacesService? _mapPlacesService;
-  List<MapPlace> _mapPlaces = const [];
-  Timer? _mapPlacesTimer;
-  int _mapPlacesGeneration = 0;
-  String? _mapPlacesQuery;
-
-  List<MapPlace> get _visibleMapPlaces => selectMapPlaces(
-    _mapPlaces,
-    _discoveryViewportCorners ?? const [],
-    _lastViewportZoom,
-  );
-
-  Map<String, dynamic> _mapPlacesGeoJson() => {
-    'type': 'FeatureCollection',
-    'features': [
-      for (final place in _visibleMapPlaces)
-        {
-          'type': 'Feature',
-          'geometry': {
-            'type': 'Point',
-            'coordinates': [place.point.longitude, place.point.latitude],
-          },
-          'properties': {'label': place.label, 'priority': place.kind.index},
-        },
-    ],
-  };
-
-  void _scheduleMapPlaces() {
-    final corners = _discoveryViewportCorners;
-    final service = _mapPlacesService ??= MapPlacesService(_basemap);
-    if (_mapRenderingPaused ||
-        !service.supported ||
-        corners == null ||
-        _lastViewportZoom < 11 ||
-        _lastViewportZoom >= 14) {
-      _mapPlacesTimer?.cancel();
-      _mapPlacesGeneration++;
-      _mapPlacesQuery = null;
-      return;
-    }
-    final key = (MapPlacesService.tilesFor(
-      corners,
-    ).map((t) => t.key()).toList()..sort()).join('|');
-    if (_mapPlacesQuery == key) return;
-    _mapPlacesTimer?.cancel();
-    _mapPlacesQuery = key;
-    final generation = ++_mapPlacesGeneration;
-    _mapPlacesTimer = Timer(const Duration(milliseconds: 650), () async {
-      bool current() =>
-          mounted && !_mapRenderingPaused && generation == _mapPlacesGeneration;
-      try {
-        final places = await service.load(corners, keepGoing: current);
-        if (!current()) return;
-        setState(() => _mapPlaces = places);
-        if (places.isEmpty) _mapPlacesQuery = null;
-        _scheduleMapLibreSync(overlays: true);
-      } on Object {
-        if (current()) _mapPlacesQuery = null;
-      }
-    });
-  }
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
@@ -1847,8 +1784,6 @@ class _RideMapScreenState extends State<RideMapScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _downloadCancellation?.cancel();
-    _mapPlacesTimer?.cancel();
-    _mapPlacesGeneration++;
     widget.currentPosition?.removeListener(_onPositionChanged);
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
@@ -1887,7 +1822,6 @@ class _RideMapScreenState extends State<RideMapScreen>
     super.didChangeAppLifecycleState(state);
     final wasPaused = _mapRenderingPaused;
     _mapRenderingPaused = mapLibreSourceUpdatesShouldPause(state);
-    _scheduleMapPlaces();
     final controller = _mapLibreController;
     if (controller != null && wasPaused != _mapRenderingPaused) {
       unawaited(
@@ -3663,64 +3597,6 @@ class _RideMapScreenState extends State<RideMapScreen>
                 RideHeatPoint(_latLng(cell.point), cell.weight),
             ],
           ),
-        if (_visibleMapPlaces.isNotEmpty)
-          MarkerLayer(
-            markers: [
-              for (final place in _visibleMapPlaces)
-                Marker(
-                  point: _latLng(place.point),
-                  width: 140,
-                  height: 34,
-                  rotate: true,
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: _basemap.dark
-                            ? const Color(0xEE151A21)
-                            : const Color(0xF2FFFFFF),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 3,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              switch (place.kind) {
-                                MapPlaceKind.fuel => Icons.local_gas_station,
-                                MapPlaceKind.food => Icons.restaurant,
-                                MapPlaceKind.stop => Icons.place,
-                              },
-                              size: 18,
-                              color: _basemap.dark
-                                  ? Colors.white
-                                  : const Color(0xFF17212B),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                place.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: _basemap.dark
-                                      ? Colors.white
-                                      : const Color(0xFF17212B),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
         if (_visibleDiscoveryFeatures.any((feature) => !feature.isPoint))
           PolylineLayer(
             key: const Key('free-roam-discovery-lines-layer'),
@@ -4957,27 +4833,19 @@ class _RideMapScreenState extends State<RideMapScreen>
               (previous[index].longitude - corners[index].longitude).abs() <
                   0.001,
         ).every((same) => same)) {
-      _scheduleMapPlaces();
       _scheduleGlobalHeatmapRefresh();
       return;
     }
     if (!mounted) return;
     _personalRideHeatmap?.setViewport(corners);
     setState(() => _discoveryViewportCorners = corners);
-    _scheduleMapPlaces();
     _scheduleMapLibreSync(overlays: true);
     _scheduleGlobalHeatmapRefresh();
   }
 
   void _updateViewportZoom(double zoom) {
     final wasVisible = motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom);
-    final oldPlacesBand = _lastViewportZoom.floor();
     _lastViewportZoom = zoom;
-    if (oldPlacesBand != zoom.floor()) {
-      _scheduleMapPlaces();
-      if (mounted) setState(() {});
-      _scheduleMapLibreSync(overlays: true);
-    }
     final isVisible = motorcycleDiscoveryVisibleAtZoom(zoom);
     if (!mounted || wasVisible == isVisible) return;
     setState(() {});
@@ -5664,22 +5532,6 @@ class _RideMapScreenState extends State<RideMapScreen>
         ),
         belowLayerId: heatmapBelowLayerId,
       );
-      await controller.addGeoJsonSource(_mapPlacesSource, _mapPlacesGeoJson());
-      await controller.addSymbolLayer(
-        _mapPlacesSource,
-        'ride-relay-map-places-labels',
-        ml.SymbolLayerProperties(
-          textField: ['get', 'label'],
-          textSize: 12,
-          textFont: ['Noto Sans Regular'],
-          textColor: _basemap.dark ? '#FFFFFF' : '#17212B',
-          textHaloColor: _basemap.dark ? '#151A21' : '#FFFFFF',
-          textHaloWidth: 2,
-          textAllowOverlap: false,
-          symbolSortKey: ['get', 'priority'],
-        ),
-        enableInteraction: false,
-      );
       await controller.addGeoJsonSource(
         _discoveryLineSource,
         _discoveryLineGeoJson(),
@@ -6009,7 +5861,6 @@ class _RideMapScreenState extends State<RideMapScreen>
         (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
         (_discoveryLineSource, _discoveryLineGeoJson),
         (_discoveryPointSource, _discoveryPointGeoJson),
-        (_mapPlacesSource, _mapPlacesGeoJson),
         (_riddenRouteSource, _riddenRouteGeoJson),
         (_remainingRouteSource, _remainingRouteGeoJson),
         (_riderTrailSource, _riderTrailGeoJson),
@@ -6101,7 +5952,6 @@ class _RideMapScreenState extends State<RideMapScreen>
           (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
           (_discoveryLineSource, _discoveryLineGeoJson),
           (_discoveryPointSource, _discoveryPointGeoJson),
-          (_mapPlacesSource, _mapPlacesGeoJson),
           (_riderTrailSource, _riderTrailGeoJson),
           (_markerPlanSource, _markerPlanGeoJson),
           (_overlaySource, _overlayGeoJson),
