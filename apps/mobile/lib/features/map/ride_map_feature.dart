@@ -2807,6 +2807,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                     : RouteProgressPanel(
                         progress: progress,
                         distanceUnit: widget.distanceUnit,
+                        displaySize: widget.ridingDisplaySize,
                         // The time is now a consistent map label in both
                         // orientations rather than changing hierarchy with the
                         // ETA card.

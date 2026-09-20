@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/distance_unit.dart';
+import '../../domain/riding_display_size.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/route_journey_progress.dart';
 import 'ride_clock.dart';
@@ -13,11 +14,13 @@ class RouteProgressPanel extends StatelessWidget {
     required this.distanceUnit,
     this.showClock = false,
     this.onStop,
+    this.displaySize = RidingDisplaySize.small,
   });
 
   final RouteJourneyProgress progress;
   final DistanceUnit distanceUnit;
   final bool showClock;
+  final RidingDisplaySize displaySize;
 
   /// Stops navigating, where the host offers a way out here (#615).
   ///
@@ -36,6 +39,8 @@ class RouteProgressPanel extends StatelessWidget {
     final nextName = progress.nextWaypointName;
     final nextDistance = progress.nextWaypointDistanceMeters;
     final nextArrival = _timeLabel(context, progress.nextWaypointArrivalTime);
+    final scale = displaySize.scale;
+    final enlarged = displaySize != RidingDisplaySize.small;
     final semantics = [
       '$timeRemaining and ${formatter.distance(progress.remainingDistanceMeters)} remaining',
       if (arrival != '—') 'route ETA $arrival',
@@ -49,7 +54,7 @@ class RouteProgressPanel extends StatelessWidget {
       container: true,
       child: Container(
         key: const Key('route-progress-panel'),
-        constraints: const BoxConstraints(maxWidth: 230),
+        constraints: BoxConstraints(maxWidth: 230 * scale),
         padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
         decoration: BoxDecoration(
           color: const Color(0xE6252E39),
@@ -63,19 +68,49 @@ class RouteProgressPanel extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.route, size: 15, color: Color(0xFFFFA04A)),
+                Icon(
+                  Icons.route,
+                  size: 15 * scale,
+                  color: const Color(0xFFFFA04A),
+                ),
                 const SizedBox(width: 5),
                 Expanded(
-                  child: Text(
-                    '$timeRemaining · ${formatter.distance(progress.remainingDistanceMeters)} left',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                    ),
-                  ),
+                  child: enlarged
+                      ? Wrap(
+                          spacing: 8,
+                          children: [
+                            Text(
+                              timeRemaining,
+                              key: const Key('eta-remaining-time'),
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13 * scale,
+                              ),
+                            ),
+                            Text(
+                              formatter.distance(
+                                progress.remainingDistanceMeters,
+                              ),
+                              key: const Key('eta-remaining-distance'),
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13 * scale,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          '$timeRemaining · ${formatter.distance(progress.remainingDistanceMeters)} left',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
                 ),
               ],
             ),
@@ -83,22 +118,23 @@ class RouteProgressPanel extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Route ETA $arrival',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFC4CDD8),
-                      fontSize: 11,
+                    enlarged ? 'ETA $arrival' : 'Route ETA $arrival',
+                    key: const Key('eta-arrival'),
+                    maxLines: enlarged ? null : 1,
+                    overflow: enlarged ? null : TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: const Color(0xFFF0F4F8),
+                      fontSize: 11 * scale,
                       height: 1.35,
                     ),
                   ),
                 ),
                 if (showClock) ...[
                   const SizedBox(width: 7),
-                  const RideClock(
+                  RideClock(
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 12,
+                      fontSize: 12 * scale,
                       fontWeight: FontWeight.w800,
                       height: 1,
                     ),
@@ -112,10 +148,10 @@ class RouteProgressPanel extends StatelessWidget {
               const SizedBox(height: 4),
               Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.flag_outlined,
-                    size: 14,
-                    color: Color(0xFF9FC8FF),
+                    size: 14 * scale,
+                    color: const Color(0xFF9FC8FF),
                   ),
                   const SizedBox(width: 5),
                   Expanded(
@@ -123,10 +159,10 @@ class RouteProgressPanel extends StatelessWidget {
                       nextName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
-                        fontSize: 12,
+                        fontSize: 12 * scale,
                       ),
                     ),
                   ),
@@ -137,9 +173,9 @@ class RouteProgressPanel extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
-                      style: const TextStyle(
-                        color: Color(0xFFD7DEE7),
-                        fontSize: 11,
+                      style: TextStyle(
+                        color: const Color(0xFFD7DEE7),
+                        fontSize: 11 * scale,
                       ),
                     ),
                   ),
@@ -149,8 +185,8 @@ class RouteProgressPanel extends StatelessWidget {
             if (onStop != null) ...[
               const SizedBox(height: 4),
               Container(height: 1, color: const Color(0x335E6B7B)),
-              SizedBox(
-                height: 32,
+              ConstrainedBox(
+                constraints: BoxConstraints(minHeight: 32 * scale),
                 child: TextButton.icon(
                   key: const Key('stop-navigating'),
                   onPressed: onStop,
@@ -159,10 +195,13 @@ class RouteProgressPanel extends StatelessWidget {
                     padding: EdgeInsets.zero,
                     visualDensity: VisualDensity.compact,
                   ),
-                  icon: const Icon(Icons.close, size: 15),
-                  label: const Text(
+                  icon: Icon(Icons.close, size: 15 * scale),
+                  label: Text(
                     'Stop navigating',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      fontSize: 12 * scale,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),

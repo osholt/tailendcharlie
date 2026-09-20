@@ -1,10 +1,64 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/riding_display_size.dart';
 import 'package:ride_relay/features/map/route_progress_panel.dart';
 import 'package:ride_relay/services/route_journey_progress.dart';
 
 void main() {
+  for (final size in RidingDisplaySize.values) {
+    testWidgets(
+      'ETA honours ${size.label} at narrow width and large system text',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(textScaler: TextScaler.linear(1.6)),
+              child: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: 228,
+                    child: RouteProgressPanel(
+                      displaySize: size,
+                      distanceUnit: DistanceUnit.miles,
+                      onStop: () {},
+                      progress: RouteJourneyProgress(
+                        remainingDistanceMeters: 233500,
+                        remainingTime: const Duration(hours: 3, minutes: 42),
+                        arrivalTime: DateTime(2026, 9, 20, 17, 42),
+                        nextWaypointName: 'A long name for the next fuel stop',
+                        nextWaypointDistanceMeters: 50300,
+                        nextWaypointArrivalTime: DateTime(2026, 9, 20, 15, 20),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        final arrival = tester.widget<Text>(
+          find.byKey(const Key('eta-arrival')),
+        );
+        expect(arrival.style!.fontSize, closeTo(11 * size.scale, 0.01));
+        if (size != RidingDisplaySize.small) {
+          final time = tester.widget<Text>(
+            find.byKey(const Key('eta-remaining-time')),
+          );
+          expect(time.style!.fontSize, closeTo(13 * size.scale, 0.01));
+          expect(
+            time.overflow,
+            isNot(TextOverflow.ellipsis),
+            reason: 'enlargement must not hide remaining time',
+          );
+          expect(arrival.maxLines, isNull);
+        }
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(const Key('stop-navigating')), findsOneWidget);
+      },
+    );
+  }
   testWidgets('shows trip, next-stop and current-time information compactly', (
     tester,
   ) async {
