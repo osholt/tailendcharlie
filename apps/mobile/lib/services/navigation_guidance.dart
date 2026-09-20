@@ -128,7 +128,9 @@ class ManeuverInstruction {
   ///
   /// Departures and road-name changes are route bookkeeping, not decisions.
   bool get isGuidance =>
-      kind != ManeuverKind.depart && kind != ManeuverKind.continueAhead;
+      kind != ManeuverKind.depart &&
+      (kind != ManeuverKind.continueAhead ||
+          maneuver.type.trim().toLowerCase() == 'continue');
 
   String get roadLabel {
     final name = roadName?.trim();
