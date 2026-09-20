@@ -6,6 +6,7 @@ import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/basemap_configuration.dart';
+import '../../services/flutter_vector_style.dart';
 import '../../services/measurement_formatter.dart';
 
 class RideLibraryEntry {
@@ -122,10 +123,7 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
   Future<vmt.Style?> _loadStyle() async {
     if (!widget.basemap.usesMapLibre) return null;
     try {
-      return await vmt.StyleReader(
-        uri: widget.basemap.styleUrl,
-        httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-      ).read().timeout(const Duration(seconds: 7));
+      return await readFlutterVectorStyle(widget.basemap);
     } on Object {
       return null;
     }
@@ -134,7 +132,11 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
   @override
   void didUpdateWidget(RideLibraryBrowser old) {
     super.didUpdateWidget(old);
-    if (old.basemap.styleUrl != widget.basemap.styleUrl) _style = _loadStyle();
+    if (old.basemap.styleUrl != widget.basemap.styleUrl ||
+        old.basemap.restrainedLightStyle !=
+            widget.basemap.restrainedLightStyle) {
+      _style = _loadStyle();
+    }
   }
 
   @override

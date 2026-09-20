@@ -8,6 +8,7 @@ import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/flutter_vector_style.dart';
 import 'route_trail_style.dart';
 
 const _routePreviewCameraInset = 30.0;
@@ -104,7 +105,9 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
   void didUpdateWidget(FlutterVectorRoutePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.basemapConfiguration.styleUrl !=
-        widget.basemapConfiguration.styleUrl) {
+            widget.basemapConfiguration.styleUrl ||
+        oldWidget.basemapConfiguration.restrainedLightStyle !=
+            widget.basemapConfiguration.restrainedLightStyle) {
       _paintSettledTimer?.cancel();
       _reportedReady = false;
       _reportedFailure = false;
@@ -119,18 +122,20 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
   }
 
   Future<vmt.Style> _loadStyle() {
-    final url = widget.basemapConfiguration.styleUrl;
-    return _styleCache[url] ??= _readStyle(url);
+    final configuration = widget.basemapConfiguration;
+    final key =
+        '${configuration.styleUrl}:${configuration.restrainedLightStyle}';
+    return _styleCache[key] ??= _readStyle(key, configuration);
   }
 
-  static Future<vmt.Style> _readStyle(String url) async {
+  static Future<vmt.Style> _readStyle(
+    String key,
+    BasemapConfiguration configuration,
+  ) async {
     try {
-      return await vmt.StyleReader(
-        uri: url,
-        httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-      ).read().timeout(const Duration(seconds: 7));
+      return await readFlutterVectorStyle(configuration);
     } on Object {
-      _styleCache.remove(url);
+      _styleCache.remove(key);
       rethrow;
     }
   }
