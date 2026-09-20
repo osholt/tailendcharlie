@@ -28,6 +28,7 @@ import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/hazard_map_symbol.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
+import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/relay/live_presence.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/biker_place_catalogue.dart';
@@ -129,6 +130,57 @@ void main() {
       contains('Stale'),
       reason: 'the last-known position remains available to the main map',
     );
+  });
+
+  testWidgets('local rider gets a travel arrow when GPS omits course (#777)', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final directory = Directory.systemTemp.createTempSync('marker-direction');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final now = DateTime.now();
+    final navigation = ValueNotifier(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.45, longitude: -2.59),
+        recordedAt: now,
+        speedMetersPerSecond: 10,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          navigating: true,
+          discoveryCatalogueLoader: () async =>
+              const MotorcycleDiscoveryCatalogue([]),
+          bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 51.45, longitude: -2.5897),
+      recordedAt: now.add(const Duration(seconds: 2)),
+      speedMetersPerSecond: 10,
+      accuracyMeters: 5,
+    );
+    await tester.pumpAndSettle();
+    final badge = tester
+        .widgetList<RiderMarkerBadge>(find.byType(RiderMarkerBadge))
+        .where((b) => b.mapMarker)
+        .first;
+    expect(badge.headingDegrees, closeTo(90, .1));
   });
 
   test('native source updates follow app visibility on iOS (#732)', () {

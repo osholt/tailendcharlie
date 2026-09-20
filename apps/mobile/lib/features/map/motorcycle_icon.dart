@@ -664,20 +664,27 @@ class RiderMarkerShapePainter extends CustomPainter {
         ),
       );
     }
+    // Keep a broad body for an upright bike/initials glyph at every rotation.
+    // A narrow triangle clipped the identity; the long pointed nose supplies
+    // direction while the rounded body protects the readable centre.
     return Path()
-      ..moveTo(size.width * .5, size.height * .03)
-      ..lineTo(size.width * .94, size.height * .44)
-      ..quadraticBezierTo(
-        size.width * .94,
-        size.height * .90,
+      ..moveTo(size.width * .5, size.height * .02)
+      ..lineTo(size.width * .84, size.height * .32)
+      ..cubicTo(
+        size.width * 1.02,
+        size.height * .55,
+        size.width * .88,
+        size.height * .96,
         size.width * .5,
-        size.height * .92,
+        size.height * .96,
       )
-      ..quadraticBezierTo(
-        size.width * .06,
-        size.height * .90,
-        size.width * .06,
-        size.height * .44,
+      ..cubicTo(
+        size.width * .12,
+        size.height * .96,
+        size.width * -.02,
+        size.height * .55,
+        size.width * .16,
+        size.height * .32,
       )
       ..close();
   }
