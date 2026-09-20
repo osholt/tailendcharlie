@@ -97,13 +97,14 @@ void main() {
         );
       }
       if (request.url.path.endsWith('.json')) return http.Response('{}', 200);
-      if (request.url.path.endsWith('.png'))
+      if (request.url.path.endsWith('.png')) {
         return http.Response.bytes(
           base64Decode(
             'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=',
           ),
           200,
         );
+      }
       return http.Response.bytes(tileBytes, 200);
     }),
   );
