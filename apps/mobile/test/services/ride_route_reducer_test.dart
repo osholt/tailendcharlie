@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:ride_relay/domain/ride_library_organisation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/ride_event.dart';
@@ -5,6 +9,31 @@ import 'package:ride_relay/services/ride_event_authenticator.dart';
 import 'package:ride_relay/services/ride_route_reducer.dart';
 
 void main() {
+  test(
+    'sharing a route excludes private library organisation and bin state',
+    () {
+      final route = _route('Shared plan').withLibraryDetails(
+        status: RideLibraryStatus.deleted,
+        organisation: RideLibraryOrganisation.fromInput(
+          tags: '#private',
+          folder: 'Personal/Trips',
+        ),
+      );
+      final encoded = const RideRouteEncoder().encode(route);
+      final shared =
+          jsonDecode(
+                utf8.decode(
+                  gzip.decode(base64Url.decode(encoded.chunks.join())),
+                ),
+              )
+              as Map;
+      expect(shared, isNot(contains('organisation')));
+      expect(shared, isNot(contains('libraryStatus')));
+      expect(shared, isNot(contains('deletedAt')));
+      expect(shared['name'], 'Shared plan');
+    },
+  );
+
   const secret = '0123456789abcdef0123456789abcdef';
   final start = DateTime.utc(2026, 7, 22, 10);
 

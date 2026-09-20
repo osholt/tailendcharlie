@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:vector_map_tiles/vector_map_tiles.dart' as vmt;
 
 import '../../domain/distance_unit.dart';
+import '../../domain/ride_library_organisation.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/basemap_configuration.dart';
 import '../../services/flutter_vector_style.dart';
@@ -18,6 +19,7 @@ class RideLibraryEntry {
     required this.paths,
     required this.open,
     this.rating,
+    this.organisation = const RideLibraryOrganisation(),
   });
   final String id;
   final String title;
@@ -25,6 +27,7 @@ class RideLibraryEntry {
   final double distanceMeters;
   final List<List<GeoPoint>> paths;
   final int? rating;
+  final RideLibraryOrganisation organisation;
   final VoidCallback open;
 }
 
@@ -37,11 +40,26 @@ bool libraryEntryMatches(
   int minimumRating = 0,
   double lengthUnitMeters = 1000,
   LatLngBounds? area,
+  String? folder,
+  String? tag,
 }) {
-  final search = query.trim().toLowerCase();
-  if (search.isNotEmpty &&
-      !'${entry.title} ${entry.locationLabel}'.toLowerCase().contains(search)) {
-    return false;
+  if (folder != null && !entry.organisation.inFolder(folder)) return false;
+  if (tag != null && !entry.organisation.tags.contains(tag)) return false;
+  final text =
+      '${entry.title} ${entry.locationLabel} ${entry.organisation.folder}'
+          .toLowerCase();
+  for (final term
+      in query
+          .trim()
+          .toLowerCase()
+          .split(RegExp(r'\s+'))
+          .where((term) => term.isNotEmpty)) {
+    if (term.startsWith('#')) {
+      if (!entry.organisation.tags.contains(term.substring(1))) return false;
+    } else if (!text.contains(term) &&
+        !entry.organisation.tags.any((tag) => tag.contains(term))) {
+      return false;
+    }
   }
   final distance = entry.distanceMeters / lengthUnitMeters;
   if (switch (length) {
@@ -118,6 +136,8 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
   int _rating = 0;
   LatLngBounds? _area;
   String? _selected;
+  String? _folder;
+  String? _tag;
   late Future<vmt.Style?> _style = _loadStyle();
 
   Future<vmt.Style?> _loadStyle() async {
@@ -153,7 +173,9 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
       _searchController.text.trim().isNotEmpty ||
       _length != LibraryLength.all ||
       _rating > 0 ||
-      _area != null;
+      _area != null ||
+      _folder != null ||
+      _tag != null;
   List<RideLibraryEntry> get _visible => widget.entries
       .where(
         (entry) => libraryEntryMatches(
@@ -163,6 +185,8 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
           minimumRating: _rating,
           lengthUnitMeters: _unit,
           area: _area,
+          folder: _folder,
+          tag: _tag,
         ),
       )
       .toList(growable: false);
@@ -172,7 +196,23 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
     _length = LibraryLength.all;
     _rating = 0;
     _area = null;
+    _folder = null;
+    _tag = null;
   });
+
+  List<String> get _folders {
+    final result = <String>{};
+    for (final entry in widget.entries) {
+      final parts = entry.organisation.folder
+          .split('/')
+          .where((part) => part.isNotEmpty)
+          .toList();
+      for (var i = 1; i <= parts.length; i++) {
+        result.add(parts.take(i).join('/'));
+      }
+    }
+    return result.toList()..sort();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -189,7 +229,7 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
                   key: const Key('library-search'),
                   controller: _searchController,
                   decoration: const InputDecoration(
-                    hintText: 'Name or place',
+                    hintText: 'Name, place or #tag',
                     prefixIcon: Icon(Icons.search),
                     isDense: true,
                   ),
@@ -215,6 +255,57 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
               children: [
+                if (_folders.isNotEmpty) ...[
+                  PopupMenuButton<String>(
+                    key: const Key('library-folder-filter'),
+                    tooltip: 'Choose folder',
+                    onSelected: (value) =>
+                        setState(() => _folder = value == '*' ? null : value),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: '*',
+                        child: Text('All folders'),
+                      ),
+                      const PopupMenuItem(value: '', child: Text('Unfiled')),
+                      for (final folder in _folders)
+                        PopupMenuItem(value: folder, child: Text(folder)),
+                    ],
+                    child: Chip(
+                      avatar: const Icon(Icons.folder_outlined, size: 18),
+                      label: Text(
+                        _folder == null
+                            ? 'Folder'
+                            : _folder!.isEmpty
+                            ? 'Unfiled'
+                            : _folder!,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                if (widget.entries.any(
+                  (entry) => entry.organisation.tags.isNotEmpty,
+                )) ...[
+                  PopupMenuButton<String>(
+                    key: const Key('library-tag-filter'),
+                    tooltip: 'Choose tag',
+                    onSelected: (value) =>
+                        setState(() => _tag = value.isEmpty ? null : value),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: '', child: Text('All tags')),
+                      for (final tag in ({
+                        for (final entry in widget.entries)
+                          ...entry.organisation.tags,
+                      }.toList()..sort()))
+                        PopupMenuItem(value: tag, child: Text('#$tag')),
+                    ],
+                    child: Chip(
+                      avatar: const Icon(Icons.tag, size: 18),
+                      label: Text(_tag == null ? 'Tag' : '#$_tag'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 PopupMenuButton<LibraryLength>(
                   key: const Key('library-length-filter'),
                   tooltip: 'Filter by length',
@@ -368,9 +459,7 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
                                 for (final point in path)
                                   LatLng(point.latitude, point.longitude),
                               ],
-                              color: entry.id == _selected
-                                  ? Colors.orange
-                                  : Colors.tealAccent.shade700,
+                              color: Color(entry.organisation.colourArgb),
                               strokeWidth: entry.id == _selected ? 6 : 3,
                               borderColor: Colors.black87,
                               borderStrokeWidth: 1,
@@ -400,9 +489,7 @@ class _RideLibraryBrowserState extends State<RideLibraryBrowser> {
                             tooltip: entry.title,
                             icon: Icon(
                               Icons.place,
-                              color: entry.id == _selected
-                                  ? Colors.orange
-                                  : Colors.teal,
+                              color: Color(entry.organisation.colourArgb),
                             ),
                             onPressed: () =>
                                 setState(() => _selected = entry.id),

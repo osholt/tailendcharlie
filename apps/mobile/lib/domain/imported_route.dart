@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'route_preferences.dart';
 import 'ride_library_status.dart';
+import 'ride_library_organisation.dart';
 
 export 'route_preferences.dart';
 export 'ride_library_status.dart';
@@ -435,6 +436,7 @@ class ImportedRoute {
     this.plannedDuration,
     this.libraryStatus = RideLibraryStatus.active,
     this.deletedAt,
+    this.organisation = const RideLibraryOrganisation(),
   });
 
   static const schemaVersion = 1;
@@ -457,28 +459,33 @@ class ImportedRoute {
   final Duration? plannedDuration;
   final RideLibraryStatus libraryStatus;
   final DateTime? deletedAt;
+  final RideLibraryOrganisation organisation;
 
-  ImportedRoute withLibraryDetails({String? name, RideLibraryStatus? status}) =>
-      ImportedRoute(
-        id: id,
-        name: name ?? this.name,
-        description: description,
-        importedAt: importedAt,
-        sourceFileName: sourceFileName,
-        paths: paths,
-        waypoints: waypoints,
-        shapingPoints: shapingPoints,
-        maneuvers: maneuvers,
-        markerReview: markerReview,
-        preferences: preferences,
-        plannedDuration: plannedDuration,
-        libraryStatus: status ?? libraryStatus,
-        deletedAt: status == RideLibraryStatus.deleted
-            ? DateTime.now().toUtc()
-            : status == RideLibraryStatus.active
-            ? null
-            : deletedAt,
-      );
+  ImportedRoute withLibraryDetails({
+    String? name,
+    RideLibraryStatus? status,
+    RideLibraryOrganisation? organisation,
+  }) => ImportedRoute(
+    id: id,
+    name: name ?? this.name,
+    description: description,
+    importedAt: importedAt,
+    sourceFileName: sourceFileName,
+    paths: paths,
+    waypoints: waypoints,
+    shapingPoints: shapingPoints,
+    maneuvers: maneuvers,
+    markerReview: markerReview,
+    preferences: preferences,
+    plannedDuration: plannedDuration,
+    libraryStatus: status ?? libraryStatus,
+    organisation: organisation ?? this.organisation,
+    deletedAt: status == RideLibraryStatus.deleted
+        ? DateTime.now().toUtc()
+        : status == RideLibraryStatus.active
+        ? null
+        : deletedAt,
+  );
 
   /// Which suggested marking positions a person has rejected or added.
   final MarkerPlanReview markerReview;
@@ -497,6 +504,7 @@ class ImportedRoute {
     preferences: preferences,
     plannedDuration: plannedDuration,
     libraryStatus: libraryStatus,
+    organisation: organisation,
     deletedAt: deletedAt,
   );
 
@@ -537,6 +545,7 @@ class ImportedRoute {
         preferences: preferences,
         plannedDuration: plannedDuration,
         libraryStatus: libraryStatus,
+        organisation: organisation,
         deletedAt: deletedAt,
       );
 
@@ -547,6 +556,7 @@ class ImportedRoute {
     if (description != null) 'description': description,
     'importedAt': importedAt.toUtc().toIso8601String(),
     'sourceFileName': sourceFileName,
+    'organisation': organisation.toJson(),
     if (libraryStatus != RideLibraryStatus.active)
       'libraryStatus': libraryStatus.name,
     if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
@@ -640,6 +650,7 @@ class ImportedRoute {
       importedAt: DateTime.parse(_requiredString(json, 'importedAt')).toUtc(),
       sourceFileName: sourceFileName,
       libraryStatus: RideLibraryStatus.parse(json['libraryStatus']),
+      organisation: RideLibraryOrganisation.fromJson(json['organisation']),
       deletedAt: _optionalDateTime(json['deletedAt']),
       paths: paths,
       waypoints: waypoints,

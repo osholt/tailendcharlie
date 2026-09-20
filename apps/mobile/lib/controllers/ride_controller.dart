@@ -2006,7 +2006,23 @@ class RideController extends ChangeNotifier {
     // purge after it is a privacy obligation, and it must not be skipped
     // because a file could not be written (#299).
     try {
-      await store.save(snapshot);
+      // Ended journals are replayed after restart. Refresh their geometry
+      // without erasing edits the rider has already made in the library.
+      final existing = (await store.list())
+          .where((ride) => ride.rideId == snapshot.rideId)
+          .firstOrNull;
+      await store.save(
+        existing == null
+            ? snapshot
+            : snapshot.copyWith(
+                libraryName: existing.libraryName,
+                rating: existing.rating,
+                notes: existing.notes,
+                libraryStatus: existing.libraryStatus,
+                deletedAt: existing.deletedAt,
+                organisation: existing.organisation,
+              ),
+      );
       _rideArchiveError = null;
     } on Object catch (error, stackTrace) {
       _rideArchiveError = rideArchiveFailedMessage;

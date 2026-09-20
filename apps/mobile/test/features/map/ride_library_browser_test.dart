@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:ride_relay/domain/imported_route.dart' show GeoPoint;
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/ride_library_organisation.dart';
 import 'package:ride_relay/features/map/ride_library_browser.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 
@@ -15,12 +16,14 @@ void main() {
     double distance = 60000,
     int? rating = 4,
     VoidCallback? open,
+    RideLibraryOrganisation organisation = const RideLibraryOrganisation(),
   }) => RideLibraryEntry(
     id: id,
     title: title,
     locationLabel: place,
     distanceMeters: distance,
     rating: rating,
+    organisation: organisation,
     open: open ?? () {},
     paths: const [
       [
@@ -29,6 +32,29 @@ void main() {
       ],
     ],
   );
+
+  test('tags and nested folders combine with other library filters', () {
+    final ride = entry(
+      organisation: RideLibraryOrganisation.fromInput(
+        tags: '#Fun #twisty, FUN',
+        folder: ' Trips / France ',
+      ),
+    );
+    expect(ride.organisation.tags, ['fun', 'twisty']);
+    expect(
+      libraryEntryMatches(
+        ride,
+        query: 'Bristol #fun',
+        folder: 'Trips',
+        tag: 'twisty',
+      ),
+      isTrue,
+    );
+    expect(libraryEntryMatches(ride, query: '#wet'), isFalse);
+    expect(libraryEntryMatches(ride, folder: 'Trip'), isFalse);
+    expect(libraryEntryMatches(ride, folder: ''), isFalse);
+    expect(libraryEntryMatches(entry(), folder: ''), isTrue);
+  });
 
   test(
     'location, length and rating filters combine and exclude unrated rides',
