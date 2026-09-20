@@ -310,7 +310,9 @@ void main() {
         rideActive: true,
       );
       expect(warmable.configureCalls, 1);
-      expect(warmable.spoken, ['Speed camera, in 151 yards']);
+      expect(warmable.spoken, [
+        'Speed camera, in one hundred and fifty one yards',
+      ]);
     },
   );
 
