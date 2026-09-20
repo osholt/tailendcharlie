@@ -260,9 +260,11 @@ class GlobalHeatmapSnapshot {
     required this.version,
     required this.date,
     required this.cells,
+    this.resolution = 17,
   });
 
   static const empty = GlobalHeatmapSnapshot(version: '', date: '', cells: []);
+  final int resolution;
   final String version;
   final String date;
   final List<GlobalHeatmapCell> cells;
@@ -274,7 +276,10 @@ class GlobalHeatmapSnapshot {
         {
           'type': 'Feature',
           'id': 'global-$version-$index',
-          'properties': {'weight': cells[index].weight},
+          'properties': {
+            'weight': cells[index].weight,
+            'resolution': resolution,
+          },
           'geometry': {
             'type': 'Point',
             'coordinates': [
@@ -294,6 +299,7 @@ class GlobalHeatmapSnapshot {
     return GlobalHeatmapSnapshot(
       version: json['snapshotVersion'] as String? ?? '',
       date: json['snapshotDate'] as String? ?? '',
+      resolution: (json['resolution'] as num?)?.toInt().clamp(6, 17) ?? 17,
       cells: [
         for (final raw in features.whereType<Map>())
           if (raw['geometry'] case {'coordinates': final List coordinates})
@@ -382,6 +388,13 @@ class GlobalHeatmapClient {
     required double north,
     required int zoom,
   }) async {
+    // A country viewport includes sea and neighbouring territory. Clip queries
+    // to the supported region rather than refusing the whole visible map.
+    west = west.clamp(-12.0, 10.0);
+    east = east.clamp(-12.0, 10.0);
+    south = south.clamp(41.0, 62.0);
+    north = north.clamp(41.0, 62.0);
+    if (west >= east || south >= north) return GlobalHeatmapSnapshot.empty;
     final response = await _client.get(
       _uri('v1/heatmap/cells', {
         'west': '$west',

@@ -1,3 +1,4 @@
+import 'ride_heatmap_layer.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -236,46 +237,6 @@ bool canGenerateNavigableRoute(ImportedRoute route) =>
 /// threshold while preserving every saved layer choice.
 @visibleForTesting
 const motorcycleDiscoveryMinimumZoom = 12.5;
-
-/// Ground radius for the fallback renderer. z19 cell centres are about 45–50 m
-/// apart at UK and French latitudes, so these circles overlap without turning
-/// a travelled road into the large square bands produced by filled cells.
-@visibleForTesting
-double personalHeatmapGroundRadiusMeters(double weight) =>
-    26 + 10 * weight.clamp(0, 1);
-
-/// MapLibre heatmap radius in screen pixels, calibrated to one z19 heat cell.
-///
-/// Personal history is stored in z19 cells. At riding latitudes a 26–36 metre
-/// ground radius is roughly 0.6 of that cell, or 307 px at z19 on MapLibre's
-/// 512 px tiles. The previous expression reached 898 px at z19 and made each
-/// observation cover about three cells, visibly changing the map's scale.
-@visibleForTesting
-const List<Object> personalHeatmapRadiusExpression = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  5,
-  1,
-  12,
-  2.4,
-  13,
-  4.8,
-  14,
-  9.6,
-  15,
-  19.2,
-  16,
-  38.4,
-  17,
-  76.8,
-  18,
-  153.6,
-  19,
-  307.2,
-  20,
-  614.4,
-];
 
 @visibleForTesting
 bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
@@ -2123,7 +2084,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         final east = math.max(corners[0].longitude, corners[1].longitude);
         final south = math.min(corners[0].latitude, corners[1].latitude);
         final north = math.max(corners[0].latitude, corners[1].latitude);
-        if (east - west > 8 || north - south > 8) return;
+
         unawaited(
           controller!.refresh(
             west: west,
@@ -3537,36 +3498,22 @@ class _RideMapScreenState extends State<RideMapScreen>
             ),
           ),
         if (_visiblePersonalHeatmap.cells.isNotEmpty)
-          CircleLayer(
+          RideHeatmapLayer(
             key: const Key('personal-rides-heatmap-layer'),
-            circles: [
+            resolution: PersonalRideHeatmapBuilder.canonicalZoom,
+            points: [
               for (final cell in _visiblePersonalHeatmap.cells)
-                CircleMarker(
-                  point: _latLng(cell.centre),
-                  radius: personalHeatmapGroundRadiusMeters(cell.weight),
-                  useRadiusInMeter: true,
-                  color: Color.lerp(
-                    const Color(0xFF7C3AED),
-                    const Color(0xFFF97316),
-                    cell.weight,
-                  )!.withValues(alpha: 0.16 + 0.24 * cell.weight),
-                ),
+                RideHeatPoint(_latLng(cell.centre), cell.weight),
             ],
           ),
         if (_visibleGlobalHeatmap.cells.isNotEmpty)
-          CircleLayer(
+          RideHeatmapLayer(
             key: const Key('global-rides-heatmap-layer'),
-            circles: [
+            resolution: _visibleGlobalHeatmap.resolution,
+            global: true,
+            points: [
               for (final cell in _visibleGlobalHeatmap.cells)
-                CircleMarker(
-                  point: _latLng(cell.point),
-                  radius: 7 + 5 * cell.weight,
-                  color: Color.lerp(
-                    const Color(0xFF0EA5E9),
-                    const Color(0xFFF59E0B),
-                    cell.weight,
-                  )!.withValues(alpha: 0.14 + 0.22 * cell.weight),
-                ),
+                RideHeatPoint(_latLng(cell.point), cell.weight),
             ],
           ),
         if (_visibleDiscoveryFeatures.any((feature) => !feature.isPoint))
@@ -5447,18 +5394,8 @@ class _RideMapScreenState extends State<RideMapScreen>
       await controller.addHeatmapLayer(
         _globalHeatmapSource,
         _globalHeatmapLayer,
-        const ml.HeatmapLayerProperties(
-          heatmapRadius: [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            5,
-            4,
-            12,
-            10,
-            17,
-            18,
-          ],
+        ml.HeatmapLayerProperties(
+          heatmapRadius: heatmapRadiusExpression(),
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.8,
           heatmapColor: [
@@ -5485,8 +5422,8 @@ class _RideMapScreenState extends State<RideMapScreen>
       await controller.addHeatmapLayer(
         _personalHeatmapSource,
         _personalHeatmapLayer,
-        const ml.HeatmapLayerProperties(
-          heatmapRadius: personalHeatmapRadiusExpression,
+        ml.HeatmapLayerProperties(
+          heatmapRadius: heatmapRadiusExpression(resolution: 19),
           heatmapWeight: ['get', 'weight'],
           heatmapIntensity: 0.85,
           heatmapColor: [

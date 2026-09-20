@@ -274,7 +274,7 @@ def test_bounds_authentication_and_cell_region_are_enforced(client: TestClient):
     credential = _register(client, 1)
     assert _contribute(client, credential, upload=1, cells=[outside]).status_code == 400
     assert (
-        client.get("/api/v1/heatmap/cells?west=-10&south=49&east=3&north=61&zoom=6").status_code
+        client.get("/api/v1/heatmap/cells?west=-10&south=49&east=3&north=61&zoom=17").status_code
         == 400
     )
     assert (
@@ -319,3 +319,31 @@ def test_oversized_payload_is_rejected_before_storage(client: TestClient):
 
 def test_compatibility_advertises_global_heatmap(client: TestClient):
     assert "global-ride-heatmap-v1" in client.get("/api/v1/compatibility").json()["capabilities"]
+
+
+def test_country_view_retains_coverage_and_contributor_privacy(client: TestClient):
+    cell = tile_for_point(48.8, 2.3, 17)
+    for index in (1, 2):
+        assert (
+            _contribute(client, _register(client, index), upload=index, cells=[cell]).status_code
+            == 200
+        )
+    url = "/api/v1/heatmap/cells?west=-12&south=41&east=10&north=62&zoom=6"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.json()["features"] == []
+    assert _contribute(client, _register(client, 3), upload=3, cells=[cell]).status_code == 200
+    with client.app.state.session_factory() as session:
+        rebuild_public_snapshot(session, today=datetime.now(UTC).date() + timedelta(days=1))
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.json()["resolution"] == 8
+    assert len(response.json()["features"]) == 1
+    assert response.json()["features"][0]["properties"]["contributors"] == "3-4"
+
+
+def test_world_view_remains_bounded(client: TestClient):
+    assert (
+        client.get("/api/v1/heatmap/cells?west=-180&south=-80&east=180&north=80&zoom=6").status_code
+        == 400
+    )
