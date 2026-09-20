@@ -48,7 +48,7 @@ void main() {
     );
   });
 
-  test('uses neutral copy outside the bundled Great Britain index', () {
+  test('uses neutral copy outside indexed coverage', () {
     expect(
       approximateEndpointLabel(
         index: index,
@@ -66,7 +66,7 @@ void main() {
     );
   });
 
-  test('the bundled Great Britain index is packaged and readable', () async {
+  test('the bundled British and French indexes are readable offline', () async {
     final bundled = await ApproximatePlaceIndex.load();
 
     expect(
@@ -88,5 +88,14 @@ void main() {
       'Chippenham',
     );
     expect(bundled.attribution, contains('OS data'));
+    expect(
+      bundled.nearestName(const GeoPoint(latitude: 45.835, longitude: 1.261)),
+      'Limoges',
+    );
+    expect(
+      bundled.nearestName(const GeoPoint(latitude: 49.183, longitude: -0.369)),
+      'Caen',
+    );
+    expect(bundled.attribution, contains('DINUM'));
   });
 }

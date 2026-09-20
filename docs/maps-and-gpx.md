@@ -1094,3 +1094,16 @@ and coverage edges remain part of the field-test matrix.
 - [GPX 1.1 schema](https://www.topografix.com/GPX/1/1/)
 - [OSRM route service](https://project-osrm.org/docs/)
 - [Nominatim usage policy](https://operations.osmfoundation.org/policies/nominatim/)
+
+### Browsing saved rides (#779)
+
+Imported routes, recorder tracks and completed rides retain their own tabs in the
+ride library. Each tab now has list/map views, a name or approximate endpoint
+place search, length filters in the rider's units, and a map viewport filter.
+Completed rides additionally support a minimum rating. Selecting a line or start
+marker shows a card opening the existing details/options; overlapping routes
+offer a chooser. Archive and deleted-ride recovery controls remain in the
+unfiltered list. The route geometry stays selectable if the basemap is offline.
+Endpoint names are bundled for Great Britain and metropolitan France/Corsica;
+other locations can be selected geographically without reverse-geocoding a
+private ride. French data provenance and regeneration are in `tools/places`.
