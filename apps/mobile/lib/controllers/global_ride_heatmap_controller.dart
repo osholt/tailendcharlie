@@ -140,6 +140,7 @@ class GlobalRideHeatmapController extends ChangeNotifier {
           'type': 'FeatureCollection',
           'snapshotVersion': result.version,
           'snapshotDate': result.date,
+          'resolution': result.resolution,
           'features': result.toGeoJson()['features'],
         }),
       );

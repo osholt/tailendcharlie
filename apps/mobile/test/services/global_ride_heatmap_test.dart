@@ -10,6 +10,52 @@ import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/services/global_ride_heatmap.dart';
 
 void main() {
+  test(
+    'country viewport is clipped and public resolution survives parsing',
+    () async {
+      final client = GlobalHeatmapClient(
+        baseUri: Uri.parse('https://relay.example/api'),
+        client: MockClient((request) async {
+          expect(request.url.queryParameters, {
+            'west': '-12.0',
+            'south': '41.0',
+            'east': '10.0',
+            'north': '62.0',
+            'zoom': '6',
+          });
+          return http.Response(
+            jsonEncode({
+              'type': 'FeatureCollection',
+              'resolution': 8,
+              'features': [
+                {
+                  'geometry': {
+                    'coordinates': [2.3, 48.8],
+                  },
+                  'properties': {'weight': 0.5},
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+      final snapshot = await client.fetch(
+        west: -20,
+        south: 30,
+        east: 20,
+        north: 70,
+        zoom: 6,
+      );
+      expect(snapshot.resolution, 8);
+      expect(
+        (snapshot.toGeoJson()['features'] as List)
+            .single['properties']['resolution'],
+        8,
+      );
+    },
+  );
+
   test('trims both ends before quantising and preserves recording gaps', () {
     final ride = _ride([
       _path(51.45, -2.60, 51.45, -2.56),

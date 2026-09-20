@@ -23,10 +23,11 @@ CANONICAL_ZOOM = 17
 MIN_PUBLIC_ZOOM = 8
 MAX_PUBLIC_CELLS = 5_000
 MIN_CONTRIBUTORS = 3
-UK_WEST = -11.5
-UK_EAST = 3.0
-UK_SOUTH = 49.0
-UK_NORTH = 61.5
+# Bounded launch region covering UK, mainland France and Corsica.
+HEATMAP_WEST = -12.0
+HEATMAP_EAST = 10.0
+HEATMAP_SOUTH = 41.0
+HEATMAP_NORTH = 62.0
 
 
 def expected_proof(handle: str, secret: str) -> str:
@@ -308,19 +309,23 @@ def cleanup_heatmap(session: Session, *, today: date | None = None) -> tuple[int
 
 def validate_viewport(west: float, south: float, east: float, north: float, zoom: int) -> None:
     if (
-        west < UK_WEST
-        or east > UK_EAST
-        or south < UK_SOUTH
-        or north > UK_NORTH
+        west < HEATMAP_WEST
+        or east > HEATMAP_EAST
+        or south < HEATMAP_SOUTH
+        or north > HEATMAP_NORTH
         or west >= east
         or south >= north
         or zoom < 6
         or zoom > 18
-        or east - west > 8
-        or north - south > 8
-        or (east - west) * (north - south) > 25
+        or not all(math.isfinite(value) for value in (west, south, east, north))
+        or (
+            zoom > 8
+            and (east - west > 8 or north - south > 8 or (east - west) * (north - south) > 25)
+        )
     ):
-        raise RelayServiceError(400, "A bounded UK heatmap viewport is required")
+        raise RelayServiceError(
+            400, "A bounded heatmap viewport in the supported region is required"
+        )
 
 
 def tile_for_point(latitude: float, longitude: float, zoom: int) -> tuple[int, int]:
@@ -342,7 +347,7 @@ def tile_center(x: int, y: int, zoom: int) -> tuple[float, float]:
 
 def tile_is_in_supported_region(x: int, y: int, zoom: int) -> bool:
     longitude, latitude = tile_center(x, y, zoom)
-    return UK_WEST <= longitude <= UK_EAST and UK_SOUTH <= latitude <= UK_NORTH
+    return HEATMAP_WEST <= longitude <= HEATMAP_EAST and HEATMAP_SOUTH <= latitude <= HEATMAP_NORTH
 
 
 def _contributor_bucket(count: int) -> str:
