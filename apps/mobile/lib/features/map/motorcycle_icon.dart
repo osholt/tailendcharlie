@@ -386,6 +386,9 @@ class RiderMarkerBadge extends StatelessWidget {
     this.symbol = riderSymbolDefault,
     this.displayName = '',
     this.size = 34,
+    this.mapMarker = false,
+    this.headingDegrees,
+    this.mapBearingDegrees = 0,
     this.borderColor = RouteTrailStyle.casing,
     this.borderWidth = 2,
     this.glyphColor = RouteTrailStyle.markerGlyph,
@@ -396,6 +399,9 @@ class RiderMarkerBadge extends StatelessWidget {
   final RiderSymbol symbol;
   final String displayName;
   final double size;
+  final bool mapMarker;
+  final double? headingDegrees;
+  final double mapBearingDegrees;
   final Color borderColor;
   final double borderWidth;
 
@@ -403,66 +409,79 @@ class RiderMarkerBadge extends StatelessWidget {
   final Color glyphColor;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: size,
-    height: size,
-    decoration: BoxDecoration(
-      color: badgeColor,
-      shape: BoxShape.circle,
-      border: borderWidth <= 0
+  Widget build(BuildContext context) => CustomPaint(
+    painter: mapMarker
+        ? RiderMarkerShapePainter(
+            color: badgeColor,
+            borderColor: borderColor,
+            borderWidth: borderWidth,
+            headingDegrees: headingDegrees,
+            mapBearingDegrees: mapBearingDegrees,
+          )
+        : null,
+    child: Container(
+      width: size,
+      height: size,
+      decoration: mapMarker
           ? null
-          : Border.all(color: borderColor, width: borderWidth),
-    ),
-    child: Center(
-      child: switch (symbol.kind) {
-        RiderSymbolKind.motorcycle => MotorcycleIcon(
-          style: style,
-          // Dark, not white. Every badge fill is light because it has to be
-          // found on a dark basemap, so a white glyph on top had almost no
-          // contrast at all - 1.76:1 on the default rider green, 1.53:1 on
-          // yellow. See `RouteTrailStyle.markerGlyph` (#133).
-          color: glyphColor,
-          size: size * 0.62,
-        ),
-        RiderSymbolKind.initials => Padding(
-          // The same fill as the raster the native map draws, so the two
-          // renderers of the same marker agree (#259). Measured against the
-          // coloured circle rather than the widget's outer box, because the
-          // border is drawn inside that box and the raster has no border at
-          // all — basing it on the outer box left the two 6% apart.
-          padding: EdgeInsets.all(
-            (size - 2 * borderWidth) * (1 - riderInitialsBadgeFill) / 2,
+          : BoxDecoration(
+              color: badgeColor,
+              shape: BoxShape.circle,
+              border: borderWidth <= 0
+                  ? null
+                  : Border.all(color: borderColor, width: borderWidth),
+            ),
+      child: Center(
+        child: switch (symbol.kind) {
+          RiderSymbolKind.motorcycle => MotorcycleIcon(
+            style: style,
+            // Dark, not white. Every badge fill is light because it has to be
+            // found on a dark basemap, so a white glyph on top had almost no
+            // contrast at all - 1.76:1 on the default rider green, 1.53:1 on
+            // yellow. See `RouteTrailStyle.markerGlyph` (#133).
+            color: glyphColor,
+            size: size * 0.62,
           ),
-          child: FittedBox(
-            key: const Key('rider-marker-initials-fill'),
-            fit: BoxFit.contain,
-            child: Text(
-              symbol.initialsFor(displayName),
-              maxLines: 1,
-              style: TextStyle(
-                color: symbol.initialsInk.color,
-                shadows: riderInitialsShadows(
-                  symbol.initialsInk.color,
-                  size * 0.025,
+          RiderSymbolKind.initials => Padding(
+            // The same fill as the raster the native map draws, so the two
+            // renderers of the same marker agree (#259). Measured against the
+            // coloured circle rather than the widget's outer box, because the
+            // border is drawn inside that box and the raster has no border at
+            // all — basing it on the outer box left the two 6% apart.
+            padding: EdgeInsets.all(
+              (size - 2 * borderWidth) * (1 - riderInitialsBadgeFill) / 2,
+            ),
+            child: FittedBox(
+              key: const Key('rider-marker-initials-fill'),
+              fit: BoxFit.contain,
+              child: Text(
+                symbol.initialsFor(displayName),
+                maxLines: 1,
+                style: TextStyle(
+                  color: symbol.initialsInk.color,
+                  shadows: riderInitialsShadows(
+                    symbol.initialsInk.color,
+                    size * 0.025,
+                  ),
+                  // Start at the badge diameter, then let FittedBox use whichever
+                  // dimension is limiting. One and two letters therefore occupy
+                  // the circle instead of inheriting a body-text-sized glyph
+                  // (#259).
+                  fontSize: size,
+                  height: 0.9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.8,
                 ),
-                // Start at the badge diameter, then let FittedBox use whichever
-                // dimension is limiting. One and two letters therefore occupy
-                // the circle instead of inheriting a body-text-sized glyph
-                // (#259).
-                fontSize: size,
-                height: 0.9,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -0.8,
               ),
             ),
           ),
-        ),
-        RiderSymbolKind.emoji => Text(
-          symbol.emoji!,
-          maxLines: 1,
-          style: TextStyle(fontSize: size * 0.55, height: 1),
-        ),
-      },
+          RiderSymbolKind.emoji => Text(
+            symbol.emoji!,
+            maxLines: 1,
+            style: TextStyle(fontSize: size * 0.55, height: 1),
+          ),
+        },
+      ),
     ),
   );
 }
@@ -594,4 +613,194 @@ Future<Uint8List> _rasterizePng({
   final image = await picture.toImage(size.round(), size.round());
   final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
   return bytes!.buffer.asUint8List();
+}
+
+/// Only moving, current fixes support a direction-of-travel claim.
+double? riderTravelHeading({
+  double? headingDegrees,
+  double? speedMetersPerSecond,
+  bool fresh = true,
+}) {
+  if (!fresh ||
+      headingDegrees == null ||
+      !headingDegrees.isFinite ||
+      headingDegrees < 0 ||
+      headingDegrees >= 360 ||
+      speedMetersPerSecond == null ||
+      !speedMetersPerSecond.isFinite ||
+      speedMetersPerSecond < 1.5) {
+    return null;
+  }
+  return headingDegrees;
+}
+
+const riderDirectionShapeImage = 'tec-rider-direction';
+const riderUnknownShapeImage = 'tec-rider-unknown';
+
+/// Pointed badge for travel; a rounded square makes no heading claim at rest.
+/// Rotate only the background so initials and emoji always remain upright.
+class RiderMarkerShapePainter extends CustomPainter {
+  const RiderMarkerShapePainter({
+    required this.color,
+    this.borderColor = Colors.black,
+    this.borderWidth = 2,
+    this.headingDegrees,
+    this.mapBearingDegrees = 0,
+  });
+  final Color color;
+  final Color borderColor;
+  final double borderWidth;
+  final double? headingDegrees;
+  final double mapBearingDegrees;
+
+  static Path shape(Size size, {required bool directional}) {
+    if (!directional) {
+      return Path()..addRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            size.width * .1,
+            size.height * .1,
+            size.width * .8,
+            size.height * .8,
+          ),
+          Radius.circular(size.shortestSide * .14),
+        ),
+      );
+    }
+    return Path()
+      ..moveTo(size.width * .5, size.height * .03)
+      ..lineTo(size.width * .94, size.height * .44)
+      ..quadraticBezierTo(
+        size.width * .94,
+        size.height * .90,
+        size.width * .5,
+        size.height * .92,
+      )
+      ..quadraticBezierTo(
+        size.width * .06,
+        size.height * .90,
+        size.width * .06,
+        size.height * .44,
+      )
+      ..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final heading = headingDegrees;
+    canvas.save();
+    if (heading != null && heading.isFinite) {
+      canvas.translate(size.width / 2, size.height / 2);
+      canvas.rotate((heading - mapBearingDegrees) * math.pi / 180);
+      canvas.translate(-size.width / 2, -size.height / 2);
+    }
+    final path = shape(size, directional: heading != null && heading.isFinite);
+    canvas.drawPath(path, Paint()..color = color);
+    if (borderWidth > 0) {
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = borderColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = borderWidth,
+      );
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(RiderMarkerShapePainter old) =>
+      color != old.color ||
+      borderColor != old.borderColor ||
+      borderWidth != old.borderWidth ||
+      headingDegrees != old.headingDegrees ||
+      mapBearingDegrees != old.mapBearingDegrees;
+}
+
+// MapLibre colours and outlines SDF images using distance encoded in alpha,
+// not a normal opaque silhouette. Keep an eight-pixel distance band and padding
+// at 1x; the plugin treats iOS images as device-density sprites.
+final _riderShapeRasters = <(bool, double), Future<Uint8List>>{};
+
+Future<Uint8List> rasterizeRiderMarkerShapePng({
+  required bool directional,
+  double pixelRatio = 1,
+}) => _riderShapeRasters.putIfAbsent((
+  directional,
+  pixelRatio,
+), () => _rasterizeRiderShapeSdf(directional, pixelRatio));
+
+Future<Uint8List> _rasterizeRiderShapeSdf(
+  bool directional,
+  double pixelRatio,
+) async {
+  const side = 144;
+  final path = RiderMarkerShapePainter.shape(
+    const Size.square(128),
+    directional: directional,
+  ).shift(const Offset(8, 8));
+  final segments = <(Offset, Offset)>[];
+  for (final metric in path.computeMetrics()) {
+    var previous = metric.getTangentForOffset(0)!.position;
+    for (var distance = 1.0; distance < metric.length + 1; distance += 1) {
+      final next = metric
+          .getTangentForOffset(math.min(distance, metric.length))!
+          .position;
+      segments.add((previous, next));
+      previous = next;
+    }
+  }
+  final pixels = Uint8List(side * side * 4);
+  for (var y = 0; y < side; y++) {
+    for (var x = 0; x < side; x++) {
+      final point = Offset(x + .5, y + .5);
+      var nearestSquared = double.infinity;
+      for (final (a, b) in segments) {
+        final delta = b - a;
+        final lengthSquared = delta.distanceSquared;
+        if (lengthSquared == 0) continue;
+        final relative = point - a;
+        final t =
+            ((relative.dx * delta.dx + relative.dy * delta.dy) / lengthSquared)
+                .clamp(0.0, 1.0);
+        nearestSquared = math.min(
+          nearestSquared,
+          (point - (a + delta * t)).distanceSquared,
+        );
+      }
+      final distance =
+          math.sqrt(nearestSquared) * (path.contains(point) ? 1 : -1);
+      final alpha = (255 * (.75 + distance / 8)).round().clamp(0, 255);
+      final index = (y * side + x) * 4;
+      // Premultiplied white; only alpha is consumed by the native SDF shader.
+      pixels.fillRange(index, index + 4, alpha);
+    }
+  }
+  final buffer = await ui.ImmutableBuffer.fromUint8List(pixels);
+  final descriptor = ui.ImageDescriptor.raw(
+    buffer,
+    width: side,
+    height: side,
+    pixelFormat: ui.PixelFormat.rgba8888,
+  );
+  final codec = await descriptor.instantiateCodec();
+  final image = (await codec.getNextFrame()).image;
+  try {
+    return await _rasterizePng(
+      size: side * pixelRatio,
+      paint: (canvas) {
+        canvas.scale(pixelRatio);
+        canvas.drawImage(
+          image,
+          Offset.zero,
+          Paint()..filterQuality = FilterQuality.low,
+        );
+      },
+    );
+  } finally {
+    image.dispose();
+    codec.dispose();
+    descriptor.dispose();
+    buffer.dispose();
+  }
 }

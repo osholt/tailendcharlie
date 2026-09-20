@@ -31,6 +31,44 @@ void main() {
     rideActive: rideActive,
   );
 
+  test(
+    'refreshes distance after configuration and does not change road numbers',
+    () async {
+      final slow = _SlowConfigurationEngine();
+      final currentSpeaker = SpokenGuidanceSpeaker(slow);
+      var phrase = 'In 400 m, turn onto A205';
+      final speaking = currentSpeaker.speakManoeuvre(
+        key: 'turn',
+        phrase: phrase,
+        enabled: true,
+        rideActive: true,
+        currentPhrase: () => phrase,
+      );
+      phrase = 'In 205 m, turn onto A205';
+      slow.configurationReady.complete();
+      expect(await speaking, isTrue);
+      expect(slow.spoken, ['In two hundred and five metres, turn onto A205']);
+    },
+  );
+
+  test('stopping during configuration cancels pending navigation', () async {
+    final slow = _SlowConfigurationEngine();
+    final currentSpeaker = SpokenGuidanceSpeaker(slow);
+    final keys = <String>{};
+    final speaking = currentSpeaker.speakTrackedManoeuvre(
+      deliveredKeys: keys,
+      key: 'turn',
+      phrase: 'Turn left',
+      enabled: true,
+      rideActive: true,
+    );
+    await currentSpeaker.stop();
+    slow.configurationReady.complete();
+    expect(await speaking, isFalse);
+    expect(keys, isEmpty);
+    expect(slow.spoken, isEmpty);
+  });
+
   test('speaks a manoeuvre once', () async {
     expect(await speak(), isTrue);
     expect(engine.spoken, ['Second exit']);
@@ -158,7 +196,7 @@ void main() {
     await blocking.waitForCallCount(2);
     expect(blocking.spoken, [
       'In 60 yards, turn right',
-      'Speed camera, in 150 yards',
+      'Speed camera, in one hundred and fifty yards',
     ]);
     blocking.completeNext();
     expect(await alert, isTrue);
@@ -272,7 +310,9 @@ void main() {
         rideActive: true,
       );
       expect(warmable.configureCalls, 1);
-      expect(warmable.spoken, ['Speed camera, in 151 yards']);
+      expect(warmable.spoken, [
+        'Speed camera, in one hundred and fifty one yards',
+      ]);
     },
   );
 
@@ -400,9 +440,9 @@ void main() {
     );
 
     expect(tts.spoken, [
-      'In 1 yard, then 55 yards. Continue for 1.0 mile, then 2 miles. '
+      'In 1 yard, then 55 yards. Continue for 1 mile, then 2 miles. '
           'Clearance 1 foot, then 8 feet. In 1 metre, then 400 metres. '
-          'Continue for 1.0 kilometre, then 2 kilometres at '
+          'Continue for 1 kilometre, then 2 kilometres at '
           '30 miles per hour or 50 kilometres per hour. '
           'Stay on the M4 past Lloyd Way.',
     ]);
@@ -606,4 +646,10 @@ class _RecordingAudioFocus implements SpokenGuidanceAudioFocus {
 
   @override
   Future<void> abandon() async => abandonCalls += 1;
+}
+
+class _SlowConfigurationEngine extends _RecordingEngine {
+  final configurationReady = Completer<void>();
+  @override
+  Future<void> configure() => configurationReady.future;
 }

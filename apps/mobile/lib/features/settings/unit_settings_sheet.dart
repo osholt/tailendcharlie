@@ -16,6 +16,7 @@ import '../map/discovery_layer_toggles.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
+import '../../domain/riding_display_size.dart';
 import '../../domain/rider_color.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/build_identity.dart';
@@ -133,6 +134,26 @@ class UnitSettingsSheet extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 20),
+          Text(
+            'Riding display size',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Larger turn arrows, directions and distances. Small keeps the original size.',
+          ),
+          const SizedBox(height: 8),
+          SegmentedButton<RidingDisplaySize>(
+            key: const Key('riding-display-size'),
+            segments: [
+              for (final size in RidingDisplaySize.values)
+                ButtonSegment(value: size, label: Text(size.label)),
+            ],
+            selected: {mapStyleMode.ridingDisplaySize},
+            onSelectionChanged: (sizes) =>
+                unawaited(mapStyleMode.setRidingDisplaySize(sizes.single)),
+          ),
           const SizedBox(height: 20),
           // Near the top, and here rather than only on the map's overflow
           // menu, because that menu does not exist during a ride: `hideChrome`

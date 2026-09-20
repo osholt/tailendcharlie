@@ -3,6 +3,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/map_style_mode.dart';
+import '../domain/riding_display_size.dart';
 
 typedef SunPositionSource = Future<GeoCoordinate?> Function();
 
@@ -16,6 +17,7 @@ class MapStyleModeController extends ChangeNotifier
   );
 
   static const preferenceKey = 'map_style_mode';
+  static const ridingDisplaySizePreferenceKey = 'riding_display_size';
   static const dayStylePreferenceKey = 'day_map_style';
   static const defaultMode = MapStyleMode.system;
   static const defaultDayStyle = DayMapStyle.restrained;
@@ -24,6 +26,7 @@ class MapStyleModeController extends ChangeNotifier
   final SunPositionSource _locationSource;
   MapStyleMode _mode;
   DayMapStyle _dayStyle;
+  RidingDisplaySize _ridingDisplaySize = RidingDisplaySize.small;
   GeoCoordinate? _lastKnownSunPosition;
 
   static Future<MapStyleModeController> load({
@@ -48,6 +51,15 @@ class MapStyleModeController extends ChangeNotifier
       dayStyle,
       locationSource ?? _lastKnownDevicePosition,
     );
+    controller._ridingDisplaySize =
+        RidingDisplaySize.values
+            .where(
+              (size) =>
+                  size.name ==
+                  preferences.getString(ridingDisplaySizePreferenceKey),
+            )
+            .firstOrNull ??
+        RidingDisplaySize.small;
     if (mode == MapStyleMode.sunriseSunset) {
       await controller.refreshSunPosition();
     }
@@ -58,6 +70,14 @@ class MapStyleModeController extends ChangeNotifier
   MapStyleMode get value => _mode;
 
   DayMapStyle get dayStyle => _dayStyle;
+  RidingDisplaySize get ridingDisplaySize => _ridingDisplaySize;
+
+  Future<void> setRidingDisplaySize(RidingDisplaySize size) async {
+    if (_ridingDisplaySize == size) return;
+    _ridingDisplaySize = size;
+    await _preferences?.setString(ridingDisplaySizePreferenceKey, size.name);
+    notifyListeners();
+  }
 
   /// Whether a location fix is already cached for [MapStyleMode.sunriseSunset]
   /// - if not, [resolveDark] is currently falling back to platform brightness.

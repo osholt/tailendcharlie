@@ -12,6 +12,48 @@ void main() {
   _turnDirectionTests();
   const planner = NavigationGuidancePlanner();
 
+  test('a turn just after a roundabout cannot change its exit direction', () {
+    GeoPoint point(double east, double north) =>
+        GeoPoint(latitude: north / 111195, longitude: east / 111195);
+    final path = [
+      point(0, -250),
+      point(0, -150),
+      point(0, -60),
+      point(0, 0),
+      point(20, 10),
+      point(20, 30),
+      point(0, 40),
+      point(-30, 30),
+      point(-60, 30),
+      point(-85, 30),
+      point(-85, -50),
+      point(-85, -180),
+    ];
+    for (final drivingSide in ['left', 'right']) {
+      final instructions = collapseManeuvers([
+        RouteManeuver(
+          position: point(0, 0),
+          type: 'roundabout',
+          bearingBeforeDegrees: 0,
+          exitNumber: 3,
+          drivingSide: drivingSide,
+        ),
+        RouteManeuver(
+          position: point(-30, 30),
+          type: 'exit roundabout',
+          bearingAfterDegrees: 300,
+          drivingSide: drivingSide,
+        ),
+        RouteManeuver(position: point(-85, 30), type: 'turn', modifier: 'left'),
+      ], path: path);
+      expect(instructions.length, 2);
+      expect(instructions.first.direction, ManeuverDirection.left);
+      expect(instructions.first.departureBearingDegrees, closeTo(270, 0.1));
+      expect(instructions.first.exitNumber, 3);
+      expect(instructions.last.direction, ManeuverDirection.left);
+    }
+  });
+
   test('selects the next useful maneuver by monotonic route progress', () {
     final route = _route();
 

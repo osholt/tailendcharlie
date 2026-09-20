@@ -154,6 +154,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   late final FreeRoamRideRecorder _freeRoamRideRecorder;
   SpokenGuidanceSpeaker? _spokenGuidance;
   final _spokenGuidanceKeys = <String>{};
+  NavigationGuidance? _currentGuidanceForSpeech;
   String? _guidanceManeuverIdentity;
   route_domain.GeoPoint? _passedManeuverPosition;
   route_domain.GeoPoint? _lastGuidanceManeuverPosition;
@@ -377,6 +378,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
   }
 
   void _onNavigationGuidanceChanged(NavigationGuidance? guidance) {
+    _currentGuidanceForSpeech = guidance;
     if (guidance == null || !widget.navigating) return;
     _recordManoeuvreDiagnostics(guidance);
     final speaker = _spokenGuidance;
@@ -416,7 +418,9 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       speedMetersPerSecond: _navigationPosition.value?.speedMetersPerSecond,
       alreadySpokenKeys: _spokenGuidanceKeys,
       metersSincePreviousManeuver: metersSincePrevious,
-      distanceFormatter: MeasurementFormatter(widget.distanceUnit).distance,
+      distanceFormatter: MeasurementFormatter(
+        widget.distanceUnit,
+      ).spokenDistance,
       followingInstructionText: guidance.followingInstruction?.standaloneText,
     );
     if (announcement == null || speaker.isSpeaking) return;
@@ -429,6 +433,37 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
         deliveredKeys: _spokenGuidanceKeys,
         key: announcement.key,
         phrase: announcement.phrase,
+        currentPhrase: () {
+          if (!mounted ||
+              !(widget.navigating &&
+                  spokenAudioAllows(
+                    controller.mode,
+                    SpokenAudioClass.navigation,
+                  ))) {
+            return null;
+          }
+          final current = _currentGuidanceForSpeech;
+          if (current == null ||
+              current.instruction.maneuver.identity != identity) {
+            return null;
+          }
+          final refreshed = nextGuidanceAnnouncement(
+            maneuverIdentity: identity,
+            instructionText: current.instruction.standaloneText,
+            distanceToManeuverMeters: current.distanceMeters,
+            speedMetersPerSecond:
+                _navigationPosition.value?.speedMetersPerSecond,
+            alreadySpokenKeys: {..._spokenGuidanceKeys}
+              ..remove(announcement.key),
+            metersSincePreviousManeuver: metersSincePrevious,
+            distanceFormatter: MeasurementFormatter(
+              widget.distanceUnit,
+            ).spokenDistance,
+            followingInstructionText:
+                current.followingInstruction?.standaloneText,
+          );
+          return refreshed?.key == announcement.key ? refreshed?.phrase : null;
+        },
         enabled: true,
         rideActive: widget.navigating,
       ),
@@ -631,6 +666,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             navigationPosition: _navigationPosition,
             completedRideStore: widget.completedRideStore,
             globalRideHeatmap: widget.globalRideHeatmap,
+            ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
             darkMapStyle: widget.mapStyleMode.resolveDark(
               MediaQuery.platformBrightnessOf(context),
             ),

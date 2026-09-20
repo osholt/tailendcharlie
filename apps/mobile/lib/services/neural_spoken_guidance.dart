@@ -39,6 +39,13 @@ abstract interface class NeuralSpeechStarter {
   Future<void> stop();
 }
 
+abstract interface class FreshNeuralSpeechStarter {
+  NeuralSpeechAttempt beginSpeakFresh(
+    CurrentSpokenPhrase currentPhrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  });
+}
+
 abstract interface class NeuralSpeechBackend {
   Future<void> prepare();
 
@@ -169,7 +176,10 @@ class SherpaOnnxNeuralSpeechBackend implements NeuralSpeechBackend {
 
 /// Plays complete neural utterances with navigation-grade audio focus.
 class NeuralSpokenGuidanceEngine
-    implements SpokenGuidanceEngine, NeuralSpeechStarter {
+    implements
+        SpokenGuidanceEngine,
+        NeuralSpeechStarter,
+        FreshNeuralSpeechStarter {
   NeuralSpokenGuidanceEngine({
     required this.backend,
     required this.voiceProvider,
@@ -239,12 +249,21 @@ class NeuralSpokenGuidanceEngine
     String phrase, {
     SpokenAudioClass audioClass = SpokenAudioClass.navigation,
   }) {
+    return beginSpeakFresh(() => phrase, audioClass: audioClass);
+  }
+
+  @override
+  NeuralSpeechAttempt beginSpeakFresh(
+    CurrentSpokenPhrase currentPhrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) {
     final started = Completer<void>();
     final completed = Completer<void>();
     final generation = ++_attemptGeneration;
     unawaited(() async {
       try {
         await prepare();
+        final phrase = requireCurrentSpokenPhrase(currentPhrase);
         if (generation != _attemptGeneration) {
           throw const _NeuralSpeechSuperseded();
         }
@@ -254,6 +273,11 @@ class NeuralSpokenGuidanceEngine
         );
         if (generation != _attemptGeneration) {
           throw const _NeuralSpeechSuperseded();
+        }
+        // Never play a distance or junction that became stale during inference.
+        // The fail-safe will deliver the current phrase immediately instead.
+        if (requireCurrentSpokenPhrase(currentPhrase) != phrase) {
+          throw const SpokenGuidanceSuperseded();
         }
         final player = _player ??= AudioPlayer();
         await player.setAudioContext(
@@ -285,6 +309,9 @@ class NeuralSpokenGuidanceEngine
             throw const _NeuralSpeechFocusDenied();
           }
           _notifyLifecycle(phrase, SpokenGuidanceLifecycleEvent.focusAcquired);
+        }
+        if (requireCurrentSpokenPhrase(currentPhrase) != phrase) {
+          throw const SpokenGuidanceSuperseded();
         }
         await player.play(DeviceFileSource(file));
         if (!started.isCompleted) started.complete();
@@ -400,7 +427,10 @@ class NeuralSpokenGuidanceEngine
 /// fails. Once model warm-up succeeds, generation time alone never changes the
 /// rider's selected voice.
 class FailSafeNeuralSpokenGuidanceEngine
-    implements SpokenGuidanceEngine, WarmableSpokenGuidanceEngine {
+    implements
+        SpokenGuidanceEngine,
+        WarmableSpokenGuidanceEngine,
+        FreshSpokenGuidanceEngine {
   FailSafeNeuralSpokenGuidanceEngine({
     required this.neural,
     required this.fallback,
@@ -443,7 +473,22 @@ class FailSafeNeuralSpokenGuidanceEngine
     String phrase, {
     SpokenAudioClass audioClass = SpokenAudioClass.navigation,
   }) async {
-    final attempt = neural.beginSpeak(phrase, audioClass: audioClass);
+    await speakFresh(() => phrase, audioClass: audioClass);
+  }
+
+  @override
+  Future<void> speakFresh(
+    CurrentSpokenPhrase currentPhrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
+    var phrase = requireCurrentSpokenPhrase(currentPhrase);
+    final starter = neural;
+    final attempt = starter is FreshNeuralSpeechStarter
+        ? (starter as FreshNeuralSpeechStarter).beginSpeakFresh(
+            currentPhrase,
+            audioClass: audioClass,
+          )
+        : starter.beginSpeak(phrase, audioClass: audioClass);
     try {
       if (_warmed) {
         // Kokoro generates a complete WAV before playback. Long road names and
@@ -462,7 +507,12 @@ class FailSafeNeuralSpokenGuidanceEngine
       // This prompt must not be late, but one slow generation must not disable
       // the installed natural voice for the rest of the ride. The model remains
       // warm and the next independently serialized prompt gets a fresh chance.
-      await fallback.speak(phrase, audioClass: audioClass);
+      phrase = requireCurrentSpokenPhrase(currentPhrase);
+      await deliverCurrentSpokenPhrase(
+        fallback,
+        currentPhrase,
+        audioClass: audioClass,
+      );
       _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
       return;
     }
@@ -489,7 +539,10 @@ class FailSafeNeuralSpokenGuidanceEngine
 /// speaker once, so choosing, disabling, or deleting a pack later must be read
 /// at the next utterance rather than requiring the whole ride UI to restart.
 class AdaptiveNeuralSpokenGuidanceEngine
-    implements SpokenGuidanceEngine, WarmableSpokenGuidanceEngine {
+    implements
+        SpokenGuidanceEngine,
+        WarmableSpokenGuidanceEngine,
+        FreshSpokenGuidanceEngine {
   AdaptiveNeuralSpokenGuidanceEngine({
     required this.enabled,
     required this.neuralFactory,
@@ -516,17 +569,30 @@ class AdaptiveNeuralSpokenGuidanceEngine
     String phrase, {
     SpokenAudioClass audioClass = SpokenAudioClass.navigation,
   }) async {
+    await speakFresh(() => phrase, audioClass: audioClass);
+  }
+
+  @override
+  Future<void> speakFresh(
+    CurrentSpokenPhrase currentPhrase, {
+    SpokenAudioClass audioClass = SpokenAudioClass.navigation,
+  }) async {
     if (!enabled()) {
       final previous = _active;
       _active = null;
       await previous?.neural.stop();
       if (!_fallbackConfigured) await configure();
-      await fallback.speak(phrase, audioClass: audioClass);
+      final phrase = requireCurrentSpokenPhrase(currentPhrase);
+      await deliverCurrentSpokenPhrase(
+        fallback,
+        currentPhrase,
+        audioClass: audioClass,
+      );
       _reportOutput(phrase, SpokenGuidanceOutput.systemFallback);
       return;
     }
     await _ensureNatural();
-    await _active!.speak(phrase, audioClass: audioClass);
+    await _active!.speakFresh(currentPhrase, audioClass: audioClass);
   }
 
   @override

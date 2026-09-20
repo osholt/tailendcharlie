@@ -62,7 +62,9 @@ final class CarPlayCommandCompletion {
   }
 
   override func applicationProtectedDataDidBecomeAvailable(_ application: UIApplication) {
-    super.applicationProtectedDataDidBecomeAvailable(application)
+    // This UIApplicationDelegate callback is optional. FlutterAppDelegate does
+    // not implement it; calling super sends an unrecognised Objective-C selector
+    // and aborts the process, even without a Flutter engine or CarPlay (#732).
     // Keep the native cached trip visible while protected data is unavailable,
     // then ask the restored Dart owner for one authoritative refresh. This does
     // not create or start a ride and is safe to repeat after every unlock.
