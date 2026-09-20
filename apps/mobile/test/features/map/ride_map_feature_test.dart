@@ -17,6 +17,7 @@ import 'package:ride_relay/controllers/personal_ride_heatmap_controller.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/riding_display_size.dart';
 import 'package:ride_relay/domain/geo_point.dart' as awareness_geo;
 import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/domain/imported_route.dart';
@@ -182,6 +183,90 @@ void main() {
         .first;
     expect(badge.headingDegrees, closeTo(90, .1));
   });
+
+  testWidgets(
+    'all navigation sizes keep the rider clear of measured panels (#821)',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('rider-clearance');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final route = _testRoute(
+        id: 'clearance',
+        name: 'Clearance',
+        maneuvers: const [
+          RouteManeuver(
+            position: GeoPoint(latitude: 51.46, longitude: -2.58),
+            type: 'turn',
+            modifier: 'right',
+            name: 'Station Road',
+          ),
+        ],
+      );
+      final position = ValueNotifier(
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 51.455, longitude: -2.585),
+          recordedAt: DateTime.now(),
+          speedMetersPerSecond: 10,
+          headingDegrees: 45,
+          accuracyMeters: 5,
+        ),
+      );
+      addTearDown(position.dispose);
+      for (final size in const [Size(390, 844), Size(844, 390)]) {
+        tester.view.physicalSize = size;
+        for (final display in RidingDisplaySize.values) {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: RideMapScreen(
+                routeStore: InMemoryRouteStore(route),
+                routeImporter: RouteImporter(source: const _NoFileSource()),
+                offlineTileCache: cache,
+                navigationPosition: position,
+                navigating: true,
+                ridingDisplaySize: display,
+                discoveryCatalogueLoader: () async =>
+                    const MotorcycleDiscoveryCatalogue([]),
+                bikerPlaceCatalogueLoader: () async =>
+                    BikerPlaceCatalogue.empty,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final badge = find
+              .byWidgetPredicate((w) => w is RiderMarkerBadge && w.mapMarker)
+              .first;
+          final rider = tester.getRect(badge);
+          expect(
+            rider.center.dx,
+            closeTo(size.width * (size.width > size.height ? 2 / 3 : .5), 3),
+          );
+          for (final key in [
+            'route-progress-panel',
+            'navigation-guidance-banner',
+            'speed-compass-cluster',
+          ]) {
+            final panel = find.byKey(Key(key));
+            if (panel.evaluate().isEmpty) continue;
+            expect(
+              rider.overlaps(tester.getRect(panel)),
+              false,
+              reason: '$size $display $key: $rider',
+            );
+          }
+          expect(tester.takeException(), isNull);
+        }
+      }
+    },
+  );
 
   test('native source updates follow app visibility on iOS (#732)', () {
     expect(

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show Rect;
 
 /// MapLibre's perspective camera uses a fixed vertical field of view of
 /// 36.87 degrees on every platform, so the camera sits
@@ -203,6 +204,8 @@ abstract final class NavigationCameraPlanner {
     double latitudeDegrees = 51.5,
     double bottomChromeFraction = 0,
     bool leftHandTraffic = true,
+    List<Rect> occlusions = const [],
+    double topInsetPixels = 0,
   }) {
     final speed = (speedMetersPerSecond ?? 0).isFinite
         ? (speedMetersPerSecond ?? 0).clamp(
@@ -225,17 +228,26 @@ abstract final class NavigationCameraPlanner {
     final width = viewportWidthPixels.isFinite && viewportWidthPixels > 0
         ? viewportWidthPixels
         : 400.0;
-    final riderFraction = _riderViewportFraction(
+    var riderFraction = _riderViewportFraction(
       landscape: landscape,
       speedFactor: speedFactor,
       bottomChromeFraction: bottomChromeFraction,
     );
-    final forwardBiasPixels = (riderFraction - 0.5) * height;
     final horizontalFraction = landscape
         ? (leftHandTraffic
               ? navigationCameraLandscapeRiderFractionLeftTraffic
               : navigationCameraLandscapeRiderFractionRightTraffic)
         : 0.5;
+    riderFraction =
+        unobscuredRiderY(
+          preferredY: riderFraction * height,
+          x: horizontalFraction * width,
+          height: height,
+          topInset: topInsetPixels,
+          occlusions: occlusions,
+        ) /
+        height;
+    final forwardBiasPixels = (riderFraction - 0.5) * height;
     final lateralBiasPixels = (horizontalFraction - 0.5) * width;
     return NavigationCameraPlan(
       zoom: zoom,
@@ -421,4 +433,50 @@ abstract final class NavigationCameraPlanner {
       (tileSize == 256 ? 156543.03392 : 78271.5169) *
       math.cos(latitudeDegrees * math.pi / 180).abs() /
       math.pow(2, zoom);
+}
+
+/// Chooses the nearest free vertical slot at the fixed right-third/centre
+/// anchor. Clear the entire 38 px marker plus an 8 px gap, including rotation.
+double unobscuredRiderY({
+  required double preferredY,
+  required double x,
+  required double height,
+  required List<Rect> occlusions,
+  double topInset = 0,
+}) {
+  if (occlusions.isEmpty) return preferredY;
+  const clearance = 27.0;
+  final top = topInset + clearance;
+  final bottom = height - clearance;
+  final blocked =
+      occlusions
+          .map((r) => r.inflate(clearance))
+          .where(
+            (r) =>
+                x >= r.left &&
+                x <= r.right &&
+                r.bottom >= top &&
+                r.top <= bottom,
+          )
+          .toList()
+        ..sort((a, b) => a.top.compareTo(b.top));
+  var cursor = top;
+  final candidates = <double>[];
+  for (final rect in blocked) {
+    if (rect.top > cursor) {
+      candidates.add(
+        preferredY.clamp(cursor, math.min(rect.top, bottom)).toDouble(),
+      );
+    }
+    cursor = math.max(cursor, rect.bottom);
+    if (cursor >= bottom) break;
+  }
+  if (cursor < bottom) {
+    candidates.add(preferredY.clamp(cursor, bottom).toDouble());
+  }
+  if (candidates.isEmpty) return preferredY;
+  candidates.sort(
+    (a, b) => (a - preferredY).abs().compareTo((b - preferredY).abs()),
+  );
+  return candidates.first;
 }
