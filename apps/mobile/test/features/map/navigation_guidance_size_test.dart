@@ -59,7 +59,9 @@ void main() {
           final arrow = tester.widget<ManeuverSymbolView>(
             find.byType(ManeuverSymbolView),
           );
-          final direction = tester.widget<Text>(find.text('Turn left'));
+          final direction = tester.widget<Text>(
+            find.text(size == RidingDisplaySize.small ? 'Turn left' : 'Left'),
+          );
           expect(arrow.size, greaterThan(previousArrow));
           expect(direction.style!.fontSize!, greaterThan(previousText));
           previousArrow = arrow.size;
@@ -74,4 +76,54 @@ void main() {
       },
     );
   }
+  testWidgets('large guidance keeps the action and roundabout exit readable', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 568));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final (kind, wording, visible) in [
+      (
+        ManeuverKind.endOfRoad,
+        'At the end of the road, turn sharp left',
+        'Sharp left',
+      ),
+      (ManeuverKind.fork, 'At the fork, keep sharp left', 'Sharp left'),
+      (ManeuverKind.roundabout, '3rd exit, left', '3rd exit, left'),
+    ]) {
+      final instruction = ManeuverInstruction(
+        maneuver: maneuver,
+        kind: kind,
+        direction: ManeuverDirection.sharpLeft,
+        text: wording,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(1.6)),
+            child: Scaffold(
+              body: NavigationGuidanceBanner(
+                guidance: NavigationGuidance(
+                  maneuver: maneuver,
+                  distanceMeters: 350,
+                  instruction: instruction,
+                ),
+                distanceUnit: DistanceUnit.kilometres,
+                compact: false,
+                displaySize: RidingDisplaySize.large,
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(tester.takeException(), isNull);
+      final action = tester.widget<Text>(find.text(visible));
+      expect(action.maxLines, isNull, reason: 'the turn must not be truncated');
+      expect(action.overflow, TextOverflow.visible);
+      final semantics = tester.widget<Semantics>(
+        find.byKey(const Key('navigation-guidance-banner')),
+      );
+      expect(semantics.properties.label, contains(wording));
+      expect(tester.getRect(find.text(visible)).bottom, lessThan(568));
+    }
+  });
 }

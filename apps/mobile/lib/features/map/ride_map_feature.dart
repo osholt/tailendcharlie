@@ -11491,9 +11491,16 @@ class NavigationGuidanceBanner extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        instruction.text,
-                        maxLines: compact && enlarged ? 1 : 2,
-                        overflow: TextOverflow.ellipsis,
+                        enlarged
+                            ? _enlargedInstructionText(instruction)
+                            : instruction.text,
+                        // Never ellipsize the action in an enlarged display.
+                        // Long roundabout exit wording can occupy three lines
+                        // on a narrow phone with larger accessibility text.
+                        maxLines: enlarged ? null : 2,
+                        overflow: enlarged
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
                         softWrap: true,
                         style: TextStyle(
                           fontSize: (compact ? 16 : 18) * scale,
@@ -11557,6 +11564,18 @@ class NavigationGuidanceBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The symbol supplies the junction shape; enlarged text prioritises direction.
+/// Roundabouts retain the exit number, and unstated directions stay unstated.
+String _enlargedInstructionText(ManeuverInstruction instruction) {
+  if (!instruction.direction.isStated ||
+      instruction.isRoundabout ||
+      instruction.kind == ManeuverKind.arrive) {
+    return instruction.text;
+  }
+  final label = instruction.direction.label;
+  return '${label[0].toUpperCase()}${label.substring(1)}';
 }
 
 class _NavigationGuidanceStatusBanner extends StatelessWidget {
