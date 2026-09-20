@@ -1,6 +1,21 @@
 # Next-agent handoff
 
-Updated: 2026-09-20
+Updated: 2026-09-21
+
+## Build 100 — build 99 field regressions
+
+#818 tracks the latest eight regressions and the authorised tester release.
+Issue commits cover #793, #776, #306, #819, #820, #777, #821 and #822.
+See [build 100 validation](build-100-validation.md) and
+[tester notes](tester-release-notes.md). The user explicitly requested pushing
+these fixes to testers; no further release confirmation is needed.
+
+Merge the combined release only after every protected-main check passes. Deploy
+the relay at that exact merged commit, verify `serverBuildCommit`, and release
+build 100 to TestFlight and Android alpha (`notification_mode=dry-run`). Record
+actual workflow and store availability on #818; this candidate handoff does not
+by itself establish distribution. Keep field-dependent issues ready for
+validation until the reporter confirms them on a ride.
 
 ## France follow-up release — build 99
 
