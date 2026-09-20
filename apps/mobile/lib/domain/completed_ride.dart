@@ -1,5 +1,6 @@
 import 'imported_route.dart';
 import 'ride_role.dart';
+import 'ride_library_organisation.dart';
 export 'ride_library_status.dart';
 
 class CompletedMarkerSession {
@@ -55,6 +56,7 @@ class CompletedRide {
     this.notes,
     this.libraryStatus = RideLibraryStatus.active,
     this.deletedAt,
+    this.organisation = const RideLibraryOrganisation(),
   });
 
   static const schemaVersion = 2;
@@ -78,6 +80,7 @@ class CompletedRide {
   final String? notes;
   final RideLibraryStatus libraryStatus;
   final DateTime? deletedAt;
+  final RideLibraryOrganisation organisation;
 
   String get title {
     final renamed = libraryName?.trim();
@@ -122,6 +125,7 @@ class CompletedRide {
     if (rating != null) 'rating': rating,
     if (notes != null) 'notes': notes,
     'libraryStatus': libraryStatus.name,
+    'organisation': organisation.toJson(),
     if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
   };
 
@@ -163,6 +167,7 @@ class CompletedRide {
       rating: _rating(json['rating']),
       notes: json['notes'] as String?,
       libraryStatus: _libraryStatus(json['libraryStatus']),
+      organisation: RideLibraryOrganisation.fromJson(json['organisation']),
       deletedAt: switch (json['deletedAt']) {
         final String value => DateTime.tryParse(value)?.toUtc(),
         _ => null,
@@ -180,6 +185,7 @@ class CompletedRide {
     RideLibraryStatus? libraryStatus,
     DateTime? deletedAt,
     bool clearDeletedAt = false,
+    RideLibraryOrganisation? organisation,
   }) => CompletedRide(
     rideId: rideId,
     rideCode: rideCode,
@@ -200,6 +206,7 @@ class CompletedRide {
     notes: clearNotes ? null : notes ?? this.notes,
     libraryStatus: libraryStatus ?? this.libraryStatus,
     deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
+    organisation: organisation ?? this.organisation,
   );
 
   static RideLibraryStatus _libraryStatus(Object? value) {

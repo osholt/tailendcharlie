@@ -76,6 +76,7 @@ class FlutterVectorRoutePreview extends StatefulWidget {
     this.interactive = true,
     this.onReady,
     this.onFailure,
+    this.routeColour,
   });
 
   final List<List<GeoPoint>> paths;
@@ -83,6 +84,7 @@ class FlutterVectorRoutePreview extends StatefulWidget {
   final bool interactive;
   final VoidCallback? onReady;
   final ValueChanged<Object>? onFailure;
+  final Color? routeColour;
 
   @override
   State<FlutterVectorRoutePreview> createState() =>
@@ -225,7 +227,9 @@ class _FlutterVectorRoutePreviewState extends State<FlutterVectorRoutePreview> {
                                   LatLng(point.latitude, point.longitude),
                             )
                             .toList(growable: false),
-                        color: RouteTrailStyle.routeAhead.color,
+                        color:
+                            widget.routeColour ??
+                            RouteTrailStyle.routeAhead.color,
                         strokeWidth: RouteTrailStyle.routeAhead.widthPixels,
                         borderColor: RouteTrailStyle.casing,
                         borderStrokeWidth:

@@ -4,6 +4,7 @@ import 'ride_library_browser.dart';
 
 import '../../domain/completed_ride.dart';
 import '../../domain/distance_unit.dart';
+import '../../domain/ride_library_organisation.dart';
 import '../../domain/imported_route.dart' show GeoPoint;
 import '../../services/measurement_formatter.dart';
 import '../../services/approximate_place_index.dart';
@@ -234,6 +235,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
         RideLibraryEntry(
           id: candidate.id,
           title: candidate.title,
+          organisation: candidate.geometry.organisation,
           locationLabel: approximateEndpointLabel(
             index: places,
             start: candidate.startPoint,
@@ -271,6 +273,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
         RideLibraryEntry(
           id: candidate.id,
           title: candidate.title,
+          organisation: candidate.geometry.organisation,
           locationLabel: approximateEndpointLabel(
             index: places,
             start: candidate.startPoint,
@@ -284,6 +287,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
         RideLibraryEntry(
           id: ride.rideId,
           title: ride.title,
+          organisation: ride.organisation,
           rating: ride.rating,
           locationLabel: _rideLocation(ride, places),
           distanceMeters: ride.totalDistanceMeters,
@@ -417,7 +421,9 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
                 : StoredRouteOrigin.previousRidePlan,
             title: ride.title,
             storedAt: ride.startedAt,
-            geometry: geometry,
+            geometry: geometry.withLibraryDetails(
+              organisation: ride.organisation,
+            ),
             rideCode: ride.rideCode,
           );
     final endpointLabel = candidate == null
@@ -448,7 +454,8 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
           subtitle: Text(
             '$endpointLabel\n${_date(ride.startedAt)} · '
             '${MeasurementFormatter(widget.distanceUnit).distance(ride.totalDistanceMeters)} · '
-            '${ride.riderCount} rider${ride.riderCount == 1 ? '' : 's'}$rating',
+            '${ride.riderCount} rider${ride.riderCount == 1 ? '' : 's'}$rating'
+            '${_organisationLabel(ride.organisation)}',
           ),
           isThreeLine: true,
           trailing: _entryMenu(
@@ -491,7 +498,9 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
                 : StoredRouteOrigin.previousRidePlan,
             title: ride.title,
             storedAt: ride.startedAt,
-            geometry: geometry,
+            geometry: geometry.withLibraryDetails(
+              organisation: ride.organisation,
+            ),
             rideCode: ride.rideCode,
           ),
         );
@@ -517,17 +526,16 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     onSelected: onSelected,
     itemBuilder: (_) => [
       const PopupMenuItem(value: _EntryAction.rename, child: Text('Rename')),
+      const PopupMenuItem(
+        value: _EntryAction.organise,
+        child: Text('Tags, folder & colour'),
+      ),
       if (status == RideLibraryStatus.active)
         const PopupMenuItem(value: _EntryAction.bin, child: Text('Move to Bin'))
       else
         const PopupMenuItem(
           value: _EntryAction.restore,
           child: Text('Restore'),
-        ),
-      if (status == RideLibraryStatus.deleted)
-        const PopupMenuItem(
-          value: _EntryAction.delete,
-          child: Text('Delete permanently'),
         ),
     ],
   );
@@ -561,40 +569,22 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     );
   }
 
-  Future<bool> _confirmDelete(String title) async =>
-      await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Delete permanently?'),
-          content: Text(
-            '“$title” will be removed from this phone. This cannot be undone.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete permanently'),
-            ),
-          ],
-        ),
-      ) ??
-      false;
-
   Future<void> _manageRoute(
     StoredRouteCandidate candidate,
     _EntryAction action,
   ) async {
     final route = candidate.geometry;
     await _mutate(() async {
-      if (action == _EntryAction.delete) {
-        if (await _confirmDelete(route.name)) {
-          await widget.library.recordedRoutes.delete(route.id);
+      if (action == _EntryAction.organise) {
+        final organisation = await _editOrganisation(route.organisation);
+        if (organisation != null) {
+          await widget.library.recordedRoutes.save(
+            route.withLibraryDetails(organisation: organisation),
+          );
         }
         return;
       }
+
       final name = action == _EntryAction.rename
           ? await _rename(route.name)
           : null;
@@ -614,12 +604,16 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
 
   Future<void> _manageRide(CompletedRide ride, _EntryAction action) async {
     await _mutate(() async {
-      if (action == _EntryAction.delete) {
-        if (await _confirmDelete(ride.title)) {
-          await widget.library.completedRides.delete(ride.rideId);
+      if (action == _EntryAction.organise) {
+        final organisation = await _editOrganisation(ride.organisation);
+        if (organisation != null) {
+          await widget.library.completedRides.save(
+            ride.copyWith(organisation: organisation),
+          );
         }
         return;
       }
+
       final name = action == _EntryAction.rename
           ? await _rename(ride.title)
           : null;
@@ -637,6 +631,25 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
         ),
       );
     });
+  }
+
+  Future<RideLibraryOrganisation?> _editOrganisation(
+    RideLibraryOrganisation initial,
+  ) async {
+    final data = await _data;
+    if (!mounted) return null;
+    final folders = <String>{
+      for (final candidate in data.candidates)
+        candidate.geometry.organisation.folder,
+      for (final ride in data.rides) ride.organisation.folder,
+    }..remove('');
+    return showDialog<RideLibraryOrganisation>(
+      context: context,
+      builder: (_) => _OrganisationDialog(
+        initial: initial,
+        folders: folders.toList()..sort(),
+      ),
+    );
   }
 
   Future<void> _mutate(Future<void> Function() change) async {
@@ -701,7 +714,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
 
 enum _RideLibraryAction { backup, restore }
 
-enum _EntryAction { rename, bin, restore, delete }
+enum _EntryAction { rename, organise, bin, restore }
 
 /// One choosable stored route: its shape, what it is, when it was ridden and
 /// how far it goes. A list of dates is not choosable.
@@ -743,7 +756,8 @@ class StoredRouteCandidateTile extends StatelessWidget {
         '${_date(candidate.storedAt)}\n'
         '${MeasurementFormatter(distanceUnit).distance(routeLengthMeters(candidate.geometry))} · '
         '${candidate.pointCount} points'
-        '${candidate.rideCode == null ? '' : ' · ride ${candidate.rideCode}'}',
+        '${candidate.rideCode == null ? '' : ' · ride ${candidate.rideCode}'}'
+        '${_organisationLabel(candidate.geometry.organisation)}',
       ),
       isThreeLine: true,
       trailing: trailing ?? const Icon(Icons.chevron_right),
@@ -801,6 +815,7 @@ class StoredRouteMapPreview extends StatelessWidget {
           paths: paths,
           basemapConfiguration: basemapConfiguration,
           interactive: interactive,
+          routeColour: Color(candidate.geometry.organisation.colourArgb),
         ),
       ],
     );
@@ -826,6 +841,7 @@ class StoredRouteShapePreview extends StatelessWidget {
     painter: RouteSketchPainter(
       normalizeRoutePoints(_points()),
       strokeWidth: 2.5,
+      color: Color(candidate.geometry.organisation.colourArgb),
     ),
     child: const SizedBox.expand(),
   );
@@ -1096,4 +1112,150 @@ String _date(DateTime value) {
   final local = value.toLocal();
   return '${local.day.toString().padLeft(2, '0')}/'
       '${local.month.toString().padLeft(2, '0')}/${local.year}';
+}
+
+String _organisationLabel(RideLibraryOrganisation value) => [
+  if (value.folder.isNotEmpty) value.folder,
+  if (value.tags.isNotEmpty) value.tags.map((tag) => '#$tag').join(' '),
+].map((label) => '\n$label').join();
+
+class _OrganisationDialog extends StatefulWidget {
+  const _OrganisationDialog({required this.initial, required this.folders});
+  final RideLibraryOrganisation initial;
+  final List<String> folders;
+  @override
+  State<_OrganisationDialog> createState() => _OrganisationDialogState();
+}
+
+class _OrganisationDialogState extends State<_OrganisationDialog> {
+  final _form = GlobalKey<FormState>();
+  late final _folder = TextEditingController(text: widget.initial.folder);
+  late String _tags = widget.initial.tags.map((tag) => '#$tag').join(' ');
+  late int _colour = widget.initial.colourArgb;
+  @override
+  void dispose() {
+    _folder.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Organise ride'),
+    content: SizedBox(
+      width: 440,
+      child: SingleChildScrollView(
+        child: Form(
+          key: _form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                key: const Key('library-tags-field'),
+                initialValue: _tags,
+                decoration: const InputDecoration(
+                  labelText: 'Tags',
+                  helperText: '#fun #long #wet #twisty',
+                  helperMaxLines: 2,
+                ),
+                onChanged: (value) => _tags = value,
+                validator: (value) {
+                  final tags = (value ?? '')
+                      .split(RegExp(r'[\s,#]+'))
+                      .where((tag) => tag.isNotEmpty)
+                      .toList();
+                  if (tags.length > 20) return 'Use up to 20 tags.';
+                  if (tags.any(
+                    (tag) => !RegExp(
+                      r'^[\p{L}\p{N}_-]{1,32}$',
+                      unicode: true,
+                    ).hasMatch(tag),
+                  )) {
+                    return 'Use letters, numbers, hyphens or underscores (up to 32 per tag).';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                key: const Key('library-folder-field'),
+                controller: _folder,
+                maxLength: 120,
+                decoration: const InputDecoration(
+                  labelText: 'Folder',
+                  hintText: 'Trips/France · leave empty for Unfiled',
+                ),
+              ),
+              if (widget.folders.isNotEmpty)
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    for (final folder in widget.folders)
+                      ActionChip(
+                        label: Text(folder),
+                        onPressed: () => _folder.text = folder,
+                      ),
+                  ],
+                ),
+              const SizedBox(height: 8),
+              const Text('Map colour'),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (
+                    var i = 0;
+                    i < RideLibraryOrganisation.colours.length;
+                    i++
+                  )
+                    ChoiceChip(
+                      key: Key('library-colour-$i'),
+                      label: Text(
+                        const [
+                          'Teal',
+                          'Blue',
+                          'Orange',
+                          'Pink',
+                          'Purple',
+                          'Gold',
+                        ][i],
+                      ),
+                      avatar: Icon(
+                        Icons.circle,
+                        color: Color(RideLibraryOrganisation.colours[i]),
+                        size: 18,
+                      ),
+                      selected: _colour == RideLibraryOrganisation.colours[i],
+                      onSelected: (_) => setState(
+                        () => _colour = RideLibraryOrganisation.colours[i],
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () {
+          if (_form.currentState!.validate()) {
+            Navigator.pop(
+              context,
+              RideLibraryOrganisation.fromInput(
+                tags: _tags,
+                folder: _folder.text,
+                colourArgb: _colour,
+              ),
+            );
+          }
+        },
+        child: const Text('Save'),
+      ),
+    ],
+  );
 }

@@ -7,6 +7,7 @@ import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
+import 'package:ride_relay/domain/ride_library_organisation.dart';
 import 'package:ride_relay/domain/marker_assistance.dart';
 import 'package:ride_relay/domain/geo_point.dart';
 import 'package:ride_relay/domain/imported_route.dart' as route_domain;
@@ -764,6 +765,47 @@ void main() {
     expect(archived.toJson().toString(), isNot(contains(inviteSecret)));
     expect(archived.toJson().toString(), isNot(contains(joinToken)));
   });
+
+  test(
+    'replaying an ended ride preserves library edits and bin status',
+    () async {
+      await controller.createRide('Oliver');
+      await controller.startRide();
+      await controller.endRide();
+      final original = (await completedRideStore.list()).single;
+      final organisation = RideLibraryOrganisation.fromInput(
+        tags: '#wet',
+        folder: 'France',
+        colourArgb: 0xFFAB73EF,
+      );
+      await completedRideStore.save(
+        original.copyWith(
+          libraryName: 'Renamed after riding',
+          rating: 4,
+          notes: 'Keep these notes',
+          libraryStatus: RideLibraryStatus.deleted,
+          deletedAt: DateTime.utc(2026, 7, 16, 12),
+          organisation: organisation,
+        ),
+      );
+      final restarted = RideController(
+        eventStore,
+        sessionStore,
+        const _FakeNearbyBridge(),
+        clock: () => DateTime.utc(2026, 7, 16, 12, 1),
+        completedRideStore: completedRideStore,
+      );
+      addTearDown(restarted.dispose);
+      await restarted.initialize();
+      final restored = (await completedRideStore.list()).single;
+      expect(restored.title, 'Renamed after riding');
+      expect(restored.rating, 4);
+      expect(restored.notes, 'Keep these notes');
+      expect(restored.libraryStatus, RideLibraryStatus.deleted);
+      expect(restored.deletedAt, original.endedAt);
+      expect(restored.organisation.toJson(), organisation.toJson());
+    },
+  );
 
   for (final mode in RideCoordinationMode.values) {
     test('${mode.name} rides archive their local travelled track', () async {
