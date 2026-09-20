@@ -235,6 +235,7 @@ class RelayTrafficRerouteProvider {
       id: _idFactory(),
       sourceRouteId: original.sourceRouteId ?? original.id,
       organisation: original.organisation,
+      derivedFromRouteId: original.derivedFromRouteId,
       name: '${original.name} · traffic alternative',
       description:
           'Leader-reviewed TomTom traffic alternative calculated '

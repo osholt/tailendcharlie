@@ -435,6 +435,7 @@ class ImportedRoute {
     this.preferences,
     this.plannedDuration,
     this.sourceRouteId,
+    this.derivedFromRouteId,
     this.libraryStatus = RideLibraryStatus.active,
     this.deletedAt,
     this.organisation = const RideLibraryOrganisation(),
@@ -462,6 +463,9 @@ class ImportedRoute {
   /// Stable library identity of the original plan, retained by road matching
   /// and rerouting. The original geometry is kept locally with the ride.
   final String? sourceRouteId;
+
+  /// Provenance of a corrected plan, distinct from its original navigation GPX.
+  final String? derivedFromRouteId;
   final RideLibraryStatus libraryStatus;
   final DateTime? deletedAt;
   final RideLibraryOrganisation organisation;
@@ -484,6 +488,7 @@ class ImportedRoute {
     preferences: preferences,
     plannedDuration: plannedDuration,
     sourceRouteId: sourceRouteId,
+    derivedFromRouteId: derivedFromRouteId,
     libraryStatus: status ?? libraryStatus,
     organisation: organisation ?? this.organisation,
     deletedAt: status == RideLibraryStatus.deleted
@@ -510,6 +515,7 @@ class ImportedRoute {
     preferences: preferences,
     plannedDuration: plannedDuration,
     sourceRouteId: sourceRouteId,
+    derivedFromRouteId: derivedFromRouteId,
     libraryStatus: libraryStatus,
     organisation: organisation,
     deletedAt: deletedAt,
@@ -552,6 +558,7 @@ class ImportedRoute {
         preferences: preferences,
         plannedDuration: plannedDuration,
         sourceRouteId: sourceRouteId,
+        derivedFromRouteId: derivedFromRouteId,
         libraryStatus: libraryStatus,
         organisation: organisation,
         deletedAt: deletedAt,
@@ -565,6 +572,7 @@ class ImportedRoute {
     'importedAt': importedAt.toUtc().toIso8601String(),
     'sourceFileName': sourceFileName,
     if (sourceRouteId != null) 'sourceRouteId': sourceRouteId,
+    if (derivedFromRouteId != null) 'derivedFromRouteId': derivedFromRouteId,
     'organisation': organisation.toJson(),
     if (libraryStatus != RideLibraryStatus.active)
       'libraryStatus': libraryStatus.name,
@@ -659,6 +667,7 @@ class ImportedRoute {
       importedAt: DateTime.parse(_requiredString(json, 'importedAt')).toUtc(),
       sourceFileName: sourceFileName,
       sourceRouteId: _optionalString(json['sourceRouteId']),
+      derivedFromRouteId: _optionalString(json['derivedFromRouteId']),
       libraryStatus: RideLibraryStatus.parse(json['libraryStatus']),
       organisation: RideLibraryOrganisation.fromJson(json['organisation']),
       deletedAt: _optionalDateTime(json['deletedAt']),

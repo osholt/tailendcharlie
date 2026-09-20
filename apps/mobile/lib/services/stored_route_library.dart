@@ -253,6 +253,7 @@ class StoredRouteLibrary {
             candidate.geometry.sourceRouteId ?? candidate.geometry.id,
         preferences: candidate.geometry.preferences,
         organisation: candidate.geometry.organisation,
+        derivedFromRouteId: candidate.geometry.derivedFromRouteId,
         shapingPoints: selection.reversed
             ? const []
             : candidate.geometry.shapingPoints,

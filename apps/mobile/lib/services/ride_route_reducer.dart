@@ -36,6 +36,7 @@ class RideRouteEncoder {
     // Organisation belongs to this phone's library, not to the shared plan.
     final shared = route.toJson()
       ..remove('organisation')
+      ..remove('derivedFromRouteId')
       ..remove('libraryStatus')
       ..remove('deletedAt');
     final compressed = gzip.encode(utf8.encode(jsonEncode(shared)));
