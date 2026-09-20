@@ -51,6 +51,7 @@ class CompletedRide {
     required this.markerSessions,
     required this.plannedRoute,
     required this.traveledRoute,
+    this.recordingComplete = true,
     this.sourceRoute,
     this.libraryName,
     this.rating,
@@ -79,6 +80,7 @@ class CompletedRide {
 
   /// Local snapshot of the original GPX; library edits or binning cannot
   /// change the historical planned/actual comparison.
+  final bool recordingComplete;
   final ImportedRoute? sourceRoute;
   ImportedRoute? get comparisonPlan => sourceRoute ?? plannedRoute;
   final String? libraryName;
@@ -113,6 +115,7 @@ class CompletedRide {
 
   Map<String, Object?> toJson() => {
     'schemaVersion': schemaVersion,
+    'recordingComplete': recordingComplete,
     'rideId': rideId,
     'rideCode': rideCode,
     if (rideName != null) 'rideName': rideName,
@@ -144,6 +147,7 @@ class CompletedRide {
       );
     }
     return CompletedRide(
+      recordingComplete: json['recordingComplete'] != false,
       rideId: json['rideId']! as String,
       rideCode: json['rideCode']! as String,
       rideName: json['rideName'] as String?,
@@ -197,6 +201,7 @@ class CompletedRide {
     bool clearDeletedAt = false,
     RideLibraryOrganisation? organisation,
   }) => CompletedRide(
+    recordingComplete: recordingComplete,
     rideId: rideId,
     rideCode: rideCode,
     rideName: rideName,

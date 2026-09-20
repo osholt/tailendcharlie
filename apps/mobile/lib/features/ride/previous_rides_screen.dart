@@ -1,3 +1,4 @@
+import '../../services/ride_timing_analysis.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -433,6 +434,22 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
                           label: 'Original estimate',
                           value: _duration(duration),
                         ),
+                      if (RideTimingAnalysis.fromRoute(ride.traveledRoute)
+                          case final timing?) ...[
+                        _Metric(
+                          label: 'Travel, excluding long breaks',
+                          value: _duration(timing.travelling),
+                        ),
+                        _Metric(
+                          label: 'Breaks, including probable gaps',
+                          value: _duration(timing.breaks),
+                        ),
+                        if (timing.unknownGaps > Duration.zero)
+                          _Metric(
+                            label: 'Uncertain recording gaps',
+                            value: _duration(timing.unknownGaps),
+                          ),
+                      ],
                       _Metric(
                         label: 'Elapsed, including stops',
                         value: _duration(ride.duration),

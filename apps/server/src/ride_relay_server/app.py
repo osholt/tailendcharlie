@@ -41,6 +41,7 @@ from .discovery import (
     road_rating_report,
     suggestion_json,
 )
+from .eta import EtaProfileRequest, public_factors, remove_profile, save_profile
 from .heatmap import (
     accept_contribution,
     authenticate_contributor,
@@ -170,6 +171,8 @@ def create_app(
         maximum_requests=max(5, settings.traffic_incident_rate_limit_requests // 6),
         window_seconds=settings.traffic_incident_rate_limit_window_seconds,
     )
+    eta_write_limiter = SlidingWindowRateLimiter(maximum_requests=30, window_seconds=3600)
+    eta_read_limiter = SlidingWindowRateLimiter(maximum_requests=120, window_seconds=3600)
     heatmap_registration_limiter = SlidingWindowRateLimiter(
         maximum_requests=settings.heatmap_registration_rate_limit_requests,
         window_seconds=settings.heatmap_rate_limit_window_seconds,
@@ -263,6 +266,15 @@ def create_app(
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable):
+        if request.method == "POST" and request.url.path == "/api/v1/eta/profile":
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 1024:
+                    return JSONResponse(
+                        status_code=413, content={"error": "ETA profile is too large"}
+                    )
+                body.extend(chunk)
+            request._body = bytes(body)
         if request.method == "POST" and request.url.path == "/api/v1/heatmap/contributions":
             content_length = request.headers.get("content-length")
             try:
@@ -364,6 +376,31 @@ def create_app(
         retry_after = limiter.check(f"{prefix}:{client_ip}")
         if retry_after is not None:
             raise RelayServiceError(429, "Heatmap request rate limit exceeded")
+
+    def eta_rate_limit(request: Request, *, write: bool) -> None:
+        limiter = eta_write_limiter if write else eta_read_limiter
+        client_ip = request.client.host if request.client is not None else "unknown"
+        if limiter.check(client_ip) is not None:
+            raise RelayServiceError(429, "ETA request rate limit exceeded")
+
+    @app.post("/api/v1/eta/profile")
+    def update_eta_profile(
+        payload: EtaProfileRequest, request: Request, session: Session = Depends(database_session)
+    ) -> dict:
+        eta_rate_limit(request, write=True)
+        save_profile(session, request.headers.get("authorization", ""), payload)
+        return {"schemaVersion": 1, "saved": True}
+
+    @app.delete("/api/v1/eta/profile")
+    def delete_eta_profile(request: Request, session: Session = Depends(database_session)) -> dict:
+        eta_rate_limit(request, write=True)
+        remove_profile(session, request.headers.get("authorization", ""))
+        return {"schemaVersion": 1, "removed": True}
+
+    @app.get("/api/v1/eta/factors")
+    def get_eta_factors(request: Request, session: Session = Depends(database_session)) -> dict:
+        eta_rate_limit(request, write=False)
+        return public_factors(session)
 
     @app.post("/api/v1/heatmap/contributors", include_in_schema=False)
     def create_heatmap_contributor(
