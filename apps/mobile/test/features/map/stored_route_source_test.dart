@@ -43,11 +43,11 @@ void main() {
 
     await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('ride-library-recorded-tab')));
+    await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
     await tester.pumpAndSettle();
 
     expect(find.text('Ride library'), findsWidgets);
-    expect(find.text('RECORDED ROUTES'), findsOneWidget);
+    expect(find.text('RIDES'), findsOneWidget);
     expect(find.text('Scouted loop'), findsOneWidget);
 
     await tester.tap(
@@ -98,13 +98,10 @@ void main() {
     await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
     await tester.pumpAndSettle();
 
-    expect(find.text('PREVIOUS RIDES'), findsOneWidget);
+    expect(find.text('RIDES'), findsOneWidget);
     expect(find.text('Sunday run'), findsOneWidget);
-    expect(find.textContaining('ride AB12CD'), findsOneWidget);
 
-    await tester.tap(
-      find.byKey(const Key('stored-route-candidate-ride:ride-1:track')),
-    );
+    await tester.tap(find.byKey(const Key('ride-library-record-ride-1')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('use-stored-route')));
     await _followOriginalTrack(tester);
@@ -134,9 +131,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const Key('stored-route-candidate-ride:ride-1:track')),
-    );
+    await tester.tap(find.byKey(const Key('ride-library-record-ride-1')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.byKey(const Key('stored-route-reverse')));
     await tester.pumpAndSettle();
@@ -187,7 +182,7 @@ void main() {
       await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
       await tester.pumpAndSettle();
       await tester.tap(
-        find.byKey(const Key('stored-route-candidate-ride:ride-392725:track')),
+        find.byKey(const Key('ride-library-record-ride-392725')),
       );
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('stored-route-reverse')));
@@ -219,29 +214,33 @@ void main() {
     },
   );
 
-  testWidgets('a ride whose data has been removed is not offered', (
-    tester,
-  ) async {
-    final rides = InMemoryCompletedRideStore();
-    await rides.save(
-      _completedRide(
-        rideId: 'ride-gone',
-        rideCode: 'GONE01',
-        // Retention is ride-scoped and is not being extended: with no
-        // geometry left there is nothing to ride.
-        traveledRoute: null,
-      ),
-    );
+  testWidgets(
+    'a ride without retained geometry cannot be selected for riding',
+    (tester) async {
+      final rides = InMemoryCompletedRideStore();
+      await rides.save(
+        _completedRide(
+          rideId: 'ride-gone',
+          rideCode: 'GONE01',
+          // Retention is ride-scoped and is not being extended: with no
+          // geometry left there is nothing to ride.
+          traveledRoute: null,
+        ),
+      );
 
-    await _pumpMap(tester, store: _RecordingRouteStore(), rides: rides);
+      await _pumpMap(tester, store: _RecordingRouteStore(), rides: rides);
 
-    await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
+      await tester.pumpAndSettle();
 
-    expect(find.text('No saved routes yet'), findsOneWidget);
-    expect(find.text('Sunday run'), findsNothing);
-    expect(find.text('PREVIOUS RIDES'), findsNothing);
-  });
+      await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
+      await tester.pumpAndSettle();
+      expect(find.text('Sunday run'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('ride-library-record-ride-gone')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('use-stored-route')), findsNothing);
+    },
+  );
 
   testWidgets('the raw recorded track stays available and is labelled', (
     tester,
@@ -254,7 +253,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('use-stored-route-empty-button')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('ride-library-recorded-tab')));
+    await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
     await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const Key('stored-route-candidate-recorded:scouted')),

@@ -3,7 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ride_relay/domain/imported_route.dart' show GeoPoint, RideLibraryStatus;
+import 'package:ride_relay/domain/imported_route.dart'
+    show GeoPoint, RideLibraryStatus;
 import 'package:ride_relay/domain/recorded_route_store.dart';
 import 'package:ride_relay/features/home/home_destination_search.dart';
 import 'package:ride_relay/features/home/home_screen.dart';

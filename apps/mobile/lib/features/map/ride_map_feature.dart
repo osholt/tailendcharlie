@@ -59,6 +59,7 @@ import '../../services/tec_gap_trend.dart';
 import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
+import '../../services/flutter_vector_offline_manager.dart';
 import '../../services/map_camera_command.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
@@ -95,6 +96,11 @@ import 'route_progress_panel.dart';
 import 'route_trail_style.dart';
 import 'smooth_countdown.dart';
 import 'stored_route_picker.dart';
+
+MapLibreOfflineManager _offlineManagerFor(BasemapConfiguration configuration) =>
+    defaultTargetPlatform == TargetPlatform.iOS
+    ? FlutterVectorOfflineManager(configuration: configuration)
+    : MapLibreOfflineManager(configuration: configuration);
 
 @visibleForTesting
 bool mapLibreSourceUpdatesShouldPause(AppLifecycleState state) =>
@@ -786,7 +792,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         cache: suppliedCache,
         mapLibreOfflineManager:
             widget.mapLibreOfflineManager ??
-            MapLibreOfflineManager(configuration: widget.basemapConfiguration),
+            _offlineManagerFor(widget.basemapConfiguration),
         mapStyleString: suppliedStyle,
         // An embedder handing over a style vouches for it; there is no fetch
         // here whose outcome could be reported.
@@ -808,7 +814,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
             await OfflineTileCache.openDefault(widget.basemapConfiguration),
         mapLibreOfflineManager:
             widget.mapLibreOfflineManager ??
-            MapLibreOfflineManager(configuration: widget.basemapConfiguration),
+            _offlineManagerFor(widget.basemapConfiguration),
         mapStyleString: resolution.style,
         mapStyleOutcome: resolution.outcome,
       );
@@ -1648,8 +1654,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         widget.speedLimitDisplay ?? SpeedLimitDisplayController.inMemory();
     _groupPipBridge = GroupPipBridge();
     _mapLibreOfflineManager =
-        widget.mapLibreOfflineManager ??
-        MapLibreOfflineManager(configuration: _basemap);
+        widget.mapLibreOfflineManager ?? _offlineManagerFor(_basemap);
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
     _recordLocalTrail(_effectivePosition, _navigationFix?.recordedAt);

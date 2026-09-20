@@ -85,6 +85,7 @@ void main() {
   /// Every test tears the map down so the load watchdog cannot outlive it.
   Future<void> unmount(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 11));
     await tester.pump();
   }
 
