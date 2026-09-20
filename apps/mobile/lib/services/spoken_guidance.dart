@@ -577,7 +577,11 @@ class SpokenGuidanceSpeaker {
     try {
       await _ensureConfigured();
       _lastSpokenKey = key;
-      await deliverCurrentSpokenPhrase(_engine, resolve);
+      await deliverCurrentSpokenPhrase(
+        _engine,
+        resolve,
+        audioClass: SpokenAudioClass.navigation,
+      );
 
       return true;
     } on SpokenGuidanceSuperseded {
