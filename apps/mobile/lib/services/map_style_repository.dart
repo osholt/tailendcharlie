@@ -687,17 +687,17 @@ class MapStyleRepository {
     'highway_name_other': {
       'text-color': _labelRoad,
       'text-halo-color': _labelHalo,
-      'text-halo-width': 1.2,
+      'text-halo-width': 1.8,
     },
     'highway_name_motorway': {
       'text-color': _labelMotorway,
       'text-halo-color': _labelHalo,
-      'text-halo-width': 1.2,
+      'text-halo-width': 1.8,
     },
     'water_name': {
       'text-color': _labelWater,
       'text-halo-color': _labelHalo,
-      'text-halo-width': 1.2,
+      'text-halo-width': 1.8,
     },
     'place_other': {
       'text-color': _labelPlace,

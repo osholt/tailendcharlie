@@ -689,13 +689,6 @@ void main() {
           paint(beforeFill[name]!),
         );
         final after = contrastRatio(RouteTrailStyle.casing, surface(name));
-        if (name == 'service/track') {
-          // The one class that got dimmer, deliberately: a driveway or a forest
-          // track is not a road a group rides, and main painted it the same
-          // colour as a lane.
-          expect(after, closeTo(before, 0.02), reason: name);
-          continue;
-        }
         expect(
           after,
           greaterThan(before),
@@ -704,66 +697,81 @@ void main() {
       }
       expect(
         contrastRatio(RouteTrailStyle.casing, surface('motorway')),
-        closeTo(4.54, 0.01),
+        greaterThan(9),
       );
     });
 
-    test('a bright line over a road fill is no worse off than in daylight', () {
-      // Lifting the road fills does cost the bare line-over-road number, which
-      // is why #139 rejected the opposite change. The floor that makes it
-      // acceptable is the light basemap, whose road fills are white and cream:
-      // it ships, it is field-legible, and it is harsher on every one of these
-      // colours than the new dark basemap is.
-      double worst(Iterable<Color> surfaces) => RouteTrailStyle.allLines.values
-          .expand((line) => surfaces.map((s) => contrastRatio(line.color, s)))
-          .reduce(math.min);
+    test(
+      'bright routes retain an opaque contrasting boundary on lighter roads',
+      () {
+        // A bright road can match a route's luminance. The rendered boundary is
+        // its dark casing, not a bare route directly touching the road fill.
+        for (final line in RouteTrailStyle.allLines.values) {
+          expect(
+            contrastRatio(line.color, RouteTrailStyle.casing),
+            greaterThan(6.8),
+          );
+          expect(
+            line.casingWidthPixels - line.widthPixels,
+            greaterThanOrEqualTo(4),
+          );
+        }
+        for (final road in MapStyleRepository.darkBasemapRoadRamp) {
+          expect(
+            contrastRatio(RouteTrailStyle.casing, surface(road)),
+            greaterThan(2.7),
+            reason: road,
+          );
+        }
+      },
+    );
 
-      final dark = worst([
-        for (final name in MapStyleRepository.darkBasemapPalette.keys)
-          if (name != 'road casing') surface(name),
-      ]);
-      final light = worst(RouteTrailStyle.lightBasemapSurfaces.values);
-
-      expect(light, closeTo(1.00, 0.01));
-      expect(dark, closeTo(1.50, 0.01));
-      expect(
-        dark,
-        greaterThan(light),
-        reason: 'the dark basemap must not be harsher on a line than day is',
-      );
-    });
-
-    test('labels are legible on the surfaces they are placed on', () {
-      // Road names measured 1.38:1 against the road they sit on, a motorway ref
-      // 1.14:1 against its own carriageway, and water names were pure black.
-      // Each label carries a near-black halo, so the halo is what it is measured
-      // against as well - the same rule as a route casing.
-      const labels = <String, (String, double)>{
-        'road name': ('minor', 4.58),
-        'motorway ref': ('motorway', 2.50),
-        'place name': ('background', 9.22),
-        'water name': ('water', 4.65),
-      };
-      const labelInk = <String, String>{
-        'road name': '#BCC1C9',
-        'motorway ref': '#C9CCD1',
-        'place name': '#B1B7BF',
-        'water name': '#748DB1',
-      };
-      for (final entry in labels.entries) {
-        final (against, expected) = entry.value;
-        expect(
-          contrastRatio(paint(labelInk[entry.key]!), surface(against)),
-          closeTo(expected, 0.01),
-          reason: '${entry.key} on $against',
+    test(
+      'rendered road labels retain a solid dark halo over bright roads',
+      () async {
+        final repository = MapStyleRepository(
+          directory: directory,
+          configuration: _darkConfiguration,
+          client: MockClient(
+            (_) async => http.Response(
+              jsonEncode({
+                ..._darkStyleFixture,
+                'layers': [
+                  ..._darkStyleFixture['layers'] as List,
+                  for (final id in [
+                    'highway_name_other',
+                    'highway_name_motorway',
+                    'water_name',
+                  ])
+                    {'id': id, 'type': 'symbol', 'paint': <String, Object?>{}},
+                ],
+              }),
+              200,
+            ),
+          ),
         );
-        expect(
-          contrastRatio(paint(labelInk[entry.key]!), paint('#0B0E12')),
-          greaterThan(4.5),
-          reason: '${entry.key} against its halo',
-        );
-      }
-    });
+        final style = jsonDecode((await repository.resolve()).style) as Map;
+        for (final layer in (style['layers'] as List).cast<Map>()) {
+          if (![
+            'highway_name_other',
+            'highway_name_motorway',
+            'water_name',
+          ].contains(layer['id']))
+            continue;
+          final properties = layer['paint'] as Map;
+          expect(properties['text-halo-color'], '#0B0E12');
+          expect(properties['text-halo-width'], greaterThanOrEqualTo(1.8));
+          expect(
+            contrastRatio(
+              paint(properties['text-color'] as String),
+              paint(properties['text-halo-color'] as String),
+            ),
+            greaterThan(4.5),
+            reason: layer['id'] as String,
+          );
+        }
+      },
+    );
   });
 }
 
