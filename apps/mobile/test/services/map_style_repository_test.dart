@@ -756,8 +756,9 @@ void main() {
             'highway_name_other',
             'highway_name_motorway',
             'water_name',
-          ].contains(layer['id']))
+          ].contains(layer['id'])) {
             continue;
+          }
           final properties = layer['paint'] as Map;
           expect(properties['text-halo-color'], '#0B0E12');
           expect(properties['text-halo-width'], greaterThanOrEqualTo(1.8));
