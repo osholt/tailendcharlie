@@ -72,6 +72,11 @@ Future<vmt.Style> _readFlutterVectorStyle(
   if (!resolution.hasBasemap) {
     throw StateError('The basemap style is unavailable.');
   }
+  final document = Map<String, dynamic>.from(
+    jsonDecode(resolution.style) as Map,
+  );
+  MapStyleRepository.applyPresentation(document, configuration);
+  resolution = MapStyleResolution(jsonEncode(document), resolution.outcome);
   if (cache != null) {
     try {
       await cache.write(
