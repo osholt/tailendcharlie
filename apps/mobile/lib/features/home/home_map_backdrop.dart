@@ -666,6 +666,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             navigationPosition: _navigationPosition,
             completedRideStore: widget.completedRideStore,
             globalRideHeatmap: widget.globalRideHeatmap,
+            ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
             darkMapStyle: widget.mapStyleMode.resolveDark(
               MediaQuery.platformBrightnessOf(context),
             ),
