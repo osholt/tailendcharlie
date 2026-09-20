@@ -637,7 +637,7 @@ double? riderTravelHeading({
 const riderDirectionShapeImage = 'tec-rider-direction';
 const riderUnknownShapeImage = 'tec-rider-unknown';
 
-/// Pointed badge for travel; a rounded square makes no heading claim at rest.
+/// Pointed badge for travel; a circle makes no heading claim at rest.
 /// Rotate only the background so initials and emoji always remain upright.
 class RiderMarkerShapePainter extends CustomPainter {
   const RiderMarkerShapePainter({
@@ -655,15 +655,12 @@ class RiderMarkerShapePainter extends CustomPainter {
 
   static Path shape(Size size, {required bool directional}) {
     if (!directional) {
-      return Path()..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
-            size.width * .1,
-            size.height * .1,
-            size.width * .8,
-            size.height * .8,
-          ),
-          Radius.circular(size.shortestSide * .14),
+      return Path()..addOval(
+        Rect.fromLTWH(
+          size.width * .1,
+          size.height * .1,
+          size.width * .8,
+          size.height * .8,
         ),
       );
     }
