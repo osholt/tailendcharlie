@@ -1217,6 +1217,30 @@ class _RideMapScreenState extends State<RideMapScreen>
   final MapControllerImpl _mapController = MapControllerImpl();
   final _localTravelDirection = RiderTravelDirection();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
+  SharedPreferences? _progressPreferences;
+  DateTime? _lastProgressSavedAt;
+  static const _progressCheckpointKey = 'navigation_progress_v1';
+
+  void _saveProgressCheckpoint({bool force = false}) {
+    final preferences = _progressPreferences;
+    if (preferences == null || _route == null) return;
+    final now = DateTime.now();
+    if (!force &&
+        _lastProgressSavedAt != null &&
+        now.difference(_lastProgressSavedAt!) < const Duration(seconds: 10)) {
+      return;
+    }
+    _lastProgressSavedAt = now;
+    unawaited(
+      preferences
+          .setString(
+            _progressCheckpointKey,
+            jsonEncode(_routeProgressTracker.checkpoint),
+          )
+          .catchError((Object _) => false),
+    );
+  }
+
   final RouteJourneyProgressTracker _routeJourneyProgressTracker =
       RouteJourneyProgressTracker();
   final RouteProgressTracker _rejoinProgressTracker = RouteProgressTracker();
@@ -1796,6 +1820,7 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   @override
   void dispose() {
+    _saveProgressCheckpoint(force: true);
     WidgetsBinding.instance.removeObserver(this);
     _downloadCancellation?.cancel();
     widget.currentPosition?.removeListener(_onPositionChanged);
@@ -1834,6 +1859,9 @@ class _RideMapScreenState extends State<RideMapScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) {
+      _saveProgressCheckpoint(force: true);
+    }
     final wasPaused = _mapRenderingPaused;
     _mapRenderingPaused = mapLibreSourceUpdatesShouldPause(state);
     final controller = _mapLibreController;
@@ -1907,7 +1935,25 @@ class _RideMapScreenState extends State<RideMapScreen>
   Future<void> _loadPersistedRoute() async {
     try {
       final route = await widget.routeStore.loadActiveRoute();
+      try {
+        _progressPreferences = await SharedPreferences.getInstance();
+      } on Object {
+        /* Checkpoint storage must not prevent route loading. */
+      }
       if (!mounted) return;
+      if (route != null) {
+        final saved = _progressPreferences?.getString(_progressCheckpointKey);
+        if (saved != null) {
+          try {
+            _routeProgressTracker.restore(
+              route,
+              Map<String, Object?>.from(jsonDecode(saved) as Map),
+            );
+          } on Object {
+            /* Ignore a damaged checkpoint, keep the route usable. */
+          }
+        }
+      }
       setState(() {
         _route = route;
         _mainRouteGuidanceFloorMeters = null;
@@ -1920,6 +1966,8 @@ class _RideMapScreenState extends State<RideMapScreen>
         _progressGeometry = _routeProgressTracker.update(
           route,
           _effectivePosition,
+          recordedAt: _navigationFix?.recordedAt,
+          accuracyMeters: _navigationFix?.accuracyMeters,
         );
         // Riding without a GPX is a first-class mode (#124), so following the
         // rider is driven by position and heading alone. A route changes what is
@@ -2881,6 +2929,8 @@ class _RideMapScreenState extends State<RideMapScreen>
                       : EtaCalibrationScope.of(context)?.factorFor(_route!) ??
                             1,
                   geometry: _progressGeometry,
+                  rejoinRoute: _rejoinRoute,
+                  rejoinGeometry: _rejoinProgressGeometry,
                   speedMetersPerSecond: riderSpeed?.ageing == false
                       ? riderSpeed!.value
                       : null,
@@ -4587,7 +4637,13 @@ class _RideMapScreenState extends State<RideMapScreen>
     if (_mapRenderingPaused) {
       final observedAt = navigationFix?.recordedAt ?? DateTime.now();
       if (!_backgroundNavigationRefreshGate.accept(observedAt)) return;
-      _progressGeometry = _routeProgressTracker.update(_route, position);
+      _progressGeometry = _routeProgressTracker.update(
+        _route,
+        position,
+        recordedAt: navigationFix?.recordedAt ?? DateTime.now(),
+        accuracyMeters: navigationFix?.accuracyMeters,
+      );
+      _saveProgressCheckpoint();
       _rejoinProgressGeometry = _rejoinProgressTracker.update(
         _rejoinRoute,
         position,
@@ -4678,7 +4734,13 @@ class _RideMapScreenState extends State<RideMapScreen>
         (widget.isNavigating || _isMoving) &&
         !_navigationCanvasActive;
     if (refreshProgress) {
-      _progressGeometry = _routeProgressTracker.update(_route, position);
+      _progressGeometry = _routeProgressTracker.update(
+        _route,
+        position,
+        recordedAt: navigationFix?.recordedAt ?? DateTime.now(),
+        accuracyMeters: navigationFix?.accuracyMeters,
+      );
+      _saveProgressCheckpoint();
       _rejoinProgressGeometry = _rejoinProgressTracker.update(
         _rejoinRoute,
         position,
@@ -7261,6 +7323,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _navigationCanvasActive = true;
       }
     });
+    _saveProgressCheckpoint(force: true);
     _updateNavigationGuidance(_effectivePosition);
     await _syncMapLibreSources();
     _fitRoute();

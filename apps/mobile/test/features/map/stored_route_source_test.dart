@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -26,6 +28,7 @@ import 'package:ride_relay/services/stored_route_library.dart';
 /// goes through the same pipeline as an imported file: the same review step,
 /// the same `RouteStore`, the same published route.
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   testWidgets('a recorded route can be ridden without touching a file', (
     tester,
   ) async {
