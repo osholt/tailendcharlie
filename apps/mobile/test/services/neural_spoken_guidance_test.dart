@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:ride_relay/services/natural_voice_pack.dart';
 import 'package:ride_relay/services/neural_spoken_guidance.dart';
 import 'package:ride_relay/services/spoken_audio_mode.dart';
@@ -28,6 +29,24 @@ void main() {
   test(
     'stale neural distance is replaced before playback with current speech',
     () async {
+      final playbackCalls = <String>[];
+      for (final name in [
+        'xyz.luan/audioplayers',
+        'xyz.luan/audioplayers.global',
+      ]) {
+        final channel = MethodChannel(name);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              playbackCalls.add(call.method);
+              throw PlatformException(code: 'unexpected-stale-playback');
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+      }
       var phrase = 'In 400 metres, turn left';
       final backend = _RecordingBackend()
         ..onGenerate = (text) {
@@ -48,6 +67,11 @@ void main() {
       await engine.speakFresh(() => phrase);
       expect(backend.generatedPhrases, contains('In 400 metres, turn left'));
       expect(fallback.spoken, ['In 300 metres, turn left']);
+      expect(
+        playbackCalls,
+        isEmpty,
+        reason: 'reject stale inference before touching the player',
+      );
     },
   );
 
