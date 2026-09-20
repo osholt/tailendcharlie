@@ -82,6 +82,7 @@ import '../../services/navigation_guidance.dart';
 import '../../services/route_decision_point_extractor.dart';
 import '../../services/ride_completion_detector.dart';
 import '../../services/route_progress.dart';
+import '../../services/rider_travel_direction.dart';
 import '../../services/route_journey_progress.dart';
 import '../../services/ride_membership.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
@@ -1126,6 +1127,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// and a shell can exist before its session does.
   RideDiagnosticsLogWriter? _diagnosticsWriter;
   final _trailRecorder = RiderTrailRecorder();
+  final _riderTravelDirections = <String, RiderTravelDirection>{};
   final _publishedEventIds = <String>{};
   final _warnings = <String>{};
   static const _backgroundLocationWarning =
@@ -2084,6 +2086,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (lifecycleFingerprint != _trailLifecycleFingerprint) {
       _trailLifecycleFingerprint = lifecycleFingerprint;
       _trailRecorder.clear();
+      _riderTravelDirections.clear();
       _recordedTrailTraces = const [];
     }
     // Issue #102: unlike travelled history, a rejoin plan is only valid for the
@@ -2625,6 +2628,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             // Role and alerts are already named in [label]; changing the fill
             // made one rider look like different people across surfaces (#250).
             final baseColor = location.riderColor.color;
+            final direction = _riderTravelDirections.putIfAbsent(
+              location.riderId,
+              RiderTravelDirection.new,
+            );
+            direction.update(
+              point: location.point,
+              at: location.point.recordedAt ?? now,
+              headingDegrees: location.headingDegrees,
+              speedMetersPerSecond: location.speedMetersPerSecond,
+            );
             return MapOverlayMarker(
               id: 'rider-${location.riderId}',
               point: location.point,
@@ -2634,9 +2647,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               riderDisplayName: location.displayName,
               color: baseColor,
               positionFreshness: freshness,
-              headingDegrees: riderTravelHeading(
-                headingDegrees: location.headingDegrees,
-                speedMetersPerSecond: location.speedMetersPerSecond,
+              headingDegrees: direction.headingAt(
+                now,
                 fresh: freshness == PresenceFreshness.live,
               ),
             );
@@ -3279,6 +3291,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   void _updateRiderTrails(SituationalAwarenessController awareness) {
     if (!widget.rideController.rideStarted) {
       _trailRecorder.clear();
+      _riderTravelDirections.clear();
       _publishRiderTrails(const []);
       return;
     }

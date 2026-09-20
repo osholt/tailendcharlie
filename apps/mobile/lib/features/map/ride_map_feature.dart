@@ -77,6 +77,7 @@ import '../../services/route_importer.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_journey_progress.dart';
 import '../../services/route_progress.dart';
+import '../../services/rider_travel_direction.dart';
 import '../../services/route_reshape_planner.dart';
 import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
@@ -1214,6 +1215,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   static const _discoveryPointSource = 'ride-relay-discovery-points';
 
   final MapControllerImpl _mapController = MapControllerImpl();
+  final _localTravelDirection = RiderTravelDirection();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
   final RouteJourneyProgressTracker _routeJourneyProgressTracker =
       RouteJourneyProgressTracker();
@@ -1352,7 +1354,6 @@ class _RideMapScreenState extends State<RideMapScreen>
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
   Object? _handledCircularRideRequestToken;
-  double _lastHeadingDegrees = 0;
   // Dismissal is per hazard, so passing this one and approaching the next
   // still raises a fresh warning.
   String? _dismissedEnforcementAlertId;
@@ -1658,6 +1659,15 @@ class _RideMapScreenState extends State<RideMapScreen>
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
     _recordLocalTrail(_effectivePosition, _navigationFix?.recordedAt);
+    if (_effectivePosition case final initialPoint?) {
+      _localTravelDirection.update(
+        point: initialPoint,
+        at: _navigationFix?.recordedAt ?? DateTime.now(),
+        headingDegrees: _navigationFix?.headingDegrees,
+        speedMetersPerSecond: _navigationFix?.speedMetersPerSecond,
+        accuracyMeters: _navigationFix?.accuracyMeters ?? 0,
+      );
+    }
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.riderTrails?.addListener(_onOverlayDataChanged);
     widget.rejoinNavigationRoute?.addListener(_onRejoinNavigationRouteChanged);
@@ -4514,6 +4524,15 @@ class _RideMapScreenState extends State<RideMapScreen>
       _lastHandledCurrentPosition = position;
       _lastHandledNavigationFix = null;
     }
+    if (position != null) {
+      _localTravelDirection.update(
+        point: position,
+        at: navigationFix?.recordedAt ?? DateTime.now(),
+        headingDegrees: navigationFix?.headingDegrees,
+        speedMetersPerSecond: navigationFix?.speedMetersPerSecond,
+        accuracyMeters: navigationFix?.accuracyMeters ?? 0,
+      );
+    }
     if (_mapRenderingPaused) {
       final observedAt = navigationFix?.recordedAt ?? DateTime.now();
       if (!_backgroundNavigationRefreshGate.accept(observedAt)) return;
@@ -4536,7 +4555,6 @@ class _RideMapScreenState extends State<RideMapScreen>
         _pointsDiffer(position, _previousNavigationPoint!)) {
       observedHeading = _bearingDegrees(_previousNavigationPoint!, position);
     }
-    if (observedHeading != null) _lastHeadingDegrees = observedHeading;
     _previousNavigationPoint = position;
     if (navigationFix != null) {
       // Any fix, with or without a speed, proves the platform is still tracking,
@@ -6361,16 +6379,8 @@ class _RideMapScreenState extends State<RideMapScreen>
         : const <MapGeoJsonPoint>[],
   );
 
-  double? get _localTravelHeading => riderTravelHeading(
-    headingDegrees: _navigationFix?.headingDegrees == null
-        ? null
-        : _lastHeadingDegrees,
-    speedMetersPerSecond: _navigationFix?.speedMetersPerSecond,
-    fresh:
-        _navigationFix != null &&
-        DateTime.now().difference(_navigationFix!.recordedAt) <=
-            const Duration(seconds: 30),
-  );
+  double? get _localTravelHeading =>
+      _localTravelDirection.headingAt(DateTime.now());
 
   static Future<void> _registerRiderMarkerShapes(
     ml.MapLibreMapController controller,
