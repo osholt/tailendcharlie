@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
@@ -823,6 +824,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         routeImporter: RouteImporter(source: const SystemGpxImportSource()),
         offlineTileCache: dependencies.cache,
         mapLibreOfflineManager: dependencies.mapLibreOfflineManager,
+        prepareOfflineMaps: true,
         mapStyleString: dependencies.mapStyleString,
         mapStyleOutcome: dependencies.mapStyleOutcome,
         completedRideStore: widget.completedRideStore,
@@ -918,6 +920,7 @@ class RideMapScreen extends StatefulWidget {
     this.planDirectory,
     required this.offlineTileCache,
     this.mapLibreOfflineManager,
+    this.prepareOfflineMaps = false,
     this.mapStyleString = MapStyleRepository.fallbackStyle,
     this.mapStyleOutcome = MapStyleOutcome.live,
     this.basemapTileProbe = const BasemapTileProbe(),
@@ -1002,6 +1005,9 @@ class RideMapScreen extends StatefulWidget {
   final PlanDirectory? planDirectory;
   final OfflineTileCache offlineTileCache;
   final MapLibreOfflineManager? mapLibreOfflineManager;
+
+  /// The production feature prepares maps; standalone map embedders opt in.
+  final bool prepareOfflineMaps;
   final String mapStyleString;
 
   /// Where [mapStyleString] came from, so the map can tell a rider that its
@@ -1434,6 +1440,10 @@ class _RideMapScreenState extends State<RideMapScreen>
   double? _mainRouteGuidanceFloorMeters;
   TileDownloadProgress? _downloadProgress;
   TileDownloadCancellationToken? _downloadCancellation;
+  Future<void>? _offlineDownloadTask;
+  bool _offlineMapReady = false;
+  bool _automaticOfflineMaps = true;
+  String? _offlineMapError;
   MotorcycleDiscoveryCatalogue _discoveryCatalogue =
       const MotorcycleDiscoveryCatalogue([]);
   final Set<MotorcycleDiscoveryCategory> _enabledDiscoveryCategories = {
@@ -1913,6 +1923,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       // A route loaded on a standing bike frames the whole route, not the rider,
       // so the way back has to be offered from the first frame (#133).
       _scheduleCameraFramingRefresh();
+      unawaited(_prepareOfflineRoute());
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -2450,7 +2461,9 @@ class _RideMapScreenState extends State<RideMapScreen>
                             _downloadProgress == null,
                         child: Text(
                           _basemap.canDownloadOffline
-                              ? 'Download map for offline use'
+                              ? (_offlineMapReady
+                                    ? 'Offline map ready'
+                                    : 'Offline route map')
                               : 'Offline map download unavailable',
                         ),
                       ),
@@ -3169,6 +3182,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                 key: const Key('map-landscape-left-rail'),
                 alignment: CrossAxisAlignment.start,
                 children: [
+                  ?_offlineMapControl,
                   if (downloadProgress != null)
                     Card(
                       child: _DownloadProgress(
@@ -3305,6 +3319,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                 key: _bottomChromeKey,
                 alignment: CrossAxisAlignment.stretch,
                 children: [
+                  ?_offlineMapControl,
                   if (downloadProgress != null)
                     Card(
                       child: _DownloadProgress(
@@ -7047,19 +7062,141 @@ class _RideMapScreenState extends State<RideMapScreen>
     if (_navigationMode) unawaited(_followNavigationCamera());
     widget.onRouteChanged?.call(activeRoute);
     widget.onRouteCommitted?.call(activeRoute);
-    _showMessage(
-      '${activeRoute.name}: confirmed and stored offline '
-      '(${activeRoute.pathPointCount} points).',
-    );
+    _showMessage('${activeRoute.name}: route saved on this phone.');
+    unawaited(_prepareOfflineRoute());
     return activeRoute;
   }
 
-  Future<void> _downloadOfflineMap() async {
+  Future<void> _prepareOfflineRoute() async {
+    if (!widget.prepareOfflineMaps ||
+        !_basemap.canDownloadOffline ||
+        !_basemap.usesMapLibre) {
+      return;
+    }
+    final route = _route;
+    _downloadCancellation?.cancel();
+    await _offlineDownloadTask;
+    if (!mounted || route == null || !identical(route, _route)) return;
+    setState(() {
+      _offlineMapReady = false;
+      _offlineMapError = null;
+    });
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final automatic =
+          preferences.getBool('automatic_offline_route_maps') ?? true;
+      final ready = await _mapLibreOfflineManager.isRouteReady(route);
+      if (!mounted || !identical(route, _route)) return;
+      setState(() {
+        _offlineMapReady = ready;
+        _automaticOfflineMaps = automatic;
+      });
+      if (!ready && automatic) await _downloadOfflineMap();
+    } on Object catch (error) {
+      if (mounted && identical(route, _route)) {
+        setState(() => _offlineMapError = '$error');
+      }
+    }
+  }
+
+  Future<void> _showOfflineMapDetails() => showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => StatefulBuilder(
+      builder: (context, refresh) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Offline route map',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Downloads the whole route plus 2 km on either side, from overview to riding zoom, in day and night colours. Keep TEC open until it says Ready. New routes beyond that area still need a connection.',
+              ),
+              SwitchListTile(
+                title: const Text('Download maps when choosing a route'),
+                subtitle: const Text(
+                  'Uses your current connection. You can cancel a download.',
+                ),
+                value: _automaticOfflineMaps,
+                onChanged: (value) async {
+                  final preferences = await SharedPreferences.getInstance();
+                  await preferences.setBool(
+                    'automatic_offline_route_maps',
+                    value,
+                  );
+                  if (!mounted) return;
+                  setState(() => _automaticOfflineMaps = value);
+                  if (!value) _downloadCancellation?.cancel();
+                  if (context.mounted) refresh(() {});
+                },
+              ),
+              if (_offlineMapError != null)
+                Text('Map not ready: $_offlineMapError'),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                icon: Icon(
+                  _offlineMapReady ? Icons.offline_pin : Icons.download,
+                ),
+                label: Text(
+                  _offlineMapReady
+                      ? 'Ready for offline riding'
+                      : 'Download full route map',
+                ),
+                onPressed: _downloadProgress != null || _offlineMapReady
+                    ? null
+                    : () {
+                        Navigator.pop(context);
+                        unawaited(_downloadOfflineMap());
+                      },
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget? get _offlineMapControl =>
+      !widget.prepareOfflineMaps ||
+          _route == null ||
+          !_basemap.canDownloadOffline ||
+          !_basemap.usesMapLibre ||
+          widget.isNavigating ||
+          _isMoving
+      ? null
+      : TextButton.icon(
+          key: const Key('offline-route-status'),
+          onPressed: _showOfflineMapDetails,
+          icon: Icon(
+            _offlineMapReady
+                ? Icons.offline_pin
+                : Icons.download_for_offline_outlined,
+          ),
+          label: Text(
+            _offlineMapReady
+                ? 'Offline map ready'
+                : _downloadProgress != null
+                ? 'Downloading route map…'
+                : 'Offline map not ready',
+          ),
+        );
+
+  Future<void> _downloadOfflineMap() => _offlineDownloadTask ??=
+      _runOfflineDownload().whenComplete(() => _offlineDownloadTask = null);
+
+  Future<void> _runOfflineDownload() async {
     final route = _route;
     if (route == null || !_basemap.canDownloadOffline) return;
     final cancellation = TileDownloadCancellationToken();
     setState(() {
       _downloadCancellation = cancellation;
+      _offlineMapReady = false;
+      _offlineMapError = null;
       _downloadProgress = const TileDownloadProgress(
         completedTiles: 0,
         totalTiles: 1,
@@ -7089,8 +7226,13 @@ class _RideMapScreenState extends State<RideMapScreen>
             ? '${summary.totalTiles} offline map resources ready.'
             : '${summary.totalTiles} offline tiles ready (${summary.reusedTiles} already cached).',
       );
-      if (mounted) setState(() {});
+      if (mounted && identical(route, _route)) {
+        setState(() => _offlineMapReady = !summary.cancelled);
+      }
     } catch (error) {
+      if (mounted && identical(route, _route)) {
+        setState(() => _offlineMapError = '$error');
+      }
       _showMessage('Offline map download stopped: $error');
     } finally {
       if (mounted) {
@@ -7818,13 +7960,14 @@ class _RideMapScreenState extends State<RideMapScreen>
       case _MapAction.groupPip:
         await _openGroupPip();
       case _MapAction.downloadOffline:
-        await _downloadOfflineMap();
+        await _showOfflineMapDetails();
       case _MapAction.removeRoute:
         if (!widget.canEditRoute || !await _confirmRemoveRoute()) return;
         await _clearActiveRouteAndState();
       case _MapAction.clearOfflineTiles:
         await _mapLibreOfflineManager.clearAll();
         await widget.offlineTileCache.clearAll();
+        if (mounted) setState(() => _offlineMapReady = false);
         _showMessage('Offline map data cleared.');
     }
   }
@@ -12317,7 +12460,10 @@ class _DownloadProgress extends StatelessWidget {
       children: [
         Expanded(child: LinearProgressIndicator(value: progress.fraction)),
         const SizedBox(width: 10),
-        Text('${progress.completedTiles}/${progress.totalTiles}'),
+        Text(
+          '${(progress.fraction.clamp(0.0, 1.0) * 100).round()}% · '
+          '${(progress.downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} MB',
+        ),
         TextButton(onPressed: onCancel, child: const Text('Cancel')),
       ],
     ),
