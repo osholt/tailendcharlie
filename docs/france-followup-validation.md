@@ -11,7 +11,7 @@ Automated evidence below is distinct from physical ride validation.
 | #777 | Round neutral bike; pointed moving marker retained | Square neutral marker mutation fails | Stationary/moving riders on rotating maps |
 | #775 | ETA/progress sizes follow Small/Medium/Large | Disabled scaling fails; narrow layout with system text 1.6 | Moving portrait/landscape readability |
 | #801 | Preview endpoints use native map sources | Native marker omission fails | Pan/zoom on both platforms |
-| #793 | Useful POIs at explicit zooms in native and Flutter maps | Missing POI layer and raw-style bypass fail | Actual density, collision behaviour, online/offline |
+| #793 | Useful POIs at explicit zooms; bounded z14 data supplies wider city views in native and Flutter maps | Missing POI layer, missing source features and raw-style bypass fail; fresh cache loads places with zero HTTP | Actual density, collision behaviour, online/offline |
 | #794 | Day/night route corridors, two-kilometre buffer, complete status, retry | Missing buffer, partial readiness, ignored preference and bypassed iOS renderer cache fail; real Flutter style/providers reopen with all networking disabled | Entire route in airplane mode, riding zoom, deviations and interrupted downloads |
 | #795 | Imported/Rides/Bin, rename/bin/restore | Bin persistence, reimport restore and merged-tab regressions fail | Existing large real libraries |
 | #798 | Tags, hierarchical folders, colour, filters; private sharing metadata | Persistence, replay preservation, privacy and colour mutations fail | Organisation across restart and backup restore |
@@ -24,7 +24,7 @@ Automated evidence below is distinct from physical ride validation.
 ## Verification scope
 
 Each issue received focused unit/widget tests and applicable analysis. The
-combined local suite passes 2,248 mobile tests (24 existing skips), 163 server
+combined local suite passes 2,253 mobile tests (24 existing skips), 163 server
 tests and 92 website tests. Flutter analysis and server lint/format checks pass.
 Migration 0012 upgrades, downgrades and upgrades again on a disposable database,
 and Alembic reports no missing model migration. The full PostgreSQL migration,
@@ -49,3 +49,7 @@ The primary implementer reviewed the combined data flow and release diff.
   uncertainty remain documented in the build 98 validation report.
 - Uploaded builds, internal availability, external beta review and field
   validation are distinct states. Record the actual state on #802.
+
+## POI source-data check
+
+The default OpenMapTiles source emits ordinary POIs only at zoom 14 ([provider SQL](https://github.com/openmaptiles/openmaptiles/blob/master/layers/poi/poi.sql)). Lowering style minzoom alone cannot show them. At zooms 11–13 the app now decodes a bounded, centred set of at most 64 zoom-14 tiles, off the UI thread, and displays a prioritised selection of actual fuel, food and stop points. Small pans reuse decoded tiles; at zoom 14 the normal basemap labels take over. Custom providers are unchanged. A real Bristol provider tile decoded 603 useful places and selected eight labels at zoom 13, in both appearances, after reopening the downloaded corridor with networking disabled. This is cache/renderer evidence, not a physical offline ride. Wider overview coverage is deliberately bounded; pan or zoom to browse another area. On iOS these resources share the route-pack cache; on Android supplemental overview points use their ambient cache while native navigation-zoom POIs use the native downloaded region.

@@ -47,7 +47,9 @@ crash fix from build 98 has now been confirmed by the reporter.
    recent rides. The complete saved history should remain represented.
 2. Check the brighter dark roads and place labels. Fuel appears from zoom 11,
    food from zoom 12, and lodging/parking/toilets from zoom 13 on the default map;
-   labels still avoid collisions. Stationary bikes are round, moving bikes point.
+   labels still avoid collisions. At wider city views a bounded area around the
+   centre supplies detailed place data; pan or zoom to browse nearby areas.
+   Stationary bikes are round, moving bikes point.
 3. Prepare a route while connected. Open its offline-map status and wait for
    completion before going offline. Test both appearances along the route and
    within the two-kilometre corridor. Retry an interrupted download.
