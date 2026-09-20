@@ -522,6 +522,7 @@ List<ManeuverInstruction> collapseManeuvers(
     instructions.add(
       _roundaboutInstruction(
         group: maneuvers.sublist(index, last + 1),
+        previous: index > 0 ? maneuvers[index - 1] : null,
         follower: follower,
         path: path,
       ),
@@ -558,6 +559,7 @@ bool _absorbsIntoRing(RouteManeuver entry, RouteManeuver candidate) {
 
 ManeuverInstruction _roundaboutInstruction({
   required List<RouteManeuver> group,
+  RouteManeuver? previous,
   required RouteManeuver? follower,
   List<GeoPoint> path = const [],
 }) {
@@ -571,6 +573,8 @@ ManeuverInstruction _roundaboutInstruction({
       : _ringRoadBearings(
           joinPosition: entry.position,
           leavePosition: (exit ?? follower ?? last).position,
+          previousPosition: previous?.position,
+          followingPosition: exit == null ? null : follower?.position,
           path: path,
         );
   final departure =
@@ -1113,6 +1117,8 @@ double _bearingDegrees(GeoPoint from, GeoPoint to) {
 ({double approach, double departure})? _ringRoadBearings({
   required GeoPoint joinPosition,
   required GeoPoint leavePosition,
+  GeoPoint? previousPosition,
+  GeoPoint? followingPosition,
   required List<GeoPoint> path,
 }) {
   final join = _project(joinPosition, path).progressMeters;
@@ -1134,10 +1140,34 @@ double _bearingDegrees(GeoPoint from, GeoPoint to) {
     }
   }
   if (vertices < _ringRoadBearingMinimumVertices) return null;
-  final approachFrom = _pointAlong(path, join - _ringRoadBearingOuterMeters);
-  final approachTo = _pointAlong(path, join - _ringRoadBearingInnerMeters);
-  final departFrom = _pointAlong(path, leave + _ringRoadBearingInnerMeters);
-  final departTo = _pointAlong(path, leave + _ringRoadBearingOuterMeters);
+  // Never measure through the next/previous decision. A left exit followed
+  // by a nearby right turn can otherwise cancel out and be called straight on.
+  // Short arms use a shorter window while keeping a useful baseline; geometry
+  // too short to support one falls back to the provider's own bearings.
+  final before = previousPosition == null
+      ? 0.0
+      : _project(previousPosition, path).progressMeters + 5;
+  final after = followingPosition == null
+      ? _pathLength(path)
+      : _project(followingPosition, path).progressMeters - 5;
+  final approachOuter = math.min(_ringRoadBearingOuterMeters, join - before);
+  final departureOuter = math.min(_ringRoadBearingOuterMeters, after - leave);
+  final approachInner = math.min(
+    _ringRoadBearingInnerMeters,
+    approachOuter * 0.4,
+  );
+  final departureInner = math.min(
+    _ringRoadBearingInnerMeters,
+    departureOuter * 0.4,
+  );
+  if (approachOuter - approachInner < 20 ||
+      departureOuter - departureInner < 20) {
+    return null;
+  }
+  final approachFrom = _pointAlong(path, join - approachOuter);
+  final approachTo = _pointAlong(path, join - approachInner);
+  final departFrom = _pointAlong(path, leave + departureInner);
+  final departTo = _pointAlong(path, leave + departureOuter);
   if (approachFrom == null ||
       approachTo == null ||
       departFrom == null ||
