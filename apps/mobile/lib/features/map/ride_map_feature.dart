@@ -2209,7 +2209,9 @@ class _RideMapScreenState extends State<RideMapScreen>
     // must remain in the same top-leading position or the map becomes a dead end.
     final showRideMenu =
         hideChrome &&
-        (widget.onOpenRideMenu != null || hostChrome?.onMore != null);
+        (widget.onOpenRideMenu != null ||
+            hostChrome?.onMore != null ||
+            hostChrome?.menuActions.isNotEmpty == true);
     // A route can contain manoeuvres before the device has a usable location.
     // The guidance banner is only composed into the band while guidance is
     // actually visible, so nothing reserves space for a banner that is absent.
@@ -2942,7 +2944,49 @@ class _RideMapScreenState extends State<RideMapScreen>
       final navigationMenuAction = widget.onOpenRideMenu == null
           ? widget.hostChrome?.onMore
           : () => unawaited(widget.onOpenRideMenu!());
-      final rideMenu = showRideMenu
+      final hostActions =
+          widget.hostChrome?.menuActions ?? const <HostMapMenuAction>[];
+      final rideMenu =
+          showRideMenu &&
+              widget.onOpenRideMenu == null &&
+              hostActions.isNotEmpty
+          ? Material(
+              color: const Color(0xE6252E39),
+              borderRadius: BorderRadius.circular(12),
+              child: PopupMenuButton<Object>(
+                key: const Key('ride-menu-button'),
+                tooltip: 'Ride menu',
+                icon: const Icon(Icons.menu, color: Colors.white),
+                onSelected: (action) {
+                  if (action is HostMapMenuAction) {
+                    action.onSelected?.call();
+                  } else {
+                    unawaited(_handleMenuAction(action as _MapAction));
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (widget.hostChrome?.onOpenRideLibrary != null)
+                    const PopupMenuItem(
+                      value: _MapAction.rideLibrary,
+                      child: Text('Ride library'),
+                    ),
+                  for (final action in hostActions)
+                    PopupMenuItem<Object>(
+                      key: Key(action.id),
+                      value: action,
+                      enabled: action.onSelected != null,
+                      child: Row(
+                        children: [
+                          Icon(action.icon, size: 20),
+                          const SizedBox(width: 12),
+                          Expanded(child: Text(action.label)),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            )
+          : showRideMenu
           ? FloatingActionButton.small(
               key: const Key('ride-menu-button'),
               heroTag: 'ride-relay-menu',

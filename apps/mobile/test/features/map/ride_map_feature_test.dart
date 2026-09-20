@@ -7013,6 +7013,40 @@ void main() {
       expect(opened, 2);
     });
 
+    testWidgets(
+      'navigation retains the flat Settings action in both layouts (#306)',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        var opened = 0;
+        for (final size in const [Size(390, 844), Size(844, 390)]) {
+          tester.view.physicalSize = size;
+          await pumpWithChrome(
+            tester,
+            hosted: true,
+            navigating: true,
+            menuActions: [
+              HostMapMenuAction(
+                id: 'home-more-settings',
+                label: 'Settings',
+                icon: Icons.settings_outlined,
+                onSelected: () => opened++,
+              ),
+            ],
+          );
+          expect(find.byType(AppBar), findsNothing);
+          await tester.tap(find.byKey(const Key('ride-menu-button')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const Key('home-more-settings')));
+          await tester.pumpAndSettle();
+          expect(find.byKey(const Key('route-progress-panel')), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        }
+        expect(opened, 2);
+      },
+    );
+
     testWidgets('a host that brought a title does not get a second way to a '
         'destination beside it', (tester) async {
       await pumpWithChrome(tester, hosted: true);
