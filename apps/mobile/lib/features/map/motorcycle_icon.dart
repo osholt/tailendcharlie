@@ -717,12 +717,90 @@ class RiderMarkerShapePainter extends CustomPainter {
       mapBearingDegrees != old.mapBearingDegrees;
 }
 
-Future<Uint8List> rasterizeRiderMarkerShapePng({required bool directional}) =>
-    _rasterizePng(
-      size: 128,
-      paint: (canvas) => RiderMarkerShapePainter(
-        color: Colors.white,
-        borderWidth: 0,
-        headingDegrees: directional ? 0 : null,
-      ).paint(canvas, const Size.square(128)),
+// MapLibre colours and outlines SDF images using distance encoded in alpha,
+// not a normal opaque silhouette. Keep an eight-pixel distance band and padding
+// at 1x; the plugin treats iOS images as device-density sprites.
+final _riderShapeRasters = <(bool, double), Future<Uint8List>>{};
+
+Future<Uint8List> rasterizeRiderMarkerShapePng({
+  required bool directional,
+  double pixelRatio = 1,
+}) => _riderShapeRasters.putIfAbsent((
+  directional,
+  pixelRatio,
+), () => _rasterizeRiderShapeSdf(directional, pixelRatio));
+
+Future<Uint8List> _rasterizeRiderShapeSdf(
+  bool directional,
+  double pixelRatio,
+) async {
+  const side = 144;
+  final path = RiderMarkerShapePainter.shape(
+    const Size.square(128),
+    directional: directional,
+  ).shift(const Offset(8, 8));
+  final segments = <(Offset, Offset)>[];
+  for (final metric in path.computeMetrics()) {
+    var previous = metric.getTangentForOffset(0)!.position;
+    for (var distance = 1.0; distance < metric.length + 1; distance += 1) {
+      final next = metric
+          .getTangentForOffset(math.min(distance, metric.length))!
+          .position;
+      segments.add((previous, next));
+      previous = next;
+    }
+  }
+  final pixels = Uint8List(side * side * 4);
+  for (var y = 0; y < side; y++) {
+    for (var x = 0; x < side; x++) {
+      final point = Offset(x + .5, y + .5);
+      var nearestSquared = double.infinity;
+      for (final (a, b) in segments) {
+        final delta = b - a;
+        final lengthSquared = delta.distanceSquared;
+        if (lengthSquared == 0) continue;
+        final relative = point - a;
+        final t =
+            ((relative.dx * delta.dx + relative.dy * delta.dy) / lengthSquared)
+                .clamp(0.0, 1.0);
+        nearestSquared = math.min(
+          nearestSquared,
+          (point - (a + delta * t)).distanceSquared,
+        );
+      }
+      final distance =
+          math.sqrt(nearestSquared) * (path.contains(point) ? 1 : -1);
+      final alpha = (255 * (.75 + distance / 8)).round().clamp(0, 255);
+      final index = (y * side + x) * 4;
+      // Premultiplied white; only alpha is consumed by the native SDF shader.
+      pixels.fillRange(index, index + 4, alpha);
+    }
+  }
+  final buffer = await ui.ImmutableBuffer.fromUint8List(pixels);
+  final descriptor = ui.ImageDescriptor.raw(
+    buffer,
+    width: side,
+    height: side,
+    pixelFormat: ui.PixelFormat.rgba8888,
+  );
+  final codec = await descriptor.instantiateCodec();
+  final image = (await codec.getNextFrame()).image;
+  try {
+    return await _rasterizePng(
+      size: side * pixelRatio,
+      paint: (canvas) {
+        canvas.scale(pixelRatio);
+        canvas.drawImage(
+          image,
+          Offset.zero,
+          Paint()..filterQuality = FilterQuality.low,
+        );
+      },
     );
+  } finally {
+    image.dispose();
+    codec.dispose();
+    descriptor.dispose();
+    buffer.dispose();
+  }
+}

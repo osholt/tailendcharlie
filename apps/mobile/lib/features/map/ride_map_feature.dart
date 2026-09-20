@@ -5372,7 +5372,10 @@ class _RideMapScreenState extends State<RideMapScreen>
       await _ensureRiderSymbolImages(controller);
       return;
     }
-    await _registerRiderMarkerShapes(controller);
+    await _registerRiderMarkerShapes(
+      controller,
+      _nativeMarkerPixelRatio(context),
+    );
     for (final style in MotorcycleIconStyle.values) {
       await controller.addImage(
         style.name,
@@ -6309,15 +6312,22 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   static Future<void> _registerRiderMarkerShapes(
     ml.MapLibreMapController controller,
+    double pixelRatio,
   ) async {
     await controller.addImage(
       riderDirectionShapeImage,
-      await rasterizeRiderMarkerShapePng(directional: true),
+      await rasterizeRiderMarkerShapePng(
+        directional: true,
+        pixelRatio: pixelRatio,
+      ),
       true,
     );
     await controller.addImage(
       riderUnknownShapeImage,
-      await rasterizeRiderMarkerShapePng(directional: false),
+      await rasterizeRiderMarkerShapePng(
+        directional: false,
+        pixelRatio: pixelRatio,
+      ),
       true,
     );
   }
@@ -9885,7 +9895,10 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     _MiniMapSnapshot snapshot,
   ) async {
     if (!_registeredSymbolImages.contains(riderDirectionShapeImage)) {
-      await _RideMapScreenState._registerRiderMarkerShapes(controller);
+      await _RideMapScreenState._registerRiderMarkerShapes(
+        controller,
+        _nativeMarkerPixelRatio(context),
+      );
       _registeredSymbolImages.add(riderDirectionShapeImage);
     }
     final riders =
@@ -11441,6 +11454,13 @@ class _RouteStartBanner extends StatelessWidget {
     );
   }
 }
+
+// maplibre_gl decodes iOS addImage bytes using UIScreen.scale; Android uses
+// inDensity=0. Supply matching resolution so a badge keeps its logical size.
+double _nativeMarkerPixelRatio(BuildContext context) =>
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
+    ? MediaQuery.devicePixelRatioOf(context)
+    : 1;
 
 class _NavigationGuidanceBanner extends StatelessWidget {
   const _NavigationGuidanceBanner({

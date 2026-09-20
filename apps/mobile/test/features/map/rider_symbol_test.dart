@@ -11,6 +11,39 @@ import 'package:ride_relay/features/map/rider_symbol_picker.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('native badge raster carries a padded signed distance field', () async {
+    for (final directional in [true, false]) {
+      final bytes = await rasterizeRiderMarkerShapePng(
+        directional: directional,
+      );
+      final codec = await ui.instantiateImageCodec(bytes);
+      final image = (await codec.getNextFrame()).image;
+      final pixels = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
+      int alpha(int x, int y) => pixels.getUint8((y * image.width + x) * 4 + 3);
+      expect(image.width, 144);
+      expect(alpha(72, 72), 255);
+      expect(alpha(0, 0), 0);
+      // Rounded-square edge is at x=20.8: the outside must carry a smooth
+      // multi-pixel distance band for MapLibre's contrasting halo.
+      if (!directional) {
+        expect(alpha(17, 72), inInclusiveRange(80, 100));
+        expect(alpha(20, 72), inInclusiveRange(175, 190));
+        expect(alpha(22, 72), greaterThan(230));
+      }
+      image.dispose();
+      codec.dispose();
+    }
+    final retina = await ui.instantiateImageCodec(
+      await rasterizeRiderMarkerShapePng(directional: true, pixelRatio: 3),
+    );
+    final image = (await retina.getNextFrame()).image;
+    expect(image.width, 432, reason: 'iOS decodes images at screen density');
+    image.dispose();
+    retina.dispose();
+  });
+
   test('travel arrows require a current moving fix with a valid course', () {
     double? heading(double? course, double? speed, {bool fresh = true}) =>
         riderTravelHeading(
