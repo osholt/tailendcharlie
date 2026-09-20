@@ -252,13 +252,13 @@ class MapStyleRepository {
   // night did not.
   static const _roadPath = '#22272C';
   static const _roadRail = '#2A2F35';
-  static const _roadService = '#343A42';
-  static const _roadMinor = '#484F58';
-  static const _roadTertiary = '#545A64';
-  static const _roadSecondary = '#5D646D';
-  static const _roadPrimary = '#676D77';
-  static const _roadTrunk = '#71767F';
-  static const _roadMotorway = '#7A7F86';
+  static const _roadService = '#535D67';
+  static const _roadMinor = '#737D87';
+  static const _roadTertiary = '#7F8993';
+  static const _roadSecondary = '#8B959F';
+  static const _roadPrimary = '#97A1AB';
+  static const _roadTrunk = '#A3ADB7';
+  static const _roadMotorway = '#AFB9C3';
 
   /// Roads read as slabs with a dark edge rather than as outlines. The fetched
   /// style did the opposite: a light casing around a black or near-black inner
@@ -270,8 +270,8 @@ class MapStyleRepository {
   // ref 1.14:1 against its own motorway, and water names were pure black with a
   // *light* halo. A rider who cannot read a road name gets no confirmation that
   // the road they are on is the road they wanted.
-  static const _labelRoad = '#BCC1C9';
-  static const _labelMotorway = '#C9CCD1';
+  static const _labelRoad = '#EDF1F6';
+  static const _labelMotorway = '#EDF1F6';
   static const _labelPlace = '#B1B7BF';
   static const _labelWater = '#748DB1';
   static const _labelHalo = '#0B0E12';
@@ -573,12 +573,106 @@ class MapStyleRepository {
     'aeroway-taxiway': {'line-color': _groundAerowayTaxiway},
     // Roads.
     'highway_path': {'line-color': _roadPath},
-    'highway_minor': {'line-color': _minorClassColor, 'line-opacity': 1},
-    'highway_major_casing': {'line-color': _roadCasing},
-    'highway_major_inner': {'line-color': _majorClassColor},
+    'highway_minor': {
+      'line-color': _minorClassColor,
+      'line-opacity': 1,
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        12,
+        1.5,
+        14,
+        3.5,
+        16,
+        7,
+        18,
+        13,
+        20,
+        26,
+      ],
+    },
+    'highway_major_casing': {
+      'line-color': _roadCasing,
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        8,
+        2.5,
+        12,
+        4.5,
+        14,
+        7,
+        16,
+        11,
+        18,
+        19,
+        20,
+        32,
+      ],
+    },
+    'highway_major_inner': {
+      'line-color': _majorClassColor,
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        8,
+        1.5,
+        12,
+        3,
+        14,
+        5,
+        16,
+        9,
+        18,
+        16,
+        20,
+        28,
+      ],
+    },
     'highway_major_subtle': {'line-color': _roadSecondary},
-    'highway_motorway_casing': {'line-color': _roadCasing},
-    'highway_motorway_inner': {'line-color': _roadMotorway},
+    'highway_motorway_casing': {
+      'line-color': _roadCasing,
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        6,
+        2.5,
+        10,
+        4,
+        14,
+        8,
+        16,
+        13,
+        18,
+        26,
+        20,
+        44,
+      ],
+    },
+    'highway_motorway_inner': {
+      'line-color': _roadMotorway,
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        6,
+        1.5,
+        10,
+        2.5,
+        14,
+        6,
+        16,
+        10,
+        18,
+        22,
+        20,
+        38,
+      ],
+    },
     'highway_motorway_subtle': {'line-color': _roadMotorway},
     'railway': {'line-color': _roadRail},
     'railway_dashline': {'line-color': _ground},
@@ -593,17 +687,17 @@ class MapStyleRepository {
     'highway_name_other': {
       'text-color': _labelRoad,
       'text-halo-color': _labelHalo,
-      'text-halo-width': 1.2,
+      'text-halo-width': 1.8,
     },
     'highway_name_motorway': {
       'text-color': _labelMotorway,
       'text-halo-color': _labelHalo,
-      'text-halo-width': 1.2,
+      'text-halo-width': 1.8,
     },
     'water_name': {
       'text-color': _labelWater,
       'text-halo-color': _labelHalo,
-      'text-halo-width': 1.2,
+      'text-halo-width': 1.8,
     },
     'place_other': {
       'text-color': _labelPlace,
@@ -760,6 +854,14 @@ class MapStyleRepository {
           decoded['version'] == 8 &&
           decoded['sources'] is Map &&
           decoded['layers'] is List) {
+        // Reapply idempotent paint on cached documents too: riders upgrading
+        // offline keep their tiles and receive the improved road visibility.
+        if (configuration.styleUrl == configuration.darkStyleUrl &&
+            configuration.styleUrl.isNotEmpty) {
+          final style = Map<String, dynamic>.from(decoded);
+          _repaintForLegibleDarkMode(style);
+          return jsonEncode(style);
+        }
         return value;
       }
     } on Object {
