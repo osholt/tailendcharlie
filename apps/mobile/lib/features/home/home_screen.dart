@@ -74,7 +74,14 @@ Future<ImportedRoute> saveSharedRouteToLibrary({
   final existing = (await recordedRoutes.list())
       .where((route) => route.id == stableId)
       .firstOrNull;
-  if (existing != null) return existing;
+  if (existing != null) {
+    if (existing.libraryStatus == RideLibraryStatus.active) return existing;
+    final restored = existing.withLibraryDetails(
+      status: RideLibraryStatus.active,
+    );
+    await recordedRoutes.save(restored);
+    return restored;
+  }
 
   final json = imported.toJson()..['id'] = stableId;
   final route = ImportedRoute.fromJson(json);

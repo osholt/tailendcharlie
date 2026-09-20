@@ -41,6 +41,73 @@ void main() {
     expect(find.text('Test offline places'), findsOneWidget);
   });
 
+  testWidgets(
+    'rename, bin and restore are available on imported files and rides',
+    (tester) async {
+      final recorded = InMemoryRecordedRouteStore();
+      await recorded.save(_route(id: '31', name: 'Imported tour'));
+      final rides = InMemoryCompletedRideStore();
+      await rides.save(_completedRide());
+      await _pump(tester, recorded: recorded, completed: rides, places: places);
+      await tester.tap(find.byKey(const Key('library-actions-route-31')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rename'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('library-name-field')),
+        'France plan',
+      );
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect((await recorded.list()).single.name, 'France plan');
+      await tester.tap(find.byKey(const Key('library-actions-route-31')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Move to Bin'));
+      await tester.pumpAndSettle();
+      expect(find.text('France plan'), findsNothing);
+      expect(
+        (await recorded.list()).single.libraryStatus,
+        RideLibraryStatus.deleted,
+      );
+      await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('library-actions-ride-ride-209271')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Move to Bin'));
+      await tester.pumpAndSettle();
+      expect(find.text('Ride 209271'), findsNothing);
+      await tester.tap(find.byKey(const Key('ride-library-bin-tab')));
+      await tester.pumpAndSettle();
+      expect(find.text('France plan'), findsOneWidget);
+      expect(find.text('Ride 209271'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('library-actions-route-31')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Restore'));
+      await tester.pumpAndSettle();
+      expect(find.text('France plan'), findsNothing);
+      expect(
+        (await recorded.list()).single.libraryStatus,
+        RideLibraryStatus.active,
+      );
+      expect((await recorded.list()).single.deletedAt, isNull);
+      await tester.tap(
+        find.byKey(const Key('library-actions-ride-ride-209271')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Restore'));
+      await tester.pumpAndSettle();
+      expect(
+        (await rides.list()).single.libraryStatus,
+        RideLibraryStatus.active,
+      );
+      await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
+      await tester.pumpAndSettle();
+      expect(find.text('Ride 209271'), findsOneWidget);
+    },
+  );
+
   testWidgets('a long combined library is scrollable', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -58,16 +125,14 @@ void main() {
     }
 
     await _pump(tester, recorded: recorded, places: places);
-    await tester.tap(find.byKey(const Key('ride-library-recorded-tab')));
+    await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
     await tester.pumpAndSettle();
     final last = find.byKey(const Key('stored-route-candidate-recorded:0'));
     await tester.scrollUntilVisible(
       last,
       500,
       scrollable: find.descendant(
-        of: find.byKey(
-          const PageStorageKey<String>('ride-library-Recorded routes'),
-        ),
+        of: find.byKey(const PageStorageKey<String>('ride-library-rides')),
         matching: find.byType(Scrollable),
       ),
     );
@@ -121,6 +186,9 @@ void main() {
 
     expect(find.byKey(const Key('stored-route-map-preview')), findsOneWidget);
     expect(find.byType(FlutterVectorRoutePreview), findsNWidgets(2));
+    // Complete the bounded style request before tearing down this network-free test.
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
   });
 
   testWidgets('a previous ride opens its details directly from the library', (
@@ -155,52 +223,47 @@ void main() {
     expect(opened, 1);
   });
 
-  testWidgets(
-    'imports, recorder tracks and completed rides have separate tabs',
-    (tester) async {
-      final recorded = InMemoryRecordedRouteStore();
-      await recorded.save(
-        _route(id: '21', name: 'Imported GPX', sourceFileName: 'tour.gpx'),
-      );
-      await recorded.save(
-        _route(
-          id: '22',
-          name: 'Phone recording',
-          sourceFileName: 'recorded.gpx',
-        ),
-      );
-      final completed = InMemoryCompletedRideStore();
-      await completed.save(_completedRide());
+  testWidgets('recordings and completed rides share one tab beside imports', (
+    tester,
+  ) async {
+    final recorded = InMemoryRecordedRouteStore();
+    await recorded.save(
+      _route(id: '21', name: 'Imported GPX', sourceFileName: 'tour.gpx'),
+    );
+    await recorded.save(
+      _route(id: '22', name: 'Phone recording', sourceFileName: 'recorded.gpx'),
+    );
+    final completed = InMemoryCompletedRideStore();
+    await completed.save(_completedRide());
 
-      await _pump(
-        tester,
-        recorded: recorded,
-        completed: completed,
-        places: places,
-        openPreviousRide: (_, _) async => null,
-      );
+    await _pump(
+      tester,
+      recorded: recorded,
+      completed: completed,
+      places: places,
+      openPreviousRide: (_, _) async => null,
+    );
 
-      expect(find.text('Imported GPX'), findsOneWidget);
-      expect(find.text('Phone recording'), findsNothing);
-      expect(
-        find.byKey(const Key('ride-library-record-ride-209271')),
-        findsNothing,
-      );
+    expect(find.text('Imported GPX'), findsOneWidget);
+    expect(find.text('Phone recording'), findsNothing);
+    expect(
+      find.byKey(const Key('ride-library-record-ride-209271')),
+      findsNothing,
+    );
 
-      await tester.tap(find.byKey(const Key('ride-library-recorded-tab')));
-      await tester.pumpAndSettle();
-      expect(find.text('Phone recording'), findsOneWidget);
-      expect(find.text('Imported GPX'), findsNothing);
+    await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
+    await tester.pumpAndSettle();
+    expect(find.text('Phone recording'), findsOneWidget);
+    expect(find.text('Imported GPX'), findsNothing);
 
-      await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('ride-library-record-ride-209271')),
-        findsOneWidget,
-      );
-      expect(find.text('Phone recording'), findsNothing);
-    },
-  );
+    await tester.tap(find.byKey(const Key('ride-library-rides-tab')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('ride-library-record-ride-209271')),
+      findsOneWidget,
+    );
+    expect(find.text('Phone recording'), findsOneWidget);
+  });
 }
 
 Future<void> _pump(

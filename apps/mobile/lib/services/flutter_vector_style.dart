@@ -14,6 +14,16 @@ Future<vmt.Style> readFlutterVectorStyle(
   BasemapConfiguration configuration, {
   MapStyleResolution? resolution,
   http.Client Function()? clientFactory,
+}) => _readFlutterVectorStyle(
+  configuration,
+  resolution: resolution,
+  clientFactory: clientFactory,
+).timeout(const Duration(seconds: 10));
+
+Future<vmt.Style> _readFlutterVectorStyle(
+  BasemapConfiguration configuration, {
+  MapStyleResolution? resolution,
+  http.Client Function()? clientFactory,
 }) async {
   if (resolution == null) {
     final repository = await MapStyleRepository.openDefault(configuration);
@@ -31,7 +41,7 @@ Future<vmt.Style> readFlutterVectorStyle(
     () => vmt.StyleReader(
       uri: configuration.styleUrl,
       httpHeaders: const {'User-Agent': 'me.osholt.ride_relay'},
-    ).read().timeout(const Duration(seconds: 10)),
+    ).read(),
     () => _ResolvedStyleClient(
       configuration.styleUrl,
       resolved.style,

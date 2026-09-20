@@ -1,7 +1,6 @@
 import 'imported_route.dart';
 import 'ride_role.dart';
-
-enum RideLibraryStatus { active, archived, deleted }
+export 'ride_library_status.dart';
 
 class CompletedMarkerSession {
   const CompletedMarkerSession({

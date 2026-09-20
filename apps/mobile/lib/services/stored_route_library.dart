@@ -147,9 +147,14 @@ class StoredRouteLibrary {
   /// dies with the ride's own archive entry: a ride whose geometry was never
   /// captured, was damaged on disk, or has been deleted simply produces no
   /// candidate, so it cannot be selected.
-  Future<List<StoredRouteCandidate>> list() async {
+  Future<List<StoredRouteCandidate>> list({
+    bool includeInactive = false,
+  }) async {
     final candidates = <StoredRouteCandidate>[];
     for (final route in await recordedRoutes.list()) {
+      if (!includeInactive && route.libraryStatus != RideLibraryStatus.active) {
+        continue;
+      }
       if (!_hasRidableGeometry(route)) continue;
       candidates.add(
         StoredRouteCandidate(

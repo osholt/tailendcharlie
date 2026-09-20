@@ -37,6 +37,32 @@ void main() {
     expect(candidates.first.endPoint?.latitude, 51.46);
   });
 
+  test(
+    'deleted GPX survives serialisation and stays out of ride selection',
+    () async {
+      final store = InMemoryRecordedRouteStore();
+      final original = _recordedRoute(id: 'bin', name: 'Plan');
+      final deleted = original.withLibraryDetails(
+        status: RideLibraryStatus.deleted,
+        name: 'Renamed plan',
+      );
+      final restoredFromDisk = ImportedRoute.fromJsonString(
+        deleted.toJsonString(),
+      );
+      await store.save(restoredFromDisk);
+      final library = _library(store, InMemoryCompletedRideStore());
+      expect(restoredFromDisk.name, 'Renamed plan');
+      expect(restoredFromDisk.deletedAt, isNotNull);
+      expect(await library.list(), isEmpty);
+      expect(await library.list(includeInactive: true), hasLength(1));
+      await store.save(
+        restoredFromDisk.withLibraryDetails(status: RideLibraryStatus.active),
+      );
+      expect(await library.list(), hasLength(1));
+      expect((await store.list()).single.deletedAt, isNull);
+    },
+  );
+
   test('endpoint points ignore unridable fragments around the track', () async {
     final recorded = InMemoryRecordedRouteStore();
     await recorded.save(
