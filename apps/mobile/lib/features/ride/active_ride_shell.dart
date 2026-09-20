@@ -4321,6 +4321,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
       showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
+      ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
       ),

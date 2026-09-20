@@ -21,6 +21,7 @@ import '../../data/json_file_recorded_route_store.dart';
 import '../../data/json_file_route_store.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/distance_unit.dart';
+import '../../domain/riding_display_size.dart';
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart';
 import '../../domain/quick_message.dart';
@@ -494,6 +495,7 @@ class RideMapFeature extends StatefulWidget {
     this.personalRideHeatmap,
     this.globalRideHeatmap,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
     this.showRouteProgress = true,
     this.basemapConfiguration = const BasemapConfiguration(),
@@ -561,6 +563,7 @@ class RideMapFeature extends StatefulWidget {
     bool? navigating,
     HostMapChrome? hostChrome,
     DistanceUnit distanceUnit = DistanceUnit.kilometres,
+    RidingDisplaySize ridingDisplaySize = RidingDisplaySize.small,
     SpeedLimitDisplayController? speedLimitDisplay,
     bool showRouteProgress = true,
     bool darkMapStyle = false,
@@ -626,6 +629,7 @@ class RideMapFeature extends StatefulWidget {
     navigating: navigating,
     hostChrome: hostChrome,
     distanceUnit: distanceUnit,
+    ridingDisplaySize: ridingDisplaySize,
     speedLimitDisplay: speedLimitDisplay,
     showRouteProgress: showRouteProgress,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
@@ -743,6 +747,7 @@ class RideMapFeature extends StatefulWidget {
   final PersonalRideHeatmapController? personalRideHeatmap;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final DistanceUnit distanceUnit;
+  final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool showRouteProgress;
   final BasemapConfiguration basemapConfiguration;
@@ -910,6 +915,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         acquireCurrentPosition: widget.acquireCurrentPosition,
         navigationExportCoordinator: widget.navigationExportCoordinator,
         distanceUnit: widget.distanceUnit,
+        ridingDisplaySize: widget.ridingDisplaySize,
         speedLimitDisplay: widget.speedLimitDisplay,
         showRouteProgress: widget.showRouteProgress,
         localMotorcycleStyle: widget.localMotorcycleStyle,
@@ -1015,6 +1021,7 @@ class RideMapScreen extends StatefulWidget {
     this.discoveryCatalogueLoader,
     this.bikerPlaceCatalogueLoader,
     this.distanceUnit = DistanceUnit.kilometres,
+    this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
     this.showRouteProgress = true,
     this.disposeOfflineTileCache = false,
@@ -1169,6 +1176,7 @@ class RideMapScreen extends StatefulWidget {
   final Future<BikerPlaceCatalogue> Function()? bikerPlaceCatalogueLoader;
 
   final DistanceUnit distanceUnit;
+  final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool showRouteProgress;
   final bool disposeOfflineTileCache;
@@ -2782,10 +2790,11 @@ class _RideMapScreenState extends State<RideMapScreen>
                         assessment: assessment,
                         compact: landscape,
                       )
-                    : _NavigationGuidanceBanner(
+                    : NavigationGuidanceBanner(
                         guidance: guidance,
                         distanceUnit: widget.distanceUnit,
                         compact: landscape,
+                        displaySize: widget.ridingDisplaySize,
                       );
               },
             )
@@ -11371,8 +11380,10 @@ class _RouteStartBanner extends StatelessWidget {
   }
 }
 
-class _NavigationGuidanceBanner extends StatelessWidget {
-  const _NavigationGuidanceBanner({
+class NavigationGuidanceBanner extends StatelessWidget {
+  const NavigationGuidanceBanner({
+    super.key,
+    this.displaySize = RidingDisplaySize.small,
     required this.guidance,
     required this.distanceUnit,
     required this.compact,
@@ -11381,9 +11392,12 @@ class _NavigationGuidanceBanner extends StatelessWidget {
   final NavigationGuidance guidance;
   final DistanceUnit distanceUnit;
   final bool compact;
+  final RidingDisplaySize displaySize;
 
   @override
   Widget build(BuildContext context) {
+    final scale = displaySize.scale;
+    final enlarged = displaySize != RidingDisplaySize.small;
     final formatter = MeasurementFormatter(distanceUnit);
     final distance = formatter.distance(guidance.distanceMeters);
     final instruction = guidance.instruction;
@@ -11433,7 +11447,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
               children: [
                 ManeuverSymbolView(
                   instruction: instruction,
-                  size: compact ? 40 : 50,
+                  size: (compact ? 40 : 50) * scale,
                   color: const Color(0xFF68A9FF),
                 ),
                 const SizedBox(width: 10),
@@ -11467,7 +11481,7 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                           formatter.distance(meters),
                           maxLines: 1,
                           style: TextStyle(
-                            fontSize: compact ? 26 : 30,
+                            fontSize: (compact ? 26 : 30) * scale,
                             fontWeight: FontWeight.w900,
                             // Tight leading: the number is one line and every
                             // point of height here is paid for out of the band
@@ -11478,10 +11492,11 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                       ),
                       Text(
                         instruction.text,
-                        maxLines: 2,
+                        maxLines: compact && enlarged ? 1 : 2,
+                        overflow: TextOverflow.ellipsis,
                         softWrap: true,
                         style: TextStyle(
-                          fontSize: compact ? 16 : 18,
+                          fontSize: (compact ? 16 : 18) * scale,
                           fontWeight: FontWeight.w800,
                           height: 1.1,
                         ),
@@ -11509,7 +11524,8 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                                 'Then'
                                 '${followingDistance == null ? '' : ' in $followingDistance'} · '
                                 '${following.text}',
-                                maxLines: 2,
+                                maxLines: enlarged ? 1 : 2,
+                                overflow: TextOverflow.ellipsis,
                                 softWrap: true,
                                 style: TextStyle(
                                   fontSize: compact ? 14 : 15,
@@ -11521,15 +11537,16 @@ class _NavigationGuidanceBanner extends StatelessWidget {
                           ],
                         ),
                       ],
-                      Text(
-                        guidance.roadLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: compact ? 13 : 14,
-                          color: const Color(0xFFB7C2CF),
+                      if (!enlarged)
+                        Text(
+                          guidance.roadLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: compact ? 13 : 14,
+                            color: const Color(0xFFB7C2CF),
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ),
