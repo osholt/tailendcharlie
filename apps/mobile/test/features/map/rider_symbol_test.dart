@@ -11,6 +11,27 @@ import 'package:ride_relay/features/map/rider_symbol_picker.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'stationary markers are circular while travel markers retain a point',
+    () {
+      final neutral = RiderMarkerShapePainter.shape(
+        const Size.square(100),
+        directional: false,
+      );
+      final moving = RiderMarkerShapePainter.shape(
+        const Size.square(100),
+        directional: true,
+      );
+      expect(neutral.contains(const Offset(50, 12)), isTrue);
+      expect(
+        neutral.contains(const Offset(79, 79)),
+        isFalse,
+        reason: 'the old rounded square filled this point outside the circle',
+      );
+      expect(neutral.contains(const Offset(50, 4)), isFalse);
+      expect(moving.contains(const Offset(50, 4)), isTrue);
+    },
+  );
   test('native badge raster carries a padded signed distance field', () async {
     for (final directional in [true, false]) {
       final bytes = await rasterizeRiderMarkerShapePng(
@@ -25,7 +46,7 @@ void main() {
       expect(image.width, 144);
       expect(alpha(72, 72), 255);
       expect(alpha(0, 0), 0);
-      // Rounded-square edge is at x=20.8: the outside must carry a smooth
+      // Circular edge at the horizontal midpoint is x=20.8: the outside needs a
       // multi-pixel distance band for MapLibre's contrasting halo.
       if (!directional) {
         expect(alpha(17, 72), inInclusiveRange(80, 100));
