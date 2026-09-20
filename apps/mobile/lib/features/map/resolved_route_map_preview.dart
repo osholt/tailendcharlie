@@ -65,6 +65,7 @@ class ResolvedRouteMapPreview extends StatefulWidget {
     this.onControllerReady,
     this.onStyleReady,
     this.reshapeEnabled = false,
+    this.preserveCameraOnUpdate = false,
     this.onReshapeStart,
     this.onReshapeUpdate,
     this.onReshapeEnd,
@@ -79,6 +80,7 @@ class ResolvedRouteMapPreview extends StatefulWidget {
   final ValueChanged<int>? onPointTap;
   final ValueChanged<RoutePreviewPin>? onPinTap;
   final bool reshapeEnabled;
+  final bool preserveCameraOnUpdate;
   final ValueChanged<RoutePreviewReshapeStart>? onReshapeStart;
   final ValueChanged<GeoPoint>? onReshapeUpdate;
   final VoidCallback? onReshapeEnd;
@@ -142,7 +144,11 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
               widget.referencePaths,
             ) ||
             !_samePreviewPins(oldWidget.pins, widget.pins))) {
-      unawaited(_syncAndFit(fit: !widget.reshapeEnabled));
+      unawaited(
+        _syncAndFit(
+          fit: !widget.reshapeEnabled && !widget.preserveCameraOnUpdate,
+        ),
+      );
     }
   }
 
@@ -597,7 +603,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
 
     final callback = widget.onPointTap;
     final points = _points;
-    if (callback == null || points.length <= 2) return;
+    if (callback == null || points.length < 2) return;
     final screenPoints = await controller.toScreenLocationBatch(
       points.map((point) => ml.LatLng(point.latitude, point.longitude)),
     );
@@ -613,7 +619,9 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
         closestDistance = distance;
       }
     }
-    if (closest >= 0 && closestDistance <= 30) callback(closest);
+    if (closest >= 0 && closestDistance <= 30 * _platformPixelScale) {
+      callback(closest);
+    }
   }
 
   void _beginReshape(DragStartDetails details) {

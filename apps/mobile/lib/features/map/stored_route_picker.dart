@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'ride_library_browser.dart';
+import 'route_correction_screen.dart';
 
 import '../../domain/completed_ride.dart';
 import '../../domain/distance_unit.dart';
@@ -526,6 +527,11 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
     onSelected: onSelected,
     itemBuilder: (_) => [
       const PopupMenuItem(value: _EntryAction.rename, child: Text('Rename')),
+      if (status == RideLibraryStatus.active)
+        const PopupMenuItem(
+          value: _EntryAction.correct,
+          child: Text('Make a corrected copy'),
+        ),
       const PopupMenuItem(
         value: _EntryAction.organise,
         child: Text('Tags, folder & colour'),
@@ -575,6 +581,15 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
   ) async {
     final route = candidate.geometry;
     await _mutate(() async {
+      if (action == _EntryAction.correct) {
+        final copy = await RouteCorrectionScreen.show(
+          context,
+          source: route,
+          basemapConfiguration: widget.basemapConfiguration,
+        );
+        if (copy != null) await widget.library.recordedRoutes.save(copy);
+        return;
+      }
       if (action == _EntryAction.organise) {
         final organisation = await _editOrganisation(route.organisation);
         if (organisation != null) {
@@ -604,6 +619,24 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
 
   Future<void> _manageRide(CompletedRide ride, _EntryAction action) async {
     await _mutate(() async {
+      if (action == _EntryAction.correct) {
+        final route = ride.traveledRoute ?? ride.comparisonPlan;
+        if (route == null) {
+          throw const FormatException(
+            'This ride has no route geometry to copy.',
+          );
+        }
+        final copy = await RouteCorrectionScreen.show(
+          context,
+          source: route.withLibraryDetails(
+            name: ride.title,
+            organisation: ride.organisation,
+          ),
+          basemapConfiguration: widget.basemapConfiguration,
+        );
+        if (copy != null) await widget.library.recordedRoutes.save(copy);
+        return;
+      }
       if (action == _EntryAction.organise) {
         final organisation = await _editOrganisation(ride.organisation);
         if (organisation != null) {
@@ -714,7 +747,7 @@ class _StoredRoutePickerScreenState extends State<StoredRoutePickerScreen> {
 
 enum _RideLibraryAction { backup, restore }
 
-enum _EntryAction { rename, organise, bin, restore }
+enum _EntryAction { rename, organise, correct, bin, restore }
 
 /// One choosable stored route: its shape, what it is, when it was ridden and
 /// how far it goes. A list of dates is not choosable.
