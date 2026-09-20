@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:ride_relay/services/natural_voice_pack.dart';
 import 'package:ride_relay/services/neural_spoken_guidance.dart';
 import 'package:ride_relay/services/spoken_audio_mode.dart';
@@ -23,6 +24,80 @@ void main() {
     expect(backend.prepareCalls, 1);
     expect(backend.generatedPhrases, ['Ready.']);
     expect(backend.allowCachedAudio, [isFalse]);
+  });
+
+  test(
+    'stale neural distance is replaced before playback with current speech',
+    () async {
+      final playbackCalls = <String>[];
+      for (final name in [
+        'xyz.luan/audioplayers',
+        'xyz.luan/audioplayers.global',
+      ]) {
+        final channel = MethodChannel(name);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              playbackCalls.add(call.method);
+              throw PlatformException(code: 'unexpected-stale-playback');
+            });
+        addTearDown(
+          () => TestDefaultBinaryMessengerBinding
+              .instance
+              .defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, null),
+        );
+      }
+      var phrase = 'In 400 metres, turn left';
+      final backend = _RecordingBackend()
+        ..onGenerate = (text) {
+          if (text != 'Ready.') phrase = 'In 300 metres, turn left';
+        };
+      final natural = NeuralSpokenGuidanceEngine(
+        backend: backend,
+        voiceProvider: () => NaturalNavigationVoice.george,
+        audioConfigurator: () async {},
+      );
+      final fallback = _RecordingEngine();
+      final engine = FailSafeNeuralSpokenGuidanceEngine(
+        neural: natural,
+        fallback: fallback,
+      );
+      await engine.configure();
+      await engine.warmUp();
+      await engine.speakFresh(() => phrase);
+      expect(backend.generatedPhrases, contains('In 400 metres, turn left'));
+      expect(fallback.spoken, ['In 300 metres, turn left']);
+      expect(
+        playbackCalls,
+        isEmpty,
+        reason: 'reject stale inference before touching the player',
+      );
+    },
+  );
+
+  test('a passed turn is silent when neural synthesis completes', () async {
+    String? phrase = 'In 400 metres, turn left';
+    final backend = _RecordingBackend()
+      ..onGenerate = (text) {
+        if (text != 'Ready.') phrase = null;
+      };
+    final natural = NeuralSpokenGuidanceEngine(
+      backend: backend,
+      voiceProvider: () => NaturalNavigationVoice.george,
+      audioConfigurator: () async {},
+    );
+    final fallback = _RecordingEngine();
+    final engine = FailSafeNeuralSpokenGuidanceEngine(
+      neural: natural,
+      fallback: fallback,
+    );
+    await engine.configure();
+    await engine.warmUp();
+    await expectLater(
+      engine.speakFresh(() => phrase),
+      throwsA(isA<SpokenGuidanceSuperseded>()),
+    );
+    expect(fallback.spoken, isEmpty);
   });
 
   test('a neural utterance that starts in time is used whole', () async {
@@ -317,6 +392,7 @@ class _RecordingEngine implements SpokenGuidanceEngine {
 }
 
 class _RecordingBackend implements NeuralSpeechBackend {
+  void Function(String)? onGenerate;
   int prepareCalls = 0;
   final generatedPhrases = <String>[];
   final allowCachedAudio = <bool>[];
@@ -331,6 +407,7 @@ class _RecordingBackend implements NeuralSpeechBackend {
     bool allowCachedAudio = true,
   }) async {
     generatedPhrases.add(phrase);
+    onGenerate?.call(phrase);
     this.allowCachedAudio.add(allowCachedAudio);
     return '/tmp/natural-voice-prime.wav';
   }
