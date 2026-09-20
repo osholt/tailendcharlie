@@ -1,3 +1,4 @@
+import 'eta_settings_section.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -134,6 +135,8 @@ class UnitSettingsSheet extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 20),
+          const EtaSettingsSection(),
           const SizedBox(height: 20),
           Text(
             'Riding display size',

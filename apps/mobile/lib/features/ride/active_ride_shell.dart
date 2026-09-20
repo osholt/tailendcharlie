@@ -1,3 +1,4 @@
+import '../../controllers/eta_calibration_controller.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -2782,6 +2783,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         ? null
         : _carPlayJourneyProgressTracker.update(
             route: navigationRoute,
+            durationFactor: navigationRoute == null
+                ? 1
+                : EtaCalibrationScope.read(
+                        context,
+                      )?.factorFor(navigationRoute) ??
+                      1,
             geometry: routeProgress,
             speedMetersPerSecond: localSpeedIsAgeing
                 ? null

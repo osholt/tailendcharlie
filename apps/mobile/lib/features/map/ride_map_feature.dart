@@ -1,3 +1,4 @@
+import '../../controllers/eta_calibration_controller.dart';
 import 'ride_heatmap_layer.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -2810,6 +2811,10 @@ class _RideMapScreenState extends State<RideMapScreen>
               builder: (context, riderSpeed, _) {
                 final progress = _routeJourneyProgressTracker.update(
                   route: _route,
+                  durationFactor: _route == null
+                      ? 1
+                      : EtaCalibrationScope.of(context)?.factorFor(_route!) ??
+                            1,
                   geometry: _progressGeometry,
                   speedMetersPerSecond: riderSpeed?.ageing == false
                       ? riderSpeed!.value

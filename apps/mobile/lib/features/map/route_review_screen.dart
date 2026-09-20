@@ -1,3 +1,4 @@
+import '../../controllers/eta_calibration_controller.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -1169,7 +1170,17 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                       if (duration case final value?)
                         _SummaryItem(
                           icon: Icons.schedule,
-                          label: _durationLabel(value),
+                          label: _durationLabel(
+                            Duration(
+                              milliseconds:
+                                  (value.inMilliseconds *
+                                          (EtaCalibrationScope.of(
+                                                context,
+                                              )?.factorFor(_route) ??
+                                              1))
+                                      .round(),
+                            ),
+                          ),
                         ),
                       _SummaryItem(
                         icon: Icons.pin_drop_outlined,

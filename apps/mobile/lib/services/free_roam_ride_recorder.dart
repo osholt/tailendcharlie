@@ -85,7 +85,7 @@ class FreeRoamRideRecorder {
 
   /// Finishes the active navigation and resets ready for the next one.
   CompletedRide? finish() {
-    final completed = checkpoint();
+    final completed = checkpoint(complete: true);
     if (completed == null) return null;
     _reset();
     return completed;
@@ -96,7 +96,7 @@ class FreeRoamRideRecorder {
   /// Free roam has no ride journal behind it, so the owner checkpoints this
   /// when the app backgrounds or the home map is removed. A later final save
   /// uses the same ride id and safely replaces the partial record.
-  CompletedRide? checkpoint() {
+  CompletedRide? checkpoint({bool complete = false}) {
     final plan = _plannedRoute;
     final startedAt = _startedAt;
     if (plan == null || startedAt == null) return null;
@@ -121,6 +121,7 @@ class FreeRoamRideRecorder {
             waypoints: const [],
           );
     final completed = CompletedRide(
+      recordingComplete: complete,
       rideId: id,
       rideCode: 'PERSONAL',
       rideName: plan.name,
