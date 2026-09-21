@@ -34,49 +34,47 @@ void main() {
     expect(southWest[1].longitude, lessThan(start.longitude));
   });
 
-  test('keeps a directional lobe beyond fixed gateway controls', () {
-    const request = CircularRideRequest(
-      start: start,
-      distanceMeters: 80 * 1609.344,
-      direction: CircularRideDirection.northWest,
-      preferences: RoutePreferences.defaults,
-    );
-    final controls = circularRideShapingPoints(request);
-    final resized = circularRideShapingPoints(
-      request,
-      shapingDistanceMeters: request.distanceMeters * 0.6,
-    );
-
-    expect(controls, hasLength(4));
-    expect(
-      controls.every(
-        (point) =>
-            point.latitude > start.latitude &&
-            point.longitude < start.longitude,
-      ),
-      isTrue,
-      reason: 'the selected direction should contain the whole loop lobe',
-    );
-    expect(resized.first.latitude, closeTo(controls.first.latitude, 0.000001));
-    expect(
-      resized.first.longitude,
-      closeTo(controls.first.longitude, 0.000001),
-    );
-    expect(resized.last.latitude, closeTo(controls.last.latitude, 0.000001));
-    expect(resized.last.longitude, closeTo(controls.last.longitude, 0.000001));
-    expect(resized[1].longitude, isNot(closeTo(controls[1].longitude, 0.0001)));
-    expect(resized[2].latitude, isNot(closeTo(controls[2].latitude, 0.0001)));
-    expect(resized[1].longitude, lessThan(resized.first.longitude));
-    expect(resized[2].latitude, greaterThan(resized.last.latitude));
-    expect(
-      _distanceSquared(start, resized[1]),
-      greaterThan(_distanceSquared(start, resized.first)),
-    );
-    expect(
-      _distanceSquared(start, resized[2]),
-      greaterThan(_distanceSquared(start, resized.last)),
-    );
-  });
+  test(
+    'direction names the loop centre, with separated outbound/return sides',
+    () {
+      const request = CircularRideRequest(
+        start: start,
+        distanceMeters: 80 * 1609.344,
+        direction: CircularRideDirection.northWest,
+        preferences: RoutePreferences.defaults,
+      );
+      final controls = circularRideShapingPoints(request);
+      final resized = circularRideShapingPoints(
+        request,
+        shapingDistanceMeters: request.distanceMeters * .6,
+      );
+      expect(controls, hasLength(4));
+      final meanLat =
+          controls.map((point) => point.latitude).reduce((a, b) => a + b) / 4;
+      final meanLon =
+          controls.map((point) => point.longitude).reduce((a, b) => a + b) / 4;
+      expect(meanLat, greaterThan(start.latitude));
+      expect(meanLon, lessThan(start.longitude));
+      expect(
+        controls.any(
+          (point) =>
+              point.latitude < start.latitude ||
+              point.longitude > start.longitude,
+        ),
+        isTrue,
+        reason: 'individual controls may fan outside the strict NW quadrant',
+      );
+      expect(_distanceSquared(controls.first, controls.last), greaterThan(.01));
+      for (var i = 0; i < controls.length; i++) {
+        expect(
+          _distanceSquared(start, resized[i]),
+          lessThan(_distanceSquared(start, controls[i]) * .5),
+          reason:
+              'all controls must shrink when twisty roads make the first loop too long',
+        );
+      }
+    },
+  );
 
   test('another route changes the shaping controls', () {
     const request = CircularRideRequest(
@@ -160,6 +158,128 @@ void main() {
       expect(routing.attempts.single.shapingPointSearchRadiusMeters, 1000);
       expect(plan.route.shapingPoints, hasLength(4));
       expect(plan.routeSectionCount, 5);
+    },
+  );
+
+  test(
+    'rejects retracing inside an atomic response with no U-turn instruction',
+    () async {
+      final routing = _AtomicCircularRoadRoutingService(
+        unannouncedSpurFirstCandidate: true,
+      );
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 80 * 1609.344,
+          direction: CircularRideDirection.northEast,
+          preferences: RoutePreferences(style: RouteStyle.veryTwisty),
+        ),
+      );
+      expect(routing.attempts.length, 2);
+      expect(plan.request.variant, 1);
+      expect(plan.route.maneuvers, isEmpty);
+      expect(routing.attempts.last.preferences.style, RouteStyle.veryTwisty);
+    },
+  );
+
+  test(
+    'atomic routing detects a huge avoid-motorway detour and keeps the road style',
+    () async {
+      final routing = _AtomicCircularRoadRoutingService(
+        excessiveMotorwayFreeDetour: true,
+      );
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 80 * 1609.344,
+          direction: CircularRideDirection.northWest,
+          preferences: RoutePreferences(
+            style: RouteStyle.veryTwisty,
+            avoidMotorways: true,
+          ),
+        ),
+      );
+      expect(routing.attempts.length, 2);
+      expect(routing.attempts.last.preferences.style, RouteStyle.veryTwisty);
+      expect(plan.motorwayAvoidanceRelaxed, isTrue);
+      expect(plan.warnings, isNotEmpty);
+      expect(plan.actualDistanceMeters, 129000);
+    },
+  );
+
+  test('another search batch changes the loop area', () {
+    const request = CircularRideRequest(
+      start: start,
+      distanceMeters: 120000,
+      direction: CircularRideDirection.north,
+      preferences: RoutePreferences.defaults,
+    );
+    final first = circularRideShapingPoints(request);
+    final another = circularRideShapingPoints(
+      request.withVariant(CircularRidePlanner.maximumCandidateVariants),
+    );
+    expect(
+      another.first.longitude,
+      isNot(closeTo(first.first.longitude, .001)),
+    );
+  });
+
+  test(
+    'a rejected overlong geometry can resize before final quality acceptance',
+    () async {
+      final routing = _AtomicCircularRoadRoutingService(
+        unannouncedSpurFirstCandidate: true,
+        overlongFirstCandidate: true,
+      );
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 80 * 1609.344,
+          direction: CircularRideDirection.northEast,
+          preferences: RoutePreferences.defaults,
+        ),
+      );
+      expect(plan.request.variant, 0);
+      expect(routing.attempts, hasLength(2));
+      expect(plan.actualDistanceMeters, 129000);
+    },
+  );
+  test(
+    'an optional alternative timing out keeps the already valid loop',
+    () async {
+      final routing = _AtomicCircularRoadRoutingService(
+        laterRequestFails: true,
+      );
+      final plan = await CircularRidePlanner(routingService: routing).generate(
+        const CircularRideRequest(
+          start: start,
+          distanceMeters: 80 * 1609.344,
+          direction: CircularRideDirection.northEast,
+          preferences: RoutePreferences.defaults,
+        ),
+      );
+      expect(plan.request.variant, 0);
+      expect(routing.attempts, hasLength(2));
+    },
+  );
+
+  test(
+    'never returns the least bad loop when every atomic candidate retraces',
+    () async {
+      final routing = _AtomicCircularRoadRoutingService(
+        unannouncedSpurAlways: true,
+      );
+      await expectLater(
+        CircularRidePlanner(routingService: routing).generate(
+          const CircularRideRequest(
+            start: start,
+            distanceMeters: 80 * 1609.344,
+            direction: CircularRideDirection.northEast,
+            preferences: RoutePreferences.defaults,
+          ),
+        ),
+        throwsA(isA<FormatException>()),
+      );
     },
   );
 
@@ -309,7 +429,7 @@ void main() {
         ),
         throwsA(isA<FormatException>()),
       );
-      expect(routing.calls, 20);
+      expect(routing.calls, 30);
     },
   );
 
@@ -382,8 +502,8 @@ void main() {
       ),
     );
 
-    expect(routing.calls, 6);
-    expect(plan.request.variant, 0);
+    expect(routing.calls, lessThanOrEqualTo(36));
+    expect(plan.route.waypoints[1].name, 'Viewpoint');
   });
 
   test(
@@ -789,10 +909,20 @@ class _AtomicCircularRoadRoutingService
   _AtomicCircularRoadRoutingService({
     this.fullLoopHasUTurn = false,
     this.rejectMotorwayFreeLoop = false,
+    this.unannouncedSpurFirstCandidate = false,
+    this.unannouncedSpurAlways = false,
+    this.excessiveMotorwayFreeDetour = false,
+    this.overlongFirstCandidate = false,
+    this.laterRequestFails = false,
   });
 
   final bool fullLoopHasUTurn;
   final bool rejectMotorwayFreeLoop;
+  final bool unannouncedSpurFirstCandidate;
+  final bool unannouncedSpurAlways;
+  final bool excessiveMotorwayFreeDetour;
+  final bool overlongFirstCandidate;
+  final bool laterRequestFails;
   final attempts = <_AtomicRoutingAttempt>[];
   var ordinaryCalls = 0;
 
@@ -842,10 +972,38 @@ class _AtomicCircularRoadRoutingService
         routeNotFound: true,
       );
     }
+    if (laterRequestFails && attempts.length > 1) {
+      throw TimeoutException('Optional alternative timed out');
+    }
+    final stem = GeoPoint(
+      latitude: waypoints.first.latitude + .02,
+      longitude: waypoints.first.longitude,
+    );
     final isFullLoop = shapingPointIndexes.length == 4;
     return RoadRouteResult(
-      points: waypoints,
-      distanceMeters: isFullLoop ? 129000 : 118800,
+      points: laterRequestFails
+          ? [
+              waypoints.first,
+              stem,
+              ...waypoints.sublist(1, waypoints.length - 1),
+              stem,
+              waypoints.last,
+            ]
+          : unannouncedSpurAlways ||
+                (unannouncedSpurFirstCandidate && attempts.length == 1)
+          ? [
+              waypoints.first,
+              waypoints[1],
+              waypoints[2],
+              waypoints[1],
+              ...waypoints.skip(2),
+            ]
+          : waypoints,
+      distanceMeters: (overlongFirstCandidate && attempts.length == 1)
+          ? 180000
+          : excessiveMotorwayFreeDetour && resolved.avoidMotorways
+          ? 330000
+          : (isFullLoop ? 129000 : 118800),
       duration: const Duration(hours: 2),
       maneuvers: fullLoopHasUTurn && isFullLoop
           ? const [

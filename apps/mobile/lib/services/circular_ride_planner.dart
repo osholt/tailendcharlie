@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import '../domain/imported_route.dart';
 import '../domain/recorded_route_store.dart';
 import 'road_routing.dart';
+import 'circular_route_quality.dart';
 import 'route_twistiness.dart';
 
 enum CircularRideDirection {
@@ -220,7 +221,7 @@ String circularRideStandardRoutingFallbackWarning({
 class CircularRidePlanner {
   const CircularRidePlanner({required this.routingService});
 
-  static const _maximumCandidateVariants = 4;
+  static const maximumCandidateVariants = 6;
 
   final RoadRoutingService routingService;
 
@@ -335,19 +336,41 @@ class CircularRidePlanner {
     required List<_CircularRideCandidateFailureKind> failures,
     required _CircularRideRoutingFallbackState routingFallback,
   }) async {
-    for (var offset = 0; offset < _maximumCandidateVariants; offset += 1) {
+    _CircularRideCandidate? best;
+    var bestOverlap = double.infinity;
+    for (var offset = 0; offset < maximumCandidateVariants; offset += 1) {
       final candidateRequest = request.withVariant(request.variant + offset);
       try {
-        return await _generateCandidate(
+        final candidate = await _generateCandidate(
           candidateRequest,
           request.preferences,
           routingFallback: routingFallback,
         );
+        final quality = circularRouteQuality(
+          candidate.result.points,
+          deliberateStops: request.plannedStops
+              .map((stop) => stop.waypoint.point)
+              .toList(),
+        );
+        if (quality.overlapFraction < bestOverlap) {
+          best = candidate;
+          bestOverlap = quality.overlapFraction;
+        }
+        if (bestOverlap <= .015) return best;
       } on _CircularRideCandidateFailure catch (failure) {
         failures.add(failure.kind);
+      } on TimeoutException {
+        if (best != null) return best;
+        rethrow;
+      } on RoadRoutingException {
+        if (best != null) return best;
+        rethrow;
+      } on FormatException {
+        if (best != null) return best;
+        rethrow;
       }
     }
-    return null;
+    return best;
   }
 
   Future<_CircularRideCandidate> _generateCandidate(
@@ -408,15 +431,30 @@ class CircularRidePlanner {
           _CircularRideCandidateFailureKind.notClosed,
         );
       }
-      if (_hasUTurn(result)) {
-        throw const _CircularRideCandidateFailure(
-          _CircularRideCandidateFailureKind.uTurn,
-        );
-      }
       if (circularRideDistanceWithinTolerance(
         requestedMeters: request.distanceMeters,
         actualMeters: result.distanceMeters,
       )) {
+        if (_hasUTurn(
+          result,
+          deliberateStops: request.plannedStops
+              .map((stop) => stop.waypoint.point)
+              .toList(),
+        )) {
+          throw const _CircularRideCandidateFailure(
+            _CircularRideCandidateFailureKind.uTurn,
+          );
+        }
+        if (!circularRouteQuality(
+          result.points,
+          deliberateStops: request.plannedStops
+              .map((stop) => stop.waypoint.point)
+              .toList(),
+        ).usable) {
+          throw const _CircularRideCandidateFailure(
+            _CircularRideCandidateFailureKind.spur,
+          );
+        }
         return _CircularRideCandidate(
           request: request,
           preferences: preferences,
@@ -606,7 +644,14 @@ class CircularRidePlanner {
         preferences: routePreferences,
         costing: costing,
       );
-      if (_hasUTurn(result) && reducedRequest != null) {
+      if (_hasUTurn(
+            result,
+            deliberateStops: [
+              for (var index = 1; index < waypoints.length - 1; index++)
+                if (preserveInternalBoundary[index - 1]) waypoints[index],
+            ],
+          ) &&
+          reducedRequest != null) {
         request = reducedRequest;
         result = await shapingService.routeThroughShapingPoints(
           request.waypoints,
@@ -645,17 +690,47 @@ class CircularRidePlanner {
     }
 
     try {
-      return sections(
-        await route(
-          routePreferences: preferences,
-          // A circular motorcycle ride needs Valhalla's non-reversing
-          // `through` controls. OSRM can keep coordinates silent, but cannot
-          // prevent it from turning back at one of them.
-          costing: service is MotorcycleCostingRoadRoutingService
-              ? RoadRoutingCosting.motorcycle
-              : RoadRoutingCosting.preferred,
-        ),
+      final costing = service is MotorcycleCostingRoadRoutingService
+          ? RoadRoutingCosting.motorcycle
+          : RoadRoutingCosting.preferred;
+      final avoided = await route(
+        routePreferences: preferences,
+        costing: costing,
       );
+      final directLoopDistance = [
+        for (var i = 1; i < waypoints.length; i++)
+          _distanceMetres(waypoints[i - 1], waypoints[i]),
+      ].fold<double>(0, (sum, distance) => sum + distance);
+      // A motorway-only crossing can be technically reachable by a huge detour.
+      // Apply the same exception as section routing to the atomic path as well.
+      if (preferences.avoidMotorways &&
+          service is MotorcycleCostingRoadRoutingService &&
+          avoided.result.distanceMeters > directLoopDistance * 2 &&
+          avoided.result.distanceMeters - directLoopDistance > 30000) {
+        try {
+          final relaxed = await route(
+            routePreferences: preferences.copyWith(avoidMotorways: false),
+            costing: costing,
+          );
+          if (_motorwayFallbackImprovesSection(
+            avoided.result,
+            relaxed.result,
+          )) {
+            return sections(
+              relaxed,
+              motorwayAvoidanceRelaxedSections:
+                  relaxed.request.waypoints.length - 1,
+            );
+          }
+        } on TimeoutException {
+          // An optional comparison must not discard the available route.
+        } on RoadRoutingException {
+          // Continue with the available route and the normal quality checks.
+        } on FormatException {
+          // A malformed comparison cannot replace the available route.
+        }
+      }
+      return sections(avoided);
     } on TimeoutException {
       if (service is! StandardCostingRoadRoutingService) rethrow;
       routingFallback.standardRoutingOnly = true;
@@ -975,7 +1050,15 @@ bool _isClosedRoute(GeoPoint start, RoadRouteResult result) =>
     _distanceMetres(start, result.points.last) <=
         circularRideClosureToleranceMeters;
 
-bool _hasUTurn(RoadRouteResult result) => result.maneuvers.any((maneuver) {
+bool _hasUTurn(
+  RoadRouteResult result, {
+  List<GeoPoint> deliberateStops = const [],
+}) => result.maneuvers.any((maneuver) {
+  if (deliberateStops.any(
+    (stop) => _distanceMetres(stop, maneuver.position) < 150,
+  )) {
+    return false;
+  }
   final modifier = maneuver.modifier?.trim().toLowerCase().replaceAll('-', ' ');
   return modifier == 'uturn' || modifier == 'u turn';
 });
@@ -1136,49 +1219,43 @@ List<GeoPoint> circularRideShapingPoints(
   CircularRideRequest request, {
   double? shapingDistanceMeters,
 }) {
-  final variant = request.variant % 8;
+  final variant = request.variant % 12;
   final handedness = variant.isEven ? 1.0 : -1.0;
-  final rotation = ((variant ~/ 2) * 7.5) * handedness;
-  final heading = request.direction.bearingDegrees + rotation;
-  // Keep every control beyond the start in the selected direction. The two
-  // nearer controls bound the outbound and return connectors; the two deeper
-  // controls make the bulk of the ride a loop in the requested area. The old
-  // broad diamond could put one side back across a river or mountain barrier,
-  // turning a local motorway crossing into several motorway-heavy sections.
-  //
-  // Distance correction only resizes the deep lobe. Keeping the gateways at
-  // their requested-distance positions prevents an overlong first attempt from
-  // pulling a necessary bridge or mountain-pass crossing back behind the
-  // barrier on the next attempt.
-  final gatewayRadius = request.distanceMeters / 5.0;
-  final lobeDistance = math.max(
-    shapingDistanceMeters ?? request.distanceMeters,
-    request.distanceMeters * 0.7,
-  );
-  final lobeRadius = lobeDistance / 5.0;
+  const rotations = [0.0, -15.0, 15.0, -25.0, 35.0, 0.0];
+  final heading =
+      request.direction.bearingDegrees +
+      rotations[variant % 6] +
+      (variant ~/ 6) * 10;
+  // Direction describes the centre of the loop, not the bearing of every road.
+  // Broad, separated sides avoid funnelling outbound/return traffic onto one
+  // stem. Scale every control when correcting distance; fixed gateways used to
+  // trap twisty-road candidates in an overlong lobe that could never shrink.
+  final roadFactor = request.preferences.style.prefersBends ? 8.8 : 8.0;
+  final lobeRadius =
+      (shapingDistanceMeters ?? request.distanceMeters) / roadFactor;
   final controls = [
     _offset(
       request.start,
-      forwardMeters: gatewayRadius * 0.75,
-      rightMeters: gatewayRadius * 0.06 * -handedness,
+      forwardMeters: lobeRadius * .65,
+      rightMeters: lobeRadius * -.95 * handedness,
       headingDegrees: heading,
     ),
     _offset(
       request.start,
-      forwardMeters: lobeRadius * 1.12,
-      rightMeters: lobeRadius * 0.38 * -handedness,
+      forwardMeters: lobeRadius * 1.8,
+      rightMeters: lobeRadius * -.65 * handedness,
       headingDegrees: heading,
     ),
     _offset(
       request.start,
-      forwardMeters: lobeRadius * 1.12,
-      rightMeters: lobeRadius * 0.38 * handedness,
+      forwardMeters: lobeRadius * 1.8,
+      rightMeters: lobeRadius * .65 * handedness,
       headingDegrees: heading,
     ),
     _offset(
       request.start,
-      forwardMeters: gatewayRadius * 0.75,
-      rightMeters: gatewayRadius * 0.06 * handedness,
+      forwardMeters: lobeRadius * .65,
+      rightMeters: lobeRadius * .95 * handedness,
       headingDegrees: heading,
     ),
   ];
