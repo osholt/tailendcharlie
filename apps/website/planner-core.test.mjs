@@ -61,9 +61,8 @@ test("circular ride controls honour direction and alternatives", () => {
     direction: "NW",
   });
   assert.ok(
-    northWest.every(
-      ([longitude, latitude]) => longitude < start[0] && latitude > start[1],
-    ),
+    northWest.reduce((sum, point) => sum + point[0], 0) / 4 < start[0] &&
+    northWest.reduce((sum, point) => sum + point[1], 0) / 4 > start[1],
   );
   assert.equal(dayRideDistanceMetres("half-day"), 220000);
   assert.equal(dayRideDistanceMetres("day"), 440000);

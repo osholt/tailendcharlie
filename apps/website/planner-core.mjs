@@ -67,6 +67,7 @@ export function circularRideShapingCoordinates({
   distanceMetres,
   direction,
   variant = 0,
+  style = "quickest",
 }) {
   if (!validCoordinatePair(start)) throw new Error("Choose a valid start point.");
   if (!Number.isFinite(distanceMetres) || distanceMetres < 8000 || distanceMetres > 800000) {
@@ -74,16 +75,16 @@ export function circularRideShapingCoordinates({
   }
   const baseBearing = CIRCULAR_RIDE_DIRECTIONS[String(direction).toUpperCase()];
   if (!Number.isFinite(baseBearing)) throw new Error("Choose a compass direction.");
-  const normalizedVariant = Math.abs(Math.trunc(variant)) % 8;
+  const normalizedVariant = Math.abs(Math.trunc(variant)) % 12;
   const handedness = normalizedVariant % 2 === 0 ? 1 : -1;
-  const rotation = Math.trunc(normalizedVariant / 2) * 7.5 * handedness;
-  const heading = baseBearing + rotation;
-  const radius = distanceMetres / 5;
+  const rotation = [0, -15, 15, -25, 35, 0][normalizedVariant % 6];
+  const heading = baseBearing + rotation + Math.floor(normalizedVariant / 6) * 10;
+  const radius = distanceMetres / (style === "quickest" ? 8 : 8.8);
   return [
-    offsetCoordinate(start, radius * 0.75, radius * 0.06 * -handedness, heading),
-    offsetCoordinate(start, radius * 1.12, radius * 0.38 * -handedness, heading),
-    offsetCoordinate(start, radius * 1.12, radius * 0.38 * handedness, heading),
-    offsetCoordinate(start, radius * 0.75, radius * 0.06 * handedness, heading),
+    offsetCoordinate(start, radius * 0.65, radius * 0.95 * -handedness, heading),
+    offsetCoordinate(start, radius * 1.8, radius * 0.65 * -handedness, heading),
+    offsetCoordinate(start, radius * 1.8, radius * 0.65 * handedness, heading),
+    offsetCoordinate(start, radius * 0.65, radius * 0.95 * handedness, heading),
   ];
 }
 
