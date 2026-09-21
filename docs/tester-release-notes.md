@@ -36,6 +36,35 @@ permissions by design.
 - ...
 ```
 
+## iOS build 101 / Android build 101 — 1.0.1 — 21 September 2026
+
+### Fixed
+
+- Circular rides use wider loop shapes with separated outward and return sides.
+  The compass choice describes the overall loop area. Complete-route checks reject
+  unintended U-turns and heavy backtracking, including unannounced reversals.
+- Twisty routes can resize before being rejected. Excessive detours caused by
+  motorway avoidance use the existing disclosed exception; the selected road
+  style is preserved. Deliberate café/viewpoint access is still allowed.
+- Motorcycle discoveries and biker cafés appear at useful regional zooms.
+  Markers are spaced and limited together so dense areas remain readable, with
+  room reserved through alternating categories. Preview maps use the same rule.
+
+### What to test
+
+- Generate Direct, Twisty and Very twisty loops in several directions. Inspect
+  their overall shape and any motorway warning before confirming.
+- Pan and zoom with motorcycle layers enabled. Sparse discoveries should remain
+  visible farther out; crowded markers should thin out and return as you zoom in.
+
+### Known limitations
+
+- A short shared access road or crossing can still be necessary. The planner
+  refuses a loop if no candidate meets its quality and distance checks.
+- Live provider checks and automated tests are complete; ride validation remains
+  outstanding. Report the build number, direction, distance and road preference
+  with any failing example.
+
 ## iOS build 100 / Android build 100 — 1.0.1 — 21 September 2026
 
 ### Fixed

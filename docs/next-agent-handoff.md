@@ -2,6 +2,21 @@
 
 Updated: 2026-09-21
 
+## Build 101 — circular routes and discovery
+
+#833 tracks the authorised tester release; #670 covers circular quality and the
+latest direction clarification on #644, and #832 covers discovery visibility.
+See [build 101 validation](build-101-validation.md) and the tester notes.
+
+Require every protected-main check before merge. Deploy the relay at the exact
+merged app commit, verify `serverBuildCommit`, and publish build 101 to TestFlight
+external testers and Android alpha (`notification_mode=dry-run`). User release
+authorisation persists; no further permission is required. Check #833 for actual
+workflow/store evidence. Keep field issues ready for validation until ridden.
+
+Build 100 was distributed on both platforms at
+`c4de72dea99e6250188161dce7c8ab91c12be38f`; #818 has the completed release evidence.
+
 ## Build 100 — build 99 field regressions
 
 #818 tracks the latest eight regressions and the authorised tester release.
