@@ -36,6 +36,45 @@ permissions by design.
 - ...
 ```
 
+## iOS build 100 / Android build 100 — 1.0.1 — 21 September 2026
+
+### Fixed
+
+- Removed the business-name boxes and restored the earlier road widths and
+  minor-road contrast. Road and town names remain readable.
+- Downloaded map resources reuse a bounded memory cache, and normal map display
+  no longer waits for disk-cache maintenance.
+- Settings is available from the map menu during navigation.
+- Circular-route failures now show a reason with options to edit or try another
+  loop, instead of silently returning to setup.
+- Rider markers have a pointed nose. Direction also works when GPS provides
+  positions without a course, and stays visible while stopped.
+- The landscape rider stays at the right third and moves clear of navigation
+  panels, including Medium and Large text.
+- Travelled distance and route progress survive an off-route stop and reopening
+  the map. Remaining distance and ETA include the road back to the route plus
+  the remaining planned journey when a rejoin is available.
+
+### What to test
+
+1. Compare the Bristol map at town and street scale with build 99. Pan over a
+   downloaded route, including after closing and reopening the app.
+2. Open Settings during navigation. Try circular routes and recovery after a
+   failed request.
+3. Ride with each text size in portrait and landscape. Check the rider remains
+   visible and that its pointed nose follows travel direction.
+4. Leave the route for a stop, reopen the app and rejoin. Check ridden distance
+   and remaining distance/time before, during and after the stop.
+
+### Known limitations
+
+- New road routing still requires connectivity. Without a usable rejoin route,
+  the app shows distance left on the original plan and waits to give an ETA.
+- Downloaded map resources must first be prepared successfully. Cold network
+  tile loading still depends on the map provider.
+- These fixes still need confirmation during a real ride; automated and rendered
+  checks do not establish sunlight readability or device performance.
+
 ## iOS build 99 / Android build 99 — 1.0.1 — 20 September 2026
 
 This follow-up addresses the second set of France-trip feedback. The background

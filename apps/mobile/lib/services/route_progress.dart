@@ -8,13 +8,17 @@ class RouteProgressGeometry {
     required this.remainingPaths,
     required this.progressMeters,
     required this.totalMeters,
+    this.travelledMeters = 0,
+    this.distanceOffRouteMeters = 0,
   });
 
   const RouteProgressGeometry.empty()
     : riddenPaths = const [],
       remainingPaths = const [],
       progressMeters = 0,
-      totalMeters = 0;
+      totalMeters = 0,
+      travelledMeters = 0,
+      distanceOffRouteMeters = 0;
 
   /// The planned route behind the rider. This is a split of the *plan*, not a
   /// record of where anyone has been: it is route geometry the rider is deemed
@@ -24,6 +28,8 @@ class RouteProgressGeometry {
   final List<List<GeoPoint>> remainingPaths;
   final double progressMeters;
   final double totalMeters;
+  final double travelledMeters;
+  final double distanceOffRouteMeters;
 }
 
 /// Along-route positions for the route's deliberate stops, in waypoint order.
@@ -99,27 +105,100 @@ class RouteProgressTracker {
   String? _routeFingerprint;
   double _progressMeters = 0;
   bool _hasProgressFix = false;
+  double _travelledMeters = 0;
+  GeoPoint? _lastTravelPoint;
+  DateTime? _lastTravelAt;
+
+  static String fingerprint(ImportedRoute route) =>
+      '${route.id}:${route.importedAt.toIso8601String()}:${route.pathPointCount}';
+
+  Map<String, Object?> get checkpoint => {
+    'route': _routeFingerprint,
+    'progress': _progressMeters,
+    'hasFix': _hasProgressFix,
+    'travelled': _travelledMeters,
+    if (_lastTravelPoint != null) 'position': _lastTravelPoint!.toJson(),
+    if (_lastTravelAt != null) 'at': _lastTravelAt!.toIso8601String(),
+  };
+
+  void restore(ImportedRoute route, Map<String, Object?> saved) {
+    if (saved['route'] != fingerprint(route)) return;
+    final progress = saved['progress'];
+    final travelled = saved['travelled'];
+    if (progress is! num ||
+        !progress.isFinite ||
+        progress < 0 ||
+        travelled is! num ||
+        !travelled.isFinite ||
+        travelled < 0) {
+      return;
+    }
+    if (_routeFingerprint != fingerprint(route)) reset();
+    _routeFingerprint = fingerprint(route);
+    _progressMeters = math.max(_progressMeters, progress.toDouble());
+    _travelledMeters = math.max(_travelledMeters, travelled.toDouble());
+    _hasProgressFix = _hasProgressFix || saved['hasFix'] == true;
+    final at = DateTime.tryParse(saved['at'] as String? ?? '');
+    if (at != null &&
+        (_lastTravelAt == null || at.isAfter(_lastTravelAt!)) &&
+        saved['position'] is Map) {
+      try {
+        _lastTravelPoint = GeoPoint.fromJson(
+          Map<String, Object?>.from(saved['position'] as Map),
+        );
+        _lastTravelAt = at;
+      } on Object {
+        /* A damaged last fix does not invalidate valid totals. */
+      }
+    }
+  }
+
+  void _recordTravel(GeoPoint? point, DateTime? at, double? accuracyMeters) {
+    if (point == null ||
+        at == null ||
+        (accuracyMeters != null && accuracyMeters > 60)) {
+      return;
+    }
+    if (_lastTravelAt != null && !at.isAfter(_lastTravelAt!)) return;
+    if (_lastTravelPoint != null && _lastTravelAt != null) {
+      final seconds = at.difference(_lastTravelAt!).inMilliseconds / 1000;
+      final distance = _distance(point, _lastTravelPoint!);
+      // Ignore GPS jitter/teleports and do not bridge long tracking outages.
+      if (seconds <= 120 && distance >= 3 && distance / seconds <= 70) {
+        _travelledMeters += distance;
+      }
+    }
+    _lastTravelPoint = point;
+    _lastTravelAt = at;
+  }
 
   void reset() {
     _routeFingerprint = null;
     _progressMeters = 0;
     _hasProgressFix = false;
+    _travelledMeters = 0;
+    _lastTravelAt = null;
+    _lastTravelPoint = null;
   }
 
-  RouteProgressGeometry update(ImportedRoute? route, GeoPoint? position) {
+  RouteProgressGeometry update(
+    ImportedRoute? route,
+    GeoPoint? position, {
+    DateTime? recordedAt,
+    double? accuracyMeters,
+  }) {
     if (route == null || route.paths.isEmpty) {
       reset();
       return const RouteProgressGeometry.empty();
     }
-    final fingerprint =
-        '${route.id}:${route.importedAt.toIso8601String()}:'
-        '${route.pathPointCount}';
-    if (_routeFingerprint != fingerprint) {
-      _routeFingerprint = fingerprint;
-      _progressMeters = 0;
-      _hasProgressFix = false;
+    final routeKey = fingerprint(route);
+    if (_routeFingerprint != routeKey) {
+      reset();
+      _routeFingerprint = routeKey;
     }
 
+    _recordTravel(position, recordedAt ?? position?.recordedAt, accuracyMeters);
+    var offRouteMeters = 0.0;
     final primaryIndex = _primaryPathIndex(route.paths);
     final primary = route.paths[primaryIndex].points;
     final total = _pathLength(primary);
@@ -129,6 +208,7 @@ class RouteProgressTracker {
         primary,
         previousProgressMeters: _hasProgressFix ? _progressMeters : null,
       );
+      offRouteMeters = candidate.distanceMeters;
       if (candidate.distanceMeters <= maximumTrackingDistanceMeters) {
         _progressMeters = math.max(_progressMeters, candidate.progressMeters);
         _hasProgressFix = true;
@@ -152,6 +232,8 @@ class RouteProgressTracker {
       remainingPaths: List.unmodifiable(remaining),
       progressMeters: _progressMeters,
       totalMeters: total,
+      travelledMeters: _travelledMeters,
+      distanceOffRouteMeters: offRouteMeters,
     );
   }
 }
@@ -344,4 +426,25 @@ class _SplitPath {
 
   final List<GeoPoint> ridden;
   final List<GeoPoint> remaining;
+}
+
+/// Locates a rejoin endpoint along the original plan, keeping loop ambiguity
+/// close to progress already established by real on-route fixes.
+({double progressMeters, double distanceMeters})? routeRejoinProgress(
+  ImportedRoute route,
+  GeoPoint point,
+  double previousProgressMeters,
+) {
+  if (route.paths.isEmpty) return null;
+  final path = route.paths[_primaryPathIndex(route.paths)].points;
+  if (path.length < 2) return null;
+  final projected = _project(
+    point,
+    path,
+    previousProgressMeters: previousProgressMeters,
+  );
+  return (
+    progressMeters: projected.progressMeters,
+    distanceMeters: projected.distanceMeters,
+  );
 }

@@ -30,6 +30,11 @@ void main() {
       );
       expect(neutral.contains(const Offset(50, 4)), isFalse);
       expect(moving.contains(const Offset(50, 4)), isTrue);
+      expect(
+        moving.contains(const Offset(12, 20)),
+        isFalse,
+        reason: 'The pointed nose must leave its shoulders clear',
+      );
     },
   );
   test('native badge raster carries a padded signed distance field', () async {

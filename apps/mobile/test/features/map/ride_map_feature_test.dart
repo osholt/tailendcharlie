@@ -17,6 +17,7 @@ import 'package:ride_relay/controllers/personal_ride_heatmap_controller.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/riding_display_size.dart';
 import 'package:ride_relay/domain/geo_point.dart' as awareness_geo;
 import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/domain/imported_route.dart';
@@ -28,6 +29,8 @@ import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/hazard_map_symbol.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
+import 'package:ride_relay/features/map/route_progress_panel.dart';
+import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/relay/live_presence.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/biker_place_catalogue.dart';
@@ -49,6 +52,7 @@ import 'package:ride_relay/services/speed_limit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   final originalMapLibrePlatformFactory = ml.MapLibrePlatform.createInstance;
 
   setUpAll(() {
@@ -130,6 +134,229 @@ void main() {
       reason: 'the last-known position remains available to the main map',
     );
   });
+
+  testWidgets('local rider gets a travel arrow when GPS omits course (#777)', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final directory = Directory.systemTemp.createTempSync('marker-direction');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    addTearDown(cache.dispose);
+    final now = DateTime.now();
+    final navigation = ValueNotifier(
+      MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.45, longitude: -2.59),
+        recordedAt: now,
+        speedMetersPerSecond: 10,
+        accuracyMeters: 5,
+      ),
+    );
+    addTearDown(navigation.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          navigationPosition: navigation,
+          navigating: true,
+          discoveryCatalogueLoader: () async =>
+              const MotorcycleDiscoveryCatalogue([]),
+          bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    navigation.value = MapNavigationPosition(
+      point: const GeoPoint(latitude: 51.45, longitude: -2.5897),
+      recordedAt: now.add(const Duration(seconds: 2)),
+      speedMetersPerSecond: 10,
+      accuracyMeters: 5,
+    );
+    await tester.pumpAndSettle();
+    final badge = tester
+        .widgetList<RiderMarkerBadge>(find.byType(RiderMarkerBadge))
+        .where((b) => b.mapMarker)
+        .first;
+    expect(badge.headingDegrees, closeTo(90, .1));
+  });
+
+  testWidgets(
+    'all navigation sizes keep the rider clear of measured panels (#821)',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({});
+      final directory = Directory.systemTemp.createTempSync('rider-clearance');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final route = _testRoute(
+        id: 'clearance',
+        name: 'Clearance',
+        maneuvers: const [
+          RouteManeuver(
+            position: GeoPoint(latitude: 51.46, longitude: -2.58),
+            type: 'turn',
+            modifier: 'right',
+            name: 'Station Road',
+          ),
+        ],
+      );
+      final position = ValueNotifier(
+        MapNavigationPosition(
+          point: const GeoPoint(latitude: 51.455, longitude: -2.585),
+          recordedAt: DateTime.now(),
+          speedMetersPerSecond: 10,
+          headingDegrees: 45,
+          accuracyMeters: 5,
+        ),
+      );
+      addTearDown(position.dispose);
+      for (final size in const [Size(390, 844), Size(844, 390)]) {
+        tester.view.physicalSize = size;
+        for (final display in RidingDisplaySize.values) {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: RideMapScreen(
+                routeStore: InMemoryRouteStore(route),
+                routeImporter: RouteImporter(source: const _NoFileSource()),
+                offlineTileCache: cache,
+                navigationPosition: position,
+                navigating: true,
+                ridingDisplaySize: display,
+                discoveryCatalogueLoader: () async =>
+                    const MotorcycleDiscoveryCatalogue([]),
+                bikerPlaceCatalogueLoader: () async =>
+                    BikerPlaceCatalogue.empty,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final badge = find
+              .byWidgetPredicate((w) => w is RiderMarkerBadge && w.mapMarker)
+              .first;
+          final rider = tester.getRect(badge);
+          expect(
+            rider.center.dx,
+            closeTo(size.width * (size.width > size.height ? 2 / 3 : .5), 3),
+          );
+          for (final key in [
+            'route-progress-panel',
+            'navigation-guidance-banner',
+            'speed-compass-cluster',
+          ]) {
+            final panel = find.byKey(Key(key));
+            if (panel.evaluate().isEmpty) continue;
+            expect(
+              rider.overlaps(tester.getRect(panel)),
+              false,
+              reason: '$size $display $key: $rider',
+            );
+          }
+          expect(tester.takeException(), isNull);
+        }
+      }
+    },
+  );
+
+  testWidgets(
+    'reopening off route restores the travelled and remaining distances (#822)',
+    (tester) async {
+      final directory = Directory.systemTemp.createTempSync('progress-restore');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      addTearDown(cache.dispose);
+      final route = _testRoute(
+        id: 'persisted-journey',
+        name: 'Persisted journey',
+      );
+      final now = DateTime.now();
+      final position = ValueNotifier(
+        MapNavigationPosition(
+          point: route.paths.first.points.first,
+          recordedAt: now,
+          speedMetersPerSecond: 10,
+          accuracyMeters: 5,
+        ),
+      );
+      addTearDown(position.dispose);
+      Future<void> open() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: RideMapScreen(
+              routeStore: InMemoryRouteStore(route),
+              routeImporter: RouteImporter(source: const _NoFileSource()),
+              offlineTileCache: cache,
+              navigationPosition: position,
+              navigating: true,
+              discoveryCatalogueLoader: () async =>
+                  const MotorcycleDiscoveryCatalogue([]),
+              bikerPlaceCatalogueLoader: () async => BikerPlaceCatalogue.empty,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await open();
+      position.value = MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.455, longitude: -2.585),
+        recordedAt: now.add(const Duration(seconds: 30)),
+        speedMetersPerSecond: 10,
+        accuracyMeters: 5,
+      );
+      await tester.pumpAndSettle();
+      final onRoad = tester
+          .widget<RouteProgressPanel>(find.byType(RouteProgressPanel))
+          .progress;
+      expect(onRoad.travelledDistanceMeters, greaterThan(600));
+      position.value = MapNavigationPosition(
+        point: const GeoPoint(latitude: 51.458, longitude: -2.585),
+        recordedAt: now.add(const Duration(seconds: 60)),
+        speedMetersPerSecond: 0,
+        accuracyMeters: 5,
+      );
+      await tester.pumpAndSettle();
+      final atCafe = tester
+          .widget<RouteProgressPanel>(find.byType(RouteProgressPanel))
+          .progress;
+      expect(atCafe.awaitingRejoin, true);
+      expect(
+        atCafe.remainingDistanceMeters,
+        closeTo(onRoad.remainingDistanceMeters, 1),
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await open();
+      final reopened = tester
+          .widget<RouteProgressPanel>(find.byType(RouteProgressPanel))
+          .progress;
+      expect(
+        reopened.travelledDistanceMeters,
+        closeTo(atCafe.travelledDistanceMeters, 1),
+      );
+      expect(
+        reopened.remainingDistanceMeters,
+        closeTo(atCafe.remainingDistanceMeters, 1),
+      );
+      expect(find.byKey(const Key('eta-travelled-distance')), findsOneWidget);
+    },
+  );
 
   test('native source updates follow app visibility on iOS (#732)', () {
     expect(
@@ -7013,6 +7240,40 @@ void main() {
       expect(opened, 2);
     });
 
+    testWidgets(
+      'navigation retains the flat Settings action in both layouts (#306)',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        var opened = 0;
+        for (final size in const [Size(390, 844), Size(844, 390)]) {
+          tester.view.physicalSize = size;
+          await pumpWithChrome(
+            tester,
+            hosted: true,
+            navigating: true,
+            menuActions: [
+              HostMapMenuAction(
+                id: 'home-more-settings',
+                label: 'Settings',
+                icon: Icons.settings_outlined,
+                onSelected: () => opened++,
+              ),
+            ],
+          );
+          expect(find.byType(AppBar), findsNothing);
+          await tester.tap(find.byKey(const Key('ride-menu-button')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const Key('home-more-settings')));
+          await tester.pumpAndSettle();
+          expect(find.byKey(const Key('route-progress-panel')), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        }
+        expect(opened, 2);
+      },
+    );
+
     testWidgets('a host that brought a title does not get a second way to a '
         'destination beside it', (tester) async {
       await pumpWithChrome(tester, hosted: true);
@@ -7187,6 +7448,34 @@ void main() {
       },
     );
 
+    testWidgets(
+      'a successful circular request reaches review without reopening setup',
+      (tester) async {
+        final routing = _BlockingRoadRoutingService()..release.complete();
+        final position = ValueNotifier(
+          const GeoPoint(latitude: 51.45, longitude: -2.59),
+        );
+        addTearDown(position.dispose);
+        await pumpMap(
+          tester,
+          started: false,
+          authority: RouteAuthority.personal,
+          currentPosition: position,
+          roadRoutingService: routing,
+          circularRideRequestToken: Object(),
+        );
+        await tester.ensureVisible(
+          find.byKey(const Key('generate-circular-ride')),
+        );
+        await tester.tap(find.byKey(const Key('generate-circular-ride')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('confirm-reviewed-route')), findsOneWidget);
+        expect(find.text('Create a circular ride'), findsNothing);
+        expect(find.text('Circular route unavailable'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('a failed circular route keeps its chosen parameters', (
       tester,
     ) async {
@@ -7211,6 +7500,11 @@ void main() {
       await tester.tap(find.byKey(const Key('generate-circular-ride')));
       await tester.pumpAndSettle();
 
+      expect(find.text('Create a circular ride'), findsNothing);
+      expect(find.text('Circular route unavailable'), findsOneWidget);
+      expect(find.textContaining('routing unavailable'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('edit-failed-circular-route')));
+      await tester.pumpAndSettle();
       expect(find.text('Create a circular ride'), findsOneWidget);
       final distance = tester.widget<TextFormField>(
         find.byKey(const Key('circular-distance')),

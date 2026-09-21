@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -49,12 +50,14 @@ Future<vmt.Style> _readFlutterVectorStyle(
   final styleKey = FlutterVectorResourceCache.key(
     'presentation-v3:${configuration.styleUrl}:${configuration.restrainedLightStyle}:${configuration.dark}',
   );
+  String? savedStyle;
   if (resolution == null && cache != null) {
     final saved = await cache.read(styleKey);
     if (saved != null) {
       try {
         final document = utf8.decode(saved);
         jsonDecode(document);
+        savedStyle = document;
         resolution = MapStyleResolution(document, MapStyleOutcome.cached);
       } on Object {
         /* Refetch a corrupt style. */
@@ -72,15 +75,27 @@ Future<vmt.Style> _readFlutterVectorStyle(
   if (!resolution.hasBasemap) {
     throw StateError('The basemap style is unavailable.');
   }
+  final document = Map<String, dynamic>.from(
+    jsonDecode(resolution.style) as Map,
+  );
+  MapStyleRepository.applyPresentation(document, configuration);
+  resolution = MapStyleResolution(
+    jsonEncode(document),
+    resolution.outcome,
+    error: resolution.error,
+  );
   if (cache != null) {
-    try {
-      await cache.write(
-        styleKey,
-        Uint8List.fromList(utf8.encode(resolution.style)),
-      );
+    if (savedStyle == resolution.style) {
       resources?.add(styleKey);
-    } on Object {
-      if (requireWrite) rethrow;
+    } else {
+      final writing = cache
+          .write(styleKey, Uint8List.fromList(utf8.encode(resolution.style)))
+          .then((_) => resources?.add(styleKey));
+      if (requireWrite) {
+        await writing;
+      } else {
+        unawaited(writing.catchError((Object _) => null));
+      }
     }
   }
   final resolved = resolution;

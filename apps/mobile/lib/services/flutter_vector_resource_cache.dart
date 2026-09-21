@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -16,9 +16,28 @@ class FlutterVectorResourceCache {
   FlutterVectorResourceCache(
     this.directory, {
     this.maximumBytes = 1024 * 1024 * 1024,
+    this.maximumMemoryBytes = 32 * 1024 * 1024,
   });
   final Directory directory;
   final int maximumBytes;
+  final int maximumMemoryBytes;
+  final _memory = <String, Uint8List>{};
+  final _reads = <String, Future<Uint8List?>>{};
+  int _memoryBytes = 0;
+
+  void _remember(String key, Uint8List bytes) {
+    final old = _memory.remove(key);
+    _memoryBytes -= old?.length ?? 0;
+    if (bytes.length > maximumMemoryBytes) return;
+    _memory[key] = bytes;
+    _memoryBytes += bytes.length;
+    while (_memoryBytes > maximumMemoryBytes) {
+      _memoryBytes -= _memory.remove(_memory.keys.first)!.length;
+    }
+  }
+
+  /// Allows download managers to wait for durable writes, never just RAM.
+  Future<void> get flushed => _writes;
   Future<void> _writes = Future.value();
   int? _bytes;
   static final Map<String, Future<FlutterVectorResourceCache>> _instances = {};
@@ -44,12 +63,30 @@ class FlutterVectorResourceCache {
     return File(path.join(directory.path, key));
   }
 
-  Future<Uint8List?> read(String resourceKey) async {
+  Future<bool> containsOnDisk(String resourceKey) async {
+    final stat = await file(resourceKey).stat();
+    return stat.type == FileSystemEntityType.file && stat.size > 0;
+  }
+
+  Future<Uint8List?> read(String resourceKey) {
+    final hot = _memory.remove(resourceKey);
+    if (hot != null) {
+      _memory[resourceKey] = hot;
+      return Future.value(hot);
+    }
+    return _reads.putIfAbsent(resourceKey, () => _readDisk(resourceKey));
+  }
+
+  Future<Uint8List?> _readDisk(String resourceKey) async {
     try {
       final bytes = await file(resourceKey).readAsBytes();
-      return bytes.isEmpty ? null : bytes;
+      if (bytes.isEmpty) return null;
+      _remember(resourceKey, bytes);
+      return bytes;
     } on FileSystemException {
       return null;
+    } finally {
+      _reads.remove(resourceKey);
     }
   }
 
@@ -77,6 +114,7 @@ class FlutterVectorResourceCache {
       await temporary.writeAsBytes(data, flush: true);
       await temporary.rename(target.path);
       _bytes = _bytes! - previous + data.length;
+      _remember(resourceKey, data);
     });
     _writes = operation.catchError((Object _) {});
     return operation;
@@ -84,6 +122,9 @@ class FlutterVectorResourceCache {
 
   Future<void> clear() async {
     await _writes;
+    await Future.wait(_reads.values.toList());
+    _memory.clear();
+    _memoryBytes = 0;
     if (await directory.exists()) await directory.delete(recursive: true);
     await directory.create(recursive: true);
     _bytes = 0;
@@ -107,7 +148,7 @@ class CachedVectorHttpClient extends http.BaseClient {
     if (request.method != 'GET') return inner.send(request);
     final key = FlutterVectorResourceCache.key(request.url.toString());
     final saved = await cache.read(key);
-    if (saved != null) {
+    if (saved != null && (!requireWrite || await cache.containsOnDisk(key))) {
       resources?.add(key);
       return http.StreamedResponse(Stream.value(saved), 200);
     }
@@ -120,13 +161,15 @@ class CachedVectorHttpClient extends http.BaseClient {
     if (response.statusCode == 200 && bytes.isNotEmpty) {
       if (request.url.path.endsWith('.pbf') ||
           request.url.path.endsWith('.mvt')) {
-        vtr.VectorTileReader().read(bytes);
+        await compute(_validateVectorTile, bytes);
       }
-      try {
-        await cache.write(key, bytes);
-        resources?.add(key);
-      } on FileSystemException {
-        if (requireWrite) rethrow;
+      final writing = cache.write(key, bytes).then((_) => resources?.add(key));
+      if (requireWrite) {
+        await writing;
+      } else {
+        // Rendering must not wait for a cold disk inventory and fsync. The
+        // explicit offline downloader still waits and fails on full storage.
+        unawaited(writing.catchError((Object _) => null));
       }
     }
     return http.StreamedResponse(
@@ -138,4 +181,8 @@ class CachedVectorHttpClient extends http.BaseClient {
 
   @override
   void close() => inner.close();
+}
+
+void _validateVectorTile(Uint8List bytes) {
+  vtr.VectorTileReader().read(bytes);
 }

@@ -60,7 +60,6 @@ import '../../services/map_geojson.dart';
 import '../../services/map_style_repository.dart';
 import '../../services/maplibre_offline_manager.dart';
 import '../../services/flutter_vector_offline_manager.dart';
-import '../../services/map_places.dart';
 import '../../services/map_camera_command.dart';
 import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
@@ -78,6 +77,7 @@ import '../../services/route_importer.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_journey_progress.dart';
 import '../../services/route_progress.dart';
+import '../../services/rider_travel_direction.dart';
 import '../../services/route_reshape_planner.dart';
 import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
@@ -1213,10 +1213,34 @@ class _RideMapScreenState extends State<RideMapScreen>
   static const _navigationGuidancePlanner = NavigationGuidancePlanner();
   static const _discoveryLineSource = 'ride-relay-discovery-lines';
   static const _discoveryPointSource = 'ride-relay-discovery-points';
-  static const _mapPlacesSource = 'ride-relay-map-places';
 
   final MapControllerImpl _mapController = MapControllerImpl();
+  final _localTravelDirection = RiderTravelDirection();
   final RouteProgressTracker _routeProgressTracker = RouteProgressTracker();
+  SharedPreferences? _progressPreferences;
+  DateTime? _lastProgressSavedAt;
+  static const _progressCheckpointKey = 'navigation_progress_v1';
+
+  void _saveProgressCheckpoint({bool force = false}) {
+    final preferences = _progressPreferences;
+    if (preferences == null || _route == null) return;
+    final now = DateTime.now();
+    if (!force &&
+        _lastProgressSavedAt != null &&
+        now.difference(_lastProgressSavedAt!) < const Duration(seconds: 10)) {
+      return;
+    }
+    _lastProgressSavedAt = now;
+    unawaited(
+      preferences
+          .setString(
+            _progressCheckpointKey,
+            jsonEncode(_routeProgressTracker.checkpoint),
+          )
+          .catchError((Object _) => false),
+    );
+  }
+
   final RouteJourneyProgressTracker _routeJourneyProgressTracker =
       RouteJourneyProgressTracker();
   final RouteProgressTracker _rejoinProgressTracker = RouteProgressTracker();
@@ -1354,7 +1378,6 @@ class _RideMapScreenState extends State<RideMapScreen>
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
   Object? _handledCircularRideRequestToken;
-  double _lastHeadingDegrees = 0;
   // Dismissal is per hazard, so passing this one and approaching the next
   // still raises a fresh warning.
   String? _dismissedEnforcementAlertId;
@@ -1383,6 +1406,10 @@ class _RideMapScreenState extends State<RideMapScreen>
   // out frame so the camera's forward bias is derived from the real geometry
   // rather than from assumed overlay heights.
   final GlobalKey _mapViewportKey = GlobalKey();
+  final GlobalKey _etaOcclusionKey = GlobalKey();
+  final GlobalKey _speedOcclusionKey = GlobalKey();
+  final GlobalKey _miniMapOcclusionKey = GlobalKey();
+  String _lastOcclusionLayout = '';
   final GlobalKey _bottomChromeKey = GlobalKey();
   final GlobalKey _landscapeGuidanceKey = GlobalKey();
   double? _smoothedNavigationSpeedMetersPerSecond;
@@ -1482,67 +1509,6 @@ class _RideMapScreenState extends State<RideMapScreen>
   List<String> _discoveryLayerFailures = const [];
   bool _bikerCafesVisible = true;
   List<GeoPoint>? _discoveryViewportCorners;
-  MapPlacesService? _mapPlacesService;
-  List<MapPlace> _mapPlaces = const [];
-  Timer? _mapPlacesTimer;
-  int _mapPlacesGeneration = 0;
-  String? _mapPlacesQuery;
-
-  List<MapPlace> get _visibleMapPlaces => selectMapPlaces(
-    _mapPlaces,
-    _discoveryViewportCorners ?? const [],
-    _lastViewportZoom,
-  );
-
-  Map<String, dynamic> _mapPlacesGeoJson() => {
-    'type': 'FeatureCollection',
-    'features': [
-      for (final place in _visibleMapPlaces)
-        {
-          'type': 'Feature',
-          'geometry': {
-            'type': 'Point',
-            'coordinates': [place.point.longitude, place.point.latitude],
-          },
-          'properties': {'label': place.label, 'priority': place.kind.index},
-        },
-    ],
-  };
-
-  void _scheduleMapPlaces() {
-    final corners = _discoveryViewportCorners;
-    final service = _mapPlacesService ??= MapPlacesService(_basemap);
-    if (_mapRenderingPaused ||
-        !service.supported ||
-        corners == null ||
-        _lastViewportZoom < 11 ||
-        _lastViewportZoom >= 14) {
-      _mapPlacesTimer?.cancel();
-      _mapPlacesGeneration++;
-      _mapPlacesQuery = null;
-      return;
-    }
-    final key = (MapPlacesService.tilesFor(
-      corners,
-    ).map((t) => t.key()).toList()..sort()).join('|');
-    if (_mapPlacesQuery == key) return;
-    _mapPlacesTimer?.cancel();
-    _mapPlacesQuery = key;
-    final generation = ++_mapPlacesGeneration;
-    _mapPlacesTimer = Timer(const Duration(milliseconds: 650), () async {
-      bool current() =>
-          mounted && !_mapRenderingPaused && generation == _mapPlacesGeneration;
-      try {
-        final places = await service.load(corners, keepGoing: current);
-        if (!current()) return;
-        setState(() => _mapPlaces = places);
-        if (places.isEmpty) _mapPlacesQuery = null;
-        _scheduleMapLibreSync(overlays: true);
-      } on Object {
-        if (current()) _mapPlacesQuery = null;
-      }
-    });
-  }
 
   BasemapConfiguration get _basemap => widget.offlineTileCache.configuration;
 
@@ -1721,6 +1687,15 @@ class _RideMapScreenState extends State<RideMapScreen>
     widget.currentPosition?.addListener(_onPositionChanged);
     widget.navigationPosition?.addListener(_onPositionChanged);
     _recordLocalTrail(_effectivePosition, _navigationFix?.recordedAt);
+    if (_effectivePosition case final initialPoint?) {
+      _localTravelDirection.update(
+        point: initialPoint,
+        at: _navigationFix?.recordedAt ?? DateTime.now(),
+        headingDegrees: _navigationFix?.headingDegrees,
+        speedMetersPerSecond: _navigationFix?.speedMetersPerSecond,
+        accuracyMeters: _navigationFix?.accuracyMeters ?? 0,
+      );
+    }
     widget.overlayMarkers?.addListener(_onOverlayDataChanged);
     widget.riderTrails?.addListener(_onOverlayDataChanged);
     widget.rejoinNavigationRoute?.addListener(_onRejoinNavigationRouteChanged);
@@ -1845,10 +1820,9 @@ class _RideMapScreenState extends State<RideMapScreen>
 
   @override
   void dispose() {
+    _saveProgressCheckpoint(force: true);
     WidgetsBinding.instance.removeObserver(this);
     _downloadCancellation?.cancel();
-    _mapPlacesTimer?.cancel();
-    _mapPlacesGeneration++;
     widget.currentPosition?.removeListener(_onPositionChanged);
     widget.navigationPosition?.removeListener(_onPositionChanged);
     widget.overlayMarkers?.removeListener(_onOverlayDataChanged);
@@ -1885,9 +1859,11 @@ class _RideMapScreenState extends State<RideMapScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) {
+      _saveProgressCheckpoint(force: true);
+    }
     final wasPaused = _mapRenderingPaused;
     _mapRenderingPaused = mapLibreSourceUpdatesShouldPause(state);
-    _scheduleMapPlaces();
     final controller = _mapLibreController;
     if (controller != null && wasPaused != _mapRenderingPaused) {
       unawaited(
@@ -1959,7 +1935,25 @@ class _RideMapScreenState extends State<RideMapScreen>
   Future<void> _loadPersistedRoute() async {
     try {
       final route = await widget.routeStore.loadActiveRoute();
+      try {
+        _progressPreferences = await SharedPreferences.getInstance();
+      } on Object {
+        /* Checkpoint storage must not prevent route loading. */
+      }
       if (!mounted) return;
+      if (route != null) {
+        final saved = _progressPreferences?.getString(_progressCheckpointKey);
+        if (saved != null) {
+          try {
+            _routeProgressTracker.restore(
+              route,
+              Map<String, Object?>.from(jsonDecode(saved) as Map),
+            );
+          } on Object {
+            /* Ignore a damaged checkpoint, keep the route usable. */
+          }
+        }
+      }
       setState(() {
         _route = route;
         _mainRouteGuidanceFloorMeters = null;
@@ -1972,6 +1966,8 @@ class _RideMapScreenState extends State<RideMapScreen>
         _progressGeometry = _routeProgressTracker.update(
           route,
           _effectivePosition,
+          recordedAt: _navigationFix?.recordedAt,
+          accuracyMeters: _navigationFix?.accuracyMeters,
         );
         // Riding without a GPX is a first-class mode (#124), so following the
         // rider is driven by position and heading alone. A route changes what is
@@ -2275,7 +2271,9 @@ class _RideMapScreenState extends State<RideMapScreen>
     // must remain in the same top-leading position or the map becomes a dead end.
     final showRideMenu =
         hideChrome &&
-        (widget.onOpenRideMenu != null || hostChrome?.onMore != null);
+        (widget.onOpenRideMenu != null ||
+            hostChrome?.onMore != null ||
+            hostChrome?.menuActions.isNotEmpty == true);
     // A route can contain manoeuvres before the device has a usable location.
     // The guidance banner is only composed into the band while guidance is
     // actually visible, so nothing reserves space for a banner that is absent.
@@ -2905,13 +2903,16 @@ class _RideMapScreenState extends State<RideMapScreen>
               trend: widget.tecGapTrend?.value ?? TecGapTrend.unknown,
             )
           : null;
-      final miniMap = canShowGroupMiniMap
+      final groupMiniMap = canShowGroupMiniMap
           ? _buildGroupMiniMap(
               overlays: overlays,
               width: groupMiniMapWidth,
               height: groupMiniMapHeight,
             )
           : null;
+      final miniMap = groupMiniMap == null
+          ? null
+          : KeyedSubtree(key: _miniMapOcclusionKey, child: groupMiniMap);
       final routeProgressPanel =
           !widget.showRouteProgress ||
               markerOverviewActive ||
@@ -2928,6 +2929,8 @@ class _RideMapScreenState extends State<RideMapScreen>
                       : EtaCalibrationScope.of(context)?.factorFor(_route!) ??
                             1,
                   geometry: _progressGeometry,
+                  rejoinRoute: _rejoinRoute,
+                  rejoinGeometry: _rejoinProgressGeometry,
                   speedMetersPerSecond: riderSpeed?.ageing == false
                       ? riderSpeed!.value
                       : null,
@@ -2935,21 +2938,25 @@ class _RideMapScreenState extends State<RideMapScreen>
                 );
                 return progress == null
                     ? const SizedBox.shrink()
-                    : RouteProgressPanel(
-                        progress: progress,
-                        distanceUnit: widget.distanceUnit,
-                        displaySize: widget.ridingDisplaySize,
-                        // The time is now a consistent map label in both
-                        // orientations rather than changing hierarchy with the
-                        // ETA card.
-                        showClock: false,
-                        // Free roam only. A ride's route belongs to the group
-                        // and leaves through LEAVE / the ride menu; out here
-                        // the route is the rider's own and the card that says
-                        // "you are navigating" carries the way to stop (#615).
-                        onStop: widget.hostChrome != null && widget.canEditRoute
-                            ? () => unawaited(_stopFreeRoamNavigation())
-                            : null,
+                    : KeyedSubtree(
+                        key: _etaOcclusionKey,
+                        child: RouteProgressPanel(
+                          progress: progress,
+                          distanceUnit: widget.distanceUnit,
+                          displaySize: widget.ridingDisplaySize,
+                          // The time is now a consistent map label in both
+                          // orientations rather than changing hierarchy with the
+                          // ETA card.
+                          showClock: false,
+                          // Free roam only. A ride's route belongs to the group
+                          // and leaves through LEAVE / the ride menu; out here
+                          // the route is the rider's own and the card that says
+                          // "you are navigating" carries the way to stop (#615).
+                          onStop:
+                              widget.hostChrome != null && widget.canEditRoute
+                              ? () => unawaited(_stopFreeRoamNavigation())
+                              : null,
+                        ),
                       );
               },
             );
@@ -3008,7 +3015,49 @@ class _RideMapScreenState extends State<RideMapScreen>
       final navigationMenuAction = widget.onOpenRideMenu == null
           ? widget.hostChrome?.onMore
           : () => unawaited(widget.onOpenRideMenu!());
-      final rideMenu = showRideMenu
+      final hostActions =
+          widget.hostChrome?.menuActions ?? const <HostMapMenuAction>[];
+      final rideMenu =
+          showRideMenu &&
+              widget.onOpenRideMenu == null &&
+              hostActions.isNotEmpty
+          ? Material(
+              color: const Color(0xE6252E39),
+              borderRadius: BorderRadius.circular(12),
+              child: PopupMenuButton<Object>(
+                key: const Key('ride-menu-button'),
+                tooltip: 'Ride menu',
+                icon: const Icon(Icons.menu, color: Colors.white),
+                onSelected: (action) {
+                  if (action is HostMapMenuAction) {
+                    action.onSelected?.call();
+                  } else {
+                    unawaited(_handleMenuAction(action as _MapAction));
+                  }
+                },
+                itemBuilder: (_) => [
+                  if (widget.hostChrome?.onOpenRideLibrary != null)
+                    const PopupMenuItem(
+                      value: _MapAction.rideLibrary,
+                      child: Text('Ride library'),
+                    ),
+                  for (final action in hostActions)
+                    PopupMenuItem<Object>(
+                      key: Key(action.id),
+                      value: action,
+                      enabled: action.onSelected != null,
+                      child: Row(
+                        children: [
+                          Icon(action.icon, size: 20),
+                          const SizedBox(width: 12),
+                          Expanded(child: Text(action.label)),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            )
+          : showRideMenu
           ? FloatingActionButton.small(
               key: const Key('ride-menu-button'),
               heroTag: 'ride-relay-menu',
@@ -3220,15 +3269,18 @@ class _RideMapScreenState extends State<RideMapScreen>
             );
       final speedCluster = speedLimit == null
           ? null
-          : Row(
-              key: const Key('speed-compass-cluster'),
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ?compass,
-                if (compass != null) const SizedBox(width: 8),
-                speedLimit,
-              ],
+          : KeyedSubtree(
+              key: _speedOcclusionKey,
+              child: Row(
+                key: const Key('speed-compass-cluster'),
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ?compass,
+                  if (compass != null) const SizedBox(width: 8),
+                  speedLimit,
+                ],
+              ),
             );
       final followMe = showFollowMe
           ? FloatingActionButton.extended(
@@ -3661,64 +3713,6 @@ class _RideMapScreenState extends State<RideMapScreen>
             points: [
               for (final cell in _visibleGlobalHeatmap.cells)
                 RideHeatPoint(_latLng(cell.point), cell.weight),
-            ],
-          ),
-        if (_visibleMapPlaces.isNotEmpty)
-          MarkerLayer(
-            markers: [
-              for (final place in _visibleMapPlaces)
-                Marker(
-                  point: _latLng(place.point),
-                  width: 140,
-                  height: 34,
-                  rotate: true,
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: _basemap.dark
-                            ? const Color(0xEE151A21)
-                            : const Color(0xF2FFFFFF),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 3,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              switch (place.kind) {
-                                MapPlaceKind.fuel => Icons.local_gas_station,
-                                MapPlaceKind.food => Icons.restaurant,
-                                MapPlaceKind.stop => Icons.place,
-                              },
-                              size: 18,
-                              color: _basemap.dark
-                                  ? Colors.white
-                                  : const Color(0xFF17212B),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                place.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: _basemap.dark
-                                      ? Colors.white
-                                      : const Color(0xFF17212B),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
             ],
           ),
         if (_visibleDiscoveryFeatures.any((feature) => !feature.isPoint))
@@ -4361,6 +4355,23 @@ class _RideMapScreenState extends State<RideMapScreen>
   void _recordBottomChromeHeight() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // Initial fitting owns the first camera move. Starting a second move
+      // before FlutterMap finishes that fit gets overwritten and throttles the
+      // real follow request. Reframe changed chrome only after arrival.
+      final layout = _navigationOcclusions.toString();
+      if (layout != _lastOcclusionLayout) {
+        _lastOcclusionLayout = layout;
+        if (_navigationMode &&
+            _cameraArrivedAtCommandedViewport &&
+            _effectivePosition != null) {
+          unawaited(
+            _followNavigationCamera(
+              force: true,
+              transitionDuration: Duration.zero,
+            ),
+          );
+        }
+      }
       final measured = _bottomChromeHeightPixels;
       if (measured == _measuredBottomChromeHeight) return;
       setState(() => _measuredBottomChromeHeight = measured);
@@ -4395,6 +4406,24 @@ class _RideMapScreenState extends State<RideMapScreen>
   /// Height of the wider bottom-right landscape guidance rail, including its
   /// margin from the display edge. The camera uses this exactly as portrait
   /// uses its bottom band whenever the card extends beneath the rider anchor.
+  List<Rect> get _navigationOcclusions {
+    final viewport = _mapViewportKey.currentContext?.findRenderObject();
+    if (viewport is! RenderBox || !viewport.hasSize) return const [];
+    final origin = viewport.localToGlobal(Offset.zero);
+    return [
+      for (final key in [
+        _bottomChromeKey,
+        _landscapeGuidanceKey,
+        _etaOcclusionKey,
+        _speedOcclusionKey,
+        _miniMapOcclusionKey,
+      ])
+        if (key.currentContext?.findRenderObject() case final RenderBox box
+            when box.hasSize)
+          (box.localToGlobal(Offset.zero) - origin) & box.size,
+    ];
+  }
+
   double get _landscapeGuidanceHeightPixels {
     final height = _landscapeGuidanceKey.currentContext?.size?.height;
     return height == null ? 0 : height + 10;
@@ -4429,6 +4458,8 @@ class _RideMapScreenState extends State<RideMapScreen>
                     _overlayBottomInsetPixels) /
                 viewportHeight,
       leftHandTraffic: _routeUsesLeftHandTraffic,
+      occlusions: _navigationOcclusions,
+      topInsetPixels: MediaQuery.paddingOf(context).top,
     );
     // MapLibre is tilted, so the bias is the perspective look-ahead the plan
     // solved. FlutterMap is flat, so it is a straight ground offset at that
@@ -4594,10 +4625,25 @@ class _RideMapScreenState extends State<RideMapScreen>
       _lastHandledCurrentPosition = position;
       _lastHandledNavigationFix = null;
     }
+    if (position != null) {
+      _localTravelDirection.update(
+        point: position,
+        at: navigationFix?.recordedAt ?? DateTime.now(),
+        headingDegrees: navigationFix?.headingDegrees,
+        speedMetersPerSecond: navigationFix?.speedMetersPerSecond,
+        accuracyMeters: navigationFix?.accuracyMeters ?? 0,
+      );
+    }
     if (_mapRenderingPaused) {
       final observedAt = navigationFix?.recordedAt ?? DateTime.now();
       if (!_backgroundNavigationRefreshGate.accept(observedAt)) return;
-      _progressGeometry = _routeProgressTracker.update(_route, position);
+      _progressGeometry = _routeProgressTracker.update(
+        _route,
+        position,
+        recordedAt: navigationFix?.recordedAt ?? DateTime.now(),
+        accuracyMeters: navigationFix?.accuracyMeters,
+      );
+      _saveProgressCheckpoint();
       _rejoinProgressGeometry = _rejoinProgressTracker.update(
         _rejoinRoute,
         position,
@@ -4616,7 +4662,6 @@ class _RideMapScreenState extends State<RideMapScreen>
         _pointsDiffer(position, _previousNavigationPoint!)) {
       observedHeading = _bearingDegrees(_previousNavigationPoint!, position);
     }
-    if (observedHeading != null) _lastHeadingDegrees = observedHeading;
     _previousNavigationPoint = position;
     if (navigationFix != null) {
       // Any fix, with or without a speed, proves the platform is still tracking,
@@ -4689,7 +4734,13 @@ class _RideMapScreenState extends State<RideMapScreen>
         (widget.isNavigating || _isMoving) &&
         !_navigationCanvasActive;
     if (refreshProgress) {
-      _progressGeometry = _routeProgressTracker.update(_route, position);
+      _progressGeometry = _routeProgressTracker.update(
+        _route,
+        position,
+        recordedAt: navigationFix?.recordedAt ?? DateTime.now(),
+        accuracyMeters: navigationFix?.accuracyMeters,
+      );
+      _saveProgressCheckpoint();
       _rejoinProgressGeometry = _rejoinProgressTracker.update(
         _rejoinRoute,
         position,
@@ -4957,27 +5008,19 @@ class _RideMapScreenState extends State<RideMapScreen>
               (previous[index].longitude - corners[index].longitude).abs() <
                   0.001,
         ).every((same) => same)) {
-      _scheduleMapPlaces();
       _scheduleGlobalHeatmapRefresh();
       return;
     }
     if (!mounted) return;
     _personalRideHeatmap?.setViewport(corners);
     setState(() => _discoveryViewportCorners = corners);
-    _scheduleMapPlaces();
     _scheduleMapLibreSync(overlays: true);
     _scheduleGlobalHeatmapRefresh();
   }
 
   void _updateViewportZoom(double zoom) {
     final wasVisible = motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom);
-    final oldPlacesBand = _lastViewportZoom.floor();
     _lastViewportZoom = zoom;
-    if (oldPlacesBand != zoom.floor()) {
-      _scheduleMapPlaces();
-      if (mounted) setState(() {});
-      _scheduleMapLibreSync(overlays: true);
-    }
     final isVisible = motorcycleDiscoveryVisibleAtZoom(zoom);
     if (!mounted || wasVisible == isVisible) return;
     setState(() {});
@@ -5461,6 +5504,18 @@ class _RideMapScreenState extends State<RideMapScreen>
       // scale. It goes into the target rather than into the call's screen-space
       // `offset`, which is silently dropped whenever the bearing has not
       // changed - the common case once the rotation deadband is holding.
+      if (cameraDuration == Duration.zero) {
+        _mapController.stopAnimationRaw();
+        _mapController.moveAndRotate(
+          _latLng(framing.target),
+          cameraPlan.zoom,
+          flutterMapRotationForBearing(
+            bearingDegrees: cameraBearing,
+            currentRotationDegrees: _mapController.camera.rotation,
+          ),
+        );
+        return;
+      }
       _mapController.moveAndRotateAnimatedRaw(
         _latLng(framing.target),
         cameraPlan.zoom,
@@ -5663,22 +5718,6 @@ class _RideMapScreenState extends State<RideMapScreen>
           heatmapOpacity: 0.48,
         ),
         belowLayerId: heatmapBelowLayerId,
-      );
-      await controller.addGeoJsonSource(_mapPlacesSource, _mapPlacesGeoJson());
-      await controller.addSymbolLayer(
-        _mapPlacesSource,
-        'ride-relay-map-places-labels',
-        ml.SymbolLayerProperties(
-          textField: ['get', 'label'],
-          textSize: 12,
-          textFont: ['Noto Sans Regular'],
-          textColor: _basemap.dark ? '#FFFFFF' : '#17212B',
-          textHaloColor: _basemap.dark ? '#151A21' : '#FFFFFF',
-          textHaloWidth: 2,
-          textAllowOverlap: false,
-          symbolSortKey: ['get', 'priority'],
-        ),
-        enableInteraction: false,
       );
       await controller.addGeoJsonSource(
         _discoveryLineSource,
@@ -6009,7 +6048,6 @@ class _RideMapScreenState extends State<RideMapScreen>
         (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
         (_discoveryLineSource, _discoveryLineGeoJson),
         (_discoveryPointSource, _discoveryPointGeoJson),
-        (_mapPlacesSource, _mapPlacesGeoJson),
         (_riddenRouteSource, _riddenRouteGeoJson),
         (_remainingRouteSource, _remainingRouteGeoJson),
         (_riderTrailSource, _riderTrailGeoJson),
@@ -6101,7 +6139,6 @@ class _RideMapScreenState extends State<RideMapScreen>
           (_personalHeatmapSource, _visiblePersonalHeatmap.toGeoJson),
           (_discoveryLineSource, _discoveryLineGeoJson),
           (_discoveryPointSource, _discoveryPointGeoJson),
-          (_mapPlacesSource, _mapPlacesGeoJson),
           (_riderTrailSource, _riderTrailGeoJson),
           (_markerPlanSource, _markerPlanGeoJson),
           (_overlaySource, _overlayGeoJson),
@@ -6467,16 +6504,8 @@ class _RideMapScreenState extends State<RideMapScreen>
         : const <MapGeoJsonPoint>[],
   );
 
-  double? get _localTravelHeading => riderTravelHeading(
-    headingDegrees: _navigationFix?.headingDegrees == null
-        ? null
-        : _lastHeadingDegrees,
-    speedMetersPerSecond: _navigationFix?.speedMetersPerSecond,
-    fresh:
-        _navigationFix != null &&
-        DateTime.now().difference(_navigationFix!.recordedAt) <=
-            const Duration(seconds: 30),
-  );
+  double? get _localTravelHeading =>
+      _localTravelDirection.headingAt(DateTime.now());
 
   static Future<void> _registerRiderMarkerShapes(
     ml.MapLibreMapController controller,
@@ -6834,7 +6863,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _circularRideGenerationStage =
             'Preparing your road preferences and suggested stops…';
       });
-      CircularRideRequest? retryRequest;
+      String? failureMessage;
       try {
         final preparedRequest = await _withSuggestedDayRideStops(requestedRide);
         if (!_isCircularRideGenerationCurrent(generation)) return;
@@ -6901,12 +6930,10 @@ class _RideMapScreenState extends State<RideMapScreen>
         return;
       } on FormatException catch (error) {
         if (!_isCircularRideGenerationCurrent(generation)) return;
-        _showMessage(error.message);
-        retryRequest = requestedRide;
+        failureMessage = error.message;
       } on Object catch (error) {
         if (!_isCircularRideGenerationCurrent(generation)) return;
-        _showMessage('Could not generate the circular ride: $error');
-        retryRequest = requestedRide;
+        failureMessage = 'Could not generate the circular ride: $error';
       } finally {
         if (_isCircularRideGenerationCurrent(generation)) {
           setState(() {
@@ -6916,11 +6943,50 @@ class _RideMapScreenState extends State<RideMapScreen>
         }
       }
       if (!mounted) return;
+      final recovery = await showDialog<RouteReviewAction>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Circular route unavailable'),
+          content: Text(
+            failureMessage ??
+                'No suitable road loop was found. Try another direction or distance.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, RouteReviewAction.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              key: const Key('edit-failed-circular-route'),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, RouteReviewAction.edit),
+              child: const Text('Edit route'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, RouteReviewAction.another),
+              child: const Text('Try another loop'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted ||
+          recovery == null ||
+          recovery == RouteReviewAction.cancel) {
+        return;
+      }
+      if (recovery == RouteReviewAction.another) {
+        // The planner already tried four variants. Advance beyond those instead
+        // of sending the same unsuccessful requests on every tap.
+        request = requestedRide.withVariant(requestedRide.variant + 4);
+        continue;
+      }
       request = await CircularRideSheet.show(
         context,
         start: origin,
         distanceUnit: widget.distanceUnit,
-        initialRequest: retryRequest,
+        initialRequest: requestedRide,
         personalHeatmapCells: _personalCircularHeatCells,
         globalHeatmapCells: _globalCircularHeatCells,
       );
@@ -7257,6 +7323,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _navigationCanvasActive = true;
       }
     });
+    _saveProgressCheckpoint(force: true);
     _updateNavigationGuidance(_effectivePosition);
     await _syncMapLibreSources();
     _fitRoute();

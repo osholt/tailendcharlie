@@ -34,7 +34,9 @@ class RouteProgressPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final formatter = MeasurementFormatter(distanceUnit);
-    final timeRemaining = _durationLabel(progress.remainingTime);
+    final timeRemaining = progress.awaitingRejoin
+        ? 'On route'
+        : _durationLabel(progress.remainingTime);
     final arrival = _timeLabel(context, progress.arrivalTime);
     final nextName = progress.nextWaypointName;
     final nextDistance = progress.nextWaypointDistanceMeters;
@@ -42,7 +44,11 @@ class RouteProgressPanel extends StatelessWidget {
     final scale = displaySize.scale;
     final enlarged = displaySize != RidingDisplaySize.small;
     final semantics = [
-      '$timeRemaining and ${formatter.distance(progress.remainingDistanceMeters)} remaining',
+      progress.awaitingRejoin
+          ? '${formatter.distance(progress.remainingDistanceMeters)} remaining on the planned route; rejoin distance and ETA pending'
+          : '$timeRemaining and ${formatter.distance(progress.remainingDistanceMeters)} remaining',
+      if (progress.travelledDistanceMeters > 0)
+        '${formatter.distance(progress.travelledDistanceMeters)} ridden',
       if (arrival != '—') 'route ETA $arrival',
       if (nextName != null && nextDistance != null)
         'next stop $nextName, ${formatter.distance(nextDistance)}'
@@ -114,11 +120,24 @@ class RouteProgressPanel extends StatelessWidget {
                 ),
               ],
             ),
+            if (progress.travelledDistanceMeters > 0)
+              Text(
+                '${formatter.distance(progress.travelledDistanceMeters)} ridden',
+                key: const Key('eta-travelled-distance'),
+                style: TextStyle(
+                  color: const Color(0xFFF0F4F8),
+                  fontSize: 11 * scale,
+                ),
+              ),
             Row(
               children: [
                 Expanded(
                   child: Text(
-                    enlarged ? 'ETA $arrival' : 'Route ETA $arrival',
+                    progress.awaitingRejoin
+                        ? 'ETA after rejoining'
+                        : enlarged
+                        ? 'ETA $arrival'
+                        : 'Route ETA $arrival',
                     key: const Key('eta-arrival'),
                     maxLines: enlarged ? null : 1,
                     overflow: enlarged ? null : TextOverflow.ellipsis,

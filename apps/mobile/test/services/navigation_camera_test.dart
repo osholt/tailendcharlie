@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show Rect, Offset;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/services/navigation_camera.dart';
@@ -64,6 +65,50 @@ NavigationCameraPlan _plan(
 );
 
 void main() {
+  test(
+    'measured panels constrain the whole marker without moving the right-third anchor',
+    () {
+      for (final height in [320.0, 390.0, 844.0]) {
+        final landscape = height < 800;
+        final width = landscape ? 844.0 : 390.0;
+        for (final scale in [1.0, 1.25, 1.5]) {
+          final panels = [
+            Rect.fromLTWH(12, 92, 230, 100 * scale),
+            Rect.fromLTWH(
+              landscape ? 480 : 12,
+              height - 110 * scale,
+              landscape ? 352 : 366,
+              110 * scale,
+            ),
+            Rect.fromLTWH(width - 140, 8, 130, 80),
+          ];
+          final plan = NavigationCameraPlanner.plan(
+            speedMetersPerSecond: 30,
+            landscape: landscape,
+            viewportWidthPixels: width,
+            viewportHeightPixels: height,
+            occlusions: panels,
+          );
+          final x = plan.riderHorizontalViewportFraction * width;
+          final y = plan.riderViewportFraction * height;
+          expect(x, closeTo(width * (landscape ? 2 / 3 : .5), .01));
+          final badge = Rect.fromCenter(
+            center: Offset(x, y),
+            width: 38,
+            height: 38,
+          );
+          for (final panel in panels) {
+            expect(
+              badge.overlaps(panel),
+              false,
+              reason: '$height $scale: $badge vs $panel',
+            );
+          }
+        }
+      }
+    },
+  );
+
   test('widens and tilts gradually from rest to higher road speed', () {
     final rest = NavigationCameraPlanner.plan(
       speedMetersPerSecond: 0,
