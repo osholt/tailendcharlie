@@ -605,11 +605,12 @@ void main() {
     expect(callback, contains('return;'));
   });
 
-  test('motorcycle discovery hides on wide-area views', () {
+  test('motorcycle discovery stays available at regional zoom', () {
     expect(
       motorcycleDiscoveryVisibleAtZoom(motorcycleDiscoveryMinimumZoom - 0.01),
       isFalse,
     );
+    expect(motorcycleDiscoveryVisibleAtZoom(10), isTrue);
     expect(
       motorcycleDiscoveryVisibleAtZoom(motorcycleDiscoveryMinimumZoom),
       isTrue,
@@ -962,7 +963,7 @@ void main() {
                   name: 'Nearby twisty road',
                   points: [
                     GeoPoint(latitude: 51.45, longitude: -2.55),
-                    GeoPoint(latitude: 51.48, longitude: -2.50),
+                    GeoPoint(latitude: 51.53, longitude: -2.40),
                   ],
                   sourceName: 'Test',
                   sourceUrl: 'https://example.test/road',
@@ -1018,6 +1019,9 @@ void main() {
       latitude: 51.4676,
       longitude: -2.5067,
     );
+    await tester.pumpAndSettle();
+    final map = tester.widget<FlutterMap>(find.byType(FlutterMap).first);
+    map.mapController!.move(const LatLng(51.50, -2.48), 10.5);
     await tester.pumpAndSettle();
     expect(
       find.byKey(const Key('free-roam-discovery-lines-layer')),

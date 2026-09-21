@@ -1082,46 +1082,88 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
                                   )
                                   .toList(growable: false),
                             ),
-                          if (visiblePointsOfInterest.isNotEmpty)
-                            MarkerLayer(
-                              key: const Key('route-review-points-of-interest'),
-                              markers: visiblePointsOfInterest
-                                  .map(
-                                    (place) => Marker(
-                                      point: _latLng(place.point),
-                                      width: 40,
-                                      height: 40,
-                                      child: Semantics(
-                                        button: true,
-                                        label:
-                                            'Add ${place.name} as a waypoint',
-                                        child: GestureDetector(
-                                          key: Key(
-                                            'route-point-of-interest-${place.id}',
-                                          ),
-                                          onTap: () => unawaited(
-                                            _showPointOfInterest(place),
-                                          ),
-                                          child: Tooltip(
-                                            message: place.name,
-                                            child: const Icon(
-                                              Icons.local_cafe,
-                                              color: Color(0xFFF97316),
-                                              size: 30,
-                                              shadows: [
-                                                Shadow(
-                                                  color: Color(0xFF10151C),
-                                                  blurRadius: 4,
-                                                ),
-                                              ],
+                          Builder(
+                            builder: (context) {
+                              final camera = MapCamera.of(context);
+                              final bounds = camera.visibleBounds;
+                              final pins = visibleRoutePreviewPins(
+                                [...pointOfInterestPins, ...discoveryPins],
+                                zoom: camera.zoom,
+                                tileSize: 256,
+                                viewport: [
+                                  GeoPoint(
+                                    latitude: bounds.south,
+                                    longitude: bounds.west,
+                                  ),
+                                  GeoPoint(
+                                    latitude: bounds.north,
+                                    longitude: bounds.east,
+                                  ),
+                                ],
+                              );
+                              return MarkerLayer(
+                                key: const Key(
+                                  'route-review-points-of-interest',
+                                ),
+                                markers: pins
+                                    .map(
+                                      (pin) => Marker(
+                                        point: _latLng(pin.point),
+                                        width: 40,
+                                        height: 40,
+                                        child: Semantics(
+                                          button: true,
+                                          label:
+                                              'Add ${pin.label} as a waypoint',
+                                          child: GestureDetector(
+                                            key: Key(
+                                              pin.kind == 'poi'
+                                                  ? 'route-point-of-interest-${pin.id!.substring(4)}'
+                                                  : 'route-${pin.id}',
+                                            ),
+                                            onTap: () {
+                                              final place =
+                                                  _pointOfInterestForPin(pin);
+                                              if (place != null) {
+                                                unawaited(
+                                                  _showPointOfInterest(place),
+                                                );
+                                              }
+                                              final feature = _discoveryForPin(
+                                                pin,
+                                              );
+                                              if (feature != null) {
+                                                unawaited(
+                                                  _showDiscoveryFeature(
+                                                    feature,
+                                                  ),
+                                                );
+                                              }
+                                            },
+                                            child: Tooltip(
+                                              message: pin.label ?? '',
+                                              child: Icon(
+                                                pin.kind == 'poi'
+                                                    ? Icons.local_cafe
+                                                    : Icons.route,
+                                                color: const Color(0xFFF97316),
+                                                size: 30,
+                                                shadows: const [
+                                                  Shadow(
+                                                    color: Color(0xFF10151C),
+                                                    blurRadius: 4,
+                                                  ),
+                                                ],
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  )
-                                  .toList(growable: false),
-                            ),
+                                    )
+                                    .toList(growable: false),
+                              );
+                            },
+                          ),
                           if (markerPlan.points.isNotEmpty)
                             MarkerLayer(
                               key: const Key('route-review-marker-plan'),

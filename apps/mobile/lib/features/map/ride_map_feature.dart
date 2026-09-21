@@ -65,6 +65,7 @@ import '../../services/measurement_formatter.dart';
 import '../../services/navigation_guidance.dart';
 import '../../services/stopped_speed_reading.dart';
 import '../../services/motorcycle_discovery.dart';
+import '../../services/discovery_marker_selection.dart';
 import '../../services/navigation_export.dart';
 import '../../services/navigation_camera.dart';
 import '../../services/navigation_heading.dart';
@@ -243,11 +244,9 @@ bool canGenerateNavigableRoute(ImportedRoute route) =>
       (path) => path.kind == RoutePathKind.track && path.points.length >= 2,
     );
 
-/// Discovery roads and cafés are useful at local riding scale and turn into a
-/// dense national overlay when the map is zoomed out. Hide them below this
-/// threshold while preserving every saved layer choice.
+/// Global views suppress the layer; regional/local views use marker density.
 @visibleForTesting
-const motorcycleDiscoveryMinimumZoom = 12.5;
+const motorcycleDiscoveryMinimumZoom = discoveryMinimumZoom;
 
 @visibleForTesting
 bool motorcycleDiscoveryVisibleAtZoom(double zoom) =>
@@ -5019,10 +5018,9 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   void _updateViewportZoom(double zoom) {
-    final wasVisible = motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom);
+    final previousBand = (_lastViewportZoom * 4).floor();
     _lastViewportZoom = zoom;
-    final isVisible = motorcycleDiscoveryVisibleAtZoom(zoom);
-    if (!mounted || wasVisible == isVisible) return;
+    if (!mounted || previousBand == (zoom * 4).floor()) return;
     setState(() {});
     _scheduleMapLibreSync(overlays: true);
   }
@@ -6359,37 +6357,70 @@ class _RideMapScreenState extends State<RideMapScreen>
     return [?_effectivePosition];
   }
 
-  List<MotorcycleDiscoveryFeature> get _visibleDiscoveryFeatures {
-    if (!motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom)) return const [];
+  Object? _discoverySelectionKey;
+  List<Object> _discoverySelectionCache = const [];
+
+  List<Object> get _selectedDiscoveries {
     final anchors = _discoveryAnchorPoints;
-    if (anchors.isEmpty || _enabledDiscoveryCategories.isEmpty) return const [];
-    var west = anchors.first.longitude;
-    var east = west;
-    var south = anchors.first.latitude;
-    var north = south;
-    for (final point in anchors.skip(1)) {
-      west = math.min(west, point.longitude);
-      east = math.max(east, point.longitude);
-      south = math.min(south, point.latitude);
-      north = math.max(north, point.latitude);
+    final key = (
+      _discoveryCatalogue,
+      _bikerPlaceCatalogue,
+      Object.hashAll(_enabledDiscoveryCategories),
+      _bikerCafesVisible,
+      _usesMapLibreRenderer,
+      Object.hashAll(anchors.map((point) => (point.latitude, point.longitude))),
+      (_lastViewportZoom * 4).floor(),
+    );
+    if (key == _discoverySelectionKey) return _discoverySelectionCache;
+    _discoverySelectionKey = key;
+    if (anchors.isEmpty ||
+        !motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom)) {
+      return _discoverySelectionCache = const [];
     }
-    const paddingDegrees = 0.6;
-    return _discoveryCatalogue.visible(
+    final west = anchors.map((p) => p.longitude).reduce(math.min);
+    final east = anchors.map((p) => p.longitude).reduce(math.max);
+    final south = anchors.map((p) => p.latitude).reduce(math.min);
+    final north = anchors.map((p) => p.latitude).reduce(math.max);
+    final features = _discoveryCatalogue.visible(
       categories: _enabledDiscoveryCategories,
-      west: west - paddingDegrees,
-      south: south - paddingDegrees,
-      east: east + paddingDegrees,
-      north: north + paddingDegrees,
+      west: west - .6,
+      south: south - .6,
+      east: east + .6,
+      north: north + .6,
+    );
+    final cafes = _bikerCafesVisible
+        ? _bikerPlaceCatalogue.nearRoute(anchors).where((place) => place.isCafe)
+        : const <BikerPlace>[];
+    return _discoverySelectionCache = selectDiscoveryMarkers<Object>(
+      [
+        for (final feature in features)
+          DiscoveryMarkerCandidate(
+            id: 'discovery-${feature.id}',
+            group: feature.category.apiValue,
+            point: feature.anchor,
+            value: feature,
+          ),
+        for (final cafe in cafes)
+          DiscoveryMarkerCandidate(
+            id: 'cafe-${cafe.id}',
+            group: 'cafes',
+            point: cafe.point,
+            value: cafe,
+          ),
+      ],
+      zoom: (_lastViewportZoom * 4).floor() / 4,
+      viewport: _discoveryViewportCorners ?? const [],
+      tileSize: _usesMapLibreRenderer ? 512 : 256,
     );
   }
 
+  List<MotorcycleDiscoveryFeature> get _visibleDiscoveryFeatures =>
+      _selectedDiscoveries.whereType<MotorcycleDiscoveryFeature>().toList(
+        growable: false,
+      );
+
   List<BikerPlace> get _visibleBikerCafes =>
-      _bikerCafesVisible && motorcycleDiscoveryVisibleAtZoom(_lastViewportZoom)
-      ? _bikerPlaceCatalogue
-            .nearRoute(_discoveryAnchorPoints)
-            .where((place) => place.isCafe)
-            .toList(growable: false)
-      : const [];
+      _selectedDiscoveries.whereType<BikerPlace>().toList(growable: false);
 
   Map<String, dynamic> _discoveryLineGeoJson() => {
     'type': 'FeatureCollection',

@@ -9,6 +9,58 @@ import 'package:ride_relay/features/map/resolved_route_map_preview.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 
 void main() {
+  test(
+    'preview keeps route controls and declutters optional discoveries at regional zoom',
+    () {
+      const pins = [
+        RoutePreviewPin(
+          point: GeoPoint(latitude: 51.5, longitude: -2.5),
+          kind: 'start',
+        ),
+        RoutePreviewPin(
+          point: GeoPoint(latitude: 51.5, longitude: -2.5),
+          kind: 'finish',
+        ),
+        RoutePreviewPin(
+          id: 'a',
+          point: GeoPoint(latitude: 51.5, longitude: -2.5),
+          kind: 'poi',
+        ),
+        RoutePreviewPin(
+          id: 'b',
+          point: GeoPoint(latitude: 51.5001, longitude: -2.5),
+          kind: 'discovery',
+        ),
+        RoutePreviewPin(
+          id: 'c',
+          point: GeoPoint(latitude: 51.7, longitude: -2.5),
+          kind: 'discovery',
+        ),
+      ];
+      expect(visibleRoutePreviewPins(pins, zoom: 10).map((p) => p.id), [
+        null,
+        null,
+        'a',
+        'c',
+      ]);
+      expect(visibleRoutePreviewPins(pins, zoom: 5).map((p) => p.kind), [
+        'start',
+        'finish',
+      ]);
+      expect(
+        visibleRoutePreviewPins(
+          pins,
+          zoom: 10,
+          viewport: const [
+            GeoPoint(latitude: 51.6, longitude: -2.6),
+            GeoPoint(latitude: 51.8, longitude: -2.4),
+          ],
+        ).map((p) => p.id),
+        [null, null, 'c'],
+      );
+    },
+  );
+
   final originalMapLibrePlatformFactory = ml.MapLibrePlatform.createInstance;
 
   setUpAll(() {
