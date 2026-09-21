@@ -11,6 +11,7 @@ import 'map_camera_guard.dart';
 import '../../domain/imported_route.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/map_style_repository.dart';
+import '../../services/discovery_marker_selection.dart';
 
 /// Lets a map embedded in a scrollable screen claim a drag that starts on the
 /// map. Without this, the surrounding list wins vertical pans and the map feels
@@ -36,6 +37,34 @@ class RoutePreviewPin {
   final bool interactive;
   final bool includeInFraming;
 }
+
+/// Route controls always remain visible; optional discoveries share one density
+/// budget and never affect the bounds used to frame a route.
+List<RoutePreviewPin> visibleRoutePreviewPins(
+  List<RoutePreviewPin> pins, {
+  required double zoom,
+  List<GeoPoint> viewport = const [],
+  double tileSize = 512,
+}) => [
+  ...pins.where((pin) => pin.kind != 'poi' && pin.kind != 'discovery'),
+  ...selectDiscoveryMarkers(
+    pins
+        .where((pin) => pin.kind == 'poi' || pin.kind == 'discovery')
+        .map(
+          (pin) => DiscoveryMarkerCandidate(
+            id:
+                pin.id ??
+                '${pin.kind}-${pin.point.latitude}-${pin.point.longitude}',
+            point: pin.point,
+            value: pin,
+            group: pin.kind == 'poi' ? 'cafes' : 'roads',
+          ),
+        ),
+    zoom: zoom,
+    viewport: viewport,
+    tileSize: tileSize,
+  ),
+];
 
 class RoutePreviewReshapeStart {
   const RoutePreviewReshapeStart({required this.point, this.shapingPointIndex});
@@ -107,6 +136,12 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
   bool _styleReady = false;
   bool _initialFitComplete = false;
   bool _initialFitInProgress = false;
+  List<GeoPoint> _discoveryViewport = const [];
+  List<RoutePreviewPin> get _visiblePins => visibleRoutePreviewPins(
+    widget.pins,
+    zoom: _controller?.cameraPosition?.zoom ?? 13,
+    viewport: _discoveryViewport,
+  );
   bool _syncing = false;
   bool _syncAgain = false;
   bool _syncAgainShouldFit = false;
@@ -184,7 +219,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
                   widget.onControllerReady?.call(controller);
                 },
                 onStyleLoadedCallback: () => unawaited(_prepareStyle()),
-                onMapIdle: () => unawaited(_fitInitialRoute()),
+                onMapIdle: () => unawaited(_onMapIdle()),
                 onMapClick: widget.onPointTap == null && widget.onPinTap == null
                     ? null
                     : (point, _) => unawaited(_handlePointTap(point)),
@@ -519,6 +554,29 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     return true;
   }
 
+  Future<void> _onMapIdle() async {
+    await _fitInitialRoute();
+    final controller = _controller;
+    if (controller == null || !_styleReady || !mounted) return;
+    try {
+      final bounds = await controller.getVisibleRegion();
+      if (!mounted || controller != _controller) return;
+      _discoveryViewport = [
+        GeoPoint(
+          latitude: bounds.southwest.latitude,
+          longitude: bounds.southwest.longitude,
+        ),
+        GeoPoint(
+          latitude: bounds.northeast.latitude,
+          longitude: bounds.northeast.longitude,
+        ),
+      ];
+      await controller.setGeoJsonSource(_pinSource, _pinGeoJson());
+    } on Object catch (error) {
+      if (kDebugMode) debugPrint('Could not refresh discovery pins: $error');
+    }
+  }
+
   Future<void> _fitInitialRoute() async {
     if (!routePreviewNeedsInitialFit(
           styleReady: _styleReady,
@@ -577,7 +635,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
     if (controller == null) return;
 
     final pinCallback = widget.onPinTap;
-    final interactivePins = widget.pins
+    final interactivePins = _visiblePins
         .where((pin) => pin.interactive)
         .toList(growable: false);
     if (pinCallback != null && interactivePins.isNotEmpty) {
@@ -762,7 +820,7 @@ class _ResolvedRouteMapPreviewState extends State<ResolvedRouteMapPreview> {
 
   Map<String, dynamic> _pinGeoJson() {
     final pins = widget.pins.isNotEmpty
-        ? widget.pins
+        ? _visiblePins
         : switch (_points) {
             [] => const <RoutePreviewPin>[],
             [final point] => [RoutePreviewPin(point: point, kind: 'start')],
