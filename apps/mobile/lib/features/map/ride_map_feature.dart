@@ -6977,9 +6977,11 @@ class _RideMapScreenState extends State<RideMapScreen>
         return;
       }
       if (recovery == RouteReviewAction.another) {
-        // The planner already tried four variants. Advance beyond those instead
+        // The planner already tried a batch. Advance beyond those instead
         // of sending the same unsuccessful requests on every tap.
-        request = requestedRide.withVariant(requestedRide.variant + 4);
+        request = requestedRide.withVariant(
+          requestedRide.variant + CircularRidePlanner.maximumCandidateVariants,
+        );
         continue;
       }
       request = await CircularRideSheet.show(

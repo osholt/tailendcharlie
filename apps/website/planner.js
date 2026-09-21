@@ -23,7 +23,7 @@ import {
   standardRoutingFallbackPreferences,
   standardRoutingFallbackWarning,
   StateHistory,
-} from "./planner-core.mjs?v=a01f6b20";
+} from "./planner-core.mjs?v=f27a1478";
 import {
   BIKER_PLACES,
   bikerPlaceKey,
@@ -1025,6 +1025,7 @@ function generateCircularRide(alternative) {
     const baseShapeCoordinates = circularRideShapingCoordinates({
       start: [start.longitude, start.latitude],
       distanceMetres,
+      style: elements.routeStyle.value,
       direction: elements.circularDirection.value,
       variant: circularRouteVariant,
     });
