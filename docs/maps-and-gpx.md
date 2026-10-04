@@ -205,9 +205,11 @@ else, and that default follows the rider's role as it changes - hand someone the
 lead mid-ride and the overview appears. Choosing either way is the rider's own and
 outranks the role from then on, until they ask for the role default back. The
 setting stores the choice, never the default it overrode. Hidden, the overview is
-not built at all: portrait's band comes down by what the overview stood above the
-targets and the camera sees the shorter band, and landscape's targets move in to
-take its place.
+not built at all: the corner it sat in is open map again; where portrait draws it
+full size the band comes down by what it stood above the targets and the camera
+frames the marker lower (on a narrower phone it is scaled to sit inside the row of
+targets and cost the band nothing); and landscape's targets move in to take its
+place.
 
 Route progress is optional in Settings. Distance is projected along the same
 primary route geometry used by navigation. Time remaining and ETA use an

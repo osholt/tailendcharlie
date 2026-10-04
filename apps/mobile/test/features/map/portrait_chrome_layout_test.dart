@@ -185,27 +185,42 @@ void main() {
   testWidgets('a narrow phone scales the overview down beside the targets', (
     tester,
   ) async {
-    // 320 points leaves 296 for the row, and the targets take 182 of it: less than
-    // the overview's own 150 once a gap is allowed for. It shrinks to fit rather
-    // than overflow the band or sit over REPORT.
-    final layout = await _pump(
-      tester,
-      phone: const _Phone('narrowest', Size(320, 568), top: 20, bottom: 0),
-      display: RidingDisplaySize.small,
-      textScale: 1,
-      leader: false,
-    );
-    final overview = layout.rects['group-mini-map']!;
-    final report = layout.rects['report-sighting-button']!;
-    expect(tester.takeException(), isNull);
-    expect(overview.width, lessThan(150));
-    expect(overview.width, greaterThan(100));
-    // Scaled as a whole - a 150 by 128 overview kept in proportion - not squeezed
-    // narrower with its height left alone, which would crop what it frames.
-    expect(overview.height / overview.width, closeTo(128 / 150, 0.03));
-    expect(overview.left, greaterThanOrEqualTo(report.right));
-    expect(overview.right, closeTo(layout.band.right, 1));
-    _expectMarkerAndConeClear(layout, reason: layout.reason);
+    // The targets take 216 of a row that is 336 on a 360 point phone and 296 on a
+    // 320 point one - REPORT is a 96 point square since #872 - which leaves less
+    // than the overview's own 150. It shrinks to fit rather than overflow the
+    // band or sit over REPORT.
+    for (final (phone, narrowest) in [
+      (_phones[2], 100.0),
+      (const _Phone('narrowest', Size(320, 568), top: 20, bottom: 0), 60.0),
+    ]) {
+      final layout = await _pump(
+        tester,
+        phone: phone,
+        display: RidingDisplaySize.small,
+        textScale: 1,
+        leader: false,
+      );
+      final overview = layout.rects['group-mini-map']!;
+      final report = layout.rects['report-sighting-button']!;
+      expect(tester.takeException(), isNull, reason: '$phone');
+      expect(overview.width, lessThan(150), reason: '$phone');
+      expect(overview.width, greaterThan(narrowest), reason: '$phone');
+      // Scaled as a whole - a 150 by 128 overview kept in proportion - not
+      // squeezed narrower with its height left alone, which would crop what it
+      // frames.
+      expect(
+        overview.height / overview.width,
+        closeTo(128 / 150, 0.03),
+        reason: '$phone',
+      );
+      expect(
+        overview.left,
+        greaterThanOrEqualTo(report.right),
+        reason: '$phone',
+      );
+      expect(overview.right, closeTo(layout.band.right, 1), reason: '$phone');
+      _expectMarkerAndConeClear(layout, reason: layout.reason);
+    }
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -298,19 +313,28 @@ void main() {
             isNot(contains('group-mini-map')),
             reason: 'hidden on ${shown.reason}',
           );
-          // The overview was the tallest thing in the row of targets, so the band
-          // comes down by what it stood above them...
+          // The band never grows when the overview goes. Where the overview is drawn
+          // full size - 150 wide, which needs a 390 point phone or wider since
+          // REPORT became a 96 point square (#872) - it stands taller than the
+          // targets, so the band comes down by that and the camera, seeing the
+          // shorter band, puts the marker lower. On a narrower phone it has already
+          // been scaled to sit inside the row of targets, costs the band nothing,
+          // and hiding it frees the corner of map but not a pixel of band...
+          final fullSize = shown.rects['group-mini-map']!.width >= 150;
           expect(
             hidden.band.height,
-            lessThan(shown.band.height),
+            fullSize
+                ? lessThan(shown.band.height)
+                : lessThanOrEqualTo(shown.band.height),
             reason:
                 'the band did not give back the overview on ${shown.reason}',
           );
-          // ...the camera sees the shorter band and puts the marker lower, never
-          // higher...
+          // ...and the camera never keeps the marker higher for it.
           expect(
             hidden.rider.top,
-            greaterThan(shown.rider.top),
+            fullSize
+                ? greaterThan(shown.rider.top)
+                : greaterThanOrEqualTo(shown.rider.top - 0.5),
             reason:
                 'the camera kept the marker where the overview was on '
                 '${shown.reason}',
