@@ -579,14 +579,18 @@ void main() {
     () async {
       await controller.createRide('Oliver');
       await controller.startRide();
+      expect(controller.ridePausedAt, isNull);
 
       await controller.pauseRide();
       expect(controller.ridePaused, isTrue);
       expect(controller.events.last.type, RideEventType.ridePaused);
+      // The time the leader paused it, for the sharing guard (#859).
+      expect(controller.ridePausedAt, controller.events.last.createdAt);
 
       await controller.resumeRide();
       expect(controller.ridePaused, isFalse);
       expect(controller.events.last.type, RideEventType.rideResumed);
+      expect(controller.ridePausedAt, isNull);
     },
   );
 
