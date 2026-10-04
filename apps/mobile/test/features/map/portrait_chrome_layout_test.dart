@@ -285,6 +285,124 @@ void main() {
     });
   });
 
+  group('hiding the group mini-map (#850)', () {
+    testWidgets('gives the band and the camera back what it took', (
+      tester,
+    ) async {
+      for (final phone in _phones) {
+        for (final leader in const [false, true]) {
+          final shown = await _pump(
+            tester,
+            phone: phone,
+            display: RidingDisplaySize.small,
+            textScale: 1,
+            leader: leader,
+          );
+          final hidden = await _pump(
+            tester,
+            phone: phone,
+            display: RidingDisplaySize.small,
+            textScale: 1,
+            leader: leader,
+            miniMapVisible: false,
+          );
+
+          expect(shown.rects, contains('group-mini-map'));
+          expect(
+            hidden.rects,
+            isNot(contains('group-mini-map')),
+            reason: 'hidden on ${shown.reason}',
+          );
+          // The band never grows when the overview goes. Where the overview is drawn
+          // full size - 150 wide, which needs a 390 point phone or wider since
+          // REPORT became a 96 point square (#872) - it stands taller than the
+          // targets, so the band comes down by that and the camera, seeing the
+          // shorter band, puts the marker lower. On a narrower phone it has already
+          // been scaled to sit inside the row of targets, costs the band nothing,
+          // and hiding it frees the corner of map but not a pixel of band...
+          final fullSize = shown.rects['group-mini-map']!.width >= 150;
+          expect(
+            hidden.band.height,
+            fullSize
+                ? lessThan(shown.band.height)
+                : lessThanOrEqualTo(shown.band.height),
+            reason:
+                'the band did not give back the overview on ${shown.reason}',
+          );
+          // ...and the camera never keeps the marker higher for it.
+          expect(
+            hidden.rider.top,
+            fullSize
+                ? greaterThan(shown.rider.top)
+                : greaterThanOrEqualTo(shown.rider.top - 0.5),
+            reason:
+                'the camera kept the marker where the overview was on '
+                '${shown.reason}',
+          );
+          // ...and what is left is as clear as before.
+          _expectMarkerAndConeClear(hidden, reason: hidden.reason);
+          for (final key in const [
+            'emergency-alert-button',
+            'leave-ride-button',
+            'report-sighting-button',
+          ]) {
+            expect(hidden.rects[key], shown.rects[key], reason: '$key moved');
+          }
+        }
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('leaves the corner empty map, not a gap in the band', (
+      tester,
+    ) async {
+      final hidden = await _pump(
+        tester,
+        phone: _phones.first,
+        display: RidingDisplaySize.small,
+        textScale: 1,
+        leader: true,
+        miniMapVisible: false,
+      );
+      // With no overview the trailing half of the row of targets is open map: the
+      // band's own surfaces end where the targets do.
+      final report = hidden.rects['report-sighting-button']!;
+      final banner = hidden.rects['navigation-guidance-banner']!;
+      expect(report.right, lessThan(hidden.band.right - 100));
+      expect(banner.bottom, lessThanOrEqualTo(report.top));
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('frees the landscape rail too, and the targets move in', (
+      tester,
+    ) async {
+      Future<Map<String, Rect>> landscape({required bool miniMap}) async {
+        final layout = await _pump(
+          tester,
+          phone: const _Phone('landscape', Size(844, 390), top: 0, bottom: 0),
+          display: RidingDisplaySize.small,
+          textScale: 1,
+          leader: false,
+          miniMapVisible: miniMap,
+        );
+        return layout.rects;
+      }
+
+      final shown = await landscape(miniMap: true);
+      final hidden = await landscape(miniMap: false);
+
+      expect(shown, contains('group-mini-map'));
+      expect(hidden, isNot(contains('group-mini-map')));
+      // The targets sat to the right of the overview and now take its place.
+      expect(
+        hidden['emergency-alert-button']!.left,
+        lessThan(shown['emergency-alert-button']!.left),
+      );
+      expect(hidden['emergency-alert-button']!.left, closeTo(10, 1));
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  });
+
   group('the forward cone', () {
     // The helper that decides every other assertion in this file, so it is held
     // to a case it must catch and a case it must let through.
@@ -442,6 +560,7 @@ Future<_Layout> _pump(
   required RidingDisplaySize display,
   required double textScale,
   required bool leader,
+  bool miniMapVisible = true,
 }) async {
   tester.view.physicalSize = phone.size;
   tester.view.devicePixelRatio = 1;
@@ -563,6 +682,7 @@ Future<_Layout> _pump(
         overlayMarkers: riders,
         leaderStatus: leader ? leaderStatus : null,
         groupRiderCount: 3,
+        showGroupMiniMap: miniMapVisible,
         distanceUnit: DistanceUnit.miles,
         ridingDisplaySize: display,
         speedLimitDisplay: speedLimit,
@@ -593,7 +713,10 @@ Future<_Layout> _pump(
         '$phone, ${display.name}, text x$textScale, '
         '${leader ? 'leader' : 'rider'}',
     rider: tester.getRect(marker),
-    band: tester.getRect(find.byKey(portraitBottomChromeKey)),
+    // Only portrait has the one band; a landscape layout has rails instead.
+    band: find.byKey(portraitBottomChromeKey).evaluate().isEmpty
+        ? Rect.zero
+        : tester.getRect(find.byKey(portraitBottomChromeKey)),
     rects: rects,
   );
 }

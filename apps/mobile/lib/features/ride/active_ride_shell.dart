@@ -18,6 +18,7 @@ import '../../controllers/observer_access_controller.dart';
 import '../../controllers/pre_start_presence_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../controllers/ride_location_lifecycle_controller.dart';
+import '../../controllers/mini_map_display_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../controllers/ride_push_notification_controller.dart';
@@ -312,6 +313,7 @@ class ActiveRideShell extends StatefulWidget {
     required this.sharedRoutes,
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
+    this.miniMapDisplay,
     this.completedRideStore,
     this.globalRideHeatmap,
     this.pushTokenSource,
@@ -354,6 +356,10 @@ class ActiveRideShell extends StatefulWidget {
   final SharedRouteController sharedRoutes;
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
+
+  /// Whether to draw the group mini-map; the rider's own choice, and failing
+  /// that their role (#850). Null draws it whenever there is a group to show.
+  final MiniMapDisplayController? miniMapDisplay;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
   final PushTokenSource? pushTokenSource;
@@ -4431,6 +4437,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       distanceUnit: widget.distanceUnits.value,
       speedLimitDisplay: widget.speedLimitDisplay,
       showRouteProgress: widget.routeProgressDisplay?.enabled ?? true,
+      showGroupMiniMap: widget.miniMapDisplay?.visibleFor(_miniMapRole) ?? true,
       ridingDisplaySize: widget.mapStyleMode.ridingDisplaySize,
       darkMapStyle: widget.mapStyleMode.resolveDark(
         MediaQuery.platformBrightnessOf(context),
@@ -6008,6 +6015,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     connectivity: _connectivitySummary,
   );
 
+  /// The role the group mini-map's default is decided by (#850): the one the
+  /// rider holds now, so the default follows a handover as it happens. A leader
+  /// holding a junction as a marker reads as a marker for this, and the overview
+  /// is the junction's own overview then anyway.
+  RideRole? get _miniMapRole => widget.rideController.session?.role;
+
   Widget _buildSettings() => SafeArea(
     child: UnitSettingsSheet(
       controller: widget.distanceUnits,
@@ -6015,6 +6028,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       riderProfile: widget.riderProfile,
       speedLimitDisplay: widget.speedLimitDisplay,
       routeProgressDisplay: widget.routeProgressDisplay,
+      miniMapDisplay: widget.miniMapDisplay,
+      miniMapRole: _miniMapRole,
       currentRideActive: true,
       lastRelaySync: _internetRelayController?.status.lastSuccessfulSync,
       testControl: widget.testControl,

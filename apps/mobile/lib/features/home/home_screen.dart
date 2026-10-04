@@ -13,6 +13,7 @@ import '../../controllers/completed_rides_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_code_preference_controller.dart';
 import '../../controllers/ride_controller.dart';
+import '../../controllers/mini_map_display_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
@@ -102,6 +103,7 @@ class HomeScreen extends StatefulWidget {
     required this.sharedRoutes,
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
+    this.miniMapDisplay,
     required this.recordedRoutes,
     required this.completedRides,
     this.globalRideHeatmap,
@@ -126,6 +128,7 @@ class HomeScreen extends StatefulWidget {
   final SharedRouteController sharedRoutes;
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
+  final MiniMapDisplayController? miniMapDisplay;
   final RecordedRouteStore recordedRoutes;
   final CompletedRidesController completedRides;
   final GlobalRideHeatmapController? globalRideHeatmap;
@@ -792,6 +795,7 @@ class _HomeScreenState extends State<HomeScreen> {
     widget.riderProfile,
     speedLimitDisplay: widget.speedLimitDisplay,
     routeProgressDisplay: widget.routeProgressDisplay,
+    miniMapDisplay: widget.miniMapDisplay,
     testControl: widget.testControl,
     spokenGuidance: widget.spokenGuidance,
     rideDiagnostics: widget.rideDiagnostics,

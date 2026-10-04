@@ -516,6 +516,7 @@ class RideMapFeature extends StatefulWidget {
     this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
     this.showRouteProgress = true,
+    this.showGroupMiniMap = true,
     this.basemapConfiguration = const BasemapConfiguration(),
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
     this.localRiderSymbol = riderSymbolDefault,
@@ -585,6 +586,7 @@ class RideMapFeature extends StatefulWidget {
     RidingDisplaySize ridingDisplaySize = RidingDisplaySize.small,
     SpeedLimitDisplayController? speedLimitDisplay,
     bool showRouteProgress = true,
+    bool showGroupMiniMap = true,
     bool darkMapStyle = false,
     bool restrainedLightMapStyle = true,
     MotorcycleIconStyle localMotorcycleStyle = motorcycleIconStyleDefault,
@@ -652,6 +654,7 @@ class RideMapFeature extends StatefulWidget {
     ridingDisplaySize: ridingDisplaySize,
     speedLimitDisplay: speedLimitDisplay,
     showRouteProgress: showRouteProgress,
+    showGroupMiniMap: showGroupMiniMap,
     basemapConfiguration: BasemapConfiguration.fromEnvironment().forBrightness(
       dark: darkMapStyle,
       restrainedLightStyle: restrainedLightMapStyle,
@@ -776,6 +779,13 @@ class RideMapFeature extends StatefulWidget {
   final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool showRouteProgress;
+
+  /// Whether the group overview may be drawn at all (#850).
+  ///
+  /// The shell resolves this from the rider's own choice and, failing that, their
+  /// role. Even when true the overview still needs a group to show - a solo ride
+  /// has nobody to draw - so this is permission, not a demand.
+  final bool showGroupMiniMap;
   final BasemapConfiguration basemapConfiguration;
   final MotorcycleIconStyle localMotorcycleStyle;
   final RiderSymbol localRiderSymbol;
@@ -950,6 +960,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         ridingDisplaySize: widget.ridingDisplaySize,
         speedLimitDisplay: widget.speedLimitDisplay,
         showRouteProgress: widget.showRouteProgress,
+        showGroupMiniMap: widget.showGroupMiniMap,
         localMotorcycleStyle: widget.localMotorcycleStyle,
         localRiderSymbol: widget.localRiderSymbol,
         localDisplayName: widget.localDisplayName,
@@ -1058,6 +1069,7 @@ class RideMapScreen extends StatefulWidget {
     this.ridingDisplaySize = RidingDisplaySize.small,
     this.speedLimitDisplay,
     this.showRouteProgress = true,
+    this.showGroupMiniMap = true,
     this.disposeOfflineTileCache = false,
     this.localMotorcycleStyle = motorcycleIconStyleDefault,
     this.localRiderSymbol = riderSymbolDefault,
@@ -1222,6 +1234,13 @@ class RideMapScreen extends StatefulWidget {
   final RidingDisplaySize ridingDisplaySize;
   final SpeedLimitDisplayController? speedLimitDisplay;
   final bool showRouteProgress;
+
+  /// Whether the group overview may be drawn at all (#850).
+  ///
+  /// The shell resolves this from the rider's own choice and, failing that, their
+  /// role. Even when true the overview still needs a group to show - a solo ride
+  /// has nobody to draw - so this is permission, not a demand.
+  final bool showGroupMiniMap;
   final bool disposeOfflineTileCache;
   final MotorcycleIconStyle localMotorcycleStyle;
   final RiderSymbol localRiderSymbol;
@@ -2345,7 +2364,9 @@ class _RideMapScreenState extends State<RideMapScreen>
     // avoids relying on a parent platform-map rebuild to notice rider updates,
     // which left the portrait mini-map absent in the live simulator.
     final canShowGroupMiniMap =
-        widget.overlayMarkers != null && !markerOverviewActive;
+        widget.showGroupMiniMap &&
+        widget.overlayMarkers != null &&
+        !markerOverviewActive;
     final groupMiniMapWidth = landscape ? 196.0 : 150.0;
     final groupMiniMapHeight = landscape ? 116.0 : 104.0;
     // An active ride supplies its own named destination menu. Free roam has no

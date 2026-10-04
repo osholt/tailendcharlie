@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../controllers/distance_unit_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
+import '../../controllers/mini_map_display_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/route_progress_display_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
@@ -17,6 +18,7 @@ import '../map/discovery_layer_toggles.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/distance_unit.dart';
 import '../../domain/map_style_mode.dart';
+import '../../domain/ride_role.dart';
 import '../../domain/riding_display_size.dart';
 import '../../domain/rider_color.dart';
 import '../../services/basemap_configuration.dart';
@@ -37,6 +39,8 @@ class UnitSettingsSheet extends StatelessWidget {
     required this.riderProfile,
     required this.speedLimitDisplay,
     this.routeProgressDisplay,
+    this.miniMapDisplay,
+    this.miniMapRole,
     this.currentRideActive = false,
     this.lastRelaySync,
     this.buildIdentity,
@@ -54,6 +58,12 @@ class UnitSettingsSheet extends StatelessWidget {
   final RiderProfileController riderProfile;
   final SpeedLimitDisplayController speedLimitDisplay;
   final RouteProgressDisplayController? routeProgressDisplay;
+
+  /// Whether to show the group mini-map, and the role that decides it when the
+  /// rider has not chosen (#850). The role is null where there is no ride, which
+  /// reads as a follower.
+  final MiniMapDisplayController? miniMapDisplay;
+  final RideRole? miniMapRole;
   final bool currentRideActive;
 
   /// Whether these settings are the body of a primary destination rather than
@@ -92,6 +102,8 @@ class UnitSettingsSheet extends StatelessWidget {
     RiderProfileController riderProfile, {
     required SpeedLimitDisplayController speedLimitDisplay,
     RouteProgressDisplayController? routeProgressDisplay,
+    MiniMapDisplayController? miniMapDisplay,
+    RideRole? miniMapRole,
     bool currentRideActive = false,
     DateTime? lastRelaySync,
     BuildIdentity? buildIdentity,
@@ -112,6 +124,8 @@ class UnitSettingsSheet extends StatelessWidget {
           riderProfile: riderProfile,
           speedLimitDisplay: speedLimitDisplay,
           routeProgressDisplay: routeProgressDisplay,
+          miniMapDisplay: miniMapDisplay,
+          miniMapRole: miniMapRole,
           currentRideActive: currentRideActive,
           lastRelaySync: lastRelaySync,
           buildIdentity: buildIdentity,
@@ -133,6 +147,7 @@ class UnitSettingsSheet extends StatelessWidget {
       riderProfile,
       speedLimitDisplay,
       ?routeProgressDisplay,
+      ?miniMapDisplay,
       ?globalRideHeatmap,
     ]),
     builder: (context, _) {
@@ -267,6 +282,33 @@ class UnitSettingsSheet extends StatelessWidget {
                   'route estimate with suitable ride history when available.',
                 ),
               ),
+            ],
+            if (miniMapDisplay case final miniMap?) ...[
+              const SizedBox(height: 8),
+              SwitchListTile.adaptive(
+                key: const Key('mini-map-display-toggle'),
+                contentPadding: EdgeInsets.zero,
+                value: miniMap.visibleFor(miniMapRole),
+                onChanged: miniMap.setVisible,
+                title: const Text('Show the group mini-map'),
+                subtitle: Text(
+                  miniMap.hasExplicitChoice
+                      ? 'A map of the whole group beside the ride controls. '
+                            'Your choice, whatever your role.'
+                      : 'A map of the whole group beside the ride controls. '
+                            'On for the leader and Tail End Charlie, off for '
+                            'other riders.',
+                ),
+              ),
+              if (miniMap.hasExplicitChoice)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    key: const Key('mini-map-display-use-role-default'),
+                    onPressed: () => unawaited(miniMap.useRoleDefault()),
+                    child: const Text('Use the default for my role'),
+                  ),
+                ),
             ],
             const SizedBox(height: 22),
             Text(
