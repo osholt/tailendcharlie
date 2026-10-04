@@ -391,9 +391,15 @@ The five route lines are separated by only 1.03–1.75:1 in luminance, which is
 unavoidable when a dark basemap needs every one of them light. Width and dash
 pattern carry that separation and must not be flattened.
 
-The leader's trail is the widest line and is drawn beneath the planned route, so
-the group's ground truth stays visible without hiding the plan. Off-route trails
-are drawn above it, because they are the deviation from it.
+The leader's trail is the widest line, and it is painted over every route line -
+the orange travelled track, the route ahead and an off-route trail - and under the
+rider markers, so a follower can always see the purple line that shows how far
+ahead the leader is. It used to be painted beneath the route lines, which hid it
+wherever the two overlapped (#842). The rejoin route stays on top of it, because
+that is the line the rider is being asked to follow right now. Both ride-map
+renderers (flutter_map on iOS, MapLibre on Android) read one order,
+`RouteTrailStyle.lineOrder`, and the group overview paints the same sequence:
+route, the leader's trail, then riders.
 
 The route ahead is green rather than cyan because cyan belongs to the rejoin
 breadcrumb, and those are the two lines that both mean "go this way" and appear
