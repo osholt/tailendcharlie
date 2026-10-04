@@ -55,7 +55,32 @@ results on #268.
 - #841: road-edge contrast in the light styles goes from 1.45–1.55:1 to about
   2.0:1. Measured tables are in `docs/maps-and-gpx.md`.
 - #848: portrait ETA strip and overview moved into the bottom band; chrome text
-  scale is capped.
+  scale is capped. The leader's REPORT and TELL GROUP stack so the overview stays
+  at least 120 pt wide.
+- #850: minimap setting, on by default for the leader and the TEC. An explicit
+  choice wins.
+- #843: Android marker images were sized as one-to-one bitmaps although MapLibre
+  draws them at device density. The halo filled the SDF square, and the badge lay
+  on the tilted map plane. All three are fixed, with density tests from 1 to 4.
+- #845: the leader and the resolved TEC are drawn as stars on the phone maps and
+  the overview. CarPlay and Android Auto still draw circles.
+- #860: unnamed EV chargers and parcel lockers whose provider name contains an
+  identifier get a generic label. The upstream OSM fix is the operator's.
+
+## Location sharing (#859)
+
+A started ride nobody ends used to share indefinitely. A pure dispersal rule now
+protects real riding, café stops, waiting markers and a TEC far behind. It asks
+after 30 minutes of dispersal and pauses sharing 15 minutes after the rider stops
+moving. It also adds a persistent sharing indicator and a background
+notification.
+
+## Planning flow (#847 phase 1)
+
+The Plan surface: the start defaults to your location and can be changed, named
+stops, dragged shaping points kept out of the stop list, and route options with
+Solo/Group on one screen. A confirmed route can be edited. Solo↔group conversion
+keeps navigation running. No new relay event types. Later phases are #891–#899.
 
 ## Release gate
 

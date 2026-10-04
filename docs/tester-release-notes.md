@@ -107,6 +107,9 @@ chat. Thank you, Becks and Nigel.
   for the leader and Tail End Charlie, and off for everyone else.
 - On Android, other riders appear as coloured discs with their bike or initials,
   the same as on iPhone. The "squashed flies" are gone.
+- The leader and the Tail End Charlie are drawn as **stars** in their own colour
+  on the map and the minimap; everyone else is a circle. CarPlay and Android Auto
+  still show circles.
 - Unnamed EV chargers and parcel lockers are labelled "EV charging" or "Parcel
   locker", never a code.
 
