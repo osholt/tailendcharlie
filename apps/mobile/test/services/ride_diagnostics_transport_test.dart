@@ -248,6 +248,22 @@ void main() {
       },
     );
 
+    test('an id in the same status that announces the peer is replaced too', () {
+      // The first time a peer is seen is also the first time its id could appear
+      // in a message, and the label has to exist before the message is scrubbed.
+      recorder.observeNearbyStatus(
+        status(
+          RelayConnectionState.connected,
+          peers: {'q7XK'},
+          message: 'Connection to q7XK established',
+        ),
+      );
+
+      final log = recorder.render();
+      expect(log, isNot(contains('q7XK')));
+      expect(log, contains('Connection to phone A established'));
+    });
+
     test('a rider\'s own name inside a platform message is scrubbed', () {
       final scrubbing = RideDiagnosticsRecorder(
         clock: () => now,
@@ -589,6 +605,32 @@ void main() {
 
       expect(summarised, 1);
     });
+
+    test(
+      'is not tallied while recording is stopped, so the next change is honest',
+      () {
+        final ledger = ledgerWithTraffic();
+        recorder.recordTransportSummary(ledger.summary());
+        recorder.stopRecording();
+        ledger.recordEvent(
+          transport: EvidenceTransport.bluetooth,
+          eventId: 'while-stopped',
+          authorId: 'alex',
+        );
+
+        // Nothing is written, and the stopped tally must not become the baseline the
+        // next written one is measured against.
+        recorder.recordTransportSummary(ledger.summary());
+        recorder.resumeRecording();
+        recorder.recordTransportSummary(ledger.summary());
+
+        final bluetooth = transportLines()
+            .where((line) => line.contains('bluetooth summary'))
+            .toList();
+        expect(bluetooth, hasLength(2));
+        expect(bluetooth.last, contains('events 2 (+1)'));
+      },
+    );
 
     test('is not written while recording is stopped', () {
       recorder.stopRecording();

@@ -280,9 +280,13 @@ class RideDiagnosticsRecorder {
   void observeNearbyStatus(RelayStatus status) {
     if (!_recording) return;
     final peers = status.peerIds;
+    // Labelled first, before any text is scrubbed or written, so a platform
+    // message that names a peer in the same status that announces it has already
+    // had the id replaced.
+    for (final id in peers) {
+      _peers.labelFor(id);
+    }
     final problem = _problemFor(status);
-    // Labelled before anything is written, so a line that mentions a peer in
-    // free text has already had its id replaced.
     final joined = [
       for (final id in peers)
         if (!_nearbyPeerIds.contains(id)) id,
@@ -291,9 +295,6 @@ class RideDiagnosticsRecorder {
       for (final id in _nearbyPeerIds)
         if (!peers.contains(id)) id,
     ];
-    for (final id in [...joined, ...left]) {
-      _peers.labelFor(id);
-    }
     final stateChanged = _nearbyState != status.state;
     final newProblem = problem != null && problem != _nearbyProblem;
     _nearbyState = status.state;
@@ -408,6 +409,7 @@ class RideDiagnosticsRecorder {
   /// previous tally, so "when did Bluetooth stop delivering" is a subtraction a
   /// reader can do by eye.
   void recordTransportSummary(TransportEvidenceSummary summary) {
+    if (!_recording) return;
     final previous = _lastTransportSummary;
     _lastTransportSummary = summary;
     for (final transport in EvidenceTransport.values) {

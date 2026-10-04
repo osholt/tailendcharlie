@@ -203,7 +203,8 @@ stays blocked on the pass gates at the end of this document, per
      arrived over Bluetooth before the internet; J arrived only over Bluetooth.*
      An "update" is a durable event from another rider (a position report, a
      hazard, a role change). M is every distinct update that reached this phone
-     by any route, N those Bluetooth delivered, K those Bluetooth delivered
+     by any route, including history it caught up on after joining, N those
+     Bluetooth delivered, K those Bluetooth delivered
      before the internet did, and J those the internet never delivered at all
      (counted once an update has waited 30 seconds, so one the internet is about
      to deliver is not claimed for Bluetooth). **K and J are the evidence.** N
