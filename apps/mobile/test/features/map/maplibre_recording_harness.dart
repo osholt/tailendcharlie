@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 
+const _viewIds = 32;
+
 /// Mounts [app] on the MapLibre render path with the platform channel recording
 /// every call, completes the style set-up a real platform view would trigger,
 /// and returns what the plugin was asked to do, in order.
@@ -24,7 +26,12 @@ Future<List<MethodCall>> recordMapLibreStyleSetUp(
   Duration timeout = const Duration(seconds: 30),
 }) async {
   final calls = <MethodCall>[];
-  const channel = MethodChannel('plugins.flutter.io/maplibre_gl_0');
+  // The platform view registry numbers views for the whole run, so the second
+  // map a test file mounts talks on `maplibre_gl_1`, and so on.
+  final channels = [
+    for (var id = 0; id < _viewIds; id++)
+      MethodChannel('plugins.flutter.io/maplibre_gl_$id'),
+  ];
   const views = MethodChannel('flutter/platform_views');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -37,10 +44,12 @@ Future<List<MethodCall>> recordMapLibreStyleSetUp(
     }
     return null;
   });
-  messenger.setMockMethodCallHandler(channel, (call) async {
-    calls.add(call);
-    return null;
-  });
+  for (final channel in channels) {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+  }
   ml.MapLibrePlatform.createInstance = () {
     final platform = ml.MapLibreMethodChannel();
     unawaited(platform.initPlatform(0));
@@ -50,8 +59,10 @@ Future<List<MethodCall>> recordMapLibreStyleSetUp(
     ml.MapLibrePlatform.createInstance = original;
     messenger.setMockMethodCallHandler(views, null);
     // The suite's own handler is installed once for the whole file, so put it
-    // back rather than leaving the channel unanswered.
-    messenger.setMockMethodCallHandler(channel, (_) async => null);
+    // back rather than leaving the channels unanswered.
+    for (final channel in channels) {
+      messenger.setMockMethodCallHandler(channel, (_) async => null);
+    }
   });
 
   await tester.pumpWidget(app);

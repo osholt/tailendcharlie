@@ -336,17 +336,52 @@ const double riderSymbolRasterSize = 128;
 /// and visibly not matching the preview a rider chose them from.
 const double riderInitialsBadgeFill = 0.94;
 
-/// `icon-size` for an initials raster drawn on a badge of [badgeDiameter].
+/// The share of a marker badge's box a bike glyph spans, and the share an
+/// emoji's font size is of it. These are the figures [RiderMarkerBadge] has
+/// always drawn the glyph at; the native map reads them from here so a marker on
+/// Android is the size of the same marker on iOS (#843).
+const double riderGlyphBoxFill = 0.62;
+
+/// See [riderGlyphBoxFill].
+const double riderEmojiFontFill = 0.55;
+
+/// Width in pixels of the bike asset the native map's glyph size is worked out
+/// from. The fifteen bikes are 230 to 267 pixels wide, and the default's is the
+/// nearest to their mean, so no style is more than 9% off the size it should be.
+const double riderGlyphRasterWidth = 251;
+
+/// `icon-size` for a bike glyph on a badge of [badgeDiameter], on a native map
+/// that treats every image it is given as [pixelRatio] pixels to a logical pixel.
+///
+/// MapLibre draws an image `width / pixelRatio` logical pixels wide before
+/// `icon-size` is applied, and the plugin's Android build gives every image the
+/// device's density as its pixel ratio (`inDensity = 0` leaves the bitmap at the
+/// device default; it does not mean one to one). The glyph's size was a constant
+/// tuned on one phone, so it was right on that phone and wrong on every other
+/// density, and the badge drawn beside it, rasterised as if the ratio were one,
+/// came out `1 / pixelRatio` of its size - small enough for the glyph to hide it.
+/// Derived from the ratio instead, the glyph comes out at [riderGlyphBoxFill] of
+/// the badge on any density.
+double riderGlyphIconSize({
+  required double badgeDiameter,
+  double pixelRatio = 1,
+}) => badgeDiameter * riderGlyphBoxFill * pixelRatio / riderGlyphRasterWidth;
+
+/// `icon-size` for an initials or emoji raster drawn on a badge of
+/// [badgeDiameter], on a native map that treats every image as [pixelRatio]
+/// pixels to a logical pixel.
 ///
 /// [rasterizeRiderSymbolPng] already insets the glyph by
 /// [riderInitialsBadgeFill] inside its own square, so the raster maps one to
-/// one onto the badge and this is simply the ratio of the two. Derived rather
-/// than tuned, so a change to a badge's radius cannot leave its initials
-/// behind — which is exactly how they got left behind the first time.
+/// one onto the badge and this is simply the ratio of the two - scaled by the
+/// pixel ratio the native map divides the raster by. Derived rather than tuned,
+/// so a change to a badge's radius cannot leave its initials behind — which is
+/// exactly how they got left behind the first time.
 double riderInitialsIconSize({
   required double badgeDiameter,
   double rasterSize = riderSymbolRasterSize,
-}) => badgeDiameter / rasterSize;
+  double pixelRatio = 1,
+}) => badgeDiameter * pixelRatio / rasterSize;
 
 /// A motorcycle glyph standing in for the plain circle/Material icon
 /// previously used for rider map markers, tinted by the caller (role colour)
@@ -440,7 +475,7 @@ class RiderMarkerBadge extends StatelessWidget {
             // contrast at all - 1.76:1 on the default rider green, 1.53:1 on
             // yellow. See `RouteTrailStyle.markerGlyph` (#133).
             color: glyphColor,
-            size: size * 0.62,
+            size: size * riderGlyphBoxFill,
           ),
           RiderSymbolKind.initials => Padding(
             // The same fill as the raster the native map draws, so the two
@@ -478,7 +513,7 @@ class RiderMarkerBadge extends StatelessWidget {
           RiderSymbolKind.emoji => Text(
             symbol.emoji!,
             maxLines: 1,
-            style: TextStyle(fontSize: size * 0.55, height: 1),
+            style: TextStyle(fontSize: size * riderEmojiFontFill, height: 1),
           ),
         },
       ),
@@ -522,7 +557,7 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
               color: initials
                   ? symbol.initialsInk.color
                   : const Color(0xFFFFFFFF),
-              fontSize: size * (initials ? 1 : 0.72),
+              fontSize: size * (initials ? 1 : riderEmojiFontFill),
               height: initials ? 0.9 : 1,
               fontWeight: initials ? FontWeight.w900 : FontWeight.normal,
               letterSpacing: initials ? -3 : null,

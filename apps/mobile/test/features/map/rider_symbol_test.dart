@@ -559,25 +559,39 @@ void main() {
     });
 
     test('initials are given more room than a bike, not the same', () {
-      // The whole defect in one line. 0.19, 0.2 and 0.09 are the sizes the
-      // three rider layers use for a pictogram, and initials took them.
-      for (final (badgeDiameter, pictogram) in const [
-        (30.0, 0.19), // other riders on the ride map
-        (32.0, 0.2), // the local rider's own marker
-        (14.0, 0.09), // the group overview
-      ]) {
-        final initials = riderInitialsIconSize(badgeDiameter: badgeDiameter);
-        expect(
-          initials,
-          greaterThan(pictogram * 1.15),
-          reason:
-              'a badge of $badgeDiameter should not size its initials like '
-              'a bike',
-        );
-        expect(
-          riderSymbolRasterSize * initials * riderInitialsBadgeFill,
-          closeTo(badgeDiameter * riderInitialsBadgeFill, 0.01),
-        );
+      // The whole defect in one line (#259): initials inherited the size of a
+      // bike glyph. Compared on screen, where the two rasters are different
+      // sizes, and on every density the native map might divide them by (#843).
+      for (final pixelRatio in const [1.0, 2.0, 2.625, 3.0]) {
+        for (final badgeDiameter in const [14.0, 34.0, 38.0]) {
+          final bike =
+              riderGlyphRasterWidth *
+              riderGlyphIconSize(
+                badgeDiameter: badgeDiameter,
+                pixelRatio: pixelRatio,
+              ) /
+              pixelRatio;
+          final initials =
+              riderSymbolRasterSize *
+              riderInitialsIconSize(
+                badgeDiameter: badgeDiameter,
+                pixelRatio: pixelRatio,
+              ) /
+              pixelRatio *
+              riderInitialsBadgeFill;
+
+          expect(
+            initials,
+            greaterThan(bike * 1.15),
+            reason:
+                'a badge of $badgeDiameter at $pixelRatio should not size its '
+                'initials like a bike',
+          );
+          expect(
+            initials,
+            closeTo(badgeDiameter * riderInitialsBadgeFill, 0.01),
+          );
+        }
       }
     });
 

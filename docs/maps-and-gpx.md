@@ -417,6 +417,44 @@ vanish into the road it is drawn on. The closest remaining pairs by luminance
 alone are route ahead against rejoin (1.16) and route ahead against the leader
 trail (1.03); hue separates the first and width and pattern separate both.
 
+### Rider markers and the native map's image density (#843, #844)
+
+A rider marker is the same size and in the same colours on every map. The
+flutter_map renderer (iOS) draws it with `RiderMarkerBadge`; the MapLibre
+renderer (Android) draws it with two symbol layers - a coloured badge shape and
+the glyph over it - from images the app rasterises and registers. Colours for
+both, and for the group overview, come from `RideMapPalette`
+(`lib/features/map/ride_map_palette.dart`).
+
+**MapLibre divides every registered image by a pixel ratio, and on Android that
+ratio is the device's density.** The plugin decodes Android image bytes with
+`inDensity = 0`, which leaves the bitmap at `Bitmap.getDefaultDensity()` (the
+device's density, not 160), and MapLibre takes `density / 160` as the image's
+pixel ratio. iOS does the same with `UIScreen.scale`. So an image's logical size
+is `width / pixelRatio` before `icon-size` is applied. The Dart side used to
+assume one to one on Android: the badge shape was rasterised at its logical size
+and came out `1 / density` of it, while the glyph's `icon-size` was a constant
+tuned on one phone. At three pixels to a dp that was a tiny coloured disc under a
+bike glyph that was larger than it - the "squashed flies" in Becks's screenshot.
+
+The rule now, in `motorcycle_icon.dart` and `_nativeMarkerPixelRatio`:
+
+- images are rasterised for `MediaQuery.devicePixelRatioOf` (the badge shape at
+  `144 * ratio` pixels), and
+- every `icon-size` is a logical size multiplied by that ratio and divided by the
+  image's own width: `riderGlyphIconSize` (a bike is `riderGlyphBoxFill`, 0.62,
+  of the badge, as `RiderMarkerBadge` draws it) and `riderInitialsIconSize` (an
+  initials or emoji raster is a 128 pixel square mapped onto the badge).
+
+The other-rider badge is a 34 box and the local rider's a 38 box on both
+renderers, so a marker is the size of its iOS twin on any density.
+`rider_marker_density_test.dart` reads the recorded images and layers at seven
+pixel ratios and asserts those logical sizes. One caveat the tests cannot cover:
+if the rider has changed Android's display size, Flutter's ratio moves and the
+bitmap default does not, and a marker is off by that factor like every other
+native symbol. Trail direction arrows and hazard badges are sized by constants
+tuned the same way and have the same dependence; they are not changed here.
+
 ### The light basemap
 
 The default OpenFreeMap Liberty document is now treated as the daylight partner
