@@ -74,7 +74,8 @@ class BasemapConfiguration {
   /// Whether the default Liberty day style receives Tail End Charlie's
   /// quieter road-first repaint. False preserves the provider's original
   /// daytime palette, apart from its road outlines, which both choices
-  /// strengthen (#841). Custom styles are never repainted either way (#489).
+  /// strengthen (#841), and POI labels that would show a source identifier
+  /// (#860). Custom styles are never repainted either way (#489).
   final bool restrainedLightStyle;
 
   /// Whether [styleUrl] is the resolved night palette rather than the day

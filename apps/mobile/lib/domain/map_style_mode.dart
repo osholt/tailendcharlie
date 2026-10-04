@@ -7,9 +7,10 @@ enum MapStyleMode { system, light, dark, sunriseSunset }
 ///
 /// Both choices use the same OpenFreeMap Liberty data. [restrained] applies
 /// Tail End Charlie's quieter road-first repaint; [original] keeps the
-/// provider's palette, labels and symbols (#489), with one exception: its road
+/// provider's palette, labels and symbols (#489), with two exceptions: its road
 /// outlines are deepened and widened so roads can be picked out in daylight
-/// (#841).
+/// (#841), and a POI label that would show a source identifier is replaced by
+/// what the POI is (#860).
 enum DayMapStyle { restrained, original }
 
 typedef GeoCoordinate = ({double latitude, double longitude});
