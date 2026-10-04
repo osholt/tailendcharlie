@@ -87,9 +87,9 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Tail End Charlie uses nearby devices and local networks to keep your ride group coordinated.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Tail End Charlie uses your location during an active ride to share your position with your group, provide navigation, and warn about route deviations. You can pause or stop location sharing at any time.</string>
+	<string>Tail End Charlie uses your location during an active ride to share your position with your group, provide navigation, and warn about route deviations. You can pause or stop location sharing at any time, and it asks whether you are still riding if you are away from your group for a while.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Tail End Charlie uses your location during an active ride to show your group position, keep the group informed of where you are, and warn about route deviations. During a ride it keeps doing this while you use another navigation app or the screen is off, and stops as soon as the ride ends.</string>
+	<string>Tail End Charlie uses your location during an active ride to show your group position, keep the group informed of where you are, and warn about route deviations. During a ride it keeps doing this while you use another navigation app or the screen is off. It stops as soon as the ride ends or you stop sharing, and it asks whether you are still riding if you are away from your group for a while.</string>
 	<!--
 	  Location is a background mode because the group has to be able to see a
 	  rider whose phone is in a pocket or showing another navigation app. Without

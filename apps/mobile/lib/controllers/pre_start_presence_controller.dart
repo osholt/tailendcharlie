@@ -49,10 +49,14 @@ class PreStartPresenceController extends ChangeNotifier {
   bool _syncing = false;
   bool _closed = false;
   bool _clearOnNextSync = false;
+  bool _localSharingSuspended = false;
   PresenceAvailability _availability = PresenceAvailability.stopped;
   RidePresencePhase _phase = RidePresencePhase.unknown;
 
   bool get active => _active;
+
+  /// True while this rider's own position is being withheld (#859).
+  bool get localSharingSuspended => _localSharingSuspended;
 
   /// The named availability of the internet presence channel. Replaces the
   /// previous string comparison against a server status code, which turned a
@@ -248,6 +252,7 @@ class PreStartPresenceController extends ChangeNotifier {
     final session = _session;
     if (!_active ||
         session == null ||
+        _localSharingSuspended ||
         location.riderId != session.localRiderId) {
       return;
     }
@@ -264,6 +269,23 @@ class PreStartPresenceController extends ChangeNotifier {
     if (!publishImmediately) return;
     unawaited(_publishNearby(location));
     wake();
+  }
+
+  /// Stops publishing this rider's own position and withdraws what is already
+  /// out there, while the controller carries on running (#859).
+  ///
+  /// The rider is still in the ride and still sees everyone else; they are just
+  /// no longer seen. Refusing positions here, rather than relying on every caller
+  /// to stop offering them, means a late fix can never undo the pause: this is
+  /// the one place that decides what leaves the phone on both presence channels.
+  Future<void> suspendLocalSharing() async {
+    _localSharingSuspended = true;
+    await clearLocalPosition();
+  }
+
+  /// Lets this rider's positions out again. The next fix is published as usual.
+  void resumeLocalSharing() {
+    _localSharingSuspended = false;
   }
 
   Future<void> clearLocalPosition() async {

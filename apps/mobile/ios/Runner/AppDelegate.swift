@@ -44,6 +44,7 @@ final class CarPlayCommandCompletion {
   private var latestCarPlayViewport: [String: Any]?
   private var latestCarPlayMapStyle: [String: Any]?
   private var pushChannel: FlutterMethodChannel?
+  private var sharingReminderChannel: FlutterMethodChannel?
   private var apnsToken: String?
   private var pendingPushTokenResult: FlutterResult?
   private var pendingOpenedPush: [String: String]?
@@ -196,6 +197,61 @@ final class CarPlayCommandCompletion {
       }
     }
     self.pushChannel = pushChannel
+
+    // The "are you still riding?" reminder (#859). Posts and removes one local
+    // notification and decides nothing: whether to ask is all in Dart. It needs
+    // the notification permission the push flow asks for at the start of a group
+    // ride, and without it simply reports false, because the question is still in
+    // the app. `willPresent` above keeps it out of the way while the app is open.
+    let sharingReminderChannel = FlutterMethodChannel(
+      name: "me.osholt.ride_relay/sharing_reminder",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    sharingReminderChannel.setMethodCallHandler { call, result in
+      let identifier = "location-sharing-reminder"
+      switch call.method {
+      case "show":
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let title = arguments["title"] as? String,
+          let body = arguments["body"] as? String,
+          !title.isEmpty,
+          !body.isEmpty
+        else {
+          result(FlutterError(code: "invalid_arguments", message: "A title and a body are required", details: nil))
+          return
+        }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+          switch settings.authorizationStatus {
+          case .authorized, .provisional, .ephemeral:
+            break
+          default:
+            DispatchQueue.main.async { result(false) }
+            return
+          }
+          let content = UNMutableNotificationContent()
+          content.title = title
+          content.body = body
+          content.sound = .default
+          content.threadIdentifier = "location-sharing"
+          // The same identifier replaces the earlier notification, so a question
+          // that becomes "sharing stopped" is one entry, not two.
+          let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+          center.add(request) { error in
+            DispatchQueue.main.async { result(error == nil) }
+          }
+        }
+      case "clear":
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.sharingReminderChannel = sharingReminderChannel
 
     let carPlayChannel = FlutterMethodChannel(
       name: "me.osholt.ride_relay/carplay",
