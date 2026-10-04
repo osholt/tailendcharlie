@@ -77,6 +77,29 @@ void main() {
       }
     });
 
+    test('an outline is never wider than the distance field can hold', () {
+      for (final badge in [14.0, 34.0, 38.0]) {
+        final iconSize = badge / riderMarkerShapeUnits;
+        for (final requested in [0.5, 1.0, 2.0, 3.0]) {
+          final halo = riderBadgeHaloWidth(
+            badgeDiameter: badge,
+            requested: requested,
+          );
+
+          expect(halo, lessThanOrEqualTo(requested));
+          expect(
+            halo / iconSize,
+            lessThanOrEqualTo(riderBadgeSdfHaloLimit + 1e-9),
+            reason:
+                'a $requested px outline on a $badge badge would overflow the '
+                'six units of distance the shape encodes',
+          );
+        }
+      }
+      // What is asked for is given while it fits.
+      expect(riderBadgeHaloWidth(badgeDiameter: 34, requested: 0.5), 0.5);
+    });
+
     test(
       'an emoji raster is painted at the font size the Flutter badge gives it',
       () async {
@@ -237,6 +260,22 @@ void main() {
             ),
             closeTo(localBox * riderGlyphBoxFill, 0.25),
           );
+
+          // The outline: a halo wider than the shape's distance field holds is no
+          // longer an outline but a solid square behind the marker.
+          for (final layer in [
+            'ride-relay-overlay-badges',
+            'ride-relay-position-badge',
+          ]) {
+            final halo = properties(layer)['icon-halo-width'] as num;
+            final size = properties(layer)['icon-size'] as num;
+            expect(halo, greaterThan(0), reason: '$layer keeps an outline');
+            expect(
+              halo / size,
+              lessThanOrEqualTo(riderBadgeSdfHaloLimit + 1e-9),
+              reason: '$layer must not fill its whole image',
+            );
+          }
         } finally {
           await tester.pump(const Duration(seconds: 2));
           await tester.pumpWidget(const SizedBox.shrink());

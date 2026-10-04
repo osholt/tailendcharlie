@@ -511,6 +511,14 @@ The rule now, in `motorcycle_icon.dart` and `_nativeMarkerPixelRatio`:
   of the badge, as `RiderMarkerBadge` draws it) and `riderInitialsIconSize` (an
   initials or emoji raster is a 128 pixel square mapped onto the badge).
 
+The badge's outline is MapLibre's `icon-halo`, and a halo can only be as wide as
+the shape's distance field holds: the SDF encodes six units outside the edge, the
+shader draws `icon-halo-width / icon-size` of them, and asked for more it fills
+the whole image - the solid dark square (white for the local rider) behind every
+Android rider marker until #843. `riderBadgeHaloWidth` keeps the outline inside
+that, at about one logical pixel on a 34 badge: what the flutter_map badge's two
+pixel stroke shows outside its edge.
+
 The other-rider badge is a 34 box and the local rider's a 38 box on both
 renderers, so a marker is the size of its iOS twin on any density.
 `rider_marker_density_test.dart` reads the recorded images and layers at seven
@@ -518,7 +526,8 @@ pixel ratios and asserts those logical sizes. One caveat the tests cannot cover:
 if the rider has changed Android's display size, Flutter's ratio moves and the
 bitmap default does not, and a marker is off by that factor like every other
 native symbol. Trail direction arrows and hazard badges are sized by constants
-tuned the same way and have the same dependence; they are not changed here.
+tuned the same way and have the same dependence, and the arrows' two pixel halo
+overflows the same way (a dark square behind each); they are not changed here.
 
 ### The light basemap
 

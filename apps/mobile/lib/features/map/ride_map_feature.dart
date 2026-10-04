@@ -6767,9 +6767,14 @@ class _RideMapScreenState extends State<RideMapScreen>
       riderUnknownShapeImage,
     ],
     iconColor: color,
-    iconSize: diameter / 128,
+    iconSize: diameter / riderMarkerShapeUnits,
     iconHaloColor: borderColor,
-    iconHaloWidth: borderWidth,
+    // As much of the outline as the shape's distance field can hold; more is a
+    // solid square behind the marker (#843).
+    iconHaloWidth: riderBadgeHaloWidth(
+      badgeDiameter: diameter,
+      requested: borderWidth,
+    ),
     iconRotate: [
       'coalesce',
       ['get', 'bearing'],

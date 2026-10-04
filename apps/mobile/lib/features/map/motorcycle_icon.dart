@@ -350,6 +350,35 @@ const double riderEmojiFontFill = 0.55;
 /// nearest to their mean, so no style is more than 9% off the size it should be.
 const double riderGlyphRasterWidth = 251;
 
+/// The furthest MapLibre can draw an outline past the edge of a badge shape, in
+/// the shape's own units (`icon-halo-width / icon-size`).
+///
+/// The shape is an SDF: its alpha encodes the distance to the edge, from 1 inside
+/// to 0 six units outside, and the shader draws a halo of `icon-halo-width /
+/// icon-size` of those units by thresholding that alpha. Asked for more than the
+/// field holds, the threshold goes negative and the "outline" is the whole image:
+/// a solid dark square behind every Android rider marker, and a white one behind
+/// the local rider's (#843). The shader's edge softening needs a margin inside
+/// the six, so the limit sits well under it. At the 34 box a rider's badge is
+/// drawn in, this is about one logical pixel - what the flutter_map badge's
+/// two pixel stroke shows outside its edge, the other pixel being inside it.
+const double riderBadgeSdfHaloLimit = 4;
+
+/// The `icon-halo-width` to give a badge shape of [badgeDiameter] asked for
+/// [requested] logical pixels of outline: as much of it as the distance field
+/// can hold.
+double riderBadgeHaloWidth({
+  required double badgeDiameter,
+  required double requested,
+}) => math.min(
+  requested,
+  riderBadgeSdfHaloLimit * badgeDiameter / riderMarkerShapeUnits,
+);
+
+/// The side of the box a badge shape is drawn in, in the units `icon-size` maps
+/// onto the badge's diameter.
+const double riderMarkerShapeUnits = 128;
+
 /// `icon-size` for a bike glyph on a badge of [badgeDiameter], on a native map
 /// that treats every image it is given as [pixelRatio] pixels to a logical pixel.
 ///
