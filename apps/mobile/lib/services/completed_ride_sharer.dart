@@ -9,6 +9,7 @@ import '../domain/distance_unit.dart';
 import 'gpx_exporter.dart';
 import 'measurement_formatter.dart';
 import 'ride_alert_log.dart';
+import 'ride_broadcast_log.dart';
 
 abstract interface class CompletedRideSharer {
   Future<void> shareSummary(
@@ -47,6 +48,10 @@ class SystemCompletedRideSharer implements CompletedRideSharer {
       if (ride.alerts.isNotEmpty) ...[
         'Alerts raised: ${ride.alerts.length}',
         rideAlertLogText(ride.alerts),
+      ],
+      if (ride.broadcasts.isNotEmpty) ...[
+        'Leader messages: ${ride.broadcasts.length}',
+        rideBroadcastLogText(ride.broadcasts),
       ],
     ].join('\n');
     await SharePlus.instance.share(

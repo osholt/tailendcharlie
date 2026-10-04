@@ -28,6 +28,7 @@ import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/hazard_map_symbol.dart';
+import 'package:ride_relay/features/map/leader_broadcast_sheet.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/features/map/route_progress_panel.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
@@ -3247,6 +3248,351 @@ void main() {
     expect(find.byKey(const Key('enforcement-alert-border')), findsNothing);
   });
 
+  group("the leader's one-tap broadcasts (#854)", () {
+    Future<void> pumpMap(
+      WidgetTester tester, {
+      Future<void> Function(QuickMessage message)? onLeaderBroadcast,
+      bool rideStarted = true,
+      bool withOtherActions = false,
+      Size? size,
+    }) async {
+      if (size != null) {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+      }
+      final directory = Directory.systemTemp.createTempSync('map-broadcast');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: rideStarted,
+            onLeaderBroadcast: onLeaderBroadcast,
+            onReportHazard: withOtherActions ? (_) async {} : null,
+            onEmergencyAlert: withOtherActions ? () async {} : null,
+            onLeaveRide: withOtherActions ? () async {} : null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> dispose(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+
+    testWidgets('are offered only when the shell says this is the leader', (
+      tester,
+    ) async {
+      await pumpMap(tester);
+      expect(find.byKey(const Key('leader-broadcast-button')), findsNothing);
+      await dispose(tester);
+
+      await pumpMap(tester, onLeaderBroadcast: (_) async {});
+      expect(find.byKey(const Key('leader-broadcast-button')), findsOneWidget);
+      await dispose(tester);
+
+      // Before the ride starts there is nobody riding to be told.
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (_) async {},
+        rideStarted: false,
+      );
+      expect(find.byKey(const Key('leader-broadcast-button')), findsNothing);
+      await dispose(tester);
+    });
+
+    testWidgets('one tap on an option sends it - no confirmation', (
+      tester,
+    ) async {
+      final sent = <QuickMessage>[];
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (message) async => sent.add(message),
+      );
+
+      await tester.tap(find.byKey(const Key('leader-broadcast-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('Tell the group'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const Key('leader-broadcast-option-pullOver')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(sent, [QuickMessage.pullOver]);
+      // Gone: the sheet closed on the tap and nothing asked "are you sure?".
+      expect(find.byKey(const Key('leader-broadcast-sheet')), findsNothing);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Pull over sent to the group.'), findsOneWidget);
+      await dispose(tester);
+    });
+
+    testWidgets('each option sends its own message', (tester) async {
+      final sent = <QuickMessage>[];
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (message) async => sent.add(message),
+      );
+      final button = find.byKey(const Key('leader-broadcast-button'));
+
+      for (final message in leaderBroadcastMessages) {
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(Key('leader-broadcast-option-${message.name}')),
+        );
+        await tester.pumpAndSettle();
+        ScaffoldMessenger.of(tester.element(button)).clearSnackBars();
+        await tester.pump();
+      }
+
+      expect(sent, leaderBroadcastMessages);
+      await dispose(tester);
+    });
+
+    testWidgets('lists the four, large, with nothing to scroll to', (
+      tester,
+    ) async {
+      for (final size in const [
+        Size(852, 393),
+        Size(390, 844),
+        Size(360, 740),
+      ]) {
+        await pumpMap(tester, onLeaderBroadcast: (_) async {}, size: size);
+        await tester.tap(find.byKey(const Key('leader-broadcast-button')));
+        await tester.pumpAndSettle();
+
+        for (final message in leaderBroadcastMessages) {
+          final option = find.byKey(
+            Key('leader-broadcast-option-${message.name}'),
+          );
+          expect(option, findsOneWidget, reason: '${message.name} at $size');
+          final rect = tester.getRect(option);
+          // A target for a gloved hand, at every size.
+          expect(
+            rect.height,
+            greaterThanOrEqualTo(72),
+            reason: '${message.name} at $size',
+          );
+          expect(
+            rect.width,
+            greaterThanOrEqualTo(140),
+            reason: '${message.name} at $size',
+          );
+          // And on screen without scrolling the sheet.
+          expect(
+            rect.top,
+            greaterThanOrEqualTo(0),
+            reason: '${message.name} at $size',
+          );
+          expect(
+            rect.bottom,
+            lessThanOrEqualTo(size.height),
+            reason: '${message.name} at $size',
+          );
+        }
+        expect(find.text('Wrong way – turn around'), findsOneWidget);
+        expect(find.text('Stopped for fuel'), findsOneWidget);
+        expect(find.text('Pull over'), findsOneWidget);
+        expect(find.text('Regroup at next stop'), findsOneWidget);
+        await dispose(tester);
+      }
+    });
+
+    testWidgets('closing the list sends nothing', (tester) async {
+      final sent = <QuickMessage>[];
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (message) async => sent.add(message),
+      );
+
+      await tester.tap(find.byKey(const Key('leader-broadcast-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('leader-broadcast-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(sent, isEmpty);
+      expect(find.byKey(const Key('leader-broadcast-sheet')), findsNothing);
+      await dispose(tester);
+    });
+
+    testWidgets('a broadcast that could not go says so', (tester) async {
+      var attempt = 0;
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (_) async {
+          attempt += 1;
+          if (attempt == 1) {
+            throw const FormatException(
+              'Only the ride leader can tell the group.',
+            );
+          }
+          throw StateError('disk is full');
+        },
+      );
+      final button = find.byKey(const Key('leader-broadcast-button'));
+
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('leader-broadcast-option-wrongWay')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Not sent. Only the ride leader can tell the group.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('sent to the group'), findsNothing);
+
+      ScaffoldMessenger.of(tester.element(button)).clearSnackBars();
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('leader-broadcast-option-pullOver')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Not sent. Try again in a moment.'), findsOneWidget);
+      await dispose(tester);
+    });
+
+    testWidgets(
+      'sit beside REPORT, in portrait and landscape, overlapping nothing',
+      (tester) async {
+        for (final size in const [
+          Size(390, 844),
+          Size(360, 740),
+          Size(852, 393),
+        ]) {
+          await pumpMap(
+            tester,
+            onLeaderBroadcast: (_) async {},
+            withOtherActions: true,
+            size: size,
+          );
+          final report = tester.getRect(
+            find.byKey(const Key('report-sighting-button')),
+          );
+          final tell = tester.getRect(
+            find.byKey(const Key('leader-broadcast-button')),
+          );
+          final sos = tester.getRect(
+            find.byKey(const Key('emergency-alert-button')),
+          );
+          final leave = tester.getRect(
+            find.byKey(const Key('leave-ride-button')),
+          );
+
+          expect(tell.width, LeaderBroadcastButton.width, reason: '$size');
+          expect(tell.height, LeaderBroadcastButton.height, reason: '$size');
+          // A target for a gloved hand, and never off the screen.
+          expect(tell.left, greaterThanOrEqualTo(0), reason: '$size');
+          expect(tell.right, lessThanOrEqualTo(size.width), reason: '$size');
+          expect(tell.bottom, lessThanOrEqualTo(size.height), reason: '$size');
+          // Beside REPORT, on the same baseline, touching neither it nor SOS/LEAVE.
+          expect(
+            tell.left,
+            greaterThanOrEqualTo(report.right + 8 - 0.01),
+            reason: '$size',
+          );
+          expect(tell.bottom, closeTo(report.bottom, 0.01), reason: '$size');
+          for (final other in [report, sos, leave]) {
+            expect(tell.overlaps(other.deflate(0.5)), isFalse, reason: '$size');
+          }
+          if (size.width > size.height) {
+            // Landscape keeps the whole cluster left of the rider anchor (#533).
+            final riderX =
+                size.width * navigationCameraLandscapeRiderFractionLeftTraffic;
+            expect(tell.right, lessThan(riderX - 19), reason: '$size');
+          }
+          await dispose(tester);
+        }
+      },
+    );
+
+    testWidgets('stand alone when REPORT is not offered, as in France', (
+      tester,
+    ) async {
+      await pumpMap(tester, onLeaderBroadcast: (_) async {});
+
+      expect(find.byKey(const Key('report-sighting-button')), findsNothing);
+      expect(find.byKey(const Key('leader-broadcast-button')), findsOneWidget);
+      await dispose(tester);
+    });
+
+    testWidgets('a second tap cannot stack a second list', (tester) async {
+      await pumpMap(tester, onLeaderBroadcast: (_) async {});
+      final button = find.byKey(const Key('leader-broadcast-button'));
+
+      await tester.tap(button);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        tester.widget<InkWell>(button).onTap,
+        isNull,
+        reason: 'the control is off while its list is open',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('leader-broadcast-sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('leader-broadcast-cancel')));
+      await tester.pumpAndSettle();
+      await dispose(tester);
+    });
+
+    test(
+      'the options go in two columns while both fit, one when they do not',
+      () {
+        // Wide enough for two full-size targets.
+        expect(leaderBroadcastColumns(availableWidth: 358, textScale: 1), 2);
+        expect(leaderBroadcastColumns(availableWidth: 820, textScale: 1), 2);
+        // Too narrow for two, or the text is too large for two.
+        expect(leaderBroadcastColumns(availableWidth: 250, textScale: 1), 1);
+        expect(leaderBroadcastColumns(availableWidth: 358, textScale: 2), 1);
+        // No width to go on.
+        expect(
+          leaderBroadcastColumns(availableWidth: double.infinity, textScale: 1),
+          1,
+        );
+      },
+    );
+
+    test(
+      'each broadcast has its own symbol, distinct from the older kinds',
+      () {
+        final symbols = {
+          for (final message in leaderBroadcastMessages)
+            message: quickMessageIcon(message),
+        };
+
+        expect(
+          symbols.values.toSet(),
+          hasLength(leaderBroadcastMessages.length),
+        );
+        for (final older in QuickMessage.values.where(
+          (m) => !m.isLeaderBroadcast,
+        )) {
+          expect(
+            symbols.values,
+            isNot(contains(quickMessageIcon(older))),
+            reason: older.name,
+          );
+        }
+      },
+    );
+  });
+
   testWidgets('a rider alert warns as ALERT, in amber, not as a camera (#849)', (
     tester,
   ) async {
@@ -4044,12 +4390,13 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('aligns portrait ETA with the mini-map below the top controls', (
+  testWidgets('keeps the portrait ETA in the bottom band, off the road ahead', (
     tester,
   ) async {
     // ActiveRideShell owns the moving ride-menu button (#404), so the map does
-    // not receive onOpenRideMenu in production. ETA and the mini-map still owe
-    // the top row enough room for that menu, the clock and speed/compass.
+    // not receive onOpenRideMenu in production. The ETA used to float 154 pixels
+    // below the top row, in the middle of the road ahead (#848); it is now the
+    // top strip of the bottom band, and the upper half of the screen is map.
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -4110,9 +4457,23 @@ void main() {
     expect(find.byKey(const Key('ride-menu-button')), findsNothing);
     final progress = find.byKey(const Key('route-progress-panel-position'));
     expect(progress, findsOneWidget);
+    final progressRect = tester.getRect(progress);
+    final bandRect = tester.getRect(find.byKey(portraitBottomChromeKey));
     expect(
-      tester.getRect(progress).top,
-      closeTo(portraitNavigationHeaderTopOffset, 1),
+      progressRect.top,
+      greaterThanOrEqualTo(bandRect.top),
+      reason: 'the ETA is inside the bottom band',
+    );
+    expect(progressRect.bottom, lessThanOrEqualTo(bandRect.bottom));
+    expect(
+      progressRect.width,
+      closeTo(bandRect.width, 1),
+      reason: 'a strip across the band, not a card floating beside the road',
+    );
+    expect(
+      progressRect.top,
+      greaterThan(844 / 2),
+      reason: 'nothing navigational is left in the upper half of the map',
     );
 
     await tester.pumpAndSettle();
@@ -4452,20 +4813,25 @@ void main() {
         tester.getRect(find.byKey(const Key('group-mini-map-canvas'))).height,
         104,
       );
-      // The portrait mini-map sits below the top row occupied by menu, clock,
-      // compass and speed, and stays out of the bottom band the camera's
-      // forward bias pays for.
+      // The portrait mini-map is part of the bottom band (#848): it shares the
+      // row of targets, hard against the trailing edge, rather than floating
+      // over the road ahead where it covered the map and the rider's own bike.
       final portraitSize =
           tester.view.physicalSize / tester.view.devicePixelRatio;
-      expect(portraitMiniMap.top, lessThan(portraitSize.height / 3));
-      expect(portraitMiniMap.right, closeTo(portraitSize.width - 12, 1));
-      expect(portraitProgress.left, closeTo(12, 1));
-      expect(
-        portraitProgress.top,
-        closeTo(portraitNavigationHeaderTopOffset, 1),
+      final portraitBand = tester.getRect(find.byKey(portraitBottomChromeKey));
+      final portraitActionRow = tester.getRect(
+        find.byKey(const Key('map-portrait-action-row')),
       );
-      expect(portraitProgress.top, closeTo(portraitMiniMap.top, 1));
-      expect(portraitProgress.right, lessThanOrEqualTo(portraitMiniMap.left));
+      expect(portraitMiniMap.top, greaterThan(portraitSize.height / 2));
+      expect(portraitMiniMap.right, closeTo(portraitSize.width - 12, 1));
+      expect(portraitMiniMap.bottom, closeTo(portraitBand.bottom, 1));
+      expect(portraitMiniMap.top, greaterThanOrEqualTo(portraitBand.top));
+      expect(portraitMiniMap.top, greaterThanOrEqualTo(portraitActionRow.top));
+      // The ETA is the strip across the top of the same band.
+      expect(portraitProgress.left, closeTo(12, 1));
+      expect(portraitProgress.right, closeTo(portraitSize.width - 12, 1));
+      expect(portraitProgress.top, greaterThanOrEqualTo(portraitBand.top));
+      expect(portraitProgress.bottom, lessThanOrEqualTo(portraitMiniMap.top));
       // Portrait has one clock in the persistent top row, above the cards.
       final portraitClock = find.byKey(const Key('ride-clock'));
       expect(portraitClock, findsOneWidget);
@@ -5152,29 +5518,41 @@ void main() {
           );
         }
 
-        // Menu, clock and speed/compass form the top row. ETA and the mini-map
-        // read as one header underneath it.
+        // Menu, clock and speed/compass are the whole top row. The ETA strip
+        // and the group overview are in the bottom band with the targets
+        // (#848): nothing navigational is left over the road ahead.
         final progress = rects['route-progress-panel-position']!;
         final miniMap = rects['group-mini-map']!;
+        final band = tester.getRect(find.byKey(portraitBottomChromeKey));
         expect(progress.left, closeTo(12, 1));
-        expect(progress.top, closeTo(portraitNavigationHeaderTopOffset, 1));
+        expect(progress.right, closeTo(size.width - 12, 1));
+        expect(progress.top, greaterThanOrEqualTo(band.top));
+        expect(progress.bottom, lessThanOrEqualTo(guidance.top));
         expect(miniMap.right, closeTo(size.width - 12, 1));
-        expect(miniMap.top, closeTo(progress.top, 1));
+        expect(miniMap.top, greaterThanOrEqualTo(guidance.bottom));
+        expect(miniMap.bottom, lessThanOrEqualTo(band.bottom + 0.5));
+        expect(miniMap.left, greaterThanOrEqualTo(report.right));
         expect(rideMenu.top, closeTo(12, 1));
         final clock = tester.getRect(find.byKey(const Key('ride-clock')));
         expect(clock.top, closeTo(12, 1));
-        expect(rideMenu.bottom, lessThanOrEqualTo(progress.top));
-        expect(clock.bottom, lessThanOrEqualTo(progress.top));
-        expect(speedLimit.bottom, lessThanOrEqualTo(progress.top));
+        for (final top in [rideMenu, clock, speedLimit]) {
+          expect(
+            top.bottom,
+            lessThan(band.top),
+            reason: 'the top row stays above the band in $size',
+          );
+        }
 
         // Portrait chrome is one measured band whose height the camera reads to
         // clamp its forward bias (#105). This is the absolute worst case - every
-        // surface live at once - and the number that must keep coming down
-        // rather than creeping back up. The same scenario measured 0.809 before
-        // #125, 0.704 after it, and 0.573 now that the group overview has left
-        // the band (#133); the ordinary riding case, and what the freed space
-        // buys the camera, is asserted in its own test below.
-        expect(_bottomChromeFraction(tester, size), lessThan(0.60));
+        // surface live at once - and the number that must not creep up. The same
+        // scenario measured 0.809 before #125, 0.704 after it, and 0.573 once the
+        // group overview left the band (#133). It is 0.674 now that the ETA strip
+        // and the overview are back in it (#848): they sat over the road ahead
+        // before, and the band is what pays for getting them off it. Measured
+        // with the block test font, so it is the pessimistic figure; the ordinary
+        // riding case is asserted in its own test below.
+        expect(_bottomChromeFraction(tester, size), lessThan(0.70));
       }
     }
 
@@ -5203,7 +5581,7 @@ void main() {
 
     // Once a manual pan earns the portrait Follow me control, it belongs above
     // the turn pane rather than covering the rider marker or road ahead.
-    await tester.dragFrom(const Offset(190, 280), const Offset(0, 90));
+    await tester.dragFrom(const Offset(190, 200), const Offset(0, 90));
     await tester.pumpAndSettle();
     final follow = tester.getRect(
       find.byKey(const Key('navigation-follow-button')),
@@ -5562,7 +5940,8 @@ void main() {
     final size = tester.view.physicalSize / tester.view.devicePixelRatio;
     expect(find.byKey(const Key('navigation-guidance-banner')), findsOneWidget);
     final bottomChromeFraction = _bottomChromeFraction(tester, size);
-    expect(bottomChromeFraction, lessThan(0.38));
+    // 0.38 before the ETA strip joined the band (#848), 0.442 with it.
+    expect(bottomChromeFraction, lessThan(0.46));
 
     final plan = NavigationCameraPlanner.plan(
       speedMetersPerSecond: 13,
@@ -5574,8 +5953,24 @@ void main() {
     // Positive bias means the camera is aimed up the road rather than behind the
     // rider, and the marker sits below the centre of the frame where #105 wants
     // it. The band no longer pushes it past the middle.
-    expect(plan.forwardBiasPixels, greaterThan(0));
-    expect(plan.riderViewportFraction, greaterThan(0.5));
+    //
+    // Judged on the band a rider actually sees. The development basemap's badge
+    // is 44 pixels of band nobody ever has, and with the ETA strip in the band
+    // (#848) it is the difference between the marker sitting a pixel above the
+    // centre in this test and below it on a phone.
+    final riderBandFraction = _bottomChromeFractionWithoutDevelopmentBadge(
+      tester,
+      size,
+    );
+    final riderPlan = NavigationCameraPlanner.plan(
+      speedMetersPerSecond: 13,
+      landscape: false,
+      viewportHeightPixels: size.height,
+      latitudeDegrees: 53,
+      bottomChromeFraction: riderBandFraction,
+    );
+    expect(riderPlan.forwardBiasPixels, greaterThan(0));
+    expect(riderPlan.riderViewportFraction, greaterThan(0.5));
     expect(projectedViewport, isNotNull);
     expect(projectedViewport!.latitude, closeTo(53, 0.01));
     expect(projectedViewport!.longitude, greaterThan(-1.015));
@@ -5590,10 +5985,11 @@ void main() {
     expect(projectedViewport!.riderHorizontalViewportFraction, 0.5);
     expect(projectedViewport!.mapStyleUrl, isEmpty);
     expect(projectedViewport!.mapStyleJson, MapStyleRepository.fallbackStyle);
-    // Each round of decluttering has to buy the camera real look-ahead, so both
-    // previous bands are held against this one: 431 pixels before #125, 342
-    // after it, 296 now that the group overview has left the band (#133).
-    for (final previousBand in [431.0, 342.0]) {
+    // The band still has to beat the one #125 started from: 431 pixels. The 342
+    // and 296 pixel bands that followed it were that small because the ETA and
+    // the group overview were floating over the road ahead (#848), which is the
+    // trade this change reverses - the road is clear and the band carries them.
+    for (final previousBand in [431.0]) {
       final previous = NavigationCameraPlanner.plan(
         speedMetersPerSecond: 13,
         landscape: false,
@@ -7228,7 +7624,8 @@ void main() {
         // The absolute worst case for #105's forward bias: every persistent
         // surface plus an unacknowledged alert. Reported in the PR; acknowledging
         // is one target away and hands the space straight back.
-        expect(_bottomChromeFraction(tester, size), lessThan(0.65));
+        // 0.65 before the ETA strip and the overview joined the band (#848).
+        expect(_bottomChromeFraction(tester, size), lessThan(0.70));
       }
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -8611,6 +9008,22 @@ RideQuickMessageAlert _quickMessageAlert({
 double _bottomChromeFraction(WidgetTester tester, Size size) =>
     (tester.getRect(find.byKey(portraitBottomChromeKey)).height + 12) /
     size.height;
+
+/// [_bottomChromeFraction] without the development basemap's badge, which no
+/// rider ever sees: the band as a phone with a configured map draws it.
+double _bottomChromeFractionWithoutDevelopmentBadge(
+  WidgetTester tester,
+  Size size,
+) {
+  final badge = find.byKey(const Key('basemap-status-badge'));
+  final badgeBand = badge.evaluate().isEmpty
+      ? 0.0
+      : tester.getSize(badge).height + 8;
+  return (tester.getRect(find.byKey(portraitBottomChromeKey)).height +
+          12 -
+          badgeBand) /
+      size.height;
+}
 
 class _NoFileSource implements GpxImportSource {
   const _NoFileSource();

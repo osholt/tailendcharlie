@@ -667,6 +667,20 @@ class _EventTimeline extends StatelessWidget {
   }
 }
 
+/// One journal row for a status message: its label, and for one of the leader's
+/// broadcasts who sent it, so the journal reads "Oliver: Pull over" rather than a
+/// bare instruction (#854).
+@visibleForTesting
+String statusMessageRowTitle(RideEvent event) {
+  final label = event.payload['label'] as String? ?? 'Status message';
+  final kind = tryParseQuickMessage(event.payload['message']);
+  if (kind == null || !kind.isLeaderBroadcast) return label;
+  final sender = event.payload['senderDisplayName'];
+  return sender is String && sender.trim().isNotEmpty
+      ? '${sender.trim()}: $label'
+      : 'Leader: $label';
+}
+
 class _EventRow extends StatelessWidget {
   const _EventRow({required this.event});
 
@@ -688,8 +702,7 @@ class _EventRow extends StatelessWidget {
       // "Seen: <what they raised>" (#151). One row either way: the log records
       // what went into the journal, and the ride surface is where a rider is
       // actually told (`_QuickMessageAlertCard` in the map).
-      RideEventType.statusMessage =>
-        event.payload['label'] as String? ?? 'Status message',
+      RideEventType.statusMessage => statusMessageRowTitle(event),
       RideEventType.riderLocationUpdated => 'Location updated',
       RideEventType.hazardReported => 'Hazard reported',
       RideEventType.hazardCleared => 'Hazard cleared',

@@ -362,6 +362,66 @@ ordinary `hazardReported` event.
   restatement of how 1.0.1+101 decodes and presents a hazard, and fails if a new
   hazard kind puts a name on the wire that build cannot decode.
 
+## Leader broadcasts (#854)
+
+The leader can tell the group four things without getting off the bike: **Wrong
+way – turn around**, **Stopped for fuel**, **Pull over** and **Regroup at next
+stop**. They extend the existing quick messages (`QuickMessage`) rather than
+adding a parallel system: four appended kinds, sent as ordinary `statusMessage`
+events, so they travel over the relay and over Nearby exactly as every quick
+message does and the relay needs no new capability or deploy.
+
+- **On the map.** `TELL GROUP` sits beside `REPORT` in the action row, 64 × 96 pt,
+  blue where REPORT is amber and SOS red. It opens a list of four 84 pt targets
+  (two columns where two full-size targets fit, one otherwise, never shrunk to
+  fit); one tap on an option sends it and closes the list. **No confirmation:** the
+  leader is riding and none of these is an emergency. The control is offered by
+  `leaderBroadcastsAvailable` and nobody else: the leader of a running group ride
+  (a leader acting as a junction marker still counts, a paused ride is allowed, a
+  solo ride has nobody to tell). The shell hands the map its callback only then.
+- **Receiving.** The recipient gets the existing quick-message banner, "Oliver says
+  pull over", with how far back or ahead the leader is and an acknowledgement, and
+  the natural voice says the same sentence once (`SpokenAudioClass.safety`, so
+  alerts-only mode keeps it and a rider who chose silence stays silent). They are
+  *pressing*, not critical: they never take the screen over.
+- **Admitted from the leader only.** A broadcast is shown, spoken and logged only
+  if its sender was the leader at that point in the signed journal
+  (`RideRoleJournal`, the rule a ride start and a Tail End Charlie request already
+  use, #99/#128). A forged "Pull over" from anyone else is dropped; so is one from a
+  leader who had already handed over; one from before the handover stands. A kind
+  this build does not know is not checked: nothing says it is a broadcast.
+- **At most once per recipient.** Every layer is idempotent: a re-delivered event
+  (the same one over the relay and over Nearby, or twice over one) is one journal
+  event; the banner and its acknowledgement are per event; the voice remembers the
+  event id, and `leaderBroadcastSpeech` declines anything older than two minutes,
+  so a restart rebuilding the banner from the journal does not say a ten-minute-old
+  "Pull over" again as though it were new. The leader's own double tap is one
+  broadcast for four seconds (`leaderBroadcastBounceWindow`); the same message
+  later is a deliberate repeat and is sent and spoken again, a different one is
+  never held back.
+- **Lives ten minutes**, not the two hours of a rider's own message: these are
+  about where the group is now. The history keeps them.
+- **Robust.** The leader's phone records it outside `RideController._run`, which
+  drops a call that arrives while another is in flight, and says "Not sent" if it
+  could not (`LeaderBroadcastOutcome`) rather than looking sent. The spoken name is
+  sanitised and bounded before it goes into the sentence.
+- **Logged in the ride history.** The dashboard journal reads "Oliver: Pull over".
+  `RideBroadcastLogReducer` rebuilds the history from the same journal events the
+  banner is built from (the same admission rule, so it never lists what the group
+  was never shown); `CompletedRide.broadcasts` keeps it; the ride-ended screen and
+  Previous rides list each with its time to the second (tap to copy), and the shared
+  summary text and CSV carry them.
+
+**Older builds.** An older build does not know the four names, so `tryParseQuickMessage`
+returns null and it shows the leader's own relayed `label` — "Oliver: Pull over" —
+with the envelope's *important* priority: a card in the alert palette, no interrupt,
+acknowledgeable, no crash and nothing hidden. It does not speak it. The names are
+new, the keys in the payload are not, and no older kind changed name, label or
+priority. `leader_broadcast_protocol_compat_test.dart` holds both directions against
+a frozen restatement of how 1.0.1+101 reads a quick message. The relay's push
+classifier has no case for the new names, so a **backgrounded** phone gets no push
+for a broadcast; they are for a rider watching the map.
+
 ## Event contract and limitations
 
 Location, hazard, route-transition and acknowledgement events use the existing

@@ -94,6 +94,7 @@ import '../../services/transport_evidence_presentation.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/enforcement_alert_detector.dart';
 import '../../services/enforcement_alert_presentation.dart';
+import '../../services/leader_broadcast.dart';
 import '../../services/hazard_map_relevance.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
@@ -3149,7 +3150,39 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       route: route,
     );
     _quickMessageAlerts.value = presented.alerts;
+    _speakLeaderBroadcasts(presented.alerts);
     return presented.bySender;
+  }
+
+  /// Says the leader's broadcasts aloud, once each (#854).
+  ///
+  /// The banner is the persistent half; this is the half for a rider looking at the
+  /// road. Spoken as [SpokenAudioClass.safety], so alerts-only mode keeps it when
+  /// turn-by-turn goes quiet, and a rider who chose silence stays silent. Said once
+  /// per journal event, however many times this runs and however many transports
+  /// delivered it: [SpokenGuidanceController.speakAlert] remembers the key, and
+  /// [leaderBroadcastSpeech] declines anything old enough that a restart rebuilding
+  /// it from the journal would be saying it a second time.
+  ///
+  /// Allowed while the ride is paused, unlike a turn: "regroup at the next stop" is
+  /// most useful when the group has stopped.
+  void _speakLeaderBroadcasts(List<RideQuickMessageAlert> alerts) {
+    final speaker = _spokenGuidance;
+    if (speaker == null || alerts.isEmpty) return;
+    final controller = widget.rideController;
+    for (final broadcast in leaderBroadcastsToSpeak(
+      alerts: alerts,
+      now: DateTime.now(),
+    )) {
+      unawaited(
+        speaker.speakAlert(
+          key: broadcast.key,
+          phrase: broadcast.phrase,
+          enabled: spokenAudioAllows(_spokenAudioMode, SpokenAudioClass.safety),
+          rideActive: controller.rideStarted && !controller.rideEnded,
+        ),
+      );
+    }
   }
 
   /// Acknowledges the presented message *and* every repeat it stands for, so a
@@ -4335,6 +4368,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           _awarenessController == null || !_enforcementReportsAllowed
           ? null
           : _reportHazardFromMap,
+      // The leader's one-tap broadcasts (#854), on the leader's phone only.
+      onLeaderBroadcast:
+          leaderBroadcastsAvailable(
+            isLocalRideLeader: widget.rideController.isLocalRideLeader,
+            rideStarted: widget.rideController.rideStarted,
+            rideEnded: widget.rideController.rideEnded,
+            coordinationMode: widget.rideController.coordinationMode,
+          )
+          ? _sendLeaderBroadcast
+          : null,
       emergencyContacts: _emergencyContacts,
       onEmergencyAlert: _sendEmergencyMapAlert,
       onEmergencyIssue: _sendEmergencyMapIssue,
@@ -4891,6 +4934,20 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       position: _localQuickMessagePosition,
     );
     await _recordLocalObserverQuickMessage(message);
+  }
+
+  /// Sends one of the leader's broadcasts to the whole group (#854).
+  ///
+  /// Anything short of sent is thrown as a sentence the map shows, so the leader is
+  /// never left believing the group was told. A bounce - the same tap twice - is
+  /// not a failure: the group already has it.
+  Future<void> _sendLeaderBroadcast(QuickMessage message) async {
+    final outcome = await widget.rideController.sendLeaderBroadcast(
+      message,
+      position: _localQuickMessagePosition,
+    );
+    final failure = outcome.failureSentence;
+    if (failure != null) throw FormatException(failure);
   }
 
   Future<void> _sendLocalQuickMessage(QuickMessage message) async {
