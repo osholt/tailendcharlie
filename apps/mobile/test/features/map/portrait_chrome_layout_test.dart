@@ -107,8 +107,8 @@ void main() {
             // The chrome stops following the system text size at its ceiling:
             // asking for 2.0 draws what 1.3 draws, and Large - already the
             // biggest the app gets - holds the system scale at 1.0. Left to
-            // grow, Large at 2.0 made the turn banner alone taller than the
-            // phone, which no camera can frame the marker above.
+            // grow, Large at 2.0 made the whole band taller than the phone,
+            // which no camera can frame the marker above.
             expect(
               byScale[2.0]!.band.height,
               closeTo(byScale[1.3]!.band.height, 0.5),
@@ -149,7 +149,15 @@ void main() {
     final report = layout.rects['report-sighting-button']!;
     final band = layout.band;
 
-    // The ETA is the top strip of the band, across the whole of it.
+    // The ETA is the top strip of the band, across the whole of it - one row of
+    // figures, not the card landscape uses, which repeats the destination as a
+    // next stop and stands taller than a glove-sized target.
+    expect(
+      find.text('Destination'),
+      findsNothing,
+      reason: 'a strip does not repeat the end of the route as a next stop',
+    );
+    expect(eta.height, lessThan(sos.height));
     expect(eta.top, greaterThanOrEqualTo(band.top));
     expect(eta.bottom, lessThanOrEqualTo(banner.top));
     expect(eta.left, closeTo(band.left, 1));
@@ -171,6 +179,33 @@ void main() {
         reason: '${entry.key} is over the road ahead of the marker',
       );
     }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a narrow phone scales the overview down beside the targets', (
+    tester,
+  ) async {
+    // 320 points leaves 296 for the row, and the targets take 182 of it: less than
+    // the overview's own 150 once a gap is allowed for. It shrinks to fit rather
+    // than overflow the band or sit over REPORT.
+    final layout = await _pump(
+      tester,
+      phone: const _Phone('narrowest', Size(320, 568), top: 20, bottom: 0),
+      display: RidingDisplaySize.small,
+      textScale: 1,
+      leader: false,
+    );
+    final overview = layout.rects['group-mini-map']!;
+    final report = layout.rects['report-sighting-button']!;
+    expect(tester.takeException(), isNull);
+    expect(overview.width, lessThan(150));
+    expect(overview.width, greaterThan(100));
+    // Scaled as a whole - a 150 by 128 overview kept in proportion - not squeezed
+    // narrower with its height left alone, which would crop what it frames.
+    expect(overview.height / overview.width, closeTo(128 / 150, 0.03));
+    expect(overview.left, greaterThanOrEqualTo(report.right));
+    expect(overview.right, closeTo(layout.band.right, 1));
+    _expectMarkerAndConeClear(layout, reason: layout.reason);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

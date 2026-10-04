@@ -380,8 +380,8 @@ const double portraitRideMenuTopOffset = 12;
 /// The Riding display size (Small, Medium, Large) is the rider's control for a
 /// bigger turn arrow, distance and ETA, and it multiplies the system text scale
 /// rather than replacing it. Left uncapped, Large at a 2.0 system scale made the
-/// turn banner alone taller than a phone (#848) - there is no framing that keeps
-/// the rider's marker visible under a band of that size. So the chrome honours
+/// whole band taller than the phone (#848) - there is no framing that keeps the
+/// rider's marker visible under a band of that size. So the chrome honours
 /// the system setting up to this value, which covers iOS Dynamic Type through
 /// its non-accessibility range and Android's Large and Largest sizes, and holds
 /// there; a rider who wants more asks the app for it by size.
@@ -1433,7 +1433,6 @@ class _RideMapScreenState extends State<RideMapScreen>
   final GlobalKey _mapViewportKey = GlobalKey();
   final GlobalKey _etaOcclusionKey = GlobalKey();
   final GlobalKey _speedOcclusionKey = GlobalKey();
-  final GlobalKey _clockOcclusionKey = GlobalKey();
   final GlobalKey _miniMapOcclusionKey = GlobalKey();
   String _lastOcclusionLayout = '';
   final GlobalKey _bottomChromeKey = GlobalKey();
@@ -3378,12 +3377,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                 right: safeRight,
                 top: safeTop + 12,
                 child: IgnorePointer(
-                  child: Center(
-                    child: KeyedSubtree(
-                      key: _clockOcclusionKey,
-                      child: RideClock(darkMap: _basemap.dark),
-                    ),
-                  ),
+                  child: Center(child: RideClock(darkMap: _basemap.dark)),
                 ),
               ),
             Positioned(
@@ -3514,12 +3508,7 @@ class _RideMapScreenState extends State<RideMapScreen>
               right: safeRight,
               top: safeTop + 12,
               child: IgnorePointer(
-                child: Center(
-                  child: KeyedSubtree(
-                    key: _clockOcclusionKey,
-                    child: RideClock(darkMap: _basemap.dark),
-                  ),
-                ),
+                child: Center(child: RideClock(darkMap: _basemap.dark)),
               ),
             ),
           if (speedCluster != null)
@@ -4478,7 +4467,6 @@ class _RideMapScreenState extends State<RideMapScreen>
         _landscapeGuidanceKey,
         _etaOcclusionKey,
         _speedOcclusionKey,
-        _clockOcclusionKey,
         _miniMapOcclusionKey,
       ])
         if (key.currentContext?.findRenderObject() case final RenderBox box
