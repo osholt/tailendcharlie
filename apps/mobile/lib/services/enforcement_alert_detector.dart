@@ -5,7 +5,15 @@ import '../domain/hazard.dart';
 import 'geo_calculations.dart';
 
 /// Hazard types riders want the earliest and loudest warning about.
+///
+/// [HazardType.alert] is the one a rider raises now (#849). The other two are what
+/// a build from before that raised, and they are still warned about: a mixed group
+/// is the normal case while testers update, and an older rider's camera report
+/// must not go quiet on a newer rider's phone. All three share one detector, one
+/// speed-aware arming rule, one expiry rule and one warning, so the migration moved
+/// the behaviour #112, #135 and #471 built rather than duplicating it.
 const enforcementHazardTypes = <HazardType>{
+  HazardType.alert,
   HazardType.speedCamera,
   HazardType.policeActivity,
 };

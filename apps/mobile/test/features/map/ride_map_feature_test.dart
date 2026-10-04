@@ -2731,7 +2731,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('reports a gloved enforcement sighting from the map', (
+  testWidgets('one tap on the big REPORT button alerts the group (#849)', (
     tester,
   ) async {
     final directory = Directory.systemTemp.createTempSync('map-report');
@@ -2758,8 +2758,8 @@ void main() {
 
     final button = find.byKey(const Key('report-sighting-button'));
     expect(button, findsOneWidget);
-    // Comfortably past the 48dp minimum target, for gloves at speed.
-    expect(tester.getSize(button).shortestSide, greaterThanOrEqualTo(56));
+    // Bigger than the 62 it was, and well past the 48dp minimum, for gloves.
+    expect(tester.getSize(button).shortestSide, greaterThanOrEqualTo(88));
     // The default test window is landscape, where #125 moves REPORT down into
     // the bottom-left rail with the other actions and pushes the speed sign into
     // the right-hand rail, clear of the centre column.
@@ -2774,54 +2774,52 @@ void main() {
     expect(speedRect.right, closeTo(size.width - 10, 1));
 
     await tester.tap(button);
-    await tester.pumpAndSettle();
-    final option = find.byKey(const Key('report-speed-camera-option'));
-    expect(option, findsOneWidget);
-    expect(tester.getSize(option).height, greaterThanOrEqualTo(72));
+    await tester.pump();
 
-    // Both targets are reachable without scrolling (#133). Stacked, the second
-    // one fell below a sheet the framework caps at nine sixteenths of a landscape
-    // screen, so reporting police needed a scroll.
-    final police = find.byKey(const Key('report-police-option'));
+    // One tap is the whole interaction: no sheet, no choice, no confirmation.
+    expect(reported, [HazardType.alert]);
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.text('SPEED CAMERA'), findsNothing);
+    expect(find.text('POLICE'), findsNothing);
+    // It says it went, on the map and on the button itself - a rider in gloves
+    // cannot feel the tap.
+    expect(find.text('Alert sent to the group.'), findsOneWidget);
+    expect(find.text('SENT'), findsOneWidget);
     expect(
-      find.byKey(const Key('report-options-side-by-side')),
+      find.descendant(
+        of: button,
+        matching: find.byIcon(Icons.check_circle_rounded),
+      ),
+      findsOneWidget,
+      reason: 'the icon says it too, for a rider who glances rather than reads',
+    );
+    expect(
+      find.descendant(
+        of: button,
+        matching: find.byIcon(Icons.add_alert_rounded),
+      ),
+      findsNothing,
+    );
+
+    // And the button is back to itself a few seconds later.
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('SENT'), findsNothing);
+    expect(find.text('REPORT'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: button,
+        matching: find.byIcon(Icons.add_alert_rounded),
+      ),
       findsOneWidget,
     );
-    for (final target in [option, police]) {
-      final rect = tester.getRect(target);
-      expect(rect.height, greaterThanOrEqualTo(72));
-      expect(rect.width, greaterThanOrEqualTo(160));
-      expect(
-        rect.bottom,
-        lessThanOrEqualTo(size.height),
-        reason: 'a report target must not fall below the fold',
-      );
-      expect(rect.top, greaterThanOrEqualTo(0));
-    }
-    // Side by side, not overlapping, and both above the control that opened them
-    // so a second stray tap cannot land on one.
-    final cameraRect = tester.getRect(option);
-    final policeRect = tester.getRect(police);
-    expect(policeRect.left, greaterThanOrEqualTo(cameraRect.right));
-    expect(cameraRect.top, closeTo(policeRect.top, 1));
-    expect(cameraRect.bottom, lessThanOrEqualTo(reportRect.top));
 
-    await tester.tap(option);
-    await tester.pumpAndSettle();
-
-    expect(reported, [HazardType.speedCamera]);
-    expect(find.textContaining('Speed camera reported'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
-  testWidgets('the report sheet stacks rather than shrink a target', (
+  testWidgets('the alert button is the same big target in portrait (#849)', (
     tester,
   ) async {
-    // The other half of #133's report fix. Side by side is only right while each
-    // half can still hold a full-size target: a portrait phone is too narrow, and
-    // so is a landscape one once the text is large enough, because the width one
-    // option needs scales with its label. The answer in both cases is to stack and
-    // let the sheet grow - never to shrink a target a gloved hand has to hit.
-    // Portrait is the case a rider meets every ride.
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -2842,34 +2840,141 @@ void main() {
           routeImporter: RouteImporter(source: const _NoFileSource()),
           offlineTileCache: cache,
           onReportHazard: (_) async {},
+          onEmergencyAlert: () async {},
+          onLeaveRide: () async {},
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('report-sighting-button')));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const Key('report-options-side-by-side')), findsNothing);
-    final size = tester.view.physicalSize / tester.view.devicePixelRatio;
-    final camera = tester.getRect(
-      find.byKey(const Key('report-speed-camera-option')),
+    final report = tester.getRect(
+      find.byKey(const Key('report-sighting-button')),
     );
-    final police = tester.getRect(
-      find.byKey(const Key('report-police-option')),
-    );
-    expect(camera.bottom, lessThanOrEqualTo(police.top));
-    for (final rect in [camera, police]) {
-      expect(rect.height, greaterThanOrEqualTo(72), reason: 'a target shrank');
-      expect(rect.top, greaterThanOrEqualTo(0));
-      // Still reachable without scrolling: stacking is only acceptable because
-      // the sheet is now free to grow to the height it needs (#133).
-      expect(rect.bottom, lessThanOrEqualTo(size.height));
-    }
+    final sos = tester.getRect(find.byKey(const Key('emergency-alert-button')));
+    final leave = tester.getRect(find.byKey(const Key('leave-ride-button')));
+    expect(report.width, greaterThanOrEqualTo(88));
+    expect(report.height, greaterThanOrEqualTo(88));
+    // As tall as the pair beside it at most, so the bottom band the camera
+    // measures is no taller than it was before the button grew.
+    expect(report.height, lessThanOrEqualTo(leave.bottom - sos.top));
+    expect(report.bottom, closeTo(leave.bottom, 0.01));
+    expect(report.right, lessThanOrEqualTo(390));
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
+
+  testWidgets('a second tap is ignored while the alert is going out (#849)', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync('map-report-twice');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final sending = Completer<void>();
+    var calls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          onReportHazard: (_) {
+            calls += 1;
+            return sending.future;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final button = find.byKey(const Key('report-sighting-button'));
+    await tester.tap(button);
+    await tester.pump();
+    await tester.tap(button);
+    await tester.pump();
+    expect(calls, 1, reason: 'a gloved double tap must not send two');
+    expect(find.text('SENT'), findsNothing, reason: 'it has not gone yet');
+
+    sending.complete();
+    await tester.pump();
+    expect(find.text('SENT'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets(
+    'an alert that could not be sent says so, and does not look sent',
+    (tester) async {
+      final directory = Directory.systemTemp.createTempSync('map-report-fails');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      var attempt = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            onReportHazard: (_) async {
+              attempt += 1;
+              if (attempt == 1) {
+                throw const FormatException(
+                  'A current location is required to report a hazard.',
+                );
+              }
+              if (attempt == 2) throw StateError('disk is full');
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final button = find.byKey(const Key('report-sighting-button'));
+
+      await tester.tap(button);
+      await tester.pump();
+      expect(
+        find.text(
+          'Alert not sent. A current location is required to report a hazard.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('SENT'), findsNothing);
+
+      // Whatever else goes wrong, the rider is told rather than shown "sent".
+      ScaffoldMessenger.of(tester.element(button)).clearSnackBars();
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pump();
+      expect(
+        find.text('Alert not sent. Try again in a moment.'),
+        findsOneWidget,
+      );
+      expect(find.text('SENT'), findsNothing);
+
+      // And the button is still there to try again with.
+      ScaffoldMessenger.of(tester.element(button)).clearSnackBars();
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pump();
+      expect(find.text('Alert sent to the group.'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
 
   testWidgets('the map has no report control outside a ride', (tester) async {
     final directory = Directory.systemTemp.createTempSync('map-no-report');
@@ -3132,6 +3237,101 @@ void main() {
     alert.value = null;
     await tester.pump();
     expect(find.byKey(const Key('enforcement-alert-border')), findsNothing);
+  });
+
+  testWidgets('a rider alert warns as ALERT, in amber, not as a camera (#849)', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final directory = Directory.systemTemp.createTempSync('alert-bubble-test');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final cache = OfflineTileCache(
+      rootDirectory: directory,
+      configuration: const BasemapConfiguration(),
+      httpClient: MockClient((_) async => http.Response('', 404)),
+    );
+    final now = DateTime.now();
+    final alert = ValueNotifier<EnforcementAlert?>(null);
+    addTearDown(alert.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: RideMapScreen(
+          routeStore: InMemoryRouteStore(),
+          routeImporter: RouteImporter(source: const _NoFileSource()),
+          offlineTileCache: cache,
+          distanceUnit: DistanceUnit.miles,
+          enforcementAlert: alert,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    alert.value = EnforcementAlert(
+      hazard: HazardReport(
+        id: 'rider-alert-1',
+        rideId: 'ride-1',
+        type: HazardType.alert,
+        severity: HazardSeverity.serious,
+        position: const awareness_geo.GeoPoint(
+          latitude: 51.5,
+          longitude: -3.18,
+        ),
+        reportedAt: now,
+        updatedAt: now,
+        expiresAt: now.add(const Duration(hours: 1)),
+        reporterId: 'becks',
+        reporterName: 'Becks',
+        source: HazardSource.rider,
+      ),
+      distanceMeters: 805,
+    );
+    await tester.pump();
+
+    // Generic on purpose: it could be police, a camera or anything else.
+    expect(find.text('ALERT'), findsOneWidget);
+    expect(find.text('SPEED CAMERA'), findsNothing);
+    expect(find.text('POLICE'), findsNothing);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const Key('enforcement-alert-distance')))
+          .data,
+      '0.5 mi',
+    );
+    expect(
+      tester
+          .getSemantics(find.byKey(const Key('enforcement-alert-overlay')))
+          .label,
+      startsWith('ALERT ahead in 0.5 mi.'),
+    );
+
+    // Amber, which is neither the camera's red nor the police's blue, and the
+    // same border drawn the same way: the migration moved the warning rather than
+    // building a second one.
+    final border = tester.widget<DecoratedBox>(
+      find.byKey(const Key('enforcement-alert-border')),
+    );
+    final decoration = border.decoration as BoxDecoration;
+    expect(decoration.border!.top.color, const Color(0xFFFFB020));
+    expect(decoration.border!.top.width, enforcementBorderWidth);
+    expect(
+      decoration.borderRadius,
+      BorderRadius.circular(enforcementBorderRadius),
+    );
+
+    // The same ten seconds, then the border alone.
+    await tester.pump(enforcementBubbleLife + const Duration(seconds: 1));
+    expect(find.byKey(const Key('enforcement-alert-overlay')), findsNothing);
+    expect(find.byKey(const Key('enforcement-alert-border')), findsOneWidget);
+
+    // Dismissing works as it does for every warning.
+    alert.value = null;
+    await tester.pump();
+    expect(find.byKey(const Key('enforcement-alert-border')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    semantics.dispose();
   });
 
   testWidgets('the speed sign is enlarged on a camera approach (#446)', (
