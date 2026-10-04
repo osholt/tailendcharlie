@@ -100,6 +100,7 @@ import '../../services/rejoin_route_share.dart';
 import '../../services/rider_contact_share.dart';
 import '../../services/road_jurisdiction.dart';
 import '../../services/road_routing.dart';
+import '../../services/verified_road_routing.dart';
 import '../../services/ride_connectivity_summary.dart';
 import '../../services/tec_gap_trend.dart';
 import '../../services/route_rejoin_planner.dart';
@@ -1320,15 +1321,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         client: _carPlayRoutingClient,
         baseUrl: carPlayRouting.geocodingBaseUrl,
       ),
-      routingService: PreferenceAwareRoadRoutingService(
-        osrm: OsrmRoadRoutingService(
-          client: _carPlayRoutingClient,
-          baseUrl: carPlayRouting.routingBaseUrl,
-        ),
-        motorcycle: ValhallaMotorcycleRoutingService(
-          client: _carPlayRoutingClient,
-          routeUrl: carPlayRouting.motorcycleRoutingUrl,
-        ),
+      routingService: buildPlanningRoutingService(
+        client: _carPlayRoutingClient,
+        configuration: carPlayRouting,
       ),
     );
     widget.rideController.addListener(_onRideControllerChanged);
@@ -4818,7 +4813,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final distance = MeasurementFormatter(
       widget.distanceUnits.value,
     ).distance(guidance.distanceMeters);
-    return '$distance · ${guidance.roadLabel}';
+    final road = guidance.roadLabel;
+    return road.isEmpty ? distance : '$distance · $road';
   }
 
   Color get _localBadgeColor {

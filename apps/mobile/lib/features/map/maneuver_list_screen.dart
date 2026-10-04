@@ -176,12 +176,13 @@ class _ManeuverListTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(details),
-          Text(
-            instruction.roadLabel,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Color(0xFFB7C2CF)),
-          ),
+          if (instruction.roadLabel.isNotEmpty)
+            Text(
+              instruction.roadLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFB7C2CF)),
+            ),
           if (showLanes) ...[
             const SizedBox(height: 4),
             Text(

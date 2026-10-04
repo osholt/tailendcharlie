@@ -152,7 +152,8 @@ GuidanceAnnouncement? nextGuidanceAnnouncement({
     // time for.
     phrase: stage == GuidanceStage.immediate
         ? spokenSubject
-        : 'In ${distanceFormatter(distanceToManeuverMeters)}, $spokenSubject',
+        : 'In ${distanceFormatter(distanceToManeuverMeters)}, '
+              '${_midSentence(spokenSubject)}',
     stage: stage,
   );
 }
@@ -198,9 +199,19 @@ String guidanceSubject({
   final following = followingInstructionText?.trim();
   if (following == null || following.isEmpty) return instructionText;
   // "then", not "and then": one syllable fewer, and it is the word a pillion
-  // would use.
-  return '$instructionText, then $following';
+  // would use. The second instruction is now the middle of a sentence, so it
+  // loses its capital: the 4 Oct ride logged "Turn right, then Turn right"
+  // (#851).
+  return '$instructionText, then ${_midSentence(following)}';
 }
+
+/// An instruction placed mid-sentence, after "then" or after a distance.
+///
+/// Instruction wording never starts with a road name or anything else that
+/// keeps its capital, so lowering the first letter is always right.
+String _midSentence(String instruction) => instruction.isEmpty
+    ? instruction
+    : '${instruction[0].toLowerCase()}${instruction.substring(1)}';
 
 /// The nearest stage that is due and has not been said.
 ///

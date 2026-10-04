@@ -76,15 +76,59 @@ def parse_opl(path):
 # Great Britain national speed limits, by carriageway type. Only used to resolve an
 # explicit maxspeed:type tag — never to guess at an untagged road, which is the
 # difference between reporting a fact and inventing one.
+#
+# `GB:nsl_restricted` is deliberately not here. It is the limit on a *restricted
+# road* (one with street lighting), and that limit is a matter of which nation's
+# law applies: 30 mph in England and Scotland, but 20 mph in Wales since
+# 17 September 2023, with councils returning some roads to 30 mph since. A table
+# that says 30 is wrong for every Welsh restricted road that has not been touched
+# (#852). The rule below resolves it by jurisdiction instead.
 NSL = {
     "GB:nsl_single": "60 mph",
     "GB:nsl_dual": "70 mph",
     "GB:motorway": "70 mph",
-    "GB:nsl_restricted": "30 mph",
     "GB:zone20": "20 mph",
     "GB:zone30": "30 mph",
     "GB:zone40": "40 mph",
 }
+
+RESTRICTED_ROAD = "GB:nsl_restricted"
+RESTRICTED_ROAD_LIMIT_OUTSIDE_WALES = "30 mph"
+
+# A box (west, south, east, north in degrees) that contains every part of Wales,
+# the Welsh islands included, and a good deal of England besides.
+#
+# The generator has no administrative-boundary data: `review_region` in
+# generate_catalogue.py is explicitly a coarse review bucket, and its Wales core
+# even contains Hoylake. So the jurisdiction of a road cannot be established as
+# *Welsh*, and what can be established is the opposite - that a road is not. A
+# restricted road wholly outside this envelope is in England or Scotland and is
+# 30 mph. Anything touching it, which is all of Wales and the English border
+# counties, is left unresolved: unknown is a true statement about what was
+# inspected, and 30 mph would not be.
+WALES_ENVELOPE = (-5.6, 51.2, -2.4, 53.7)
+
+
+def clearly_outside_wales(coordinates):
+    """True only if every (lon, lat) lies outside [WALES_ENVELOPE].
+
+    False for no coordinates at all: a road with no position is not shown to be
+    anywhere, so it is not shown to be outside Wales.
+    """
+    west, south, east, north = WALES_ENVELOPE
+    return bool(coordinates) and not any(
+        west <= lon <= east and south <= lat <= north for lon, lat in coordinates
+    )
+
+
+def implied_limit(maxspeed_type, *, outside_wales):
+    """The limit a maxspeed:type tag implies, or None where it does not fix one.
+
+    A restricted road implies a limit only where the law is known to say 30 mph.
+    """
+    if maxspeed_type == RESTRICTED_ROAD:
+        return RESTRICTED_ROAD_LIMIT_OUTSIDE_WALES if outside_wales else None
+    return NSL.get(maxspeed_type)
 
 
 def normalise_speed(raw):
@@ -101,8 +145,12 @@ def normalise_speed(raw):
     return None
 
 
-def speed_limit_for(ways, *, unknown_note):
+def speed_limit_for(ways, *, unknown_note, outside_wales=False):
     """Aggregate the mapped limit across a candidate's member ways.
+
+    `outside_wales` says the candidate was shown to be wholly outside Wales (see
+    `clearly_outside_wales`). It defaults to False so that a caller which does not
+    know can never be the reason a Welsh road reads 30 mph.
 
     `unknown_note` differs by candidate kind, and the difference is the point. A road
     candidate's own ways were inspected, so "OpenStreetMap does not record a limit"
@@ -112,14 +160,17 @@ def speed_limit_for(ways, *, unknown_note):
     road is unrestricted.
     """
     tagged, inferred = Counter(), Counter()
+    restricted_unresolved = 0
     for tags in ways:
         direct = normalise_speed(tags.get("maxspeed"))
         if direct:
             tagged[direct] += 1
             continue
-        implied = NSL.get(tags.get("maxspeed:type", ""))
+        implied = implied_limit(tags.get("maxspeed:type", ""), outside_wales=outside_wales)
         if implied:
             inferred[implied] += 1
+        elif tags.get("maxspeed:type") == RESTRICTED_ROAD:
+            restricted_unresolved += 1
 
     if tagged:
         values, provenance = tagged, "tagged"
@@ -128,6 +179,8 @@ def speed_limit_for(ways, *, unknown_note):
         values = values + inferred
     elif inferred:
         values, provenance = inferred, "inferred-from-maxspeed-type"
+    elif restricted_unresolved:
+        return {"value": None, "provenance": "unknown", "note": RESTRICTED_LIMIT_UNKNOWN}
     else:
         return {"value": None, "provenance": "unknown", "note": unknown_note}
 
@@ -148,6 +201,11 @@ def speed_limit_for(ways, *, unknown_note):
 ROAD_LIMIT_UNKNOWN = (
     "OpenStreetMap does not record a limit on this candidate's ways. That is missing "
     "data, not an unrestricted road."
+)
+RESTRICTED_LIMIT_UNKNOWN = (
+    "OpenStreetMap tags this road as a restricted road without a number. That is 30 mph in "
+    "England and Scotland but 20 mph in Wales since 17 September 2023, and the generator has "
+    "no boundary data to say which law applies, so no limit is inferred."
 )
 SUMMIT_LIMIT_UNKNOWN = (
     "No catalogue road way passes through this summit node, so no limit was resolved "
@@ -324,6 +382,7 @@ def main():
         limit = speed_limit_for(
             ways,
             unknown_note=SUMMIT_LIMIT_UNKNOWN if is_pass else ROAD_LIMIT_UNKNOWN,
+            outside_wales=clearly_outside_wales(coordinates_of(feature)),
         )
         stats[f"speed:{limit['provenance']}"] += 1
         if is_pass:
