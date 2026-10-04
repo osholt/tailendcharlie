@@ -24,6 +24,7 @@ import '../../controllers/ride_push_notification_controller.dart';
 import '../../controllers/ride_simulation_controller.dart';
 import '../../controllers/rider_profile_controller.dart';
 import '../../controllers/shared_route_controller.dart';
+import '../home/ride_with_others_sheet.dart';
 import '../../controllers/spoken_guidance_controller.dart';
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/test_control_controller.dart';
@@ -523,6 +524,8 @@ class _RideActionsPanel extends StatelessWidget {
     required this.canToggleRidePause,
     required this.onToggleRidePause,
     required this.onLeaveOrEndRide,
+    this.onRideWithOthers,
+    this.onRideOnAlone,
     required this.coordinationMode,
   });
 
@@ -558,6 +561,14 @@ class _RideActionsPanel extends StatelessWidget {
   final bool canToggleRidePause;
   final VoidCallback onToggleRidePause;
   final VoidCallback onLeaveOrEndRide;
+
+  /// Solo to group, for a solo ride: the route and the ride carry on as a
+  /// group ride with a code (#847). Null where it does not apply.
+  final VoidCallback? onRideWithOthers;
+
+  /// Group to solo: leave the group and keep navigating its route alone
+  /// (#847). Null where it does not apply.
+  final VoidCallback? onRideOnAlone;
 
   /// Whether this ride has anyone else in it. A solo ride is still led by the
   /// rider, so every surface that branches on "am I the leader" says group
@@ -733,6 +744,26 @@ class _RideActionsPanel extends StatelessWidget {
                     : 'Pauses tracking and progress',
               ),
               onTap: onToggleRidePause,
+            ),
+          if (onRideWithOthers case final rideWithOthers?)
+            ListTile(
+              key: const Key('ride-menu-ride-with-others'),
+              leading: const Icon(Icons.group_add_outlined),
+              title: const Text('Ride with others'),
+              subtitle: const Text(
+                'Make this a group ride with a code; your route comes too',
+              ),
+              onTap: rideWithOthers,
+            ),
+          if (onRideOnAlone case final rideOnAlone?)
+            ListTile(
+              key: const Key('ride-menu-ride-on-alone'),
+              leading: const Icon(Icons.person_outline),
+              title: const Text('Ride on alone'),
+              subtitle: const Text(
+                'Leave the group and keep navigating this route on your own',
+              ),
+              onTap: rideOnAlone,
             ),
           ListTile(
             key: const Key('ride-actions-leave-or-end'),
@@ -972,6 +1003,9 @@ enum _MissingTecDecision { cancel, assignTec, startAnyway }
 
 @visibleForTesting
 enum RideExitDecision { cancel, leave, endForEveryone }
+
+/// What a rider chose when riding on alone (#847).
+enum RideOnAloneDecision { cancel, leave, endForEveryone }
 
 @visibleForTesting
 enum RideCompletionDecision { continueRide, endForEveryone }
@@ -1294,9 +1328,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   bool get _isSimulation => widget.rideController.session?.isSimulation == true;
 
+  /// The ride this shell was opened for. The app keys each shell by ride.
+  String? _rideId;
+
   @override
   void initState() {
     super.initState();
+    _rideId = widget.rideController.session?.rideId;
     WidgetsBinding.instance.addObserver(this);
     // Headless and test surfaces have no audio to speak through, and must not
     // construct a platform speech engine.
@@ -3847,6 +3885,10 @@ class _ActiveRideShellState extends State<ActiveRideShell>
 
   void _onRideControllerChanged() {
     final session = widget.rideController.session;
+    // Riding with others replaces this ride with a new one (#847). The app
+    // gives the new ride its own shell; until it does, this one must not try
+    // to adopt a session that is not its own.
+    if (session != null && session.rideId != _rideId) return;
     final rideStarted =
         widget.rideController.rideStarted && !widget.rideController.rideEnded;
     final rideJustStarted = rideStarted && !_observedRideStarted;
@@ -5405,6 +5447,14 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         widget.rideController.session?.role == RideRole.lead,
     onToggleRidePause: _toggleRidePause,
     onLeaveOrEndRide: _confirmLeaveRideFromMap,
+    onRideWithOthers:
+        _isSimulation || widget.rideController.coordinationMode.isGroup
+        ? null
+        : () => unawaited(_rideWithOthers()),
+    onRideOnAlone:
+        _isSimulation || !widget.rideController.coordinationMode.isGroup
+        ? null
+        : () => unawaited(_rideOnAlone()),
   );
 
   void _openAlertsAndReports() {
@@ -6176,6 +6226,100 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         await _internetRelayController?.synchronizeNow();
       },
     );
+  }
+
+  /// The route this ride is following: the map's, or the group's published
+  /// one while the map's own store is still opening.
+  route_domain.ImportedRoute? get _currentRoute =>
+      _activeRoute ?? widget.rideController.authoritativeRoute;
+
+  /// Solo to group (#847). The solo ride is filed and a group ride takes its
+  /// place with the same route, started at once if the solo ride was under
+  /// way, so navigation never stops. No new kind of event reaches the relay.
+  Future<void> _rideWithOthers() async {
+    final controller = widget.rideController;
+    await RideWithOthersSheet.show(
+      context,
+      controller: controller,
+      riderProfile: widget.riderProfile,
+      route: _currentRoute,
+      startNow: controller.rideStarted && !controller.rideEnded,
+    );
+  }
+
+  /// Group to solo (#847): leave the group, or end it for everyone as its
+  /// leader, and keep navigating the same route in free roam.
+  ///
+  /// The route is handed to free roam before the ride goes, so the map that
+  /// replaces this one is already navigating it. Leaving publishes the
+  /// departure as any leave does; ending is the leader's ordinary end, synced
+  /// before the ended ride is set aside so the group hears it.
+  Future<void> _rideOnAlone() async {
+    final controller = widget.rideController;
+    final isLeader = canEndRideForEveryone(controller);
+    final decision = await showDialog<RideOnAloneDecision>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Ride on alone?'),
+        content: Text(
+          isLeader
+              ? 'You keep navigating this route on your own. Leave the group '
+                    'to the others, or end the ride for everyone.'
+              : 'You leave the group and keep navigating this route on your '
+                    'own. The group ride carries on for everyone else.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, RideOnAloneDecision.cancel),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const Key('ride-on-alone-leave'),
+            onPressed: () =>
+                Navigator.pop(dialogContext, RideOnAloneDecision.leave),
+            child: Text(isLeader ? 'Leave the group' : 'Ride on alone'),
+          ),
+          if (isLeader)
+            FilledButton(
+              key: const Key('ride-on-alone-end'),
+              onPressed: () => Navigator.pop(
+                dialogContext,
+                RideOnAloneDecision.endForEveryone,
+              ),
+              child: const Text('End for everyone'),
+            ),
+        ],
+      ),
+    );
+    if (!mounted ||
+        decision == null ||
+        decision == RideOnAloneDecision.cancel) {
+      return;
+    }
+    final route = _currentRoute;
+    final sharedRoutes = widget.sharedRoutes;
+    if (route != null) sharedRoutes.stageFreeRoamRoute(route);
+    switch (decision) {
+      case RideOnAloneDecision.leave:
+        await _leaveRide();
+      case RideOnAloneDecision.endForEveryone:
+        await controller.endRide();
+        if (controller.rideEnded) {
+          try {
+            await _internetRelayController?.synchronizeNow();
+          } on Object {
+            // Queued: the ended ride keeps its journal and syncs when opened.
+          }
+          controller.setEndedRideAside();
+        }
+      case RideOnAloneDecision.cancel:
+        return;
+    }
+    // Still in the ride: nothing happened, so nothing is handed over.
+    if (controller.hasActiveRide && !controller.rideSetAside) {
+      sharedRoutes.takeFreeRoamRoute();
+    }
   }
 
   Future<void> _joinGroupBeforeStart() async {

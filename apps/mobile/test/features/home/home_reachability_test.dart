@@ -20,6 +20,7 @@ import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/rider_color.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
+import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/home/home_map_backdrop.dart';
@@ -97,6 +98,7 @@ void main() {
     RideDiagnosticsController? rideDiagnostics,
     DestinationRoutePlanner? destinationPlanner,
     PlanDirectory? planDirectory,
+    RouteStore? freeRoamRouteStore,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -113,6 +115,9 @@ void main() {
           rideDiagnostics: rideDiagnostics,
           destinationPlanner: destinationPlanner,
           planDirectory: planDirectory,
+          freeRoamRouteStore: freeRoamRouteStore == null
+              ? null
+              : () async => freeRoamRouteStore,
           recordedRoutes: InMemoryRecordedRouteStore(),
           completedRides: completedRides,
           // The home map backdrop is live in production. Without this it would
@@ -278,14 +283,13 @@ void main() {
     await tester.tap(find.byKey(const Key('home-create-ride')));
     await tester.pumpAndSettle();
 
-    // The form never asks the rider to repick their identity.
-    expect(find.byKey(const Key('ride-form-scroll-view')), findsOneWidget);
+    // Riding with others never asks the rider to repick their identity, or
+    // even their name when onboarding already has it.
+    expect(find.byKey(const Key('ride-with-others-sheet')), findsOneWidget);
     expect(find.text('Your colour'), findsNothing);
+    expect(find.byKey(const Key('ride-with-others-name')), findsNothing);
 
-    await tester.ensureVisible(
-      find.widgetWithText(FilledButton, 'Create ride'),
-    );
-    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await tester.tap(find.byKey(const Key('ride-with-others-create')));
     await tester.pumpAndSettle();
 
     // And the ride carries what onboarding already knew. `createRide` defaults
@@ -582,6 +586,59 @@ void main() {
       );
     },
   );
+
+  testWidgets('riding with others keeps the route and the navigation going', (
+    tester,
+  ) async {
+    // #847: free roam to group in one action. The route on the map is the
+    // group's first revision, and a rider following it is not put back into
+    // a lobby: the ride starts at once.
+    await riderProfile.save(
+      displayName: 'Oliver',
+      motorcycleStyle: riderProfile.motorcycleStyle,
+      riderSymbol: riderProfile.riderSymbol,
+      riderColor: riderProfile.riderColor,
+    );
+    final freeRoamStore = InMemoryRouteStore(_bathRoute());
+    await pumpHome(tester, freeRoamRouteStore: freeRoamStore);
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .onRouteChanged!(_bathRoute());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('home-more-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ride with others'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bath, Somerset'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ride-with-others-create')));
+    await tester.pumpAndSettle();
+
+    expect(rideController.coordinationMode.isGroup, isTrue);
+    expect(rideController.rideStarted, isTrue);
+    expect(rideController.authoritativeRoute?.id, 'bath');
+    expect(find.byKey(const Key('ride-invite-step')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ride-invite-continue')));
+    await tester.pumpAndSettle();
+    // The route moved into the ride; free roam does not keep a copy to come
+    // back to when the group ride is over.
+    expect(await freeRoamStore.loadActiveRoute(), isNull);
+  });
+
+  testWidgets('a route handed back by a group ride is navigated at once', (
+    tester,
+  ) async {
+    sharedRoutes.stageFreeRoamRoute(_bathRoute());
+    await pumpHome(tester);
+
+    final pending = tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .pendingInAppRoute;
+    expect(pending?.route.id, 'bath');
+    expect(pending?.reviewed, isTrue);
+    expect(sharedRoutes.pendingFreeRoamRoute, isNull);
+  });
 
   testWidgets('joining by QR is offered in words, not only as an icon', (
     tester,

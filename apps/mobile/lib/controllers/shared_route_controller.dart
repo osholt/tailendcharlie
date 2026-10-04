@@ -66,6 +66,26 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void>? _refreshOperation;
 
   PickedGpxFile? get pending => _pending;
+
+  /// A route a rider is riding on with alone after leaving a group ride
+  /// (#847), waiting for free roam to take it. Kept apart from
+  /// [pendingInAppRoute], which a ride's map takes as a change to its route:
+  /// this one is for no ride at all.
+  ImportedRoute? get pendingFreeRoamRoute => _pendingFreeRoamRoute;
+  ImportedRoute? _pendingFreeRoamRoute;
+
+  /// Hands [route] to free roam, which navigates it as it is.
+  void stageFreeRoamRoute(ImportedRoute route) {
+    _pendingFreeRoamRoute = route;
+    notifyListeners();
+  }
+
+  /// Takes the route staged for free roam, once.
+  ImportedRoute? takeFreeRoamRoute() {
+    final route = _pendingFreeRoamRoute;
+    _pendingFreeRoamRoute = null;
+    return route;
+  }
   PendingInAppRoute? get pendingInAppRoute => _pendingInAppRoute;
   PlannerLinkStatus get plannerLinkStatus => _plannerLinkStatus;
   String? get plannerLinkMessage => _plannerLinkMessage;

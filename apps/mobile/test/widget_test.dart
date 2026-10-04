@@ -84,7 +84,7 @@ void main() {
 
     await tester.tap(find.byKey(const Key('home-more-actions')));
     await tester.pumpAndSettle();
-    expect(find.text('Create a group ride'), findsOneWidget);
+    expect(find.text('Ride with others'), findsOneWidget);
     expect(find.text('Try a simulated ride'), findsOneWidget);
     expect(find.text('More actions'), findsNothing);
 
@@ -284,61 +284,82 @@ void main() {
     expect(controller.rideStarted, isTrue);
   });
 
-  testWidgets('create ride accepts a web-planner route code', (tester) async {
+  testWidgets('a solo ride under way becomes a group ride with its route', (
+    tester,
+  ) async {
+    // #847: solo to group, as one action that keeps the route and keeps the
+    // ride going. The solo ride is filed and the group ride takes its place.
     final controller = await _controller();
     addTearDown(controller.dispose);
-    _sharedRoutes.clearPending();
-    addTearDown(_sharedRoutes.clearPending);
-    final plans = _FakePlanDirectory();
-
-    await tester.pumpWidget(_app(controller, planDirectory: plans));
-    await _openRideForm(tester);
-
-    expect(find.byKey(const Key('planned-route-code-field')), findsOneWidget);
-    expect(find.text('Planned route code (optional)'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const Key('planned-route-code-field')),
-      'AB12CD34',
+    await controller.createRide(
+      'Oliver',
+      coordinationMode: RideCoordinationMode.solo,
     );
-    await tester.scrollUntilVisible(
-      find.widgetWithText(FilledButton, 'Create ride'),
-      180,
-      scrollable: _rideFormScrollable,
-    );
-    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await controller.startRide();
+    await controller.publishRoute(_groupRoute());
+    final soloRideId = controller.session!.rideId;
+    await tester.pumpWidget(_app(controller));
     await tester.pumpAndSettle();
 
-    expect(plans.requestedCode, 'AB12CD34');
-    expect(find.text('Continue to ride'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
+    await tester.pumpAndSettle();
+    final rideWithOthers = find.byKey(const Key('ride-menu-ride-with-others'));
+    await tester.scrollUntilVisible(
+      rideWithOthers,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ride-menu-ride-on-alone')), findsNothing);
+    await tester.tap(rideWithOthers);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ride-with-others-create')));
+    await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Continue to ride'));
-    expect(_sharedRoutes.pending?.name, 'Peak Loop.gpx');
+    expect(controller.session!.rideId, isNot(soloRideId));
+    expect(controller.coordinationMode.isGroup, isTrue);
+    expect(controller.rideStarted, isTrue);
+    expect(controller.authoritativeRoute?.id, 'group-route');
+    expect(find.byKey(const Key('ride-invite-step')), findsOneWidget);
   });
 
-  testWidgets('a solo ride skips the group share-code step', (tester) async {
+  testWidgets('a rider rides on alone with the group route (#847)', (
+    tester,
+  ) async {
     final controller = await _controller();
     addTearDown(controller.dispose);
-
+    _sharedRoutes.takeFreeRoamRoute();
+    addTearDown(_sharedRoutes.takeFreeRoamRoute);
+    await controller.createRide('Oliver');
+    await controller.startRide();
+    await controller.publishRoute(_groupRoute());
     await tester.pumpWidget(_app(controller));
-    await _openRideForm(tester);
-
-    expect(find.byKey(const Key('ride-scope-selector')), findsOneWidget);
-    expect(find.text('Second-bike drop-off'), findsOneWidget);
-    expect(find.text('Keep-together group'), findsOneWidget);
-
-    await tester.tap(find.text('Solo'));
     await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
+    await tester.pumpAndSettle();
+    final rideOnAlone = find.byKey(const Key('ride-menu-ride-on-alone'));
     await tester.scrollUntilVisible(
-      find.widgetWithText(FilledButton, 'Create ride'),
-      180,
-      scrollable: _rideFormScrollable,
+      rideOnAlone,
+      200,
+      scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ride-menu-ride-with-others')), findsNothing);
+    await tester.tap(rideOnAlone);
+    await tester.pumpAndSettle();
+    // The leader may leave the group to the others or end it for everyone.
+    expect(find.byKey(const Key('ride-on-alone-end')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ride-on-alone-leave')));
     await tester.pumpAndSettle();
 
-    expect(controller.coordinationMode, RideCoordinationMode.solo);
-    expect(find.text('Continue to ride'), findsNothing);
-    expect(find.text('Ready for solo ride'), findsOneWidget);
+    expect(controller.hasActiveRide, isFalse);
+    // Free roam takes the group's route and navigates it as it is.
+    final pending = tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .pendingInAppRoute;
+    expect(pending?.route.id, 'group-route');
+    expect(pending?.reviewed, isTrue);
   });
 
   testWidgets('a solo pre-start map can switch straight to joining a group', (
@@ -636,11 +657,20 @@ void main() {
     expect(find.byKey(const Key('open-ride-actions')), findsNothing);
     expect(find.text('MARKING STATS'), findsOneWidget);
 
-    await tester.scrollUntilVisible(
-      find.text('QUICK MESSAGES'),
-      300,
-      scrollable: find.byType(Scrollable).first,
+    // Stepped rather than dragged: a drag starts at the list's centre, and
+    // what sits there depends on how many ride actions the rider has.
+    final dashboard = tester.state<ScrollableState>(
+      find.byType(Scrollable).first,
     );
+    for (
+      var offset = 0.0;
+      find.text('QUICK MESSAGES').evaluate().isEmpty &&
+          offset <= dashboard.position.maxScrollExtent;
+      offset += 200
+    ) {
+      dashboard.position.jumpTo(offset);
+      await tester.pumpAndSettle();
+    }
     expect(find.text('QUICK MESSAGES'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.settings_outlined));
@@ -1092,13 +1122,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('set-aside-ride-banner')), findsOneWidget);
 
-    await _openRideForm(tester);
-    await tester.scrollUntilVisible(
-      find.widgetWithText(FilledButton, 'Create ride'),
-      180,
-      scrollable: _rideFormScrollable,
-    );
-    await tester.tap(find.widgetWithText(FilledButton, 'Create ride'));
+    await _openRideWithOthers(tester);
+    await tester.tap(find.byKey(const Key('ride-with-others-create')));
     await tester.pumpAndSettle();
     expect(find.text('Continue to ride'), findsOneWidget);
 
@@ -1127,14 +1152,38 @@ final _recordedRoutes = InMemoryRecordedRouteStore();
 /// nothing. The form itself is unchanged and still holds the ride scope, the
 /// coordination mode and the planner route code, and it is reached from the
 /// search — the surface #431 put every code-driven way in on.
-Future<void> _openRideForm(WidgetTester tester) async {
-  // A planned-route code now reviews the route in free roam (#847), so the
-  // ride form is reached from the menu.
+Future<void> _openRideWithOthers(WidgetTester tester) async {
   await tester.tap(find.byKey(const Key('home-more-actions')));
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(const Key('home-create-ride')));
   await tester.pumpAndSettle();
 }
+
+ImportedRoute _groupRoute() => ImportedRoute(
+  id: 'group-route',
+  name: 'To Town',
+  importedAt: DateTime.utc(2026, 10, 4),
+  sourceFileName: 'group-route.gpx',
+  paths: const [
+    RoutePath(
+      kind: RoutePathKind.track,
+      points: [
+        GeoPoint(latitude: 52.0, longitude: -1.0),
+        GeoPoint(latitude: 52.3, longitude: -1.0),
+      ],
+    ),
+  ],
+  waypoints: const [
+    RouteWaypoint(
+      point: GeoPoint(latitude: 52.0, longitude: -1.0),
+      name: 'Start',
+    ),
+    RouteWaypoint(
+      point: GeoPoint(latitude: 52.3, longitude: -1.0),
+      name: 'Town',
+    ),
+  ],
+);
 
 final _rideFormScrollable = find
     .descendant(
@@ -1257,23 +1306,6 @@ class _SuccessfulRideCodeDirectory implements RideCodeDirectory {
     inviteSecret: 'test-invite-secret-0123456789',
     joinToken: 'test-join-token-0123456789',
   );
-}
-
-class _FakePlanDirectory implements PlanDirectory {
-  String? requestedCode;
-
-  @override
-  Future<FetchedPlan> fetch(String code) async {
-    requestedCode = code;
-    return const FetchedPlan(
-      name: 'Peak Loop',
-      gpx:
-          '<gpx version="1.1"><trk><trkseg>'
-          '<trkpt lat="53.1" lon="-1.2"/>'
-          '<trkpt lat="53.2" lon="-1.1"/>'
-          '</trkseg></trk></gpx>',
-    );
-  }
 }
 
 class _FakeNearbyBridge extends NearbyBridge {
