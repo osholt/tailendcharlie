@@ -120,6 +120,7 @@ class RoadRouteManeuver extends RouteManeuver {
     super.bearingBeforeDegrees,
     super.bearingAfterDegrees,
     super.lanes,
+    super.junction,
   });
 
   /// OSRM does not expose UK give-way signage, but these manoeuvres are the
@@ -166,6 +167,7 @@ class RoadRouteManeuver extends RouteManeuver {
               )
               .toList(growable: false) ??
           const [],
+      junction: RouteJunction.fromJson(json['junction']),
     );
   }
 }
@@ -731,6 +733,7 @@ class OsrmRoadRoutingService
             lanes: approachingLanes.isNotEmpty
                 ? approachingLanes
                 : lanesAtManeuver,
+            junction: _maneuverJunction(step['intersections']),
           ),
         );
         // Some straight forks live only in OSRM's intersection topology.
@@ -828,6 +831,17 @@ class OsrmRoadRoutingService
       );
       previous = point;
     }
+  }
+
+  /// The roads meeting at a step's own manoeuvre (#853).
+  ///
+  /// OSRM documents a step's first intersection as the one its manoeuvre
+  /// happens at. These are the branches `bearing_before` and `bearing_after`
+  /// leave out, and without them a shallow diverge cannot be told from a bend.
+  /// The stored form keeps OSRM's own field names, so it is read the same way.
+  static RouteJunction? _maneuverJunction(Object? rawIntersections) {
+    if (rawIntersections is! List || rawIntersections.isEmpty) return null;
+    return RouteJunction.fromJson(rawIntersections.first);
   }
 
   /// OSRM reports `bearing_before`/`bearing_after` in whole degrees clockwise
@@ -1759,6 +1773,7 @@ List<RoadRouteManeuver> confirmTrafficSides(
         bearingBeforeDegrees: maneuver.bearingBeforeDegrees,
         bearingAfterDegrees: maneuver.bearingAfterDegrees,
         lanes: maneuver.lanes,
+        junction: maneuver.junction,
       )
     else
       maneuver,

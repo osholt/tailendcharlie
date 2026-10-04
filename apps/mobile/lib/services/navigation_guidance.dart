@@ -695,19 +695,29 @@ ManeuverDirection _ringExitDirection({
 }
 
 ManeuverInstruction _simpleInstruction(RouteManeuver maneuver) {
-  final kind = _kindFor(maneuver.type);
+  final engineKind = _kindFor(maneuver.type);
   final reported = _maneuverDirection(maneuver);
-  final direction = switch (kind) {
-    // Neither end of the route is a turn, and the engine's modifier there
-    // describes which side the destination is on rather than a direction to
-    // ride, so no direction is claimed.
-    ManeuverKind.arrive || ManeuverKind.depart => ManeuverDirection.straight,
-    // Staying on the same road through a name change or a notification is
-    // riding straight on even when the engine reports no direction change.
-    ManeuverKind.continueAhead when !reported.isStated =>
-      ManeuverDirection.straight,
-    _ => reported,
-  };
+  final keep = _keepDirection(engineKind, maneuver, reported);
+  // A diverge the engine called a turn is a fork in the road, and is drawn and
+  // worded as one: "Keep left", not "Turn left" for a branch eight degrees off
+  // the road (#853).
+  final kind = keep != null && engineKind == ManeuverKind.turn
+      ? ManeuverKind.fork
+      : engineKind;
+  final direction =
+      keep ??
+      switch (kind) {
+        // Neither end of the route is a turn, and the engine's modifier there
+        // describes which side the destination is on rather than a direction to
+        // ride, so no direction is claimed.
+        ManeuverKind.arrive ||
+        ManeuverKind.depart => ManeuverDirection.straight,
+        // Staying on the same road through a name change or a notification is
+        // riding straight on even when the engine reports no direction change.
+        ManeuverKind.continueAhead when !reported.isStated =>
+          ManeuverDirection.straight,
+        _ => reported,
+      };
   return ManeuverInstruction(
     maneuver: maneuver,
     kind: kind,
@@ -748,7 +758,98 @@ ManeuverDirection _maneuverDirection(RouteManeuver maneuver) {
   // and an 82 degree left `straight`. A rider rides the bearings, so past one
   // bucket they win. #302 was reported as an ordinary 90 degree right announced
   // as a sharp right, which is this shape exactly.
+  //
+  // Except where the bearings cannot see the choice: at a diverge the branch
+  // taken can sit a few degrees off the approach, so the bearings read
+  // straight on whatever the modifier says. [_keepDirection] settles that case
+  // from the junction's other roads before this answer is used (#853).
   return _bucketDistance(modifier, geometry) > 1 ? geometry : modifier;
+}
+
+/// How close beside the branch taken another legal road may leave for the two
+/// to be a fork in the road rather than a side turning (#853).
+///
+/// The B4235 slip out of Usk leaves the A472 dual carriageway eight degrees
+/// from it. Thirty degrees is also the band within which a branch already
+/// counts as roughly ahead for #774's junction detector.
+const divergeBranchDegrees = 30.0;
+
+/// The side to keep where the route takes one branch of a diverge, or null
+/// where the junction is not one.
+///
+/// A diverge is a junction where the branch taken is roughly ahead, within
+/// [divergeBranchDegrees] of the approach, and another road the route could
+/// legally take leaves within [divergeBranchDegrees] of it. The side comes from
+/// where that other road lies, which is the one thing the two bearings of the
+/// manoeuvre cannot say: a road beside the route on its right means keeping
+/// left. Roads beside it on both sides make the route the middle of three,
+/// where naming a side would be a guess, so nothing is claimed.
+ManeuverSide? divergeKeepSide(RouteJunction? junction) {
+  if (junction == null) return null;
+  final taken = junction.takenBearingDegrees;
+  final approach = junction.approachHeadingDegrees;
+  // A turn into one of two side roads is still a turn.
+  if (approach != null &&
+      _signedBearingDelta(approach, taken).abs() > divergeBranchDegrees) {
+    return null;
+  }
+  var roadOnRight = false;
+  var roadOnLeft = false;
+  for (final other in junction.alternativeBearingsDegrees) {
+    final offset = _signedBearingDelta(taken, other);
+    if (offset.abs() > divergeBranchDegrees) continue;
+    if (offset >= 0) roadOnRight = true;
+    if (offset <= 0) roadOnLeft = true;
+  }
+  if (roadOnRight == roadOnLeft) return null;
+  return roadOnRight ? ManeuverSide.left : ManeuverSide.right;
+}
+
+/// The direction to give an ordinary manoeuvre that is one branch of a
+/// diverge, or null where the rules for an ordinary turn stand.
+///
+/// #853: leaving Usk, the route joins the A472 dual carriageway and leaves it
+/// at once by the B4235 slip on the left. OSRM said `turn left`, bearings 92
+/// then 88. Four degrees reads as straight on, two buckets from the modifier,
+/// so the #302 rule gave the bearings the casting vote and the rider heard
+/// "Continue straight on" with the A472 carrying straight on beside the slip.
+/// The junction says what the bearings could not: the other legal road leaves
+/// eight degrees to the right of the slip, so the instruction is to keep left.
+///
+/// A side the engine stated is never overruled into the opposite one here; if
+/// the junction and the modifier disagree about the side, the ordinary rules
+/// decide as before.
+ManeuverDirection? _keepDirection(
+  ManeuverKind kind,
+  RouteManeuver maneuver,
+  ManeuverDirection reported,
+) {
+  switch (kind) {
+    case ManeuverKind.turn:
+    case ManeuverKind.fork:
+    case ManeuverKind.onRamp:
+    case ManeuverKind.offRamp:
+      break;
+    case ManeuverKind.depart:
+    case ManeuverKind.arrive:
+    case ManeuverKind.roundabout:
+    case ManeuverKind.endOfRoad:
+    case ManeuverKind.merge:
+    case ManeuverKind.useLane:
+    case ManeuverKind.continueAhead:
+      return null;
+  }
+  final side = divergeKeepSide(maneuver.junction);
+  if (side == null) return null;
+  final stated = _directionFromModifier(maneuver.modifier).side;
+  if ((stated == ManeuverSide.left || stated == ManeuverSide.right) &&
+      stated != side) {
+    return null;
+  }
+  if (reported == ManeuverDirection.uTurn) return null;
+  return side == ManeuverSide.left
+      ? ManeuverDirection.slightLeft
+      : ManeuverDirection.slightRight;
 }
 
 /// How far apart two directions sit on the straight-ahead-to-hard-over scale.
@@ -1024,10 +1125,15 @@ String _instructionText({
     case ManeuverKind.merge:
       return direction.isStated ? 'Merge $label' : 'Merge with traffic';
     case ManeuverKind.fork:
-      return switch (direction) {
-        ManeuverDirection.unstated => 'Fork ahead, follow the route',
-        ManeuverDirection.straight => 'At the fork, continue straight on',
-        _ => 'At the fork, keep $label',
+      // A fork is worded the way a UK sign and a UK rider put it: keep to a
+      // side. How far the branch bends is the symbol's job; "keep sharp left"
+      // is not something a rider says (#853).
+      if (!direction.isStated) return 'Fork ahead, follow the route';
+      return switch (direction.side) {
+        ManeuverSide.left => 'Keep left',
+        ManeuverSide.right => 'Keep right',
+        ManeuverSide.ahead ||
+        ManeuverSide.reverse => 'At the fork, continue straight on',
       };
     case ManeuverKind.onRamp:
       return direction.isStated
