@@ -2,14 +2,17 @@ import '../domain/completed_ride.dart';
 import '../domain/imported_route.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_session.dart';
+import 'ride_alert_log.dart';
 import 'ride_summary_exporter.dart';
 
 class CompletedRideArchiver {
   const CompletedRideArchiver({
     this.summaryExporter = const RideSummaryExporter(),
+    this.alertLog = const RideAlertLogReducer(),
   });
 
   final RideSummaryExporter summaryExporter;
+  final RideAlertLogReducer alertLog;
 
   CompletedRide create({
     required RideSession session,
@@ -47,6 +50,15 @@ class CompletedRideArchiver {
         session,
         events,
         generatedAt: archivedAt,
+      ),
+      // Everyone's alerts, not only this rider's: the review is of the group's
+      // ride, and an alert a leader raised is as much a moment to find in a
+      // follower's footage (#849).
+      alerts: alertLog.fromEvents(
+        rideId: session.rideId,
+        inviteSecret: session.inviteSecret,
+        events: events,
+        localRiderId: session.localRiderId,
       ),
     );
   }

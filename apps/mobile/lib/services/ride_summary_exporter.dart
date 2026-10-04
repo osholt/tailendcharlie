@@ -8,11 +8,13 @@ import 'package:share_plus/share_plus.dart';
 import '../domain/distance_unit.dart';
 import '../domain/geo_point.dart' as geo;
 import '../domain/imported_route.dart';
+import '../domain/ride_alert_record.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_session.dart';
 import 'geo_calculations.dart';
 import 'gpx_exporter.dart';
 import 'measurement_formatter.dart';
+import 'ride_alert_log.dart';
 import 'ride_lifecycle.dart';
 
 typedef _TrailPoint = ({
@@ -51,6 +53,7 @@ class RideSummary {
     required this.markerSessions,
     required this.riderCount,
     required this.totalDistanceMeters,
+    this.alerts = const [],
   });
 
   final String rideId;
@@ -63,6 +66,9 @@ class RideSummary {
   final List<MarkerSessionSummary> markerSessions;
   final int riderCount;
   final double totalDistanceMeters;
+
+  /// The alerts the group raised, oldest first (#849).
+  final List<RideAlertRecord> alerts;
 
   Duration get rideDuration =>
       (endedAt ?? generatedAt).difference(startedAt).abs();
@@ -169,6 +175,12 @@ class RideSummaryExporter {
       markerSessions: List.unmodifiable(completed),
       riderCount: riderIds.length,
       totalDistanceMeters: _trailDistanceMeters(trail),
+      alerts: const RideAlertLogReducer().fromEvents(
+        rideId: session.rideId,
+        inviteSecret: session.inviteSecret,
+        events: ordered,
+        localRiderId: session.localRiderId,
+      ),
     );
   }
 
@@ -249,6 +261,13 @@ class RideSummaryExporter {
         '${marker.uniquePassCount} passes${marker.isComplete ? '' : ' (active)'}.',
       );
     }
+    if (summary.alerts.isNotEmpty) {
+      // One line each, in the order they were raised, so the block can be pasted
+      // into a note and read against footage (#849).
+      buffer
+        ..writeln('Alerts raised: ${summary.alerts.length}')
+        ..writeln(rideAlertLogText(summary.alerts));
+    }
     return buffer.toString().trimRight();
   }
 
@@ -282,9 +301,39 @@ class RideSummaryExporter {
           marker.uniquePassCount,
           marker.isComplete,
         ],
+      if (summary.alerts.isNotEmpty) ...[
+        [],
+        [
+          'alert_time_local',
+          'alert_time_utc',
+          'raised_by',
+          'latitude',
+          'longitude',
+        ],
+        for (final alert in summary.alerts)
+          [
+            alert.timestampLabel,
+            alert.raisedAt.toUtc().toIso8601String(),
+            alert.raisedBy,
+            alert.position.latitude.toStringAsFixed(6),
+            alert.position.longitude.toStringAsFixed(6),
+          ],
+      ],
     ];
     return '${rows.map(_csvRow).join('\r\n')}\r\n';
   }
+
+  /// The GPX the ride-ended share carries: the rider's own trail, with the
+  /// group's alerts written in as waypoints for map and footage tools (#849).
+  ///
+  /// The alerts are added here, at export, and are never part of [route]: a
+  /// route's waypoints are stops, and a track offered back to ride again must not
+  /// gain any.
+  String trailGpx(ImportedRoute route, RideSummary summary) =>
+      const GpxExporter().export(
+        route,
+        alerts: rideAlertGpxWaypoints(summary.alerts),
+      );
 
   String fileName(RideSummary summary) =>
       'ride-relay-${summary.rideCode.toLowerCase()}-summary.csv';
@@ -475,7 +524,7 @@ class SystemRideSummarySharer implements RideSummarySharer {
           if (route != null)
             XFile.fromData(
               Uint8List.fromList(
-                utf8.encode(const GpxExporter().export(route)),
+                utf8.encode(exporter.trailGpx(route, summary)),
               ),
               mimeType: 'application/gpx+xml',
               name: gpxFileName,

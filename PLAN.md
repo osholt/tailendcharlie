@@ -204,8 +204,8 @@ server automatically when any rider regains connectivity.
 - **Reading Waze crowd hazards.** Waze has no general public read API for its
   live user reports, and the partner programme that does return a feed is
   limited to government agencies and road operators. This project is not
-  eligible, so Waze is closed as a data source rather than deferred. Rider
-  reports carry camera and police sightings instead.
+  eligible, so Waze is closed as a data source rather than deferred. A rider's
+  one-tap alert (police, a camera or anything else; #849) is the warning instead.
 - **Guaranteed operation after force-quit.** iOS does not permit a promise of
   continuous peer discovery after the user terminates the app.
 - **Public social network, ride discovery, profiles, or feeds.** These dilute

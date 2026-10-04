@@ -204,24 +204,23 @@ and expiry. A report of the same type within 75 m and 30 minutes confirms the
 existing report rather than creating a duplicate. Expired hazards disappear on
 load or refresh; clearing creates a durable event.
 
-Riders can raise every hazard type, enforcement included. A rider-reported
-camera or police sighting is a first-hand observation by the person reporting
-it, which is a different thing from redistributing a provider's data, and it is
-the report the group most wants.
+Riders raise one thing from the ride map: an **alert** (#849). It is a hazard of
+kind `alert`, raised with a single tap, and it says nothing about what was seen —
+it could be police, a speed camera or anything else. It replaced the choice
+between a speed camera and the police, which a rider in gloves on a moving bike
+had no second tap to spend on. A rider-raised alert is a first-hand observation by
+the person raising it, which is a different thing from redistributing a
+provider's data, and it is the report the group most wants.
 
-The ride-map REPORT control opens a sheet with two large targets, camera and
-police. **They go side by side whenever both halves can still hold a full-size
-target, and stack otherwise** — and the sheet is scroll-controlled, so it takes
-the height it needs. Stacked in a sheet the framework caps at nine sixteenths of
-the screen, the second target fell below the fold on a landscape phone and
-reporting police needed a scroll: unusable on a bike, and it defeated the two-tap
-design, which exists so a stray map tap cannot broadcast a warning to the whole
-group. The arrangement changes, never the target size — a portrait phone is too
-narrow for side by side, and so is a landscape one at the largest text sizes,
-because the width one option needs scales with its label. Enforcement a rider raises expires faster than
-a road defect — two hours for a camera, one for police — because it is usually
-a mobile van or a patrol car that moves on, and a stale sighting would raise a
-full-screen warning for the whole group.
+An alert expires after one hour — the shorter of the two lifetimes the kinds it
+replaced had (two hours for a camera, one for police), because it is usually a
+mobile van or a patrol car that moves on, and a stale one would raise a warning
+for the whole group. It is never merged with another alert, however close: two
+riders raising one at the same place are two sightings, each with its own time.
+A second tap from the same rider inside five seconds is the first one bouncing on
+a gloved thumb and is the same alert. Road defects (potholes, debris, roadworks)
+are still reported by their own kinds from the awareness screen, and still
+confirm one another within 75 m and 30 minutes.
 
 External sources implement `ExternalHazardProvider` and must expose an honest
 state (`unavailable`, `needsConfiguration`, `configured`, `loading`, `ready`, or
@@ -237,52 +236,131 @@ Orbis key server-side; the app then rejects incidents outside the route
 corridor. Configuration, privacy limits and deployment gates are documented in
 [live-traffic-incidents.md](./live-traffic-incidents.md).
 
-## Enforcement warnings
+## Alert warnings (formerly enforcement warnings)
 
-Hazards typed `speedCamera` or `policeActivity` get the most prominent
-treatment in the app. Rider reports are currently the only source of them: no
-enforcement provider is configured and none is eligible, so the detector below
-is deliberately source-agnostic and a licensed feed would need no new UI. `EnforcementAlertDetector` watches the rider's own
-position and raises `EnforcementAlert` for the nearest one **ahead** within one
-mile; the map then covers itself with a full-screen warning showing the type
-and a live distance countdown, dismissible by tapping.
+Three hazard kinds get the most prominent treatment in the app: the rider alert,
+and the speed-camera and police kinds that builds before #849 raised. Rider
+reports are currently the only source of them: no enforcement provider is
+configured and none is eligible, so the detector below is deliberately
+source-agnostic and a licensed feed would need no new UI. `EnforcementAlertDetector`
+watches the rider's own position and raises `EnforcementAlert` for the nearest one
+**ahead**; the map then shows an announcement bubble and a border, with a live
+distance countdown, and the natural voice says it once.
+
+**#849 migrated this behaviour; it did not copy it.** The alert joined the two
+kinds the detector already knew (`enforcementHazardTypes`), so it arms, holds,
+expires, speaks and draws through exactly the code #112, #135, #418, #446, #471 and
+#544 built. The bubble and the voice say `ALERT` / "Alert ahead" for the alert and
+`SPEED CAMERA` / `POLICE` for the older kinds, which are still read, warned about
+and listed — a mixed group is the normal case while testers update, and an older
+rider's report must not go quiet on a newer rider's phone.
 
 Deliberate choices:
 
-- **One mile of warning, not half.** The brief was at least half a mile; a full
-  mile leaves room to react at national-speed-limit pace, and the countdown
-  reads down through the half-mile mark either way.
+- **Speed-aware, not a fixed distance.** The warning aims for about 30 seconds of
+  approach from the rider's speed, bounded between 250 m and 1 km, with 400 m used
+  while there is no speed sample (#471). Once armed it stays for the whole
+  approach, even if the rider slows.
 - **Ahead, not merely nearby.** With a route loaded, "ahead" is decided by
-  position along that route, so a camera already passed or one on the opposite
-  carriageway stops warning. Without a route it falls back to comparing the
-  bearing against the direction of travel. A fix with no usable heading warns
-  anyway — a false warning costs a glance, a missed one costs more.
-- **Any confidence.** A sighting warns regardless of how many riders have
-  confirmed it. A licensed feed, if one is ever configured, should likewise be
-  exempt from any confidence floor it applies to ordinary hazards.
-- **Never a reroute trigger.** Enforcement types are excluded from the
-  leader's traffic-reroute candidates at both the shell and the provider. The
-  rider is warned; the group's authoritative route is not redrawn around it.
-- Dismissal is per hazard, so passing one and approaching the next raises a
-  fresh warning.
+  position along that route, so one already passed or on the opposite carriageway
+  stops warning. Without a route it falls back to comparing the bearing against
+  the direction of travel. A fix with no usable heading warns anyway — a false
+  warning costs a glance, a missed one costs more.
+- **Any confidence.** An alert warns regardless of how many riders have confirmed
+  it.
+- **Never a reroute trigger.** These kinds are excluded from the leader's
+  traffic-reroute candidates at both the shell and the provider. The rider is
+  warned; the group's authoritative route is not redrawn around it.
+- **Announce briefly, then hold** (#446). The bubble is up for ten seconds and the
+  border holds for the rest of the approach, inside the rounded display corners
+  (#544).
+- **Held back in France.** France prohibits carrying or using devices that warn of
+  enforcement controls. The alert could be exactly that, so it is held to the same
+  rule as the two kinds it replaced: it cannot be raised in France, and one that
+  arrives from there is stored but not presented. Road hazards stay available.
+- Dismissal is per hazard, so passing one and approaching the next raises a fresh
+  warning.
 
-### Reporting a sighting
+### Raising an alert
 
-A `REPORT` control sits on the ride map's single action row, beside `ALERT` and
-`LEAVE`: it is a ride action, not a route action, so it is present with or
-without a GPX. It is 62 pt square — past the 48 dp minimum for a gloved thumb,
-and no larger, because it covers the map for the whole ride. It used to own a row
-of its own above the speed sign, which cost a row in portrait and put it high in
-the landscape left rail; see the overlay-placement section of
-`docs/maps-and-gpx.md`.
+A `REPORT` control sits on the ride map's single action row, beside `ALERT` (SOS)
+and `LEAVE`: it is a ride action, not a route action, so it is present with or
+without a GPX. It is **96 pt square** in both orientations, up from 62 — a tester
+asked for it bigger — and no taller than the SOS-over-LEAVE pair beside it in
+portrait, so the bottom band the camera measures is no taller than it was. It is
+amber on a dark ink so it reads through a visor and is not taken for SOS, which is
+red. Its label stays `REPORT`: `ALERT` is already the SOS control's own word, and
+two controls side by side with the same name is how the wrong one gets pressed.
+What the *group* sees is "Alert".
 
-Tapping it opens a sheet with two full-width 76 pt targets, `SPEED CAMERA` and
-`POLICE`, plus cancel. Two taps rather than one is deliberate: a single
-map-level tap is too easy to catch by accident at speed, and the cost of a
-mis-tap is a false warning published to every rider in the group. The sheet
-scrolls as a backstop on short landscape viewports, but both options fit
-without scrolling. Reports are published at `serious` severity, so they drive
-the same advance warning as provider data, and the map confirms what was sent.
+**One tap, no sheet, no choice, no confirmation.** A stray tap costs a glance on
+everyone else's screen; the two-tap design it replaced cost the warning, because
+the second tap was the one a gloved rider did not have. The button says it took —
+`SENT` for three seconds — because a rider in gloves cannot feel the tap, and the
+map says so too. Taps while an alert is going out are ignored.
+
+An alert is stored and sent **outside the controller's busy guard**. That guard
+drops a call that arrives while another is in flight, and location fixes and the
+leader's five-minute traffic fetch both hold it, the latter for a network round
+trip; a dropped alert would show the rider "sent" and warn nobody. A failure is
+thrown to the map, which says "Alert not sent" rather than showing `SENT`.
+
+The CarPlay report sheet offers the same single `Alert` (and `Road hazard`, which
+stays available in France), reported through the same path.
+
+### The ride review (#849)
+
+Every alert is saved with its time to the second, where the rider was, and who
+raised it, and listed once the ride is over:
+
+- **Ride ended** and **Previous rides → a ride** show an alerts card: each time in
+  the phone's own time zone, to the second, with the raiser and the position. Tap
+  a time to copy it as `2026-10-04 14:32:07`, the form a dash-cam player shows;
+  **Copy all** copies a line per alert with the UTC time as well, for a ride
+  reviewed in another time zone than it was ridden in (the footage's clock does not
+  follow the phone's).
+- **Previous rides** plots each alert on the ride map, labelled with its time, above
+  the track.
+- **GPX export** (the ride-ended share and a previous ride's export) writes each
+  alert as a `<wpt>` — time in UTC as GPX requires, the clock time in the name, who
+  and when in the description, symbol `Danger Area` — and the shared summary text
+  and CSV list them.
+
+The log is a reduction of the same signed `hazardReported` journal events the live
+warning is built from (`RideAlertLogReducer`), not a second record, so the two
+cannot disagree. It counts alerts and the older camera and police kinds *when a
+rider raised them*; hazards from a data provider are not alerts. It is not limited
+to what is still active: an alert leaves the warning after an hour and must not
+leave the log, whose whole use is afterwards. A malformed or forged event is
+skipped, never allowed to break the rest.
+
+Alerts are kept on the completed ride as their own list, **not** among the
+waypoints of its recorded route. That route is offered back as a route to ride
+again, and an alert is not somewhere to ride to. For the same reason the GPX marks
+each alert waypoint with a `tec:alert` extension, and the GPX importer drops any
+waypoint carrying it: every other `<wpt>` is read back as a named stop.
+
+### Compatibility with builds that predate it (#849)
+
+Testers' phones on 1.0.1+101 will meet this build in the same group. Nothing
+needed a new event type, a relay capability or a server change: an alert is an
+ordinary `hazardReported` event.
+
+- **An alert on an older phone.** An older build decodes a hazard's `type` with
+  `HazardType.values.byName`, which throws on a name it does not know, and the
+  journal replays that decode every time the ride restarts — so one unknown name
+  would not just drop the alert, it would stop the ride opening. An alert is
+  therefore written as an ordinary `other` hazard carrying one extra key,
+  `kind: alert` (`HazardReportWire`). The older build ignores the key and shows an
+  "Other hazard" at the right place, with no warning and no speech, which is the
+  honest degradation: it does not know what this is. The marker wins over `type`
+  when this build reads, so a later build may choose a different legacy-safe type.
+- **An older phone's report on this one.** A speed camera or police hazard still
+  decodes as itself, is still warned about, still draws its own symbol, and is
+  logged as an alert, with what the older rider said it was.
+- `alert_protocol_compat_test.dart` holds this in both directions against a frozen
+  restatement of how 1.0.1+101 decodes and presents a hazard, and fails if a new
+  hazard kind puts a name on the wire that build cannot decode.
 
 ## Event contract and limitations
 

@@ -8,11 +8,14 @@ import '../../controllers/ride_controller.dart';
 import '../../controllers/road_rating_controller.dart';
 import '../../domain/completed_ride.dart';
 import '../../domain/completed_ride_store.dart';
+import '../../domain/ride_alert_record.dart';
 import '../../services/global_ride_heatmap.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/ride_alert_log.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
+import 'ride_alerts_card.dart';
 import 'ride_recap_screen.dart';
 import 'road_rating_card.dart';
 
@@ -137,6 +140,19 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
       generatedAt: DateTime.now(),
     );
     await ratings.prepare(riddenTrack: route?.paths.single.points ?? const []);
+  }
+
+  /// Every alert this ride raised, read from the journal the screen already
+  /// holds. The ride has ended, so this is the whole log, not a window of it.
+  List<RideAlertRecord> get _alerts {
+    final session = widget.controller.session;
+    if (session == null) return const [];
+    return const RideAlertLogReducer().fromEvents(
+      rideId: session.rideId,
+      inviteSecret: session.inviteSecret,
+      events: widget.controller.events,
+      localRiderId: session.localRiderId,
+    );
   }
 
   /// The way off this screen that gives nothing up (#207).
@@ -407,6 +423,13 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
         ],
         if (widget.roadRatings case final ratings?)
           RoadRatingCard(controller: ratings),
+        // The group's alerts with their times (#849), so a rider with dash-cam
+        // footage can go straight to each moment. Above the shares, which are
+        // what carry the same list away.
+        if (_alerts case final alerts when alerts.isNotEmpty) ...[
+          RideAlertsCard(alerts: alerts),
+          const SizedBox(height: 18),
+        ],
         FilledButton.icon(
           onPressed: () => _shareSummary(context),
           icon: const Icon(Icons.ios_share),

@@ -1373,6 +1373,12 @@ class _RideMapScreenState extends State<RideMapScreen>
   bool _cameraFramingRefreshScheduled = false;
   bool _emergencyAlertSending = false;
   bool _emergencyAlertSent = false;
+  // The one-tap alert to the group (#849): in flight, and just sent. The second
+  // is held for a few seconds so a rider in gloves, who cannot feel the tap, can
+  // see that it took.
+  bool _alertSending = false;
+  bool _alertSent = false;
+  Timer? _alertSentTimer;
   bool _emergencyActionsOpen = false;
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
@@ -1842,6 +1848,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _riderStoppedTimer = null;
     _basemapViewLoadWatchdog?.cancel();
     _basemapViewLoadWatchdog = null;
+    _alertSentTimer?.cancel();
     _riderSpeed.dispose();
     _mapBearing.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
@@ -3157,11 +3164,14 @@ class _RideMapScreenState extends State<RideMapScreen>
               ),
             )
           : null;
-      // Reporting a camera or a patrol car is a ride action, not a route action,
-      // and it earns a place beside them (#125).
+      // Alerting the group is a ride action, not a route action, and it earns a
+      // place beside them (#125). One tap, and a big one (#849).
       final reportButton = !widget.rideStarted || widget.onReportHazard == null
           ? null
-          : _ReportSightingButton(onPressed: _reportEnforcementSighting);
+          : _ReportSightingButton(
+              onPressed: _alertSending ? null : _raiseAlert,
+              sent: _alertSent,
+            );
       final hasActions =
           sosButton != null || leaveButton != null || reportButton != null;
       // One arrangement per orientation, fixed for every state (#142). #139 used
@@ -3306,7 +3316,9 @@ class _RideMapScreenState extends State<RideMapScreen>
         final leftRailBottom =
             safeBottom +
             10 +
-            (miniMap == null && safetyCluster != null ? 184 : 0);
+            (miniMap == null && safetyCluster != null
+                ? _landscapeActionStackReservedHeight
+                : 0);
         return Stack(
           children: [
             if (rideMenu != null)
@@ -4337,12 +4349,15 @@ class _RideMapScreenState extends State<RideMapScreen>
   /// ride, when the route prompt and LEAVE are the only competing surfaces.
   static const _landscapeSafetyBandFloor = 72.0;
 
-  /// Three 48 px targets, two 8 px gaps, and the map-edge clearance.
+  /// Two 48 px targets, the 96 px alert target, two 8 px gaps, and the map-edge
+  /// clearance.
   ///
   /// Landscape now stacks ALERT, LEAVE and REPORT vertically (#533). Keeping
   /// the old one-row reserve let an interrupt cover the lower two controls and
-  /// absorb their taps.
-  static const _landscapeActionStackReservedHeight = 184.0;
+  /// absorb their taps. REPORT grew from 62 to 96 with the one-tap alert (#849),
+  /// and this follows it rather than restating a number.
+  static const _landscapeActionStackReservedHeight =
+      48 + 8 + 48 + 8 + _ReportSightingButton.side + 10;
 
   /// The bottom band's height as last laid out.
   ///
@@ -8381,60 +8396,37 @@ class _RideMapScreenState extends State<RideMapScreen>
     );
   }
 
-  Future<void> _reportEnforcementSighting() async {
+  /// Alerts the group with one tap (#849): no sheet, no choice, no confirmation.
+  ///
+  /// This used to open a sheet asking whether it was a speed camera or the police.
+  /// It is neither, or either, or something else - the rider has seen something
+  /// the group should look out for, and a rider in gloves on a moving bike does
+  /// not have a second tap to spend on saying what. A stray tap costs a glance on
+  /// everyone else's screen; the alternative cost the warning.
+  Future<void> _raiseAlert() async {
     final report = widget.onReportHazard;
-    if (report == null) return;
-    final type = await showModalBottomSheet<HazardType>(
-      context: context,
-      backgroundColor: const Color(0xFF161D26),
-      showDragHandle: true,
-      // Without this the sheet is capped at nine sixteenths of the screen - 219
-      // pixels on a 390 pixel landscape phone - and two glove-sized targets plus
-      // a title and a cancel do not fit, so the second one fell below the fold
-      // and selecting police needed a scroll (#133). The sheet takes the height
-      // it needs instead of the targets being shrunk to fit a cap.
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(bottom: 14),
-                child: Text(
-                  'Tell the group',
-                  style: TextStyle(
-                    color: Color(0xFFE4E9EF),
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              _ReportSightingOptions(
-                onSpeedCamera: () =>
-                    Navigator.of(sheetContext).pop(HazardType.speedCamera),
-                onPolice: () =>
-                    Navigator.of(sheetContext).pop(HazardType.policeActivity),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(sheetContext).pop(),
-                child: const Text('Cancel'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (type == null || !mounted) return;
+    if (report == null || _alertSending) return;
+    setState(() => _alertSending = true);
     try {
-      await report(type);
-      _showMessage('${type.label} reported to the group.');
+      await report(HazardType.alert);
+      if (!mounted) return;
+      _alertSentTimer?.cancel();
+      setState(() {
+        _alertSending = false;
+        _alertSent = true;
+      });
+      _alertSentTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _alertSent = false);
+      });
+      _showMessage('Alert sent to the group.');
     } on FormatException catch (error) {
-      _showMessage('Report not sent. ${error.message}');
+      if (!mounted) return;
+      setState(() => _alertSending = false);
+      _showMessage('Alert not sent. ${error.message}');
     } on Object {
-      _showMessage('Report not sent. Try again in a moment.');
+      if (!mounted) return;
+      setState(() => _alertSending = false);
+      _showMessage('Alert not sent. Try again in a moment.');
     }
   }
 
@@ -10977,61 +10969,85 @@ class _ActionLabel extends StatelessWidget {
   }
 }
 
-/// Compact map control that opens the enforcement sighting picker.
+/// The map control that alerts the group with one tap (#849).
 ///
-/// Deliberately small: it sits over the map for a whole ride, so it earns only
-/// as much space as a gloved thumb needs. The targets it opens are the large
-/// ones.
+/// 96 px square, in both orientations, up from 62 (#125 had called 62 "a
+/// deliberate glove size"; a tester asked for it bigger). It still sits over the
+/// map for the whole ride, so it is no larger than the pair of targets beside it
+/// is tall in portrait - 56 + 8 + 56 = 120 - which keeps the bottom band the camera
+/// measures exactly as high as it was. Amber on a dark ink, because it must read
+/// through a visor and must not be mistaken for SOS, which is red.
+///
+/// The label stays REPORT: ALERT is already the SOS control's own word, and two
+/// controls side by side with the same name is how the wrong one gets pressed.
+/// What the *group* sees is "Alert".
 class _ReportSightingButton extends StatelessWidget {
-  const _ReportSightingButton({required this.onPressed});
+  const _ReportSightingButton({required this.onPressed, this.sent = false});
 
-  final VoidCallback onPressed;
+  /// Null while an alert is being stored, so a second tap cannot queue behind it.
+  final VoidCallback? onPressed;
 
-  /// The square the target occupies, in every state and both orientations. #142
-  /// takes the width a narrow landscape rail needs out of the two labels, never
-  /// out of this: 62 px is a deliberate glove size, well past the 48 px minimum.
-  static const double side = 62;
+  /// Whether the last tap has just gone through. Same box, different contents:
+  /// the footprint must not move when the state changes (#142).
+  final bool sent;
+
+  /// The square the target occupies, in every state and both orientations.
+  static const double side = 96;
+
+  static const _fill = Color(0xFFFFC857);
+  static const _ink = Color(0xFF1A1200);
 
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: 'Report a camera or police to the group',
-    child: Material(
-      color: const Color(0xF21C2530),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: Color(0xFF5A6878)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        key: const Key('report-sighting-button'),
-        onTap: onPressed,
-        child: SizedBox(
-          width: side,
-          height: side,
-          child: const Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.add_alert_rounded, size: 26, color: Color(0xFFFFD24A)),
-              SizedBox(height: 2),
-              // The target keeps its 62 pixels at every text size, so the caption
-              // is what gives way rather than the box overflowing: the icon is
-              // what a rider aims at, and the word underneath only names it.
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    'REPORT',
-                    style: TextStyle(
-                      color: Color(0xFFE4E9EF),
-                      fontSize: 9,
-                      height: 1,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.6,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    enabled: onPressed != null,
+    label: sent ? 'Alert sent to the group' : 'Alert the group',
+    onTap: onPressed,
+    excludeSemantics: true,
+    child: Tooltip(
+      message: 'Alert the group',
+      child: Material(
+        color: sent ? const Color(0xFF6ED89A) : _fill,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: const BorderSide(color: Color(0xFF3A2A00), width: 2),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const Key('report-sighting-button'),
+          onTap: onPressed,
+          child: SizedBox(
+            width: side,
+            height: side,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  sent ? Icons.check_circle_rounded : Icons.add_alert_rounded,
+                  size: 44,
+                  color: _ink,
+                ),
+                const SizedBox(height: 4),
+                // The box keeps its 96 pixels at every text size, so the caption
+                // is what gives way rather than the box overflowing: the icon is
+                // what a rider aims at, and the word underneath only names it.
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      sent ? 'SENT' : 'REPORT',
+                      style: const TextStyle(
+                        color: _ink,
+                        fontSize: 15,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.8,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -11039,121 +11055,40 @@ class _ReportSightingButton extends StatelessWidget {
   );
 }
 
-/// The two report targets, side by side wherever both fit.
+/// The colours and symbol of one warning, by what it warns about.
 ///
-/// Stacked, they needed 176 pixels of a sheet the framework caps at 219 on a
-/// landscape phone, so police fell below the fold and could only be reached by
-/// scrolling - unusable on a bike, and it defeated the two-tap design, which
-/// exists so a stray map tap cannot broadcast a warning to the whole group
-/// (#133). Neither target is shrunk to achieve it: the pair goes side by side
-/// when each half can still hold a full-size target, and stacks otherwise, which
-/// is what keeps the largest accessibility text sizes honest.
-class _ReportSightingOptions extends StatelessWidget {
-  const _ReportSightingOptions({
-    required this.onSpeedCamera,
-    required this.onPolice,
-  });
-
-  final VoidCallback onSpeedCamera;
-  final VoidCallback onPolice;
-
-  /// Width one option needs for its icon, its label at the current text scale,
-  /// and the padding a gloved hand needs around them.
-  static double _minimumOptionWidth(BuildContext context) =>
-      34 + 24 + MediaQuery.textScalerOf(context).scale(22) * 7.2;
-
-  @override
-  Widget build(BuildContext context) {
-    final camera = _ReportSightingOption(
-      optionKey: const Key('report-speed-camera-option'),
-      label: 'SPEED CAMERA',
-      icon: Icons.speed_rounded,
-      color: const Color(0xFF9B1B23),
-      onPressed: onSpeedCamera,
-    );
-    final police = _ReportSightingOption(
-      optionKey: const Key('report-police-option'),
-      label: 'POLICE',
-      icon: Icons.local_police_rounded,
-      color: const Color(0xFF17497F),
-      onPressed: onPolice,
-    );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final available = constraints.maxWidth;
-        final sideBySide =
-            available.isFinite &&
-            (available - 12) / 2 >= _minimumOptionWidth(context);
-        if (!sideBySide) {
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [camera, police],
-          );
-        }
-        return Row(
-          key: const Key('report-options-side-by-side'),
-          // Each option carries its own height, so the row must not try to
-          // stretch to a parent that has none to give.
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: camera),
-            const SizedBox(width: 12),
-            Expanded(child: police),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// One report target, sized for a rider wearing gloves, on a moving bike.
-class _ReportSightingOption extends StatelessWidget {
-  const _ReportSightingOption({
-    required this.optionKey,
-    required this.label,
+/// The alert is amber, which is neither the camera's red nor the police's blue
+/// and is not the red of SOS either (#849): it says "look out" and nothing more
+/// specific. White text on the alert's fill measures 10.3:1.
+class _EnforcementAlertPalette {
+  const _EnforcementAlertPalette({
+    required this.border,
+    required this.fill,
     required this.icon,
-    required this.color,
-    required this.onPressed,
   });
 
-  final Key optionKey;
-  final String label;
+  final Color border;
+  final Color fill;
   final IconData icon;
-  final Color color;
-  final VoidCallback onPressed;
 
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: SizedBox(
-      // Both options must be reachable on a landscape phone without scrolling;
-      // the sheet scrolls as a backstop, but a rider should never have to reach
-      // for it. This height is never traded away to make them fit - see
-      // [_ReportSightingOptions], which changes the arrangement instead.
-      height: 76,
-      child: FilledButton.icon(
-        key: optionKey,
-        onPressed: onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: color,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
+  static _EnforcementAlertPalette of(HazardType type) =>
+      switch (EnforcementAlertKind.forHazard(type)) {
+        EnforcementAlertKind.alert => const _EnforcementAlertPalette(
+          border: Color(0xFFFFB020),
+          fill: Color(0xFF5A3A00),
+          icon: Icons.warning_amber_rounded,
         ),
-        icon: Icon(icon, size: 34),
-        label: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.5,
-          ),
+        EnforcementAlertKind.speedCamera => const _EnforcementAlertPalette(
+          border: Color(0xFFFF3B30),
+          fill: Color(0xFF6E1015),
+          icon: Icons.speed_rounded,
         ),
-      ),
-    ),
-  );
+        EnforcementAlertKind.police => const _EnforcementAlertPalette(
+          border: Color(0xFF4C9AFF),
+          fill: Color(0xFF0F3560),
+          icon: Icons.local_police_rounded,
+        ),
+      };
 }
 
 /// The two-part enforcement warning: a bubble, then a border (#446).
@@ -11214,7 +11149,7 @@ class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
 
   @override
   Widget build(BuildContext context) {
-    final camera = widget.alert.hazard.type == HazardType.speedCamera;
+    final palette = _EnforcementAlertPalette.of(widget.alert.hazard.type);
     final stage = _stage;
     return Stack(
       children: [
@@ -11233,9 +11168,7 @@ class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(enforcementBorderRadius),
                 border: Border.all(
-                  color: camera
-                      ? const Color(0xFFFF3B30)
-                      : const Color(0xFF4C9AFF),
+                  color: palette.border,
                   width: enforcementBorderWidth,
                 ),
               ),
@@ -11279,8 +11212,8 @@ class _EnforcementAlertBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final camera = alert.hazard.type == HazardType.speedCamera;
-    final title = camera ? 'SPEED CAMERA' : 'POLICE';
+    final palette = _EnforcementAlertPalette.of(alert.hazard.type);
+    final title = EnforcementAlertKind.forHazard(alert.hazard.type).title;
     final distance = MeasurementFormatter(
       distanceUnit,
     ).distance(alert.distanceMeters);
@@ -11304,12 +11237,9 @@ class _EnforcementAlertBubble extends StatelessWidget {
           decoration: BoxDecoration(
             // Opaque: anything showing through the words competes with them at
             // the moment the rider has least attention to spare (#107).
-            color: camera ? const Color(0xFF6E1015) : const Color(0xFF0F3560),
+            color: palette.fill,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: camera ? const Color(0xFFFF3B30) : const Color(0xFF4C9AFF),
-              width: 3,
-            ),
+            border: Border.all(color: palette.border, width: 3),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x99000000),
@@ -11324,11 +11254,7 @@ class _EnforcementAlertBubble extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                camera ? Icons.speed_rounded : Icons.local_police_rounded,
-                size: 30,
-                color: Colors.white,
-              ),
+              Icon(palette.icon, size: 30, color: Colors.white),
               const SizedBox(width: 12),
               Flexible(
                 child: Column(

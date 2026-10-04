@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:xml/xml.dart';
 
 import '../domain/imported_route.dart';
+import 'gpx_exporter.dart' show gpxAlertMarkerElement, gpxTecNamespace;
 
 class GpxParser {
   const GpxParser({
@@ -156,6 +157,10 @@ class GpxParser {
     }
 
     final waypoints = _children(root, 'wpt')
+        // A ride's GPX carries its alerts as waypoints for map and footage tools
+        // (#849). They are not places on a route, and read back as waypoints they
+        // would become stops the next time the file was imported as a plan.
+        .where((waypoint) => !_isRideAlert(waypoint))
         .map(
           (waypoint) => RouteWaypoint(
             point: parsePoint(waypoint),
@@ -403,6 +408,19 @@ class GpxFormatException implements FormatException {
 Iterable<XmlElement> _children(XmlElement parent, String localName) => parent
     .childElements
     .where((element) => element.name.local.toLowerCase() == localName);
+
+/// Whether [waypoint] is one of this app's own alert markers, and so not a place.
+///
+/// By the extension's namespace as well as its name: another tool's `alert`
+/// element is none of this parser's business, and a waypoint of theirs is still a
+/// waypoint.
+bool _isRideAlert(XmlElement waypoint) => _children(waypoint, 'extensions')
+    .expand((extensions) => extensions.childElements)
+    .any(
+      (element) =>
+          element.name.local == gpxAlertMarkerElement &&
+          element.name.namespaceUri == gpxTecNamespace,
+    );
 
 List<XmlElement> _routesForImport(XmlElement root) {
   final routes = _children(root, 'rte').toList(growable: false);

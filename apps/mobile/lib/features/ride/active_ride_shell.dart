@@ -91,6 +91,7 @@ import '../../services/ride_diagnostics_recorder.dart';
 import '../../services/ride_diagnostics_transition.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/enforcement_alert_detector.dart';
+import '../../services/enforcement_alert_presentation.dart';
 import '../../services/hazard_map_relevance.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
@@ -1755,7 +1756,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       'traffic-reroute-suppression:'
       '${widget.rideController.session?.rideId ?? 'none'}';
 
-  /// Publishes a rider's own enforcement sighting to the group.
+  /// Publishes a rider's own alert to the group (#849).
   ///
   /// Reported as [HazardSeverity.serious] so it reaches the same advance
   /// warning the provider feed drives; the shorter enforcement expiry in
@@ -4445,7 +4446,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (speaker == null || current == null) return;
     if (previous?.hazard.id == current.hazard.id) return;
     final controller = widget.rideController;
-    final camera = current.hazard.type == HazardType.speedCamera;
+    final kind = EnforcementAlertKind.forHazard(current.hazard.type);
     final distance = MeasurementFormatter(
       widget.distanceUnits.value,
     ).distance(current.distanceMeters);
@@ -4455,11 +4456,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(
       speaker.speakAlert(
         key: 'enforcement:${current.hazard.id}',
-        phrase: [
-          camera ? 'Speed camera' : 'Police',
-          'in $distance',
-          ?limit,
-        ].join(', '),
+        phrase: enforcementSpokenPhrase(
+          kind: kind,
+          distance: distance,
+          limit: limit,
+        ),
         enabled: spokenAudioAllows(_spokenAudioMode, SpokenAudioClass.safety),
         rideActive:
             controller.rideStarted &&
