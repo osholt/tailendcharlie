@@ -627,10 +627,17 @@ void main() {
       expect(body['shape_match'], 'map_snap');
       expect(body['costing'], 'motorcycle');
       expect(body.containsKey('costing_options'), isFalse);
-      expect(
-        (body['filters']! as Map)['attributes'],
-        ValhallaRouteAttributeProvider.requestedAttributes,
-      );
+      expect((body['filters']! as Map)['attributes'], const [
+        'edge.way_id',
+        'edge.use',
+        'edge.unpaved',
+        'edge.surface',
+        'edge.length',
+        'edge.begin_shape_index',
+        'edge.end_shape_index',
+        'matched.type',
+        'shape',
+      ]);
       expect((body['shape']! as List).length, lessThanOrEqualTo(1500));
       expect(recorded.edges, hasLength(12));
       expect(recorded.routeMeters, closeTo(1267, 5));
