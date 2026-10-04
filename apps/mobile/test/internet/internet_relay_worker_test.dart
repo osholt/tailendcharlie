@@ -7,6 +7,7 @@ import 'package:ride_relay/internet/internet_cursor_store.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/internet/internet_relay_worker.dart';
 import 'package:ride_relay/services/ride_event_authenticator.dart';
+import 'package:ride_relay/services/transport_evidence_ledger.dart';
 
 void main() {
   test(
@@ -331,6 +332,162 @@ void main() {
     expect(api.callCount, 0);
     expect(status.actionUrl, Uri.parse('https://tailendcharlie.app/update'));
     await worker.close();
+  });
+
+  // #855: which route delivered an update, and which was first.
+  group('transport evidence', () {
+    Future<void> syncOnce(InternetRelayWorker worker) async {
+      // Listening first: the status is emitted as soon as `start` is running.
+      final synced = worker.statuses.firstWhere(
+        (status) => status.phase == InternetRelayPhase.synced,
+      );
+      await worker.start(_session);
+      await synced.timeout(const Duration(seconds: 1));
+    }
+
+    test('an update the journal already holds is still reported, so the '
+        'slower route is not invisible', () async {
+      // Bluetooth delivered `remote` first: it is in the journal already, and
+      // the worker's own duplicate check will skip it.
+      final eventStore = InMemoryEventStore();
+      await eventStore.append(_event(id: 'remote', deviceId: 'remote-device'));
+      var now = DateTime.utc(2026, 10, 4, 10);
+      final ledger = TransportEvidenceLedger(
+        localRiderId: _session.localRiderId,
+        clock: () => now,
+      );
+      ledger.recordEvent(
+        transport: EvidenceTransport.bluetooth,
+        eventId: 'remote',
+        authorId: 'remote-device',
+      );
+      now = now.add(const Duration(seconds: 3));
+      final api = _FakeApi(
+        results: [
+          InternetSyncResult(
+            cursor: 'cursor-1',
+            acceptedEventIds: const {},
+            events: [_event(id: 'remote', deviceId: 'remote-device')],
+          ),
+        ],
+      );
+      final worker = InternetRelayWorker(
+        api: api,
+        eventStore: eventStore,
+        cursorStore: InMemoryInternetCursorStore(),
+        pollInterval: const Duration(days: 1),
+        evidence: ledger,
+      );
+      final received = <RideEvent>[];
+      final subscription = worker.receivedEvents.listen(received.add);
+
+      await syncOnce(worker);
+
+      // The worker did skip it as a duplicate...
+      expect(received, isEmpty);
+      // ...and the ledger still saw the internet deliver it, three seconds behind.
+      final remote = ledger.evidenceFor('remote-device')!;
+      expect(remote.internet.events, 1);
+      expect(remote.bluetooth.firstDelivered, 1);
+      expect(remote.internet.firstDelivered, 0);
+      final verdict = ledger.verdict(now: now);
+      expect(verdict.bluetoothFirst, 1);
+      expect(verdict.medianLeadOverInternet, const Duration(seconds: 3));
+      await subscription.cancel();
+      await worker.close();
+    });
+
+    test('an update the internet delivers first is reported as the first '
+        'delivery', () async {
+      final ledger = TransportEvidenceLedger(
+        localRiderId: _session.localRiderId,
+      );
+      final api = _FakeApi(
+        results: [
+          InternetSyncResult(
+            cursor: 'cursor-1',
+            acceptedEventIds: const {},
+            events: [_event(id: 'remote', deviceId: 'remote-device')],
+          ),
+        ],
+      );
+      final worker = InternetRelayWorker(
+        api: api,
+        eventStore: InMemoryEventStore(),
+        cursorStore: InMemoryInternetCursorStore(),
+        pollInterval: const Duration(days: 1),
+        evidence: ledger,
+      );
+
+      await syncOnce(worker);
+
+      final remote = ledger.evidenceFor('remote-device')!;
+      expect(remote.internet.events, 1);
+      expect(remote.internet.firstDelivered, 1);
+      expect(remote.bluetooth.events, 0);
+      await worker.close();
+    });
+
+    test('the same update downloaded again is counted once', () async {
+      final ledger = TransportEvidenceLedger(
+        localRiderId: _session.localRiderId,
+      );
+      final api = _FakeApi(
+        results: [
+          InternetSyncResult(
+            cursor: 'cursor-1',
+            acceptedEventIds: const {},
+            events: [_event(id: 'remote', deviceId: 'remote-device')],
+          ),
+          InternetSyncResult(
+            cursor: 'cursor-2',
+            acceptedEventIds: const {},
+            events: [_event(id: 'remote', deviceId: 'remote-device')],
+          ),
+        ],
+      );
+      final worker = InternetRelayWorker(
+        api: api,
+        eventStore: InMemoryEventStore(),
+        cursorStore: InMemoryInternetCursorStore(),
+        pollInterval: const Duration(days: 1),
+        evidence: ledger,
+      );
+
+      await syncOnce(worker);
+      await worker.synchronizeNow();
+
+      expect(api.callCount, 2);
+      expect(ledger.evidenceFor('remote-device')!.internet.events, 1);
+      await worker.close();
+    });
+
+    test('this rider\'s own events coming back are not counted', () async {
+      final ledger = TransportEvidenceLedger(
+        localRiderId: _session.localRiderId,
+      );
+      final api = _FakeApi(
+        results: [
+          InternetSyncResult(
+            cursor: 'cursor-1',
+            acceptedEventIds: const {},
+            events: [_event(id: 'mine')],
+          ),
+        ],
+      );
+      final worker = InternetRelayWorker(
+        api: api,
+        eventStore: InMemoryEventStore(),
+        cursorStore: InMemoryInternetCursorStore(),
+        pollInterval: const Duration(days: 1),
+        evidence: ledger,
+      );
+
+      await syncOnce(worker);
+
+      expect(ledger.riders, isEmpty);
+      await worker.close();
+    });
   });
 }
 

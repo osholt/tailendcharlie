@@ -169,6 +169,126 @@ class RouteShapingPoint {
   }
 }
 
+/// The roads that meet where a manoeuvre happens, as the routing engine
+/// reported them (#853).
+///
+/// A manoeuvre's own two bearings describe the line ridden and nothing beside
+/// it. Where a road divides at a shallow angle the branch taken can head within
+/// a few degrees of the approach, so those two bearings read "straight on"
+/// while the rider has a choice to make: leaving Usk, the B4235 slip leaves the
+/// A472 at 8 degrees and was announced "Continue straight on". The branches are
+/// what tell a diverge from a bend, so they are kept with the route.
+///
+/// Bearings point away from the junction, clockwise from true north, in the
+/// engine's own order.
+class RouteJunction {
+  const RouteJunction._({
+    required this.bearingsDegrees,
+    required this.enterable,
+    required this.takenIndex,
+    required this.approachIndex,
+  });
+
+  /// A junction, or null where the engine's description of it does not hang
+  /// together: an index outside the list, the route leaving by the road it
+  /// arrived on, or a bearing that is not a number.
+  ///
+  /// Null rather than an exception, because a junction only ever refines an
+  /// instruction. A route must not become unreadable because one junction in
+  /// it was described badly.
+  static RouteJunction? tryCreate({
+    required List<double> bearingsDegrees,
+    required List<bool> enterable,
+    required int takenIndex,
+    int? approachIndex,
+  }) {
+    if (bearingsDegrees.isEmpty ||
+        bearingsDegrees.length != enterable.length ||
+        bearingsDegrees.any((bearing) => !bearing.isFinite) ||
+        takenIndex < 0 ||
+        takenIndex >= bearingsDegrees.length) {
+      return null;
+    }
+    final approach = approachIndex;
+    if (approach != null &&
+        (approach < 0 ||
+            approach >= bearingsDegrees.length ||
+            approach == takenIndex)) {
+      return null;
+    }
+    return RouteJunction._(
+      bearingsDegrees: List.unmodifiable(
+        bearingsDegrees.map((bearing) => (bearing % 360 + 360) % 360),
+      ),
+      enterable: List.unmodifiable(enterable),
+      takenIndex: takenIndex,
+      approachIndex: approach,
+    );
+  }
+
+  /// Every road at the junction, as the bearing it leaves on.
+  final List<double> bearingsDegrees;
+
+  /// Whether the route could legally have left by each road.
+  final List<bool> enterable;
+
+  /// The road the route leaves by.
+  final int takenIndex;
+
+  /// The road the route arrives on, or null where the route starts here.
+  final int? approachIndex;
+
+  double get takenBearingDegrees => bearingsDegrees[takenIndex];
+
+  /// The heading the rider arrives on, which is the approach road's bearing
+  /// turned round, or null where the route starts at this junction.
+  double? get approachHeadingDegrees {
+    final approach = approachIndex;
+    if (approach == null) return null;
+    return (bearingsDegrees[approach] + 180) % 360;
+  }
+
+  /// The roads the route could have taken instead.
+  Iterable<double> get alternativeBearingsDegrees sync* {
+    for (var index = 0; index < bearingsDegrees.length; index += 1) {
+      if (index == takenIndex || index == approachIndex) continue;
+      if (enterable[index]) yield bearingsDegrees[index];
+    }
+  }
+
+  Map<String, Object?> toJson() => {
+    'bearings': bearingsDegrees,
+    'entry': enterable,
+    'out': takenIndex,
+    if (approachIndex != null) 'in': approachIndex,
+  };
+
+  /// Reads a stored junction, or null where there is none or it is unusable.
+  static RouteJunction? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final bearings = json['bearings'];
+    final entry = json['entry'];
+    final taken = json['out'];
+    final approach = json['in'];
+    if (bearings is! List ||
+        entry is! List ||
+        bearings.any((value) => value is! num) ||
+        entry.any((value) => value is! bool) ||
+        taken is! int ||
+        (approach != null && approach is! int)) {
+      return null;
+    }
+    return tryCreate(
+      bearingsDegrees: [
+        for (final value in bearings) (value as num).toDouble(),
+      ],
+      enterable: entry.cast<bool>(),
+      takenIndex: taken,
+      approachIndex: approach as int?,
+    );
+  }
+}
+
 /// A routing or reviewed mapped instruction retained with the route geometry so
 /// navigation guidance remains available after restart and while offline.
 class RouteManeuver {
@@ -184,6 +304,7 @@ class RouteManeuver {
     this.bearingBeforeDegrees,
     this.bearingAfterDegrees,
     this.lanes = const [],
+    this.junction,
   });
 
   final GeoPoint position;
@@ -224,6 +345,13 @@ class RouteManeuver {
   final double? bearingAfterDegrees;
   final List<RouteLane> lanes;
 
+  /// The roads meeting at this manoeuvre, where the engine described them.
+  ///
+  /// Null for routes saved before it was kept, for engines that do not report
+  /// it, and for manoeuvres restored from mapped data. Guidance then works
+  /// from the modifier and bearings alone, as it always did.
+  final RouteJunction? junction;
+
   /// Stable identity for de-duplicating work about the same junction.
   ///
   /// Deliberately **not** `hashCode`. This class defines no value equality, so
@@ -259,6 +387,7 @@ class RouteManeuver {
     if (bearingAfterDegrees != null) 'bearingAfterDegrees': bearingAfterDegrees,
     if (lanes.isNotEmpty)
       'lanes': lanes.map((lane) => lane.toJson()).toList(growable: false),
+    if (junction != null) 'junction': junction!.toJson(),
   };
 
   factory RouteManeuver.fromJson(Map<String, Object?> json) => RouteManeuver(
@@ -281,6 +410,7 @@ class RouteManeuver {
             .map((lane) => RouteLane.fromJson(Map<String, Object?>.from(lane)))
             .toList(growable: false) ??
         const [],
+    junction: RouteJunction.fromJson(json['junction']),
   );
 }
 
