@@ -961,6 +961,8 @@ void main() {
           routeImporter: RouteImporter(source: const _NoFileSource()),
           offlineTileCache: cache,
           currentPosition: currentPosition,
+          // Free roam: the layers are not drawn while navigating (#846).
+          rideStarted: false,
           discoveryCatalogueLoader: () async =>
               const MotorcycleDiscoveryCatalogue([
                 MotorcycleDiscoveryFeature(
