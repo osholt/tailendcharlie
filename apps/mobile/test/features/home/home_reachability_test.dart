@@ -26,6 +26,7 @@ import 'package:ride_relay/features/home/home_map_backdrop.dart';
 import 'package:ride_relay/features/home/home_screen.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
+import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -95,6 +96,7 @@ void main() {
     WidgetTester tester, {
     RideDiagnosticsController? rideDiagnostics,
     DestinationRoutePlanner? destinationPlanner,
+    PlanDirectory? planDirectory,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -110,6 +112,7 @@ void main() {
           spokenGuidance: spokenGuidance,
           rideDiagnostics: rideDiagnostics,
           destinationPlanner: destinationPlanner,
+          planDirectory: planDirectory,
           recordedRoutes: InMemoryRecordedRouteStore(),
           completedRides: completedRides,
           // The home map backdrop is live in production. Without this it would
@@ -516,6 +519,70 @@ void main() {
     );
   });
 
+  testWidgets('a confirmed free-roam route can be edited from the menu', (
+    tester,
+  ) async {
+    await pumpHome(tester);
+    await tester.tap(find.byKey(const Key('home-more-actions')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('home-edit-route')),
+      findsNothing,
+      reason: 'nothing to edit before a route is on the map',
+    );
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pumpAndSettle();
+
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .onRouteChanged!(_bathRoute());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-more-actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('home-edit-route')));
+    await tester.pumpAndSettle();
+
+    // The map owns the route and the plan surface; Home asks it to reopen.
+    expect(
+      tester
+          .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+          .editRouteRequestToken,
+      isNotNull,
+    );
+  });
+
+  testWidgets(
+    'a planned-route code is reviewed in free roam, not a ride form',
+    (tester) async {
+      final plans = _FakePlanDirectory();
+      await pumpHome(tester, planDirectory: plans);
+
+      await tester.tap(find.byKey(const Key('home-search-bar')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('home-search-planned-code')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('ride-form-scroll-view')), findsNothing);
+      await tester.enterText(
+        find.byKey(const Key('recall-plan-code-field')),
+        'AB12CD34',
+      );
+      await tester.tap(find.byKey(const Key('recall-plan-code-load')));
+      await tester.pumpAndSettle();
+
+      expect(plans.requestedCode, 'AB12CD34');
+      expect(rideController.hasActiveRide, isFalse);
+      final pending = tester
+          .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+          .pendingInAppRoute;
+      expect(pending?.route.name, 'Peak Loop');
+      expect(
+        pending?.reviewed,
+        isFalse,
+        reason: 'it still goes through review',
+      );
+    },
+  );
+
   testWidgets('joining by QR is offered in words, not only as an icon', (
     tester,
   ) async {
@@ -573,6 +640,23 @@ Future<void> _tapInPlan(WidgetTester tester, Finder finder) async {
   await tester.pumpAndSettle();
   await tester.tap(finder);
   await tester.pumpAndSettle();
+}
+
+class _FakePlanDirectory implements PlanDirectory {
+  String? requestedCode;
+
+  @override
+  Future<FetchedPlan> fetch(String code) async {
+    requestedCode = code;
+    return const FetchedPlan(
+      name: 'Peak Loop',
+      gpx:
+          '<gpx version="1.1"><trk><name>Peak Loop</name><trkseg>'
+          '<trkpt lat="53.1" lon="-1.2"/>'
+          '<trkpt lat="53.2" lon="-1.1"/>'
+          '</trkseg></trk></gpx>',
+    );
+  }
 }
 
 class _FakeNearbyBridge extends NearbyBridge {

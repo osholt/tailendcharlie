@@ -68,6 +68,8 @@ class HomeMapBackdrop extends StatefulWidget {
     this.onChangeRouteRequestHandled,
     this.circularRideRequestToken,
     this.onCircularRideRequestHandled,
+    this.editRouteRequestToken,
+    this.onEditRouteRequestHandled,
     this.onRouteChanged,
     this.localDisplayName = 'Rider',
     this.onNavigationArchived,
@@ -119,6 +121,10 @@ class HomeMapBackdrop extends StatefulWidget {
   /// sheet. A token is consumed once, like the route-change handoff above.
   final Object? circularRideRequestToken;
   final VoidCallback? onCircularRideRequestHandled;
+
+  /// Asks the map to reopen its route on the plan surface (#847).
+  final Object? editRouteRequestToken;
+  final VoidCallback? onEditRouteRequestHandled;
 
   /// Fires with the route the map is following, or null when there is none —
   /// including the one restored from the last session.
@@ -700,6 +706,8 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
             onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
             circularRideRequestToken: widget.circularRideRequestToken,
             onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
+            editRouteRequestToken: widget.editRouteRequestToken,
+            onEditRouteRequestHandled: widget.onEditRouteRequestHandled,
             onRouteChanged: _onRouteChanged,
             onNavigationGuidanceChanged: _onNavigationGuidanceChanged,
             navigating: widget.navigating,

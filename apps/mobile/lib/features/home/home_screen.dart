@@ -319,6 +319,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// existing flow rather than growing a second implementation of it.
   Object? _circularRideRequestToken;
 
+  /// Bumped to reopen the free-roam route on the plan surface (#847). The map
+  /// owns the route and the surface, so Home only asks.
+  Object? _editRouteRequestToken;
+
   /// The route the free-roam map is following, if any.
   ///
   /// There is no lobby out here, so a route *is* the navigation: no start
@@ -590,6 +594,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onCircularRideRequestHandled: () => setState(() {
               _circularRideRequestToken = null;
             }),
+            editRouteRequestToken: _editRouteRequestToken,
+            onEditRouteRequestHandled: () => setState(() {
+              _editRouteRequestToken = null;
+            }),
             navigating: _routeOnMap != null,
             localDisplayName: widget.riderProfile.displayName,
             onNavigationArchived: (ride) =>
@@ -605,6 +613,17 @@ class _HomeScreenState extends State<HomeScreen> {
             hostChrome: HostMapChrome(
               bottomInset: 0,
               menuActions: [
+                // Confirming a route is not final (#847). Offered from the
+                // menu, which the navigation canvas's menu button also opens,
+                // so it is reachable on the move as well as at a standstill.
+                if (_routeOnMap != null)
+                  HostMapMenuAction(
+                    id: 'home-edit-route',
+                    label: 'Edit route',
+                    icon: Icons.edit_road_outlined,
+                    onSelected: () =>
+                        setState(() => _editRouteRequestToken = Object()),
+                  ),
                 HostMapMenuAction(
                   id: 'home-create-ride',
                   label: 'Create a group ride',
@@ -839,13 +858,14 @@ class _HomeScreenState extends State<HomeScreen> {
         await _navigateTo(choice);
       case HomeSearchHandoff(:final kind):
         switch (kind) {
-          // Both of these are the existing form, which already knows how to take
-          // a six-digit ride code and a planner route code. #431 is about the way
-          // in, not about replacing what works once you are there.
+          // Joining takes a six-digit code, so it stays the join form.
           case HomeSearchHandoffKind.joinWithCode:
             await _showRideSheet(context, creating: false);
+          // A planned route is a route, not a ride: it is reviewed and ridden
+          // in free roam like an imported GPX, and riding it with others is a
+          // choice made afterwards (#847).
           case HomeSearchHandoffKind.plannedRouteCode:
-            await _showRideSheet(context, creating: true);
+            await _recallPlannedRoute();
           case HomeSearchHandoffKind.storedRoute:
             await _openRideLibrary(context);
           case HomeSearchHandoffKind.circularRide:
@@ -954,14 +974,60 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (selection == null || !mounted) return;
     final prepared = library.prepare(selection);
-    await _showRideSheet(
-      context,
-      creating: true,
-      pendingInAppRoute: PendingInAppRoute(
-        route: prepared.route,
-        reviewNotes: prepared.notes,
-      ),
+    // Into free roam's review, as a GPX import is, rather than a ride form
+    // in front of it: choosing a saved route used to create a ride before the
+    // rider could see it (#847).
+    _reviewInFreeRoam(
+      PendingInAppRoute(route: prepared.route, reviewNotes: prepared.notes),
     );
+  }
+
+  /// Hands a route to the free-roam map's review.
+  void _reviewInFreeRoam(PendingInAppRoute route) => setState(() {
+    _freeRoamRoute = route;
+    _freeRoamRouteToken = Object();
+  });
+
+  /// Fetches a web-planner route by its code and reviews it in free roam.
+  Future<void> _recallPlannedRoute() async {
+    final code = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => const _PlanCodeDialog(),
+    );
+    if (code == null || code.trim().isEmpty || !mounted) return;
+    final owned = widget.planDirectory == null
+        ? HttpPlanDirectory.fromEnvironment()
+        : null;
+    try {
+      final plan = await (widget.planDirectory ?? owned!).fetch(code.trim());
+      final route = RouteImporter(source: const SystemGpxImportSource())
+          .importFromFile(
+            PickedGpxFile(
+              name: '${plan.name ?? 'planned-route'}.gpx',
+              bytes: Uint8List.fromList(utf8.encode(plan.gpx)),
+            ),
+          );
+      if (!mounted) return;
+      _reviewInFreeRoam(PendingInAppRoute(route: route));
+    } on PlanDirectoryException catch (error) {
+      _showSnack(error.message);
+    } on FormatException catch (error) {
+      _showSnack(error.message);
+    } on Object {
+      _showSnack(
+        'The planned route could not be loaded. Check your connection and '
+        'try again.',
+      );
+    } finally {
+      owned?.close();
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _showSavedNavigation(CompletedRide ride) async {
@@ -1058,6 +1124,58 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
   }
+}
+
+/// Asks for a web-planner code. Its own widget so its text controller is
+/// disposed with it.
+class _PlanCodeDialog extends StatefulWidget {
+  const _PlanCodeDialog();
+
+  @override
+  State<_PlanCodeDialog> createState() => _PlanCodeDialogState();
+}
+
+class _PlanCodeDialogState extends State<_PlanCodeDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Recall a planned route'),
+    content: TextField(
+      key: const Key('recall-plan-code-field'),
+      controller: _controller,
+      autofocus: true,
+      textCapitalization: TextCapitalization.characters,
+      maxLength: 16,
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
+        LengthLimitingTextInputFormatter(16),
+      ],
+      decoration: const InputDecoration(
+        labelText: 'Plan code',
+        hintText: 'e.g. 7F3K9QRT',
+        helperText: 'From the web planner',
+      ),
+      onSubmitted: (value) => Navigator.of(context).pop(value),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const Key('recall-plan-code-load'),
+        onPressed: () => Navigator.of(context).pop(_controller.text),
+        child: const Text('Load'),
+      ),
+    ],
+  );
 }
 
 class _RideRestorationBanner extends StatelessWidget {
