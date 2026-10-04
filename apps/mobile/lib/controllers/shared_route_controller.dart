@@ -86,6 +86,7 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
     _pendingFreeRoamRoute = null;
     return route;
   }
+
   PendingInAppRoute? get pendingInAppRoute => _pendingInAppRoute;
   PlannerLinkStatus get plannerLinkStatus => _plannerLinkStatus;
   String? get plannerLinkMessage => _plannerLinkMessage;
