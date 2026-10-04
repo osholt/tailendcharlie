@@ -4818,7 +4818,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final distance = MeasurementFormatter(
       widget.distanceUnits.value,
     ).distance(guidance.distanceMeters);
-    return '$distance · ${guidance.roadLabel}';
+    final road = guidance.roadLabel;
+    return road.isEmpty ? distance : '$distance · $road';
   }
 
   Color get _localBadgeColor {

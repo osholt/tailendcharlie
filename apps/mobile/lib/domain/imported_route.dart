@@ -256,6 +256,35 @@ class RouteJunction {
     }
   }
 
+  /// How close beside the branch taken another legal road may leave for the
+  /// two to be a fork in the road rather than a side turning (#853).
+  ///
+  /// The B4235 slip out of Usk leaves the A472 dual carriageway eight degrees
+  /// from it. Thirty degrees is also the band within which a branch already
+  /// counted as roughly ahead for #774's junction detector.
+  static const divergeBranchDegrees = 30.0;
+
+  /// How far the branch taken turns from the approach, positive clockwise, or
+  /// null where the route starts at this junction.
+  double? get takenTurnDegrees {
+    final approach = approachHeadingDegrees;
+    if (approach == null) return null;
+    return _signedDegrees(approach, takenBearingDegrees);
+  }
+
+  /// Every other legal road that leaves within [divergeBranchDegrees] of the
+  /// branch taken, as its offset from that branch: positive where it lies to
+  /// the right of it.
+  Iterable<double> get branchOffsetsBesideTakenDegrees sync* {
+    for (final other in alternativeBearingsDegrees) {
+      final offset = _signedDegrees(takenBearingDegrees, other);
+      if (offset.abs() <= divergeBranchDegrees) yield offset;
+    }
+  }
+
+  static double _signedDegrees(double from, double to) =>
+      ((to - from + 540) % 360) - 180;
+
   Map<String, Object?> toJson() => {
     'bearings': bearingsDegrees,
     'entry': enterable,
