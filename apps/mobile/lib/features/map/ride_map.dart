@@ -37,7 +37,12 @@ export 'ride_map_feature.dart'
         waypointCircleStyle,
         quickMessageIcon;
 export 'route_trail_style.dart'
-    show RouteLineStyle, RouteTrailStyle, contrastRatio, relativeLuminance;
+    show
+        RideMapLine,
+        RouteLineStyle,
+        RouteTrailStyle,
+        contrastRatio,
+        relativeLuminance;
 export '../../services/navigation_export.dart'
     show NavigationExportCoordinator, NavigationExportResult, NavigationTarget;
 export '../../services/rider_trail_recorder.dart'

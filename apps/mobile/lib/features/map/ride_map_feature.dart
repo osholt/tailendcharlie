@@ -3603,6 +3603,10 @@ class _RideMapScreenState extends State<RideMapScreen>
               .where((points) => points.length >= 2)
               .toList(growable: false) ??
           const [],
+      leaderPaths: [
+        for (final trace in _visibleRiderTrails)
+          if (trace.kind == RiderTrailKind.leader) trace.points,
+      ],
       currentPosition: _effectivePosition,
       localHeadingDegrees: _localTravelHeading,
       riders: groupRiders,
@@ -3799,18 +3803,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         // location recording has a gap; the latter shows where the bike really
         // went, including while navigating without a group ride (#658).
         if (route != null || _visibleRiderTrails.isNotEmpty)
-          PolylineLayer(
-            polylines: [
-              ..._progressGeometry.riddenPaths.map(
-                (path) => _routePolyline(path, RouteTrailStyle.travelled),
-              ),
-              ..._trailPolylines(dashed: false),
-              ..._progressGeometry.remainingPaths.map(
-                (path) => _routePolyline(path, RouteTrailStyle.routeAhead),
-              ),
-              ..._trailPolylines(dashed: true),
-            ],
-          ),
+          PolylineLayer(polylines: _orderedLinePolylines()),
         if (route != null || _visibleRiderTrails.isNotEmpty)
           MarkerLayer(
             key: const Key('trail-direction-arrow-layer'),
@@ -5763,74 +5756,32 @@ class _RideMapScreenState extends State<RideMapScreen>
           circleStrokeColor: '#10151C',
         ),
       );
-      // Solid trails are drawn before the planned route so the leader's wider
-      // trail reads as a corridor beneath it rather than hiding it.
       await controller.addGeoJsonSource(
         _riddenRouteSource,
         _riddenRouteGeoJson(),
-      );
-      await controller.addLineLayer(
-        _riddenRouteSource,
-        'ride-relay-route-ridden-border',
-        ml.LineLayerProperties(
-          lineColor: _casingHex,
-          lineWidth: RouteTrailStyle.travelled.casingWidthPixels,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      await controller.addLineLayer(
-        _riddenRouteSource,
-        'ride-relay-route-ridden',
-        ml.LineLayerProperties(
-          lineColor: _hexColor(RouteTrailStyle.travelled.color),
-          lineWidth: RouteTrailStyle.travelled.widthPixels,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
       );
       await controller.addGeoJsonSource(
         _riderTrailSource,
         _riderTrailGeoJson(),
       );
-      await _addTrailLayers(controller, RiderTrailKind.leader);
-      await _addTrailLayers(controller, RiderTrailKind.rider);
       await controller.addGeoJsonSource(
         _remainingRouteSource,
         _remainingRouteGeoJson(),
       );
-      await controller.addLineLayer(
-        _remainingRouteSource,
-        'ride-relay-route-remaining-border',
-        ml.LineLayerProperties(
-          lineColor: _casingHex,
-          lineWidth: RouteTrailStyle.routeAhead.casingWidthPixels,
-          lineDasharray: RouteTrailStyle.routeAhead.maplibreCasingDashArray,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      await controller.addLineLayer(
-        _remainingRouteSource,
-        'ride-relay-route-remaining',
-        ml.LineLayerProperties(
-          lineColor: _hexColor(RouteTrailStyle.routeAhead.color),
-          lineWidth: RouteTrailStyle.routeAhead.widthPixels,
-          lineDasharray: RouteTrailStyle.routeAhead.maplibreDashArray,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      // An off-route trail belongs on top of the plan: it is the deviation from
-      // it.
-      await _addTrailLayers(controller, RiderTrailKind.offRoute);
-      // The advisory rejoin route (#102) goes above everything else: it is the
-      // one line the affected rider is being asked to follow right now.
-      await _addTrailLayers(controller, RiderTrailKind.rejoin);
+      // Bottom to top, in the one order the flutter_map renderer reads too: the
+      // route lines, the leader's trail over them, then the rejoin route. Every
+      // rider marker is a symbol layer added below this loop, so it sits over
+      // all of them (#842).
+      for (final line in RouteTrailStyle.lineOrder) {
+        switch (line.trailKind) {
+          case final kind?:
+            await _addTrailLayers(controller, kind);
+          case null when line == RideMapLine.riddenRoute:
+            await _addRiddenRouteLayers(controller);
+          case null:
+            await _addRemainingRouteLayers(controller);
+        }
+      }
       await controller.addGeoJsonSource(
         _trailDirectionArrowSource,
         _trailDirectionArrowGeoJson(),
@@ -5985,6 +5936,64 @@ class _RideMapScreenState extends State<RideMapScreen>
         );
       }
     }
+  }
+
+  /// The planned route the rider has already covered.
+  Future<void> _addRiddenRouteLayers(
+    ml.MapLibreMapController controller,
+  ) async {
+    await controller.addLineLayer(
+      _riddenRouteSource,
+      'ride-relay-route-ridden-border',
+      ml.LineLayerProperties(
+        lineColor: _casingHex,
+        lineWidth: RouteTrailStyle.travelled.casingWidthPixels,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      enableInteraction: false,
+    );
+    await controller.addLineLayer(
+      _riddenRouteSource,
+      'ride-relay-route-ridden',
+      ml.LineLayerProperties(
+        lineColor: _hexColor(RouteTrailStyle.travelled.color),
+        lineWidth: RouteTrailStyle.travelled.widthPixels,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      enableInteraction: false,
+    );
+  }
+
+  /// The planned route that has not been ridden yet.
+  Future<void> _addRemainingRouteLayers(
+    ml.MapLibreMapController controller,
+  ) async {
+    await controller.addLineLayer(
+      _remainingRouteSource,
+      'ride-relay-route-remaining-border',
+      ml.LineLayerProperties(
+        lineColor: _casingHex,
+        lineWidth: RouteTrailStyle.routeAhead.casingWidthPixels,
+        lineDasharray: RouteTrailStyle.routeAhead.maplibreCasingDashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      enableInteraction: false,
+    );
+    await controller.addLineLayer(
+      _remainingRouteSource,
+      'ride-relay-route-remaining',
+      ml.LineLayerProperties(
+        lineColor: _hexColor(RouteTrailStyle.routeAhead.color),
+        lineWidth: RouteTrailStyle.routeAhead.widthPixels,
+        lineDasharray: RouteTrailStyle.routeAhead.maplibreDashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      enableInteraction: false,
+    );
   }
 
   /// Adds one trail kind's casing and line layers.
@@ -6259,17 +6268,27 @@ class _RideMapScreenState extends State<RideMapScreen>
             : StrokePattern.dashed(segments: style.dashPixels!),
       );
 
-  /// Trail polylines of one pattern, widest first so a wider trail never hides
-  /// a narrower one. MapLibre gets the same ordering from its per-kind layers.
-  Iterable<Polyline> _trailPolylines({required bool dashed}) =>
-      (_visibleRiderTrails
-              .where((trace) => trace.style.isDashed == dashed)
-              .toList()
-            ..sort(
-              (first, second) =>
-                  second.style.widthPixels.compareTo(first.style.widthPixels),
-            ))
-          .map((trace) => _routePolyline(trace.points, trace.style));
+  /// Every route and trail line, bottom first, in
+  /// [RouteTrailStyle.lineOrder] - the order the MapLibre renderer adds its
+  /// layers in too, so the leader's trail is over the route lines on both
+  /// platforms (#842).
+  List<Polyline> _orderedLinePolylines() => [
+    for (final line in RouteTrailStyle.lineOrder)
+      ...switch (line.trailKind) {
+        final kind? => _trailPolylines(kind),
+        null when line == RideMapLine.riddenRoute =>
+          _progressGeometry.riddenPaths.map(
+            (path) => _routePolyline(path, RouteTrailStyle.travelled),
+          ),
+        null => _progressGeometry.remainingPaths.map(
+          (path) => _routePolyline(path, RouteTrailStyle.routeAhead),
+        ),
+      },
+  ];
+
+  Iterable<Polyline> _trailPolylines(RiderTrailKind kind) => _visibleRiderTrails
+      .where((trace) => trace.kind == kind)
+      .map((trace) => _routePolyline(trace.points, trace.style));
 
   /// Which lines carry direction arrows, in priority order.
   ///
@@ -9583,6 +9602,7 @@ class _GroupMiniMap extends StatefulWidget {
     required this.width,
     required this.height,
     required this.routePaths,
+    required this.leaderPaths,
     required this.currentPosition,
     this.localHeadingDegrees,
     required this.riders,
@@ -9599,6 +9619,9 @@ class _GroupMiniMap extends StatefulWidget {
   final double width;
   final double height;
   final List<List<GeoPoint>> routePaths;
+
+  /// The leader's travelled trail, drawn over the route and under the riders.
+  final List<List<GeoPoint>> leaderPaths;
   final GeoPoint? currentPosition;
   final double? localHeadingDegrees;
   final List<MapOverlayMarker> riders;
@@ -9617,12 +9640,14 @@ class _GroupMiniMap extends StatefulWidget {
 
 typedef _MiniMapSnapshot = ({
   List<List<GeoPoint>> routePaths,
+  List<List<GeoPoint>> leaderPaths,
   GeoPoint? currentPosition,
   List<MapOverlayMarker> riders,
 });
 
 class _GroupMiniMapState extends State<_GroupMiniMap> {
   static const _routeSource = 'ride-relay-mini-route';
+  static const _leaderSource = 'ride-relay-mini-leader';
   static const _riderSource = 'ride-relay-mini-riders';
 
   /// Radius of a rider's badge on the group overview, which is smaller than the
@@ -9655,6 +9680,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   /// which could visually detach a rider's dot from its trimmed route line.
   _MiniMapSnapshot _snapshot() => (
     routePaths: widget.routePaths,
+    leaderPaths: widget.leaderPaths,
     currentPosition: widget.currentPosition,
     riders: widget.riders,
   );
@@ -9859,6 +9885,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         painter: _GroupMiniMapPainter(
           localHeadingDegrees: widget.localHeadingDegrees,
           routePaths: visibleRoutePaths,
+          leaderPaths: _visibleLeaderPaths(_snapshot()),
           currentPosition: widget.currentPosition,
           riders: widget.riders,
           localRiderSymbol: widget.localRiderSymbol,
@@ -9918,6 +9945,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         if (style == null || groupPoints.isEmpty) {
           return _buildLocalOverview(visibleRoutePaths);
         }
+        final visibleLeaderPaths = _visibleLeaderPaths(_snapshot());
         final framing = GroupMiniMapFraming.forPoints(
           groupPoints,
           width: widget.width - _fitHorizontalPadding,
@@ -9961,25 +9989,19 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 ),
                 if (visibleRoutePaths.isNotEmpty)
                   PolylineLayer(
-                    polylines: [
-                      for (final path in visibleRoutePaths)
-                        if (path.length >= 2)
-                          Polyline(
-                            points: path
-                                .map(
-                                  (point) =>
-                                      LatLng(point.latitude, point.longitude),
-                                )
-                                .toList(growable: false),
-                            color: RouteTrailStyle.miniMapRoute.color,
-                            strokeWidth:
-                                RouteTrailStyle.miniMapRoute.widthPixels,
-                            borderColor: RouteTrailStyle.casing,
-                            borderStrokeWidth:
-                                RouteTrailStyle.miniMapRoute.casingWidthPixels -
-                                RouteTrailStyle.miniMapRoute.widthPixels,
-                          ),
-                    ],
+                    polylines: _miniMapPolylines(
+                      visibleRoutePaths,
+                      RouteTrailStyle.miniMapRoute,
+                    ),
+                  ),
+                // The leader's trail goes over the route and under the riders,
+                // the same order as the main map (#842).
+                if (visibleLeaderPaths.isNotEmpty)
+                  PolylineLayer(
+                    polylines: _miniMapPolylines(
+                      visibleLeaderPaths,
+                      RouteTrailStyle.miniMapLeaderTrail,
+                    ),
                   ),
                 MarkerLayer(
                   markers: [
@@ -10015,6 +10037,23 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       },
     );
   }
+
+  List<Polyline> _miniMapPolylines(
+    List<List<GeoPoint>> paths,
+    RouteLineStyle style,
+  ) => [
+    for (final path in paths)
+      if (path.length >= 2)
+        Polyline(
+          points: path
+              .map((point) => LatLng(point.latitude, point.longitude))
+              .toList(growable: false),
+          color: style.color,
+          strokeWidth: style.widthPixels,
+          borderColor: RouteTrailStyle.casing,
+          borderStrokeWidth: style.fallbackBorderWidthPixels,
+        ),
+  ];
 
   Marker _vectorRiderMarker({
     required GeoPoint point,
@@ -10066,6 +10105,33 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         ml.LineLayerProperties(
           lineColor: _hexColor(RouteTrailStyle.miniMapRoute.color),
           lineWidth: RouteTrailStyle.miniMapRoute.widthPixels,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      // Over the route, under the riders: the main map's order (#842).
+      await controller.addGeoJsonSource(
+        _leaderSource,
+        _leaderGeoJson(snapshot),
+      );
+      await controller.addLineLayer(
+        _leaderSource,
+        'ride-relay-mini-leader-border',
+        ml.LineLayerProperties(
+          lineColor: RouteTrailStyle.casingHex,
+          lineWidth: RouteTrailStyle.miniMapLeaderTrail.casingWidthPixels,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _leaderSource,
+        'ride-relay-mini-leader-line',
+        ml.LineLayerProperties(
+          lineColor: _hexColor(RouteTrailStyle.miniMapLeaderTrail.color),
+          lineWidth: RouteTrailStyle.miniMapLeaderTrail.widthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -10128,6 +10194,10 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         await controller.setGeoJsonSource(
           _routeSource,
           _routeGeoJson(snapshot),
+        );
+        await controller.setGeoJsonSource(
+          _leaderSource,
+          _leaderGeoJson(snapshot),
         );
         await controller.setGeoJsonSource(
           _riderSource,
@@ -10197,11 +10267,23 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   Map<String, dynamic> _routeGeoJson(_MiniMapSnapshot snapshot) =>
       MapGeoJson.lines(_visibleRoutePaths(snapshot), idPrefix: 'mini-route');
 
+  Map<String, dynamic> _leaderGeoJson(_MiniMapSnapshot snapshot) =>
+      MapGeoJson.lines(_visibleLeaderPaths(snapshot), idPrefix: 'mini-leader');
+
+  List<List<GeoPoint>> _visibleRoutePaths(_MiniMapSnapshot snapshot) =>
+      _pathsNearGroup(snapshot, snapshot.routePaths);
+
+  List<List<GeoPoint>> _visibleLeaderPaths(_MiniMapSnapshot snapshot) =>
+      _pathsNearGroup(snapshot, snapshot.leaderPaths);
+
   /// The mini-map follows the group, not the entire ride. Rendering a long
   /// route in a tight group viewport creates clipped, disconnected-looking
   /// lines which can be mistaken for an invalid route. Keep only contiguous
-  /// route segments near the currently visible riders.
-  List<List<GeoPoint>> _visibleRoutePaths(_MiniMapSnapshot snapshot) {
+  /// segments of [paths] near the currently visible riders.
+  List<List<GeoPoint>> _pathsNearGroup(
+    _MiniMapSnapshot snapshot,
+    List<List<GeoPoint>> paths,
+  ) {
     final groupPoints = <GeoPoint?>[
       snapshot.currentPosition,
       ...snapshot.riders.map((rider) => rider.point),
@@ -10229,7 +10311,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     east += longitudePadding;
 
     final visiblePaths = <List<GeoPoint>>[];
-    for (final path in snapshot.routePaths) {
+    for (final path in paths) {
       var segment = <GeoPoint>[];
       for (final point in path) {
         final isVisible =
@@ -10480,6 +10562,7 @@ class _MiniMapScaleBar extends StatelessWidget {
 class _GroupMiniMapPainter extends CustomPainter {
   const _GroupMiniMapPainter({
     required this.routePaths,
+    required this.leaderPaths,
     required this.currentPosition,
     this.localHeadingDegrees,
     required this.riders,
@@ -10489,6 +10572,7 @@ class _GroupMiniMapPainter extends CustomPainter {
   });
 
   final List<List<GeoPoint>> routePaths;
+  final List<List<GeoPoint>> leaderPaths;
   final GeoPoint? currentPosition;
   final double? localHeadingDegrees;
   final List<MapOverlayMarker> riders;
@@ -10546,35 +10630,41 @@ class _GroupMiniMapPainter extends CustomPainter {
       gridPaint,
     );
 
-    for (final route in routePaths.where((path) => path.length >= 2)) {
-      final path = ui.Path()
-        ..moveTo(project(route.first).dx, project(route.first).dy);
-      final stride = math.max(1, route.length ~/ 1200);
-      for (var index = stride; index < route.length; index += stride) {
-        final offset = project(route[index]);
-        path.lineTo(offset.dx, offset.dy);
+    // The route, then the leader's trail over it, then the riders (#842).
+    void drawLines(List<List<GeoPoint>> lines, RouteLineStyle style) {
+      for (final line in lines.where((path) => path.length >= 2)) {
+        final path = ui.Path()
+          ..moveTo(project(line.first).dx, project(line.first).dy);
+        final stride = math.max(1, line.length ~/ 1200);
+        for (var index = stride; index < line.length; index += stride) {
+          final offset = project(line[index]);
+          path.lineTo(offset.dx, offset.dy);
+        }
+        // Opaque colour over a casing rather than a translucent line, matching
+        // the tiled mini-map and the main map's route ahead.
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = RouteTrailStyle.casing
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = style.casingWidthPixels
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round,
+        );
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = style.color
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = style.widthPixels
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round,
+        );
       }
-      // Opaque colour over a casing rather than a translucent line, matching
-      // the tiled mini-map and the main map's route ahead.
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = RouteTrailStyle.casing
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = RouteTrailStyle.miniMapRoute.casingWidthPixels
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = RouteTrailStyle.miniMapRoute.color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = RouteTrailStyle.miniMapRoute.widthPixels
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
-      );
     }
+
+    drawLines(routePaths, RouteTrailStyle.miniMapRoute);
+    drawLines(leaderPaths, RouteTrailStyle.miniMapLeaderTrail);
 
     void drawRider(
       Offset offset,
