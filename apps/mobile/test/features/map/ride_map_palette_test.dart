@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -13,7 +12,6 @@ import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/features/map/ride_map_palette.dart';
-import 'package:ride_relay/features/map/route_trail_style.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/offline_tile_cache.dart';
