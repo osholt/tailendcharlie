@@ -17,6 +17,7 @@ import '../../services/navigation_guidance.dart';
 import '../../services/route_marker_plan.dart';
 import '../../services/route_reshape_planner.dart';
 import '../../services/route_twistiness.dart';
+import '../../services/route_verification.dart';
 import '../../services/route_waypoint_editor.dart';
 import 'maneuver_list_screen.dart';
 import 'resolved_route_map_preview.dart';
@@ -37,6 +38,7 @@ class RouteReviewAlternative {
     this.duration,
     this.twistinessScore,
     this.warnings = const [],
+    this.verification,
   });
 
   final ImportedRoute route;
@@ -44,6 +46,7 @@ class RouteReviewAlternative {
   final Duration? duration;
   final double? twistinessScore;
   final List<String> warnings;
+  final RouteVerification? verification;
 }
 
 typedef RouteAlternativeCallback = Future<RouteReviewAlternative> Function();
@@ -58,6 +61,7 @@ class RouteReviewScreen extends StatefulWidget {
     this.duration,
     this.twistinessScore,
     this.warnings = const [],
+    this.verification,
     this.previousRoute,
     this.comparisonRoute,
     this.canEditStops = false,
@@ -83,6 +87,11 @@ class RouteReviewScreen extends StatefulWidget {
   /// from a share code or a file has.
   final double? twistinessScore;
   final List<String> warnings;
+
+  /// What checking the planned route against the rider's preferences found.
+  /// Kept apart from [warnings] because it describes the route's geometry, and
+  /// is replaced when the rider reshapes it or asks for another (#840).
+  final RouteVerification? verification;
   final ImportedRoute? previousRoute;
 
   /// A route drawn underneath [route] for an explicit before/after review.
@@ -122,6 +131,7 @@ class RouteReviewScreen extends StatefulWidget {
     Duration? duration,
     double? twistinessScore,
     List<String> warnings = const [],
+    RouteVerification? verification,
     ImportedRoute? previousRoute,
     ImportedRoute? comparisonRoute,
     bool canEditStops = false,
@@ -146,6 +156,7 @@ class RouteReviewScreen extends StatefulWidget {
             duration: duration,
             twistinessScore: twistinessScore,
             warnings: warnings,
+            verification: verification,
             previousRoute: previousRoute,
             comparisonRoute: comparisonRoute,
             canEditStops: canEditStops,
@@ -178,6 +189,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
   late Duration? _duration = widget.duration;
   late double? _twistinessScore = widget.twistinessScore;
   late List<String> _warnings = List.of(widget.warnings);
+  late RouteVerification? _verification = widget.verification;
   final List<List<RouteShapingPoint>> _reshapeHistory = [];
   Timer? _reshapeTimer;
   int _reshapeGeneration = 0;
@@ -282,6 +294,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
         _duration = alternative.duration;
         _twistinessScore = alternative.twistinessScore;
         _warnings = List.of(alternative.warnings);
+        _verification = alternative.verification;
         _reshapeHistory.clear();
         _activeShapingPointId = null;
         _nearbyPointsOfInterest = _pointOfInterests.nearRoute(
@@ -415,6 +428,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
             _distanceMeters = result.distanceMeters;
             _duration = result.duration;
             _twistinessScore = result.twistinessScore;
+            _verification = result.verification;
           });
           widget.onRouteChanged?.call(_route);
         } on Object catch (error) {
@@ -844,6 +858,7 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     );
     final visibleWarnings = [
       ...warnings.where((warning) => warning.trim().isNotEmpty),
+      ...?_verification?.notices(distanceUnit),
       ?materialWarning,
     ];
     final formatter = MeasurementFormatter(distanceUnit);

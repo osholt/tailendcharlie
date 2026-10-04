@@ -114,12 +114,18 @@ class RoutePreferences {
   /// the plain OSRM driving profile.
   ///
   /// This is the web planner's `requestRoadRoute` rule, extended for byways.
-  /// The four avoidances are hard exclusions OSRM's driving profile cannot
-  /// express. [BywaySurfacePreference.allowUnsurfaced] is on the list for the
-  /// opposite reason: OSRM's standard car profile does not route
-  /// `highway=track` at all, so *seeking* byways is the case OSRM cannot serve.
-  /// Avoiding them is the case it already serves, which is why the default
-  /// preference does not force every route onto the motorcycle service.
+  /// The four avoidances are exclusions OSRM's driving profile cannot express.
+  /// [BywaySurfacePreference.allowUnsurfaced] is on the list because only the
+  /// motorcycle costing has a lever for *seeking* byways.
+  ///
+  /// The default - avoid unsurfaced byways - stays on OSRM, but **not** because
+  /// OSRM avoids them. It does not. This comment used to say OSRM's car profile
+  /// "does not route `highway=track` at all"; on 4 October 2026 the public OSRM
+  /// server routed an untagged `highway=track` with gates, because it was
+  /// shorter than the paved road beside it (#840). The default stays on OSRM so
+  /// that every ordinary route does not go through the shared Valhalla
+  /// instance, and the preference is enforced by *checking the route that comes
+  /// back* and re-planning around what breaks it (`RouteVerifier`).
   bool get requiresMotorcycleCosting =>
       avoidMotorways ||
       avoidMajorRoads ||
@@ -131,9 +137,17 @@ class RoutePreferences {
   ///
   /// Identical to `motorcycleCostingOptions` in `planner-core.mjs`, including
   /// its numbers. `use_trails` and `exclude_unpaved` are documented Valhalla
-  /// motorcycle/auto options derived from OpenStreetMap surface and track
-  /// tagging, which is what makes the byway preference honour the tags instead
-  /// of guessing from road class.
+  /// options derived from OpenStreetMap surface and track tagging, which is
+  /// what makes the byway preference follow the tags instead of guessing from
+  /// road class.
+  ///
+  /// Documented is not honoured. Measured against the public instance on
+  /// 4 October 2026: `exclude_highways` and `use_highways` are honoured (with
+  /// Avoid motorways on, Bristol to Stroud has no motorway edge), but
+  /// `exclude_unpaved` and `use_trails: 0` are not - the same request routed
+  /// over a `highway=track` that `auto` costing avoids (#840, #858). So these
+  /// are a request, and the route that comes back is checked against the
+  /// preferences rather than trusted (`RouteVerifier`).
   Map<String, Object?> valhallaMotorcycleCostingOptions() => {
     'use_highways': avoidMajorRoads ? 0.08 : style.highwayPreference ?? 1,
     'use_tolls': avoidTolls ? 0 : 0.5,
@@ -145,9 +159,14 @@ class RoutePreferences {
     'exclude_unpaved': bywaySurface.avoidsUnsurfaced,
   };
 
-  /// One sentence a rider can check the route against, in the same order and
-  /// wording as the web planner's status line.
-  List<String> get appliedNotes => [
+  /// What the rider asked for, in the order of the web planner's status line.
+  ///
+  /// Worded as the request, never as an outcome. These used to read "motorways
+  /// excluded" and "unsurfaced byways avoided", which stated a result nothing
+  /// had established: a route up the M5 and a route over a gated track both
+  /// went out under them (#858, #840). Whether a request was met is what
+  /// `RouteVerification` says.
+  List<String> get requestedNotes => [
     if (style.prefersBends)
       switch (style) {
         RouteStyle.flowing => 'Flowing-road bias',
@@ -155,21 +174,21 @@ class RoutePreferences {
         RouteStyle.veryTwisty => 'Very-twisty-road bias',
         RouteStyle.quickest => '',
       },
-    if (avoidMotorways) 'motorways excluded',
-    if (avoidMajorRoads) 'major roads avoided',
-    if (avoidTolls) 'tolls excluded',
-    if (avoidFerries) 'ferries excluded',
+    if (avoidMotorways) 'avoid motorways',
+    if (avoidMajorRoads) 'avoid major roads',
+    if (avoidTolls) 'avoid toll roads',
+    if (avoidFerries) 'avoid ferries',
     if (bywaySurface.avoidsUnsurfaced)
-      'unsurfaced byways avoided'
+      'avoid unsurfaced byways'
     else
-      'unsurfaced byways allowed',
+      'allow unsurfaced byways',
   ];
 
-  /// The rider-facing summary. Never empty: the byway preference always says
-  /// which way round it is, because "we did not avoid them" and "we avoided
-  /// them" are the difference between a Fireblade and a rutted BOAT.
+  /// The rider-facing summary of what was asked for. Never empty: the byway
+  /// preference always says which way round it is, because "avoid them" and
+  /// "allow them" are the difference between a Fireblade and a rutted BOAT.
   String get summary {
-    final notes = appliedNotes;
+    final notes = requestedNotes;
     if (notes.isEmpty) return 'Quickest route.';
     final joined = notes.join(', ');
     return '${joined[0].toUpperCase()}${joined.substring(1)}.';

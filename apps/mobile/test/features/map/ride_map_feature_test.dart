@@ -763,7 +763,13 @@ void main() {
     expect(source, contains('_riddenRouteSource'));
     expect(source, contains('_progressGeometry.riddenPaths'));
     expect(source, contains('_progressGeometry.remainingPaths'));
-    expect(source, contains('_trailPolylines(dashed: false)'));
+    expect(
+      RegExp(r'in RouteTrailStyle\.lineOrder').allMatches(source).length,
+      2,
+      reason:
+          'flutter_map and MapLibre both paint lines in the one shared '
+          'order (#842)',
+    );
     expect(
       source,
       contains('tileSize: _usesMapLibreRenderer ? 512 : 256'),
@@ -956,6 +962,8 @@ void main() {
           routeImporter: RouteImporter(source: const _NoFileSource()),
           offlineTileCache: cache,
           currentPosition: currentPosition,
+          // Free roam: the layers are not drawn while navigating (#846).
+          rideStarted: false,
           discoveryCatalogueLoader: () async =>
               const MotorcycleDiscoveryCatalogue([
                 MotorcycleDiscoveryFeature(
@@ -4844,13 +4852,19 @@ void main() {
         layer.polylines.indexOf(travelled),
         lessThan(layer.polylines.indexOf(ahead)),
       );
-      // The leader's trail is the widest line and is drawn under the plan; an
-      // off-route trail is dashed and drawn over it.
+      // The leader's trail is the widest line and is drawn over the route lines
+      // (#842); an off-route trail is dashed and drawn over the plan but under
+      // the leader's trail.
       final leader = lineWithColor(RouteTrailStyle.leaderTrail.color);
       expect(leader.strokeWidth, RouteTrailStyle.leaderTrail.widthPixels);
       expect(
         layer.polylines.indexOf(leader),
-        lessThan(layer.polylines.indexOf(ahead)),
+        greaterThan(layer.polylines.indexOf(ahead)),
+      );
+      expect(
+        layer.polylines.indexOf(leader),
+        greaterThan(layer.polylines.indexOf(travelled)),
+        reason: 'the purple line must not vanish where it overlaps the orange',
       );
       final offRoute = lineWithColor(RouteTrailStyle.offRouteTrail.color);
       expect(
@@ -4860,6 +4874,10 @@ void main() {
       expect(
         layer.polylines.indexOf(offRoute),
         greaterThan(layer.polylines.indexOf(ahead)),
+      );
+      expect(
+        layer.polylines.indexOf(offRoute),
+        lessThan(layer.polylines.indexOf(leader)),
       );
 
       await tester.drag(find.byType(FlutterMap), const Offset(80, 0));
