@@ -452,6 +452,90 @@ Map<String, Object?> newCheltenhamRoadOmittedRoundaboutsResponse() => _response(
   ],
 );
 
+/// Leaving Usk on the A472, the route keeps left onto the B4235 slip (#853).
+///
+/// Junction-local steps from the live OSRM demo `driving` response of 4 October
+/// 2026: about 430 m of the A472 approach, the recorded `turn` step and its
+/// first two intersections, and 300 m of the slip. Only the depart and arrive
+/// at the window's ends are added. The engine said `turn left` with bearings 92
+/// then 88; the junction it reported has the A472 continuing at 97 degrees,
+/// eight degrees to the right of the slip at 89. `driving_side` is copied as
+/// OSRM sent it, including its usual `right` for a UK road.
+Map<String, Object?> uskB4235DivergeResponse() => _response(
+  coordinates: const [
+    [-2.883752, 51.704842],
+    [-2.880504, 51.705208],
+    [-2.87959, 51.705294],
+    [-2.879061, 51.70533],
+    [-2.878684, 51.705379],
+    [-2.87834, 51.705388],
+    [-2.877949, 51.70539],
+    [-2.877573, 51.705375],
+    [-2.877341, 51.705379],
+    [-2.877089, 51.705406],
+    [-2.876858, 51.705461],
+    [-2.8767, 51.705533],
+    [-2.876655, 51.705621],
+    [-2.876505, 51.705741],
+    [-2.876341, 51.705804],
+    [-2.876167, 51.70583],
+    [-2.875941, 51.705853],
+    [-2.875737, 51.705874],
+    [-2.875535, 51.705899],
+    [-2.875322, 51.705928],
+    [-2.874379, 51.706033],
+    [-2.873556, 51.706122],
+  ],
+  distanceMeters: 730,
+  durationSeconds: 52,
+  steps: [
+    _step(
+      name: 'Castle Parade',
+      ref: 'A472',
+      drivingSide: 'right',
+      type: 'depart',
+      bearingBefore: 0,
+      bearingAfter: 80,
+      location: [-2.883752, 51.704842],
+    ),
+    _step(
+      name: '',
+      ref: 'B4235',
+      drivingSide: 'right',
+      type: 'turn',
+      modifier: 'left',
+      bearingBefore: 92,
+      bearingAfter: 88,
+      location: [-2.877573, 51.705375],
+      intersections: [
+        {
+          'out': 0,
+          'in': 2,
+          'entry': [true, true, false],
+          'bearings': [89, 97, 274],
+          'location': [-2.877573, 51.705375],
+        },
+        {
+          'out': 0,
+          'in': 2,
+          'entry': [true, true, false],
+          'bearings': [15, 195, 240],
+          'location': [-2.8767, 51.705533],
+        },
+      ],
+    ),
+    _step(
+      name: '',
+      ref: 'B4235',
+      drivingSide: 'right',
+      type: 'arrive',
+      bearingBefore: 83,
+      bearingAfter: 0,
+      location: [-2.873556, 51.706122],
+    ),
+  ],
+);
+
 Map<String, Object?> _response({
   required Coordinates coordinates,
   required double distanceMeters,

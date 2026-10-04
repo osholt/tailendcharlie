@@ -9,6 +9,7 @@ import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/relay/live_presence.dart';
 import 'package:ride_relay/relay/relay_presence.dart';
+import 'package:ride_relay/services/transport_evidence_ledger.dart';
 
 void main() {
   final session = RideSession(
@@ -144,6 +145,166 @@ void main() {
       );
     },
   );
+
+  // #855: which route delivered a live position, and how often.
+  group('transport evidence', () {
+    late DateTime now;
+    late TransportEvidenceLedger ledger;
+
+    setUp(() {
+      now = DateTime.utc(2026, 10, 4, 10);
+      ledger = TransportEvidenceLedger(localRiderId: 'local', clock: () => now);
+    });
+
+    PreStartPresenceController controllerFor(
+      List<PreStartPresenceResult> results,
+    ) {
+      final controller = PreStartPresenceController(
+        _FakePresenceApi(results),
+        pollInterval: const Duration(days: 1),
+        clock: () => now,
+        evidence: ledger,
+      );
+      addTearDown(controller.close);
+      return controller;
+    }
+
+    PreStartPresenceResult polled(RiderLocation location) =>
+        PreStartPresenceResult(
+          locations: [location],
+          ttl: const Duration(seconds: 45),
+        );
+
+    RiderLocation remoteAt(DateTime recordedAt) => _location(
+      riderId: 'remote',
+      displayName: 'Alex',
+      latitude: 51.1,
+      receivedAt: recordedAt,
+    );
+
+    test(
+      'a new position over the internet is counted, a repeat is not',
+      () async {
+        final first = remoteAt(now);
+        final controller = controllerFor([
+          polled(first),
+          // The relay hands the same position back on every poll until the rider
+          // sends another: that is the poll working, not the rider being heard.
+          polled(first),
+          polled(remoteAt(now.add(const Duration(seconds: 10)))),
+        ]);
+
+        await controller.start(session);
+        expect(ledger.evidenceFor('remote')!.internet.presenceUpdates, 1);
+
+        await controller.synchronizeNow();
+        expect(ledger.evidenceFor('remote')!.internet.presenceUpdates, 1);
+
+        now = now.add(const Duration(seconds: 10));
+        await controller.synchronizeNow();
+        expect(ledger.evidenceFor('remote')!.internet.presenceUpdates, 2);
+        expect(ledger.evidenceFor('remote')!.internet.lastPresenceAt, now);
+      },
+    );
+
+    test(
+      'a position over the direct link is counted when it is newer',
+      () async {
+        final nearby = _FakePresenceGateway();
+        addTearDown(nearby.close);
+        final controller = controllerFor([
+          const PreStartPresenceResult(
+            locations: [],
+            ttl: Duration(seconds: 45),
+          ),
+        ]);
+        await controller.start(session);
+        await controller.attachNearby(nearby);
+
+        RelayPresenceUpdate update(DateTime sentAt, {bool clear = false}) =>
+            RelayPresenceUpdate(
+              riderId: 'remote',
+              sentAt: sentAt,
+              expiresAt: sentAt.add(const Duration(seconds: 45)),
+              clear: clear,
+              position: clear ? null : remoteAt(sentAt),
+            );
+
+        final first = now;
+        nearby.emit(update(first));
+        await Future<void>.delayed(Duration.zero);
+        expect(ledger.evidenceFor('remote')!.bluetooth.presenceUpdates, 1);
+
+        // The same snapshot again, and an older one: neither is a new position.
+        nearby.emit(update(first));
+        nearby.emit(update(first.subtract(const Duration(seconds: 5))));
+        await Future<void>.delayed(Duration.zero);
+        expect(ledger.evidenceFor('remote')!.bluetooth.presenceUpdates, 1);
+
+        now = now.add(const Duration(seconds: 6));
+        nearby.emit(update(now));
+        await Future<void>.delayed(Duration.zero);
+        expect(ledger.evidenceFor('remote')!.bluetooth.presenceUpdates, 2);
+        expect(ledger.evidenceFor('remote')!.bluetooth.lastPresenceAt, now);
+
+        // A rider who stops sharing sends a clear. That is not a position.
+        now = now.add(const Duration(seconds: 6));
+        nearby.emit(update(now, clear: true));
+        await Future<void>.delayed(Duration.zero);
+        expect(ledger.evidenceFor('remote')!.bluetooth.presenceUpdates, 2);
+      },
+    );
+
+    test(
+      'the same position arriving by both routes is credited to each',
+      () async {
+        final nearby = _FakePresenceGateway();
+        addTearDown(nearby.close);
+        final position = remoteAt(now);
+        final controller = controllerFor([polled(position)]);
+        await controller.start(session);
+        await controller.attachNearby(nearby);
+
+        nearby.emit(
+          RelayPresenceUpdate(
+            riderId: 'remote',
+            sentAt: now,
+            expiresAt: now.add(const Duration(seconds: 45)),
+            clear: false,
+            position: position,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        final remote = ledger.evidenceFor('remote')!;
+        expect(remote.internet.presenceUpdates, 1);
+        expect(remote.bluetooth.presenceUpdates, 1);
+      },
+    );
+
+    test('this phone\'s own position is never counted as evidence', () async {
+      final nearby = _FakePresenceGateway();
+      addTearDown(nearby.close);
+      final controller = controllerFor([
+        const PreStartPresenceResult(locations: [], ttl: Duration(seconds: 45)),
+        const PreStartPresenceResult(locations: [], ttl: Duration(seconds: 45)),
+      ]);
+      await controller.start(session);
+      await controller.attachNearby(nearby);
+
+      controller.updateLocalPosition(
+        _location(
+          riderId: 'local',
+          displayName: 'Oliver',
+          latitude: 51.2,
+          receivedAt: now,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(ledger.riders, isEmpty);
+    });
+  });
 }
 
 RiderLocation _location({

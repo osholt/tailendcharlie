@@ -13,6 +13,7 @@ import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/features/ride/ended_ride_screen.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/services/nearby_bridge.dart';
+import 'package:ride_relay/services/transport_evidence_ledger.dart';
 
 void main() {
   late InMemoryEventStore events;
@@ -152,6 +153,265 @@ void main() {
     expect(archived.map((ride) => ride.rideId), contains(rideId));
     expect(controller.session, isNotNull);
     expect(find.byKey(const Key('file-ended-ride-button')), findsNothing);
+  });
+
+  // #855: the end-of-ride answer to "did phone-to-phone sharing work?".
+  group('the Bluetooth verdict', () {
+    late DateTime rideStart;
+    late DateTime now;
+    late TransportEvidenceLedger ledger;
+
+    setUp(() {
+      rideStart = controller.rideStartedAt!;
+      now = rideStart;
+      ledger = TransportEvidenceLedger(
+        localRiderId: controller.session!.localRiderId,
+        clock: () => now,
+      );
+    });
+
+    Future<void> pumpWithEvidence(WidgetTester tester) => tester.pumpWidget(
+      MaterialApp(
+        home: EndedRideScreen(
+          controller: controller,
+          distanceUnits: DistanceUnitController.forLocale(
+            const Locale('en', 'GB'),
+          ),
+          transportEvidence: ledger,
+        ),
+      ),
+    );
+
+    String verdictText(WidgetTester tester) => tester
+        .widget<Text>(find.byKey(const Key('bluetooth-verdict-text')))
+        .data!;
+
+    testWidgets('says Bluetooth worked, with the counts, when it delivered', (
+      tester,
+    ) async {
+      // Two updates Bluetooth delivered first and the internet followed, one it
+      // delivered alone, and one the internet delivered first.
+      for (final id in ['k1', 'k2']) {
+        ledger.recordEvent(
+          transport: EvidenceTransport.bluetooth,
+          eventId: id,
+          authorId: 'alex',
+        );
+      }
+      now = now.add(const Duration(seconds: 3));
+      for (final id in ['k1', 'k2']) {
+        ledger.recordEvent(
+          transport: EvidenceTransport.internet,
+          eventId: id,
+          authorId: 'alex',
+        );
+      }
+      ledger.recordEvent(
+        transport: EvidenceTransport.bluetooth,
+        eventId: 'j1',
+        authorId: 'alex',
+      );
+      ledger.recordEvent(
+        transport: EvidenceTransport.internet,
+        eventId: 'i1',
+        authorId: 'alex',
+      );
+      now = now.add(const Duration(minutes: 5));
+
+      await pumpWithEvidence(tester);
+
+      expect(find.byKey(const Key('bluetooth-verdict-card')), findsOneWidget);
+      expect(
+        verdictText(tester),
+        'Bluetooth peer-to-peer worked: 3 of 4 updates arrived over '
+        'Bluetooth; 2 arrived over Bluetooth before the internet; 1 arrived '
+        'only over Bluetooth.',
+      );
+    });
+
+    testWidgets('says nothing arrived, and why, when it did not', (
+      tester,
+    ) async {
+      // The internet delivered everything and the direct link never connected.
+      ledger.recordEvent(
+        transport: EvidenceTransport.internet,
+        eventId: 'i1',
+        authorId: 'alex',
+      );
+
+      await pumpWithEvidence(tester);
+
+      expect(
+        verdictText(tester),
+        'Nothing arrived over Bluetooth on this ride.',
+      );
+      expect(
+        find.textContaining('never connected to another phone over Bluetooth'),
+        findsOneWidget,
+      );
+      // Not a claim that it worked, anywhere on the screen.
+      expect(find.textContaining('peer-to-peer worked'), findsNothing);
+    });
+
+    testWidgets('says so honestly when only live positions came that way', (
+      tester,
+    ) async {
+      ledger.recordPresence(
+        transport: EvidenceTransport.bluetooth,
+        riderId: 'alex',
+      );
+
+      await pumpWithEvidence(tester);
+
+      expect(verdictText(tester), contains('Bluetooth peer-to-peer worked'));
+      expect(verdictText(tester), contains('live positions'));
+      expect(
+        find.textContaining('Live positions: 1 arrived over Bluetooth'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('is absent from a ride with no other riders', (tester) async {
+      await pumpScreen(tester);
+
+      expect(find.byKey(const Key('bluetooth-verdict-card')), findsNothing);
+      expect(find.textContaining('Bluetooth'), findsNothing);
+    });
+
+    testWidgets('does not describe the direct link as a working mesh', (
+      tester,
+    ) async {
+      ledger.recordEvent(
+        transport: EvidenceTransport.bluetooth,
+        eventId: 'j1',
+        authorId: 'alex',
+      );
+      now = now.add(const Duration(minutes: 5));
+
+      await pumpWithEvidence(tester);
+
+      // docs/nearby-relay.md: Nearby is a development alpha, not a mesh. The
+      // verdict reports what arrived on this ride and claims nothing more.
+      expect(
+        find.textContaining(RegExp('mesh', caseSensitive: false)),
+        findsNothing,
+      );
+      expect(find.textContaining('reliable'), findsNothing);
+    });
+  });
+
+  // #855: a group ride's log, shared by name like a solo ride's.
+  group('sharing the ride\'s diagnostics', () {
+    Future<void> pumpWithDiagnostics(
+      WidgetTester tester, {
+      required Future<String?> Function()? diagnostics,
+      List<({String fileName, String text})>? shared,
+    }) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EndedRideScreen(
+            controller: controller,
+            distanceUnits: DistanceUnitController.forLocale(
+              const Locale('en', 'GB'),
+            ),
+            diagnostics: diagnostics,
+            diagnosticsSharer:
+                ({
+                  required fileName,
+                  required text,
+                  sharePositionOrigin,
+                }) async {
+                  shared?.add((fileName: fileName, text: text));
+                },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('offers the log by itself when one was recorded', (
+      tester,
+    ) async {
+      final shared = <({String fileName, String text})>[];
+      await pumpWithDiagnostics(
+        tester,
+        diagnostics: () async => 'Tail End Charlie · ride diagnostics\nentry',
+        shared: shared,
+      );
+
+      await tester.tap(find.byKey(const Key('share-ride-diagnostics-button')));
+      await tester.pumpAndSettle();
+
+      expect(shared, hasLength(1));
+      expect(
+        shared.single.fileName,
+        'tail-end-charlie-diagnostics-${controller.session!.rideCode}.txt',
+      );
+      expect(shared.single.text, contains('entry'));
+    });
+
+    testWidgets('offers nothing when no log was recorded', (tester) async {
+      await pumpWithDiagnostics(tester, diagnostics: () async => null);
+
+      expect(
+        find.byKey(const Key('share-ride-diagnostics-button')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('offers nothing for an empty log', (tester) async {
+      await pumpWithDiagnostics(tester, diagnostics: () async => '');
+
+      expect(
+        find.byKey(const Key('share-ride-diagnostics-button')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('offers nothing when this build records nothing', (
+      tester,
+    ) async {
+      await pumpWithDiagnostics(tester, diagnostics: null);
+
+      expect(
+        find.byKey(const Key('share-ride-diagnostics-button')),
+        findsNothing,
+      );
+    });
+
+    testWidgets('says so when the share fails', (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EndedRideScreen(
+              controller: controller,
+              distanceUnits: DistanceUnitController.forLocale(
+                const Locale('en', 'GB'),
+              ),
+              diagnostics: () async => 'a log',
+              diagnosticsSharer:
+                  ({required fileName, required text, sharePositionOrigin}) =>
+                      Future.error(StateError('no share sheet')),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('share-ride-diagnostics-button')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Could not share the diagnostics'),
+        findsOneWidget,
+      );
+    });
   });
 }
 

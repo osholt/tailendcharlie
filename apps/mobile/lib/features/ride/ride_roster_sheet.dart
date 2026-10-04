@@ -2,12 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../controllers/nearby_relay_controller.dart';
 import '../../controllers/ride_controller.dart';
 import '../../domain/ride_role.dart';
 import '../../domain/rider_color.dart';
 import '../../relay/live_presence.dart';
 import '../../services/ride_membership.dart';
 import '../../services/tec_role_assignment.dart';
+import '../../services/transport_evidence_ledger.dart';
+import '../../services/transport_evidence_presentation.dart';
 import '../map/motorcycle_icon.dart';
 
 enum _RosterFilter { active, attention, left, all }
@@ -18,6 +21,9 @@ class RideRosterSheet extends StatefulWidget {
     required this.controller,
     this.relayCanCarryTecRequest = true,
     this.legacyPeerRiderIds = const {},
+    this.transportEvidence,
+    this.nearbyRelayController,
+    this.clock,
   });
 
   final RideController controller;
@@ -32,11 +38,29 @@ class RideRosterSheet extends StatefulWidget {
   /// by name before asking rather than watching it sit unanswered.
   final Set<String> legacyPeerRiderIds;
 
+  /// Which route delivered each rider's updates (#855). Present in a group ride.
+  ///
+  /// It is what lets a rider tell, without leaving the app, whether somebody is
+  /// being heard over the phone signal or over the direct phone-to-phone link:
+  /// each row says when each route last delivered from that rider.
+  final TransportEvidenceLedger? transportEvidence;
+
+  /// The direct link's own status, for the one line at the top that says whether
+  /// it is up at all.
+  final NearbyRelayController? nearbyRelayController;
+
+  /// The time ages are read against. Absent in the app, where it is the clock on
+  /// the wall; a test pins it, because an age in whole seconds read against a real
+  /// clock is a different number if the test is slow to start.
+  final DateTime Function()? clock;
+
   static Future<void> show(
     BuildContext context,
     RideController controller, {
     bool relayCanCarryTecRequest = true,
     Set<String> legacyPeerRiderIds = const {},
+    TransportEvidenceLedger? transportEvidence,
+    NearbyRelayController? nearbyRelayController,
   }) => showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
@@ -46,6 +70,8 @@ class RideRosterSheet extends StatefulWidget {
       controller: controller,
       relayCanCarryTecRequest: relayCanCarryTecRequest,
       legacyPeerRiderIds: legacyPeerRiderIds,
+      transportEvidence: transportEvidence,
+      nearbyRelayController: nearbyRelayController,
     ),
   );
 
@@ -55,6 +81,28 @@ class RideRosterSheet extends StatefulWidget {
 
 class _RideRosterSheetState extends State<RideRosterSheet> {
   _RosterFilter _filter = _RosterFilter.active;
+
+  /// Ages read "12 s ago", so they have to move. Only runs when there is
+  /// evidence to age (#855).
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.transportEvidence != null) {
+      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  DateTime get _now => widget.clock?.call() ?? DateTime.now();
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -109,6 +157,10 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                           '$liveCount currently included · ${all.length} recorded',
                           style: const TextStyle(color: Color(0xFF9DA8B6)),
                         ),
+                        if (widget.transportEvidence != null)
+                          _BluetoothStatusLine(
+                            controller: widget.nearbyRelayController,
+                          ),
                       ],
                     ),
                   ),
@@ -193,7 +245,7 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                       separatorBuilder: (_, _) => const Divider(height: 1),
                       itemBuilder: (context, index) => _ParticipantTile(
                         participant: visible[index],
-                        now: DateTime.now(),
+                        now: _now,
                         effectiveTecRiderId: effectiveTecRiderId,
                         onAskToBeTec:
                             _canAsk(visible[index], effectiveTecRiderId)
@@ -202,6 +254,7 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
                         peerAppIsOlder: widget.legacyPeerRiderIds.contains(
                           visible[index].riderId,
                         ),
+                        evidenceLine: _evidenceLine(visible[index]),
                       ),
                     ),
             ),
@@ -210,6 +263,18 @@ class _RideRosterSheetState extends State<RideRosterSheet> {
       );
     },
   );
+
+  /// Which route last delivered from this rider, or null where it does not
+  /// apply: this phone's own row, a rider who has left, or a ride with no ledger.
+  String? _evidenceLine(RideParticipant participant) {
+    final ledger = widget.transportEvidence;
+    if (ledger == null ||
+        participant.isLocal ||
+        !participant.isIncludedInLiveCount) {
+      return null;
+    }
+    return riderEvidenceLine(ledger.evidenceFor(participant.riderId), _now);
+  }
 
   /// The leader may ask any live rider other than themselves who is not the
   /// effective TEC. Before an accepted assignment, a self-selected TEC is
@@ -499,6 +564,7 @@ class _ParticipantTile extends StatelessWidget {
     this.effectiveTecRiderId,
     this.onAskToBeTec,
     this.peerAppIsOlder = false,
+    this.evidenceLine,
   });
 
   final RideParticipant participant;
@@ -506,6 +572,9 @@ class _ParticipantTile extends StatelessWidget {
   final String? effectiveTecRiderId;
   final VoidCallback? onAskToBeTec;
   final bool peerAppIsOlder;
+
+  /// `Bluetooth 12 s ago · Internet 8 s ago` (#855).
+  final String? evidenceLine;
 
   @override
   Widget build(BuildContext context) {
@@ -531,6 +600,7 @@ class _ParticipantTile extends StatelessWidget {
       participant.stateLabel,
       'last seen $lastSeen',
       participant.transportLabel,
+      ?evidenceLine,
       ?rejoin,
       ?lastKnownPosition,
       ?attention,
@@ -571,6 +641,7 @@ class _ParticipantTile extends StatelessWidget {
             [
               '$role · ${participant.stateLabel}',
               'Last seen $lastSeen · ${participant.transportLabel}',
+              ?evidenceLine,
               ?rejoin,
               ?lastKnownPosition,
               ?attention,
@@ -607,6 +678,30 @@ class _ParticipantTile extends StatelessWidget {
     if (age < const Duration(hours: 1)) return '${age.inMinutes} min ago';
     if (age < const Duration(hours: 24)) return '${age.inHours} hr ago';
     return '${age.inDays} days ago';
+  }
+}
+
+/// The direct link's state in one line: connected to how many phones, searching,
+/// or unavailable and why (#855). Read from the relay's own status, so it moves
+/// when the link does.
+class _BluetoothStatusLine extends StatelessWidget {
+  const _BluetoothStatusLine({required this.controller});
+
+  final NearbyRelayController? controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = this.controller;
+    Widget line(String text) => Text(
+      text,
+      key: const Key('roster-bluetooth-status'),
+      style: const TextStyle(color: Color(0xFF9DA8B6)),
+    );
+    if (controller == null) return line(bluetoothLinkLine(null));
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => line(bluetoothLinkLine(controller.status)),
+    );
   }
 }
 

@@ -10,6 +10,7 @@ import 'package:ride_relay/domain/rider_location.dart';
 import 'package:ride_relay/relay/in_memory_relay_queue.dart';
 import 'package:ride_relay/relay/peer_transport.dart';
 import 'package:ride_relay/relay/relay_engine.dart';
+import 'package:ride_relay/services/transport_evidence_ledger.dart';
 
 void main() {
   const secret = '0123456789abcdef0123456789abcdef';
@@ -225,6 +226,160 @@ void main() {
     expect(await queueB.count('ride-1', now: now), 0);
     await engineA.dispose();
     await engineB.dispose();
+  });
+
+  // #855: an event that arrives over the direct link is reported to the
+  // evidence ledger even when this phone already holds it.
+  group('transport evidence', () {
+    final event = RideEvent(
+      id: 'event-1',
+      rideId: 'ride-1',
+      deviceId: 'device-a',
+      type: RideEventType.statusMessage,
+      priority: EventPriority.important,
+      createdAt: now,
+      payload: const {'message': 'OK'},
+      signature: 'a' * 64,
+    );
+
+    /// A sends [event] to B over the fake direct link. [heldByB] puts it in B's
+    /// journal and queue first, which is what happens once the internet has
+    /// delivered it and the ride shell has handed it to the nearby relay.
+    Future<({TransportEvidenceLedger ledger, List<RideEvent> received})> send({
+      required bool heldByB,
+    }) async {
+      final transportA = FakePeerTransport('peer-a');
+      final transportB = FakePeerTransport('peer-b');
+      final storeA = InMemoryEventStore();
+      final storeB = InMemoryEventStore();
+      final ledger = TransportEvidenceLedger(
+        localRiderId: 'device-b',
+        clock: () => now,
+      );
+      var id = 0;
+      final engineA = RelayEngine(
+        transport: transportA,
+        eventStore: storeA,
+        queue: InMemoryRelayQueue(),
+        clock: () => now,
+        idFactory: () => 'frame-a-${id++}',
+      );
+      final engineB = RelayEngine(
+        transport: transportB,
+        eventStore: storeB,
+        queue: InMemoryRelayQueue(),
+        clock: () => now,
+        idFactory: () => 'frame-b-${id++}',
+        evidence: ledger,
+      );
+      addTearDown(engineA.dispose);
+      addTearDown(engineB.dispose);
+      await engineA.start(
+        const RelayEngineConfig(
+          rideId: 'ride-1',
+          rideSecret: secret,
+          localDeviceId: 'device-a',
+          endpointName: 'A',
+        ),
+      );
+      await engineB.start(
+        const RelayEngineConfig(
+          rideId: 'ride-1',
+          rideSecret: secret,
+          localDeviceId: 'device-b',
+          endpointName: 'B',
+        ),
+      );
+      final received = <RideEvent>[];
+      final subscription = engineB.receivedEvents.listen(received.add);
+      addTearDown(subscription.cancel);
+      await _drain();
+      if (heldByB) {
+        await storeB.append(event);
+        await engineB.enqueueLocal(event);
+      }
+      await storeA.append(event);
+      await engineA.enqueueLocal(event);
+      transportA.connect(transportB);
+      await _drain();
+      return (ledger: ledger, received: received);
+    }
+
+    test('an event delivered first over the direct link is recorded', () async {
+      final result = await send(heldByB: false);
+
+      final evidence = result.ledger.evidenceFor('device-a')!;
+      expect(evidence.bluetooth.events, 1);
+      expect(evidence.bluetooth.firstDelivered, 1);
+      expect(result.received.map((item) => item.id), ['event-1']);
+    });
+
+    test('an event already held is still recorded, though the relay '
+        'discards it as a duplicate', () async {
+      final result = await send(heldByB: true);
+
+      // The relay did treat it as a duplicate: it was not handed on again.
+      expect(result.received, isEmpty);
+      // But the arrival over the direct link is on the ledger. Recording it only
+      // after the duplicate check would leave this at zero, and the direct link
+      // would look idle every time the internet was quicker.
+      final evidence = result.ledger.evidenceFor('device-a')!;
+      expect(evidence.bluetooth.events, 1);
+      expect(result.ledger.verdict().viaBluetooth, 1);
+    });
+
+    test(
+      'this phone\'s own events relayed back to it are not counted',
+      () async {
+        final transportA = FakePeerTransport('peer-a');
+        final transportB = FakePeerTransport('peer-b');
+        final ledger = TransportEvidenceLedger(
+          localRiderId: 'device-a',
+          clock: () => now,
+        );
+        var id = 0;
+        // B is the author and holds the event; A is the phone with the ledger.
+        final engineA = RelayEngine(
+          transport: transportA,
+          eventStore: InMemoryEventStore(),
+          queue: InMemoryRelayQueue(),
+          clock: () => now,
+          idFactory: () => 'frame-a-${id++}',
+          evidence: ledger,
+        );
+        final engineB = RelayEngine(
+          transport: transportB,
+          eventStore: InMemoryEventStore(),
+          queue: InMemoryRelayQueue(),
+          clock: () => now,
+          idFactory: () => 'frame-b-${id++}',
+        );
+        addTearDown(engineA.dispose);
+        addTearDown(engineB.dispose);
+        await engineA.start(
+          const RelayEngineConfig(
+            rideId: 'ride-1',
+            rideSecret: secret,
+            localDeviceId: 'device-a',
+            endpointName: 'A',
+          ),
+        );
+        await engineB.start(
+          const RelayEngineConfig(
+            rideId: 'ride-1',
+            rideSecret: secret,
+            localDeviceId: 'device-b',
+            endpointName: 'B',
+          ),
+        );
+        await _drain();
+        await engineB.enqueueLocal(event);
+        transportA.connect(transportB);
+        await _drain();
+
+        expect(ledger.riders, isEmpty);
+      },
+    );
   });
 
   test('backoff grows deterministically and is bounded', () {
