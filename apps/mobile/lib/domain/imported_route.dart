@@ -318,6 +318,71 @@ class RouteJunction {
   }
 }
 
+/// The symbol the GPX importer gives a route point marked as a shaping point,
+/// which a GPX exported from a route saved before #839 also carries.
+const routeShapingPointSymbol = 'Shaping point';
+
+bool _isShapingWaypoint(RouteWaypoint waypoint) =>
+    waypoint.symbol?.trim().toLowerCase() ==
+    routeShapingPointSymbol.toLowerCase();
+
+/// Splits [waypoints] into the stops a rider rides to and the shaping points
+/// that only bend the route between them (#839).
+///
+/// A GPX route's `<trp:ShapingPoint>`s used to be kept as waypoints marked
+/// [routeShapingPointSymbol], and everything that treats a waypoint as a stop
+/// treated them as one: they were drawn as stops, the next-stop estimate ran to
+/// them and reset, and routing them made the engine announce an arrival at
+/// each. They are the same thing as a point dragged onto the route in review,
+/// so they become that: a [RouteShapingPoint] on the leg between the stops
+/// listed either side of it. [existing] shaping points are kept, and every
+/// point stays in its leg in list order.
+({List<RouteWaypoint> stops, List<RouteShapingPoint> shapingPoints})
+separateShapingWaypoints(
+  List<RouteWaypoint> waypoints, {
+  List<RouteShapingPoint> existing = const [],
+}) {
+  if (!waypoints.any(_isShapingWaypoint)) {
+    return (stops: waypoints, shapingPoints: existing);
+  }
+  final stops = <RouteWaypoint>[];
+  final pending = <({GeoPoint point, int stopsBefore})>[];
+  for (final waypoint in waypoints) {
+    if (_isShapingWaypoint(waypoint)) {
+      pending.add((point: waypoint.point, stopsBefore: stops.length));
+    } else {
+      stops.add(waypoint);
+    }
+  }
+  final lastLeg = stops.length < 2 ? 0 : stops.length - 2;
+  final usedIds = {for (final point in existing) point.id};
+  var counter = 0;
+  String nextId() {
+    while (!usedIds.add('imported-shaping-$counter')) {
+      counter += 1;
+    }
+    return 'imported-shaping-$counter';
+  }
+
+  final combined = [
+    ...existing,
+    for (final point in pending)
+      RouteShapingPoint(
+        id: nextId(),
+        point: point.point,
+        legIndex: (point.stopsBefore - 1).clamp(0, lastLeg),
+      ),
+  ];
+  final legs = {for (final point in combined) point.legIndex}.toList()..sort();
+  return (
+    stops: List.unmodifiable(stops),
+    shapingPoints: List.unmodifiable([
+      for (final leg in legs)
+        ...combined.where((point) => point.legIndex == leg),
+    ]),
+  );
+}
+
 /// A routing or reviewed mapped instruction retained with the route geometry so
 /// navigation guidance remains available after restart and while offline.
 class RouteManeuver {
@@ -819,6 +884,11 @@ class ImportedRoute {
     final rawPreferences = json['preferences'];
     final sourceFileName = _requiredString(json, 'sourceFileName');
     final description = _optionalString(json['description']);
+    // Routes imported before #839 kept GPX shaping points as waypoints.
+    final separated = separateShapingWaypoints(
+      waypoints,
+      existing: shapingPoints,
+    );
     return ImportedRoute(
       id: _requiredString(json, 'id'),
       name: _requiredString(json, 'name'),
@@ -831,8 +901,8 @@ class ImportedRoute {
       organisation: RideLibraryOrganisation.fromJson(json['organisation']),
       deletedAt: _optionalDateTime(json['deletedAt']),
       paths: paths,
-      waypoints: waypoints,
-      shapingPoints: shapingPoints,
+      waypoints: separated.stops,
+      shapingPoints: separated.shapingPoints,
       maneuvers: maneuvers,
       markerReview: markerReview,
       preferences: rawPreferences is Map
