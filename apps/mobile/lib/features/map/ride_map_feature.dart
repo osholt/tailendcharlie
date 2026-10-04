@@ -30,6 +30,7 @@ import '../../domain/imported_route.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
+import '../../domain/rider_marker_outline.dart';
 import '../../domain/route_authority.dart';
 import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
@@ -521,6 +522,7 @@ class RideMapFeature extends StatefulWidget {
     this.localRiderSymbol = riderSymbolDefault,
     this.localDisplayName = 'You',
     this.localBadgeColor = const Color(0xFF2F80ED),
+    this.localMarkerOutline = RiderMarkerOutline.circle,
   });
 
   factory RideMapFeature.fromEnvironment({
@@ -591,6 +593,7 @@ class RideMapFeature extends StatefulWidget {
     RiderSymbol localRiderSymbol = riderSymbolDefault,
     String localDisplayName = 'You',
     Color localBadgeColor = const Color(0xFF2F80ED),
+    RiderMarkerOutline localMarkerOutline = RiderMarkerOutline.circle,
   }) => RideMapFeature(
     key: key,
     currentPosition: currentPosition,
@@ -660,6 +663,7 @@ class RideMapFeature extends StatefulWidget {
     localRiderSymbol: localRiderSymbol,
     localDisplayName: localDisplayName,
     localBadgeColor: localBadgeColor,
+    localMarkerOutline: localMarkerOutline,
   );
 
   final ValueListenable<GeoPoint?>? currentPosition;
@@ -781,6 +785,10 @@ class RideMapFeature extends StatefulWidget {
   final RiderSymbol localRiderSymbol;
   final String localDisplayName;
   final Color localBadgeColor;
+
+  /// The shape of the local rider's own marker: a star while they are the
+  /// leader or the Tail End Charlie, a circle otherwise (#845).
+  final RiderMarkerOutline localMarkerOutline;
 
   @override
   State<RideMapFeature> createState() => _RideMapFeatureState();
@@ -954,6 +962,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         localRiderSymbol: widget.localRiderSymbol,
         localDisplayName: widget.localDisplayName,
         localBadgeColor: widget.localBadgeColor,
+        localMarkerOutline: widget.localMarkerOutline,
       );
     },
   );
@@ -1063,6 +1072,7 @@ class RideMapScreen extends StatefulWidget {
     this.localRiderSymbol = riderSymbolDefault,
     this.localDisplayName = 'You',
     this.localBadgeColor = const Color(0xFF2F80ED),
+    this.localMarkerOutline = RiderMarkerOutline.circle,
   });
 
   final RouteStore routeStore;
@@ -1227,6 +1237,10 @@ class RideMapScreen extends StatefulWidget {
   final RiderSymbol localRiderSymbol;
   final String localDisplayName;
   final Color localBadgeColor;
+
+  /// The shape of the local rider's own marker: a star while they are the
+  /// leader or the Tail End Charlie, a circle otherwise (#845).
+  final RiderMarkerOutline localMarkerOutline;
 
   @override
   State<RideMapScreen> createState() => _RideMapScreenState();
@@ -1853,6 +1867,11 @@ class _RideMapScreenState extends State<RideMapScreen>
       oldWidget.enforcementAlert?.removeListener(_onEnforcementAlertChanged);
       widget.enforcementAlert?.addListener(_onEnforcementAlertChanged);
       _onEnforcementAlertChanged();
+    }
+    if (oldWidget.localMarkerOutline != widget.localMarkerOutline) {
+      // A handover changes the local rider's shape without moving them, and the
+      // position source is otherwise only rewritten when they do (#845).
+      _scheduleMapLibreSync(position: true);
     }
     if (oldWidget.isNavigating != widget.isNavigating ||
         oldWidget.rideStarted != widget.rideStarted) {
@@ -3752,6 +3771,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       localRiderSymbol: widget.localRiderSymbol,
       localDisplayName: widget.localDisplayName,
       localColor: widget.localBadgeColor,
+      localOutline: widget.localMarkerOutline,
       onTap: widget.onOpenRoster,
       renderer: groupMiniMapRenderer(
         mapLibreEnabled: _basemap.usesMapLibre,
@@ -4077,6 +4097,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                   symbol: widget.localRiderSymbol,
                   displayName: widget.localDisplayName,
                   badgeColor: widget.localBadgeColor,
+                  outline: widget.localMarkerOutline,
                 ),
               ),
             ],
@@ -5704,6 +5725,7 @@ class _RideMapScreenState extends State<RideMapScreen>
               displayName: overlay.riderDisplayName ?? overlay.label,
               badgeColor: RideMapPalette.riderFill(overlay.color),
               size: 34,
+              outline: overlay.outline,
             ),
           );
   }
@@ -5711,6 +5733,12 @@ class _RideMapScreenState extends State<RideMapScreen>
   static const _hazardIconImage = 'ride-relay-hazard-warning';
   bool _markerImagesRegistered = false;
   final Set<String> _registeredRiderSymbolImages = {};
+
+  /// The star shapes are drawn only for the leader and the Tail End Charlie, and
+  /// each is a distance field that takes a frame or two to rasterise, so they are
+  /// registered the first time a marker needs one rather than for every ride
+  /// (#845).
+  bool _starShapesRegistered = false;
 
   Future<void> _registerMarkerImages(
     ml.MapLibreMapController controller,
@@ -5759,6 +5787,21 @@ class _RideMapScreenState extends State<RideMapScreen>
   Future<void> _ensureRiderSymbolImages(
     ml.MapLibreMapController controller,
   ) async {
+    final needsStar =
+        widget.localMarkerOutline == RiderMarkerOutline.star ||
+        (widget.overlayMarkers?.value ?? const <MapOverlayMarker>[]).any(
+          (overlay) =>
+              overlay.motorcycleStyle != null &&
+              overlay.outline == RiderMarkerOutline.star,
+        );
+    if (needsStar && !_starShapesRegistered) {
+      _starShapesRegistered = true;
+      await _registerRiderMarkerShapes(
+        controller,
+        _nativeMarkerPixelRatio(context),
+        outline: RiderMarkerOutline.star,
+      );
+    }
     final riders =
         <({RiderSymbol symbol, String displayName, MotorcycleIconStyle style})>[
           (
@@ -6732,26 +6775,24 @@ class _RideMapScreenState extends State<RideMapScreen>
   double? get _localTravelHeading =>
       _localTravelDirection.headingAt(DateTime.now());
 
+  /// Registers the two shapes of one [outline]: the one a rider with a heading
+  /// is drawn in, and the one that makes no claim about it.
   static Future<void> _registerRiderMarkerShapes(
     ml.MapLibreMapController controller,
-    double pixelRatio,
-  ) async {
-    await controller.addImage(
-      riderDirectionShapeImage,
-      await rasterizeRiderMarkerShapePng(
-        directional: true,
-        pixelRatio: pixelRatio,
-      ),
-      true,
-    );
-    await controller.addImage(
-      riderUnknownShapeImage,
-      await rasterizeRiderMarkerShapePng(
-        directional: false,
-        pixelRatio: pixelRatio,
-      ),
-      true,
-    );
+    double pixelRatio, {
+    RiderMarkerOutline outline = RiderMarkerOutline.circle,
+  }) async {
+    for (final directional in [true, false]) {
+      await controller.addImage(
+        riderMarkerShapeImageName(outline: outline, directional: directional),
+        await rasterizeRiderMarkerShapePng(
+          directional: directional,
+          outline: outline,
+          pixelRatio: pixelRatio,
+        ),
+        true,
+      );
+    }
   }
 
   static ml.SymbolLayerProperties _riderShapeProperties({
@@ -6760,12 +6801,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     Object borderColor = RideMapPalette.otherRiderOutlineHex,
     double borderWidth = 2,
   }) => ml.SymbolLayerProperties(
-    iconImage: [
-      'case',
-      ['has', 'bearing'],
-      riderDirectionShapeImage,
-      riderUnknownShapeImage,
-    ],
+    iconImage: riderShapeImageExpression,
     iconColor: color,
     iconSize: diameter / riderMarkerShapeUnits,
     iconHaloColor: borderColor,
@@ -6800,7 +6836,10 @@ class _RideMapScreenState extends State<RideMapScreen>
               MapGeoJsonPoint(
                 id: 'current-position',
                 point: point,
-                properties: {'bearing': ?_localTravelHeading},
+                properties: {
+                  'bearing': ?_localTravelHeading,
+                  'outline': widget.localMarkerOutline.name,
+                },
               ),
             ],
     );
@@ -6864,6 +6903,7 @@ class _RideMapScreenState extends State<RideMapScreen>
             properties: {
               'label': overlay.label,
               'color': _hexColor(RideMapPalette.riderFill(overlay.color)),
+              'outline': overlay.outline.name,
               'bearing': ?overlay.headingDegrees,
               'hazardSymbol': overlay.hazardSymbol != null,
               'iconImage': _overlayIconImage(overlay),
@@ -9197,9 +9237,15 @@ class MapOverlayMarker {
     this.positionFreshness = PresenceFreshness.live,
     this.hazardSymbol,
     this.headingDegrees,
+    this.outline = RiderMarkerOutline.circle,
   });
 
   final double? headingDegrees;
+
+  /// The shape a rider's marker is drawn in on every map: a star for the leader
+  /// and the Tail End Charlie, a circle for everyone else (#845). Ignored by a
+  /// hazard.
+  final RiderMarkerOutline outline;
   final String id;
   final GeoPoint point;
   final String label;
@@ -9249,11 +9295,12 @@ class GroupMiniMapMarker {
     required this.id,
     required this.point,
     required this.fill,
-    required this.outline,
+    required this.outlineColor,
     required this.symbol,
     required this.displayName,
     required this.motorcycleStyle,
     required this.isLocal,
+    this.outline = RiderMarkerOutline.circle,
     this.headingDegrees,
   });
 
@@ -9263,7 +9310,12 @@ class GroupMiniMapMarker {
   /// The rider's own identity colour: the same one the main map and the roster
   /// show for them.
   final Color fill;
-  final Color outline;
+
+  /// The colour of the edge of the badge.
+  final Color outlineColor;
+
+  /// The shape: a star for the leader and the Tail End Charlie (#845).
+  final RiderMarkerOutline outline;
   final RiderSymbol symbol;
   final String displayName;
   final MotorcycleIconStyle motorcycleStyle;
@@ -9280,6 +9332,7 @@ List<GroupMiniMapMarker> groupMiniMapMarkers({
   required RiderSymbol localSymbol,
   required String localDisplayName,
   required MotorcycleIconStyle localMotorcycleStyle,
+  RiderMarkerOutline localOutline = RiderMarkerOutline.circle,
   double? localHeadingDegrees,
 }) => [
   for (final rider in riders)
@@ -9287,7 +9340,8 @@ List<GroupMiniMapMarker> groupMiniMapMarkers({
       id: rider.id,
       point: rider.point,
       fill: RideMapPalette.riderFill(rider.color),
-      outline: RideMapPalette.riderOutline(local: false),
+      outlineColor: RideMapPalette.riderOutline(local: false),
+      outline: rider.outline,
       symbol: rider.riderSymbol,
       displayName: rider.riderDisplayName ?? rider.label,
       motorcycleStyle: rider.motorcycleStyle ?? motorcycleIconStyleDefault,
@@ -9299,7 +9353,8 @@ List<GroupMiniMapMarker> groupMiniMapMarkers({
       id: 'mini-local-rider',
       point: localPosition,
       fill: RideMapPalette.riderFill(localColor),
-      outline: RideMapPalette.riderOutline(local: true),
+      outlineColor: RideMapPalette.riderOutline(local: true),
+      outline: localOutline,
       symbol: localSymbol,
       displayName: localDisplayName,
       motorcycleStyle: localMotorcycleStyle,
@@ -9307,6 +9362,30 @@ List<GroupMiniMapMarker> groupMiniMapMarkers({
       headingDegrees: localHeadingDegrees,
     ),
 ];
+
+/// The flutter_map marker for one rider on the group overview (iOS draws it with
+/// the vector style): the same badge as the main map's, at the overview's size.
+Marker groupMiniMapVectorMarker(GroupMiniMapMarker marker) {
+  // The local rider's badge is a little larger, as it is on the main map.
+  final size = marker.isLocal ? 18.0 : 16.0;
+  return Marker(
+    point: LatLng(marker.point.latitude, marker.point.longitude),
+    width: size + 4,
+    height: size + 4,
+    child: RiderMarkerBadge(
+      mapMarker: true,
+      headingDegrees: marker.headingDegrees,
+      style: marker.motorcycleStyle,
+      symbol: marker.symbol,
+      displayName: marker.displayName,
+      badgeColor: marker.fill,
+      size: size,
+      borderColor: marker.outlineColor,
+      borderWidth: 1,
+      outline: marker.outline,
+    ),
+  );
+}
 
 LatLng _latLng(GeoPoint point) => LatLng(point.latitude, point.longitude);
 
@@ -9887,6 +9966,7 @@ class _GroupMiniMap extends StatefulWidget {
     required this.localRiderSymbol,
     required this.localDisplayName,
     required this.localColor,
+    required this.localOutline,
     required this.onTap,
     required this.renderer,
     required this.mapStyleUrl,
@@ -9909,6 +9989,9 @@ class _GroupMiniMap extends StatefulWidget {
 
   /// The local rider's own colour, as the main map draws them.
   final Color localColor;
+
+  /// The local rider's shape: a star while they lead or sweep (#845).
+  final RiderMarkerOutline localOutline;
   final VoidCallback? onTap;
   final GroupMiniMapRenderer renderer;
   final String mapStyleUrl;
@@ -9971,6 +10054,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         riders: snapshot.riders,
         localPosition: snapshot.currentPosition,
         localColor: widget.localColor,
+        localOutline: widget.localOutline,
         localSymbol: widget.localRiderSymbol,
         localDisplayName: widget.localDisplayName,
         localMotorcycleStyle: widget.localMotorcycleStyle,
@@ -10300,7 +10384,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 MarkerLayer(
                   markers: [
                     for (final marker in _markersFor(_snapshot()))
-                      _vectorRiderMarker(marker),
+                      groupMiniMapVectorMarker(marker),
                   ],
                 ),
               ],
@@ -10329,27 +10413,6 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
           borderStrokeWidth: style.fallbackBorderWidthPixels,
         ),
   ];
-
-  Marker _vectorRiderMarker(GroupMiniMapMarker marker) {
-    // The local rider's badge is a little larger, as it is on the main map.
-    final size = marker.isLocal ? 18.0 : 16.0;
-    return Marker(
-      point: LatLng(marker.point.latitude, marker.point.longitude),
-      width: size + 4,
-      height: size + 4,
-      child: RiderMarkerBadge(
-        mapMarker: true,
-        headingDegrees: marker.headingDegrees,
-        style: marker.motorcycleStyle,
-        symbol: marker.symbol,
-        displayName: marker.displayName,
-        badgeColor: marker.fill,
-        size: size,
-        borderColor: marker.outline,
-        borderWidth: 1,
-      ),
-    );
-  }
 
   Future<void> _prepareStyle() async {
     final controller = _controller;
@@ -10624,7 +10687,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
             properties: {
               'bearing': ?marker.headingDegrees,
               'color': _hexColor(marker.fill),
-              'strokeColor': _hexColor(marker.outline),
+              'strokeColor': _hexColor(marker.outlineColor),
+              'outline': marker.outline.name,
               'iconImage': marker.symbol.imageName(
                 marker.displayName,
                 marker.motorcycleStyle,
@@ -10638,14 +10702,24 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     ml.MapLibreMapController controller,
     _MiniMapSnapshot snapshot,
   ) async {
+    // Read before the first await, which the build context cannot be used past.
+    final pixelRatio = _nativeMarkerPixelRatio(context);
     if (!_registeredSymbolImages.contains(riderDirectionShapeImage)) {
       await _RideMapScreenState._registerRiderMarkerShapes(
         controller,
-        _nativeMarkerPixelRatio(context),
+        pixelRatio,
       );
       _registeredSymbolImages.add(riderDirectionShapeImage);
     }
     final riders = _markersFor(snapshot);
+    if (riders.any((rider) => rider.outline == RiderMarkerOutline.star) &&
+        _registeredSymbolImages.add(riderStarDirectionShapeImage)) {
+      await _RideMapScreenState._registerRiderMarkerShapes(
+        controller,
+        pixelRatio,
+        outline: RiderMarkerOutline.star,
+      );
+    }
     for (final rider in riders) {
       final imageName = rider.symbol.imageName(
         rider.displayName,
@@ -10920,9 +10994,10 @@ class _GroupMiniMapPainter extends CustomPainter {
       canvas.translate(offset.dx - radius, offset.dy - radius);
       RiderMarkerShapePainter(
         color: marker.fill,
-        borderColor: marker.outline,
+        borderColor: marker.outlineColor,
         borderWidth: 1,
         headingDegrees: marker.headingDegrees,
+        outline: marker.outline,
       ).paint(canvas, Size.square(radius * 2));
       canvas.restore();
       if (symbol.kind == RiderSymbolKind.motorcycle) return;
@@ -13028,12 +13103,14 @@ class _CurrentPositionMarker extends StatelessWidget {
     required this.symbol,
     required this.displayName,
     required this.badgeColor,
+    required this.outline,
   });
   final double? headingDegrees;
   final MotorcycleIconStyle style;
   final RiderSymbol symbol;
   final String displayName;
   final Color badgeColor;
+  final RiderMarkerOutline outline;
   @override
   Widget build(BuildContext context) => RiderMarkerBadge(
     mapMarker: true,
@@ -13046,6 +13123,7 @@ class _CurrentPositionMarker extends StatelessWidget {
     size: 38,
     borderColor: RideMapPalette.localRiderOutline,
     borderWidth: 3,
+    outline: outline,
   );
 }
 

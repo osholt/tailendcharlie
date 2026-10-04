@@ -45,6 +45,7 @@ import '../../domain/ride_role.dart';
 import '../../domain/ride_session.dart';
 import '../../domain/rider_location.dart';
 import '../../domain/rider_color.dart';
+import '../../domain/rider_marker_outline.dart';
 import '../../domain/route_alert.dart';
 import '../../domain/route_authority.dart';
 import '../../domain/route_store.dart';
@@ -2680,6 +2681,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 now,
                 fresh: freshness == PresenceFreshness.live,
               ),
+              // The leader and the one resolved Tail End Charlie are stars on
+              // every map (#845). A rider's own claim to the role is not enough:
+              // two can hold it in the journal while the group has one back.
+              outline: riderMarkerOutlineFor(
+                role: location.role,
+                isEffectiveTec: isTec,
+              ),
             );
           }),
     ];
@@ -4444,6 +4452,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           widget.rideController.session?.riderSymbol ?? riderSymbolDefault,
       localDisplayName: widget.rideController.session?.displayName ?? 'You',
       localBadgeColor: _localBadgeColor,
+      localMarkerOutline: _localMarkerOutline,
     );
   }
 
@@ -4865,6 +4874,21 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final session = widget.rideController.session;
     if (session == null) return riderColorDefault.color;
     return session.riderColor.color;
+  }
+
+  /// The shape of this phone's own marker: a star while the rider is the
+  /// group's leader or its resolved Tail End Charlie (#845).
+  ///
+  /// Read in `build`, so a handover or a leader's accepted TEC request changes
+  /// the marker as it happens.
+  RiderMarkerOutline get _localMarkerOutline {
+    final session = widget.rideController.session;
+    return localRiderMarkerOutline(
+      role: session?.role,
+      localRiderId: session?.localRiderId,
+      effectiveTecRiderIds: _effectiveTecRiderIds,
+      coordinationMode: widget.rideController.coordinationMode,
+    );
   }
 
   /// The leader and TEC, with a phone number attached only where that rider has

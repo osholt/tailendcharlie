@@ -151,7 +151,7 @@ void main() {
         );
 
         expect(markers.first.fill, colour.color, reason: colour.label);
-        expect(markers.first.outline, RouteTrailStyle.casing);
+        expect(markers.first.outlineColor, RouteTrailStyle.casing);
       }
     });
 
@@ -164,7 +164,7 @@ void main() {
 
         expect(marker.isLocal, isTrue);
         expect(marker.fill, colour.color, reason: colour.label);
-        expect(marker.outline, const Color(0xFFFFFFFF));
+        expect(marker.outlineColor, const Color(0xFFFFFFFF));
       }
     });
 
