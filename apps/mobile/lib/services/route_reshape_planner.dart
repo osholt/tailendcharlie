@@ -1,6 +1,7 @@
 import '../domain/imported_route.dart';
 import 'road_routing.dart';
 import 'route_marker_plan.dart';
+import 'route_verification.dart';
 
 class RouteReshapeResult {
   const RouteReshapeResult({
@@ -8,12 +9,18 @@ class RouteReshapeResult {
     required this.distanceMeters,
     required this.duration,
     this.twistinessScore,
+    this.verification,
   });
 
   final ImportedRoute route;
   final double distanceMeters;
   final Duration duration;
   final double? twistinessScore;
+
+  /// What checking the reshaped route against its preferences found, or null
+  /// when it was not checked. The route changed, so whatever was found about
+  /// the one before it no longer applies (#840).
+  final RouteVerification? verification;
 }
 
 /// Recalculates a route through non-stopping shaping controls.
@@ -75,6 +82,7 @@ class RouteReshapePlanner {
       distanceMeters: result.distanceMeters,
       duration: result.duration,
       twistinessScore: result.twistinessScore,
+      verification: result.verification,
     );
   }
 }

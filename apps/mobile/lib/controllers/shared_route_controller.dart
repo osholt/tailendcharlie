@@ -9,6 +9,7 @@ import '../domain/imported_route.dart';
 import '../services/gpx_import_source.dart';
 import '../services/navigation_export.dart';
 import '../services/planner_link_channel.dart';
+import '../services/route_verification.dart';
 import '../services/shared_gpx_channel.dart';
 
 enum PlannerLinkStatus { idle, loading, error }
@@ -18,11 +19,16 @@ class PendingInAppRoute {
     required this.route,
     this.reviewNotes = const [],
     this.handoffTarget,
+    this.verification,
   });
 
   final ImportedRoute route;
   final List<String> reviewNotes;
   final NavigationTarget? handoffTarget;
+
+  /// What checking the planned route against the rider's preferences found, to
+  /// be shown on the route review (#840).
+  final RouteVerification? verification;
 }
 
 /// Tracks a GPX file the platform has handed to the app via "Open in..." /
@@ -117,11 +123,13 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   void stagePendingInAppRoute(
     ImportedRoute route, {
     List<String> reviewNotes = const [],
+    RouteVerification? verification,
   }) {
     _pending = null;
     _pendingInAppRoute = PendingInAppRoute(
       route: route,
       reviewNotes: List.unmodifiable(reviewNotes),
+      verification: verification,
     );
     notifyListeners();
   }

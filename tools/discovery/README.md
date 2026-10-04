@@ -199,6 +199,14 @@ would mislead a rider planning a route.
   means nobody has mapped it. 919 of 2,085 published candidates are `unknown`. Never
   guess a limit from road class — #145 was caused by trusting a value that never held
   what the code expected.
+- **A restricted road is 30 mph only where the law says so.** `GB:nsl_restricted` was
+  mapped to 30 mph everywhere; since 17 September 2023 it is 20 mph in Wales (#852).
+  The generator has no administrative-boundary data, and `review_region` is an
+  explicitly coarse review bucket (its Wales core contains Hoylake), so Wales cannot be
+  recognised. What can be shown is that a road is *not* Welsh: a restricted road wholly
+  outside `WALES_ENVELOPE` - every part of Wales and a margin of England - is 30 mph,
+  and one touching it is `unknown` with a note saying why. An explicit `maxspeed` tag is
+  believed wherever the road is, so a Welsh road returned to 30 and mapped 30 stays 30.
 - **Absent enforcement data is not absence of enforcement.** Only one candidate
   matches an OSM `enforcement=average_speed` relation, yet the A57 Snake Pass has
   published average speed camera proposals that OSM does not record. Every

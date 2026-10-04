@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../controllers/distance_unit_controller.dart';
@@ -10,7 +12,10 @@ import '../../domain/completed_ride.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../services/global_ride_heatmap.dart';
 import '../../services/basemap_configuration.dart';
+import '../../services/ride_diagnostics_sharer.dart';
 import '../../services/ride_summary_exporter.dart';
+import '../../services/transport_evidence_ledger.dart';
+import '../../services/transport_evidence_presentation.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
 import 'ride_recap_screen.dart';
@@ -29,6 +34,8 @@ class EndedRideScreen extends StatefulWidget {
     this.onSetAside,
     this.relayCanCarryReopen = true,
     this.diagnostics,
+    this.diagnosticsSharer = shareRideDiagnosticsFile,
+    this.transportEvidence,
     this.completedRideStore,
     this.globalRideHeatmap,
   });
@@ -64,6 +71,15 @@ class EndedRideScreen extends StatefulWidget {
   /// summary** — the obvious button once a ride is over — the one door that
   /// silently dropped the evidence.
   final Future<String?> Function()? diagnostics;
+
+  /// Shares the log on its own. A group ride's log used to leave the phone only
+  /// bundled into **Share ride summary** or from Settings, while a solo Where To
+  /// ride offered it by name; this is the same named door (#855).
+  final RideDiagnosticsFileSharer diagnosticsSharer;
+
+  /// Which route delivered each update from the other riders (#855). Present in
+  /// a group ride; it is what the Bluetooth verdict below is built from.
+  final TransportEvidenceLedger? transportEvidence;
   final CompletedRideStore? completedRideStore;
   final GlobalRideHeatmapController? globalRideHeatmap;
 
@@ -81,7 +97,43 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _prepareRatings();
       _prepareHeatmapContribution();
+      unawaited(_prepareDiagnostics());
     });
+  }
+
+  /// Whether a recorded log exists for this ride, so the button for it is only
+  /// offered when there is something behind it.
+  bool _hasDiagnostics = false;
+
+  Future<void> _prepareDiagnostics() async {
+    try {
+      final text = await widget.diagnostics?.call();
+      if (!mounted || text == null || text.isEmpty) return;
+      setState(() => _hasDiagnostics = true);
+    } on Object {
+      // No log is offered, which is what a rider who recorded nothing sees too.
+    }
+  }
+
+  Future<void> _shareDiagnostics(BuildContext context) async {
+    final renderObject = context.findRenderObject();
+    final origin = renderObject is RenderBox && renderObject.hasSize
+        ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+        : null;
+    try {
+      final text = await widget.diagnostics?.call();
+      if (text == null || text.isEmpty) return;
+      await widget.diagnosticsSharer(
+        fileName: rideDiagnosticsFileName(widget.controller.session!.rideCode),
+        text: text,
+        sharePositionOrigin: origin,
+      );
+    } on Object catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not share the diagnostics: $error')),
+      );
+    }
   }
 
   CompletedRide? _completedRide;
@@ -397,8 +449,22 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
           label: const Text('Back to the map'),
         ),
         const SizedBox(height: 18),
+        // First, above the two cards that describe the links as they are now: this
+        // is what the ride showed (#855).
+        if (widget.transportEvidence case final evidence?) ...[
+          _BluetoothVerdictCard(
+            evidence: evidence,
+            nearbyRelayController: widget.nearbyRelayController,
+            internetRelayController: widget.internetRelayController,
+            rideStartedAt: widget.controller.rideStartedAt,
+          ),
+          const SizedBox(height: 12),
+        ],
         if (widget.nearbyRelayController case final nearby?) ...[
-          RelayStatusCard(controller: nearby),
+          RelayStatusCard(
+            controller: nearby,
+            evidence: widget.transportEvidence,
+          ),
           const SizedBox(height: 12),
         ],
         if (widget.internetRelayController case final internet?) ...[
@@ -412,6 +478,17 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
           icon: const Icon(Icons.ios_share),
           label: const Text('Share ride summary'),
         ),
+        // The log by itself, named, the way a solo Where To ride offers it. Only
+        // when one was recorded (#855).
+        if (_hasDiagnostics) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const Key('share-ride-diagnostics-button'),
+            onPressed: () => unawaited(_shareDiagnostics(context)),
+            icon: const Icon(Icons.bug_report_outlined),
+            label: const Text('Share ride diagnostics'),
+          ),
+        ],
         const SizedBox(height: 12),
         OutlinedButton.icon(
           key: const Key('share-recap-image-entry-button'),
@@ -489,4 +566,71 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     2000 => '2 km',
     _ => '$meters m',
   };
+}
+
+/// What the ride showed about phone-to-phone sharing, in plain words (#855).
+///
+/// Diagnostic evidence, not a product claim: it says what arrived over the direct
+/// link on this ride and nothing about how well a mesh would work. It refreshes
+/// whenever either link reports, because the ended ride's relays keep running to
+/// deliver the last events.
+class _BluetoothVerdictCard extends StatelessWidget {
+  const _BluetoothVerdictCard({
+    required this.evidence,
+    required this.nearbyRelayController,
+    required this.internetRelayController,
+    required this.rideStartedAt,
+  });
+
+  final TransportEvidenceLedger evidence;
+  final NearbyRelayController? nearbyRelayController;
+  final InternetRelayController? internetRelayController;
+  final DateTime? rideStartedAt;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([
+      ?nearbyRelayController,
+      ?internetRelayController,
+    ]),
+    builder: (context, _) {
+      final wording = bluetoothVerdictWording(
+        evidence.verdict(),
+        status: nearbyRelayController?.status,
+        rideStartedAt: rideStartedAt,
+      );
+      return Card(
+        key: const Key('bluetooth-verdict-card'),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Bluetooth peer-to-peer',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                wording.headline,
+                key: const Key('bluetooth-verdict-text'),
+                style: const TextStyle(height: 1.4),
+              ),
+              for (final detail in wording.details)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    detail,
+                    style: const TextStyle(
+                      color: Color(0xFFABB5C1),
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }

@@ -10,7 +10,10 @@ import 'package:ride_relay/services/navigation_guidance.dart';
 import 'package:ride_relay/services/road_jurisdiction.dart';
 import 'package:ride_relay/services/road_routing.dart';
 import 'package:ride_relay/services/route_geometry_enricher.dart';
+import 'package:ride_relay/services/route_attribute_provider.dart';
 import 'package:ride_relay/services/route_reshape_planner.dart';
+import 'package:ride_relay/services/route_verification.dart';
+import 'package:ride_relay/services/verified_road_routing.dart';
 
 /// #839: shaping points were announced as destinations. Live OSRM, asked to
 /// route Usk to Chepstow through one control, returns two legs and an arrival
@@ -142,6 +145,63 @@ void main() {
         ]);
       },
     );
+  });
+
+  test(
+    'a checking service over an engine that cannot pass through still drops '
+    'the shaping arrival and keeps what the check found (#839, #840)',
+    () async {
+      final routing = VerifiedRoadRoutingService(
+        routing: _StopOnlyRoutingService([
+          _maneuver('depart', start),
+          _maneuver('arrive', shaping),
+          _maneuver('depart', shaping),
+          _maneuver('turn', const GeoPoint(latitude: 51.7, longitude: -2.885)),
+          _maneuver('arrive', cafe),
+          _maneuver('depart', cafe),
+          _maneuver('arrive', finish),
+        ]),
+        verifier: const RouteVerifier(attributes: _UncheckableAttributes()),
+      );
+
+      final result = await routeThroughWithShaping(
+        routing,
+        const [start, shaping, cafe, finish],
+        shapingPointIndexes: const {1},
+      );
+
+      expect(result.maneuvers.map((maneuver) => maneuver.type), [
+        'depart',
+        'turn',
+        'arrive',
+        'depart',
+        'arrive',
+      ]);
+      // The lookup failed, so the route must say it is unchecked rather than
+      // arrive with no verification at all.
+      expect(result.verification, isNotNull);
+    },
+  );
+
+  test('dropping shaping arrivals from a stop-only engine keeps what its check '
+      'found (#839, #840)', () async {
+    const found = RouteVerification.unchecked(RoutePreferences());
+    final result = await routeThroughWithShaping(
+      _StopOnlyRoutingService([
+        _maneuver('depart', start),
+        _maneuver('arrive', shaping),
+        _maneuver('depart', shaping),
+        _maneuver('arrive', finish),
+      ], verification: found),
+      const [start, shaping, finish],
+      shapingPointIndexes: const {1},
+    );
+
+    expect(result.maneuvers.map((maneuver) => maneuver.type), [
+      'depart',
+      'arrive',
+    ]);
+    expect(result.verification, same(found));
   });
 
   test('a saved route never announces a leg end that is not a stop', () {
@@ -331,9 +391,10 @@ Map<String, Object?> _twoLegResponse(
 
 /// An engine with no way to pass through a control: every control is a stop.
 class _StopOnlyRoutingService implements RoadRoutingService {
-  _StopOnlyRoutingService(this.maneuvers);
+  _StopOnlyRoutingService(this.maneuvers, {this.verification});
 
   final List<RoadRouteManeuver> maneuvers;
+  final RouteVerification? verification;
 
   @override
   Future<RoadRouteResult> routeThrough(
@@ -345,6 +406,7 @@ class _StopOnlyRoutingService implements RoadRoutingService {
     distanceMeters: 2100,
     duration: const Duration(minutes: 3),
     maneuvers: maneuvers,
+    verification: verification,
   );
 }
 
@@ -411,3 +473,11 @@ const _gpxWithShapingAndVia = '''
   </rte>
 </gpx>
 ''';
+
+class _UncheckableAttributes implements RouteAttributeProvider {
+  const _UncheckableAttributes();
+
+  @override
+  Future<RouteTrace> trace(List<GeoPoint> route) =>
+      throw const RouteAttributeException('lookup unavailable in this test');
+}

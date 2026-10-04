@@ -1,6 +1,7 @@
 import '../domain/imported_route.dart';
 import 'road_routing.dart';
 import 'route_reshape_planner.dart';
+import 'route_verification.dart';
 
 class RouteGeometryEnrichment {
   const RouteGeometryEnrichment({
@@ -8,12 +9,18 @@ class RouteGeometryEnrichment {
     required this.attempted,
     required this.snappedPathCount,
     this.warning,
+    this.verification,
   });
 
   final ImportedRoute route;
   final bool attempted;
   final int snappedPathCount;
   final String? warning;
+
+  /// What checking the re-snapped geometry against the route's preferences
+  /// found, or null when nothing was re-snapped or the routing service does not
+  /// check its routes (#840).
+  final RouteVerification? verification;
 
   bool get changed => snappedPathCount > 0;
 }
@@ -33,6 +40,7 @@ class RouteGeometryEnricher {
     var attempted = false;
     var snapped = 0;
     String? warning;
+    final verifications = <RouteVerification>[];
 
     for (final path in route.paths) {
       if (path.kind != RoutePathKind.route || path.points.length < 2) {
@@ -67,6 +75,9 @@ class RouteGeometryEnricher {
         );
         maneuvers.addAll(result.maneuvers);
         snapped += 1;
+        if (result.verification case final verification?) {
+          verifications.add(verification);
+        }
       } on Object catch (error) {
         paths.add(path);
         warning ??= 'Could not match every GPX route point to roads: $error';
@@ -96,6 +107,9 @@ class RouteGeometryEnricher {
         );
         maneuvers.addAll(result.maneuvers);
         snapped += 1;
+        if (result.verification case final verification?) {
+          verifications.add(verification);
+        }
       } on Object catch (error) {
         warning = 'Could not match GPX waypoints to roads: $error';
       }
@@ -132,6 +146,7 @@ class RouteGeometryEnricher {
       attempted: attempted,
       snappedPathCount: snapped,
       warning: warning,
+      verification: RouteVerification.merge(verifications),
     );
   }
 }

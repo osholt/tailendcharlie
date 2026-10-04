@@ -50,15 +50,41 @@ Recorded:
 - `RIDDEN`: the heading change the bike actually made through that junction;
 - each spoken prompt, with the distance to the junction when it fired;
 - enforcement warnings arming and clearing, and how they cleared;
-- route recalculations.
+- route recalculations;
+- **how updates reached this phone (`TRANSPORT`, #855)**, in a group ride; see below.
 
 Not recorded, deliberately:
 
 - **any other rider's position.** Someone else's data.
+- **any rider's name, Bluetooth device name or endpoint id.** Other phones are
+  `phone A`, `phone B` in the order they were first seen;
 - ride secrets, invite secrets, join tokens, bearer tokens;
 - emergency-contact or ICE detail.
 
 The same exclusions `testControlForbiddenActions` documents, for the same reasons.
+
+## Transport evidence: did phone-to-phone sharing work? (#855)
+
+A group ride's log answers a second question, the one the 4 October ride could not:
+was another rider's position delivered by the phone signal or by the direct
+phone-to-phone link? The ride service is always listening, so a good signal hides
+the direct link; the log therefore records **which route delivered each update and
+which was first**, as `TRANSPORT` lines:
+
+| Line | When it is written |
+| --- | --- |
+| `bluetooth searching  0 phones` | the direct link's state changes, with the number of phones; also a new platform problem on the same state |
+| `bluetooth peer connected  phone A  (1 phone now)` | a phone joins the link; `peer lost` when one goes |
+| `internet sync ok` / `internet sync failing  retrying` | the ride service starts failing, and `(recovered after N failed attempts, S s)` when it answers again. Only the transitions: a phone with no signal does not write a line per retry |
+| `bluetooth summary` / `internet summary` | about once a minute: `events` received over that route, `first` (delivered before the other route did), `presence` (live-position updates) and the age of the **least recently heard** rider, each with the change since the previous summary in brackets |
+| `verdict` | once, as the ride ends: the same sentence the ride-ended screen shows |
+
+Peers are labelled per **connection**: the platform's endpoint ids change on
+reconnection, so `phone C` can be `phone A` again after it dropped out. Counts and
+times only; free text from a platform message has any endpoint id or rider name
+replaced before it is written. How to read these lines, and the airplane-mode check
+that settles the question, are in
+[field-test-plan.md](field-test-plan.md#proving-bluetooth-peer-to-peer).
 
 ## Reading it
 
@@ -116,7 +142,8 @@ includes Mail.
 
 | Where | What it gives |
 | --- | --- |
-| **Settings → Recorded rides** | The log on its own, for any of the last few recorded rides. Works from anywhere, at any time, including long after the ride. |
+| **Settings → Recorded rides** | The log on its own, for any of the last few recorded rides. Works from anywhere, at any time, including long after the ride. A Where To navigation is listed as **Where To navigation**, a ride by its code. |
+| **Ride ended → Share ride diagnostics** | The group (or solo) ride's log on its own, by name, the way a Where To ride offers its own. Only shown when the ride was recorded. |
 | **Ride ended → Share ride summary** | The log beside the summary CSV and the GPX track. |
 | **Ride menu → Share ride summary**, mid-ride | The same three, while still riding. |
 | **End this ride? → Share summary** | The same three. Ride leader only. |
@@ -142,9 +169,24 @@ those doors, and the rider used a different one (#456).
   or the battery flat still leaves a file. Writes are coalesced — one at a time,
   with a single follow-up covering anything recorded while one was in flight — so a
   burst of entries costs one extra write rather than one each.
-- `FileRideDiagnosticsLogStore.maximumRetainedLogs` rides are kept and the oldest
-  dropped. Bounded because a log holds a route, and keeping every one forever would
-  quietly accumulate a location history the rider never asked for.
+- `FileRideDiagnosticsLogStore.maximumRetainedLogs` **rides** are kept and the
+  oldest dropped, and `maximumRetainedPersonalLogs` **Where To navigations**
+  separately. Bounded because a log holds a route, and keeping every one forever
+  would quietly accumulate a location history the rider never asked for. They are
+  counted apart because every Where To navigation writes a log, and an afternoon
+  of replanning legs writes enough of them to push a group ride's log out of one
+  shared pool of five (#855).
+- **A ride's log is continued, not replaced, when its screen is rebuilt.** The log
+  is stored whole under the ride id and the recorder lives with the ride screen.
+  Stepping away from a running ride and rejoining it, or a relaunch mid-ride, builds
+  a new recorder; it now reads the stored log back first (the writer waits for
+  that), carries the earlier entries in front of its own and marks the join with
+  `recording continued`. Before this the new recorder's first write replaced the
+  file, so a long group ride with a café stop in it kept only its last stretch.
+- **A ride that has already ended is not recorded again.** The ride-ended screen
+  returns after an app relaunch with a new shell under it; starting a recorder
+  there rewrote the stored log of the finished ride with its own two lines
+  (`recording started`, `ride completed`). It reads the stored log instead.
 - Ordering comes from the `Written:` line in the log's own header, **not** from the
   file's modification time, which has one-second resolution: two logs written in
   the same second tie, and a tie makes the sort order arbitrary. That is invisible

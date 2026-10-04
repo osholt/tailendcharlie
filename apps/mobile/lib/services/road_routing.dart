@@ -11,6 +11,7 @@ import 'measurement_formatter.dart';
 import 'road_jurisdiction.dart';
 import 'route_origin_bearing.dart';
 import 'route_twistiness.dart';
+import 'route_verification.dart';
 
 class RoutingConfiguration {
   const RoutingConfiguration({
@@ -63,6 +64,24 @@ class RoutingConfiguration {
   /// Valhalla `trace_route`, used to turn an imported GPX track into road
   /// geometry with real manoeuvres. See [ValhallaImportedTrackMatcher].
   final Uri trackMatchingUrl;
+
+  /// Valhalla `trace_attributes`, which says what a planned route is made of:
+  /// the way, its use, its surface and its road class (#840).
+  ///
+  /// Derived from the motorcycle route URL rather than configured separately,
+  /// for the same reason as [trackMatchingUrl]: a self-hosted deployment cannot
+  /// end up checking routes on one host and planning them on another.
+  Uri get routeAttributesUrl {
+    final segments = motorcycleRoutingUrl.pathSegments
+        .where((segment) => segment.isNotEmpty)
+        .toList(growable: false);
+    return motorcycleRoutingUrl.replace(
+      pathSegments: [
+        ...segments.take(math.max(0, segments.length - 1)),
+        'trace_attributes',
+      ],
+    );
+  }
 }
 
 class RoadRouteResult {
@@ -73,6 +92,7 @@ class RoadRouteResult {
     this.maneuvers = const [],
     this.twistinessScore,
     this.preferences,
+    this.verification,
   });
 
   final List<GeoPoint> points;
@@ -87,6 +107,22 @@ class RoadRouteResult {
   /// What the route was actually planned for. Null when the caller asked for
   /// nothing in particular.
   final RoutePreferences? preferences;
+
+  /// What checking this route against [preferences] found. Null when the route
+  /// was not checked, which is the case for every route an engine returns; it
+  /// is set by `VerifiedRoadRoutingService`.
+  final RouteVerification? verification;
+
+  RoadRouteResult withVerification(RouteVerification? verification) =>
+      RoadRouteResult(
+        points: points,
+        distanceMeters: distanceMeters,
+        duration: duration,
+        maneuvers: maneuvers,
+        twistinessScore: twistinessScore,
+        preferences: preferences,
+        verification: verification,
+      );
 }
 
 /// A routing-provider failure with enough structure for a planner to explain
@@ -477,6 +513,9 @@ Future<RoadRouteResult> routeThroughWithShaping(
     maneuvers: withoutShapingLegEnds(result.maneuvers, shapingPointIndexes),
     twistinessScore: result.twistinessScore,
     preferences: result.preferences,
+    // A checking service reports what it found on the route it returned; the
+    // shaping arrivals removed above do not change that route (#840).
+    verification: result.verification,
   );
 }
 
@@ -535,6 +574,28 @@ abstract interface class MotorcycleCostingRoadRoutingService {
 abstract interface class StandardCostingRoadRoutingService {
   Future<RoadRouteResult> routeThroughStandard(
     List<GeoPoint> waypoints, {
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  });
+}
+
+/// Optional capability for a service that can be told which roads not to use.
+///
+/// A planned route is checked against what the rider asked for, and a stretch
+/// that breaks it is excluded by position and the route asked for again (#840).
+/// Only Valhalla can do that (`exclude_locations`); OSRM's public instance has
+/// no equivalent, so a service without this capability can only report.
+abstract interface class ExclusionRoadRoutingService {
+  /// Routes through [waypoints] without using the edges at [excludeLocations].
+  ///
+  /// Each location excludes the single road edge nearest to it. Everything else
+  /// is as for [RoadRoutingService.routeThrough] and
+  /// [ShapingPointRoadRoutingService.routeThroughShapingPoints].
+  Future<RoadRouteResult> routeThroughExcluding(
+    List<GeoPoint> waypoints, {
+    required List<GeoPoint> excludeLocations,
+    Set<int>? shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
     RoutePreferences? preferences,
     double? originBearingDegrees,
   });
@@ -1058,7 +1119,8 @@ class ValhallaMotorcycleRoutingService
     implements
         RoadRoutingService,
         MotorcycleCostingRoadRoutingService,
-        ShapingPointRoadRoutingService {
+        ShapingPointRoadRoutingService,
+        ExclusionRoadRoutingService {
   const ValhallaMotorcycleRoutingService({
     required this.client,
     required this.routeUrl,
@@ -1118,12 +1180,30 @@ class ValhallaMotorcycleRoutingService
     originBearingDegrees: originBearingDegrees,
   );
 
+  @override
+  Future<RoadRouteResult> routeThroughExcluding(
+    List<GeoPoint> waypoints, {
+    required List<GeoPoint> excludeLocations,
+    Set<int>? shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) => _routeThrough(
+    waypoints,
+    shapingPointIndexes: shapingPointIndexes,
+    shapingPointSearchRadiusMeters: shapingPointSearchRadiusMeters,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+    excludeLocations: excludeLocations,
+  );
+
   Future<RoadRouteResult> _routeThrough(
     List<GeoPoint> waypoints, {
     Set<int>? shapingPointIndexes,
     double shapingPointSearchRadiusMeters = 0,
     RoutePreferences? preferences,
     double? originBearingDegrees,
+    List<GeoPoint> excludeLocations = const [],
   }) async {
     if (waypoints.length < 2) {
       throw const FormatException('At least two route points are required.');
@@ -1158,6 +1238,14 @@ class ValhallaMotorcycleRoutingService
       'costing_options': {
         'motorcycle': resolved.valhallaMotorcycleCostingOptions(),
       },
+      // Valhalla excludes the one edge nearest each location. A stretch a
+      // planned route was found to use against the rider's preferences is asked
+      // for again without it (#840).
+      if (excludeLocations.isNotEmpty)
+        'exclude_locations': [
+          for (final location in excludeLocations)
+            {'lat': location.latitude, 'lon': location.longitude},
+        ],
       'units': 'kilometers',
       'directions_options': {'units': 'kilometers'},
     };
@@ -1459,7 +1547,8 @@ class PreferenceAwareRoadRoutingService
         RoadRoutingService,
         MotorcycleCostingRoadRoutingService,
         StandardCostingRoadRoutingService,
-        ShapingPointRoadRoutingService {
+        ShapingPointRoadRoutingService,
+        ExclusionRoadRoutingService {
   const PreferenceAwareRoadRoutingService({
     required this.osrm,
     required this.motorcycle,
@@ -1526,6 +1615,32 @@ class PreferenceAwareRoadRoutingService
     preferences: preferences,
     originBearingDegrees: originBearingDegrees,
   );
+
+  /// Always Valhalla: OSRM cannot be told which roads not to use.
+  @override
+  Future<RoadRouteResult> routeThroughExcluding(
+    List<GeoPoint> waypoints, {
+    required List<GeoPoint> excludeLocations,
+    Set<int>? shapingPointIndexes,
+    double shapingPointSearchRadiusMeters = 0,
+    RoutePreferences? preferences,
+    double? originBearingDegrees,
+  }) {
+    final service = motorcycle;
+    if (service is! ExclusionRoadRoutingService) {
+      throw const RoadRoutingException(
+        'This motorcycle router cannot exclude roads.',
+      );
+    }
+    return (service as ExclusionRoadRoutingService).routeThroughExcluding(
+      waypoints,
+      excludeLocations: excludeLocations,
+      shapingPointIndexes: shapingPointIndexes,
+      shapingPointSearchRadiusMeters: shapingPointSearchRadiusMeters,
+      preferences: preferences,
+      originBearingDegrees: originBearingDegrees,
+    );
+  }
 
   @override
   Future<RoadRouteResult> routeThroughShapingPoints(
@@ -1776,6 +1891,7 @@ class DestinationRoutePlanner {
       duration: roadRoute.duration,
       twistinessScore: roadRoute.twistinessScore,
       warnings: List.unmodifiable(warnings),
+      verification: roadRoute.verification,
     );
   }
 
@@ -1809,6 +1925,7 @@ class DestinationRoutePlan {
     required this.duration,
     this.twistinessScore,
     this.warnings = const [],
+    this.verification,
   });
 
   final ImportedRoute route;
@@ -1819,6 +1936,11 @@ class DestinationRoutePlan {
   /// planner shows for the same geometry.
   final double? twistinessScore;
   final List<String> warnings;
+
+  /// What checking the route against the rider's preferences found, or null
+  /// when it was not checked. Kept apart from [warnings] so the review can
+  /// replace it when the route changes under it (#840).
+  final RouteVerification? verification;
 }
 
 /// Replaces an engine's per-step traffic-side claim with the country fact.

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/ride_diagnostics_controller.dart';
+import 'package:ride_relay/data/ride_diagnostics_log_store.dart';
 import 'package:ride_relay/features/settings/ride_diagnostics_section.dart';
 import 'package:ride_relay/services/ride_diagnostics_configuration.dart';
 
@@ -56,6 +57,50 @@ void main() {
           find.textContaining('Nothing is sent anywhere until you choose'),
           findsOneWidget,
         );
+      });
+
+      testWidgets('says the log also counts how updates reached this phone', (
+        tester,
+      ) async {
+        await pumpSection(tester, RideDiagnosticsController.inMemory());
+
+        // #855: the log now carries counts of which route delivered updates from
+        // other riders, so the row that says what is recorded has to say so.
+        expect(
+          find.textContaining(
+            'how updates from other riders reached this phone',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('no rider’s name'), findsOneWidget);
+      });
+
+      testWidgets('lists a Where To navigation by name and a ride by its code', (
+        tester,
+      ) async {
+        final store = InMemoryRideDiagnosticsLogStore();
+        await store.write(
+          rideId: 'where-to',
+          text:
+              'Tail End Charlie · ride diagnostics\nRide:  PERSONAL\n'
+              'Written: 2026-10-04T13:45:40.000Z\n',
+        );
+        await store.write(
+          rideId: 'group-ride',
+          text:
+              'Tail End Charlie · ride diagnostics\nRide:  123456\n'
+              'Written: 2026-10-04T10:00:00.000Z\n',
+        );
+        await pumpSection(
+          tester,
+          RideDiagnosticsController.inMemory(logStore: store),
+        );
+        await tester.pumpAndSettle();
+
+        // Five identical "PERSONAL" rows is how a group ride's log went unnoticed.
+        expect(find.text('Where To navigation'), findsOneWidget);
+        expect(find.text('Ride 123456'), findsOneWidget);
+        expect(find.text('PERSONAL'), findsNothing);
       });
 
       testWidgets('the switch turns recording on', (tester) async {
