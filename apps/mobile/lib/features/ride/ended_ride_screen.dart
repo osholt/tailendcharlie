@@ -11,9 +11,11 @@ import '../../controllers/road_rating_controller.dart';
 import '../../domain/completed_ride.dart';
 import '../../domain/completed_ride_store.dart';
 import '../../domain/ride_alert_record.dart';
+import '../../domain/ride_broadcast_record.dart';
 import '../../services/global_ride_heatmap.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/ride_alert_log.dart';
+import '../../services/ride_broadcast_log.dart';
 import '../../services/ride_diagnostics_sharer.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/transport_evidence_ledger.dart';
@@ -21,6 +23,7 @@ import '../../services/transport_evidence_presentation.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
 import 'ride_alerts_card.dart';
+import 'ride_broadcasts_card.dart';
 import 'ride_recap_screen.dart';
 import 'road_rating_card.dart';
 
@@ -200,6 +203,18 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
     final session = widget.controller.session;
     if (session == null) return const [];
     return const RideAlertLogReducer().fromEvents(
+      rideId: session.rideId,
+      inviteSecret: session.inviteSecret,
+      events: widget.controller.events,
+      localRiderId: session.localRiderId,
+    );
+  }
+
+  /// What the leader told the group, from the same journal (#854).
+  List<RideBroadcastRecord> get _broadcasts {
+    final session = widget.controller.session;
+    if (session == null) return const [];
+    return const RideBroadcastLogReducer().fromEvents(
       rideId: session.rideId,
       inviteSecret: session.inviteSecret,
       events: widget.controller.events,
@@ -494,6 +509,11 @@ class _EndedRideScreenState extends State<EndedRideScreen> {
         // what carry the same list away.
         if (_alerts case final alerts when alerts.isNotEmpty) ...[
           RideAlertsCard(alerts: alerts),
+          const SizedBox(height: 18),
+        ],
+        // What the leader told the group (#854).
+        if (_broadcasts case final broadcasts when broadcasts.isNotEmpty) ...[
+          RideBroadcastsCard(broadcasts: broadcasts),
           const SizedBox(height: 18),
         ],
         FilledButton.icon(

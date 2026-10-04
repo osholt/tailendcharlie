@@ -29,6 +29,7 @@ import '../map/resolved_route_map_preview.dart'
     show embeddedMapGestureRecognizers;
 import '../map/stored_route_picker.dart';
 import 'ride_alerts_card.dart';
+import 'ride_broadcasts_card.dart';
 import 'ride_recap_screen.dart';
 
 class PreviousRidesScreen extends StatelessWidget {
@@ -299,6 +300,11 @@ class _PreviousRideDetailScreenState extends State<PreviousRideDetailScreen> {
           if (ride.alerts.isNotEmpty) ...[
             const SizedBox(height: 12),
             RideAlertsCard(alerts: ride.alerts),
+          ],
+          // What the leader told the group (#854).
+          if (ride.broadcasts.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            RideBroadcastsCard(broadcasts: ride.broadcasts),
           ],
           const SizedBox(height: 12),
           FilledButton.icon(

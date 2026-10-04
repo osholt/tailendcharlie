@@ -90,6 +90,7 @@ import 'circular_ride_sheet.dart';
 import 'discovery_layer_visibility.dart';
 import 'discovery_road_sheet.dart';
 import 'hazard_map_symbol.dart';
+import 'leader_broadcast_sheet.dart';
 import 'map_camera_guard.dart';
 import 'maneuver_list_screen.dart';
 import 'maneuver_symbol.dart';
@@ -477,6 +478,7 @@ class RideMapFeature extends StatefulWidget {
     this.initialRouteStartConnector,
     this.onRouteStartConnectorChanged,
     this.onReportHazard,
+    this.onLeaderBroadcast,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
@@ -549,6 +551,7 @@ class RideMapFeature extends StatefulWidget {
     ImportedRoute? initialRouteStartConnector,
     ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged,
     Future<void> Function(HazardType type)? onReportHazard,
+    Future<void> Function(QuickMessage message)? onLeaderBroadcast,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
     Future<void> Function(QuickMessage message)? onEmergencyIssue,
@@ -615,6 +618,7 @@ class RideMapFeature extends StatefulWidget {
     onDismissQuickMessageInterrupt: onDismissQuickMessageInterrupt,
     onDismissQuickMessageReceipt: onDismissQuickMessageReceipt,
     onReportHazard: onReportHazard,
+    onLeaderBroadcast: onLeaderBroadcast,
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
     onEmergencyIssue: onEmergencyIssue,
@@ -715,6 +719,12 @@ class RideMapFeature extends StatefulWidget {
   final ImportedRoute? initialRouteStartConnector;
   final ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged;
   final Future<void> Function(HazardType type)? onReportHazard;
+
+  /// Sends one of the leader's broadcasts to the group (#854). Non-null only on the
+  /// leader's phone, for a running group ride; the map offers the control exactly
+  /// when this is there, and the shell decides that with
+  /// `leaderBroadcastsAvailable`.
+  final Future<void> Function(QuickMessage message)? onLeaderBroadcast;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
@@ -910,6 +920,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onDismissQuickMessageInterrupt: widget.onDismissQuickMessageInterrupt,
         onDismissQuickMessageReceipt: widget.onDismissQuickMessageReceipt,
         onReportHazard: widget.onReportHazard,
+        onLeaderBroadcast: widget.onLeaderBroadcast,
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
         onEmergencyIssue: widget.onEmergencyIssue,
@@ -1002,6 +1013,7 @@ class RideMapScreen extends StatefulWidget {
     this.onDismissQuickMessageInterrupt,
     this.onDismissQuickMessageReceipt,
     this.onReportHazard,
+    this.onLeaderBroadcast,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
@@ -1119,6 +1131,12 @@ class RideMapScreen extends StatefulWidget {
   final ValueChanged<String>? onDismissQuickMessageInterrupt;
   final ValueChanged<String>? onDismissQuickMessageReceipt;
   final Future<void> Function(HazardType type)? onReportHazard;
+
+  /// Sends one of the leader's broadcasts to the group (#854). Non-null only on the
+  /// leader's phone, for a running group ride; the map offers the control exactly
+  /// when this is there, and the shell decides that with
+  /// `leaderBroadcastsAvailable`.
+  final Future<void> Function(QuickMessage message)? onLeaderBroadcast;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
@@ -1416,6 +1434,9 @@ class _RideMapScreenState extends State<RideMapScreen>
   bool _alertSending = false;
   bool _alertSent = false;
   Timer? _alertSentTimer;
+  // The leader's broadcast list is open (#854), so the button cannot stack a
+  // second sheet over it.
+  bool _broadcastSheetOpen = false;
   bool _emergencyActionsOpen = false;
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
@@ -3240,8 +3261,20 @@ class _RideMapScreenState extends State<RideMapScreen>
               onPressed: _alertSending ? null : _raiseAlert,
               sent: _alertSent,
             );
+      // The leader's list of one-tap broadcasts (#854): present only for the
+      // leader of a running group ride, and beside REPORT because it is the same
+      // kind of thing - a glove-sized ride action, not a route action.
+      final broadcastButton =
+          !widget.rideStarted || widget.onLeaderBroadcast == null
+          ? null
+          : LeaderBroadcastButton(
+              onPressed: _broadcastSheetOpen ? null : _openLeaderBroadcasts,
+            );
       final hasActions =
-          sosButton != null || leaveButton != null || reportButton != null;
+          sosButton != null ||
+          leaveButton != null ||
+          reportButton != null ||
+          broadcastButton != null;
       // One arrangement per orientation, fixed for every state (#142). #139 used
       // a `Wrap` in landscape, and a `Wrap` decides its runs from its children's
       // measured widths - so the moment SOS said "ALERT SENT" the rail could no
@@ -3258,7 +3291,17 @@ class _RideMapScreenState extends State<RideMapScreen>
       final leaveSubtree = leaveButton == null || actionTargetHeight == null
           ? leaveButton
           : SizedBox(height: actionTargetHeight, child: leaveButton);
-      final reportSubtree = reportButton;
+      final reportSubtree = reportButton == null || broadcastButton == null
+          ? (reportButton ?? broadcastButton)
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                reportButton,
+                const SizedBox(width: 8),
+                broadcastButton,
+              ],
+            );
       final safetyCluster = !hasActions
           ? null
           : landscape
@@ -8558,6 +8601,34 @@ class _RideMapScreenState extends State<RideMapScreen>
     }
   }
 
+  /// Opens the leader's broadcasts and sends the one they tap (#854).
+  ///
+  /// One tap on an option sends it and closes the list: no confirmation, because
+  /// the leader is riding and none of these is an emergency.
+  Future<void> _openLeaderBroadcasts() async {
+    final send = widget.onLeaderBroadcast;
+    if (send == null || _broadcastSheetOpen) return;
+    setState(() => _broadcastSheetOpen = true);
+    final QuickMessage? message;
+    try {
+      message = await showLeaderBroadcastSheet(context);
+    } finally {
+      if (mounted) setState(() => _broadcastSheetOpen = false);
+    }
+    if (message == null || !mounted) return;
+    try {
+      await send(message);
+      if (!mounted) return;
+      _showMessage('${message.label} sent to the group.');
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      _showMessage('Not sent. ${error.message}');
+    } on Object {
+      if (!mounted) return;
+      _showMessage('Not sent. Try again in a moment.');
+    }
+  }
+
   Future<void> _confirmEnableSpeedLimitDisplay() async {
     if (_speedLimitDisplay.enabled) return;
     final confirmed = await showDialog<bool>(
@@ -12288,6 +12359,12 @@ IconData quickMessageIcon(QuickMessage? message) => switch (message) {
   QuickMessage.emergencyStop => Icons.emergency_outlined,
   QuickMessage.allPassed => Icons.done_all_rounded,
   QuickMessage.resolved => Icons.task_alt_rounded,
+  // The leader's broadcasts (#854). Rounded where an older kind has the outlined
+  // glyph of the same thing, so the two are distinct symbols on both phones.
+  QuickMessage.wrongWay => Icons.u_turn_left_rounded,
+  QuickMessage.stoppedForFuel => Icons.local_gas_station_rounded,
+  QuickMessage.pullOver => Icons.local_parking_rounded,
+  QuickMessage.regroupNextStop => Icons.groups_rounded,
   // A kind only a newer build knows. The sender's own label still reads, so the
   // row says what they said with a neutral symbol rather than nothing at all.
   null => Icons.campaign_outlined,

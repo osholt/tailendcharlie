@@ -11,6 +11,7 @@ import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/geo_point.dart' as awareness;
 import 'package:ride_relay/domain/hazard.dart';
+import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/features/ride/ended_ride_screen.dart';
@@ -274,6 +275,40 @@ void main() {
       expect(saved.alerts.map((record) => record.raisedBy), ['Nigel']);
       expect(saved.alerts.single.raisedAt.isAtSameMomentAs(at), isTrue);
     });
+  });
+
+  // #854: what the leader told the group, in the ride history.
+  testWidgets('lists what the leader told the group, with times (#854)', (
+    tester,
+  ) async {
+    final session = controller.session!;
+    // After the ride was created: a broadcast only counts from somebody who was
+    // already the leader at that point in the journal.
+    final at = DateTime.utc(2026, 7, 27, 12, 30, 5);
+    controller.ingestStoredEvent(
+      SituationEventFactory(
+        session: session,
+        clock: () => at,
+        idFactory: () => 'event-pull-over',
+      ).create(
+        type: RideEventType.statusMessage,
+        payload: {
+          'message': QuickMessage.pullOver.name,
+          'label': QuickMessage.pullOver.label,
+          'senderDisplayName': 'Oliver',
+        },
+        priority: EventPriority.important,
+      ),
+    );
+    await pumpScreen(tester);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('ride-broadcasts-card')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('1 leader message'), findsOneWidget);
+    expect(find.text('Oliver (you): Pull over'), findsOneWidget);
   });
 
   testWidgets('ending automatically archives the ride without a save prompt', (

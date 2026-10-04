@@ -5,6 +5,7 @@ import '../domain/ride_event.dart';
 import 'gpx_exporter.dart';
 import 'ride_event_authenticator.dart';
 import 'ride_lifecycle.dart';
+import 'ride_log_time.dart';
 
 /// Rebuilds the list of alerts a ride raised, from the signed journal (#849).
 ///
@@ -135,20 +136,14 @@ class RideAlertLogReducer {
 /// and neither should this.
 extension RideAlertRecordLabels on RideAlertRecord {
   /// `14:32:07`.
-  String get clockLabel => _clock(raisedAt.toLocal());
+  String get clockLabel => rideLogClock(raisedAt);
 
   /// `2026-10-04 14:32:07`. The one thing the copy button puts on the clipboard.
-  String get timestampLabel {
-    final local = raisedAt.toLocal();
-    return '${_date(local)} ${_clock(local)}';
-  }
+  String get timestampLabel => rideLogTimestamp(raisedAt);
 
   /// `2026-10-04 13:32:07 UTC`, for a ride reviewed in another time zone than it
   /// was ridden in.
-  String get utcLabel {
-    final utc = raisedAt.toUtc();
-    return '${_date(utc)} ${_clock(utc)} UTC';
-  }
+  String get utcLabel => rideLogUtc(raisedAt);
 
   /// `51.50012, -3.18012`: five decimal places, about a metre.
   String get positionLabel =>
@@ -164,20 +159,8 @@ extension RideAlertRecordLabels on RideAlertRecord {
 String rideAlertLogText(Iterable<RideAlertRecord> alerts) =>
     alerts.map((alert) => alert.summaryLine).join('\n');
 
-/// The name of the zone [moment] is shown in, such as `BST`, for the line that
-/// says what the times are in.
-String rideAlertTimeZoneLabel(DateTime moment) {
-  final local = moment.toLocal();
-  final offset = local.timeZoneOffset;
-  final sign = offset.isNegative ? '-' : '+';
-  final hours = offset.inHours.abs();
-  final minutes = offset.inMinutes.abs().remainder(60);
-  final utc = minutes == 0
-      ? 'UTC$sign$hours'
-      : 'UTC$sign$hours:${minutes.toString().padLeft(2, '0')}';
-  final name = local.timeZoneName;
-  return name.isEmpty || name == utc ? utc : '$name, $utc';
-}
+/// The name of the zone [moment] is shown in, such as `BST, UTC+1`.
+String rideAlertTimeZoneLabel(DateTime moment) => rideLogTimeZoneLabel(moment);
 
 /// The alerts as GPX waypoints, for [GpxExporter.export].
 ///
@@ -200,12 +183,3 @@ List<GpxAlertWaypoint> rideAlertGpxWaypoints(
           '${alert.timestampLabel} local time (${alert.utcLabel}).',
     ),
 ];
-
-String _two(int value) => value.toString().padLeft(2, '0');
-
-String _clock(DateTime moment) =>
-    '${_two(moment.hour)}:${_two(moment.minute)}:${_two(moment.second)}';
-
-String _date(DateTime moment) =>
-    '${moment.year.toString().padLeft(4, '0')}-${_two(moment.month)}-'
-    '${_two(moment.day)}';
