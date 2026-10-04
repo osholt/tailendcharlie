@@ -36,21 +36,27 @@ void main() {
       expect(slip.text, isNot(contains('straight')));
     });
 
-    test('the side comes from where the other road lies', () {
-      // Mirror image of Usk: the other road leaves eight degrees to the left.
-      final instruction = _instruction(
-        modifier: 'right',
-        before: 88,
-        after: 92,
-        junction: RouteJunction.tryCreate(
-          bearingsDegrees: const [91, 83, 274],
-          enterable: const [true, true, false],
-          takenIndex: 0,
-          approachIndex: 2,
-        ),
-      );
-      expect(instruction.direction, ManeuverDirection.slightRight);
-      expect(instruction.text, 'Keep right');
+    test('where the engine names no side, it comes from the other road', () {
+      // Mirror images of Usk with no modifier at all: the other road leaves
+      // eight degrees to one side, and the route keeps to the other.
+      for (final (other, side, text) in [
+        (83.0, ManeuverDirection.slightRight, 'Keep right'),
+        (99.0, ManeuverDirection.slightLeft, 'Keep left'),
+      ]) {
+        final instruction = _instruction(
+          modifier: null,
+          before: 88,
+          after: 92,
+          junction: RouteJunction.tryCreate(
+            bearingsDegrees: [91, other, 274],
+            enterable: const [true, true, false],
+            takenIndex: 0,
+            approachIndex: 2,
+          ),
+        );
+        expect(instruction.direction, side, reason: 'other road at $other');
+        expect(instruction.text, text, reason: 'other road at $other');
+      }
     });
 
     test('a slip road the engine called straight on still names its side', () {
@@ -73,21 +79,31 @@ void main() {
       expect(instruction.text, 'Take the exit slip road slight right');
     });
 
-    test('roads beside the route on both sides claim no side', () {
-      final instruction = _instruction(
+    test('roads beside the route on both sides claim no side of their own', () {
+      final middle = RouteJunction.tryCreate(
+        bearingsDegrees: const [89, 97, 70, 274],
+        enterable: const [true, true, true, false],
+        takenIndex: 0,
+        approachIndex: 3,
+      );
+      // The middle of three, and the engine named no side: nothing is read
+      // from the junction, and the existing rules decide as before.
+      final unstated = _instruction(
+        modifier: 'straight',
+        before: 92,
+        after: 88,
+        junction: middle,
+      );
+      expect(unstated.kind, ManeuverKind.turn);
+      expect(unstated.direction, ManeuverDirection.straight);
+      // Where the engine did name one, it is a fork and that is the side.
+      final stated = _instruction(
         modifier: 'left',
         before: 92,
         after: 88,
-        junction: RouteJunction.tryCreate(
-          bearingsDegrees: const [89, 97, 70, 274],
-          enterable: const [true, true, true, false],
-          takenIndex: 0,
-          approachIndex: 3,
-        ),
+        junction: middle,
       );
-      // The middle of three: the existing rules decide, as before.
-      expect(instruction.kind, ManeuverKind.turn);
-      expect(instruction.direction, ManeuverDirection.straight);
+      expect(stated.text, 'Keep left');
     });
 
     test('a turn into one of two side roads is still a turn', () {
@@ -140,10 +156,11 @@ void main() {
       expect(instruction.text, 'Turn slight right');
     });
 
-    test('a stated side is never turned into the opposite side', () {
+    test('the engine\'s side wins where it names one', () {
       // The engine says left; the only nearby road is also on the left, which
-      // would make this "keep right". The two disagree, so the junction does
-      // not get the casting vote and the ordinary rules stand.
+      // read from the junction alone would be "keep right". The engine chose
+      // the branch from the whole of both roads, so its side stands, and the
+      // junction only says that this is a fork.
       final instruction = _instruction(
         modifier: 'left',
         before: 92,
@@ -155,7 +172,43 @@ void main() {
           approachIndex: 2,
         ),
       );
-      expect(instruction.direction.side, isNot(ManeuverSide.right));
+      expect(instruction.direction, ManeuverDirection.slightLeft);
+      expect(instruction.text, 'Keep left');
+    });
+
+    test('branches too close to read give no side the engine did not', () {
+      // Live OSRM, the M32 split: the engine's `fork` `slight right` takes the
+      // branch at 27 degrees with the other at 31. Read from the junction
+      // alone that would be "keep left".
+      final m32 = _instruction(
+        type: 'fork',
+        modifier: 'slight right',
+        before: 26,
+        after: 29,
+        junction: RouteJunction.tryCreate(
+          bearingsDegrees: const [27, 31, 208],
+          enterable: const [true, true, false],
+          takenIndex: 0,
+          approachIndex: 2,
+        ),
+      );
+      expect(m32.text, 'Keep right');
+      // Without the engine's word, four degrees apart says nothing about
+      // which side the route is on.
+      final unread = _instruction(
+        type: 'off ramp',
+        modifier: 'straight',
+        before: 26,
+        after: 29,
+        junction: RouteJunction.tryCreate(
+          bearingsDegrees: const [27, 31, 208],
+          enterable: const [true, true, false],
+          takenIndex: 0,
+          approachIndex: 2,
+        ),
+      );
+      expect(unread.direction, ManeuverDirection.straight);
+      expect(unread.text, 'Take the exit slip road straight on');
     });
 
     test('a road the route may not enter is not a choice', () {

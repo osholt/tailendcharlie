@@ -774,33 +774,56 @@ ManeuverDirection _maneuverDirection(RouteManeuver maneuver) {
 /// counts as roughly ahead for #774's junction detector.
 const divergeBranchDegrees = 30.0;
 
-/// The side to keep where the route takes one branch of a diverge, or null
-/// where the junction is not one.
+/// How far apart two branches must leave before the side one lies on can be
+/// read from their bearings at the junction.
+///
+/// Roads a few degrees apart are parallel where they are measured, and which
+/// is on the left is settled further along. The M32 split north of Bristol
+/// leaves at 27 and 31 degrees and the engine calls the branch at 27 its
+/// `slight right`; a side read from those two numbers would be the wrong one.
+const divergeSideReadableDegrees = 5.0;
+
+/// Offsets from the branch taken of every other legal road leaving within
+/// [divergeBranchDegrees] of it, positive where the road lies to its right;
+/// or null where the junction is not a diverge at all.
 ///
 /// A diverge is a junction where the branch taken is roughly ahead, within
 /// [divergeBranchDegrees] of the approach, and another road the route could
-/// legally take leaves within [divergeBranchDegrees] of it. The side comes from
-/// where that other road lies, which is the one thing the two bearings of the
-/// manoeuvre cannot say: a road beside the route on its right means keeping
-/// left. Roads beside it on both sides make the route the middle of three,
-/// where naming a side would be a guess, so nothing is claimed.
-ManeuverSide? divergeKeepSide(RouteJunction? junction) {
+/// legally take leaves within [divergeBranchDegrees] of it. A turn into one of
+/// two side roads is still a turn.
+List<double>? _divergeOffsets(RouteJunction? junction) {
   if (junction == null) return null;
   final taken = junction.takenBearingDegrees;
   final approach = junction.approachHeadingDegrees;
-  // A turn into one of two side roads is still a turn.
   if (approach != null &&
       _signedBearingDelta(approach, taken).abs() > divergeBranchDegrees) {
     return null;
   }
-  var roadOnRight = false;
-  var roadOnLeft = false;
-  for (final other in junction.alternativeBearingsDegrees) {
-    final offset = _signedBearingDelta(taken, other);
-    if (offset.abs() > divergeBranchDegrees) continue;
-    if (offset >= 0) roadOnRight = true;
-    if (offset <= 0) roadOnLeft = true;
+  final offsets = [
+    for (final other in junction.alternativeBearingsDegrees)
+      if (_signedBearingDelta(taken, other) case final offset
+          when offset.abs() <= divergeBranchDegrees)
+        offset,
+  ];
+  return offsets.isEmpty ? null : offsets;
+}
+
+/// The side to keep where the route takes one branch of a diverge, read from
+/// the junction alone, or null where it cannot be read.
+///
+/// The side comes from where the other road lies, which is the one thing the
+/// two bearings of the manoeuvre cannot say: a road beside the route on its
+/// right means keeping left. Roads beside it on both sides make the route the
+/// middle of three, and a road closer than [divergeSideReadableDegrees] could
+/// be on either side, so in both cases nothing is claimed.
+ManeuverSide? divergeKeepSide(RouteJunction? junction) {
+  final offsets = _divergeOffsets(junction);
+  if (offsets == null ||
+      offsets.any((offset) => offset.abs() < divergeSideReadableDegrees)) {
+    return null;
   }
+  final roadOnRight = offsets.any((offset) => offset > 0);
+  final roadOnLeft = offsets.any((offset) => offset < 0);
   if (roadOnRight == roadOnLeft) return null;
   return roadOnRight ? ManeuverSide.left : ManeuverSide.right;
 }
@@ -813,12 +836,12 @@ ManeuverSide? divergeKeepSide(RouteJunction? junction) {
 /// then 88. Four degrees reads as straight on, two buckets from the modifier,
 /// so the #302 rule gave the bearings the casting vote and the rider heard
 /// "Continue straight on" with the A472 carrying straight on beside the slip.
-/// The junction says what the bearings could not: the other legal road leaves
-/// eight degrees to the right of the slip, so the instruction is to keep left.
 ///
-/// A side the engine stated is never overruled into the opposite one here; if
-/// the junction and the modifier disagree about the side, the ordinary rules
-/// decide as before.
+/// The junction says what the bearings could not: another legal road leaves
+/// beside the slip, so this is a fork in the road and the side must be stated.
+/// Where the engine named a side, that is the side, because it chose the
+/// branch from the whole of both roads. Where it named none, the side is read
+/// from where the other road lies ([divergeKeepSide]), or not claimed.
 ManeuverDirection? _keepDirection(
   ManeuverKind kind,
   RouteManeuver maneuver,
@@ -839,17 +862,19 @@ ManeuverDirection? _keepDirection(
     case ManeuverKind.continueAhead:
       return null;
   }
-  final side = divergeKeepSide(maneuver.junction);
-  if (side == null) return null;
-  final stated = _directionFromModifier(maneuver.modifier).side;
-  if ((stated == ManeuverSide.left || stated == ManeuverSide.right) &&
-      stated != side) {
-    return null;
-  }
   if (reported == ManeuverDirection.uTurn) return null;
-  return side == ManeuverSide.left
-      ? ManeuverDirection.slightLeft
-      : ManeuverDirection.slightRight;
+  if (_divergeOffsets(maneuver.junction) == null) return null;
+  final stated = _directionFromModifier(maneuver.modifier).side;
+  final side = switch (stated) {
+    ManeuverSide.left || ManeuverSide.right => stated,
+    ManeuverSide.ahead ||
+    ManeuverSide.reverse => divergeKeepSide(maneuver.junction),
+  };
+  return switch (side) {
+    ManeuverSide.left => ManeuverDirection.slightLeft,
+    ManeuverSide.right => ManeuverDirection.slightRight,
+    _ => null,
+  };
 }
 
 /// How far apart two directions sit on the straight-ahead-to-hard-over scale.
