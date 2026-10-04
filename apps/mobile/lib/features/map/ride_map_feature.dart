@@ -3322,6 +3322,20 @@ class _RideMapScreenState extends State<RideMapScreen>
               ),
             )
           : null;
+      // The leader has two more targets than anyone else - REPORT and TELL GROUP
+      // (#854) - and side by side they were a 160 pixel column beside SOS/LEAVE
+      // that left the group overview 81 pixels on a 393 point phone. In portrait
+      // they stack as one column exactly as tall as the SOS-over-LEAVE pair, each
+      // half the height and the full 96 wide, so a leader's row is two columns of
+      // targets and the overview, as everyone else's is (#848). Nobody else has a
+      // TELL GROUP, so nobody else's REPORT changes: it stays the 96 point square.
+      // Landscape keeps them side by side: its cluster is a column and its
+      // overview is in the rail beside it.
+      final stackLeaderTargets =
+          !landscape &&
+          widget.rideStarted &&
+          widget.onReportHazard != null &&
+          widget.onLeaderBroadcast != null;
       // Alerting the group is a ride action, not a route action, and it earns a
       // place beside them (#125). One tap, and a big one (#849).
       final reportButton = !widget.rideStarted || widget.onReportHazard == null
@@ -3329,6 +3343,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           : _ReportSightingButton(
               onPressed: _alertSending ? null : _raiseAlert,
               sent: _alertSent,
+              compact: stackLeaderTargets,
             );
       // The leader's list of one-tap broadcasts (#854): present only for the
       // leader of a running group ride, and beside REPORT because it is the same
@@ -3338,6 +3353,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           ? null
           : LeaderBroadcastButton(
               onPressed: _broadcastSheetOpen ? null : _openLeaderBroadcasts,
+              compact: stackLeaderTargets,
             );
       final hasActions =
           sosButton != null ||
@@ -3362,6 +3378,16 @@ class _RideMapScreenState extends State<RideMapScreen>
           : SizedBox(height: actionTargetHeight, child: leaveButton);
       final reportSubtree = reportButton == null || broadcastButton == null
           ? (reportButton ?? broadcastButton)
+          : stackLeaderTargets
+          ? Column(
+              key: const Key('map-leader-target-stack'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                reportButton,
+                const SizedBox(height: 8),
+                broadcastButton,
+              ],
+            )
           : Row(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -11302,7 +11328,16 @@ class _ActionLabel extends StatelessWidget {
 /// controls side by side with the same name is how the wrong one gets pressed.
 /// What the *group* sees is "Alert".
 class _ReportSightingButton extends StatelessWidget {
-  const _ReportSightingButton({required this.onPressed, this.sent = false});
+  const _ReportSightingButton({
+    required this.onPressed,
+    this.sent = false,
+    this.compact = false,
+  });
+
+  /// The same target at half the height, for the leader's portrait stack with
+  /// TELL GROUP: 96 wide, 56 high, so the pair is exactly as tall as the
+  /// SOS-over-LEAVE pair beside it.
+  final bool compact;
 
   /// Null while an alert is being stored, so a second tap cannot queue behind it.
   final VoidCallback? onPressed;
@@ -11313,6 +11348,9 @@ class _ReportSightingButton extends StatelessWidget {
 
   /// The square the target occupies, in every state and both orientations.
   static const double side = 96;
+
+  /// The height of the compact target, which matches SOS and LEAVE.
+  static const double compactHeight = 56;
 
   static const _fill = Color(0xFFFFC857);
   static const _ink = Color(0xFF1A1200);
@@ -11338,16 +11376,16 @@ class _ReportSightingButton extends StatelessWidget {
           onTap: onPressed,
           child: SizedBox(
             width: side,
-            height: side,
+            height: compact ? compactHeight : side,
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
                   sent ? Icons.check_circle_rounded : Icons.add_alert_rounded,
-                  size: 44,
+                  size: compact ? 26 : 44,
                   color: _ink,
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: compact ? 2 : 4),
                 // The box keeps its 96 pixels at every text size, so the caption
                 // is what gives way rather than the box overflowing: the icon is
                 // what a rider aims at, and the word underneath only names it.
@@ -11356,9 +11394,9 @@ class _ReportSightingButton extends StatelessWidget {
                     fit: BoxFit.scaleDown,
                     child: Text(
                       sent ? 'SENT' : 'REPORT',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _ink,
-                        fontSize: 15,
+                        fontSize: compact ? 12 : 15,
                         height: 1,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 0.8,

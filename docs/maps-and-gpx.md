@@ -200,6 +200,16 @@ trailing edge, so it costs the band almost no height; on a narrow phone it scale
 down rather than overflow. Landscape is unchanged: its rails already kept both
 clear of the rider.
 
+A leader has one more target, TELL GROUP (#854). Beside REPORT it made the targets
+288 points wide and left the overview 81 points on a 393 point phone - the phone
+and the rider it is on for by default - so in portrait the two stack as one 96
+wide column exactly as tall as the SOS-over-LEAVE pair (56 + 8 + 56), REPORT level
+with SOS and TELL GROUP level with LEAVE. A leader's row is then two columns of
+targets and the overview, as everyone else's is: 150 wide on a 393 or 430 point
+phone, 135 on an SE and 120 on a 360 point one, which is the floor the layout test
+asserts. Nobody else has TELL GROUP, so nobody else's REPORT changes - it stays the
+96 point square - and landscape keeps the two side by side.
+
 **The group mini-map can be turned off in Settings (#850), per device.** With no
 choice made it is on for the leader and the Tail End Charlie and off for everyone
 else, and that default follows the rider's role as it changes - hand someone the

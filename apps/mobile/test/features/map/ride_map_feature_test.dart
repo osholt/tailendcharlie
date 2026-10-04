@@ -3467,59 +3467,76 @@ void main() {
       await dispose(tester);
     });
 
-    testWidgets(
-      'sit beside REPORT, in portrait and landscape, overlapping nothing',
-      (tester) async {
-        for (final size in const [
-          Size(390, 844),
-          Size(360, 740),
-          Size(852, 393),
-        ]) {
-          await pumpMap(
-            tester,
-            onLeaderBroadcast: (_) async {},
-            withOtherActions: true,
-            size: size,
-          );
-          final report = tester.getRect(
-            find.byKey(const Key('report-sighting-button')),
-          );
-          final tell = tester.getRect(
-            find.byKey(const Key('leader-broadcast-button')),
-          );
-          final sos = tester.getRect(
-            find.byKey(const Key('emergency-alert-button')),
-          );
-          final leave = tester.getRect(
-            find.byKey(const Key('leave-ride-button')),
-          );
+    testWidgets('stack under REPORT in portrait and sit beside it in landscape', (
+      tester,
+    ) async {
+      for (final size in const [
+        Size(390, 844),
+        Size(360, 740),
+        Size(852, 393),
+      ]) {
+        await pumpMap(
+          tester,
+          onLeaderBroadcast: (_) async {},
+          withOtherActions: true,
+          size: size,
+        );
+        final report = tester.getRect(
+          find.byKey(const Key('report-sighting-button')),
+        );
+        final tell = tester.getRect(
+          find.byKey(const Key('leader-broadcast-button')),
+        );
+        final sos = tester.getRect(
+          find.byKey(const Key('emergency-alert-button')),
+        );
+        final leave = tester.getRect(
+          find.byKey(const Key('leave-ride-button')),
+        );
+        final landscape = size.width > size.height;
 
+        // A target for a gloved hand, and never off the screen.
+        expect(tell.left, greaterThanOrEqualTo(0), reason: '$size');
+        expect(tell.right, lessThanOrEqualTo(size.width), reason: '$size');
+        expect(tell.bottom, lessThanOrEqualTo(size.height), reason: '$size');
+        for (final other in [report, sos, leave]) {
+          expect(tell.overlaps(other.deflate(0.5)), isFalse, reason: '$size');
+        }
+        if (landscape) {
           expect(tell.width, LeaderBroadcastButton.width, reason: '$size');
           expect(tell.height, LeaderBroadcastButton.height, reason: '$size');
-          // A target for a gloved hand, and never off the screen.
-          expect(tell.left, greaterThanOrEqualTo(0), reason: '$size');
-          expect(tell.right, lessThanOrEqualTo(size.width), reason: '$size');
-          expect(tell.bottom, lessThanOrEqualTo(size.height), reason: '$size');
-          // Beside REPORT, on the same baseline, touching neither it nor SOS/LEAVE.
+          // Beside REPORT, on the same baseline, touching neither it nor
+          // SOS/LEAVE.
           expect(
             tell.left,
             greaterThanOrEqualTo(report.right + 8 - 0.01),
             reason: '$size',
           );
           expect(tell.bottom, closeTo(report.bottom, 0.01), reason: '$size');
-          for (final other in [report, sos, leave]) {
-            expect(tell.overlaps(other.deflate(0.5)), isFalse, reason: '$size');
-          }
-          if (size.width > size.height) {
-            // Landscape keeps the whole cluster left of the rider anchor (#533).
-            final riderX =
-                size.width * navigationCameraLandscapeRiderFractionLeftTraffic;
-            expect(tell.right, lessThan(riderX - 19), reason: '$size');
-          }
-          await dispose(tester);
+          // Landscape keeps the whole cluster left of the rider anchor (#533).
+          final riderX =
+              size.width * navigationCameraLandscapeRiderFractionLeftTraffic;
+          expect(tell.right, lessThan(riderX - 19), reason: '$size');
+        } else {
+          // Portrait stacks the two as one column the height of SOS over LEAVE
+          // (#848): REPORT level with SOS, TELL GROUP level with LEAVE, each
+          // 96 wide and 56 high.
+          expect(tell.width, LeaderBroadcastButton.stackedWidth);
+          expect(tell.height, LeaderBroadcastButton.stackedHeight);
+          expect(report.width, 96, reason: '$size');
+          expect(report.height, 56, reason: '$size');
+          expect(tell.left, closeTo(report.left, 0.01), reason: '$size');
+          expect(
+            tell.top,
+            greaterThanOrEqualTo(report.bottom + 8 - 0.01),
+            reason: '$size',
+          );
+          expect(report.top, closeTo(sos.top, 0.01), reason: '$size');
+          expect(tell.bottom, closeTo(leave.bottom, 0.01), reason: '$size');
         }
-      },
-    );
+        await dispose(tester);
+      }
+    });
 
     testWidgets('stand alone when REPORT is not offered, as in France', (
       tester,
