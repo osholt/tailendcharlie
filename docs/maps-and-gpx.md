@@ -87,6 +87,14 @@ only come from the server's separately authenticated moderation pipeline.
 Highlights are descriptive planning aids, not safety endorsements. Riders must
 check signs, closures, restrictions, weather, surface and current conditions.
 
+The layers are for choosing where to go, so they are drawn while browsing free
+roam, planning a route and reviewing one, and are hidden while a route is being
+followed, in a started ride or in free roam (#846). The orange and blue
+highlights sat beside the route line and read as part of it. Hiding them never
+changes the rider's saved layer choices - only what is drawn - so they return as
+chosen when navigation ends. The decision is
+`discoveryLayersShownIn` in `lib/features/map/discovery_layer_visibility.dart`.
+
 ## Riding display
 
 ### Navigation surfaces

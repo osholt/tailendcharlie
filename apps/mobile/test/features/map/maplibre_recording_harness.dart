@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -93,7 +94,9 @@ Future<List<MethodCall>> recordMapLibreStyleSetUp(
         'the MapLibre style set-up did not finish; calls: '
         '${calls.map((call) => call.method).toList()}',
   );
-  return List.unmodifiable(calls);
+  // A live, read-only view: later calls appear in it, so a test can wait for
+  // what a change it makes sends next.
+  return UnmodifiableListView(calls);
 }
 
 extension RecordedMapLibreCalls on List<MethodCall> {

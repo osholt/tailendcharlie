@@ -185,8 +185,9 @@ class _DiscoveryLayersScreenState extends State<DiscoveryLayersScreen> {
           const SizedBox(height: 4),
           const Text(
             'Choose which optional café and road layers appear on the map. '
-            'Choices are remembered on this phone and apply everywhere the map '
-            'is shown.',
+            'Choices are remembered on this phone and apply wherever the map '
+            'is shown, except while you are navigating, when these layers are '
+            'hidden.',
           ),
           const SizedBox(height: 8),
           if (_loading)

@@ -87,6 +87,7 @@ import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'circular_ride_sheet.dart';
+import 'discovery_layer_visibility.dart';
 import 'discovery_road_sheet.dart';
 import 'hazard_map_symbol.dart';
 import 'map_camera_guard.dart';
@@ -1805,6 +1806,12 @@ class _RideMapScreenState extends State<RideMapScreen>
       oldWidget.enforcementAlert?.removeListener(_onEnforcementAlertChanged);
       widget.enforcementAlert?.addListener(_onEnforcementAlertChanged);
       _onEnforcementAlertChanged();
+    }
+    if (oldWidget.isNavigating != widget.isNavigating ||
+        oldWidget.rideStarted != widget.rideStarted) {
+      // The discovery layers are drawn only while the rider is not navigating
+      // (#846), so the native sources have to follow the change.
+      _scheduleMapLibreSync(overlays: true);
     }
     if (oldWidget.speedLimitDisplay != widget.speedLimitDisplay) {
       if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
@@ -6417,7 +6424,22 @@ class _RideMapScreenState extends State<RideMapScreen>
   Object? _discoverySelectionKey;
   List<Object> _discoverySelectionCache = const [];
 
+  /// What the map is being used for, which decides whether the discovery layers
+  /// are drawn at all (#846).
+  DiscoveryLayerContext get _discoveryLayerContext => discoveryLayerContextFor(
+    navigating: widget.isNavigating,
+    rideStarted: widget.rideStarted,
+    hasRoute: _route != null,
+  );
+
   List<Object> get _selectedDiscoveries {
+    if (!discoveryLayersShownIn(_discoveryLayerContext)) {
+      // Not drawn while navigating. The saved layer choices are untouched, and
+      // the cached selection is forgotten so it is worked out afresh, rather
+      // than replayed empty, when navigation ends.
+      _discoverySelectionKey = null;
+      return _discoverySelectionCache = const [];
+    }
     final anchors = _discoveryAnchorPoints;
     final key = (
       _discoveryCatalogue,
