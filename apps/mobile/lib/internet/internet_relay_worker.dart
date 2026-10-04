@@ -6,6 +6,7 @@ import '../domain/ride_event.dart';
 import '../domain/ride_session.dart';
 import '../relay/live_presence.dart';
 import '../services/ride_event_authenticator.dart';
+import '../services/transport_evidence_ledger.dart';
 import 'internet_cursor_store.dart';
 import 'internet_relay_client.dart';
 
@@ -95,6 +96,7 @@ class InternetRelayWorker {
     Duration pollInterval = const Duration(seconds: 4),
     DateTime Function()? clock,
     double Function()? randomValue,
+    TransportEvidenceLedger? evidence,
   }) => InternetRelayWorker._(
     api,
     eventStore,
@@ -103,6 +105,7 @@ class InternetRelayWorker {
     pollInterval,
     clock ?? DateTime.now,
     randomValue ?? Random.secure().nextDouble,
+    evidence,
   );
 
   InternetRelayWorker._(
@@ -113,6 +116,7 @@ class InternetRelayWorker {
     this._pollInterval,
     this._clock,
     this._randomValue,
+    this._evidence,
   );
 
   final InternetRelayApi _api;
@@ -122,6 +126,9 @@ class InternetRelayWorker {
   final Duration _pollInterval;
   final DateTime Function() _clock;
   final double Function() _randomValue;
+
+  /// Where an authenticated arrival over the ride service is reported (#855).
+  final TransportEvidenceLedger? _evidence;
   final _statusController = StreamController<InternetRelayStatus>.broadcast();
   final _receivedEventController = StreamController<RideEvent>.broadcast();
 
@@ -299,6 +306,15 @@ class InternetRelayWorker {
       await _eventStore.markAcknowledgedAll(result.acceptedEventIds);
       for (final event in result.events) {
         if (!_isCurrent(generation, session)) return;
+        // Before the line below, which skips an event the journal already holds.
+        // An event the direct link delivered first is held, so skipping it
+        // unrecorded would hide the internet's arrival exactly when the internet
+        // is the slower route (#855). Every event here has just been verified.
+        _evidence?.recordEvent(
+          transport: EvidenceTransport.internet,
+          eventId: event.id,
+          authorId: event.deviceId,
+        );
         if (!knownEventIds.add(event.id)) continue;
         final stored = event.copyWith(acknowledged: true);
         await _eventStore.append(stored);

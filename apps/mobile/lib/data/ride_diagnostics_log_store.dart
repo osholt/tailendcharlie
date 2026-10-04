@@ -64,6 +64,20 @@ class RideDiagnosticsLog {
   final DateTime writtenAt;
   final String text;
 
+  /// The ride code a Where To (free-roam) navigation's log is written under. It
+  /// is not a ride and has no code of its own, so this stands in for one.
+  static const personalNavigationRideCode = 'PERSONAL';
+
+  /// Whether this is a solo Where To navigation rather than a ride.
+  bool get isPersonalNavigation => rideCode == personalNavigationRideCode;
+
+  /// What a list calls this log. A Where To navigation is named for what it is,
+  /// because a list of five identical "PERSONAL" rows is how a group ride's log
+  /// went unnoticed on 4 October (#855).
+  String get title => isPersonalNavigation
+      ? 'Where To navigation'
+      : 'Ride ${rideCode ?? rideId}';
+
   /// What the share sheet calls the attachment.
   String get fileName =>
       'tail-end-charlie-diagnostics-${rideCode ?? rideId}.txt';
@@ -101,12 +115,24 @@ class FileRideDiagnosticsLogStore implements RideDiagnosticsLogStore {
 
   final Directory directory;
 
-  /// How many rides' logs are kept.
+  /// How many **rides'** logs are kept (a group ride, or a solo ride started with
+  /// a code).
   ///
   /// Bounded because these hold a route: keeping them forever would quietly
   /// accumulate a location history the rider never asked for. A handful is enough
   /// to cover "the ride before last, actually" and no more.
   static const maximumRetainedLogs = 5;
+
+  /// How many Where To navigations' logs are kept, **counted separately** from
+  /// rides (#855).
+  ///
+  /// They shared one pool of five, and since Where To navigations were archived
+  /// automatically every one of them writes a log. A rider planning and replanning
+  /// legs from a café and a service station wrote four in an afternoon, and four
+  /// newer logs plus any one more are all it takes to push a group ride's log out
+  /// of the five. A ride is the rarer and the more valuable record, so a run of
+  /// short navigations must never be able to evict it.
+  static const maximumRetainedPersonalLogs = 5;
 
   static Future<FileRideDiagnosticsLogStore> openDefault() async {
     final support = await getApplicationSupportDirectory();
@@ -168,10 +194,16 @@ class FileRideDiagnosticsLogStore implements RideDiagnosticsLogStore {
   @override
   Future<RideDiagnosticsLog?> latest() async => (await list()).firstOrNull;
 
-  /// Drops the oldest logs past [maximumRetainedLogs].
+  /// Drops the oldest logs past [maximumRetainedLogs] among rides and past
+  /// [maximumRetainedPersonalLogs] among Where To navigations.
   Future<void> _prune() async {
     final logs = await list();
-    for (final log in logs.skip(maximumRetainedLogs)) {
+    final rides = logs.where((log) => !log.isPersonalNavigation);
+    final navigations = logs.where((log) => log.isPersonalNavigation);
+    for (final log in [
+      ...rides.skip(maximumRetainedLogs),
+      ...navigations.skip(maximumRetainedPersonalLogs),
+    ]) {
       final file = _fileFor(log.rideId);
       if (await file.exists()) await file.delete();
     }

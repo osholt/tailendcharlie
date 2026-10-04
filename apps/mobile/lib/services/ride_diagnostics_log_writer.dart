@@ -1,4 +1,5 @@
 import '../data/ride_diagnostics_log_store.dart';
+import 'ride_diagnostics_recorder.dart';
 
 /// Keeps a stored log in step with a recorder that is still filling up (#456).
 ///
@@ -20,10 +21,19 @@ class RideDiagnosticsLogWriter {
     required this.store,
     required this.rideId,
     required this.render,
+    this.ready,
   });
 
   final RideDiagnosticsLogStore store;
   final String rideId;
+
+  /// A barrier the first write waits for (#855).
+  ///
+  /// The stored log is replaced whole, so a recorder that has not yet taken up
+  /// the earlier log for the same ride must not be the one to write it. The ride
+  /// screen supplies the future of reading that log back; nothing is written
+  /// until it completes, and a barrier that fails does not stop the writes.
+  final Future<void>? ready;
 
   /// The log as it stands. A callback rather than a string so the writer never
   /// holds a stale copy, and so rendering only happens when a write is about to
@@ -59,6 +69,12 @@ class RideDiagnosticsLogWriter {
 
   Future<void> _drain() async {
     try {
+      try {
+        await ready;
+      } on Object {
+        // The barrier is only there to stop an early write replacing something
+        // that was about to be read; if it failed there is nothing to wait for.
+      }
       // Re-checked rather than written once: an entry recorded during the write
       // below sets the flag again, and this is the loop that catches it without
       // starting a second concurrent write.
@@ -78,5 +94,35 @@ class RideDiagnosticsLogWriter {
     } finally {
       _inFlight = null;
     }
+  }
+}
+
+/// Reads the earlier log for [rideId] back out of [store] and folds it into
+/// [recorder], so a ride screen rebuilt part-way through carries on the record
+/// instead of replacing it (#855).
+///
+/// Never throws. A log that cannot be read is said so in the recorder, because a
+/// log that silently began here would read as a ride that did.
+///
+/// The recorder is not touched if [isStillCurrent] says it has been replaced by
+/// the time the read finishes, so a slow read cannot graft an old log onto a
+/// newer recorder.
+Future<void> continueRecordingFromStore({
+  required RideDiagnosticsRecorder recorder,
+  required RideDiagnosticsLogStore? store,
+  required String? rideId,
+  bool Function()? isStillCurrent,
+}) async {
+  if (store == null || rideId == null) return;
+  try {
+    final earlier = await store.read(rideId);
+    if (earlier == null) return;
+    if (isStillCurrent != null && !isStillCurrent()) return;
+    recorder.continueFrom(earlier);
+  } on Object {
+    recorder.recordNote(
+      'the earlier log for this ride could not be read; recording carries on '
+      'from here',
+    );
   }
 }
