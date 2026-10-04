@@ -36,6 +36,82 @@ permissions by design.
 - ...
 ```
 
+## iOS build 102 / Android build 102 — 1.0.1 — October 2026
+
+Everything here comes from the 4 October ride to Penelope's Cafe and the tester
+chat. Thank you, Becks and Nigel.
+
+### Navigation
+
+- Joining a dual carriageway and leaving it straight away (for example, out of
+  Usk towards Chepstow) now says **Keep left** or **Keep right**, never
+  "Continue straight on".
+- Where the road you are on carries on through a junction, you hear **Follow the
+  road**, or nothing. You no longer hear "At the fork, continue straight on" at
+  every motorway slip. Leaving the main road is still announced with its
+  direction, and roundabouts keep their exit and direction.
+- Unnamed roads no longer show "Turn" or "Fork" as their name.
+- Shaping points (where you dragged the route) are passed through silently. Only
+  named stops and the destination announce an arrival.
+
+### Routes
+
+- Every planned route is checked against the map's road data. If it uses a
+  footpath or an unsurfaced track while **Avoid unsurfaced byways** is on, it is
+  re-planned around it once. If the problem can't be avoided, route review says
+  how much of the route is affected.
+- **Avoid motorways** now works from the home search too, and a motorway that
+  can't be avoided is named on route review.
+
+### Proving Bluetooth works
+
+- The ride roster shows, for each rider, how long ago something arrived over
+  Bluetooth and over the internet, for example "Bluetooth 12 s ago · Internet
+  8 s ago".
+- The ride-ended screen says whether Bluetooth peer-to-peer worked, with counts,
+  including how many updates arrived *only* over Bluetooth.
+- Ride diagnostics record the Bluetooth and internet links. A group ride's
+  diagnostics can now be shared from the ride-ended screen.
+
+### Group messages
+
+- **REPORT** is one big tap. Everyone else sees and hears an **Alert**: police,
+  a camera or anything else. After the ride, each alert is listed with its time
+  to the second and its place, is plotted on the map, and is included in the GPX
+  export, so you can check it against dash-cam footage.
+- The leader has a **TELL GROUP** button with four one-tap messages: Wrong way –
+  turn around, Stopped for fuel, Pull over, and Regroup at next stop.
+
+### Map
+
+- The purple line to the leader is drawn above the orange route.
+- The orange and blue discovery road highlights are hidden while navigating.
+  They are still shown while planning.
+- The minimap and the main map now use the same rider colours.
+- Road edges are stronger in both light map styles.
+- In portrait, the ETA strip and the group minimap sit in the bottom band with
+  the buttons, so nothing covers the road ahead or your bike.
+
+### What to test
+
+1. **Bluetooth:** on one phone, turn on airplane mode, then switch Bluetooth back
+   on and leave Wi-Fi off. That phone should keep seeing the others, and they
+   should keep seeing it. Check the roster and the ride-ended verdict, then share
+   the diagnostics.
+2. Plan the route to Penelope's Cafe again. It should not use the canal track.
+3. Ride out of Usk towards Chepstow, and from Aust onto the M48 and M4. Note any
+   junction wording that surprises you.
+4. Tap **REPORT** with one rider still on build 101. Their phone should show
+   "Other hazard" and must not crash.
+5. Leader: try each **TELL GROUP** message.
+
+### Known limitations
+
+- Alerts and leader messages reach a phone running in the background only when
+  it next syncs (#881).
+- The Bluetooth readings are diagnostic evidence. They don't yet mean Bluetooth
+  is supported for riding without signal.
+
 ## iOS build 101 / Android build 101 — 1.0.1 — 21 September 2026
 
 ### Fixed
