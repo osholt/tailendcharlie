@@ -6,7 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
-import 'route_trail_style.dart';
+import 'ride_map_palette.dart';
 
 /// Rider-selectable bike silhouettes, generated as flat single-colour art
 /// (see assets/icons/motorcycles) so they can be tinted per role exactly like
@@ -389,9 +389,9 @@ class RiderMarkerBadge extends StatelessWidget {
     this.mapMarker = false,
     this.headingDegrees,
     this.mapBearingDegrees = 0,
-    this.borderColor = RouteTrailStyle.casing,
+    this.borderColor = RideMapPalette.otherRiderOutline,
     this.borderWidth = 2,
-    this.glyphColor = RouteTrailStyle.markerGlyph,
+    this.glyphColor = RideMapPalette.glyphInk,
   });
 
   final MotorcycleIconStyle style;
