@@ -19,12 +19,21 @@ class PendingInAppRoute {
     required this.route,
     this.reviewNotes = const [],
     this.handoffTarget,
+    this.reviewed = false,
     this.verification,
   });
 
   final ImportedRoute route;
   final List<String> reviewNotes;
   final NavigationTarget? handoffTarget;
+
+  /// True when the rider has already reviewed and confirmed this route on the
+  /// plan surface, so the map takes it as it is (#847).
+  ///
+  /// Every hand-off used to open the review again. A route confirmed a moment
+  /// earlier came back as "Add turn directions?" and a second Confirm (#624),
+  /// which read as the app forgetting what the rider had just done.
+  final bool reviewed;
 
   /// What checking the planned route against the rider's preferences found, to
   /// be shown on the route review (#840).
@@ -123,12 +132,14 @@ class SharedRouteController extends ChangeNotifier with WidgetsBindingObserver {
   void stagePendingInAppRoute(
     ImportedRoute route, {
     List<String> reviewNotes = const [],
+    bool reviewed = false,
     RouteVerification? verification,
   }) {
     _pending = null;
     _pendingInAppRoute = PendingInAppRoute(
       route: route,
       reviewNotes: List.unmodifiable(reviewNotes),
+      reviewed: reviewed,
       verification: verification,
     );
     notifyListeners();

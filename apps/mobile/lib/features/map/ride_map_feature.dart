@@ -27,6 +27,7 @@ import '../../domain/distance_unit.dart';
 import '../../domain/riding_display_size.dart';
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart';
+import '../../domain/ride_plan.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
@@ -40,6 +41,7 @@ import '../../services/flutter_vector_style.dart';
 import '../../services/basemap_status.dart';
 import '../../services/biker_place_catalogue.dart';
 import '../../services/circular_ride_planner.dart';
+import '../../services/ride_plan_router.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_layer_preferences.dart';
 import '../../services/discovery_suggestion_queue.dart';
@@ -85,7 +87,7 @@ import '../../services/verified_road_routing.dart';
 import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
-import 'destination_route_sheet.dart';
+import 'place_search_sheet.dart';
 import 'circular_ride_sheet.dart';
 import 'discovery_road_sheet.dart';
 import 'hazard_map_symbol.dart';
@@ -1266,6 +1268,13 @@ class _RideMapScreenState extends State<RideMapScreen>
   late final Future<DiscoverySuggestionQueue> _suggestionQueue;
   late final DiscoverySuggestionConfiguration _suggestionConfiguration;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
+
+  /// Routes the plan surface's plans through the destination planner's
+  /// preference-aware service, with drawn adjustments as non-stopping controls
+  /// (#847).
+  late final RidePlanRouter _ridePlanRouter = RidePlanRouter(
+    routingService: _destinationRoutePlanner.routingService,
+  );
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
   late final ImportedTrackMatcher _defaultImportedTrackMatcher;
   late SpeedLimitDisplayController _speedLimitDisplay;
@@ -6825,71 +6834,60 @@ class _RideMapScreenState extends State<RideMapScreen>
     );
   }
 
+  /// A new destination for this map, planned on the plan surface (#847).
+  ///
+  /// The destination comes first and the start is the rider's location, as on
+  /// Home. This used to be a text form, then a review whose "Edit stops" went
+  /// back to the form and lost every stop added on the map and every drawn
+  /// adjustment; the plan surface edits all of them in one place.
   Future<void> _planDestination() async {
     if (_routing) return;
-    DestinationPlanRequest? request;
-    ImportedRoute? previousCandidate;
-    while (mounted) {
-      if (!mounted) return;
-      request = await DestinationRouteSheet.show(
-        context,
-        initialRequest: request,
-      );
-      if (request == null || !mounted) return;
-      setState(() => _routing = true);
-      try {
-        final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
-        GeoPoint? origin;
-        if (!hasStartQuery) {
-          origin = _effectivePosition;
-          origin ??= await widget.acquireCurrentPosition?.call();
-          origin ??= _effectivePosition;
-          if (origin == null) {
-            throw const FormatException(
-              'A current location is required. Allow location access, or give '
-              'a start location instead, and try again.',
-            );
-          }
-        }
-        final planned = await _destinationRoutePlanner.planForReview(
-          origin: origin,
-          originQuery: request.startQuery,
-          stopQueries: request.stopQueries,
-          query: request.query,
-          distanceUnit: widget.distanceUnit,
-          preferences: request.preferences,
-        );
-        final review = await _reviewRoute(
-          planned.route,
-          distanceMeters: planned.distanceMeters,
-          duration: planned.duration,
-          twistinessScore: planned.twistinessScore,
-          warnings: planned.warnings,
-          verification: planned.verification,
-          canEditStops: true,
-          previousRoute: previousCandidate,
-        );
-        if (review.action == RouteReviewAction.edit) {
-          previousCandidate = review.route;
-          continue;
-        }
-        if (review.action != RouteReviewAction.confirm) return;
-        final route = await _commitRoute(review.route);
-        if (mounted) {
-          final target = request.handoffTarget;
-          if (target != null) await _exportRoute(target, route);
-        }
-        return;
-      } on FormatException catch (error) {
-        _showMessage(error.message);
-        return;
-      } on Object catch (error) {
-        _showMessage('Could not plan destination: $error');
-        return;
-      } finally {
-        if (mounted) setState(() => _routing = false);
-      }
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
     }
+    final choice = await PlaceSearchSheet.show(
+      context,
+      searchService: _destinationRoutePlanner.searchService,
+      title: 'Where to?',
+    );
+    if (choice is! PlaceSearchPlace || !mounted) return;
+    await _planOnSurface(RidePlan.toDestination(choice.place));
+  }
+
+  /// Opens the plan surface for [plan] and takes the route it confirms.
+  ///
+  /// [editing] is the route the plan was read from, when it is an edit: its
+  /// identity and library details carry over, and a material change is
+  /// compared against it.
+  Future<ImportedRoute?> _planOnSurface(
+    RidePlan plan, {
+    ImportedRoute? editing,
+  }) async {
+    final outcome = await RouteReviewScreen.showPlan(
+      context,
+      planning: RidePlanEditing(
+        plan: plan,
+        route: (plan, location) => _ridePlanRouter.route(
+          plan,
+          currentLocation: location,
+          base: editing,
+          distanceUnit: widget.distanceUnit,
+        ),
+        searchService: _destinationRoutePlanner.searchService,
+        currentLocation:
+            widget.currentPosition ??
+            ValueNotifier<GeoPoint?>(_effectivePosition),
+        acquireCurrentLocation: widget.acquireCurrentPosition,
+        confirmLabel: (_) => widget.rideStarted ? 'Update route' : 'Use route',
+      ),
+      route: editing,
+      distanceUnit: widget.distanceUnit,
+      basemapConfiguration: _basemap,
+      showMarkerPlan: widget.markerFeaturesEnabled,
+    );
+    if (outcome == null || !mounted) return null;
+    return _commitRoute(outcome.route);
   }
 
   Future<void> _planCircularRide() async {
@@ -6897,18 +6895,16 @@ class _RideMapScreenState extends State<RideMapScreen>
     var origin = _effectivePosition;
     origin ??= await widget.acquireCurrentPosition?.call();
     origin ??= _effectivePosition;
-    if (origin == null || !mounted) {
-      _showMessage(
-        'Enable location so the circular ride can start and finish here.',
-      );
-      return;
-    }
+    if (!mounted) return;
+    // No fix no longer refuses the loop: its sheet has a start row, and a
+    // rider can plan from a meeting point they are not yet at (#847).
     var request = await CircularRideSheet.show(
       context,
       start: origin,
       distanceUnit: widget.distanceUnit,
       personalHeatmapCells: _personalCircularHeatCells,
       globalHeatmapCells: _globalCircularHeatCells,
+      searchService: _destinationRoutePlanner.searchService,
     );
     while (request != null && mounted) {
       final requestedRide = request;
@@ -6974,6 +6970,7 @@ class _RideMapScreenState extends State<RideMapScreen>
             initialRequest: plan.request,
             personalHeatmapCells: _personalCircularHeatCells,
             globalHeatmapCells: _globalCircularHeatCells,
+            searchService: _destinationRoutePlanner.searchService,
           );
           continue;
         }
@@ -7049,6 +7046,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         initialRequest: requestedRide,
         personalHeatmapCells: _personalCircularHeatCells,
         globalHeatmapCells: _globalCircularHeatCells,
+        searchService: _destinationRoutePlanner.searchService,
       );
     }
   }
@@ -8630,11 +8628,15 @@ class _RideMapScreenState extends State<RideMapScreen>
         unawaited(_importSharedGpx(sharedFile));
       } else if (inAppRoute != null) {
         unawaited(() async {
-          final route = await _reviewAndActivateRoute(
-            inAppRoute.route,
-            warnings: inAppRoute.reviewNotes,
-            verification: inAppRoute.verification,
-          );
+          // Confirmed on the plan surface already: taken as it is, with no
+          // second review (#624, #847).
+          final route = inAppRoute.reviewed
+              ? await _commitRoute(inAppRoute.route)
+              : await _reviewAndActivateRoute(
+                  inAppRoute.route,
+                  warnings: inAppRoute.reviewNotes,
+                  verification: inAppRoute.verification,
+                );
           final target = inAppRoute.handoffTarget;
           if (route != null && target != null && mounted) {
             await _exportRoute(target, route);

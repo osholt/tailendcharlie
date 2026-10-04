@@ -27,22 +27,26 @@ import '../../services/road_routing.dart';
 import '../../services/verified_road_routing.dart';
 import 'home_destination_search.dart';
 import 'home_map_backdrop.dart';
+import 'ride_invite_step.dart';
+import 'ride_with_others_sheet.dart';
 import 'scan_invitation_screen.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_coordination_mode.dart';
+import '../../domain/ride_plan.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/carplay_bridge.dart';
 import '../../services/carplay_route_preview.dart';
 import '../../services/gpx_import_source.dart';
+import '../../services/ride_plan_router.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
 import '../map/ride_map_feature.dart'
     show HostMapChrome, HostMapMenuAction, rideMapToolbarHeight;
-import '../map/destination_route_sheet.dart';
+import '../map/route_review_screen.dart';
 import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
@@ -336,6 +340,12 @@ class _HomeScreenState extends State<HomeScreen> {
         client: _routingClient,
         configuration: RoutingConfiguration.fromEnvironment(),
       );
+
+  /// Routes the plan surface's plans through the destination planner's own
+  /// service, so a plan is routed exactly as a destination is (#847).
+  late final RidePlanRouter _planRouter = RidePlanRouter(
+    routingService: _destinationPlanner.routingService,
+  );
 
   BasemapConfiguration get _homeBasemap =>
       BasemapConfiguration.fromEnvironment().forBrightness(
@@ -844,62 +854,62 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Plans a route to the chosen place and hands it to the map.
+  /// Opens the plan surface on a route to the chosen place (#847).
   ///
-  /// No ride is created. A rider who searched for somewhere to go said nothing
-  /// about riding with anybody, and the app used to answer that by making a
-  /// ride — with a coordination mode it had to ask for — before it would show
-  /// a route (#600). Riding with others is offered from the map afterwards,
-  /// once there is a route to bring along, which keeps the #546 ordering:
-  /// the route exists before the ride that carries it.
+  /// The start is the rider's location unless they change it there, and a
+  /// missing fix does not stop a destination being chosen: the start row says
+  /// it is waiting, and offers a place instead. The text form that used to sit
+  /// between the search and the route is gone; stops, the start and route
+  /// options are all edited on the surface that shows the route.
+  ///
+  /// No ride is created for a solo plan. A rider who searched for somewhere to
+  /// go said nothing about riding with anybody (#600), and the map navigates
+  /// the confirmed route as it is, without a second review (#624). Choosing a
+  /// group on the plan creates the ride with the route already in it.
   Future<void> _navigateTo(DestinationChoice choice) async {
-    final request = await DestinationRouteSheet.show(
+    final outcome = await RouteReviewScreen.showPlan(
       context,
-      initialRequest: DestinationPlanRequest(query: choice.label),
-    );
-    if (request == null || !mounted) return;
-    final origin = _position.value;
-    final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
-    if (origin == null && !hasStartQuery) return;
-    setState(() => _planningDestination = true);
-    try {
-      final plan = await _destinationPlanner.planForReview(
-        origin: origin,
-        originQuery: request.startQuery,
-        stopQueries: request.stopQueries,
-        query: request.query,
-        selectedDestination: request.query.trim() == choice.label
-            ? DestinationMatch(label: choice.label, point: choice.point)
-            : null,
-        distanceUnit: widget.distanceUnits.value,
-        preferences: request.preferences,
-      );
-      if (!mounted) return;
-      setState(() {
-        _freeRoamRoute = PendingInAppRoute(
-          route: plan.route,
-          reviewNotes: plan.warnings,
-          handoffTarget: request.handoffTarget,
-          verification: plan.verification,
-        );
-        _freeRoamRouteToken = Object();
-      });
-    } on Object catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            error is FormatException
-                ? error.message
-                : 'Could not plan a route there. Try again, or pick a different '
-                      'place.',
+      planning: RidePlanEditing(
+        plan: RidePlan.toDestination(
+          RidePlanPlace.fromSearchResult(
+            label: choice.label,
+            point: choice.point,
           ),
         ),
+        route: (plan, location) => _planRouter.route(
+          plan,
+          currentLocation: location,
+          distanceUnit: widget.distanceUnits.value,
+        ),
+        searchService: _destinationPlanner.searchService,
+        currentLocation: _position,
+        offerCoordinationChoice: true,
+        confirmLabel: (plan) => plan.isGroup ? 'Create group ride' : 'Start',
+      ),
+      distanceUnit: widget.distanceUnits.value,
+      basemapConfiguration: _planBasemap,
+    );
+    if (outcome == null || !mounted) return;
+    if (outcome.plan.isGroup) {
+      await RideWithOthersSheet.show(
+        context,
+        controller: widget.controller,
+        riderProfile: widget.riderProfile,
+        route: outcome.route,
+        coordinationMode: outcome.plan.coordinationMode,
       );
-    } finally {
-      if (mounted) setState(() => _planningDestination = false);
+      return;
     }
+    setState(() {
+      _freeRoamRoute = PendingInAppRoute(route: outcome.route, reviewed: true);
+      _freeRoamRouteToken = Object();
+    });
   }
+
+  /// The plan surface's map. A build without the platform map — widget tests,
+  /// plugin-less builds — gets the route-only preview the review already has.
+  BasemapConfiguration get _planBasemap =>
+      widget.enableNativeServices ? _homeBasemap : const BasemapConfiguration();
 
   Future<void> _showRideSheet(
     BuildContext context, {
@@ -1371,7 +1381,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (_showShareStep) {
-      return _ShareCodeStep(
+      return RideInviteStep(
         controller: widget.controller,
         onContinue: _finishCreating,
       );
@@ -1823,91 +1833,6 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     _pastedJoinToken = invite.token;
     _codeController.text = code;
     _codeController.selection = TextSelection.collapsed(offset: code.length);
-  }
-}
-
-/// Shown immediately after creating a ride - the moment a leader most needs
-/// the code, with riders waiting nearby, rather than requiring a trip
-/// through the active Ride page to find it.
-class _ShareCodeStep extends StatelessWidget {
-  const _ShareCodeStep({required this.controller, required this.onContinue});
-
-  final RideController controller;
-  final VoidCallback onContinue;
-
-  @override
-  Widget build(BuildContext context) {
-    final session = controller.session;
-    final code = session?.rideCode ?? '';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Icon(Icons.check_circle, color: Color(0xFF6ED89A), size: 40),
-          const SizedBox(height: 16),
-          Text(
-            session?.rideName ?? 'Ride created',
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Share this code so the group can join.',
-            style: TextStyle(color: Color(0xFFABB5C1)),
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF111720),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF2A3441)),
-            ),
-            child: Center(
-              child: Text(
-                code,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 34,
-                  letterSpacing: 6,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => Clipboard.setData(ClipboardData(text: code)),
-                  icon: const Icon(Icons.copy_outlined),
-                  label: const Text('Copy'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => SharePlus.instance.share(
-                    ShareParams(
-                      text: controller.rideCodeShareText,
-                      subject: 'Join my Tail End Charlie group',
-                    ),
-                  ),
-                  icon: const Icon(Icons.ios_share),
-                  label: const Text('Share'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 22),
-          TextButton(
-            onPressed: onContinue,
-            child: const Text('Continue to ride'),
-          ),
-        ],
-      ),
-    );
   }
 }
 

@@ -110,9 +110,9 @@ class HomeDestinationSearchSheet extends StatefulWidget {
 
   final DestinationSearchService searchService;
 
-  /// False when the app has no position yet, which makes routing from "here"
-  /// impossible. Said in the sheet rather than discovered as a failure after the
-  /// rider has chosen solo or group.
+  /// False when the app has no position yet. Said in the sheet, but it no
+  /// longer stops anything: a destination can be chosen without a fix, and the
+  /// plan's start row then waits for one or takes a place instead (#847).
   final bool hasPosition;
 
   static Future<HomeSearchOutcome?> show(
@@ -231,8 +231,9 @@ class _HomeDestinationSearchSheetState
               padding: EdgeInsets.symmetric(horizontal: 16),
               child: Text(
                 key: Key('home-search-needs-position'),
-                'Tap “Show my location” on the map first — a route has to start '
-                'somewhere.',
+                'Your location is not known yet. Choose a destination anyway: '
+                'the route starts from you once you are found, or from a start '
+                'you choose.',
                 style: TextStyle(color: Color(0xFFFFB59A), fontSize: 13),
               ),
             ),
@@ -255,7 +256,6 @@ class _HomeDestinationSearchSheetState
                       key: Key('home-search-result-${match.label}'),
                       leading: const Icon(Icons.place_outlined),
                       title: Text(match.label),
-                      enabled: widget.hasPosition,
                       onTap: () => _choose(match),
                     ),
                 const Divider(height: 12),
@@ -266,7 +266,6 @@ class _HomeDestinationSearchSheetState
                   subtitle: const Text(
                     'Choose distance, direction, stops and road preferences',
                   ),
-                  enabled: widget.hasPosition,
                   onTap: () => Navigator.of(context).pop(
                     const HomeSearchHandoff(HomeSearchHandoffKind.circularRide),
                   ),
