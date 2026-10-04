@@ -21,7 +21,8 @@ coarser privacy-oriented z17 contribution cells.
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
 keeps the provider's daytime colours and labels, with deeper and wider road
-outlines ([#841](#road-edges-in-daylight-841)). They use the same vector tile
+outlines ([#841](#road-edges-in-daylight-841)) and no POI label that is a source
+identifier ([#860](#provider-labels-never-show-an-identifier-860)). They use the same vector tile
 source and offline tile cache; only their small style-document caches are kept
 separate so switching cannot serve the wrong palette.
 
@@ -198,6 +199,16 @@ where there is one. The group overview shares the row of targets, hard against t
 trailing edge, so it costs the band almost no height; on a narrow phone it scales
 down rather than overflow. Landscape is unchanged: its rails already kept both
 clear of the rider.
+
+A leader has one more target, TELL GROUP (#854). Beside REPORT it made the targets
+288 points wide and left the overview 81 points on a 393 point phone - the phone
+and the rider it is on for by default - so in portrait the two stack as one 96
+wide column exactly as tall as the SOS-over-LEAVE pair (56 + 8 + 56), REPORT level
+with SOS and TELL GROUP level with LEAVE. A leader's row is then two columns of
+targets and the overview, as everyone else's is: 150 wide on a 393 or 430 point
+phone, 135 on an SE and 120 on a 360 point one, which is the floor the layout test
+asserts. Nobody else has TELL GROUP, so nobody else's REPORT changes - it stays the
+96 point square - and landscape keeps the two side by side.
 
 **The group mini-map can be turned off in Settings (#850), per device.** With no
 choice made it is on for the leader and the Tail End Charlie and off for everyone
@@ -652,8 +663,8 @@ ground. Original's lane edge, `#CFCDCA`, is 1.45:1.
   tints do. Ramps, bridges and tunnels carry the edge of their class.
 - **Original:** a lane's edge, `#CFCDCA`, deepens to `#AEACA9`, the same warm hue
   at L\* 70.5. The orange edges of the larger roads keep the provider's colour.
-  Ground, fills, labels, POI symbols and every other layer are the provider's, as
-  #489 promised.
+  Ground, fills, symbols and every other layer are the provider's, as #489
+  promised, and so are its labels apart from the identifier guard (#860, below).
 - **Both:** the edge is one pixel wider from zoom 14, 0.75–1.1 px a side becoming
   1.25–1.6. Each width table is the provider's own stops plus one pixel, so
   everything below zoom 13 keeps the provider's curve and every zoom from 14 up
@@ -1346,6 +1357,91 @@ overview. MapLibre attribution remains visible at bottom leading: it is a
 licence condition, not decoration. CarPlay's recenter, pan, report and SOS
 targets remain platform-managed `CPMapButton`s, so their trailing-edge placement
 is intentionally not replaced with app-drawn phone controls.
+
+## Provider labels never show an identifier (#860)
+
+A screenshot from the 4 October group ride (Android, Aust services) showed a
+fuel-pump symbol labelled `Gridserve` followed by a UUID. A rider should never
+see an internal or source identifier, so this records where that text came from,
+why it was in the tile, and what now stops it.
+
+### Where the text came from
+
+Not from anything this repository generates. The label is the `name` of a point
+of interest in OpenFreeMap's `poi` tile layer, drawn by the provider's Liberty
+style (`poi_r1`, `poi_r7`, `poi_r20`: italic grey text beside a sprite icon, which
+is how it looks in the screenshot). Only the Original daytime map draws these
+labels: the Restrained repaint removes every provider POI layer and the dark
+style has none.
+
+None of the bundled catalogues is involved. The biker-place catalogue, the
+discovery catalogue and the route-place index carry no label that is an
+identifier, and `tools/discovery/tests/test_published_labels.py` now says so for
+every label field in them, including the website's copy of the discovery
+catalogue.
+
+### Why an identifier was in the tile
+
+The OpenStreetMap relation behind that charging station has `brand=Gridserve`,
+`operator=Gridserve` and `ref=09981d11-e3db-…`, the Location ID in Gridserve's
+open-data feed, and **no `name`**. OpenFreeMap builds its tiles with the
+OpenMapTiles profile for Planetiler. Its `Poi` layer gives an unnamed charging
+station or parcel locker a name made of its brand (or operator) and its `ref`
+(`BRAND_OPERATOR_REF_SUBCLASSES` in `Poi.java`), so the tile says
+`Gridserve 09981d11-e3db-479d-82cb-088d4dc046ba` and the style draws it.
+
+The same rule gives `bp pulse FC18642`, `InPost UKLON00047` and `ESB Energy
+UT02D9`. It applies to those two kinds and no others. In 441 zoom-14 tiles around
+nine areas of Great Britain there were 225 distinct charging-station and
+parcel-locker names, 26 of them containing a digit. All but one of those (a street
+address) are a brand and a reference, and three are Gridserve UUIDs. A scan of 294
+of those tiles, holding 147,783 POIs of every kind, found no UUID in the name of
+any other kind of POI. The fixture `test/fixtures/openfreemap_poi_names.json`
+records 35 of these attribute sets as published.
+
+### What stops it now
+
+`ProviderLabelGuard` wraps the label of every provider POI layer (any layer drawn
+from the `poi` source layer) in the default Liberty style:
+
+- a charging station or parcel locker whose name contains a digit is labelled by
+  what it is, **EV charging** or **Parcel locker**;
+- one whose name has no digit keeps it (`BP Pulse`, `Amazon Locker`);
+- every other kind of POI is untouched, so a café called `1915` still reads
+  `1915`, and an unnamed POI stays unlabelled.
+
+The tile carries no separate brand, so the fallback after the name is the generic
+type. A name cannot be told from an assembled reference by inspection, hence the
+digit rule, which errs towards hiding: it also turns the street-address name
+`42-14 Lancaster Grove` on a charging station into `EV charging`. Nothing else
+loses a label.
+
+It lives in `MapStyleRepository.applyPresentation`, so it covers a fresh download,
+a cached style upgraded offline, the offline manager and CarPlay. Custom styles are
+not rewritten. Native MapLibre gets an expression that searches the name for a
+digit. The Flutter vector renderer (route previews and the ride library) parses a
+smaller expression language and cannot search a string, so it is handed a portable
+version that labels the two kinds by type, always.
+
+![The guard drawn by MapLibre GL JS over sample POIs: the provider's label in red, the guarded label in black](images/provider-poi-label-guard.png)
+
+On MapLibre Native, through the app's own style pipeline (a debug harness, not the
+ride screen), at the Aust site on the Original map at zoom 17.2: the provider's own
+label before, the guarded one after. The Android frame reproduces the field
+screenshot, and every other POI on the screen is unchanged.
+
+![iOS and Android, before and after](images/provider-poi-label-devices.png)
+
+### What this does not fix
+
+- **The data.** The OpenStreetMap relation (19196996) has no `name`, and the tile
+  rule is upstream. Adding a `name` to the relation, for example its `ref_name`,
+  would fix that one site at the source; it needs an OpenStreetMap account, so it is
+  for the owner to do. The upstream rule affects every such charge point.
+- **The website planner** draws the same provider style and the same label. It is
+  not covered here.
+- **Daylight, a mounted phone, a ride.** The evidence is a render of the expression
+  and the app's map at the site, not a ride past it.
 
 ## MapLibre provider configuration
 

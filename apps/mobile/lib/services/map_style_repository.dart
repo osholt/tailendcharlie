@@ -8,6 +8,7 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 import 'basemap_configuration.dart';
+import 'provider_label_guard.dart';
 
 /// Where the style the map is about to render actually came from.
 ///
@@ -221,10 +222,14 @@ class MapStyleRepository {
 
   /// Shared by native maps and Flutter previews. Also applied to cached styles
   /// so an offline upgrade gets the current map presentation.
+  ///
+  /// [portableExpressions] is for the Flutter vector renderer, whose expression
+  /// parser reads a smaller language than MapLibre's; see [ProviderLabelGuard].
   static void applyPresentation(
     Map<String, dynamic> style,
-    BasemapConfiguration configuration,
-  ) {
+    BasemapConfiguration configuration, {
+    bool portableExpressions = false,
+  }) {
     if (configuration.styleUrl == configuration.darkStyleUrl &&
         configuration.styleUrl.isNotEmpty) {
       _repaintForLegibleDarkMode(style);
@@ -234,12 +239,29 @@ class MapStyleRepository {
         _repaintForRestrainedLightMode(style);
       } else {
         // Original keeps the provider's palette, labels and symbols. Its road
-        // edges are the one exception (#841): they were the thinnest, palest
-        // thing on the map, in this style as much as in Restrained.
+        // edges are an exception (#841): they were the thinnest, palest thing
+        // on the map, in this style as much as in Restrained. POI labels that
+        // would show an identifier are the other (#860), guarded below.
         _strengthenOriginalRoadEdges(style);
       }
     }
     _removeBusinessLabels(style, configuration);
+    _guardProviderLabels(style, configuration, portable: portableExpressions);
+  }
+
+  /// A rider never sees a source identifier on a provider POI (#860). Only the
+  /// default provider styles are the provider's own; a custom style belongs to
+  /// the deployment that supplied it and is not rewritten.
+  static void _guardProviderLabels(
+    Map<String, dynamic> style,
+    BasemapConfiguration configuration, {
+    required bool portable,
+  }) {
+    if (configuration.styleUrl != BasemapConfiguration.defaultLightStyleUrl &&
+        configuration.styleUrl != BasemapConfiguration.defaultDarkStyleUrl) {
+      return;
+    }
+    ProviderLabelGuard.apply(style, portable: portable);
   }
 
   static void _removeBusinessLabels(

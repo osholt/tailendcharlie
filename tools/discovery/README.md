@@ -76,6 +76,14 @@ outputs, byte-for-byte web/mobile parity, source pin rejection, category and
 nation stratification of the review sample, quota shortfall reporting, and the
 interpreter version guard.
 
+`test_published_labels.py` is different: it reads the committed assets rather
+than a fixture. It scans every label field of the bundled catalogues (both copies
+of this one, the biker places and the route-place indexes) and fails if a label is
+an identifier, meaning a UUID, a bare hash or an OpenStreetMap element reference.
+Nothing here generates such a label today. The check is for the day an extract
+puts one in a name, so that the review gate above sees it instead of a rider
+(#860).
+
 ## Enrichment and publication
 
 The generator produces geometry and a score. It does not produce anything a rider

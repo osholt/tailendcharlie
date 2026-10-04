@@ -27,6 +27,7 @@ import '../../domain/distance_unit.dart';
 import '../../domain/riding_display_size.dart';
 import '../../domain/hazard.dart';
 import '../../domain/imported_route.dart';
+import '../../domain/ride_plan.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
@@ -40,6 +41,7 @@ import '../../services/flutter_vector_style.dart';
 import '../../services/basemap_status.dart';
 import '../../services/biker_place_catalogue.dart';
 import '../../services/circular_ride_planner.dart';
+import '../../services/ride_plan_router.dart';
 import '../../services/demo_route_loader.dart';
 import '../../services/discovery_layer_preferences.dart';
 import '../../services/discovery_suggestion_queue.dart';
@@ -80,12 +82,13 @@ import '../../services/route_journey_progress.dart';
 import '../../services/route_progress.dart';
 import '../../services/rider_travel_direction.dart';
 import '../../services/route_reshape_planner.dart';
+import '../../services/route_waypoint_editor.dart';
 import '../../services/route_verification.dart';
 import '../../services/verified_road_routing.dart';
 import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
-import 'destination_route_sheet.dart';
+import 'place_search_sheet.dart';
 import 'circular_ride_sheet.dart';
 import 'discovery_layer_visibility.dart';
 import 'discovery_road_sheet.dart';
@@ -499,6 +502,8 @@ class RideMapFeature extends StatefulWidget {
     this.onChangeRouteRequestHandled,
     this.circularRideRequestToken,
     this.onCircularRideRequestHandled,
+    this.editRouteRequestToken,
+    this.onEditRouteRequestHandled,
     this.pendingSharedGpxFile,
     this.pendingInAppRoute,
     this.acquireCurrentPosition,
@@ -574,6 +579,8 @@ class RideMapFeature extends StatefulWidget {
     VoidCallback? onChangeRouteRequestHandled,
     Object? circularRideRequestToken,
     VoidCallback? onCircularRideRequestHandled,
+    Object? editRouteRequestToken,
+    VoidCallback? onEditRouteRequestHandled,
     PickedGpxFile? pendingSharedGpxFile,
     PendingInAppRoute? pendingInAppRoute,
     Future<GeoPoint?> Function()? acquireCurrentPosition,
@@ -643,6 +650,8 @@ class RideMapFeature extends StatefulWidget {
     onChangeRouteRequestHandled: onChangeRouteRequestHandled,
     circularRideRequestToken: circularRideRequestToken,
     onCircularRideRequestHandled: onCircularRideRequestHandled,
+    editRouteRequestToken: editRouteRequestToken,
+    onEditRouteRequestHandled: onEditRouteRequestHandled,
     pendingSharedGpxFile: pendingSharedGpxFile,
     pendingInAppRoute: pendingInAppRoute,
     acquireCurrentPosition: acquireCurrentPosition,
@@ -753,6 +762,11 @@ class RideMapFeature extends StatefulWidget {
   final VoidCallback? onChangeRouteRequestHandled;
   final Object? circularRideRequestToken;
   final VoidCallback? onCircularRideRequestHandled;
+
+  /// Asks the map to reopen its route on the plan surface (#847). Consumed
+  /// once per token, like the route-change and circular-ride requests.
+  final Object? editRouteRequestToken;
+  final VoidCallback? onEditRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
   final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -960,6 +974,8 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onChangeRouteRequestHandled: widget.onChangeRouteRequestHandled,
         circularRideRequestToken: widget.circularRideRequestToken,
         onCircularRideRequestHandled: widget.onCircularRideRequestHandled,
+        editRouteRequestToken: widget.editRouteRequestToken,
+        onEditRouteRequestHandled: widget.onEditRouteRequestHandled,
         pendingSharedGpxFile: widget.pendingSharedGpxFile,
         pendingInAppRoute: widget.pendingInAppRoute,
         acquireCurrentPosition: widget.acquireCurrentPosition,
@@ -1058,6 +1074,8 @@ class RideMapScreen extends StatefulWidget {
     this.onChangeRouteRequestHandled,
     this.circularRideRequestToken,
     this.onCircularRideRequestHandled,
+    this.editRouteRequestToken,
+    this.onEditRouteRequestHandled,
     this.pendingSharedGpxFile,
     this.pendingInAppRoute,
     this.acquireCurrentPosition,
@@ -1210,6 +1228,11 @@ class RideMapScreen extends StatefulWidget {
   final VoidCallback? onChangeRouteRequestHandled;
   final Object? circularRideRequestToken;
   final VoidCallback? onCircularRideRequestHandled;
+
+  /// Asks the map to reopen its route on the plan surface (#847). Consumed
+  /// once per token, like the route-change and circular-ride requests.
+  final Object? editRouteRequestToken;
+  final VoidCallback? onEditRouteRequestHandled;
   final PickedGpxFile? pendingSharedGpxFile;
   final PendingInAppRoute? pendingInAppRoute;
   final Future<GeoPoint?> Function()? acquireCurrentPosition;
@@ -1344,6 +1367,13 @@ class _RideMapScreenState extends State<RideMapScreen>
   late final Future<DiscoverySuggestionQueue> _suggestionQueue;
   late final DiscoverySuggestionConfiguration _suggestionConfiguration;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
+
+  /// Routes the plan surface's plans through the destination planner's
+  /// preference-aware service, with drawn adjustments as non-stopping controls
+  /// (#847).
+  late final RidePlanRouter _ridePlanRouter = RidePlanRouter(
+    routingService: _destinationRoutePlanner.routingService,
+  );
   late final RouteGeometryEnricher _defaultRouteGeometryEnricher;
   late final ImportedTrackMatcher _defaultImportedTrackMatcher;
   late SpeedLimitDisplayController _speedLimitDisplay;
@@ -1474,6 +1504,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
   Object? _handledCircularRideRequestToken;
+  Object? _handledEditRouteRequestToken;
   // Dismissal is per hazard, so passing this one and approaching the next
   // still raises a fresh warning.
   String? _dismissedEnforcementAlertId;
@@ -1831,6 +1862,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     unawaited(_loadDiscoveryCatalogue());
     _maybeHandleChangeRouteRequest();
     _maybeHandleCircularRideRequest();
+    _maybeHandleEditRouteRequest();
   }
 
   @override
@@ -1841,6 +1873,9 @@ class _RideMapScreenState extends State<RideMapScreen>
     }
     if (oldWidget.circularRideRequestToken != widget.circularRideRequestToken) {
       _maybeHandleCircularRideRequest();
+    }
+    if (oldWidget.editRouteRequestToken != widget.editRouteRequestToken) {
+      _maybeHandleEditRouteRequest();
     }
     if (oldWidget.globalRideHeatmap != widget.globalRideHeatmap) {
       oldWidget.globalRideHeatmap?.removeListener(_onGlobalRideHeatmapChanged);
@@ -2054,6 +2089,19 @@ class _RideMapScreenState extends State<RideMapScreen>
   }
 
   Future<void> _loadPersistedRoute() async {
+    try {
+      await _readPersistedRoute();
+    } finally {
+      if (!_persistedRouteRead.isCompleted) _persistedRouteRead.complete();
+    }
+  }
+
+  /// Completes once the stored route has been read, found or not, so a request
+  /// that arrives with the map — Edit route, say — acts on the route the rider
+  /// confirmed rather than on the empty map before it loads (#847).
+  final Completer<void> _persistedRouteRead = Completer<void>();
+
+  Future<void> _readPersistedRoute() async {
     try {
       final route = await widget.routeStore.loadActiveRoute();
       try {
@@ -3293,6 +3341,20 @@ class _RideMapScreenState extends State<RideMapScreen>
               ),
             )
           : null;
+      // The leader has two more targets than anyone else - REPORT and TELL GROUP
+      // (#854) - and side by side they were a 160 pixel column beside SOS/LEAVE
+      // that left the group overview 81 pixels on a 393 point phone. In portrait
+      // they stack as one column exactly as tall as the SOS-over-LEAVE pair, each
+      // half the height and the full 96 wide, so a leader's row is two columns of
+      // targets and the overview, as everyone else's is (#848). Nobody else has a
+      // TELL GROUP, so nobody else's REPORT changes: it stays the 96 point square.
+      // Landscape keeps them side by side: its cluster is a column and its
+      // overview is in the rail beside it.
+      final stackLeaderTargets =
+          !landscape &&
+          widget.rideStarted &&
+          widget.onReportHazard != null &&
+          widget.onLeaderBroadcast != null;
       // Alerting the group is a ride action, not a route action, and it earns a
       // place beside them (#125). One tap, and a big one (#849).
       final reportButton = !widget.rideStarted || widget.onReportHazard == null
@@ -3300,6 +3362,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           : _ReportSightingButton(
               onPressed: _alertSending ? null : _raiseAlert,
               sent: _alertSent,
+              compact: stackLeaderTargets,
             );
       // The leader's list of one-tap broadcasts (#854): present only for the
       // leader of a running group ride, and beside REPORT because it is the same
@@ -3309,6 +3372,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           ? null
           : LeaderBroadcastButton(
               onPressed: _broadcastSheetOpen ? null : _openLeaderBroadcasts,
+              compact: stackLeaderTargets,
             );
       final hasActions =
           sosButton != null ||
@@ -3333,6 +3397,16 @@ class _RideMapScreenState extends State<RideMapScreen>
           : SizedBox(height: actionTargetHeight, child: leaveButton);
       final reportSubtree = reportButton == null || broadcastButton == null
           ? (reportButton ?? broadcastButton)
+          : stackLeaderTargets
+          ? Column(
+              key: const Key('map-leader-target-stack'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                reportButton,
+                const SizedBox(height: 8),
+                broadcastButton,
+              ],
+            )
           : Row(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -7071,71 +7145,60 @@ class _RideMapScreenState extends State<RideMapScreen>
     );
   }
 
+  /// A new destination for this map, planned on the plan surface (#847).
+  ///
+  /// The destination comes first and the start is the rider's location, as on
+  /// Home. This used to be a text form, then a review whose "Edit stops" went
+  /// back to the form and lost every stop added on the map and every drawn
+  /// adjustment; the plan surface edits all of them in one place.
   Future<void> _planDestination() async {
     if (_routing) return;
-    DestinationPlanRequest? request;
-    ImportedRoute? previousCandidate;
-    while (mounted) {
-      if (!mounted) return;
-      request = await DestinationRouteSheet.show(
-        context,
-        initialRequest: request,
-      );
-      if (request == null || !mounted) return;
-      setState(() => _routing = true);
-      try {
-        final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
-        GeoPoint? origin;
-        if (!hasStartQuery) {
-          origin = _effectivePosition;
-          origin ??= await widget.acquireCurrentPosition?.call();
-          origin ??= _effectivePosition;
-          if (origin == null) {
-            throw const FormatException(
-              'A current location is required. Allow location access, or give '
-              'a start location instead, and try again.',
-            );
-          }
-        }
-        final planned = await _destinationRoutePlanner.planForReview(
-          origin: origin,
-          originQuery: request.startQuery,
-          stopQueries: request.stopQueries,
-          query: request.query,
-          distanceUnit: widget.distanceUnit,
-          preferences: request.preferences,
-        );
-        final review = await _reviewRoute(
-          planned.route,
-          distanceMeters: planned.distanceMeters,
-          duration: planned.duration,
-          twistinessScore: planned.twistinessScore,
-          warnings: planned.warnings,
-          verification: planned.verification,
-          canEditStops: true,
-          previousRoute: previousCandidate,
-        );
-        if (review.action == RouteReviewAction.edit) {
-          previousCandidate = review.route;
-          continue;
-        }
-        if (review.action != RouteReviewAction.confirm) return;
-        final route = await _commitRoute(review.route);
-        if (mounted) {
-          final target = request.handoffTarget;
-          if (target != null) await _exportRoute(target, route);
-        }
-        return;
-      } on FormatException catch (error) {
-        _showMessage(error.message);
-        return;
-      } on Object catch (error) {
-        _showMessage('Could not plan destination: $error');
-        return;
-      } finally {
-        if (mounted) setState(() => _routing = false);
-      }
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
     }
+    final choice = await PlaceSearchSheet.show(
+      context,
+      searchService: _destinationRoutePlanner.searchService,
+      title: 'Where to?',
+    );
+    if (choice is! PlaceSearchPlace || !mounted) return;
+    await _planOnSurface(RidePlan.toDestination(choice.place));
+  }
+
+  /// Opens the plan surface for [plan] and takes the route it confirms.
+  ///
+  /// [editing] is the route the plan was read from, when it is an edit: its
+  /// identity and library details carry over, and a material change is
+  /// compared against it.
+  Future<ImportedRoute?> _planOnSurface(
+    RidePlan plan, {
+    ImportedRoute? editing,
+  }) async {
+    final outcome = await RouteReviewScreen.showPlan(
+      context,
+      planning: RidePlanEditing(
+        plan: plan,
+        route: (plan, location) => _ridePlanRouter.route(
+          plan,
+          currentLocation: location,
+          base: editing,
+          distanceUnit: widget.distanceUnit,
+        ),
+        searchService: _destinationRoutePlanner.searchService,
+        currentLocation:
+            widget.currentPosition ??
+            ValueNotifier<GeoPoint?>(_effectivePosition),
+        acquireCurrentLocation: widget.acquireCurrentPosition,
+        confirmLabel: (_) => widget.rideStarted ? 'Update route' : 'Use route',
+      ),
+      route: editing,
+      distanceUnit: widget.distanceUnit,
+      basemapConfiguration: _basemap,
+      showMarkerPlan: widget.markerFeaturesEnabled,
+    );
+    if (outcome == null || !mounted) return null;
+    return _commitRoute(outcome.route);
   }
 
   Future<void> _planCircularRide() async {
@@ -7143,18 +7206,16 @@ class _RideMapScreenState extends State<RideMapScreen>
     var origin = _effectivePosition;
     origin ??= await widget.acquireCurrentPosition?.call();
     origin ??= _effectivePosition;
-    if (origin == null || !mounted) {
-      _showMessage(
-        'Enable location so the circular ride can start and finish here.',
-      );
-      return;
-    }
+    if (!mounted) return;
+    // No fix no longer refuses the loop: its sheet has a start row, and a
+    // rider can plan from a meeting point they are not yet at (#847).
     var request = await CircularRideSheet.show(
       context,
       start: origin,
       distanceUnit: widget.distanceUnit,
       personalHeatmapCells: _personalCircularHeatCells,
       globalHeatmapCells: _globalCircularHeatCells,
+      searchService: _destinationRoutePlanner.searchService,
     );
     while (request != null && mounted) {
       final requestedRide = request;
@@ -7220,6 +7281,7 @@ class _RideMapScreenState extends State<RideMapScreen>
             initialRequest: plan.request,
             personalHeatmapCells: _personalCircularHeatCells,
             globalHeatmapCells: _globalCircularHeatCells,
+            searchService: _destinationRoutePlanner.searchService,
           );
           continue;
         }
@@ -7295,6 +7357,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         initialRequest: requestedRide,
         personalHeatmapCells: _personalCircularHeatCells,
         globalHeatmapCells: _globalCircularHeatCells,
+        searchService: _destinationRoutePlanner.searchService,
       );
     }
   }
@@ -8221,126 +8284,25 @@ class _RideMapScreenState extends State<RideMapScreen>
     if (add == true) await _addBikerPlaceToRoute(place);
   }
 
-  Future<void> _addBikerPlaceToRoute(BikerPlace place) async {
-    if (_routing) return;
-    // Checked here rather than left to the backstop inside
-    // _reviewAndActivateRoute: the catch below prefixes whatever it is given
-    // with "Could not route via ...", which turned a leadership rule into a
-    // routing failure with the exception class printed at the rider (#576).
-    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
-      _showMessage(refusal);
-      return;
-    }
-    final existing = _route;
-    final start =
-        existing?.paths.lastOrNull?.points.lastOrNull ?? _effectivePosition;
-    if (start == null) {
-      _showMessage('Enable location before routing to this café.');
-      return;
-    }
-    setState(() => _routing = true);
-    try {
-      final extension = await _roadRoutingService.routeThrough([
-        start,
-        place.point,
-      ], preferences: existing?.preferences);
-      final route = ImportedRoute(
-        id:
-            existing?.id ??
-            'biker-cafe-${DateTime.now().microsecondsSinceEpoch}',
-        name: existing?.name ?? 'Route via ${place.name}',
-        description: existing?.description,
-        importedAt: existing?.importedAt ?? DateTime.now().toUtc(),
-        sourceFileName: existing?.sourceFileName ?? 'biker-cafe',
-        paths: [
-          ...?existing?.paths,
-          RoutePath(
-            kind: RoutePathKind.route,
-            name: place.name,
-            points: extension.points,
-          ),
-        ],
-        waypoints: [
-          ...?existing?.waypoints,
-          RouteWaypoint(
-            point: place.point,
-            name: place.name,
-            description: place.address,
-            symbol: 'Restaurant',
-          ),
-        ],
-        preferences: existing?.preferences,
-        plannedDuration:
-            (existing?.plannedDuration ?? Duration.zero) + extension.duration,
-      );
-      await _reviewAndActivateRoute(route);
-    } on Object catch (error) {
-      _showMessage('Could not route via ${place.name}: $error');
-    } finally {
-      if (mounted) setState(() => _routing = false);
-    }
-  }
+  Future<void> _addBikerPlaceToRoute(BikerPlace place) => _addPlaceToPlan(
+    RidePlanPlace(
+      point: place.point,
+      label: place.name,
+      description: place.address.isEmpty ? null : place.address,
+      symbol: 'Restaurant',
+    ),
+  );
 
   Future<void> _addDiscoveryFeatureToRoute(
     MotorcycleDiscoveryFeature feature,
-  ) async {
-    if (_routing) return;
-    // See _addBikerPlaceToRoute: the same prefixing catch is below (#576).
-    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
-      _showMessage(refusal);
-      return;
-    }
-    final existing = _route;
-    final start =
-        existing?.paths.lastOrNull?.points.lastOrNull ?? _effectivePosition;
-    if (start == null) {
-      _showMessage(
-        'Load a route or enable location before adding this highlight.',
-      );
-      return;
-    }
-    setState(() => _routing = true);
-    try {
-      final extension = await _roadRoutingService.routeThrough([
-        start,
-        feature.anchor,
-      ], preferences: existing?.preferences);
-      final route = ImportedRoute(
-        id:
-            existing?.id ??
-            'discovery-${DateTime.now().microsecondsSinceEpoch}',
-        name: existing?.name ?? 'Route via ${feature.name}',
-        description: existing?.description,
-        importedAt: existing?.importedAt ?? DateTime.now().toUtc(),
-        sourceFileName: existing?.sourceFileName ?? 'motorcycle-discovery',
-        paths: [
-          ...?existing?.paths,
-          RoutePath(
-            kind: RoutePathKind.route,
-            name: feature.name,
-            points: extension.points,
-          ),
-        ],
-        waypoints: [
-          ...?existing?.waypoints,
-          RouteWaypoint(
-            point: feature.anchor,
-            name: feature.name,
-            description: '${feature.category.label}; ${feature.warning}',
-            symbol: 'Scenic Area',
-          ),
-        ],
-        preferences: existing?.preferences,
-        plannedDuration:
-            (existing?.plannedDuration ?? Duration.zero) + extension.duration,
-      );
-      await _reviewAndActivateRoute(route);
-    } on Object catch (error) {
-      _showMessage('Could not route via ${feature.name}: $error');
-    } finally {
-      if (mounted) setState(() => _routing = false);
-    }
-  }
+  ) => _addPlaceToPlan(
+    RidePlanPlace(
+      point: feature.anchor,
+      label: feature.name,
+      description: '${feature.category.label}; ${feature.warning}',
+      symbol: 'Scenic Area',
+    ),
+  );
 
   Future<void> _showDiscoverySuggestionForm({
     MotorcycleDiscoveryFeature? feature,
@@ -8544,6 +8506,11 @@ class _RideMapScreenState extends State<RideMapScreen>
       case _MapAction.downloadOffline:
         await _showOfflineMapDetails();
       case _MapAction.removeRoute:
+        // Free roam has no group to clear a route for (#847).
+        if (widget.hostChrome != null && widget.canEditRoute) {
+          await _stopFreeRoamNavigation();
+          return;
+        }
         if (!widget.canEditRoute || !await _confirmRemoveRoute()) return;
         await _clearActiveRouteAndState();
       case _MapAction.clearOfflineTiles:
@@ -8881,11 +8848,15 @@ class _RideMapScreenState extends State<RideMapScreen>
         unawaited(_importSharedGpx(sharedFile));
       } else if (inAppRoute != null) {
         unawaited(() async {
-          final route = await _reviewAndActivateRoute(
-            inAppRoute.route,
-            warnings: inAppRoute.reviewNotes,
-            verification: inAppRoute.verification,
-          );
+          // Confirmed on the plan surface already: taken as it is, with no
+          // second review (#624, #847).
+          final route = inAppRoute.reviewed
+              ? await _commitRoute(inAppRoute.route)
+              : await _reviewAndActivateRoute(
+                  inAppRoute.route,
+                  warnings: inAppRoute.reviewNotes,
+                  verification: inAppRoute.verification,
+                );
           final target = inAppRoute.handoffTarget;
           if (route != null && target != null && mounted) {
             await _exportRoute(target, route);
@@ -8917,6 +8888,62 @@ class _RideMapScreenState extends State<RideMapScreen>
     });
   }
 
+  /// Reopens the route on the plan surface when the host asks (#847).
+  void _maybeHandleEditRouteRequest() {
+    final token = widget.editRouteRequestToken;
+    if (token == null || identical(token, _handledEditRouteRequestToken)) {
+      return;
+    }
+    _handledEditRouteRequestToken = token;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onEditRouteRequestHandled?.call();
+      if (mounted) unawaited(_editRoute());
+    });
+  }
+
+  /// Edit route: the confirmed route, back on the plan surface with its start,
+  /// stops, drawn adjustments and options as they were confirmed (#847).
+  ///
+  /// Confirming a route used to be final: every way back replaced it from
+  /// scratch. A start that was the rider's location is their location again,
+  /// so an edit made under way re-plans from where they are, as Google Maps
+  /// does. With no route there is nothing to edit, and this is a new plan.
+  Future<void> _editRoute() async {
+    await _persistedRouteRead.future;
+    if (!mounted || _routing) return;
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
+    }
+    final route = _route;
+    if (route == null) {
+      await _planDestination();
+      return;
+    }
+    await _planOnSurface(RidePlan.fromRoute(route), editing: route);
+  }
+
+  /// A café or highlight added from the map is a stop on the plan, on the leg
+  /// nearest to it, rather than a new leg after the destination (#847). With
+  /// no route it is where the plan goes.
+  Future<void> _addPlaceToPlan(RidePlanPlace place) async {
+    if (_routing) return;
+    if (widget.routeAuthority.routeChangeRefusal case final refusal?) {
+      _showMessage(refusal);
+      return;
+    }
+    final route = _route;
+    if (route == null || route.waypoints.length < 2) {
+      await _planOnSurface(RidePlan.toDestination(place));
+      return;
+    }
+    final withStop = insertRouteWaypoint(
+      route,
+      place.toWaypoint(defaultSymbol: RidePlanRouter.stopSymbol),
+    );
+    await _planOnSurface(RidePlan.fromRoute(withStop), editing: route);
+  }
+
   /// A file the platform already handed us (Open in..., a share sheet)
   /// skips the picker sheet entirely and goes straight through the same
   /// parse-and-activate pipeline a manual import uses.
@@ -8944,6 +8971,21 @@ class _RideMapScreenState extends State<RideMapScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Edit before replace: the confirmed route's stops, drawn
+              // adjustments and options come back as they were (#847).
+              if (_route != null) ...[
+                ListTile(
+                  key: const Key('edit-route-sheet-item'),
+                  leading: const Icon(Icons.edit_road_outlined),
+                  title: const Text('Edit this route'),
+                  subtitle: const Text('Start, stops and route options'),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    unawaited(_editRoute());
+                  },
+                ),
+                const Divider(height: 1),
+              ],
               ListTile(
                 key: const Key('continue-without-route-sheet-item'),
                 leading: const Icon(Icons.map_outlined),
@@ -11385,7 +11427,16 @@ class _ActionLabel extends StatelessWidget {
 /// controls side by side with the same name is how the wrong one gets pressed.
 /// What the *group* sees is "Alert".
 class _ReportSightingButton extends StatelessWidget {
-  const _ReportSightingButton({required this.onPressed, this.sent = false});
+  const _ReportSightingButton({
+    required this.onPressed,
+    this.sent = false,
+    this.compact = false,
+  });
+
+  /// The same target at half the height, for the leader's portrait stack with
+  /// TELL GROUP: 96 wide, 56 high, so the pair is exactly as tall as the
+  /// SOS-over-LEAVE pair beside it.
+  final bool compact;
 
   /// Null while an alert is being stored, so a second tap cannot queue behind it.
   final VoidCallback? onPressed;
@@ -11396,6 +11447,9 @@ class _ReportSightingButton extends StatelessWidget {
 
   /// The square the target occupies, in every state and both orientations.
   static const double side = 96;
+
+  /// The height of the compact target, which matches SOS and LEAVE.
+  static const double compactHeight = 56;
 
   static const _fill = Color(0xFFFFC857);
   static const _ink = Color(0xFF1A1200);
@@ -11421,16 +11475,16 @@ class _ReportSightingButton extends StatelessWidget {
           onTap: onPressed,
           child: SizedBox(
             width: side,
-            height: side,
+            height: compact ? compactHeight : side,
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
                   sent ? Icons.check_circle_rounded : Icons.add_alert_rounded,
-                  size: 44,
+                  size: compact ? 26 : 44,
                   color: _ink,
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: compact ? 2 : 4),
                 // The box keeps its 96 pixels at every text size, so the caption
                 // is what gives way rather than the box overflowing: the icon is
                 // what a rider aims at, and the word underneath only names it.
@@ -11439,9 +11493,9 @@ class _ReportSightingButton extends StatelessWidget {
                     fit: BoxFit.scaleDown,
                     child: Text(
                       sent ? 'SENT' : 'REPORT',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _ink,
-                        fontSize: 15,
+                        fontSize: compact ? 12 : 15,
                         height: 1,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 0.8,

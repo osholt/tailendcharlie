@@ -28,22 +28,26 @@ import '../../services/road_routing.dart';
 import '../../services/verified_road_routing.dart';
 import 'home_destination_search.dart';
 import 'home_map_backdrop.dart';
+import 'ride_invite_step.dart';
+import 'ride_with_others_sheet.dart';
 import 'scan_invitation_screen.dart';
 import '../../controllers/test_control_controller.dart';
 import '../../domain/join_invite.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_coordination_mode.dart';
+import '../../domain/ride_plan.dart';
 import '../../internet/plan_directory.dart';
 import '../../services/build_identity.dart';
 import '../../services/basemap_configuration.dart';
 import '../../services/carplay_bridge.dart';
 import '../../services/carplay_route_preview.dart';
 import '../../services/gpx_import_source.dart';
+import '../../services/ride_plan_router.dart';
 import '../../services/route_importer.dart';
 import '../../services/stored_route_library.dart';
 import '../map/ride_map_feature.dart'
     show HostMapChrome, HostMapMenuAction, rideMapToolbarHeight;
-import '../map/destination_route_sheet.dart';
+import '../map/route_review_screen.dart';
 import '../map/stored_route_picker.dart';
 import '../ride/previous_rides_screen.dart';
 import '../ride/route_recorder_screen.dart';
@@ -318,6 +322,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// existing flow rather than growing a second implementation of it.
   Object? _circularRideRequestToken;
 
+  /// Bumped to reopen the free-roam route on the plan surface (#847). The map
+  /// owns the route and the surface, so Home only asks.
+  Object? _editRouteRequestToken;
+
   /// The route the free-roam map is following, if any.
   ///
   /// There is no lobby out here, so a route *is* the navigation: no start
@@ -339,6 +347,12 @@ class _HomeScreenState extends State<HomeScreen> {
         client: _routingClient,
         configuration: RoutingConfiguration.fromEnvironment(),
       );
+
+  /// Routes the plan surface's plans through the destination planner's own
+  /// service, so a plan is routed exactly as a destination is (#847).
+  late final RidePlanRouter _planRouter = RidePlanRouter(
+    routingService: _destinationPlanner.routingService,
+  );
 
   BasemapConfiguration get _homeBasemap =>
       BasemapConfiguration.fromEnvironment().forBrightness(
@@ -583,6 +597,10 @@ class _HomeScreenState extends State<HomeScreen> {
             onCircularRideRequestHandled: () => setState(() {
               _circularRideRequestToken = null;
             }),
+            editRouteRequestToken: _editRouteRequestToken,
+            onEditRouteRequestHandled: () => setState(() {
+              _editRouteRequestToken = null;
+            }),
             navigating: _routeOnMap != null,
             localDisplayName: widget.riderProfile.displayName,
             onNavigationArchived: (ride) =>
@@ -598,6 +616,17 @@ class _HomeScreenState extends State<HomeScreen> {
             hostChrome: HostMapChrome(
               bottomInset: 0,
               menuActions: [
+                // Confirming a route is not final (#847). Offered from the
+                // menu, which the navigation canvas's menu button also opens,
+                // so it is reachable on the move as well as at a standstill.
+                if (_routeOnMap != null)
+                  HostMapMenuAction(
+                    id: 'home-edit-route',
+                    label: 'Edit route',
+                    icon: Icons.edit_road_outlined,
+                    onSelected: () =>
+                        setState(() => _editRouteRequestToken = Object()),
+                  ),
                 HostMapMenuAction(
                   id: 'home-create-ride',
                   label: 'Create a group ride',
@@ -833,13 +862,14 @@ class _HomeScreenState extends State<HomeScreen> {
         await _navigateTo(choice);
       case HomeSearchHandoff(:final kind):
         switch (kind) {
-          // Both of these are the existing form, which already knows how to take
-          // a six-digit ride code and a planner route code. #431 is about the way
-          // in, not about replacing what works once you are there.
+          // Joining takes a six-digit code, so it stays the join form.
           case HomeSearchHandoffKind.joinWithCode:
             await _showRideSheet(context, creating: false);
+          // A planned route is a route, not a ride: it is reviewed and ridden
+          // in free roam like an imported GPX, and riding it with others is a
+          // choice made afterwards (#847).
           case HomeSearchHandoffKind.plannedRouteCode:
-            await _showRideSheet(context, creating: true);
+            await _recallPlannedRoute();
           case HomeSearchHandoffKind.storedRoute:
             await _openRideLibrary(context);
           case HomeSearchHandoffKind.circularRide:
@@ -848,62 +878,62 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Plans a route to the chosen place and hands it to the map.
+  /// Opens the plan surface on a route to the chosen place (#847).
   ///
-  /// No ride is created. A rider who searched for somewhere to go said nothing
-  /// about riding with anybody, and the app used to answer that by making a
-  /// ride — with a coordination mode it had to ask for — before it would show
-  /// a route (#600). Riding with others is offered from the map afterwards,
-  /// once there is a route to bring along, which keeps the #546 ordering:
-  /// the route exists before the ride that carries it.
+  /// The start is the rider's location unless they change it there, and a
+  /// missing fix does not stop a destination being chosen: the start row says
+  /// it is waiting, and offers a place instead. The text form that used to sit
+  /// between the search and the route is gone; stops, the start and route
+  /// options are all edited on the surface that shows the route.
+  ///
+  /// No ride is created for a solo plan. A rider who searched for somewhere to
+  /// go said nothing about riding with anybody (#600), and the map navigates
+  /// the confirmed route as it is, without a second review (#624). Choosing a
+  /// group on the plan creates the ride with the route already in it.
   Future<void> _navigateTo(DestinationChoice choice) async {
-    final request = await DestinationRouteSheet.show(
+    final outcome = await RouteReviewScreen.showPlan(
       context,
-      initialRequest: DestinationPlanRequest(query: choice.label),
-    );
-    if (request == null || !mounted) return;
-    final origin = _position.value;
-    final hasStartQuery = (request.startQuery ?? '').trim().isNotEmpty;
-    if (origin == null && !hasStartQuery) return;
-    setState(() => _planningDestination = true);
-    try {
-      final plan = await _destinationPlanner.planForReview(
-        origin: origin,
-        originQuery: request.startQuery,
-        stopQueries: request.stopQueries,
-        query: request.query,
-        selectedDestination: request.query.trim() == choice.label
-            ? DestinationMatch(label: choice.label, point: choice.point)
-            : null,
-        distanceUnit: widget.distanceUnits.value,
-        preferences: request.preferences,
-      );
-      if (!mounted) return;
-      setState(() {
-        _freeRoamRoute = PendingInAppRoute(
-          route: plan.route,
-          reviewNotes: plan.warnings,
-          handoffTarget: request.handoffTarget,
-          verification: plan.verification,
-        );
-        _freeRoamRouteToken = Object();
-      });
-    } on Object catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            error is FormatException
-                ? error.message
-                : 'Could not plan a route there. Try again, or pick a different '
-                      'place.',
+      planning: RidePlanEditing(
+        plan: RidePlan.toDestination(
+          RidePlanPlace.fromSearchResult(
+            label: choice.label,
+            point: choice.point,
           ),
         ),
+        route: (plan, location) => _planRouter.route(
+          plan,
+          currentLocation: location,
+          distanceUnit: widget.distanceUnits.value,
+        ),
+        searchService: _destinationPlanner.searchService,
+        currentLocation: _position,
+        offerCoordinationChoice: true,
+        confirmLabel: (plan) => plan.isGroup ? 'Create group ride' : 'Start',
+      ),
+      distanceUnit: widget.distanceUnits.value,
+      basemapConfiguration: _planBasemap,
+    );
+    if (outcome == null || !mounted) return;
+    if (outcome.plan.isGroup) {
+      await RideWithOthersSheet.show(
+        context,
+        controller: widget.controller,
+        riderProfile: widget.riderProfile,
+        route: outcome.route,
+        coordinationMode: outcome.plan.coordinationMode,
       );
-    } finally {
-      if (mounted) setState(() => _planningDestination = false);
+      return;
     }
+    setState(() {
+      _freeRoamRoute = PendingInAppRoute(route: outcome.route, reviewed: true);
+      _freeRoamRouteToken = Object();
+    });
   }
+
+  /// The plan surface's map. A build without the platform map — widget tests,
+  /// plugin-less builds — gets the route-only preview the review already has.
+  BasemapConfiguration get _planBasemap =>
+      widget.enableNativeServices ? _homeBasemap : const BasemapConfiguration();
 
   Future<void> _showRideSheet(
     BuildContext context, {
@@ -948,14 +978,60 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (selection == null || !mounted) return;
     final prepared = library.prepare(selection);
-    await _showRideSheet(
-      context,
-      creating: true,
-      pendingInAppRoute: PendingInAppRoute(
-        route: prepared.route,
-        reviewNotes: prepared.notes,
-      ),
+    // Into free roam's review, as a GPX import is, rather than a ride form
+    // in front of it: choosing a saved route used to create a ride before the
+    // rider could see it (#847).
+    _reviewInFreeRoam(
+      PendingInAppRoute(route: prepared.route, reviewNotes: prepared.notes),
     );
+  }
+
+  /// Hands a route to the free-roam map's review.
+  void _reviewInFreeRoam(PendingInAppRoute route) => setState(() {
+    _freeRoamRoute = route;
+    _freeRoamRouteToken = Object();
+  });
+
+  /// Fetches a web-planner route by its code and reviews it in free roam.
+  Future<void> _recallPlannedRoute() async {
+    final code = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => const _PlanCodeDialog(),
+    );
+    if (code == null || code.trim().isEmpty || !mounted) return;
+    final owned = widget.planDirectory == null
+        ? HttpPlanDirectory.fromEnvironment()
+        : null;
+    try {
+      final plan = await (widget.planDirectory ?? owned!).fetch(code.trim());
+      final route = RouteImporter(source: const SystemGpxImportSource())
+          .importFromFile(
+            PickedGpxFile(
+              name: '${plan.name ?? 'planned-route'}.gpx',
+              bytes: Uint8List.fromList(utf8.encode(plan.gpx)),
+            ),
+          );
+      if (!mounted) return;
+      _reviewInFreeRoam(PendingInAppRoute(route: route));
+    } on PlanDirectoryException catch (error) {
+      _showSnack(error.message);
+    } on FormatException catch (error) {
+      _showSnack(error.message);
+    } on Object {
+      _showSnack(
+        'The planned route could not be loaded. Check your connection and '
+        'try again.',
+      );
+    } finally {
+      owned?.close();
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _showSavedNavigation(CompletedRide ride) async {
@@ -1052,6 +1128,58 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
   }
+}
+
+/// Asks for a web-planner code. Its own widget so its text controller is
+/// disposed with it.
+class _PlanCodeDialog extends StatefulWidget {
+  const _PlanCodeDialog();
+
+  @override
+  State<_PlanCodeDialog> createState() => _PlanCodeDialogState();
+}
+
+class _PlanCodeDialogState extends State<_PlanCodeDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Recall a planned route'),
+    content: TextField(
+      key: const Key('recall-plan-code-field'),
+      controller: _controller,
+      autofocus: true,
+      textCapitalization: TextCapitalization.characters,
+      maxLength: 16,
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
+        LengthLimitingTextInputFormatter(16),
+      ],
+      decoration: const InputDecoration(
+        labelText: 'Plan code',
+        hintText: 'e.g. 7F3K9QRT',
+        helperText: 'From the web planner',
+      ),
+      onSubmitted: (value) => Navigator.of(context).pop(value),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const Key('recall-plan-code-load'),
+        onPressed: () => Navigator.of(context).pop(_controller.text),
+        child: const Text('Load'),
+      ),
+    ],
+  );
 }
 
 class _RideRestorationBanner extends StatelessWidget {
@@ -1375,7 +1503,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (_showShareStep) {
-      return _ShareCodeStep(
+      return RideInviteStep(
         controller: widget.controller,
         onContinue: _finishCreating,
       );
@@ -1827,91 +1955,6 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
     _pastedJoinToken = invite.token;
     _codeController.text = code;
     _codeController.selection = TextSelection.collapsed(offset: code.length);
-  }
-}
-
-/// Shown immediately after creating a ride - the moment a leader most needs
-/// the code, with riders waiting nearby, rather than requiring a trip
-/// through the active Ride page to find it.
-class _ShareCodeStep extends StatelessWidget {
-  const _ShareCodeStep({required this.controller, required this.onContinue});
-
-  final RideController controller;
-  final VoidCallback onContinue;
-
-  @override
-  Widget build(BuildContext context) {
-    final session = controller.session;
-    final code = session?.rideCode ?? '';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Icon(Icons.check_circle, color: Color(0xFF6ED89A), size: 40),
-          const SizedBox(height: 16),
-          Text(
-            session?.rideName ?? 'Ride created',
-            style: Theme.of(context).textTheme.headlineMedium,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Share this code so the group can join.',
-            style: TextStyle(color: Color(0xFFABB5C1)),
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF111720),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFF2A3441)),
-            ),
-            child: Center(
-              child: Text(
-                code,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 34,
-                  letterSpacing: 6,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => Clipboard.setData(ClipboardData(text: code)),
-                  icon: const Icon(Icons.copy_outlined),
-                  label: const Text('Copy'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => SharePlus.instance.share(
-                    ShareParams(
-                      text: controller.rideCodeShareText,
-                      subject: 'Join my Tail End Charlie group',
-                    ),
-                  ),
-                  icon: const Icon(Icons.ios_share),
-                  label: const Text('Share'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 22),
-          TextButton(
-            onPressed: onContinue,
-            child: const Text('Continue to ride'),
-          ),
-        ],
-      ),
-    );
   }
 }
 
