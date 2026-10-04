@@ -40,3 +40,7 @@ marketing/video/*-raw.mp4
 marketing/video/segment-*.mp4
 marketing/video/overlay-*.png
 marketing/video/end-card.png
+
+# Agent worktrees (see AGENTS.md)
+/.claude/worktrees/
+/.codex/worktrees/

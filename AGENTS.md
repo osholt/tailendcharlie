@@ -28,6 +28,21 @@ each cost hours:
   automatic signing can never work for this target.
 - CI signing is already correct and evidenced on both platforms. Do not "fix" it.
 
+## Parallel work uses git worktrees, never copied folders
+
+The one checkout is `~/Projects/Personal/tailendcharlie`. Never `cp -r` it or
+create sibling `tailendcharlie-*` folders. For a separate branch, add a worktree
+inside the repository's ignored worktree directory:
+
+```bash
+git worktree add .claude/worktrees/issue-NNN-short-name -b claude/issue-NNN-short-name origin/main
+```
+
+(Codex sessions use `.codex/worktrees/` the same way.) When the branch has been
+pushed or merged, remove it with `git worktree remove <path>` and
+`git worktree prune`; the branch survives. Run `git worktree list` before
+starting — reuse a clean, current worktree rather than adding another.
+
 ## Entry points
 
 - `PLAN.md` — product scope, acceptance criteria, and release gates.
