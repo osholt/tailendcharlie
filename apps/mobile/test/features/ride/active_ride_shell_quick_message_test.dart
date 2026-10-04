@@ -276,4 +276,120 @@ void main() {
     expect(presented.alerts.single.repeatCount, 1);
     expect(presented.alerts.single.acknowledgeable.single.eventId, 'stop-1');
   });
+
+  // #854: the leader's broadcasts take the same banner as every quick message.
+  group("the leader's broadcasts (#854)", () {
+    test('are presented as a banner with where the leader is', () {
+      final presented = presentableQuickMessageAlerts(
+        messages: [
+          message(
+            eventId: 'pull-over',
+            senderRiderId: 'oliver',
+            senderDisplayName: 'Oliver',
+            kind: QuickMessage.pullOver,
+            raisedAtPosition: const GeoPoint(latitude: 53, longitude: -1.03),
+          ),
+        ],
+        localRiderId: 'me',
+        readerPosition: readerPosition,
+        route: route,
+      );
+
+      final alert = presented.alerts.single;
+      expect(alert.message.headline, 'Oliver says pull over');
+      expect(alert.message.isPressing, isTrue);
+      expect(alert.message.interrupts, isFalse);
+      expect(alert.origin?.senderIsBehind, isTrue);
+      // The leader's marker says what they said.
+      expect(presented.bySender['oliver']?.label, 'Pull over');
+    });
+
+    test('said twice are one banner but two messages, so each is read out', () {
+      // One card to dismiss, not two; but speech is per journal event, and a
+      // leader repeating "Pull over" because nobody has is meant to be heard.
+      final presented = presentableQuickMessageAlerts(
+        messages: [
+          message(
+            eventId: 'first',
+            senderRiderId: 'oliver',
+            senderDisplayName: 'Oliver',
+            kind: QuickMessage.pullOver,
+          ),
+          message(
+            eventId: 'second',
+            senderRiderId: 'oliver',
+            senderDisplayName: 'Oliver',
+            kind: QuickMessage.pullOver,
+          ),
+        ],
+        localRiderId: 'me',
+        readerPosition: readerPosition,
+      );
+
+      expect(presented.alerts, hasLength(1));
+      expect(presented.alerts.single.acknowledgeable.map((m) => m.eventId), [
+        'first',
+        'second',
+      ]);
+    });
+
+    test('different broadcasts are separate banners', () {
+      final presented = presentableQuickMessageAlerts(
+        messages: [
+          message(
+            eventId: 'wrong-way',
+            senderRiderId: 'oliver',
+            senderDisplayName: 'Oliver',
+            kind: QuickMessage.wrongWay,
+          ),
+          message(
+            eventId: 'pull-over',
+            senderRiderId: 'oliver',
+            senderDisplayName: 'Oliver',
+            kind: QuickMessage.pullOver,
+          ),
+        ],
+        localRiderId: 'me',
+        readerPosition: readerPosition,
+      );
+
+      expect(presented.alerts, hasLength(2));
+    });
+
+    test('once seen, one does not come back on this phone', () {
+      final presented = presentableQuickMessageAlerts(
+        messages: [
+          message(
+            eventId: 'pull-over',
+            senderRiderId: 'oliver',
+            senderDisplayName: 'Oliver',
+            kind: QuickMessage.pullOver,
+            acknowledgedBy: const ['me'],
+          ),
+        ],
+        localRiderId: 'me',
+        readerPosition: readerPosition,
+      );
+
+      expect(presented.alerts, isEmpty);
+    });
+
+    test('the leader\'s own appears only as a receipt, never as a banner', () {
+      final presented = presentableQuickMessageAlerts(
+        messages: [
+          message(
+            eventId: 'pull-over',
+            senderRiderId: 'me',
+            senderDisplayName: 'Me',
+            kind: QuickMessage.pullOver,
+            raisedFromLocalRider: true,
+          ),
+        ],
+        localRiderId: 'me',
+        readerPosition: readerPosition,
+      );
+
+      expect(presented.alerts, isEmpty);
+    });
+  });
 }

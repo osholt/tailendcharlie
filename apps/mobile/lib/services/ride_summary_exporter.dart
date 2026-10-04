@@ -9,12 +9,14 @@ import '../domain/distance_unit.dart';
 import '../domain/geo_point.dart' as geo;
 import '../domain/imported_route.dart';
 import '../domain/ride_alert_record.dart';
+import '../domain/ride_broadcast_record.dart';
 import '../domain/ride_event.dart';
 import '../domain/ride_session.dart';
 import 'geo_calculations.dart';
 import 'gpx_exporter.dart';
 import 'measurement_formatter.dart';
 import 'ride_alert_log.dart';
+import 'ride_broadcast_log.dart';
 import 'ride_lifecycle.dart';
 
 typedef _TrailPoint = ({
@@ -54,6 +56,7 @@ class RideSummary {
     required this.riderCount,
     required this.totalDistanceMeters,
     this.alerts = const [],
+    this.broadcasts = const [],
   });
 
   final String rideId;
@@ -69,6 +72,9 @@ class RideSummary {
 
   /// The alerts the group raised, oldest first (#849).
   final List<RideAlertRecord> alerts;
+
+  /// What the leader told the group, oldest first (#854).
+  final List<RideBroadcastRecord> broadcasts;
 
   Duration get rideDuration =>
       (endedAt ?? generatedAt).difference(startedAt).abs();
@@ -181,6 +187,12 @@ class RideSummaryExporter {
         events: ordered,
         localRiderId: session.localRiderId,
       ),
+      broadcasts: const RideBroadcastLogReducer().fromEvents(
+        rideId: session.rideId,
+        inviteSecret: session.inviteSecret,
+        events: ordered,
+        localRiderId: session.localRiderId,
+      ),
     );
   }
 
@@ -268,6 +280,11 @@ class RideSummaryExporter {
         ..writeln('Alerts raised: ${summary.alerts.length}')
         ..writeln(rideAlertLogText(summary.alerts));
     }
+    if (summary.broadcasts.isNotEmpty) {
+      buffer
+        ..writeln('Leader messages: ${summary.broadcasts.length}')
+        ..writeln(rideBroadcastLogText(summary.broadcasts));
+    }
     return buffer.toString().trimRight();
   }
 
@@ -317,6 +334,17 @@ class RideSummaryExporter {
             alert.raisedBy,
             alert.position.latitude.toStringAsFixed(6),
             alert.position.longitude.toStringAsFixed(6),
+          ],
+      ],
+      if (summary.broadcasts.isNotEmpty) ...[
+        [],
+        ['message_time_local', 'message_time_utc', 'sent_by', 'message'],
+        for (final broadcast in summary.broadcasts)
+          [
+            broadcast.timestampLabel,
+            broadcast.sentAt.toUtc().toIso8601String(),
+            broadcast.sentBy,
+            broadcast.text,
           ],
       ],
     ];

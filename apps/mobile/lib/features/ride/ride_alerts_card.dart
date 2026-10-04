@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../domain/ride_alert_record.dart';
 import '../../services/ride_alert_log.dart';
+import 'ride_log_copy.dart';
 
 /// The alerts a ride raised, each with its time to the second, where it was
 /// raised and who raised it (#849).
@@ -41,7 +41,7 @@ class RideAlertsCard extends StatelessWidget {
                 ),
                 TextButton.icon(
                   key: const Key('ride-alerts-copy-all'),
-                  onPressed: () => _copy(
+                  onPressed: () => copyRideLogText(
                     context,
                     text: rideAlertLogText(alerts),
                     confirmation: 'Copied all ${alerts.length} alerts',
@@ -88,7 +88,7 @@ class _AlertRow extends StatelessWidget {
         : alert.raisedBy;
     final qualifier = alert.kind.qualifier;
     final kind = qualifier == null ? '' : ' · $qualifier';
-    void copy() => _copy(
+    void copy() => copyRideLogText(
       context,
       text: alert.timestampLabel,
       confirmation: 'Copied ${alert.timestampLabel}',
@@ -160,16 +160,4 @@ class _AlertRow extends StatelessWidget {
       ),
     );
   }
-}
-
-Future<void> _copy(
-  BuildContext context, {
-  required String text,
-  required String confirmation,
-}) async {
-  final messenger = ScaffoldMessenger.maybeOf(context);
-  await Clipboard.setData(ClipboardData(text: text));
-  messenger?.showSnackBar(
-    SnackBar(content: Text(confirmation), duration: const Duration(seconds: 2)),
-  );
 }

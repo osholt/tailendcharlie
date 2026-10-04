@@ -28,6 +28,7 @@ import 'package:ride_relay/domain/route_store.dart';
 import 'package:ride_relay/domain/route_alert.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/features/map/hazard_map_symbol.dart';
+import 'package:ride_relay/features/map/leader_broadcast_sheet.dart';
 import 'package:ride_relay/features/map/ride_map.dart';
 import 'package:ride_relay/features/map/route_progress_panel.dart';
 import 'package:ride_relay/features/map/motorcycle_icon.dart';
@@ -3237,6 +3238,351 @@ void main() {
     alert.value = null;
     await tester.pump();
     expect(find.byKey(const Key('enforcement-alert-border')), findsNothing);
+  });
+
+  group("the leader's one-tap broadcasts (#854)", () {
+    Future<void> pumpMap(
+      WidgetTester tester, {
+      Future<void> Function(QuickMessage message)? onLeaderBroadcast,
+      bool rideStarted = true,
+      bool withOtherActions = false,
+      Size? size,
+    }) async {
+      if (size != null) {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+      }
+      final directory = Directory.systemTemp.createTempSync('map-broadcast');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final cache = OfflineTileCache(
+        rootDirectory: directory,
+        configuration: const BasemapConfiguration(),
+        httpClient: MockClient((_) async => http.Response('', 404)),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: RideMapScreen(
+            routeStore: InMemoryRouteStore(),
+            routeImporter: RouteImporter(source: const _NoFileSource()),
+            offlineTileCache: cache,
+            rideStarted: rideStarted,
+            onLeaderBroadcast: onLeaderBroadcast,
+            onReportHazard: withOtherActions ? (_) async {} : null,
+            onEmergencyAlert: withOtherActions ? () async {} : null,
+            onLeaveRide: withOtherActions ? () async {} : null,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> dispose(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+
+    testWidgets('are offered only when the shell says this is the leader', (
+      tester,
+    ) async {
+      await pumpMap(tester);
+      expect(find.byKey(const Key('leader-broadcast-button')), findsNothing);
+      await dispose(tester);
+
+      await pumpMap(tester, onLeaderBroadcast: (_) async {});
+      expect(find.byKey(const Key('leader-broadcast-button')), findsOneWidget);
+      await dispose(tester);
+
+      // Before the ride starts there is nobody riding to be told.
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (_) async {},
+        rideStarted: false,
+      );
+      expect(find.byKey(const Key('leader-broadcast-button')), findsNothing);
+      await dispose(tester);
+    });
+
+    testWidgets('one tap on an option sends it - no confirmation', (
+      tester,
+    ) async {
+      final sent = <QuickMessage>[];
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (message) async => sent.add(message),
+      );
+
+      await tester.tap(find.byKey(const Key('leader-broadcast-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('Tell the group'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const Key('leader-broadcast-option-pullOver')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(sent, [QuickMessage.pullOver]);
+      // Gone: the sheet closed on the tap and nothing asked "are you sure?".
+      expect(find.byKey(const Key('leader-broadcast-sheet')), findsNothing);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Pull over sent to the group.'), findsOneWidget);
+      await dispose(tester);
+    });
+
+    testWidgets('each option sends its own message', (tester) async {
+      final sent = <QuickMessage>[];
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (message) async => sent.add(message),
+      );
+      final button = find.byKey(const Key('leader-broadcast-button'));
+
+      for (final message in leaderBroadcastMessages) {
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(Key('leader-broadcast-option-${message.name}')),
+        );
+        await tester.pumpAndSettle();
+        ScaffoldMessenger.of(tester.element(button)).clearSnackBars();
+        await tester.pump();
+      }
+
+      expect(sent, leaderBroadcastMessages);
+      await dispose(tester);
+    });
+
+    testWidgets('lists the four, large, with nothing to scroll to', (
+      tester,
+    ) async {
+      for (final size in const [
+        Size(852, 393),
+        Size(390, 844),
+        Size(360, 740),
+      ]) {
+        await pumpMap(tester, onLeaderBroadcast: (_) async {}, size: size);
+        await tester.tap(find.byKey(const Key('leader-broadcast-button')));
+        await tester.pumpAndSettle();
+
+        for (final message in leaderBroadcastMessages) {
+          final option = find.byKey(
+            Key('leader-broadcast-option-${message.name}'),
+          );
+          expect(option, findsOneWidget, reason: '${message.name} at $size');
+          final rect = tester.getRect(option);
+          // A target for a gloved hand, at every size.
+          expect(
+            rect.height,
+            greaterThanOrEqualTo(72),
+            reason: '${message.name} at $size',
+          );
+          expect(
+            rect.width,
+            greaterThanOrEqualTo(140),
+            reason: '${message.name} at $size',
+          );
+          // And on screen without scrolling the sheet.
+          expect(
+            rect.top,
+            greaterThanOrEqualTo(0),
+            reason: '${message.name} at $size',
+          );
+          expect(
+            rect.bottom,
+            lessThanOrEqualTo(size.height),
+            reason: '${message.name} at $size',
+          );
+        }
+        expect(find.text('Wrong way – turn around'), findsOneWidget);
+        expect(find.text('Stopped for fuel'), findsOneWidget);
+        expect(find.text('Pull over'), findsOneWidget);
+        expect(find.text('Regroup at next stop'), findsOneWidget);
+        await dispose(tester);
+      }
+    });
+
+    testWidgets('closing the list sends nothing', (tester) async {
+      final sent = <QuickMessage>[];
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (message) async => sent.add(message),
+      );
+
+      await tester.tap(find.byKey(const Key('leader-broadcast-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('leader-broadcast-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(sent, isEmpty);
+      expect(find.byKey(const Key('leader-broadcast-sheet')), findsNothing);
+      await dispose(tester);
+    });
+
+    testWidgets('a broadcast that could not go says so', (tester) async {
+      var attempt = 0;
+      await pumpMap(
+        tester,
+        onLeaderBroadcast: (_) async {
+          attempt += 1;
+          if (attempt == 1) {
+            throw const FormatException(
+              'Only the ride leader can tell the group.',
+            );
+          }
+          throw StateError('disk is full');
+        },
+      );
+      final button = find.byKey(const Key('leader-broadcast-button'));
+
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('leader-broadcast-option-wrongWay')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Not sent. Only the ride leader can tell the group.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('sent to the group'), findsNothing);
+
+      ScaffoldMessenger.of(tester.element(button)).clearSnackBars();
+      await tester.pump();
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('leader-broadcast-option-pullOver')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Not sent. Try again in a moment.'), findsOneWidget);
+      await dispose(tester);
+    });
+
+    testWidgets(
+      'sit beside REPORT, in portrait and landscape, overlapping nothing',
+      (tester) async {
+        for (final size in const [
+          Size(390, 844),
+          Size(360, 740),
+          Size(852, 393),
+        ]) {
+          await pumpMap(
+            tester,
+            onLeaderBroadcast: (_) async {},
+            withOtherActions: true,
+            size: size,
+          );
+          final report = tester.getRect(
+            find.byKey(const Key('report-sighting-button')),
+          );
+          final tell = tester.getRect(
+            find.byKey(const Key('leader-broadcast-button')),
+          );
+          final sos = tester.getRect(
+            find.byKey(const Key('emergency-alert-button')),
+          );
+          final leave = tester.getRect(
+            find.byKey(const Key('leave-ride-button')),
+          );
+
+          expect(tell.width, LeaderBroadcastButton.width, reason: '$size');
+          expect(tell.height, LeaderBroadcastButton.height, reason: '$size');
+          // A target for a gloved hand, and never off the screen.
+          expect(tell.left, greaterThanOrEqualTo(0), reason: '$size');
+          expect(tell.right, lessThanOrEqualTo(size.width), reason: '$size');
+          expect(tell.bottom, lessThanOrEqualTo(size.height), reason: '$size');
+          // Beside REPORT, on the same baseline, touching neither it nor SOS/LEAVE.
+          expect(
+            tell.left,
+            greaterThanOrEqualTo(report.right + 8 - 0.01),
+            reason: '$size',
+          );
+          expect(tell.bottom, closeTo(report.bottom, 0.01), reason: '$size');
+          for (final other in [report, sos, leave]) {
+            expect(tell.overlaps(other.deflate(0.5)), isFalse, reason: '$size');
+          }
+          if (size.width > size.height) {
+            // Landscape keeps the whole cluster left of the rider anchor (#533).
+            final riderX =
+                size.width * navigationCameraLandscapeRiderFractionLeftTraffic;
+            expect(tell.right, lessThan(riderX - 19), reason: '$size');
+          }
+          await dispose(tester);
+        }
+      },
+    );
+
+    testWidgets('stand alone when REPORT is not offered, as in France', (
+      tester,
+    ) async {
+      await pumpMap(tester, onLeaderBroadcast: (_) async {});
+
+      expect(find.byKey(const Key('report-sighting-button')), findsNothing);
+      expect(find.byKey(const Key('leader-broadcast-button')), findsOneWidget);
+      await dispose(tester);
+    });
+
+    testWidgets('a second tap cannot stack a second list', (tester) async {
+      await pumpMap(tester, onLeaderBroadcast: (_) async {});
+      final button = find.byKey(const Key('leader-broadcast-button'));
+
+      await tester.tap(button);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        tester.widget<InkWell>(button).onTap,
+        isNull,
+        reason: 'the control is off while its list is open',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('leader-broadcast-sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('leader-broadcast-cancel')));
+      await tester.pumpAndSettle();
+      await dispose(tester);
+    });
+
+    test(
+      'the options go in two columns while both fit, one when they do not',
+      () {
+        // Wide enough for two full-size targets.
+        expect(leaderBroadcastColumns(availableWidth: 358, textScale: 1), 2);
+        expect(leaderBroadcastColumns(availableWidth: 820, textScale: 1), 2);
+        // Too narrow for two, or the text is too large for two.
+        expect(leaderBroadcastColumns(availableWidth: 250, textScale: 1), 1);
+        expect(leaderBroadcastColumns(availableWidth: 358, textScale: 2), 1);
+        // No width to go on.
+        expect(
+          leaderBroadcastColumns(availableWidth: double.infinity, textScale: 1),
+          1,
+        );
+      },
+    );
+
+    test(
+      'each broadcast has its own symbol, distinct from the older kinds',
+      () {
+        final symbols = {
+          for (final message in leaderBroadcastMessages)
+            message: quickMessageIcon(message),
+        };
+
+        expect(
+          symbols.values.toSet(),
+          hasLength(leaderBroadcastMessages.length),
+        );
+        for (final older in QuickMessage.values.where(
+          (m) => !m.isLeaderBroadcast,
+        )) {
+          expect(
+            symbols.values,
+            isNot(contains(quickMessageIcon(older))),
+            reason: older.name,
+          );
+        }
+      },
+    );
   });
 
   testWidgets('a rider alert warns as ALERT, in amber, not as a camera (#849)', (
