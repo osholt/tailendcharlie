@@ -134,29 +134,47 @@ Surface, width, gates and seasonal restrictions remain the rider's own check.
 ## Checking the route that comes back
 
 *Mobile app only. The web planner has the same engine rule and does not yet check
-its routes; its status line still words the byway preference as a result.*
+its routes; its status line still words the preferences as results.*
 
 A preference is sent to the engine and then **checked**, because neither engine
-can be trusted to have honoured it. Every route a planner produces - a destination
-plan, a reshape, a snapped GPX route, a circular loop - is looked up once with
-Valhalla `trace_attributes` (`shape_match: map_snap`, because the line usually came
-from OSRM over different map data). Each edge it returns carries its way, `use`,
-`surface` and `unpaved`, and is classified:
+can be trusted to have honoured it. OSRM cannot express any of them, and measured
+on the public Valhalla instance on 4 October 2026:
+
+| Option sent | Honoured? |
+| --- | --- |
+| `exclude_highways` (Avoid motorways) | Yes. Bristol to Stroud has no motorway edge with it on, against 40 km of M32/M4/M5 without. |
+| `use_highways: 0.08` (Avoid major roads) | Yes, as a bias. The motorway goes and trunk falls from 11.5 km to 0.2 km, but 9.8 km of primary road remains. |
+| `exclude_unpaved`, `use_trails: 0` (Avoid unsurfaced byways) | **No.** The route took a gated `highway=track`. |
+
+The Home destination search once planned through OSRM alone, so the first row was
+never reached from there: Avoid motorways and Avoid major roads were dropped on the
+way to the router, and Bristol to Stroud went up the M5 under a note saying
+motorways were excluded (#858).
+
+Every route a planner produces - a destination plan, a reshape, a snapped GPX
+route, a circular loop - is looked up once with Valhalla `trace_attributes`
+(`shape_match: map_snap`, because the line usually came from OSRM over different
+map data). Each edge it returns carries its way, `use`, `surface`, `unpaved` and
+`road_class`, and is classified:
 
 | Found | Counts as | When |
 | --- | --- | --- |
 | `footway`, `path`, `cycleway`, `bridleway`, `steps`, `pedestrian` | Not a road | Always |
 | `use=track`, or an unpaved surface (parking aisles and drives excepted) | Unsurfaced | Avoid unsurfaced byways is on |
+| `road_class=motorway` | Motorway | Avoid motorways is on |
+| `road_class=trunk` or `primary` (and motorway) | Major road | Avoid major roads is on |
 
-A concern is excluded by position (`exclude_locations`: the middle of each
-offending edge, at most 32) and the trip is asked of Valhalla **once more**. The
-new route replaces the old only if it is checked itself, has at most half as much
-of the offending road in it, and starts and ends within 150 m of where the first
-did. Otherwise the original is kept. A circular loop is checked once, for the loop
-the planner settles on, and is reported but not re-planned: a replacement would
-have to pass the same closed-loop, distance, U-turn and overlap tests as any other
-candidate. (The review then re-snaps it like any route made of route points, and
-that route is checked and re-planned as above.)
+A **hard** concern - not a road, unsurfaced, motorway - is excluded by position
+(`exclude_locations`: the middle of each offending edge, at most 32) and the trip
+is asked of Valhalla **once more**. The new route replaces the old only if it is
+checked itself, has at most half as much of the offending road in it, and starts
+and ends within 150 m of where the first did. Otherwise the original is kept.
+Major roads are a **soft** concern: reported, never re-planned, because excluding
+them strands most routes, and only reported over 1 km. A circular loop is checked
+once, for the loop the planner settles on, and is reported but not re-planned: a
+replacement would have to pass the same closed-loop, distance, U-turn and overlap
+tests as any other candidate. (The review then re-snaps it like any route made of
+route points, and that route is checked and re-planned as above.)
 
 Whatever is left is shown on the route review, with its length, and is never
 hidden:
@@ -164,6 +182,10 @@ hidden:
 - `Uses 0.4 mi of unsurfaced track, although Avoid unsurfaced byways is on.`
   followed by `No road route that avoids it was found.` if the re-plan found
   nothing;
+- `Uses 7.8 mi of motorway (M5), although Avoid motorways is on. No
+  motorway-free route was found.` - roads are named by their reference, and
+  international E-numbers are skipped;
+- `Uses 7.9 mi of major roads (A38), although Avoid major roads is on.`;
 - `Could not check this route against your road preferences (...), so it may use
   roads you asked to avoid.` when the lookup failed or could not be trusted;
 - `Only N of M could be checked` when the route is longer than one request can
@@ -179,12 +201,18 @@ Limits, measured on the same instance:
   over 250 m, and takes about 0.3-0.4 s.
 - A matched road covering under half, or over 125%, of the line sent is not
   believed, and the route is reported as unchecked.
-- A stretch under 20 m is not reported. Not checked: the short legs a ride makes
-  to rejoin its route or reach its start, and service roads with no explicit
-  vehicle access, which `trace_attributes` does not report.
+- A stretch under 20 m is not reported. Not checked: tolls and ferries (the same
+  table would carry them), the short legs a ride makes to rejoin its route or reach
+  its start, and service roads with no explicit vehicle access, which
+  `trace_attributes` does not report.
+- A motorway-free route that is hugely longer is not flagged: the rider asked, and
+  the review shows the distance. Chepstow to Aust services is 7.9 km over the
+  Severn bridge and 92.1 km round by Gloucester without it, and Valhalla honours
+  the request. Only "no route" is reported as unavoidable.
 
-The byway note on a route says what was **asked** ("Avoid unsurfaced byways") and
-never what was achieved; whether it was achieved is the check's to say.
+The preference notes on a route say what was **asked** ("Avoid motorways", "Avoid
+unsurfaced byways") and never what was achieved; whether it was achieved is the
+check's to say.
 
 ## Limitations
 
