@@ -507,6 +507,8 @@ Set<String> registeredTecRiderIds({
 class _RideActionsPanel extends StatelessWidget {
   const _RideActionsPanel({
     required this.canChangeRoute,
+    required this.canEditRoute,
+    required this.onEditRoute,
     required this.onAlertsAndReports,
     required this.onShareSummary,
     required this.onOpenRoster,
@@ -534,6 +536,10 @@ class _RideActionsPanel extends StatelessWidget {
   });
 
   final bool canChangeRoute;
+
+  /// A leader with a route can reopen it on the plan surface (#847).
+  final bool canEditRoute;
+  final VoidCallback onEditRoute;
   final VoidCallback onAlertsAndReports;
   final VoidCallback onShareSummary;
   final VoidCallback onOpenRoster;
@@ -621,13 +627,24 @@ class _RideActionsPanel extends StatelessWidget {
             subtitle: const Text('Presence, freshness and relay evidence'),
             onTap: onOpenRoster,
           ),
+          // Edit before replace (#847): the confirmed route's start, stops,
+          // drawn adjustments and options come back on the plan surface, and
+          // confirming publishes a new revision to the group.
+          if (canEditRoute)
+            ListTile(
+              key: const Key('ride-menu-edit-route'),
+              leading: const Icon(Icons.edit_road_outlined),
+              title: const Text('Edit route'),
+              subtitle: const Text('Start, stops and route options'),
+              onTap: onEditRoute,
+            ),
           if (canChangeRoute)
             ListTile(
               key: const Key('ride-menu-change-route'),
-              leading: const Icon(Icons.edit_road_outlined),
-              title: const Text('Change route'),
+              leading: const Icon(Icons.alt_route_outlined),
+              title: const Text('Replace route'),
               subtitle: const Text(
-                'Plan a destination, import a GPX file, or load the demo route',
+                'Plan a new destination, use a saved route, or import a GPX file',
               ),
               onTap: onChangeRoute,
             ),
@@ -1255,6 +1272,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   int _routeGeneration = 0;
   int _selectedIndex = 0;
   Object? _changeRouteRequestToken;
+  Object? _editRouteRequestToken;
   PickedGpxFile? _pendingSharedGpxFile;
   PendingInAppRoute? _pendingInAppRoute;
   int _handledAutomaticMarkerActivation = 0;
@@ -1452,7 +1470,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final code = widget.sharedRoutes.plannerLinkCode;
     return _warnings.add(
       'Shared route link: $message'
-      '${code == null ? '' : ' You can still enter code $code from Change route → Load a planned route.'}',
+      '${code == null ? '' : ' You can still enter code $code from Replace route → Load a planned route.'}',
     );
   }
 
@@ -4341,7 +4359,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
                 busy: widget.rideController.busy || _loading,
                 routeName: _activeRoute?.name,
                 onStartRide: _confirmStartRide,
-                onChooseRoute: _requestRouteChange,
+                // "Change" reopens the route it names; with none yet, the
+                // sources to choose one from (#847).
+                onChooseRoute: _hasRoute
+                    ? _requestRouteEdit
+                    : _requestRouteChange,
                 onJoinGroup: widget.onJoinGroupRequested == null
                     ? null
                     : _joinGroupBeforeStart,
@@ -4624,6 +4646,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         );
       },
       changeRouteRequestToken: _changeRouteRequestToken,
+      editRouteRequestToken: _editRouteRequestToken,
+      onEditRouteRequestHandled: () {
+        if (_editRouteRequestToken != null) {
+          setState(() => _editRouteRequestToken = null);
+        }
+      },
       onChangeRouteRequestHandled: _clearChangeRouteRequest,
       pendingSharedGpxFile: _pendingSharedGpxFile,
       pendingInAppRoute: _pendingInAppRoute,
@@ -5559,6 +5587,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   Widget _buildRideActions() => _RideActionsPanel(
     coordinationMode: widget.rideController.coordinationMode,
     canChangeRoute: _isSimulation || widget.rideController.isLocalRideLeader,
+    canEditRoute:
+        (_isSimulation || widget.rideController.isLocalRideLeader) && _hasRoute,
+    onEditRoute: _requestRouteEdit,
     onAlertsAndReports: _openAlertsAndReports,
     onShareSummary: _shareCurrentRideSummary,
     onOpenRoster: _openRoster,
@@ -6079,6 +6110,21 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// Explicitly clears any pending shared file: without that, a stale one
   /// from an earlier "Open in..." delivery would silently skip the picker
   /// this menu action is supposed to show.
+  /// Whether this ride has a route to edit: the one on the map, or the group's
+  /// published one while the map's own store is still opening.
+  bool get _hasRoute =>
+      _activeRoute != null || widget.rideController.authoritativeRoute != null;
+
+  /// Switches to the map and asks it to reopen its route on the plan surface
+  /// (#847). The map owns the route and the surface; the shell only asks, as
+  /// it does for a route change.
+  void _requestRouteEdit() {
+    setState(() {
+      _selectedIndex = 0;
+      _editRouteRequestToken = Object();
+    });
+  }
+
   void _requestRouteChange() {
     setState(() {
       _selectedIndex = 0;

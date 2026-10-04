@@ -15,6 +15,7 @@ import 'package:ride_relay/controllers/speed_limit_display_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/data/in_memory_session_store.dart';
 import 'package:ride_relay/domain/distance_unit.dart';
+import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/domain/map_style_mode.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
 import 'package:ride_relay/domain/recorded_route_store.dart';
@@ -659,6 +660,61 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('a leader can reopen the group route from the Ride tab (#847)', (
+    tester,
+  ) async {
+    final controller = await _controller();
+    addTearDown(controller.dispose);
+    await controller.createRide('Oliver');
+    await controller.startRide();
+    await controller.publishRoute(
+      ImportedRoute(
+        id: 'group-route',
+        name: 'To Town',
+        importedAt: DateTime.utc(2026, 10, 4),
+        sourceFileName: 'group-route.gpx',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 52.0, longitude: -1.0),
+              GeoPoint(latitude: 52.3, longitude: -1.0),
+            ],
+          ),
+        ],
+        waypoints: const [
+          RouteWaypoint(
+            point: GeoPoint(latitude: 52.0, longitude: -1.0),
+            name: 'Start',
+          ),
+          RouteWaypoint(
+            point: GeoPoint(latitude: 52.3, longitude: -1.0),
+            name: 'Town',
+          ),
+        ],
+      ),
+    );
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.two_wheeler_outlined));
+    await tester.pumpAndSettle();
+    final edit = find.byKey(const Key('ride-menu-edit-route'));
+    await tester.scrollUntilVisible(
+      edit,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Edit route'), findsOneWidget);
+    // Editing comes before replacing, and replacing is still there.
+    expect(find.text('Replace route'), findsOneWidget);
+
+    await tester.tap(edit);
+    await tester.pumpAndSettle();
+    // Back on the map, which owns the route and opens the plan surface.
+    expect(find.text('Navigation map'), findsOneWidget);
+  });
+
   testWidgets('alerts are a Ride action rather than a primary destination', (
     tester,
   ) async {
@@ -1072,9 +1128,11 @@ final _recordedRoutes = InMemoryRecordedRouteStore();
 /// coordination mode and the planner route code, and it is reached from the
 /// search — the surface #431 put every code-driven way in on.
 Future<void> _openRideForm(WidgetTester tester) async {
-  await tester.tap(find.byKey(const Key('home-search-bar')));
+  // A planned-route code now reviews the route in free roam (#847), so the
+  // ride form is reached from the menu.
+  await tester.tap(find.byKey(const Key('home-more-actions')));
   await tester.pumpAndSettle();
-  await tester.tap(find.byKey(const Key('home-search-planned-code')));
+  await tester.tap(find.byKey(const Key('home-create-ride')));
   await tester.pumpAndSettle();
 }
 

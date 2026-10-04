@@ -397,9 +397,6 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       // adjustments all describe the same legs.
       _planRouted = isRoutedPlan(widget.route, plan);
       if (!_planRouted) {
-        if (plan.startsAtCurrentLocation && _currentLocation == null) {
-          unawaited(_acquireLocation());
-        }
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) unawaited(_replan(plan));
         });
@@ -439,7 +436,14 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
       _reshaping = routable;
     });
     widget.onPlanChanged?.call(plan);
-    if (!routable) return;
+    if (!routable) {
+      // An edit that starts from "your location" needs a fix to re-plan from;
+      // ask for one, and plan when it comes.
+      if (plan.startsAtCurrentLocation && _currentLocation == null) {
+        unawaited(_acquireLocation());
+      }
+      return;
+    }
     try {
       final result = await planning.route(plan, location);
       if (!mounted || generation != _reshapeGeneration) return;
@@ -491,7 +495,6 @@ class _RouteReviewScreenState extends State<RouteReviewScreen> {
     if (choice == null || !mounted) return;
     switch (choice) {
       case PlaceSearchCurrentLocation():
-        if (_currentLocation == null) unawaited(_acquireLocation());
         await _replan(plan.withStart(const CurrentLocationStart()));
       case PlaceSearchPlace(:final place):
         await _replan(plan.withStart(PlaceStart(place)));
