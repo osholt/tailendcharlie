@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../domain/event_store.dart';
 import '../domain/rider_location.dart';
 import '../domain/ride_event.dart';
+import '../services/transport_evidence_ledger.dart';
 import 'peer_transport.dart';
 import 'relay_protocol.dart';
 import 'relay_queue.dart';
@@ -135,6 +136,7 @@ class RelayEngine {
     RelayIdFactory? idFactory,
     RelayDelay? delay,
     Random? random,
+    TransportEvidenceLedger? evidence,
   }) : this._(
          transport,
          eventStore,
@@ -145,6 +147,7 @@ class RelayEngine {
          idFactory ?? const Uuid().v7,
          delay ?? Future<void>.delayed,
          random ?? Random.secure(),
+         evidence,
        );
 
   RelayEngine._(
@@ -157,6 +160,7 @@ class RelayEngine {
     this._idFactory,
     this._delay,
     this._random,
+    this._evidence,
   );
 
   static const maxQueuedEvents = 512;
@@ -171,6 +175,10 @@ class RelayEngine {
   final RelayIdFactory _idFactory;
   final RelayDelay _delay;
   final Random _random;
+
+  /// Where an authenticated arrival over this link is reported (#855). Optional,
+  /// so the engine stays usable without it.
+  final TransportEvidenceLedger? _evidence;
   final _statusController = StreamController<RelayStatus>.broadcast();
   final _receivedEventController = StreamController<RideEvent>.broadcast();
   final _receivedPresenceController =
@@ -424,6 +432,17 @@ class RelayEngine {
     final acknowledged = <String>[];
     for (final item in frame.events) {
       acknowledged.add(item.event.id);
+      // Reported before the duplicate check below, not after it. The queue holds
+      // every event this phone has already seen by *any* route, so an event the
+      // internet delivered first is skipped right here, and without this line the
+      // direct link's arrival would vanish exactly when it is the slower route
+      // (#855). The frame's HMAC has already been verified, so this is an
+      // authenticated arrival.
+      _evidence?.recordEvent(
+        transport: EvidenceTransport.bluetooth,
+        eventId: item.event.id,
+        authorId: item.event.deviceId,
+      );
       if (await _queue.contains(item.event.id)) {
         continue;
       }
