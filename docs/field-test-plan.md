@@ -163,12 +163,178 @@ paths, so it is evidence for delivery, convergence and roster agreement, and is
 **not** evidence for radio, battery or real-GPS accuracy. Label a driven result as
 driven.
 
+## Proving Bluetooth peer-to-peer
+
+The question this answers (#855, the instrument for #268): *when another rider's
+position showed up, was that the phone signal or real phone-to-phone sharing?* On
+an ordinary ride the ride service is listening the whole time, so a good signal
+hides the direct link completely, and on 4 October the evidence could not tell the
+two apart. The app now records **which route delivered each update from another
+rider, and which one delivered it first**, and shows it in three places on a normal
+ride. One deliberate check then settles it.
+
+"Bluetooth" on screen and in the log means the direct phone-to-phone link, which is
+Google Nearby Connections. The SDK chooses its own radio and can use local Wi-Fi as
+well as Bluetooth, which is why the definitive check below turns Wi-Fi off rather
+than trusting the label. Nothing here is evidence for a working mesh: that claim
+stays blocked on the pass gates at the end of this document, per
+[nearby-relay.md](nearby-relay.md).
+
+### (a) What to read on a normal ride
+
+1. **Roster ages.** Ride tab → **Ride roster**. Under every other rider is one
+   line, `Bluetooth 12 s ago · Internet 8 s ago`: when each route last delivered
+   anything from that rider, or `Bluetooth: nothing yet`. The line at the top of
+   the roster says whether the link is up at all (`Bluetooth: connected to 2
+   phones`, `searching for nearby phones`, `unavailable: <reason>`); the Bluetooth
+   card on the Ride tab says the same and how much has been received.
+   - Both lines fresh: both routes are carrying that rider.
+   - Bluetooth fresh while Internet is old or `nothing yet`: that rider is being
+     carried by the direct link. This is the line to look for.
+   - Internet fresh with `Bluetooth: nothing yet`: the signal is doing all the
+     work. Expected for a rider who has not been near this phone.
+
+   A fresh Bluetooth line does not mean that rider's phone is next to yours.
+   Ride events are passed on from phone to phone (the A to B to C case in step
+   13), so they can arrive over Bluetooth by way of a third rider; live positions
+   are not passed on and only come from a phone you are directly connected to.
+2. **The verdict on the ride-ended screen.** One of two statements.
+   - *Bluetooth peer-to-peer worked: N of M updates arrived over Bluetooth; K
+     arrived over Bluetooth before the internet; J arrived only over Bluetooth.*
+     An "update" is a durable event from another rider (a position report, a
+     hazard, a role change). M is every distinct update that reached this phone
+     by any route, N those Bluetooth delivered, K those Bluetooth delivered
+     before the internet did, and J those the internet never delivered at all
+     (counted once an update has waited 30 seconds, so one the internet is about
+     to deliver is not claimed for Bluetooth). **K and J are the evidence.** N
+     alone proves only that Bluetooth delivered something, not that it mattered.
+     A second line counts live positions per route.
+   - *Nothing arrived over Bluetooth on this ride.* With the reason when it is
+     known: permission refused, link unavailable, never connected to another
+     phone, or connected with nothing arriving. If the app was reopened mid-ride
+     it says from what time it was counting, because absence is not a safe claim
+     about a stretch nobody watched.
+3. **`TRANSPORT` lines in the diagnostics log**, when **Settings → Record ride
+   diagnostics** was on for the ride ([ride-diagnostics.md](ride-diagnostics.md)):
+
+   ```
+   TRANSPORT  bluetooth searching  0 phones
+   TRANSPORT  bluetooth connected  1 phone
+   TRANSPORT  bluetooth peer connected  phone A  (1 phone now)
+   TRANSPORT  internet sync ok
+   TRANSPORT  bluetooth summary  events 12 (+3)  first 9 (+2)  presence 41 (+10)  oldest rider 14 s ago
+   TRANSPORT  internet summary  events 30 (+6)  first 21 (+4)  presence 52 (+12)  oldest rider 6 s ago
+   TRANSPORT  bluetooth peer lost  phone A  (0 phones now)
+   TRANSPORT  internet sync failing  retrying
+   TRANSPORT  internet sync ok  (recovered after 4 failed attempts, 38 s)
+   TRANSPORT  verdict  Bluetooth peer-to-peer worked: ...
+   ```
+
+   State changes and peers are written when they happen, the summaries about once
+   a minute with the change since the previous one in brackets, and the verdict at
+   the end. `first` is the number of events that route delivered before the other
+   did. Read the pair of summaries together: a Bluetooth `events` count that keeps
+   climbing while the internet's `oldest rider` age grows is the direct link
+   carrying the ride.
+
+   The file records counts and times only. Other phones are `phone A`, `phone B`
+   in the order they were first seen, **a label per connection, not per handset**:
+   the platform's endpoint ids change on reconnection, so `phone C` can be `phone
+   A` again after it dropped out. No rider name, Bluetooth device name, position
+   or payload is written.
+
+### (b) The definitive check
+
+A good signal can still make (a) ambiguous, so one run takes the signal away.
+
+1. Two or more phones in a started ride, each showing the others' positions.
+2. On **one phone, X**: switch airplane mode on, then switch **Bluetooth back
+   on**. Confirm mobile data **and Wi-Fi are both off**. Both are off in airplane
+   mode, but each platform lets you turn Wi-Fi back on inside it, and a phone
+   that is on the same Wi-Fi as the others can use it for the direct link, which
+   would prove nothing about Bluetooth. Leave the other phones as they are.
+3. Keep the phones within a few metres, screens on, the app open on the ride
+   map. Move them, or walk, so there are new positions to deliver. Run for at least
+   two minutes.
+4. **Pass.** Phone X keeps receiving the others' positions, and the others keep
+   receiving phone X's. X has no route to the ride service, so anything X
+   receives came over the direct link, and anything the others receive from X can
+   only have come that way too. In the roster, X's rows for the others show
+   Bluetooth fresh while Internet climbs (`Internet 1 min ago`, `2 min ago`): that
+   climbing line is also the proof that the internet really is out on X. On the
+   others, X's row shows Bluetooth fresh with Internet `nothing yet`, or old if X
+   had signal earlier.
+5. **Fail.** X's rows go stale and the others stop seeing X move, or the ended-ride
+   verdict on X says *Nothing arrived over Bluetooth on this ride*.
+6. End the ride on the leader. On phone X the verdict should report a non-zero **J**
+   (updates that arrived only over Bluetooth): X had no other way to get them.
+
+For the strictest version, put **every** phone in airplane mode with Bluetooth on.
+Then nothing can arrive any way but the direct link, and any update at all is proof.
+
+### (c) Run it for every pairing
+
+Phone X is the one in airplane mode; the other phone is on normal signal. Both
+directions are observed in each run (X receiving, and the other receiving X), so
+each row below is one run. The two mixed rows are the two mixed directions.
+
+| Run | Phone X (airplane mode, Bluetooth on) | Other phone |
+| --- | --- | --- |
+| 1 | iPhone | iPhone |
+| 2 | Android | Android |
+| 3 | iPhone | Android |
+| 4 | Android | iPhone |
+
+Hardware: run 1 is possible with the two iPhones held, and runs 2 to 4 need an
+Android phone, which is why #268 cannot close on the iPhones alone. An emulator is
+no use here: no radio path exists between an emulator and a phone, as the section
+above says.
+
+### (d) Recording the result on #268
+
+#268 closes against [field-test-results.md](field-test-results.md), which wants one
+dated section per run with a build number and an observed measurement, labelled
+with the surface it was observed on. So each run is recorded twice: a section in
+that file in the shape below, and a short comment on #268 that links it and quotes
+the verdict line.
+
+```
+### YYYY-MM-DD: Bluetooth peer-to-peer, run N (#268, #855)
+
+Status: **pass / fail / partial.** Surface: physical phones.
+
+| Field | Value |
+| --- | --- |
+| Phone X (airplane mode, Bluetooth on) | <model and OS version only> |
+| Other phone | <model and OS version only> |
+| Build | `1.0.1` build `NNN` on both (Settings → About & build) |
+| Relay commit | the deployed `serverBuildCommit` |
+| Wi-Fi and mobile data on X confirmed off | yes / no |
+| Duration, distance, placement | ... |
+| X received the other's position throughout | yes / no. Roster on X: Bluetooth <age>, Internet <age> |
+| The other received X's position throughout | yes / no. Roster on the other: Bluetooth <age>, Internet <age> |
+| Verdict on X, verbatim | "Bluetooth peer-to-peer worked: N of M ... J arrived only over Bluetooth." |
+| Verdict on the other phone, verbatim | ... |
+```
+
+If diagnostics were recorded, paste the `TRANSPORT ... summary` lines, which carry
+counts and times only. **Do not attach the diagnostics file or a GPX**: they hold
+this phone's own route, and the results record must carry no precise public
+route. Identify phones by model and OS version, never a serial number or UDID.
+Label anything run on an emulator, or driven through the test-control API, as
+exactly that: it is never radio evidence. A single run does not close #268. It
+stays `status: ready for validation` until all four pairings and the other gates in
+this document have been run and recorded.
+
 ## Test sequence
 
 1. Bench discovery and authentication across Android↔Android, iPhone↔iPhone,
    Android→iPhone and iPhone→Android pairings.
 2. Repeat every cross-platform pairing with mobile data disabled, Wi-Fi not
-   associated to a common access point, and no personal hotspot.
+   associated to a common access point, and no personal hotspot. The airplane-mode
+   check under *Proving Bluetooth peer-to-peer* is the preferred form of this
+   step, because the roster ages and the verdict show whether the direct link
+   carried anything, which "it still worked" does not.
 3. Exchange 1 KB priority events for 30 minutes.
 4. Lock every screen and repeat.
 5. Background the app without force-quitting and repeat.
