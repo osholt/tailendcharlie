@@ -317,6 +317,17 @@ a leader on an SE at Large with the richest banner, leaves 62 pixels of road
 ahead; the marker is still uncovered, and the camera gives up look-ahead before
 it gives up the marker.
 
+Before and after, rendered by the widget tests with the Material fonts and each
+phone's safe areas, over the route-only fallback map (so they say nothing about
+the basemap): the marker is pushed to the top of an SE by the floating cards in
+the leader case, and sits clear in the same place after.
+
+![iPhone 15, before and after](images/portrait-band-iphone15.png)
+
+![iPhone SE, before and after](images/portrait-band-iphone-se.png)
+
+![Android 360x800, before and after](images/portrait-band-android.png)
+
 **The chrome stops following the system text size.** The Riding display size
 multiplies the system text scale rather than replacing it, and uncapped, Large at
 a 2.0 system scale made the band 849 pixels tall on an 844-pixel phone: taller
