@@ -67,11 +67,24 @@ const _navigationalKeys = [
   'emergency-alert-button',
   'leave-ride-button',
   'report-sighting-button',
+  'leader-broadcast-button',
 ];
 
 /// The three corner glances #125 and #133 allowed above the road: the ride
 /// menu, the clock and the speed sign with its compass.
 const _topRowKeys = ['ride-menu-button', 'ride-clock', 'speed-compass-cluster'];
+
+/// The narrowest the group overview may be drawn in the matrix: 120 of its own
+/// 150 points, a scale of 0.8.
+///
+/// Below that the smallest text in it - the 10 point rider count - is under 8
+/// points on screen, which is the least a phone can show legibly, and it is no
+/// longer the map of the whole group that #850 turns on for the leader. It is also
+/// exactly what a 360 point phone has left once the two columns of targets (110 and
+/// 96 wide with a 10 point gap) have taken their 216 of a 336 point row, so it is
+/// the floor the layout can reach without shrinking a glove-sized target. A 320
+/// point phone, outside the matrix, has 80 and is scaled further.
+const _minimumOverviewWidth = 120.0;
 
 /// How far either side of straight ahead the forward cone opens. The road a
 /// rider reads runs up the middle of the frame and bends within this of it.
@@ -98,6 +111,7 @@ void main() {
               );
               byScale[scale] = layout;
               _expectMarkerAndConeClear(layout, reason: layout.reason);
+              _expectLeaderTargets(layout);
               expect(
                 tester.takeException(),
                 isNull,
@@ -500,6 +514,60 @@ void _expectMarkerAndConeClear(_Layout layout, {required String reason}) {
   );
 }
 
+/// The row of targets, and the group overview beside it, for this configuration
+/// (#848).
+///
+/// A leader has TELL GROUP as well as REPORT. Side by side they made the row 288
+/// points of targets and left the overview 81 on a 393 point phone, which is the
+/// phone and the rider the overview is on for by default; stacked they are one
+/// 96 wide column exactly as tall as the SOS-over-LEAVE pair, and a leader's row
+/// is two columns and the overview like everyone else's.
+void _expectLeaderTargets(_Layout layout) {
+  final reason = layout.reason;
+  final rects = layout.rects;
+  final sos = rects['emergency-alert-button']!;
+  final leave = rects['leave-ride-button']!;
+  final report = rects['report-sighting-button']!;
+  final tell = rects['leader-broadcast-button'];
+  final overview = rects['group-mini-map']!;
+  final pair = leave.bottom - sos.top;
+
+  // Glove-sized, every one: SOS and LEAVE at least 48 high, REPORT and TELL GROUP
+  // at least 96 wide and 44 high.
+  expect(sos.height, greaterThanOrEqualTo(48), reason: reason);
+  expect(leave.height, greaterThanOrEqualTo(48), reason: reason);
+  expect(report.width, greaterThanOrEqualTo(96), reason: reason);
+  expect(report.height, greaterThanOrEqualTo(44), reason: reason);
+  // The overview is a readable map of the group, however many targets there are.
+  expect(
+    overview.width,
+    greaterThanOrEqualTo(_minimumOverviewWidth - 0.5),
+    reason: '$reason: the overview is squeezed to ${overview.width}',
+  );
+  expect(overview.left, greaterThanOrEqualTo(report.right), reason: reason);
+
+  if (tell == null) {
+    // Nobody but the leader has TELL GROUP, so nobody else's REPORT changes: it
+    // stays the 96 point square #849 made it.
+    expect(report.size, const Size(96, 96), reason: reason);
+    return;
+  }
+  expect(tell.width, greaterThanOrEqualTo(96), reason: reason);
+  expect(tell.height, greaterThanOrEqualTo(44), reason: reason);
+  // One column: REPORT above TELL GROUP, level with SOS and LEAVE, no taller than
+  // the pair beside it so the band the camera measures is no higher.
+  expect(tell.left, closeTo(report.left, 0.01), reason: reason);
+  expect(tell.top, greaterThanOrEqualTo(report.bottom), reason: reason);
+  expect(report.top, closeTo(sos.top, 0.01), reason: reason);
+  expect(tell.bottom, closeTo(leave.bottom, 0.01), reason: reason);
+  expect(
+    tell.bottom - report.top,
+    lessThanOrEqualTo(pair + 0.01),
+    reason: reason,
+  );
+  expect(tell.right, lessThanOrEqualTo(overview.left + 0.5), reason: reason);
+}
+
 /// The triangle of map a rider reads the road ahead in: from the top of the
 /// marker, [_forwardConeHalfAngleDegrees] either side of straight up, to the
 /// bottom of the top row, which is the glance row #125 and #133 left above it.
@@ -690,6 +758,8 @@ Future<_Layout> _pump(
         onEmergencyAlert: () async {},
         onLeaveRide: () async {},
         onReportHazard: (_) async {},
+        // The leader of a running group ride has TELL GROUP as well (#854).
+        onLeaderBroadcast: leader ? (_) async {} : null,
       ),
     ),
   );
