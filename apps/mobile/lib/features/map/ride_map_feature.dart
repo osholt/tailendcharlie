@@ -1291,6 +1291,9 @@ class _RideMapScreenState extends State<RideMapScreen>
   static const _overlaySource = 'ride-relay-overlays';
   static const _markerPlanSource = 'ride-relay-marker-plan';
   static const _trailDirectionArrowImage = 'ride-relay-trail-direction-arrow';
+  static const _trailDirectionArrowCasingLayer =
+      'ride-relay-trail-direction-arrow-casing';
+  static const _trailDirectionArrowLayer = 'ride-relay-trail-direction-arrows';
 
   /// How many of the direction arrows the planned route may claim before the
   /// live cues take the rest. Half the budget: enough to read the route's
@@ -4053,7 +4056,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                         child: Icon(
                           Icons.navigation_rounded,
                           color: item.color,
-                          size: 18,
+                          size: RouteTrailStyle.directionArrowSize,
                           shadows: const [
                             Shadow(color: Color(0xFF10151C), blurRadius: 4),
                             Shadow(color: Color(0xFF10151C), blurRadius: 4),
@@ -6024,23 +6027,38 @@ class _RideMapScreenState extends State<RideMapScreen>
         _trailDirectionArrowSource,
         _trailDirectionArrowGeoJson(),
       );
-      await controller.addSymbolLayer(
-        _trailDirectionArrowSource,
-        'ride-relay-trail-direction-arrows',
-        const ml.SymbolLayerProperties(
-          iconImage: _trailDirectionArrowImage,
-          iconColor: ['get', 'color'],
-          iconHaloColor: '#10151C',
-          iconHaloWidth: 2,
-          iconSize: 0.15,
-          iconRotate: ['get', 'bearing'],
-          iconRotationAlignment: 'map',
-          iconPitchAlignment: 'map',
-          iconAllowOverlap: true,
-          iconIgnorePlacement: true,
-        ),
-        enableInteraction: false,
+      // The arrow, over a larger dark copy of itself that is its edge. Sized from
+      // the pixel ratio like every native image (#900), and not given an
+      // `icon-halo`: the image is a plain mask, so a halo was nothing at the
+      // right size and a solid square behind the arrow at any other.
+      final arrowSize = iconGlyphIconSize(
+        glyphSize: RouteTrailStyle.directionArrowSize,
+        pixelRatio: pixelRatio,
       );
+      for (final (layerId, colour, scale) in <(String, Object, double)>[
+        (
+          _trailDirectionArrowCasingLayer,
+          RouteTrailStyle.casingHex,
+          RouteTrailStyle.directionArrowCasingScale,
+        ),
+        (_trailDirectionArrowLayer, const ['get', 'color'], 1.0),
+      ]) {
+        await controller.addSymbolLayer(
+          _trailDirectionArrowSource,
+          layerId,
+          ml.SymbolLayerProperties(
+            iconImage: _trailDirectionArrowImage,
+            iconColor: colour,
+            iconSize: arrowSize * scale,
+            iconRotate: const ['get', 'bearing'],
+            iconRotationAlignment: 'map',
+            iconPitchAlignment: 'map',
+            iconAllowOverlap: true,
+            iconIgnorePlacement: true,
+          ),
+          enableInteraction: false,
+        );
+      }
       await controller.addGeoJsonSource(_waypointSource, _waypointGeoJson());
       await controller.addCircleLayer(
         _waypointSource,
@@ -6158,9 +6176,9 @@ class _RideMapScreenState extends State<RideMapScreen>
       await controller.addSymbolLayer(
         _overlaySource,
         _hazardSymbolLayer,
-        const ml.SymbolLayerProperties(
+        ml.SymbolLayerProperties(
           iconImage: ['get', 'iconImage'],
-          iconSize: 1 / hazardMapSymbolRasterScale,
+          iconSize: hazardMapSymbolIconSize(pixelRatio: pixelRatio),
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
