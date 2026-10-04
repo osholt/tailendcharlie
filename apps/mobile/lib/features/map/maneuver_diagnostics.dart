@@ -74,7 +74,8 @@ String maneuverDiagnosticsReport(
     'Exit number:      ${instruction.exitNumber ?? '—'}',
     'Driving side:     ${maneuver.drivingSide ?? '—'}',
     'Steps merged:     ${instruction.stepCount}',
-    'Road:             ${instruction.roadLabel}',
+    'Road:             '
+        '${instruction.roadLabel.isEmpty ? '—' : instruction.roadLabel}',
     'Position:         ${maneuver.position.latitude.toStringAsFixed(6)}, '
         '${maneuver.position.longitude.toStringAsFixed(6)}',
   ];

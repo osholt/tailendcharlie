@@ -736,8 +736,8 @@ class OsrmRoadRoutingService
             junction: _maneuverJunction(step['intersections']),
           ),
         );
-        // Some straight forks live only in OSRM's intersection topology.
-        // Surface the choice without making any claim about right of way.
+        // A fork the engine left silent, where nothing says which way the road
+        // goes. Surfaced without any claim about right of way (#774, #851).
         if (type != 'roundabout' && type != 'rotary') {
           maneuvers.addAll(
             _ambiguousStraightJunctions(
@@ -761,6 +761,24 @@ class OsrmRoadRoutingService
     return List.unmodifiable(maneuvers);
   }
 
+  /// Forks the engine left silent that a rider cannot read from the road
+  /// (#774, #851).
+  ///
+  /// OSRM gives no instruction where it judges the way on obvious, and #774
+  /// found junctions in France where that judgement left a rider guessing.
+  /// The first answer restored a fork wherever another legal road left within
+  /// 60 degrees of straight ahead. That is every motorway exit slip and most
+  /// field gates on a B road: the 4 Oct ride heard "At the fork, continue
+  /// straight on" at the Aust services exits and at M48 J1, and the B4235 out
+  /// of Usk alone had ten of them (#851).
+  ///
+  /// A road that carries a number or a name through the junction is the way
+  /// on — that is OSRM's reason for its silence, and a UK rider follows the
+  /// major road without being told. So a fork is only restored here where the
+  /// step has neither, and where the choice is real: another legal road
+  /// leaves within [RouteJunction.divergeBranchDegrees] of the branch taken,
+  /// so the two look alike from the saddle. The junction is kept with the
+  /// manoeuvre and guidance reads the side to keep from it.
   static Iterable<RoadRouteManeuver> _ambiguousStraightJunctions(
     Map<String, Object?> step, {
     required GeoPoint start,
@@ -768,29 +786,20 @@ class OsrmRoadRoutingService
   }) sync* {
     final intersections = step['intersections'];
     if (intersections is! List) return;
+    if (_hasRoadIdentity(step['name']) || _hasRoadIdentity(step['ref'])) return;
     GeoPoint? previous;
     for (final raw in intersections.whereType<Map>()) {
       final location = raw['location'];
-      final bearings = raw['bearings'];
-      final entry = raw['entry'];
-      final incoming = raw['in'];
-      final outgoing = raw['out'];
       if (location is! List ||
           location.length != 2 ||
-          location.any((value) => value is! num || !value.isFinite) ||
-          bearings is! List ||
-          entry is! List ||
-          bearings.length != entry.length ||
-          bearings.any((value) => value is! num || !value.isFinite) ||
-          entry.any((value) => value is! bool) ||
-          incoming is! int ||
-          outgoing is! int ||
-          incoming == outgoing ||
-          incoming < 0 ||
-          outgoing < 0 ||
-          incoming >= bearings.length ||
-          outgoing >= bearings.length ||
-          entry[outgoing] != true) {
+          location.any((value) => value is! num || !value.isFinite)) {
+        continue;
+      }
+      final junction = RouteJunction.fromJson(raw);
+      final turn = junction?.takenTurnDegrees;
+      if (junction == null ||
+          turn == null ||
+          !junction.enterable[junction.takenIndex]) {
         continue;
       }
       final point = GeoPoint(
@@ -804,34 +813,29 @@ class OsrmRoadRoutingService
           (previous != null && _distanceMeters(previous, point) < 35)) {
         continue;
       }
-      final forward = ((bearings[incoming] as num).toDouble() + 180) % 360;
-      double delta(num bearing) => ((bearing - forward + 540) % 360) - 180;
-      final taken = delta(bearings[outgoing] as num);
-      // A competing forward branch creates a real choice. A lone bend,
-      // side road at right angles or incoming-only split carriageway does not.
-      if (taken.abs() > 30) continue;
-      final competing = List.generate(bearings.length, (index) => index).any(
-        (index) =>
-            index != incoming &&
-            index != outgoing &&
-            entry[index] == true &&
-            delta(bearings[index] as num).abs() <= 60,
-      );
-      if (!competing) continue;
+      // A branch roughly ahead with another legal road beside it is a choice.
+      // A lone bend, a side road at right angles or an incoming-only split
+      // carriageway is not.
+      if (turn.abs() > RouteJunction.divergeBranchDegrees ||
+          junction.branchOffsetsBesideTakenDegrees.isEmpty) {
+        continue;
+      }
       yield RoadRouteManeuver(
         position: point,
         type: 'fork',
         modifier: 'straight',
-        name: step['name'] as String?,
-        ref: step['ref'] as String?,
         drivingSide: step['driving_side'] as String?,
-        bearingBeforeDegrees: forward,
-        bearingAfterDegrees: (bearings[outgoing] as num).toDouble(),
+        bearingBeforeDegrees: junction.approachHeadingDegrees,
+        bearingAfterDegrees: junction.takenBearingDegrees,
         lanes: _parseIntersectionLanes(raw),
+        junction: junction,
       );
       previous = point;
     }
   }
+
+  static bool _hasRoadIdentity(Object? value) =>
+      value is String && value.trim().isNotEmpty;
 
   /// The roads meeting at a step's own manoeuvre (#853).
   ///

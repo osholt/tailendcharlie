@@ -12025,7 +12025,7 @@ class NavigationGuidanceBanner extends StatelessWidget {
                           ],
                         ),
                       ],
-                      if (!enlarged)
+                      if (!enlarged && guidance.roadLabel.isNotEmpty)
                         Text(
                           guidance.roadLabel,
                           maxLines: 1,
