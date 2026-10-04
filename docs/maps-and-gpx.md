@@ -20,7 +20,8 @@ coarser privacy-oriented z17 contribution cells.
 
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
-keeps the provider's daytime colours and labels. They use the same vector tile
+keeps the provider's daytime colours and labels, with deeper and wider road
+outlines ([#841](#road-edges-in-daylight-841)). They use the same vector tile
 source and offline tile cache; only their small style-document caches are kept
 separate so switching cannot serve the wrong palette.
 
@@ -410,9 +411,10 @@ and at ride zoom the casing is wider than the whole carriageway. What changed
 adjacency is casing-against-road, which *improved* — 2.50:1 → 4.54:1 over a
 motorway, 1.61:1 → 2.21:1 over a lane. The floor that makes the bare column
 acceptable is the light basemap, which ships and is field-legible: its white and
-cream road fills put the worst of these five lines at 1.04:1, against 1.50:1 on
-the new dark basemap. Daylight is harsher on every one of these colours than
-night now is.
+cream road fills put the worst of these five lines at 1.12:1 (1.00:1 until #841
+re-edged the roads, when the leader trail shared a luminance with the old road
+casing), against 1.50:1 on the new dark basemap. Daylight is harsher on every one
+of these colours than night now is.
 
 ### The full ride-map ink audit
 
@@ -495,6 +497,120 @@ and airport symbol layer are removed. Route geometry remains dominant through
 its near-black casing, which measures above 8:1 against every declared light
 surface. The palette and hierarchy live in
 `MapStyleRepository.lightBasemapPalette` and are held by repository tests.
+
+#### Road edges in daylight (#841)
+
+After the 4 October group ride a tester on Android found roads hard to pick out
+in the light map, and the same was true on iOS in both daytime styles. (The
+Android screenshot attached to #860 draws the provider's POI symbols, which only
+Original draws, so at least that report came from Original.) The cause is the
+road's *edge*, not its fill. No
+palette can separate a white or cream fill from a warm off-white ground: every
+fill measures 1.0–1.2:1 against it. What tells a lane from the field it crosses
+is its casing, and the casing was thin and pale. The provider draws it only
+1.5–2.25 px wider than the road in total — 0.75–1.1 px a side — at the zooms the
+ride camera uses, MapLibre z13.4–14.7 (`NavigationCameraPlanner`). Restrained
+painted every class that casing the same grey, `#C4C5C1`, 1.55:1 against its
+ground. Original's lane edge, `#CFCDCA`, is 1.45:1.
+
+**What changed.** Only the edge, in both styles:
+
+- **Restrained:** each casing takes the colour of its class. They share one
+  lightness, CIE L\* 70.5, and chroma climbs with the class (`#ACADA7` for a lane
+  to `#BBAA8E` for a motorway), so an edge says what it edges the way the fill
+  tints do. Ramps, bridges and tunnels carry the edge of their class.
+- **Original:** a lane's edge, `#CFCDCA`, deepens to `#AEACA9`, the same warm hue
+  at L\* 70.5. The orange edges of the larger roads keep the provider's colour.
+  Ground, fills, labels, POI symbols and every other layer are the provider's, as
+  #489 promised.
+- **Both:** the edge is one pixel wider from zoom 14, 0.75–1.1 px a side becoming
+  1.25–1.6. Each width table is the provider's own stops plus one pixel, so
+  everything below zoom 13 keeps the provider's curve and every zoom from 14 up
+  is exactly one pixel wider.
+- **Not touched:** the ground, every fill, every road *width*, service roads,
+  tracks and paths. #776 widened bright roads on the dark map and field
+  validation found they obscured the route, so the carriageway stays as the
+  provider drew it and only its outline grows.
+
+Measured on the real OpenFreeMap Liberty paint at z14, WCAG 2.1 ratio and CIE L\*
+of the edge against the ground (`#F3F2ED` in Restrained, `#F8F4F0` in Original):
+
+Restrained
+
+| class | fill | edge, before → after | edge : ground | ΔL\* | px a side |
+| --- | --- | --- | --- | --- | --- |
+| lane (minor) | `#FEFDF9` | `#C4C5C1` → `#ACADA7` | 1.55 → **2.02** | 16.1 → **25.0** | 0.75 → **1.25** |
+| tertiary | `#FCF9ED` | `#C4C5C1` → `#AFADA4` | 1.55 → **2.01** | 16.1 → **24.8** | 0.88 → **1.38** |
+| secondary | `#F8F2DD` | `#C4C5C1` → `#B2AC9C` | 1.55 → **2.02** | 16.1 → **25.0** | 0.88 → **1.38** |
+| primary | `#F4E9CF` | `#C4C5C1` → `#B5AC97` | 1.55 → **2.01** | 16.1 → **24.9** | 0.81 → **1.31** |
+| trunk | `#F1E2C2` | `#C4C5C1` → `#B8AB93` | 1.55 → **2.02** | 16.1 → **25.0** | 0.81 → **1.31** |
+| motorway | `#EEDBB6` | `#C4C5C1` → `#BBAA8E` | 1.55 → **2.02** | 16.1 → **25.1** | 0.81 → **1.31** |
+| service, track | `#F7F6F1` | `#C4C5C1`, unchanged | 1.55 | 16.1 | 0.50 |
+
+Original
+
+| class | fill | edge, before → after | edge : ground | ΔL\* | px a side |
+| --- | --- | --- | --- | --- | --- |
+| lane (minor) | `#FFFFFF` | `#CFCDCA` → `#AEACA9` | 1.45 → **2.07** | 13.9 → **26.0** | 0.75 → **1.25** |
+| tertiary, secondary | `#FFEEAA` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.88 → **1.38** |
+| primary, trunk | `#FFEEAA` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.81 → **1.31** |
+| motorway | `#FFCC88` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.81 → **1.31** |
+| service, track | `#FFFFFF` | `#CFCDCA`, unchanged | 1.45 | 13.9 | 0.50 |
+
+The edge width is the same at the other riding zooms: a lane gains half a pixel a
+side at each of z13.85, 14.0, 14.65 and 16 (0.89 → 1.31, 0.75 → 1.25, 0.77 →
+1.27, 0.81 → 1.31), a secondary road 0.86 → 1.28 to 1.13 → 1.63. Against the
+darkest ground a road crosses at riding zoom, a building, a Restrained edge
+rises from 1.27:1 to 1.64–1.65:1 and an Original lane edge from 1.13:1 to 1.61:1.
+`light_basemap_road_edges_test.dart` recomputes every figure here from the
+recorded provider paint (`test/fixtures/openfreemap_liberty_roads.json`), so the
+tables cannot drift from the style.
+
+**The route, and why the edge is not darker.** L\* 70.5 is as dark as an edge can
+be while the route's own near-black casing, `#10151C`, still measures 8:1 against
+it (8.07–8.15:1 across the seven Restrained edges, 8.09:1 for the Original lane).
+A test holds that above 8:1 against every colour either light style paints on a
+road, because the route has to stay the strongest line on the map. A darker edge
+would carry further in glare; it would also start to compete with the route.
+Nothing a route line or a marker is drawn *over* got lighter or darker except
+these edges. The one contrast that moved is the route casing against a road
+casing, from 10.56:1 against the old `#C4C5C1` to about 8.1:1. The worst bare
+pair of route colour and light surface rose from 1.00:1 to 1.12:1, only because
+the leader trail no longer shares a luminance with the road casing.
+
+**What glare does to this** is a model, not a measurement. A phone in direct sun
+adds a roughly constant veiling luminance to every pixel. That compresses any
+*ratio* but leaves a luminance *difference* alone, so the figure to watch is the
+luminance gap between edge and ground, which grows from 0.33 to 0.47 for a
+Restrained lane and from 0.30 to 0.50 for an Original lane. With a veil of half
+the screen's white, the edge's Weber contrast (gap over ground plus veil) rises
+from 0.24 to 0.34 in Restrained (+42%) and from 0.21 to 0.35 in Original (+67%).
+A white fill never could have carried this: it sits within 1.1:1 of the ground
+at any veil.
+
+**What it looks like.** Real OpenFreeMap tiles through the repainted style, in
+the app, on the iOS Simulator (iPhone 15 Pro, iOS 17.5) and the Android emulator
+(Android 14), before and after. Each is a debug build of this change and of the
+commit it branched from, with the simulated location set over a market town. The
+home map opens at zoom 14, which is inside the riding range, with no tilt. The
+lanes that were white threads are outlined, in both styles, on both platforms.
+
+![iOS, Restrained and Original, before and after](images/light-basemap-road-edges-ios.png)
+
+![Android, Restrained and Original, before and after](images/light-basemap-road-edges-android.png)
+
+The frames below are **not** the app. They are the same repainted styles drawn by
+MapLibre GL JS at the ride camera's zoom 14.65 and 51° tilt, with a route line in
+the app's own values (a 6 px `#3DDC84` long-dashed line inside its 10 px
+`#10151C` casing). They are here because the route is the thing the edge must not
+compete with, and it does not: it is still the only dark, saturated line on the
+map.
+
+![Riding tilt with a route, before and after](images/light-basemap-road-edges-route.png)
+
+**Not verified.** No frame here is daylight and none is a mounted phone. The
+field check #841 asks for, a photograph or a tester's confirmation in direct
+sunlight on both platforms, is still owed.
 
 ### The dark basemap
 
