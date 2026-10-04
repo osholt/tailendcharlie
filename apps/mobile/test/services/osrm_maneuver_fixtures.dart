@@ -876,6 +876,153 @@ Map<String, Object?> m4M48ForkResponse({required bool staysOnM4}) => _response(
   ],
 );
 
+/// The Aust Interchange at M48 J1, entered from Sandy Lane and left by the
+/// first exit onto the B4461 (#856).
+///
+/// Junction-local steps from the live OSRM demo response that reproduces the
+/// 4 Oct diagnostics, from the Sandy Lane name change 206 m before the ring to
+/// 250 m down the M48 slip that follows it. The `rotary` step's `straight` and
+/// its 151 then 147 degrees describe joining the ring; the `exit rotary` step
+/// leaves it 25 m round. On the ground the B4461 is the first exit clockwise
+/// and the only one on the left: the A403, a service road, the M48 west slip
+/// and Sandy Lane itself are all further round to the right.
+Map<String, Object?> austInterchangeResponse() => _response(
+  coordinates: const [
+    [-2.618093, 51.602929],
+    [-2.617963, 51.602935],
+    [-2.617671, 51.602945],
+    [-2.617462, 51.602929],
+    [-2.617261, 51.602889],
+    [-2.617149, 51.602847],
+    [-2.617059, 51.602801],
+    [-2.616974, 51.602746],
+    [-2.616913, 51.602692],
+    [-2.616861, 51.602633],
+    [-2.616817, 51.602565],
+    [-2.616792, 51.602497],
+    [-2.616781, 51.602419],
+    [-2.616784, 51.602345],
+    [-2.616804, 51.602279],
+    [-2.616804, 51.602274],
+    [-2.616797, 51.602156],
+    [-2.616774, 51.602065],
+    [-2.616485, 51.601723],
+    [-2.616401, 51.60164],
+    [-2.616337, 51.601524],
+    [-2.616231, 51.601445],
+    [-2.616063, 51.60133],
+    [-2.61585, 51.601237],
+    [-2.615456, 51.601087],
+    [-2.614656, 51.600782],
+    [-2.614154, 51.600587],
+    [-2.613954, 51.600454],
+    [-2.613809, 51.600352],
+    [-2.613714, 51.600268],
+    [-2.613319, 51.599799],
+    [-2.61317, 51.599658],
+    [-2.613002, 51.599543],
+    [-2.612028, 51.598959],
+    [-2.611763, 51.598766],
+  ],
+  distanceMeters: 678,
+  durationSeconds: 60,
+  steps: [
+    _step(
+      name: 'Sandy Lane',
+      drivingSide: 'right',
+      type: 'new name',
+      modifier: 'straight',
+      bearingBefore: 104,
+      bearingAfter: 85,
+      location: [-2.618093, 51.602929],
+      intersections: [
+        {
+          'out': 0,
+          'in': 2,
+          'entry': [true, true, false],
+          'bearings': [90, 255, 285],
+          'location': [-2.618093, 51.602929],
+        },
+        {
+          'out': 1,
+          'in': 0,
+          'entry': [false, true, false],
+          'bearings': [15, 180, 210],
+          'location': [-2.616804, 51.602274],
+        },
+      ],
+    ),
+    _step(
+      name: 'Aust Road',
+      ref: 'B4461',
+      drivingSide: 'right',
+      type: 'rotary',
+      modifier: 'straight',
+      exit: 1,
+      bearingBefore: 151,
+      bearingAfter: 147,
+      location: [-2.616485, 51.601723],
+      intersections: [
+        {
+          'out': 0,
+          'in': 2,
+          'entry': [true, false, false],
+          'bearings': [150, 315, 330],
+          'location': [-2.616485, 51.601723],
+        },
+      ],
+    ),
+    _step(
+      name: 'Aust Road',
+      ref: 'B4461',
+      drivingSide: 'right',
+      type: 'exit rotary',
+      modifier: 'slight left',
+      exit: 1,
+      bearingBefore: 161,
+      bearingAfter: 139,
+      location: [-2.616337, 51.601524],
+      intersections: [
+        {
+          'out': 0,
+          'in': 2,
+          'entry': [true, true, false],
+          'bearings': [135, 180, 345],
+          'location': [-2.616337, 51.601524],
+        },
+      ],
+    ),
+    _step(
+      name: '',
+      ref: 'M48',
+      drivingSide: 'right',
+      type: 'on ramp',
+      modifier: 'slight right',
+      bearingBefore: 120,
+      bearingAfter: 136,
+      location: [-2.614154, 51.600587],
+      intersections: [
+        {
+          'out': 1,
+          'in': 2,
+          'entry': [true, true, false],
+          'bearings': [120, 135, 300],
+          'location': [-2.614154, 51.600587],
+        },
+      ],
+    ),
+    _step(
+      name: '',
+      ref: 'M48',
+      drivingSide: 'right',
+      type: 'arrive',
+      bearingBefore: 140,
+      bearingAfter: 0,
+      location: [-2.611763, 51.598766],
+    ),
+  ],
+);
+
 Map<String, Object?> _response({
   required Coordinates coordinates,
   required double distanceMeters,
