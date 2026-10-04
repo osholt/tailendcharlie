@@ -413,7 +413,7 @@ void main() {
   });
 
   testWidgets(
-    'a searched destination asks for routing preferences before planning',
+    'a searched destination opens the plan surface from the rider\'s location',
     (tester) async {
       final routing = _RecordingRoadRoutingService();
       final planner = DestinationRoutePlanner(
@@ -441,20 +441,80 @@ void main() {
       await tester.tap(find.text('Bath, Somerset'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Route preferences'), findsOneWidget);
-      await tester.ensureVisible(
-        find.byKey(const Key('avoid-motorways-switch')),
+      // Straight onto the plan surface: no form in between (#847).
+      expect(find.byKey(const Key('ride-plan-itinerary')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('ride-plan-start')),
+          matching: find.text('Your location'),
+        ),
+        findsOneWidget,
       );
-      await tester.tap(find.byKey(const Key('avoid-motorways-switch')));
-      await tester.ensureVisible(
-        find.byKey(const Key('plan-destination-button')),
-      );
-      await tester.tap(find.byKey(const Key('plan-destination-button')));
-      await tester.pumpAndSettle();
+      expect(routing.waypoints.first.latitude, 51.45);
+
+      // Route options re-plan on the same surface, through Home's planner.
+      await _tapInPlan(tester, find.text('Route options'));
+      await _tapInPlan(tester, find.byKey(const Key('avoid-motorways-switch')));
 
       expect(routing.preferences?.avoidMotorways, isTrue);
+
+      // A solo plan is navigated as it is, with no ride and no second review.
+      await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+      await tester.pumpAndSettle();
+      final pending = tester
+          .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+          .pendingInAppRoute;
+      expect(pending?.reviewed, isTrue);
+      expect(pending?.route.preferences?.avoidMotorways, isTrue);
+      expect(rideController.hasActiveRide, isFalse);
     },
   );
+
+  testWidgets('a plan made as a group creates the ride with its route', (
+    tester,
+  ) async {
+    final planner = DestinationRoutePlanner(
+      searchService: const _BathDestinationSearch(),
+      routingService: _RecordingRoadRoutingService(),
+    );
+    await riderProfile.save(
+      displayName: 'Oliver',
+      motorcycleStyle: riderProfile.motorcycleStyle,
+      riderSymbol: riderProfile.riderSymbol,
+      riderColor: riderProfile.riderColor,
+    );
+    await pumpHome(tester, destinationPlanner: planner);
+    tester
+        .widget<HomeMapBackdrop>(find.byType(HomeMapBackdrop))
+        .position!
+        .value = const GeoPoint(
+      latitude: 51.45,
+      longitude: -2.59,
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('home-search-bar')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('home-search-field')), 'bath');
+    await tester.tap(find.byKey(const Key('home-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bath, Somerset'));
+    await tester.pumpAndSettle();
+
+    await _tapInPlan(tester, find.text('Group'));
+    await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
+    await tester.pumpAndSettle();
+
+    expect(rideController.coordinationMode.isGroup, isTrue);
+    expect(rideController.rideStarted, isFalse);
+    expect(rideController.authoritativeRoute?.name, 'To Bath');
+    expect(find.byKey(const Key('ride-invite-step')), findsOneWidget);
+    expect(
+      find.text(rideController.session!.rideCode),
+      findsOneWidget,
+      reason: 'the code is on screen the moment the ride exists',
+    );
+  });
 
   testWidgets('joining by QR is offered in words, not only as an icon', (
     tester,
@@ -495,6 +555,26 @@ void main() {
   });
 }
 
+/// Scrolls the plan surface's lazily built list to [finder] and taps it.
+Future<void> _tapInPlan(WidgetTester tester, Finder finder) async {
+  if (finder.evaluate().isEmpty) {
+    await tester.scrollUntilVisible(
+      finder,
+      120,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+  }
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
 class _FakeNearbyBridge extends NearbyBridge {
   const _FakeNearbyBridge();
 
@@ -531,6 +611,7 @@ class _BathDestinationSearch implements DestinationSearchService {
 
 class _RecordingRoadRoutingService implements RoadRoutingService {
   RoutePreferences? preferences;
+  List<GeoPoint> waypoints = const [];
 
   @override
   Future<RoadRouteResult> routeThrough(
@@ -539,6 +620,7 @@ class _RecordingRoadRoutingService implements RoadRoutingService {
     double? originBearingDegrees,
   }) async {
     this.preferences = preferences;
+    this.waypoints = waypoints;
     return RoadRouteResult(
       points: waypoints,
       distanceMeters: 24000,

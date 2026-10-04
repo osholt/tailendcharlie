@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../domain/distance_unit.dart';
 import '../../domain/imported_route.dart';
+import '../../domain/ride_plan.dart';
 import '../../services/circular_ride_planner.dart';
+import '../../services/road_routing.dart';
+import 'place_search_sheet.dart';
 
 class CircularRideSheet extends StatefulWidget {
   const CircularRideSheet({
@@ -12,21 +15,30 @@ class CircularRideSheet extends StatefulWidget {
     this.initialRequest,
     this.personalHeatmapCells = const [],
     this.globalHeatmapCells = const [],
+    this.searchService,
   });
 
-  final GeoPoint start;
+  /// The rider's location: where the loop starts and finishes unless the rider
+  /// chooses somewhere else. Null while no fix is known, which no longer stops
+  /// a loop being planned from a chosen start (#847).
+  final GeoPoint? start;
   final DistanceUnit distanceUnit;
   final CircularRideRequest? initialRequest;
   final List<CircularRideHeatCell> personalHeatmapCells;
   final List<CircularRideHeatCell> globalHeatmapCells;
 
+  /// Lets the start be changed with the same submit-only search as the plan
+  /// surface. Without it the loop starts where the rider is.
+  final DestinationSearchService? searchService;
+
   static Future<CircularRideRequest?> show(
     BuildContext context, {
-    required GeoPoint start,
+    required GeoPoint? start,
     required DistanceUnit distanceUnit,
     CircularRideRequest? initialRequest,
     List<CircularRideHeatCell> personalHeatmapCells = const [],
     List<CircularRideHeatCell> globalHeatmapCells = const [],
+    DestinationSearchService? searchService,
   }) => showModalBottomSheet<CircularRideRequest>(
     context: context,
     isScrollControlled: true,
@@ -37,6 +49,7 @@ class CircularRideSheet extends StatefulWidget {
       initialRequest: initialRequest,
       personalHeatmapCells: personalHeatmapCells,
       globalHeatmapCells: globalHeatmapCells,
+      searchService: searchService,
     ),
   );
 
@@ -58,6 +71,12 @@ class _CircularRideSheetState extends State<CircularRideSheet> {
   bool _avoidMotorways = true;
   bool _avoidMajorRoads = false;
 
+  /// A start the rider chose instead of their location. Null follows them.
+  RidePlanPlace? _chosenStart;
+  String? _startError;
+
+  GeoPoint? get _start => _chosenStart?.point ?? widget.start;
+
   double get _unitMetres =>
       widget.distanceUnit == DistanceUnit.miles ? 1609.344 : 1000;
 
@@ -66,6 +85,17 @@ class _CircularRideSheetState extends State<CircularRideSheet> {
     super.initState();
     final initial = widget.initialRequest;
     if (initial != null) {
+      // Editing a loop keeps the start it was planned from, which may not be
+      // where the rider is any more.
+      final current = widget.start;
+      if (current == null ||
+          current.latitude != initial.start.latitude ||
+          current.longitude != initial.start.longitude) {
+        _chosenStart = RidePlanPlace(
+          point: initial.start,
+          label: 'The loop\'s start',
+        );
+      }
       _direction = initial.direction;
       _dayLength = initial.dayLength;
       _style = initial.preferences.style;
@@ -108,13 +138,43 @@ class _CircularRideSheetState extends State<CircularRideSheet> {
     });
   }
 
+  Future<void> _changeStart() async {
+    final search = widget.searchService;
+    if (search == null) return;
+    final choice = await PlaceSearchSheet.show(
+      context,
+      searchService: search,
+      title: 'Start and finish at',
+      offerCurrentLocation: true,
+      currentLocationKnown: widget.start != null,
+    );
+    if (choice == null || !mounted) return;
+    setState(() {
+      _chosenStart = switch (choice) {
+        PlaceSearchCurrentLocation() => null,
+        PlaceSearchPlace(:final place) => place,
+      };
+      _startError = null;
+    });
+  }
+
   void _submit() {
-    if (!_formKey.currentState!.validate()) return;
+    final start = _start;
+    final formValid = _formKey.currentState!.validate();
+    if (start == null) {
+      setState(
+        () => _startError = widget.searchService == null
+            ? 'Enable location so the circular ride can start and finish here.'
+            : 'Choose where the loop starts, or allow location access.',
+      );
+      return;
+    }
+    if (!formValid) return;
     final distance =
         double.parse(_distanceController.text.trim()) * _unitMetres;
     Navigator.of(context).pop(
       CircularRideRequest(
-        start: widget.start,
+        start: start,
         distanceMeters: distance,
         direction: _direction,
         preferences: RoutePreferences(
@@ -160,7 +220,35 @@ class _CircularRideSheetState extends State<CircularRideSheet> {
               'Choose a general direction and length. You can draw the result '
               'around other roads and add café stops before saving it.',
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            ListTile(
+              key: const Key('circular-ride-start'),
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                _chosenStart == null ? Icons.my_location : Icons.trip_origin,
+                color: const Color(0xFF68A9FF),
+              ),
+              title: Text(_chosenStart?.label ?? 'Your location'),
+              subtitle: Text(
+                _startError ??
+                    (_start == null
+                        ? 'Waiting for your location, or choose a start'
+                        : 'Start and finish'),
+                style: TextStyle(
+                  color: _startError == null
+                      ? const Color(0xFF98A3B1)
+                      : Theme.of(context).colorScheme.error,
+                ),
+              ),
+              trailing: widget.searchService == null
+                  ? null
+                  : TextButton(
+                      key: const Key('circular-ride-change-start'),
+                      onPressed: _changeStart,
+                      child: const Text('Change'),
+                    ),
+            ),
+            const SizedBox(height: 8),
             DropdownButtonFormField<RideDayLength>(
               key: const Key('circular-day-length'),
               initialValue: _dayLength,

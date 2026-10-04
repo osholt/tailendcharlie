@@ -4268,59 +4268,46 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Enter destination'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('destination-field')), 'Wrong');
-    // The sheet carries the route preferences (#182), so the plan button can
-    // start below the fold.
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('plan-destination-button')),
-      250,
-      scrollable: find.byType(Scrollable).last,
+    // The destination comes first, then the plan surface (#847).
+    await tester.enterText(
+      find.byKey(const Key('place-search-field')),
+      'Wrong',
     );
-    await tester.tap(find.byKey(const Key('plan-destination-button')));
+    await tester.tap(find.byKey(const Key('place-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('place-search-result-Wrong place')));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Wrong place'), findsWidgets);
     expect(store.savedRoutes, isEmpty);
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('edit-reviewed-route')),
-      250,
-      scrollable: find.byType(Scrollable).last,
-    );
-    await tester.tap(find.byKey(const Key('edit-reviewed-route')));
-    await tester.pumpAndSettle();
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const Key('destination-field')))
-          .controller
-          ?.text,
-      'Wrong',
-    );
 
+    // Changed in place on the plan surface: there is no form to go back to,
+    // and nothing is saved until the route is confirmed.
+    await tester.tap(find.byKey(const Key('ride-plan-change-destination')));
+    await tester.pumpAndSettle();
     await tester.enterText(
-      find.byKey(const Key('destination-field')),
+      find.byKey(const Key('place-search-field')),
       'Correct',
     );
-    // The sheet carries the route preferences (#182), so the plan button can
-    // start below the fold.
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('plan-destination-button')),
-      250,
-      scrollable: find.byType(Scrollable).last,
+    await tester.tap(find.byKey(const Key('place-search-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('place-search-result-Correct place')),
     );
-    await tester.tap(find.byKey(const Key('plan-destination-button')));
     await tester.pumpAndSettle();
     expect(find.textContaining('Correct place'), findsWidgets);
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('confirm-reviewed-route')),
-      250,
-      scrollable: find.byType(Scrollable).last,
-    );
+    expect(store.savedRoutes, isEmpty);
+
     await tester.tap(find.byKey(const Key('confirm-reviewed-route')));
     await tester.pumpAndSettle();
 
     expect(search.queries, ['Wrong', 'Correct']);
     expect(store.savedRoutes, hasLength(1));
     expect(store.savedRoutes.single.name, 'To Correct place');
+    expect(
+      store.savedRoutes.single.waypoints.first.description,
+      'Current location',
+    );
   });
 
   testWidgets('forwards the full-screen ride menu through the app wrapper', (
