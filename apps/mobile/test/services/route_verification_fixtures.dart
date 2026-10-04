@@ -1,4 +1,4 @@
-/// Recorded router responses for the route-verification tests (#840).
+/// Recorded router responses for the route-verification tests (#840, #858).
 ///
 /// Everything in `test/fixtures/route_verification/` was recorded from the live
 /// services on 4 October 2026, and is **junction-local**: a few kilometres
@@ -11,9 +11,11 @@
 ///   goes round by the road and is 1.6 km longer.
 /// - `trace_*` is Valhalla `trace_attributes` over the geometry of the route of
 ///   the same name: what each stretch of it is made of.
-/// - `valhalla_other_trip` is a Valhalla route for a trip somewhere else
-///   altogether, for the answer to an exclusion that comes back from nowhere near
-///   the trip that was asked for.
+/// - `*_m5_*` is a short run on and off the M5 north of Bristol. OSRM and Valhalla
+///   take 12.6 km of it by motorway; `valhalla_m5_avoided` is the motorway-free
+///   answer to the same trip. It is also a route for a trip somewhere else
+///   altogether, for the answer to a track exclusion that comes back from nowhere
+///   near the trip that was asked for.
 /// - `valhalla_no_path` is the real error for a trip that cannot be routed
 ///   under the exclusions asked of it.
 library;

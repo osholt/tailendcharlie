@@ -25,6 +25,10 @@ void main() {
   const wharfApproach = GeoPoint(latitude: 51.747143, longitude: -2.986532);
   const wharf = GeoPoint(latitude: 51.752096, longitude: -2.9971343);
 
+  // A short run on and off the M5, which both routers take by motorway.
+  const motorwayStart = GeoPoint(latitude: 51.5460, longitude: -2.5900);
+  const motorwayEnd = GeoPoint(latitude: 51.6385, longitude: -2.4893);
+
   DestinationRoutePlanner planner(RecordedRouting routing) =>
       DestinationRoutePlanner(
         searchService: const _Places(),
@@ -43,6 +47,19 @@ void main() {
     origin: wharfApproach,
     query: 'Wharf',
     selectedDestination: const DestinationMatch(label: 'Wharf', point: wharf),
+    preferences: preferences,
+  );
+
+  Future<DestinationRoutePlan> planMotorway(
+    RecordedRouting routing,
+    RoutePreferences preferences,
+  ) => planner(routing).planForReview(
+    origin: motorwayStart,
+    query: 'Falfield',
+    selectedDestination: const DestinationMatch(
+      label: 'Falfield',
+      point: motorwayEnd,
+    ),
     preferences: preferences,
   );
 
@@ -198,7 +215,7 @@ void main() {
       // The excluded request comes back as a different trip altogether.
       final routing = RecordedRouting(
         osrm: fixtureResponse('osrm_track_approach.json'),
-        valhallaExcluding: fixtureResponse('valhalla_other_trip.json'),
+        valhallaExcluding: fixtureResponse('valhalla_m5_avoided.json'),
         traces: [fixtureResponse('trace_track_approach.json')],
       );
 
@@ -314,6 +331,134 @@ void main() {
         expect(plan.route.preferences, RoutePreferences.defaults);
       },
     );
+  });
+
+  group('a motorway the rider asked to avoid (#858)', () {
+    const avoidMotorways = RoutePreferences(avoidMotorways: true);
+
+    test('is asked of Valhalla, and the avoidance is sent', () async {
+      final routing = RecordedRouting(
+        valhalla: fixtureResponse('valhalla_m5_avoided.json'),
+        traces: [fixtureResponse('trace_m5_avoided.json')],
+      );
+
+      final plan = await planMotorway(routing, avoidMotorways);
+
+      expect(routing.osrmRequests, isEmpty, reason: 'OSRM cannot avoid them');
+      final costing =
+          (routing.valhallaRequests.single['costing_options']!
+                  as Map)['motorcycle']!
+              as Map;
+      expect(costing['exclude_highways'], isTrue);
+      expect(plan.verification!.isClean, isTrue);
+      expect(routing.valhallaRequests, hasLength(1), reason: 'nothing to redo');
+    });
+
+    test(
+      'the plan says what was asked, not that motorways were excluded',
+      () async {
+        final routing = RecordedRouting(
+          valhalla: fixtureResponse('valhalla_m5_avoided.json'),
+          traces: [fixtureResponse('trace_m5_avoided.json')],
+        );
+
+        final plan = await planMotorway(
+          routing,
+          const RoutePreferences(avoidMotorways: true, avoidMajorRoads: true),
+        );
+
+        expect(
+          plan.route.description,
+          contains('Avoid motorways, avoid major'),
+        );
+        expect(plan.route.description, isNot(contains('excluded')));
+      },
+    );
+
+    test(
+      'one the provider routed anyway is excluded and the trip re-planned',
+      () async {
+        // Valhalla ignores the avoidance and returns the M5 route; the check
+        // finds 12.6 km of motorway, and the stricter request answers.
+        final routing = RecordedRouting(
+          valhalla: fixtureResponse('valhalla_m5_stretch.json'),
+          valhallaExcluding: fixtureResponse('valhalla_m5_avoided.json'),
+          traces: [
+            fixtureResponse('trace_m5_stretch.json'),
+            fixtureResponse('trace_m5_avoided.json'),
+          ],
+        );
+
+        final plan = await planMotorway(routing, avoidMotorways);
+
+        expect(routing.valhallaRequests, hasLength(2));
+        expect(
+          routing.valhallaRequests.first.containsKey('exclude_locations'),
+          isFalse,
+        );
+        final excluded =
+            routing.valhallaRequests.last['exclude_locations']! as List;
+        expect(excluded, hasLength(11), reason: 'one per motorway edge');
+        expect(plan.distanceMeters, closeTo(16930, 1), reason: 'the A38 route');
+        final verification = plan.verification!;
+        expect(verification.replan, RouteReplanOutcome.adopted);
+        expect(verification.avoided.single.kind, RouteConcernKind.motorway);
+        expect(verification.avoided.single.labels, ['M5']);
+        expect(verification.concerns, isEmpty);
+      },
+    );
+
+    test('one that cannot be avoided is named, with its length', () async {
+      final routing = RecordedRouting(
+        valhalla: fixtureResponse('valhalla_m5_stretch.json'),
+        valhallaExcluding: fixtureResponse('valhalla_no_path.json', 400),
+        traces: [fixtureResponse('trace_m5_stretch.json')],
+      );
+
+      final plan = await planMotorway(routing, avoidMotorways);
+
+      expect(plan.distanceMeters, closeTo(18805, 1), reason: 'the M5 route');
+      expect(plan.verification!.notices(DistanceUnit.miles), [
+        'Uses 7.8 mi of motorway (M5), although Avoid motorways is on. No '
+            'motorway-free route was found.',
+      ]);
+      expect(plan.verification!.notices(DistanceUnit.kilometres), [
+        'Uses 12.6 km of motorway (M5), although Avoid motorways is on. No '
+            'motorway-free route was found.',
+      ]);
+    });
+
+    test('major roads are reported, and are never re-planned', () async {
+      final routing = RecordedRouting(
+        valhalla: fixtureResponse('valhalla_m5_avoided.json'),
+        traces: [fixtureResponse('trace_m5_avoided.json')],
+      );
+
+      final plan = await planMotorway(
+        routing,
+        const RoutePreferences(avoidMajorRoads: true),
+      );
+
+      expect(routing.valhallaRequests, hasLength(1));
+      expect(routing.traceRequests, hasLength(1));
+      expect(plan.verification!.replan, RouteReplanOutcome.notAttempted);
+      expect(plan.verification!.notices(DistanceUnit.miles), [
+        'Uses 7.9 mi of major roads (A38), although Avoid major roads is on.',
+      ]);
+    });
+
+    test('a motorway nobody asked to avoid is not mentioned', () async {
+      final routing = RecordedRouting(
+        osrm: fixtureResponse('osrm_m5_stretch.json'),
+        traces: [fixtureResponse('trace_m5_stretch.json')],
+      );
+
+      final plan = await planMotorway(routing, RoutePreferences.defaults);
+
+      expect(plan.distanceMeters, closeTo(18617.7, 0.1));
+      expect(plan.verification!.isClean, isTrue);
+      expect(routing.valhallaRequests, isEmpty);
+    });
   });
 
   group('the verifier', () {
@@ -447,7 +592,7 @@ void main() {
         );
 
         expect(replans, 0);
-        expect(result.verification!.hasConcerns, isTrue);
+        expect(result.verification!.hasHardConcerns, isTrue);
         expect(result.verification!.replan, RouteReplanOutcome.notAttempted);
       },
     );
@@ -544,7 +689,7 @@ void main() {
 
       final result = await service.routeThrough(const [wharfApproach, wharf]);
 
-      expect(result.verification!.hasConcerns, isTrue);
+      expect(result.verification!.hasHardConcerns, isTrue);
       expect(result.verification!.replan, RouteReplanOutcome.notAttempted);
       expect(result.distanceMeters, closeTo(1267.4, 0.1));
     });

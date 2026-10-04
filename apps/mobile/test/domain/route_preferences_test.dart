@@ -205,7 +205,7 @@ void main() {
     expect(preferences.toJson()['bywaySurface'], 'allow-unsurfaced');
   });
 
-  test('the applied notes read in the planner order', () {
+  test('the requested notes read in the planner order', () {
     expect(
       const RoutePreferences(
         style: RouteStyle.flowing,
@@ -213,25 +213,31 @@ void main() {
         avoidMajorRoads: true,
         avoidTolls: true,
         avoidFerries: true,
-      ).appliedNotes,
+      ).requestedNotes,
       [
         'Flowing-road bias',
-        'motorways excluded',
-        'major roads avoided',
-        'tolls excluded',
-        'ferries excluded',
+        'avoid motorways',
+        'avoid major roads',
+        'avoid toll roads',
+        'avoid ferries',
         'avoid unsurfaced byways',
       ],
     );
   });
 
-  test('the byway note states what was asked and never claims an outcome', () {
-    // It used to read "unsurfaced byways avoided", over a route that went along
-    // a gated track (#840). Whether the request was met is the verification's to
+  test('the notes state what was asked and never claim an outcome', () {
+    // They used to read "motorways excluded" and "unsurfaced byways avoided",
+    // which a route up the M5 and a route over a gated track both went out
+    // under (#858, #840). Whether a request was met is the verification's to
     // say, not the preference's.
-    for (final preference in BywaySurfacePreference.values) {
-      final notes = RoutePreferences(bywaySurface: preference).appliedNotes;
-      expect(notes.single, isNot(contains('avoided')));
+    const everything = RoutePreferences(
+      avoidMotorways: true,
+      avoidMajorRoads: true,
+      avoidTolls: true,
+      avoidFerries: true,
+    );
+    for (final note in everything.requestedNotes) {
+      expect(note, isNot(matches(RegExp(r'(excluded|avoided)$'))));
     }
   });
 }

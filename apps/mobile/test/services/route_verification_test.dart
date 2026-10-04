@@ -109,6 +109,7 @@ void main() {
       expect(concern.lengthMeters, closeTo(576, 0.5));
       expect(concern.stretches, 1);
       expect(concern.labels, ['track']);
+      expect(concern.isHard, isTrue);
       // One point in the middle of each of its seven edges, to exclude them.
       expect(concern.locations, hasLength(7));
     });
@@ -249,6 +250,7 @@ void main() {
         ).where((concern) => concern.kind == RouteConcernKind.nonRoad);
         expect(concerns, hasLength(1), reason: preferences.summary);
         expect(concerns.single.labels, ['cycle path', 'footpath']);
+        expect(concerns.single.isHard, isTrue);
       }
     });
 
@@ -277,6 +279,137 @@ void main() {
         classifyRouteEdges(edges, recorded.shape, RoutePreferences.defaults),
         isEmpty,
       );
+    });
+
+    test('a motorway is a hard concern only while Avoid motorways is on', () {
+      final asked = classify(
+        'trace_m5_stretch.json',
+        const RoutePreferences(avoidMotorways: true),
+      );
+      expect(asked, hasLength(1));
+      expect(asked.single.kind, RouteConcernKind.motorway);
+      expect(asked.single.lengthMeters, closeTo(12625, 1));
+      expect(asked.single.labels, ['M5']);
+      expect(asked.single.stretches, 1);
+      expect(asked.single.isHard, isTrue);
+      expect(asked.single.locations, hasLength(11));
+
+      expect(
+        classify('trace_m5_stretch.json', RoutePreferences.defaults),
+        isEmpty,
+        reason: 'nobody asked to avoid it',
+      );
+    });
+
+    test('a motorway-free route has no motorway to report', () {
+      expect(
+        classify(
+          'trace_m5_avoided.json',
+          const RoutePreferences(avoidMotorways: true),
+        ),
+        isEmpty,
+      );
+    });
+
+    test('major roads are a soft concern, named and never excluded', () {
+      final concerns = classify(
+        'trace_m5_avoided.json',
+        const RoutePreferences(avoidMajorRoads: true),
+      );
+
+      expect(concerns, hasLength(1));
+      expect(concerns.single.kind, RouteConcernKind.majorRoad);
+      expect(concerns.single.labels, ['A38']);
+      expect(concerns.single.isHard, isFalse);
+      expect(concerns.single.locations, isEmpty);
+      expect(selectExclusionLocations(concerns, 32), isEmpty);
+    });
+
+    test(
+      'a motorway counts as a major road when only major roads are avoided',
+      () {
+        final concerns = classify(
+          'trace_m5_stretch.json',
+          const RoutePreferences(avoidMajorRoads: true),
+        );
+
+        expect(concerns.single.kind, RouteConcernKind.majorRoad);
+        expect(concerns.single.labels, contains('M5'));
+        expect(
+          concerns.single.lengthMeters,
+          greaterThan(13000),
+          reason: 'the 12.6 km of motorway is in it, not only the A-road',
+        );
+      },
+    );
+
+    test('major roads are reported only once they are a real part of the '
+        'route', () {
+      List<RouteConcern> primary(double metres) => classifyRouteEdges(
+        [
+          RouteEdge(
+            lengthMeters: metres,
+            beginShapeIndex: 0,
+            endShapeIndex: 0,
+            use: 'road',
+            roadClass: 'primary',
+            names: const ['A38'],
+          ),
+        ],
+        const [GeoPoint(latitude: 51, longitude: -2)],
+        const RoutePreferences(avoidMajorRoads: true),
+      );
+
+      expect(primary(800), isEmpty, reason: 'a town crossed on an A-road');
+      expect(primary(1200).single.labels, ['A38']);
+    });
+
+    test('both preferences give a hard concern and a soft one', () {
+      final concerns = classify(
+        'trace_m5_stretch.json',
+        const RoutePreferences(avoidMotorways: true, avoidMajorRoads: true),
+      );
+
+      expect(concerns.map((concern) => concern.kind), [
+        RouteConcernKind.motorway,
+        RouteConcernKind.majorRoad,
+      ]);
+    });
+
+    test('a road is named by its reference, not by a roundabout\'s name', () {
+      final concern = classifyRouteEdges(
+        const [
+          RouteEdge(
+            lengthMeters: 800,
+            beginShapeIndex: 0,
+            endShapeIndex: 0,
+            use: 'road',
+            roadClass: 'motorway',
+            names: ['E 30', 'M5', 'Severn Crossing'],
+          ),
+          RouteEdge(
+            lengthMeters: 700,
+            beginShapeIndex: 0,
+            endShapeIndex: 0,
+            use: 'road',
+            roadClass: 'motorway',
+            names: ['Junction Roundabout'],
+          ),
+          RouteEdge(
+            lengthMeters: 700,
+            beginShapeIndex: 0,
+            endShapeIndex: 0,
+            use: 'road',
+            roadClass: 'motorway',
+            names: ['M4', 'E 30'],
+          ),
+        ],
+        const [GeoPoint(latitude: 51, longitude: -2)],
+        const RoutePreferences(avoidMotorways: true),
+      ).single;
+
+      expect(concern.labels, ['M5', 'M4']);
+      expect(concern.stretches, 1);
     });
 
     test('separate runs of the same offence are counted as places', () {
@@ -356,6 +489,13 @@ void main() {
         reason: 'every edge of the short concern is excluded',
       );
     });
+
+    test('a soft concern is never excluded', () {
+      expect(
+        selectExclusionLocations([concern(RouteConcernKind.majorRoad, 10)], 32),
+        isEmpty,
+      );
+    });
   });
 
   group('what the rider is told', () {
@@ -378,6 +518,11 @@ void main() {
       kind: RouteConcernKind.unsurfaced,
       lengthMeters: 576,
       labels: ['track'],
+    );
+    const motorway = RouteConcern(
+      kind: RouteConcernKind.motorway,
+      lengthMeters: 12625,
+      labels: ['M5'],
     );
 
     test('a clean route says nothing', () {
@@ -411,6 +556,50 @@ void main() {
       );
     });
 
+    test('an unavoidable motorway is named with its reference and length', () {
+      final found = verification(
+        const [motorway],
+        preferences: const RoutePreferences(avoidMotorways: true),
+        replan: RouteReplanOutcome.failed,
+      );
+
+      expect(found.notices(DistanceUnit.miles), [
+        'Uses 7.8 mi of motorway (M5), although Avoid motorways is on. No '
+            'motorway-free route was found.',
+      ]);
+    });
+
+    test('major roads are reported without claiming a re-plan was tried', () {
+      final found = verification(const [
+        RouteConcern(
+          kind: RouteConcernKind.majorRoad,
+          lengthMeters: 8000,
+          stretches: 3,
+          labels: ['A38', 'A46'],
+        ),
+      ], replan: RouteReplanOutcome.failed);
+
+      expect(found.notices(DistanceUnit.miles), [
+        'Uses 5.0 mi of major roads (A38, A46) in 3 places, although Avoid '
+            'major roads is on.',
+      ]);
+    });
+
+    test('a long list of roads is cut short', () {
+      final found = verification([
+        RouteConcern(
+          kind: RouteConcernKind.majorRoad,
+          lengthMeters: 8000,
+          labels: [for (var index = 1; index <= 9; index += 1) 'A$index'],
+        ),
+      ]);
+
+      expect(
+        found.notices(DistanceUnit.miles).single,
+        contains('(A1, A2, A3, A4, A5, A6 and others)'),
+      );
+    });
+
     test('a footpath is called a footpath', () {
       final found = verification(const [
         RouteConcern(
@@ -432,6 +621,18 @@ void main() {
       expect(unchecked.notices(DistanceUnit.miles), [
         'Could not check this route against your road preferences (avoid '
             'unsurfaced byways), so it may use roads you asked to avoid.',
+      ]);
+    });
+
+    test('a route that could not be checked names every preference it asked', () {
+      const unchecked = RouteVerification.unchecked(
+        RoutePreferences(avoidMotorways: true, avoidMajorRoads: true),
+      );
+
+      expect(unchecked.notices(DistanceUnit.miles), [
+        'Could not check this route against your road preferences (avoid '
+            'unsurfaced byways, avoid motorways, avoid major roads), so it may '
+            'use roads you asked to avoid.',
       ]);
     });
 
@@ -629,9 +830,11 @@ void main() {
       expect(body.containsKey('costing_options'), isFalse);
       expect((body['filters']! as Map)['attributes'], const [
         'edge.way_id',
+        'edge.names',
         'edge.use',
         'edge.unpaved',
         'edge.surface',
+        'edge.road_class',
         'edge.length',
         'edge.begin_shape_index',
         'edge.end_shape_index',
