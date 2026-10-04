@@ -519,6 +519,14 @@ Android rider marker until #843. `riderBadgeHaloWidth` keeps the outline inside
 that, at about one logical pixel on a 34 badge: what the flutter_map badge's two
 pixel stroke shows outside its edge.
 
+The badge shape also faces the camera (`icon-pitch-alignment: viewport`). The
+navigation camera is tilted 51 to 58 degrees, and a symbol that lies on the map
+is foreshortened by that tilt: the disc came out an ellipse about 1.8 times
+wider than tall, with the bike glyph (already facing the camera) standing over it
+and overflowing it. iOS has no tilt and draws a circle. The shape is still
+rotated with the map, so a pointer keeps the rider's heading on the ground as the
+camera turns.
+
 The other-rider badge is a 34 box and the local rider's a 38 box on both
 renderers, so a marker is the size of its iOS twin on any density.
 `rider_marker_density_test.dart` reads the recorded images and layers at seven

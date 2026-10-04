@@ -6781,6 +6781,12 @@ class _RideMapScreenState extends State<RideMapScreen>
       0,
     ],
     iconRotationAlignment: 'map',
+    // The navigation camera is tilted 51 to 58 degrees, and a symbol that lies
+    // on the map is foreshortened by it into an ellipse, with the glyph (which
+    // faces the camera) standing over it. The badge faces the camera too, so it
+    // is the circle iOS draws; it still turns with the map, so the pointer keeps
+    // the rider's heading on the ground (#843).
+    iconPitchAlignment: 'viewport',
     iconAllowOverlap: true,
     iconIgnorePlacement: true,
   );
