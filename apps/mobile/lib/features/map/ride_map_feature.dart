@@ -80,6 +80,8 @@ import '../../services/route_journey_progress.dart';
 import '../../services/route_progress.dart';
 import '../../services/rider_travel_direction.dart';
 import '../../services/route_reshape_planner.dart';
+import '../../services/route_verification.dart';
+import '../../services/verified_road_routing.dart';
 import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
@@ -1253,6 +1255,14 @@ class _RideMapScreenState extends State<RideMapScreen>
   final Map<int, Offset> _mapPointerOrigins = {};
   late final http.Client _routingClient;
   late final RoadRoutingService _roadRoutingService;
+
+  /// The routing that planning goes through: [_roadRoutingService] with its
+  /// answers checked against the rider's preferences (#840). The same service
+  /// as [_roadRoutingService] when one was injected, so a test's router is used
+  /// exactly as given. Not for the short legs a ride makes to rejoin or reach
+  /// its start, which are not planning decisions.
+  late final RoadRoutingService _planningRoutingService;
+  late final RouteVerifier? _routeVerifier;
   late final Future<DiscoverySuggestionQueue> _suggestionQueue;
   late final DiscoverySuggestionConfiguration _suggestionConfiguration;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
@@ -1658,15 +1668,28 @@ class _RideMapScreenState extends State<RideMapScreen>
             routeUrl: routingConfiguration.motorcycleRoutingUrl,
           ),
         );
+    final routeVerifier = widget.roadRoutingService == null
+        ? RouteVerifier.production(
+            client: _routingClient,
+            configuration: routingConfiguration,
+          )
+        : null;
+    _routeVerifier = routeVerifier;
+    _planningRoutingService = routeVerifier == null
+        ? _roadRoutingService
+        : VerifiedRoadRoutingService(
+            routing: _roadRoutingService,
+            verifier: routeVerifier,
+          );
     _defaultDestinationRoutePlanner = DestinationRoutePlanner(
       searchService: NominatimDestinationSearchService(
         client: _routingClient,
         baseUrl: routingConfiguration.geocodingBaseUrl,
       ),
-      routingService: _roadRoutingService,
+      routingService: _planningRoutingService,
     );
     _defaultRouteGeometryEnricher = RouteGeometryEnricher(
-      routingService: _roadRoutingService,
+      routingService: _planningRoutingService,
     );
     // Valhalla, not OSRM: the configured OSRM demo server caps `/match` at ten
     // trace coordinates, so this path returned 400 for every import ever
@@ -6842,6 +6865,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           duration: planned.duration,
           twistinessScore: planned.twistinessScore,
           warnings: planned.warnings,
+          verification: planned.verification,
           canEditStops: true,
           previousRoute: previousCandidate,
         );
@@ -6904,6 +6928,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         );
         final planner = CircularRidePlanner(
           routingService: _roadRoutingService,
+          verifier: _routeVerifier,
         );
         var plan = await planner.generate(preparedRequest);
         if (!_isCircularRideGenerationCurrent(generation)) return;
@@ -6917,6 +6942,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           duration: plan.duration,
           twistinessScore: plan.twistinessScore,
           warnings: _circularRideReviewWarnings(plan),
+          verification: plan.routeVerification,
           canEditStops: true,
           canGenerateAlternative: true,
           onGenerateAlternative: () async {
@@ -6930,6 +6956,7 @@ class _RideMapScreenState extends State<RideMapScreen>
               duration: plan.duration,
               twistinessScore: plan.twistinessScore,
               warnings: _circularRideReviewWarnings(plan),
+              verification: plan.routeVerification,
             );
           },
         );
@@ -7188,6 +7215,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     double? distanceMeters,
     Duration? duration,
     List<String> warnings = const [],
+    RouteVerification? verification,
   }) async {
     // A backstop, not the rider-facing path: every caller that a rider can
     // reach checks the authority first and says so plainly. Reaching this
@@ -7224,6 +7252,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       distanceMeters: distanceMeters,
       duration: duration,
       warnings: warnings,
+      verification: verification,
       previousRoute: comparisonRoute,
       comparisonRoute: comparisonRoute,
     );
@@ -7237,6 +7266,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     Duration? duration,
     double? twistinessScore,
     List<String> warnings = const [],
+    RouteVerification? verification,
     bool canEditStops = false,
     bool canGenerateAlternative = false,
     RouteAlternativeCallback? onGenerateAlternative,
@@ -7274,6 +7304,11 @@ class _RideMapScreenState extends State<RideMapScreen>
       duration: duration,
       twistinessScore: twistinessScore,
       warnings: reviewWarnings,
+      // The geometry that is reviewed is what was checked, so re-snapped
+      // geometry is judged on its own check and not on the plan's (#840).
+      verification: enrichment.changed
+          ? enrichment.verification ?? verification
+          : verification,
       previousRoute: previousRoute ?? _route,
       comparisonRoute: comparisonRoute,
       canEditStops: canEditStops,
@@ -7282,7 +7317,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       showMarkerPlan: widget.markerFeaturesEnabled,
       onMarkerReviewChanged: (review) => markerReview = review,
       onReshapeRoute: (candidate, shapingPoints) => RouteReshapePlanner(
-        routingService: _roadRoutingService,
+        routingService: _planningRoutingService,
       ).reshape(candidate, shapingPoints),
       onRouteChanged: (candidate) => reviewedRoute = candidate,
     );
@@ -8598,6 +8633,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           final route = await _reviewAndActivateRoute(
             inAppRoute.route,
             warnings: inAppRoute.reviewNotes,
+            verification: inAppRoute.verification,
           );
           final target = inAppRoute.handoffTarget;
           if (route != null && target != null && mounted) {
