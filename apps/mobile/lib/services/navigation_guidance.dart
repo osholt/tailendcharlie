@@ -69,7 +69,9 @@ class ManeuverInstruction {
     this.lanes = const [],
     this.leftHandTraffic,
     this.stepCount = 1,
+    this.approachBearingDegrees,
     this.departureBearingDegrees,
+    this.ringRoadsFromRouteLine = false,
     this._announced,
   }) : standaloneText = standaloneText ?? text;
 
@@ -111,6 +113,22 @@ class ManeuverInstruction {
   /// what lets a captured turn detail explain the instruction a rider saw
   /// instead of showing a heading change that was never used (#360).
   final double? departureBearingDegrees;
+
+  /// The heading on the road the rider arrives by, paired with
+  /// [departureBearingDegrees]: the two numbers a roundabout's direction was
+  /// read from, and the only two a captured turn detail may report for it.
+  ///
+  /// Since #614 both roads are read from the route's line where it can be
+  /// read, but only the departure was kept, so a capture paired it with the
+  /// engine's bearing at the ring - a pair the instruction never used. At the
+  /// Aust roundabout that read 151 in, 121.6 out, "straight on", beside an
+  /// instruction worked out from 160.6 in and 121.6 out (#856).
+  final double? approachBearingDegrees;
+
+  /// Whether [approachBearingDegrees] and [departureBearingDegrees] were read
+  /// from the roads either side of the ring on the route's own line, rather
+  /// than taken from the engine's bearings at the ring.
+  final bool ringRoadsFromRouteLine;
 
   /// `true` where the engine reported left-hand traffic at this manoeuvre.
   ///
@@ -597,14 +615,18 @@ ManeuverInstruction _roundaboutInstruction({
           followingPosition: exit == null ? null : follower?.position,
           path: path,
         );
+  // Both roads come from the same place: the route's line where it could be
+  // read, otherwise the engine's own bearings. Pairing a line-read departure
+  // with the engine's approach is how the Aust capture reported a heading
+  // change the instruction never used (#856).
+  final approach = roads?.approach ?? entry.bearingBeforeDegrees;
   final departure =
       roads?.departure ??
       _ringDepartureBearing(entry: entry, exit: exit, follower: follower);
   final direction = _ringExitDirection(
     entry: entry,
-    exit: exit,
-    follower: follower,
-    roads: roads,
+    approach: approach,
+    departure: departure,
   );
   // Exit counts belong to one ring. Where adjacent rings were merged, neither
   // count describes the collapsed instruction, so no number is claimed.
@@ -640,7 +662,9 @@ ManeuverInstruction _roundaboutInstruction({
       confirmed: entry.trafficSideConfirmed,
     ),
     stepCount: group.length,
+    approachBearingDegrees: approach,
     departureBearingDegrees: departure,
+    ringRoadsFromRouteLine: roads != null,
   );
 }
 
@@ -668,13 +692,22 @@ double? _ringDepartureBearing({
 ///
 /// The engine's entry modifier describes joining the ring and its exit modifier
 /// describes leaving it relative to travel around the ring, so neither states
-/// the direction through the junction. The heading before joining compared with
-/// the heading on the road taken does.
+/// the direction through the junction: OSRM gives a `roundabout` or `rotary`
+/// step the direction of the turn onto the ring, and works out the whole turn
+/// only for a `roundabout turn`. The heading on the road arrived by compared
+/// with the heading on the road taken does state it.
+///
+/// [approach] and [departure] are that pair, read once by the caller from the
+/// route's line where it could be read and from the engine's bearings
+/// otherwise. Ride 723888 crossed a Bristol rotary whose engine bearings were
+/// 222 degrees in and 302 out - an 80 degree right - while the rider's own
+/// track approached on 273 and left on 297. The roads say straight on, twice,
+/// and so did the engine's modifier; only the ring-measured pair said right
+/// (#614).
 ManeuverDirection _ringExitDirection({
   required RouteManeuver entry,
-  required RouteManeuver? exit,
-  ({double approach, double departure})? roads,
-  required RouteManeuver? follower,
+  required double? approach,
+  required double? departure,
 }) {
   // A small roundabout the engine reports as a plain turn does carry the turn
   // direction in its own modifier.
@@ -682,30 +715,7 @@ ManeuverDirection _ringExitDirection({
     final modifier = _directionFromModifier(entry.modifier);
     if (modifier.isStated) return modifier;
   }
-  // The two roads, where the route's line could be read. Ride 723888 crossed a
-  // Bristol rotary whose engine bearings were 222 degrees in and 302 out - an
-  // 80 degree right - while the rider's own track approached on 273 and left on
-  // 297. The roads say straight on, twice, and so did the engine's modifier;
-  // only the ring-measured pair said right (#614).
-  if (roads != null) {
-    return _directionFromTurnDegrees(
-      _signedBearingDelta(roads.approach, roads.departure),
-      straightBandDegrees: _roundaboutStraightBandDegrees,
-    );
-  }
-  final approach = entry.bearingBeforeDegrees;
-  if (approach == null) return ManeuverDirection.unstated;
-  // The step that leaves the ring reports the heading on the road taken.
-  var departure = exit?.bearingAfterDegrees;
-  if (departure == null &&
-      exit == null &&
-      follower != null &&
-      _distance(entry.position, follower.position) <= _exitBearingReachMeters) {
-    // Without a separate exit step the ring traversal ends at the next step,
-    // whose approach heading is the heading on the road leaving the ring.
-    departure = follower.bearingBeforeDegrees;
-  }
-  if (departure == null) return ManeuverDirection.unstated;
+  if (approach == null || departure == null) return ManeuverDirection.unstated;
   return _directionFromTurnDegrees(
     _signedBearingDelta(approach, departure),
     straightBandDegrees: _roundaboutStraightBandDegrees,
