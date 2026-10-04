@@ -69,7 +69,10 @@ class ManeuverInstruction {
     this.lanes = const [],
     this.leftHandTraffic,
     this.stepCount = 1,
+    this.approachBearingDegrees,
     this.departureBearingDegrees,
+    this.ringRoadsFromRouteLine = false,
+    this._announced,
   }) : standaloneText = standaloneText ?? text;
 
   /// The engine step the rider acts on. Retained so route progress, positions
@@ -111,6 +114,22 @@ class ManeuverInstruction {
   /// instead of showing a heading change that was never used (#360).
   final double? departureBearingDegrees;
 
+  /// The heading on the road the rider arrives by, paired with
+  /// [departureBearingDegrees]: the two numbers a roundabout's direction was
+  /// read from, and the only two a captured turn detail may report for it.
+  ///
+  /// Since #614 both roads are read from the route's line where it can be
+  /// read, but only the departure was kept, so a capture paired it with the
+  /// engine's bearing at the ring - a pair the instruction never used. At the
+  /// Aust roundabout that read 151 in, 121.6 out, "straight on", beside an
+  /// instruction worked out from 160.6 in and 121.6 out (#856).
+  final double? approachBearingDegrees;
+
+  /// Whether [approachBearingDegrees] and [departureBearingDegrees] were read
+  /// from the roads either side of the ring on the route's own line, rather
+  /// than taken from the engine's bearings at the ring.
+  final bool ringRoadsFromRouteLine;
+
   /// `true` where the engine reported left-hand traffic at this manoeuvre.
   ///
   /// Used only to draw a roundabout ring or U-turn the right way round; it
@@ -124,14 +143,26 @@ class ManeuverInstruction {
 
   bool get isRoundabout => kind == ManeuverKind.roundabout;
 
+  /// Set where the instruction itself decided whether it is announced, rather
+  /// than its kind: "Follow the road" is drawn as carrying on, and is still a
+  /// prompt, because the engine marked a junction there (#851).
+  final bool? _announced;
+
   /// Whether this instruction is worth announcing.
   ///
   /// Departures and road-name changes are route bookkeeping, not decisions.
   bool get isGuidance =>
-      kind != ManeuverKind.depart &&
-      (kind != ManeuverKind.continueAhead ||
-          maneuver.type.trim().toLowerCase() == 'continue');
+      _announced ??
+      (kind != ManeuverKind.depart &&
+          (kind != ManeuverKind.continueAhead ||
+              maneuver.type.trim().toLowerCase() == 'continue'));
 
+  /// The road this instruction leads onto, by name and number, or empty where
+  /// the engine named neither.
+  ///
+  /// Empty rather than a stand-in. It used to fall back to the engine's step
+  /// type, so an unnamed service road was shown and logged as a road called
+  /// "Turn", and a synthesised junction as one called "Fork" (#851).
   String get roadLabel {
     final name = roadName?.trim();
     final ref = roadRef?.trim();
@@ -140,7 +171,7 @@ class ManeuverInstruction {
     }
     if (name != null && name.isNotEmpty) return name;
     if (ref != null && ref.isNotEmpty) return ref;
-    return _sentenceCase(maneuver.type);
+    return '';
   }
 }
 
@@ -509,7 +540,12 @@ List<ManeuverInstruction> collapseManeuvers(
   while (index < maneuvers.length) {
     final entry = maneuvers[index];
     if (_kindFor(entry.type) != ManeuverKind.roundabout) {
-      instructions.add(_simpleInstruction(entry));
+      instructions.add(
+        _simpleInstruction(
+          entry,
+          previous: index > 0 ? maneuvers[index - 1] : null,
+        ),
+      );
       index += 1;
       continue;
     }
@@ -579,14 +615,18 @@ ManeuverInstruction _roundaboutInstruction({
           followingPosition: exit == null ? null : follower?.position,
           path: path,
         );
+  // Both roads come from the same place: the route's line where it could be
+  // read, otherwise the engine's own bearings. Pairing a line-read departure
+  // with the engine's approach is how the Aust capture reported a heading
+  // change the instruction never used (#856).
+  final approach = roads?.approach ?? entry.bearingBeforeDegrees;
   final departure =
       roads?.departure ??
       _ringDepartureBearing(entry: entry, exit: exit, follower: follower);
   final direction = _ringExitDirection(
     entry: entry,
-    exit: exit,
-    follower: follower,
-    roads: roads,
+    approach: approach,
+    departure: departure,
   );
   // Exit counts belong to one ring. Where adjacent rings were merged, neither
   // count describes the collapsed instruction, so no number is claimed.
@@ -622,7 +662,9 @@ ManeuverInstruction _roundaboutInstruction({
       confirmed: entry.trafficSideConfirmed,
     ),
     stepCount: group.length,
+    approachBearingDegrees: approach,
     departureBearingDegrees: departure,
+    ringRoadsFromRouteLine: roads != null,
   );
 }
 
@@ -650,13 +692,22 @@ double? _ringDepartureBearing({
 ///
 /// The engine's entry modifier describes joining the ring and its exit modifier
 /// describes leaving it relative to travel around the ring, so neither states
-/// the direction through the junction. The heading before joining compared with
-/// the heading on the road taken does.
+/// the direction through the junction: OSRM gives a `roundabout` or `rotary`
+/// step the direction of the turn onto the ring, and works out the whole turn
+/// only for a `roundabout turn`. The heading on the road arrived by compared
+/// with the heading on the road taken does state it.
+///
+/// [approach] and [departure] are that pair, read once by the caller from the
+/// route's line where it could be read and from the engine's bearings
+/// otherwise. Ride 723888 crossed a Bristol rotary whose engine bearings were
+/// 222 degrees in and 302 out - an 80 degree right - while the rider's own
+/// track approached on 273 and left on 297. The roads say straight on, twice,
+/// and so did the engine's modifier; only the ring-measured pair said right
+/// (#614).
 ManeuverDirection _ringExitDirection({
   required RouteManeuver entry,
-  required RouteManeuver? exit,
-  ({double approach, double departure})? roads,
-  required RouteManeuver? follower,
+  required double? approach,
+  required double? departure,
 }) {
   // A small roundabout the engine reports as a plain turn does carry the turn
   // direction in its own modifier.
@@ -664,39 +715,38 @@ ManeuverDirection _ringExitDirection({
     final modifier = _directionFromModifier(entry.modifier);
     if (modifier.isStated) return modifier;
   }
-  // The two roads, where the route's line could be read. Ride 723888 crossed a
-  // Bristol rotary whose engine bearings were 222 degrees in and 302 out - an
-  // 80 degree right - while the rider's own track approached on 273 and left on
-  // 297. The roads say straight on, twice, and so did the engine's modifier;
-  // only the ring-measured pair said right (#614).
-  if (roads != null) {
-    return _directionFromTurnDegrees(
-      _signedBearingDelta(roads.approach, roads.departure),
-      straightBandDegrees: _roundaboutStraightBandDegrees,
-    );
-  }
-  final approach = entry.bearingBeforeDegrees;
-  if (approach == null) return ManeuverDirection.unstated;
-  // The step that leaves the ring reports the heading on the road taken.
-  var departure = exit?.bearingAfterDegrees;
-  if (departure == null &&
-      exit == null &&
-      follower != null &&
-      _distance(entry.position, follower.position) <= _exitBearingReachMeters) {
-    // Without a separate exit step the ring traversal ends at the next step,
-    // whose approach heading is the heading on the road leaving the ring.
-    departure = follower.bearingBeforeDegrees;
-  }
-  if (departure == null) return ManeuverDirection.unstated;
+  if (approach == null || departure == null) return ManeuverDirection.unstated;
   return _directionFromTurnDegrees(
     _signedBearingDelta(approach, departure),
     straightBandDegrees: _roundaboutStraightBandDegrees,
   );
 }
 
-ManeuverInstruction _simpleInstruction(RouteManeuver maneuver) {
+ManeuverInstruction _simpleInstruction(
+  RouteManeuver maneuver, {
+  RouteManeuver? previous,
+}) {
   final engineKind = _kindFor(maneuver.type);
   final reported = _maneuverDirection(maneuver);
+  final leftHandTraffic = _leftHandTraffic(
+    maneuver.drivingSide,
+    confirmed: maneuver.trafficSideConfirmed,
+  );
+  if (_followsTheRoad(engineKind, maneuver, previous, reported)) {
+    // The UK way to say it: the road carries on, so the rider follows it, and
+    // it is drawn straight on because a major road is straight on (#851).
+    return ManeuverInstruction(
+      maneuver: maneuver,
+      kind: ManeuverKind.continueAhead,
+      direction: ManeuverDirection.straight,
+      text: followTheRoadText,
+      announced: true,
+      roadName: maneuver.name,
+      roadRef: maneuver.ref,
+      lanes: maneuver.lanes,
+      leftHandTraffic: leftHandTraffic,
+    );
+  }
   final keep = _keepDirection(engineKind, maneuver, reported);
   // A diverge the engine called a turn is a fork in the road, and is drawn and
   // worded as one: "Keep left", not "Turn left" for a branch eight degrees off
@@ -726,10 +776,105 @@ ManeuverInstruction _simpleInstruction(RouteManeuver maneuver) {
     roadName: maneuver.name,
     roadRef: maneuver.ref,
     lanes: maneuver.lanes,
-    leftHandTraffic: _leftHandTraffic(
-      maneuver.drivingSide,
-      confirmed: maneuver.trafficSideConfirmed,
-    ),
+    leftHandTraffic: leftHandTraffic,
+  );
+}
+
+/// What a rider is told where the road they are on simply carries on (#851).
+const followTheRoadText = 'Follow the road';
+
+/// How much nearer straight ahead than every other legal road the branch taken
+/// must be before it is the plain continuation of the road (#851).
+///
+/// Two branches a few degrees apart are a choice however the road is numbered:
+/// at the M32 split the route's branch is one degree off straight and the other
+/// three, and "Follow the road" there would not say which lanes to be in.
+const obviousContinuationMarginDegrees = 10.0;
+
+/// Whether the road the rider is on carries on through [maneuver] (#851).
+///
+/// A road is known by its number where both sides have one, because a UK road
+/// keeps its number while its name changes from one street to the next; the
+/// A4017 is Bromley Heath Road and then Cleeve Hill. Without a number on both
+/// sides the name decides. With neither, nothing says it is the same road, and
+/// this is false.
+bool staysOnRoad(RouteManeuver? previous, RouteManeuver maneuver) {
+  if (previous == null) return false;
+  final refsBefore = _roadRefs(previous.ref);
+  final refsAfter = _roadRefs(maneuver.ref);
+  if (refsBefore.isNotEmpty && refsAfter.isNotEmpty) {
+    return refsBefore.any(refsAfter.contains);
+  }
+  final nameBefore = _roadName(previous.name);
+  return nameBefore != null && nameBefore == _roadName(maneuver.name);
+}
+
+/// The road numbers a step carries. OSRM joins concurrent numbers with `;`
+/// ("M4;E30") and writes them with or without a space ("B 4235").
+Set<String> _roadRefs(String? ref) => {
+  for (final part in (ref ?? '').split(';'))
+    if (part.replaceAll(RegExp(r'\s+'), '').toUpperCase() case final value
+        when value.isNotEmpty)
+      value,
+};
+
+String? _roadName(String? name) {
+  final normalized = name?.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+  return normalized == null || normalized.isEmpty ? null : normalized;
+}
+
+/// Whether [maneuver] is the road the rider is on carrying on, which a UK rider
+/// is told as "Follow the road" rather than as a turn or a fork (#851).
+///
+/// "Turn left at the fork" confuses where the major road itself carries on to
+/// the left. Two things have to be true before the turn is dropped from the
+/// wording:
+///
+/// - the road carries on: [staysOnRoad], by number or by name;
+/// - nothing else there could be taken for it: no other legal road at the
+///   junction is within [obviousContinuationMarginDegrees] of being as straight
+///   as the branch taken. Where the junction was not kept (an older saved
+///   route, a Valhalla route) only a manoeuvre that is already straight on
+///   qualifies, because nothing else can be checked.
+///
+/// A sharp bend or a U-turn keeps its own wording: following the road round a
+/// hairpin is not something to say with a straight-on arrow. Roundabouts, the
+/// end of a road, slip roads, merges and lanes never come here; they keep
+/// their explicit left, right and straight on.
+bool _followsTheRoad(
+  ManeuverKind kind,
+  RouteManeuver maneuver,
+  RouteManeuver? previous,
+  ManeuverDirection reported,
+) {
+  switch (kind) {
+    case ManeuverKind.turn:
+    case ManeuverKind.fork:
+      break;
+    case ManeuverKind.continueAhead:
+      // A name change or a notification is bookkeeping, never a prompt; only
+      // the engine's explicit `continue` is spoken.
+      if (maneuver.type.trim().toLowerCase() != 'continue') return false;
+    case ManeuverKind.depart:
+    case ManeuverKind.arrive:
+    case ManeuverKind.roundabout:
+    case ManeuverKind.endOfRoad:
+    case ManeuverKind.merge:
+    case ManeuverKind.onRamp:
+    case ManeuverKind.offRamp:
+    case ManeuverKind.useLane:
+      return false;
+  }
+  if (!staysOnRoad(previous, maneuver)) return false;
+  final junction = maneuver.junction;
+  if (junction == null) return reported == ManeuverDirection.straight;
+  final approach = junction.approachHeadingDegrees;
+  final turn = junction.takenTurnDegrees;
+  if (approach == null || turn == null || turn.abs() > 120) return false;
+  return junction.alternativeBearingsDegrees.every(
+    (other) =>
+        _signedBearingDelta(approach, other).abs() >=
+        turn.abs() + obviousContinuationMarginDegrees,
   );
 }
 
@@ -767,12 +912,9 @@ ManeuverDirection _maneuverDirection(RouteManeuver maneuver) {
 }
 
 /// How close beside the branch taken another legal road may leave for the two
-/// to be a fork in the road rather than a side turning (#853).
-///
-/// The B4235 slip out of Usk leaves the A472 dual carriageway eight degrees
-/// from it. Thirty degrees is also the band within which a branch already
-/// counts as roughly ahead for #774's junction detector.
-const divergeBranchDegrees = 30.0;
+/// to be a fork in the road rather than a side turning (#853). See
+/// [RouteJunction.divergeBranchDegrees], which the route parser shares.
+const divergeBranchDegrees = RouteJunction.divergeBranchDegrees;
 
 /// How far apart two branches must leave before the side one lies on can be
 /// read from their bearings at the junction.
@@ -793,18 +935,12 @@ const divergeSideReadableDegrees = 5.0;
 /// two side roads is still a turn.
 List<double>? _divergeOffsets(RouteJunction? junction) {
   if (junction == null) return null;
-  final taken = junction.takenBearingDegrees;
-  final approach = junction.approachHeadingDegrees;
-  if (approach != null &&
-      _signedBearingDelta(approach, taken).abs() > divergeBranchDegrees) {
-    return null;
-  }
-  final offsets = [
-    for (final other in junction.alternativeBearingsDegrees)
-      if (_signedBearingDelta(taken, other) case final offset
-          when offset.abs() <= divergeBranchDegrees)
-        offset,
-  ];
+  // A turn into one of two side roads is still a turn.
+  final turn = junction.takenTurnDegrees;
+  if (turn != null && turn.abs() > divergeBranchDegrees) return null;
+  final offsets = junction.branchOffsetsBesideTakenDegrees.toList(
+    growable: false,
+  );
   return offsets.isEmpty ? null : offsets;
 }
 
@@ -1405,12 +1541,6 @@ double _distance(GeoPoint first, GeoPoint second) {
           math.cos(latitude2) *
           math.pow(math.sin(longitudeDelta / 2), 2);
   return _earthRadiusMeters * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-}
-
-String _sentenceCase(String value) {
-  final words = value.trim().replaceAll(RegExp(r'\s+'), ' ');
-  if (words.isEmpty) return 'Continue';
-  return '${words[0].toUpperCase()}${words.substring(1)}';
 }
 
 double _radians(double degrees) => degrees * math.pi / 180;

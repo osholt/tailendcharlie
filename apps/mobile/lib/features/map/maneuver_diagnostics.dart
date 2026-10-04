@@ -31,15 +31,29 @@ String maneuverDiagnosticsReport(
   final band = isRoundabout
       ? maneuverRoundaboutStraightBandDegrees
       : maneuverStraightBandDegrees;
-  // A roundabout's direction is read from the approach bearing compared with
-  // the heading on the road *taken*, across two merged steps - so the entry
-  // manoeuvre's own bearingAfter, which every other manoeuvre uses, is not the
-  // number the app reasoned from. Reporting that one made a roundabout capture
-  // unable to explain the instruction the rider saw (#360).
+  // A roundabout's direction is read from the road arrived by compared with
+  // the road *taken*, across two merged steps and, where the route's line
+  // allows, from the roads either side of the ring rather than the engine's
+  // bearings at it. So the entry manoeuvre's own bearings, which every other
+  // manoeuvre uses, are not the numbers the app reasoned from. Reporting them
+  // made a roundabout capture unable to explain its instruction (#360), and
+  // reporting the engine's approach beside the line's departure made the Aust
+  // capture say "straight on" beside "1st exit, left" (#856).
   final departure = isRoundabout
       ? instruction.departureBearingDegrees
       : maneuver.bearingAfterDegrees;
-  final approach = maneuver.bearingBeforeDegrees;
+  final approach = isRoundabout
+      ? instruction.approachBearingDegrees
+      : maneuver.bearingBeforeDegrees;
+  // The engine's modifier on a ring entry is the turn onto the ring; OSRM only
+  // states the whole turn for a `roundabout turn`, and there it is the answer.
+  final engineType = maneuver.type.trim().toLowerCase();
+  final joinsRing = engineType == 'roundabout' || engineType == 'rotary';
+  final readFrom = engineType == 'roundabout turn' && fromModifier.isStated
+      ? 'the engine\'s modifier, which states a roundabout turn whole'
+      : instruction.ringRoadsFromRouteLine
+      ? 'the roads either side of the ring, on the route line'
+      : 'the engine\'s bearings';
   final headingChange = isRoundabout
       ? (approach == null || departure == null
             ? null
@@ -59,11 +73,16 @@ String maneuverDiagnosticsReport(
     'Engine type:      ${maneuver.type}',
     'Engine modifier:  ${modifier ?? '—'}'
         '${modifier != null && !fromModifier.isStated ? '  (NOT RECOGNISED)' : ''}',
-    'Modifier reads as: ${label(fromModifier)}',
+    'Modifier reads as: ${label(fromModifier)}'
+        '${joinsRing && modifier != null ? ' (joining the ring, not the exit)' : ''}',
     'Bearing before:   ${_degrees(approach)}',
-    if (isRoundabout)
-      'Bearing off ring: ${_degrees(departure)}'
-    else
+    if (isRoundabout) ...[
+      'Bearing off ring: ${_degrees(departure)}',
+      'Read from:        $readFrom',
+      if (instruction.ringRoadsFromRouteLine)
+        'Engine at ring:   ${_degrees(maneuver.bearingBeforeDegrees)} in, '
+            '${_degrees(maneuver.bearingAfterDegrees)} onto the ring',
+    ] else
       'Bearing after:    ${_degrees(maneuver.bearingAfterDegrees)}',
     'Heading change:   ${_signed(headingChange)}',
     // The band decides which side of "straight on" the heading change lands,
@@ -74,7 +93,8 @@ String maneuverDiagnosticsReport(
     'Exit number:      ${instruction.exitNumber ?? '—'}',
     'Driving side:     ${maneuver.drivingSide ?? '—'}',
     'Steps merged:     ${instruction.stepCount}',
-    'Road:             ${instruction.roadLabel}',
+    'Road:             '
+        '${instruction.roadLabel.isEmpty ? '—' : instruction.roadLabel}',
     'Position:         ${maneuver.position.latitude.toStringAsFixed(6)}, '
         '${maneuver.position.longitude.toStringAsFixed(6)}',
   ];

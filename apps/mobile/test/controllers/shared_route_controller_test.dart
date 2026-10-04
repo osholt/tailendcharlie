@@ -6,6 +6,7 @@ import 'package:ride_relay/domain/imported_route.dart';
 import 'package:ride_relay/internet/plan_directory.dart';
 import 'package:ride_relay/services/gpx_import_source.dart';
 import 'package:ride_relay/services/planner_link_channel.dart';
+import 'package:ride_relay/services/route_verification.dart';
 import 'package:ride_relay/services/shared_gpx_channel.dart';
 
 void main() {
@@ -141,6 +142,49 @@ void main() {
     controller.clearPending();
     expect(controller.pendingInAppRoute, isNull);
   });
+
+  test(
+    'what checking a planned route found travels with it to the review',
+    () async {
+      final controller = await SharedRouteController.load(
+        channel: const _NoGpxChannel(),
+        plannerLinkSource: _PlannerLinkSource(const []),
+        planDirectory: _PlanDirectory(),
+      );
+      addTearDown(controller.dispose);
+      final route = ImportedRoute(
+        id: 'planned',
+        name: 'To the wharf',
+        importedAt: DateTime.utc(2026, 10, 4),
+        sourceFileName: 'planned',
+        paths: const [
+          RoutePath(
+            kind: RoutePathKind.track,
+            points: [
+              GeoPoint(latitude: 51, longitude: -2),
+              GeoPoint(latitude: 52, longitude: -1),
+            ],
+          ),
+        ],
+        waypoints: const [],
+      );
+      const verification = RouteVerification(
+        preferences: RoutePreferences.defaults,
+        checked: true,
+        concerns: [
+          RouteConcern(
+            kind: RouteConcernKind.unsurfaced,
+            lengthMeters: 576,
+            labels: ['track'],
+          ),
+        ],
+      );
+
+      controller.stagePendingInAppRoute(route, verification: verification);
+
+      expect(controller.pendingInAppRoute?.verification, same(verification));
+    },
+  );
 }
 
 class _PlannerLinkSource implements IncomingPlannerLinkSource {

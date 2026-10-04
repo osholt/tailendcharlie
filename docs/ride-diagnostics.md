@@ -93,10 +93,15 @@ The interesting line is the pair:
 ```
 MANOEUVRE  at 51.454500, -2.587900
            Shown as:         right (roundabout)
+           Engine modifier:  straight
+           Modifier reads as: straight on (joining the ring, not the exit)
            Bearing before:   10.0°
            Bearing off ring: 100.0°
+           Read from:        the roads either side of the ring, on the route line
+           Engine at ring:   12.0° in, 300.0° onto the ring
            Heading change:   +90.0° (clockwise, to the right)
            Straight band:    ±38°
+           Geometry reads as: right
 RIDDEN     right
            actual approach 0.0°
            actual departure 0.0°
@@ -105,9 +110,19 @@ RIDDEN     right
 
 That example is #412: the app called a 90° right, the bike went straight on.
 
+For a roundabout, `Bearing before`, `Bearing off ring` and `Heading change` are
+always the pair the instruction was worked out from, so `Geometry reads as`
+agrees with `Shown as` unless the engine reported a `roundabout turn`, whose
+modifier states the whole turn. `Read from` says where that pair came from: the
+roads either side of the ring on the route's own line (about 45–145 m clear of
+it, shortened before a neighbouring junction), or the engine's bearings where
+the line could not be read. `Engine at ring` and the engine's modifier on a
+`roundabout`/`rotary` step describe joining the ring, not the direction through
+the junction. Until #856 a capture paired the engine's approach with the line's
+departure, so the Aust roundabout read "straight on" beside "1st exit, left".
+
 - **`Bearing before` does not match the road the rider approached on** → the app
-  reasoned from the wrong reference. Look at where the roundabout entry
-  manoeuvre's `bearingBeforeDegrees` comes from.
+  reasoned from the wrong reference. `Read from` says which reference it was.
 - **The bearings match and `Heading change` sits inside ±38° for a turn the rider
   really made** → the bucketing is at fault, and
   `_roundaboutStraightBandDegrees` is the number to argue about.

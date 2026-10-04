@@ -25,6 +25,7 @@ import '../../domain/completed_ride.dart';
 import '../../domain/imported_route.dart' show GeoPoint, ImportedRoute;
 import '../../domain/map_style_mode.dart';
 import '../../services/road_routing.dart';
+import '../../services/verified_road_routing.dart';
 import 'home_destination_search.dart';
 import 'home_map_backdrop.dart';
 import 'scan_invitation_screen.dart';
@@ -161,6 +162,30 @@ class HomeScreen extends StatefulWidget {
 
   @visibleForTesting
   final DestinationRoutePlanner? destinationPlanner;
+
+  /// The planner Home uses when none is injected.
+  ///
+  /// A function of its own so a test can hold it to the one thing it once got
+  /// wrong. It was built on OSRM alone, which cannot express a single route
+  /// preference, so "Avoid motorways" was dropped on the way to the router and
+  /// a route up the M5 was reviewed under a note saying motorways were excluded
+  /// (#858). It plans through the same preference-aware, checked routing as the
+  /// map does, and a route that could not be checked or re-planned around a
+  /// track could not be either (#840).
+  @visibleForTesting
+  static DestinationRoutePlanner defaultDestinationPlanner({
+    required http.Client client,
+    required RoutingConfiguration configuration,
+  }) => DestinationRoutePlanner(
+    searchService: NominatimDestinationSearchService(
+      client: client,
+      baseUrl: configuration.geocodingBaseUrl,
+    ),
+    routingService: buildPlanningRoutingService(
+      client: client,
+      configuration: configuration,
+    ),
+  );
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -308,20 +333,12 @@ class _HomeScreenState extends State<HomeScreen> {
   /// no more than one a second.
   final _routingClient = http.Client();
 
-  late final DestinationRoutePlanner _destinationPlanner = () {
-    if (widget.destinationPlanner case final planner?) return planner;
-    final configuration = RoutingConfiguration.fromEnvironment();
-    return DestinationRoutePlanner(
-      searchService: NominatimDestinationSearchService(
+  late final DestinationRoutePlanner _destinationPlanner =
+      widget.destinationPlanner ??
+      HomeScreen.defaultDestinationPlanner(
         client: _routingClient,
-        baseUrl: configuration.geocodingBaseUrl,
-      ),
-      routingService: OsrmRoadRoutingService(
-        client: _routingClient,
-        baseUrl: configuration.routingBaseUrl,
-      ),
-    );
-  }();
+        configuration: RoutingConfiguration.fromEnvironment(),
+      );
 
   BasemapConfiguration get _homeBasemap =>
       BasemapConfiguration.fromEnvironment().forBrightness(
@@ -867,6 +884,7 @@ class _HomeScreenState extends State<HomeScreen> {
           route: plan.route,
           reviewNotes: plan.warnings,
           handoffTarget: request.handoffTarget,
+          verification: plan.verification,
         );
         _freeRoamRouteToken = Object();
       });
@@ -1733,6 +1751,7 @@ class _RideFormState extends State<_RideForm> with WidgetsBindingObserver {
       widget.sharedRoutes.stagePendingInAppRoute(
         route.route,
         reviewNotes: route.reviewNotes,
+        verification: route.verification,
       );
     }
     widget.onComplete();
