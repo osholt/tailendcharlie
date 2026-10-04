@@ -2,49 +2,53 @@ import 'package:flutter/material.dart';
 
 import '../../controllers/nearby_relay_controller.dart';
 import '../../relay/relay_engine.dart';
+import '../../services/transport_evidence_ledger.dart';
+import '../../services/transport_evidence_presentation.dart';
 
+/// The direct phone-to-phone link: whether it is up, and what has come over it.
+///
+/// The title is the same ride-level line the roster shows (#855), so the two
+/// cannot disagree. The line under it used to say the link "does not carry ride
+/// events yet", which stopped being true when the relay engine and its durable
+/// queue shipped, and which contradicted the evidence the rest of the app now
+/// shows. It says what has actually been received instead.
 class RelayStatusCard extends StatelessWidget {
-  const RelayStatusCard({required this.controller, super.key});
+  const RelayStatusCard({required this.controller, this.evidence, super.key});
 
   final NearbyRelayController controller;
+
+  /// Which route delivered each update, for the line about what has arrived.
+  /// Without it the card says only what is queued.
+  final TransportEvidenceLedger? evidence;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: controller,
     builder: (context, _) {
       final status = controller.status;
-      final (icon, label) = switch (status.state) {
-        RelayConnectionState.connected => (
-          Icons.bluetooth_connected,
-          '${status.peerIds.length} nearby',
-        ),
-        RelayConnectionState.searching => (Icons.radar, 'Searching nearby'),
-        RelayConnectionState.backingOff => (
-          Icons.sync_problem,
-          'Reconnecting automatically',
-        ),
-        RelayConnectionState.unavailable => (
-          Icons.bluetooth_disabled,
-          'Nearby unavailable',
-        ),
-        RelayConnectionState.failed => (Icons.error_outline, 'Nearby error'),
-        RelayConnectionState.starting => (Icons.sync, 'Starting nearby'),
-        RelayConnectionState.stopped => (Icons.bluetooth, 'Nearby stopped'),
+      final icon = switch (status.state) {
+        RelayConnectionState.connected => Icons.bluetooth_connected,
+        RelayConnectionState.searching => Icons.radar,
+        RelayConnectionState.backingOff => Icons.sync_problem,
+        RelayConnectionState.unavailable => Icons.bluetooth_disabled,
+        RelayConnectionState.failed => Icons.error_outline,
+        RelayConnectionState.starting => Icons.sync,
+        RelayConnectionState.stopped => Icons.bluetooth,
       };
+      final queued = status.queuedEventCount == 0
+          ? null
+          : '${status.queuedEventCount} held for nearby phones';
+      final received = evidence == null
+          ? null
+          : bluetoothReceivedLine(evidence!.summary().bluetooth);
       return Card(
         child: ListTile(
           leading: Icon(icon),
-          title: Text(label),
-          // "development alpha" was a build channel leaking into a rider-facing
-          // card, and a bare count told a tester nothing about whether 106 was
-          // normal (#174). The nearby transport genuinely does not carry events
-          // yet, so say that instead - it is the useful half of what the build
-          // channel was standing in for.
+          title: Text(bluetoothLinkLine(status)),
           subtitle: Text(
-            status.queuedEventCount == 0
-                ? 'Not carrying ride events yet'
-                : '${status.queuedEventCount} held for nearby, which does not '
-                      'carry ride events yet',
+            [?received, ?queued].isEmpty
+                ? 'Nothing held for nearby phones'
+                : [?received, ?queued].join(' · '),
           ),
         ),
       );

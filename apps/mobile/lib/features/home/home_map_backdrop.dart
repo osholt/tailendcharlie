@@ -6,6 +6,7 @@ import '../../controllers/foreground_location_controller.dart';
 import '../../controllers/global_ride_heatmap_controller.dart';
 import '../../controllers/map_style_mode_controller.dart';
 import '../../controllers/ride_diagnostics_controller.dart';
+import '../../data/ride_diagnostics_log_store.dart';
 import '../../controllers/shared_route_controller.dart' show PendingInAppRoute;
 import '../../controllers/speed_limit_display_controller.dart';
 import '../../controllers/spoken_guidance_controller.dart';
@@ -550,7 +551,7 @@ class _HomeMapBackdropState extends State<HomeMapBackdrop>
       store: store,
       rideId: rideId,
       render: () => recorder.render(
-        rideCode: 'PERSONAL',
+        rideCode: RideDiagnosticsLog.personalNavigationRideCode,
         appBuild: _diagnosticsBuildLabel,
       ),
     );

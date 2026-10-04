@@ -90,6 +90,74 @@ void main() {
     });
   });
 
+  // #855: a group ride's log was replaced when the ended-ride screen came back.
+  group('a ride that is already over is never recorded', () {
+    test('switched on with no recorder does nothing for an ended ride', () {
+      // The ended-ride screen returns after an app relaunch, and the shell under
+      // it is new. A recorder started here begins empty, and the stored log is
+      // written whole, so its first write replaced the log of the ride that had
+      // just finished with its own two lines.
+      expect(
+        rideDiagnosticsTransition(
+          switchedOn: true,
+          hasRecorder: false,
+          isRecording: false,
+          rideEnded: true,
+        ),
+        RideDiagnosticsTransition.nothing,
+      );
+    });
+
+    test('the same switch for a ride still running starts one', () {
+      expect(
+        rideDiagnosticsTransition(
+          switchedOn: true,
+          hasRecorder: false,
+          isRecording: false,
+          rideEnded: false,
+        ),
+        RideDiagnosticsTransition.start,
+      );
+    });
+
+    test(
+      'a recorder that already holds the ride is still stopped and resumed',
+      () {
+        // Only *starting* is withheld: a recorder that has been recording the ride
+        // keeps following the switch, so what it gathered is not stranded.
+        expect(
+          rideDiagnosticsTransition(
+            switchedOn: false,
+            hasRecorder: true,
+            isRecording: true,
+            rideEnded: true,
+          ),
+          RideDiagnosticsTransition.stop,
+        );
+        expect(
+          rideDiagnosticsTransition(
+            switchedOn: true,
+            hasRecorder: true,
+            isRecording: false,
+            rideEnded: true,
+          ),
+          RideDiagnosticsTransition.resume,
+        );
+      },
+    );
+
+    test('the default is a ride that has not ended', () {
+      expect(
+        rideDiagnosticsTransition(
+          switchedOn: true,
+          hasRecorder: false,
+          isRecording: false,
+        ),
+        RideDiagnosticsTransition.start,
+      );
+    });
+  });
+
   group('a log that begins mid-ride says so', () {
     test('the note names what is missing, not just when it started', () {
       // A log that starts halfway through and does not say so reads as a record of

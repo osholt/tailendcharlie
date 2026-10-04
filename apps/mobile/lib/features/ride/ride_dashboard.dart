@@ -13,6 +13,7 @@ import '../../domain/ride_coordination_mode.dart';
 import '../../domain/ride_event.dart';
 import '../../domain/ride_role.dart';
 import '../../services/ride_connectivity_summary.dart';
+import '../../services/transport_evidence_ledger.dart';
 import '../internet/internet_relay_status_card.dart';
 import '../nearby/relay_status_card.dart';
 import 'ride_invitation_qr_sheet.dart';
@@ -26,6 +27,7 @@ class RideDashboard extends StatelessWidget {
     required this.rideActions,
     required this.onOpenRoster,
     this.relayController,
+    this.transportEvidence,
     this.markerAssistanceController,
     this.internetRelayController,
     this.onSendQuickMessage,
@@ -39,6 +41,10 @@ class RideDashboard extends StatelessWidget {
   final Widget rideActions;
   final VoidCallback onOpenRoster;
   final NearbyRelayController? relayController;
+
+  /// Which route delivered each update from the other riders (#855), for the
+  /// Bluetooth card's line about what has been received.
+  final TransportEvidenceLedger? transportEvidence;
   final MarkerAssistanceController? markerAssistanceController;
   final InternetRelayController? internetRelayController;
   final Future<void> Function(QuickMessage)? onSendQuickMessage;
@@ -94,7 +100,10 @@ class RideDashboard extends StatelessWidget {
                   ],
                   if (relayController case final relayController?) ...[
                     const SizedBox(height: 14),
-                    RelayStatusCard(controller: relayController),
+                    RelayStatusCard(
+                      controller: relayController,
+                      evidence: transportEvidence,
+                    ),
                   ],
                   if (internetRelayController
                       case final internetRelayController?) ...[

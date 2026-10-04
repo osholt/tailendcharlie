@@ -135,7 +135,7 @@ class _RideDiagnosticsSectionState extends State<RideDiagnosticsSection> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
                 leading: const Icon(Icons.description_outlined),
-                title: Text(log.rideCode ?? 'Ride ${log.rideId}'),
+                title: Text(log.title),
                 subtitle: Text(_when(log.writtenAt)),
                 trailing: const Icon(Icons.ios_share, size: 20),
                 enabled: !_sharing,
