@@ -424,8 +424,9 @@ class UnitSettingsSheet extends StatelessWidget {
             const SizedBox(height: 10),
             const Text(
               'Restrained uses the quieter road-first daytime palette. Original '
-              'keeps the OpenFreeMap Liberty colours. This applies whenever the '
-              'map is in light or sun-based daytime mode.',
+              'keeps the OpenFreeMap Liberty colours and labels, with clearer '
+              'road outlines. This applies whenever the map is in light or '
+              'sun-based daytime mode.',
               style: TextStyle(color: Color(0xFF98A3B1)),
             ),
             const SizedBox(height: 18),

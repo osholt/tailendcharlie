@@ -222,8 +222,10 @@ class VerifiedRoadRoutingService
                 costing: costing,
                 originBearingDegrees: originBearingDegrees,
               )
-        : await service.routeThrough(
+        : await _routeThroughStopsOnly(
+            service,
             waypoints,
+            shapingPointIndexes: shapingPointIndexes,
             preferences: preferences,
             originBearingDegrees: originBearingDegrees,
           );
@@ -289,3 +291,30 @@ RoadRoutingService buildPlanningRoutingService({
     configuration: configuration,
   ),
 );
+
+/// A service that can only stop at every control still must not announce the
+/// shaping points as arrivals: route through all of them, then drop the
+/// arrival and departure at each shaping point (#839).
+Future<RoadRouteResult> _routeThroughStopsOnly(
+  RoadRoutingService service,
+  List<GeoPoint> waypoints, {
+  required Set<int> shapingPointIndexes,
+  RoutePreferences? preferences,
+  double? originBearingDegrees,
+}) async {
+  final result = await service.routeThrough(
+    waypoints,
+    preferences: preferences,
+    originBearingDegrees: originBearingDegrees,
+  );
+  if (shapingPointIndexes.isEmpty) return result;
+  return RoadRouteResult(
+    points: result.points,
+    distanceMeters: result.distanceMeters,
+    duration: result.duration,
+    maneuvers: withoutShapingLegEnds(result.maneuvers, shapingPointIndexes),
+    twistinessScore: result.twistinessScore,
+    preferences: result.preferences,
+    verification: result.verification,
+  );
+}

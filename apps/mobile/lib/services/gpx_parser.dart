@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:xml/xml.dart';
 
 import '../domain/imported_route.dart';
+import 'gpx_exporter.dart' show gpxAlertMarkerElement, gpxTecNamespace;
 
 class GpxParser {
   const GpxParser({
@@ -124,7 +125,9 @@ class GpxParser {
               description: pointKind == 'shaping'
                   ? 'Soft route shaping point'
                   : 'Route via point',
-              symbol: pointKind == 'shaping' ? 'Shaping point' : 'Via point',
+              symbol: pointKind == 'shaping'
+                  ? routeShapingPointSymbol
+                  : 'Via point',
             ),
           );
         }
@@ -156,6 +159,10 @@ class GpxParser {
     }
 
     final waypoints = _children(root, 'wpt')
+        // A ride's GPX carries its alerts as waypoints for map and footage tools
+        // (#849). They are not places on a route, and read back as waypoints they
+        // would become stops the next time the file was imported as a plan.
+        .where((waypoint) => !_isRideAlert(waypoint))
         .map(
           (waypoint) => RouteWaypoint(
             point: parsePoint(waypoint),
@@ -184,6 +191,7 @@ class GpxParser {
         'The GPX file contains no tracks, routes, or waypoints.',
       );
     }
+    final separated = separateShapingWaypoints(waypoints);
     final metadata = _children(root, 'metadata').firstOrNull;
     final metadataName = metadata == null ? null : _childText(metadata, 'name');
     final firstPathName = selectedPaths
@@ -201,7 +209,9 @@ class GpxParser {
       importedAt: importedAt.toUtc(),
       sourceFileName: sourceFileName,
       paths: selectedPaths,
-      waypoints: List.unmodifiable(waypoints),
+      // A shaping point bends the route and is never a stop (#839).
+      waypoints: separated.stops,
+      shapingPoints: separated.shapingPoints,
       preferences: metadata == null ? null : _routePreferences(metadata),
       markerReview: metadata == null
           ? MarkerPlanReview.empty
@@ -403,6 +413,19 @@ class GpxFormatException implements FormatException {
 Iterable<XmlElement> _children(XmlElement parent, String localName) => parent
     .childElements
     .where((element) => element.name.local.toLowerCase() == localName);
+
+/// Whether [waypoint] is one of this app's own alert markers, and so not a place.
+///
+/// By the extension's namespace as well as its name: another tool's `alert`
+/// element is none of this parser's business, and a waypoint of theirs is still a
+/// waypoint.
+bool _isRideAlert(XmlElement waypoint) => _children(waypoint, 'extensions')
+    .expand((extensions) => extensions.childElements)
+    .any(
+      (element) =>
+          element.name.local == gpxAlertMarkerElement &&
+          element.name.namespaceUri == gpxTecNamespace,
+    );
 
 List<XmlElement> _routesForImport(XmlElement root) {
   final routes = _children(root, 'rte').toList(growable: false);

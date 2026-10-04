@@ -29,6 +29,8 @@
 /// because ten seconds is long enough to read it and short enough not to matter.
 library;
 
+import '../domain/hazard.dart';
+
 /// How long the bubble is shown before it gives way to the border alone.
 ///
 /// Ten seconds, fixed, and not a function of distance: an announcement that
@@ -106,3 +108,48 @@ bool enforcementEmphasisApplies({
   required bool armed,
   required bool dismissed,
 }) => armed && !dismissed;
+
+/// Which warning a hazard raises, as far as its words and colours go (#849).
+///
+/// A rider's alert is generic on purpose - it could be police, a camera or
+/// anything else - so it is neither of the other two. Those remain because an
+/// older build still raises them, and a newer rider must still be warned.
+enum EnforcementAlertKind {
+  alert,
+  speedCamera,
+  police;
+
+  static EnforcementAlertKind forHazard(HazardType type) => switch (type) {
+    HazardType.speedCamera => EnforcementAlertKind.speedCamera,
+    HazardType.policeActivity => EnforcementAlertKind.police,
+    _ => EnforcementAlertKind.alert,
+  };
+
+  /// What the bubble says.
+  String get title => switch (this) {
+    EnforcementAlertKind.alert => 'ALERT',
+    EnforcementAlertKind.speedCamera => 'SPEED CAMERA',
+    EnforcementAlertKind.police => 'POLICE',
+  };
+
+  /// What the natural voice says, before the distance.
+  ///
+  /// "Alert ahead" rather than "Alert": said bare, the word is easy to take for
+  /// the SOS control's own label.
+  String get spokenName => switch (this) {
+    EnforcementAlertKind.alert => 'Alert ahead',
+    EnforcementAlertKind.speedCamera => 'Speed camera',
+    EnforcementAlertKind.police => 'Police',
+  };
+}
+
+/// The sentence the natural voice says when a warning arms (#430, #849).
+///
+/// One place, so the words a rider hears and the title they read cannot drift:
+/// "Alert ahead, in 400 yards" for the rider alert, "Speed camera, in 400 yards,
+/// 30 miles per hour" for a camera that carries its limit.
+String enforcementSpokenPhrase({
+  required EnforcementAlertKind kind,
+  required String distance,
+  String? limit,
+}) => [kind.spokenName, 'in $distance', ?limit].join(', ');

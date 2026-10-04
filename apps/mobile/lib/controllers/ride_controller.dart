@@ -26,6 +26,7 @@ import '../features/map/motorcycle_icon.dart';
 import '../relay/live_presence.dart';
 import '../services/nearby_bridge.dart';
 import '../services/completed_ride_archiver.dart';
+import '../services/leader_broadcast.dart';
 import '../services/marker_statistics.dart';
 import '../services/ride_event_authenticator.dart';
 import '../services/ride_lifecycle.dart';
@@ -66,6 +67,48 @@ enum TecRoleRequestOutcome {
 
   /// The journal write failed. [RideController.errorMessage] carries the reason.
   failed,
+}
+
+/// What became of a leader's one-tap broadcast to the group (#854).
+///
+/// Every value other than [sent] is something the leader is told in words. The
+/// outcome this must never have is a leader who believes the group has been told
+/// "Pull over" when nothing left the phone.
+enum LeaderBroadcastOutcome {
+  sent,
+
+  /// This phone is not the leader's. Only the leader may tell the group where to
+  /// go.
+  notLeader,
+
+  /// No running group ride to tell: not started, ended, or a solo ride.
+  notAvailable,
+
+  /// The kind named is not one of the leader's broadcasts.
+  notABroadcast,
+
+  /// The same broadcast went a moment ago; this was the same tap bouncing, and
+  /// the group has already been told.
+  bounced,
+
+  /// The journal write failed, so nothing was sent.
+  failed,
+}
+
+extension LeaderBroadcastOutcomeSentence on LeaderBroadcastOutcome {
+  /// What the leader is told when the broadcast did not go, or null when it did.
+  ///
+  /// A bounce is not a failure: the same tap twice, and the group already has it.
+  String? get failureSentence => switch (this) {
+    LeaderBroadcastOutcome.sent || LeaderBroadcastOutcome.bounced => null,
+    LeaderBroadcastOutcome.notLeader =>
+      'Only the ride leader can tell the group.',
+    LeaderBroadcastOutcome.notAvailable =>
+      'There is no running group ride to tell.',
+    LeaderBroadcastOutcome.notABroadcast =>
+      'The leader cannot send that message.',
+    LeaderBroadcastOutcome.failed => 'It could not be saved. Try again.',
+  };
 }
 
 /// Why a leader's attempt to un-end a ride did or did not take effect.
@@ -132,6 +175,10 @@ class RideController extends ChangeNotifier {
   String? _errorMessage;
   bool _errorIsRetryable = false;
   RideRole? _roleBeforeMarker;
+
+  /// The leader's most recent broadcast, set before it is written so a double tap
+  /// that lands while the first is still being stored is seen as a bounce.
+  ({QuickMessage message, DateTime at})? _lastLeaderBroadcast;
   Timer? _endedRideCleanupTimer;
   bool _endedRideSetAside = false;
   RideLifecycle _lifecycle = const RideLifecycle();
@@ -1243,6 +1290,73 @@ class RideController extends ChangeNotifier {
         },
       );
     });
+  }
+
+  /// Sends one of the leader's one-tap broadcasts to the whole group (#854).
+  ///
+  /// Extends the quick message the rest of the ride already sends: an ordinary
+  /// `statusMessage` event, so it travels over the relay and over Nearby exactly as
+  /// the others do, an older build that does not know the kind shows the sender's
+  /// own words, and the relay needs nothing new. What differs is who may send it,
+  /// how long it lives ([leaderBroadcastLife], ten minutes), and that it names
+  /// no recipient - it is for everyone.
+  ///
+  /// No confirmation, by design: the leader is riding. Written outside [_run],
+  /// which drops a call that arrives while another is in flight, because a
+  /// "Pull over" that was silently dropped would leave a leader certain the group
+  /// had been told. A failure is returned, never swallowed.
+  ///
+  /// [position] is where the leader is: "wrong way" and "regroup at the next stop"
+  /// are not actionable without it, and it lets the review say where each was
+  /// sent from.
+  Future<LeaderBroadcastOutcome> sendLeaderBroadcast(
+    QuickMessage message, {
+    awareness_geo.GeoPoint? position,
+  }) async {
+    if (!message.isLeaderBroadcast) return LeaderBroadcastOutcome.notABroadcast;
+    final activeSession = _session;
+    if (activeSession == null) return LeaderBroadcastOutcome.notAvailable;
+    if (!isLocalRideLeader) return LeaderBroadcastOutcome.notLeader;
+    if (!leaderBroadcastsAvailable(
+      isLocalRideLeader: isLocalRideLeader,
+      rideStarted: rideStarted,
+      rideEnded: rideEnded,
+      coordinationMode: coordinationMode,
+    )) {
+      return LeaderBroadcastOutcome.notAvailable;
+    }
+    final now = _clock();
+    final previous = _lastLeaderBroadcast;
+    if (previous != null && previous.message == message) {
+      final age = now.difference(previous.at);
+      if (!age.isNegative && age < leaderBroadcastBounceWindow) {
+        return LeaderBroadcastOutcome.bounced;
+      }
+    }
+    final attempt = (message: message, at: now);
+    _lastLeaderBroadcast = attempt;
+    try {
+      await _record(
+        type: RideEventType.statusMessage,
+        priority: message.priority,
+        expiresAt: now.add(leaderBroadcastLife),
+        payload: {
+          'message': message.name,
+          'label': message.label,
+          'senderDisplayName': activeSession.displayName,
+          if (position != null) 'position': position.toJson(),
+        },
+      );
+    } on Object catch (error, stackTrace) {
+      // Nothing was stored, so a retry a moment later is a first attempt.
+      if (_lastLeaderBroadcast == attempt) _lastLeaderBroadcast = previous;
+      if (kDebugMode) {
+        debugPrint('Leader broadcast failed: $error\n$stackTrace');
+      }
+      return LeaderBroadcastOutcome.failed;
+    }
+    notifyListeners();
+    return LeaderBroadcastOutcome.sent;
   }
 
   /// Quick messages this phone should be presenting, most urgent first.

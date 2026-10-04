@@ -25,7 +25,13 @@ enum HazardMapBadgeShape { circle, plate }
 /// Only the kinds the data model actually carries. [HazardType.speedCamera] is
 /// one type - there is no fixed-versus-mobile flag on a report - so there is one
 /// camera symbol.
-enum HazardMapGlyph { camera, police, roadDefect }
+///
+/// [alert] is the rider's one-tap warning (#849). It is not a camera and not the
+/// police - it can be either, or anything - so it wears the warning triangle the
+/// road defect already uses, on the sign plate the other roadside warnings use.
+/// The plate is what says "somebody warned the group" and the triangle is what
+/// says "take care", and the pair is found nowhere else on this map.
+enum HazardMapGlyph { camera, police, roadDefect, alert }
 
 /// How much of a report's trusted life has run.
 ///
@@ -166,6 +172,7 @@ abstract final class HazardMapSymbols {
   static HazardMapGlyph glyphFor(HazardType type) => switch (type) {
     HazardType.speedCamera => HazardMapGlyph.camera,
     HazardType.policeActivity => HazardMapGlyph.police,
+    HazardType.alert => HazardMapGlyph.alert,
     _ => HazardMapGlyph.roadDefect,
   };
 
@@ -374,6 +381,10 @@ class HazardMapSymbolPainter extends CustomPainter {
       case HazardMapGlyph.police:
         _paintPolice(canvas, box, ink);
       case HazardMapGlyph.roadDefect:
+        _paintRoadDefect(canvas, box, ink);
+      case HazardMapGlyph.alert:
+        // The same artwork as a road defect, deliberately: the shape of the
+        // badge, not the glyph inside it, is what separates the two families.
         _paintRoadDefect(canvas, box, ink);
     }
   }

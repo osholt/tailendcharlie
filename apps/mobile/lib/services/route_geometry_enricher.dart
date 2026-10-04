@@ -1,5 +1,6 @@
 import '../domain/imported_route.dart';
 import 'road_routing.dart';
+import 'route_reshape_planner.dart';
 import 'route_verification.dart';
 
 class RouteGeometryEnrichment {
@@ -48,8 +49,18 @@ class RouteGeometryEnricher {
       }
       attempted = true;
       try {
-        final result = await routingService.routeThrough(
-          _sample(path.points, maximumViaPoints),
+        // Only the route's stops end a leg. Every other point of a GPX route -
+        // a shaping point, a plain route point, a Garmin shape vertex - bends
+        // the line and is passed through, so it is never arrived at (#839).
+        final controls = _routeControls(
+          path.points,
+          route.waypoints,
+          maximumViaPoints,
+        );
+        final result = await routeThroughWithShaping(
+          routingService,
+          controls.points,
+          shapingPointIndexes: controls.shapingPointIndexes,
           // A route that recorded what it was planned for is re-snapped for the
           // same thing, so a shared route does not quietly gain a motorway when
           // it reaches a second rider's phone (#182).
@@ -76,11 +87,15 @@ class RouteGeometryEnricher {
     if (route.paths.isEmpty && route.waypoints.length >= 2) {
       attempted = true;
       try {
-        final result = await routingService.routeThrough(
-          _sample(
-            route.waypoints.map((waypoint) => waypoint.point).toList(),
-            maximumViaPoints,
-          ),
+        final controls = routeShapingControlPlan(route, route.shapingPoints);
+        final result = await routeThroughWithShaping(
+          routingService,
+          controls.points.length <= maximumViaPoints
+              ? controls.points
+              : _sample(controls.points, maximumViaPoints),
+          shapingPointIndexes: controls.points.length <= maximumViaPoints
+              ? controls.shapingPointIndexes
+              : const {},
           preferences: route.preferences,
         );
         paths.add(
@@ -120,6 +135,7 @@ class RouteGeometryEnricher {
         sourceFileName: route.sourceFileName,
         paths: List.unmodifiable(paths),
         waypoints: route.waypoints,
+        shapingPoints: route.shapingPoints,
         maneuvers: List.unmodifiable(maneuvers),
         // Recalculating geometry must not silently un-reject a marking
         // position a person already rejected for this route (#179).
@@ -145,3 +161,62 @@ List<GeoPoint> _sample(List<GeoPoint> points, int maximum) {
     return points[sourceIndex];
   }, growable: false);
 }
+
+/// The points to route a GPX route path through, and which of them are only
+/// shaping it (#839).
+///
+/// A point is a stop where one of the route's stop waypoints sits on it - a
+/// `<trp:ViaPoint>` or a waypoint placed on the route - and the path's own ends
+/// are always stops. Every stop is kept; the rest of [maximum] samples the line
+/// between them evenly.
+({List<GeoPoint> points, Set<int> shapingPointIndexes}) _routeControls(
+  List<GeoPoint> points,
+  List<RouteWaypoint> stops,
+  int maximum,
+) {
+  if (maximum < 2) {
+    throw ArgumentError.value(maximum, 'maximum', 'Must be at least two.');
+  }
+  final last = points.length - 1;
+  final stopIndexes = <int>{
+    0,
+    last,
+    for (var index = 1; index < last; index += 1)
+      if (stops.any((stop) => _samePoint(stop.point, points[index]))) index,
+  };
+  final kept = <int>{};
+  if (stopIndexes.length >= maximum) {
+    final ordered = stopIndexes.toList()..sort();
+    kept.addAll(_evenly(ordered, maximum));
+  } else {
+    kept.addAll(stopIndexes);
+    final others = [
+      for (var index = 0; index <= last; index += 1)
+        if (!stopIndexes.contains(index)) index,
+    ];
+    kept.addAll(_evenly(others, maximum - stopIndexes.length));
+  }
+  final chosen = kept.toList()..sort();
+  return (
+    points: List.unmodifiable([for (final index in chosen) points[index]]),
+    shapingPointIndexes: Set.unmodifiable({
+      for (final (position, index) in chosen.indexed)
+        if (!stopIndexes.contains(index)) position,
+    }),
+  );
+}
+
+/// [count] of [items], spread evenly and keeping both ends where it can.
+Iterable<int> _evenly(List<int> items, int count) {
+  if (count <= 0 || items.isEmpty) return const [];
+  if (items.length <= count) return items;
+  if (count == 1) return [items.first];
+  return {
+    for (var index = 0; index < count; index += 1)
+      items[(index * (items.length - 1) / (count - 1)).round()],
+  };
+}
+
+bool _samePoint(GeoPoint first, GeoPoint second) =>
+    (first.latitude - second.latitude).abs() < 0.000001 &&
+    (first.longitude - second.longitude).abs() < 0.000001;

@@ -2752,15 +2752,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
       }
     }
     var actions: [CPAlertAction] = []
+    // One alert, not a choice between a speed camera and the police (#849): it
+    // could be either, or anything else. It carries the enforcement gate because
+    // it can be a warning about enforcement, which France does not allow.
     if enforcementReportsAllowed {
       actions.append(
-        CPAlertAction(title: "Speed camera", style: .default) { _ in
-          report("speedCamera")
-        }
-      )
-      actions.append(
-        CPAlertAction(title: "Police", style: .default) { _ in
-          report("policeActivity")
+        CPAlertAction(title: "Alert", style: .default) { _ in
+          report("alert")
         }
       )
     }

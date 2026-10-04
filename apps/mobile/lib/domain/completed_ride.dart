@@ -1,4 +1,6 @@
 import 'imported_route.dart';
+import 'ride_alert_record.dart';
+import 'ride_broadcast_record.dart';
 import 'ride_role.dart';
 import 'ride_library_organisation.dart';
 export 'ride_library_status.dart';
@@ -59,6 +61,8 @@ class CompletedRide {
     this.libraryStatus = RideLibraryStatus.active,
     this.deletedAt,
     this.organisation = const RideLibraryOrganisation(),
+    this.alerts = const [],
+    this.broadcasts = const [],
   });
 
   static const schemaVersion = 2;
@@ -89,6 +93,23 @@ class CompletedRide {
   final RideLibraryStatus libraryStatus;
   final DateTime? deletedAt;
   final RideLibraryOrganisation organisation;
+
+  /// The alerts the group raised during the ride, oldest first (#849).
+  ///
+  /// Kept here, as their own list, and **not** among the waypoints of
+  /// [traveledRoute]: that route is offered back as a route to ride again, and an
+  /// alert is not somewhere to ride to. They reach a GPX file at the moment of
+  /// export instead.
+  ///
+  /// An optional key, with the schema version unchanged, so a record written by
+  /// this build still reads in the build before it and a record from before this
+  /// has none.
+  final List<RideAlertRecord> alerts;
+
+  /// What the leader told the group during the ride, oldest first (#854): "Pull
+  /// over", "Regroup at next stop". Optional in the same way as [alerts], so a
+  /// record from before it exists reads as having none.
+  final List<RideBroadcastRecord> broadcasts;
 
   String get title {
     final renamed = libraryName?.trim();
@@ -137,6 +158,9 @@ class CompletedRide {
     'libraryStatus': libraryStatus.name,
     'organisation': organisation.toJson(),
     if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
+    if (alerts.isNotEmpty) 'alerts': [for (final a in alerts) a.toJson()],
+    if (broadcasts.isNotEmpty)
+      'broadcasts': [for (final b in broadcasts) b.toJson()],
   };
 
   factory CompletedRide.fromJson(Map<String, Object?> json) {
@@ -184,6 +208,8 @@ class CompletedRide {
         final String value => DateTime.tryParse(value)?.toUtc(),
         _ => null,
       },
+      alerts: _alerts(json['alerts']),
+      broadcasts: _broadcasts(json['broadcasts']),
     );
   }
 
@@ -200,6 +226,8 @@ class CompletedRide {
     DateTime? deletedAt,
     bool clearDeletedAt = false,
     RideLibraryOrganisation? organisation,
+    List<RideAlertRecord>? alerts,
+    List<RideBroadcastRecord>? broadcasts,
   }) => CompletedRide(
     recordingComplete: recordingComplete,
     rideId: rideId,
@@ -223,6 +251,8 @@ class CompletedRide {
     libraryStatus: libraryStatus ?? this.libraryStatus,
     deletedAt: clearDeletedAt ? null : deletedAt ?? this.deletedAt,
     organisation: organisation ?? this.organisation,
+    alerts: alerts ?? this.alerts,
+    broadcasts: broadcasts ?? this.broadcasts,
   );
 
   static RideLibraryStatus _libraryStatus(Object? value) {
@@ -237,6 +267,39 @@ class CompletedRide {
   static int? _rating(Object? value) {
     final rating = (value as num?)?.toInt();
     return rating != null && rating >= 1 && rating <= 5 ? rating : null;
+  }
+
+  /// Reads the alert list, dropping an entry that is unusable rather than the
+  /// whole ride: one bad record must never make the library lose a ride.
+  static List<RideAlertRecord> _alerts(Object? value) {
+    if (value is! List) return const [];
+    final records = <RideAlertRecord>[];
+    for (final entry in value) {
+      if (entry is! Map) continue;
+      try {
+        records.add(RideAlertRecord.fromJson(Map<String, Object?>.from(entry)));
+      } on FormatException {
+        // Preserve the ride and every alert that does read.
+      }
+    }
+    return List.unmodifiable(records);
+  }
+
+  /// As [_alerts]: an unusable entry costs that entry, never the ride.
+  static List<RideBroadcastRecord> _broadcasts(Object? value) {
+    if (value is! List) return const [];
+    final records = <RideBroadcastRecord>[];
+    for (final entry in value) {
+      if (entry is! Map) continue;
+      try {
+        records.add(
+          RideBroadcastRecord.fromJson(Map<String, Object?>.from(entry)),
+        );
+      } on FormatException {
+        // Preserve the ride and every message that does read.
+      }
+    }
+    return List.unmodifiable(records);
   }
 
   static ImportedRoute? _optionalRoute(Object? value) {
