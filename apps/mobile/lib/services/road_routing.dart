@@ -438,6 +438,78 @@ abstract interface class ShapingPointRoadRoutingService {
   });
 }
 
+/// Routes through [waypoints], where [shapingPointIndexes] mark controls that
+/// bend the route without being stops (#839).
+///
+/// Routing every control as a stop makes each one a leg end, and the engine
+/// reports an arrival at every leg end: a reshaped route or an imported GPX
+/// route was told "Arrive at the destination" in the middle of a road. Engines
+/// that support it are asked to pass through a shaping control (OSRM's
+/// `waypoints=`, Valhalla's `through`), which the circular planner already
+/// does. An engine that cannot be asked still has the arrival and departure it
+/// reports at a shaping control removed, so no caller depends on which kind it
+/// was given.
+Future<RoadRouteResult> routeThroughWithShaping(
+  RoadRoutingService service,
+  List<GeoPoint> waypoints, {
+  required Set<int> shapingPointIndexes,
+  RoutePreferences? preferences,
+}) async {
+  if (shapingPointIndexes.isEmpty) {
+    return service.routeThrough(waypoints, preferences: preferences);
+  }
+  if (service is ShapingPointRoadRoutingService) {
+    return (service as ShapingPointRoadRoutingService)
+        .routeThroughShapingPoints(
+          waypoints,
+          shapingPointIndexes: shapingPointIndexes,
+          preferences: preferences,
+        );
+  }
+  final result = await service.routeThrough(
+    waypoints,
+    preferences: preferences,
+  );
+  return RoadRouteResult(
+    points: result.points,
+    distanceMeters: result.distanceMeters,
+    duration: result.duration,
+    maneuvers: withoutShapingLegEnds(result.maneuvers, shapingPointIndexes),
+    twistinessScore: result.twistinessScore,
+    preferences: result.preferences,
+  );
+}
+
+/// [maneuvers] without the arrival and departure an engine reports where a leg
+/// ends at one of [shapingPointIndexes] (#839).
+///
+/// Each leg runs from one control to the next, so the n-th arrival reported
+/// ends at control n. Counting legs rather than matching positions means a
+/// control the engine snapped some distance onto a road is still recognised.
+List<RoadRouteManeuver> withoutShapingLegEnds(
+  List<RoadRouteManeuver> maneuvers,
+  Set<int> shapingPointIndexes,
+) {
+  final kept = <RoadRouteManeuver>[];
+  var control = 0;
+  var dropNextDeparture = false;
+  for (final maneuver in maneuvers) {
+    switch (maneuver.type.trim().toLowerCase()) {
+      case 'depart' when dropNextDeparture:
+        dropNextDeparture = false;
+        continue;
+      case 'arrive':
+        control += 1;
+        if (shapingPointIndexes.contains(control)) {
+          dropNextDeparture = true;
+          continue;
+        }
+    }
+    kept.add(maneuver);
+  }
+  return List.unmodifiable(kept);
+}
+
 /// Optional capability for callers that must keep motorcycle costing while
 /// relaxing one of its preferences.
 ///

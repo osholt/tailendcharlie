@@ -313,7 +313,9 @@ class NavigationGuidancePlanner {
         second.distanceFromStartMeters,
       ),
     );
-    final sequence = List<RouteInstructionStep>.unmodifiable(steps);
+    final sequence = List<RouteInstructionStep>.unmodifiable(
+      _arrivalsAtStopsOnly(steps, route),
+    );
     _instructionCache[route] = sequence;
     return sequence;
   }
@@ -486,6 +488,79 @@ class NavigationGuidancePlanner {
       ),
     );
   }
+}
+
+/// How far from a stop an engine's arrival may be and still be the arrival at
+/// that stop: the engine arrives on the road nearest it, and a café or car
+/// park can sit back from that road.
+const stopArrivalToleranceMeters = 200.0;
+
+/// [steps] with only the arrivals a rider makes (#839).
+///
+/// An engine reports an arrival wherever a leg of the request ends. A route
+/// whose shaping points were sent as stops - every reshaped route and imported
+/// GPX route planned before #839, and any engine that cannot be asked to pass
+/// through a control - therefore carries an arrival at each of them, and was
+/// told "Arrive at the destination" in the middle of a road. The route's last
+/// arrival is the destination. An earlier one is kept only at one of the
+/// route's stops, worded with that stop's name, and is dropped otherwise, the
+/// way the circular planner drops the leg ends between its sections.
+List<RouteInstructionStep> _arrivalsAtStopsOnly(
+  List<RouteInstructionStep> steps,
+  ImportedRoute route,
+) {
+  final finalArrival = steps.lastIndexWhere(
+    (step) => step.instruction.kind == ManeuverKind.arrive,
+  );
+  if (finalArrival < 0) return steps;
+  final stops = route.waypoints.skip(1).toList(growable: false);
+  return [
+    for (final (index, step) in steps.indexed)
+      if (step.instruction.kind != ManeuverKind.arrive || index == finalArrival)
+        step
+      else if (_stopAt(step.instruction.position, stops) case final stop?)
+        RouteInstructionStep(
+          instruction: _arrivalAtStop(step.instruction, stop),
+          distanceFromStartMeters: step.distanceFromStartMeters,
+          distanceFromRouteMeters: step.distanceFromRouteMeters,
+        ),
+  ];
+}
+
+RouteWaypoint? _stopAt(GeoPoint position, List<RouteWaypoint> stops) {
+  RouteWaypoint? nearest;
+  var nearestMeters = stopArrivalToleranceMeters;
+  for (final stop in stops) {
+    final meters = _distance(position, stop.point);
+    if (meters <= nearestMeters) {
+      nearest = stop;
+      nearestMeters = meters;
+    }
+  }
+  return nearest;
+}
+
+/// The arrival at an intermediate stop, named for it: "Arrive at the
+/// destination" there told a rider the ride was over.
+ManeuverInstruction _arrivalAtStop(
+  ManeuverInstruction arrival,
+  RouteWaypoint stop,
+) {
+  final name = stop.name?.trim();
+  final text = name == null || name.isEmpty
+      ? 'Arrive at your stop'
+      : 'Arrive at $name';
+  return ManeuverInstruction(
+    maneuver: arrival.maneuver,
+    kind: arrival.kind,
+    direction: arrival.direction,
+    text: text,
+    roadName: arrival.roadName,
+    roadRef: arrival.roadRef,
+    lanes: arrival.lanes,
+    leftHandTraffic: arrival.leftHandTraffic,
+    stepCount: arrival.stepCount,
+  );
 }
 
 /// Distance beyond which a following step's heading is no longer taken as the

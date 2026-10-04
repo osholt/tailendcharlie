@@ -124,7 +124,9 @@ class GpxParser {
               description: pointKind == 'shaping'
                   ? 'Soft route shaping point'
                   : 'Route via point',
-              symbol: pointKind == 'shaping' ? 'Shaping point' : 'Via point',
+              symbol: pointKind == 'shaping'
+                  ? routeShapingPointSymbol
+                  : 'Via point',
             ),
           );
         }
@@ -184,6 +186,7 @@ class GpxParser {
         'The GPX file contains no tracks, routes, or waypoints.',
       );
     }
+    final separated = separateShapingWaypoints(waypoints);
     final metadata = _children(root, 'metadata').firstOrNull;
     final metadataName = metadata == null ? null : _childText(metadata, 'name');
     final firstPathName = selectedPaths
@@ -201,7 +204,9 @@ class GpxParser {
       importedAt: importedAt.toUtc(),
       sourceFileName: sourceFileName,
       paths: selectedPaths,
-      waypoints: List.unmodifiable(waypoints),
+      // A shaping point bends the route and is never a stop (#839).
+      waypoints: separated.stops,
+      shapingPoints: separated.shapingPoints,
       preferences: metadata == null ? null : _routePreferences(metadata),
       markerReview: metadata == null
           ? MarkerPlanReview.empty

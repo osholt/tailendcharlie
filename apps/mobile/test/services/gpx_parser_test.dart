@@ -165,17 +165,14 @@ void main() {
       route.paths.where((path) => path.kind.name == 'route').single.name,
       'Garmin Trip',
     );
+    // A shaping point bends the route and is never a stop: it is kept as the
+    // route's shaping point, the same as one dragged on in review (#839).
     expect(
       route.waypoints.where((waypoint) => waypoint.symbol == 'Shaping point'),
-      hasLength(1),
+      isEmpty,
     );
-    expect(
-      route.waypoints
-          .where((waypoint) => waypoint.symbol == 'Shaping point')
-          .single
-          .name,
-      'Via 1',
-    );
+    expect(route.shapingPoints.single.point.latitude, 51.1);
+    expect(route.shapingPoints.single.point.longitude, -2.1);
   });
 
   test('Garmin RoutePoint extension points shape the line without becoming '
