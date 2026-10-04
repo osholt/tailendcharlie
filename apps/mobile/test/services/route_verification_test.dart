@@ -175,6 +175,30 @@ void main() {
       );
     });
 
+    test('a track is a track even when its surface is mapped paved', () {
+      // `highway=track` with no access tag is not evidence of a public vehicular
+      // right, whatever it is surfaced with.
+      final concern = classifyRouteEdges(
+        const [
+          RouteEdge(
+            lengthMeters: 300,
+            beginShapeIndex: 0,
+            endShapeIndex: 1,
+            use: 'track',
+            surface: 'paved_smooth',
+          ),
+        ],
+        const [
+          GeoPoint(latitude: 51, longitude: -2),
+          GeoPoint(latitude: 51.002, longitude: -2),
+        ],
+        RoutePreferences.defaults,
+      ).single;
+
+      expect(concern.kind, RouteConcernKind.unsurfaced);
+      expect(concern.labels, ['track']);
+    });
+
     test('an unpaved road with no track tag is an unsurfaced road', () {
       final concern = classifyRouteEdges(
         const [
