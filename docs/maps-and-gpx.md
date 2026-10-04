@@ -179,18 +179,24 @@ The small glance surfaces have fixed homes:
 
 | corner | portrait | landscape |
 | --- | --- | --- |
-| top leading | ride menu; route progress immediately below | ride menu |
-| top centre | — | current time |
-| top trailing | group overview | speed sign |
-| bottom trailing | — | route progress, recovery, junction card, group overview |
+| top leading | ride menu | ride menu |
+| top centre | current time | current time |
+| top trailing | compass and speed sign | compass and speed sign |
+| bottom | the band: everything else | route progress, recovery, junction card, group overview (left and right rails) |
 
-The portrait route-progress card is at most 210 logical pixels wide (and no more
-than 54% of the safe viewport); landscape reuses the existing 230-pixel right
-rail. The portrait card also carries the current time, while landscape keeps the
-clock in its small top-centre position. These are *glances*, never targets. The
-centre and upper-middle remain empty, and moving the group overview out of the
-portrait bottom band stops the camera's forward bias paying for a surface nobody
-acts on.
+**Portrait keeps every navigational surface in the bottom band (#848).** The route
+progress card and the group overview used to float 154 pixels below the top row,
+which on a mounted phone is the middle of the road ahead; a tester on Android
+reported that together they covered the map and the rider's own bike. They are
+now part of the band the camera frames the marker above, and the only things
+above the marker are the three corner glances in the table. The route progress is
+a one-row strip across the top of the band (`RouteProgressPanel.strip`): time and
+distance left and the arrival time, with the next stop on a row of its own only
+when it is a stop before the destination, and the way out of free-roam navigation
+where there is one. The group overview shares the row of targets, hard against the
+trailing edge, so it costs the band almost no height; on a narrow phone it scales
+down rather than overflow. Landscape is unchanged: its rails already kept both
+clear of the rider.
 
 Route progress is optional in Settings. Distance is projected along the same
 primary route geometry used by navigation. Time remaining and ETA use an
@@ -201,7 +207,8 @@ GPX waypoint ahead along the route; shaping points are not presented as stops,
 and an unnamed final point is labelled Destination.
 
 Everything else is bottom-anchored. Portrait is one band: urgent alerts, the TEC
-gap, then the turn banner, then the targets. Landscape splits into a left rail
+gap, the route progress strip, then the turn banner, then the targets with the
+group overview beside them. Landscape splits into a left rail
 (urgent alerts, TEC gap, turn banner, actions) and a right rail (recovery,
 junction marker card, group overview), leaving the centre column clear. Each rail
 is a single column, so placement stays deterministic and no surface can cover
@@ -282,6 +289,62 @@ the band is 484 pixels (0.573 of the viewport, from 0.809 before #125 and 0.704
 after it) and still clamps to the 0.35 floor, because a paused-ride banner, an
 off-course alert, a turn banner with lane guidance and the TEC gap all live at
 once; shortening those belongs to the issues that own them.
+
+#### What bringing the ETA and the overview into the band cost (#848)
+
+The earlier rounds bought the camera look-ahead by moving surfaces *out of* the
+band, and some of that was bought by putting them over the road instead. The
+band is now taller again - by a one-row strip, and by the few pixels the
+overview's rider-count caption stands above the targets - and the road ahead is
+clear. The camera is the same: it measures the band, and the marker sits above it.
+`NavigationCameraPlanner` itself did not change; what changed is that nothing is
+left above the marker for it to miss.
+
+Measured with the Material fonts and the safe areas a phone has (iPhone 15:
+393x852 with 59/34 insets; SE: 375x667 with 20/0), without the development
+basemap's badge. "Rider" has no TEC card, "leader" has one. *Plain* is an
+ordinary turn banner; *rich* is a roundabout with lane guidance and a second turn
+close behind it, which is the tallest the banner gets. "Road ahead" is the space
+between the bottom of the top row and the top of the marker.
+
+| phone, size | banner | rider: band / road ahead | leader: band / road ahead |
+| --- | --- | --- | --- |
+| iPhone 15, Small | plain | 257 / 284 px (33%) | 297 / 244 px (29%) |
+| iPhone 15, Small | rich | 326 / 215 px (25%) | 366 / 175 px (21%) |
+| iPhone 15, Large | plain | 282 / 259 px (30%) | 322 / 219 px (26%) |
+| iPhone 15, Large | rich | 351 / 190 px (22%) | 391 / 150 px (18%) |
+| iPhone SE, Small | plain | 257 / 183 px (27%) | 297 / 143 px (21%) |
+| iPhone SE, Small | rich | 326 / 114 px (17%) | 366 / 87 px (13%) |
+| iPhone SE, Large | rich | 351 / 94 px (14%) | 391 / 62 px (9%) |
+
+The marker is above the band by at least a marker's height and a margin in every
+row, and `portrait_chrome_layout_test.dart` asserts that - for four phones, all
+three sizes, three text scales, rider and leader - along with the stronger
+statement that every navigational surface is below the marker. The worst row,
+a leader on an SE at Large with the richest banner, leaves 62 pixels of road
+ahead; the marker is still uncovered, and the camera gives up look-ahead before
+it gives up the marker.
+
+Before and after, rendered by the widget tests with the Material fonts and each
+phone's safe areas, over the route-only fallback map (so they say nothing about
+the basemap): the marker is pushed to the top of an SE by the floating cards in
+the leader case, and sits clear in the same place after.
+
+![iPhone 15, before and after](images/portrait-band-iphone15.png)
+
+![iPhone SE, before and after](images/portrait-band-iphone-se.png)
+
+![Android 360x800, before and after](images/portrait-band-android.png)
+
+**The chrome stops following the system text size.** The Riding display size
+multiplies the system text scale rather than replacing it, and uncapped, Large at
+a 2.0 system scale made the band 849 pixels tall on an 844-pixel phone: taller
+than the phone, so no framing could keep the marker above it. The chrome now
+follows the system setting up to 1.3 (iOS Dynamic Type's ordinary range, Android's
+Large and Largest), and to a combined 1.65 times the Small size, which is what
+Large already is - so Large holds the system scale at 1.0 and Small and Medium
+keep 1.3. Anyone who wants bigger asks for it by Riding display size.
+`rideChromeTextScaleCeiling` is the one place that says so.
 
 Landscape navigation also shows a compact group overview above the primary
 turn-by-turn map. It uses a second, throttled view of the configured MapLibre
