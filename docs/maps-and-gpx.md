@@ -21,7 +21,8 @@ coarser privacy-oriented z17 contribution cells.
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
 keeps the provider's daytime colours and labels, with deeper and wider road
-outlines ([#841](#road-edges-in-daylight-841)). They use the same vector tile
+outlines ([#841](#road-edges-in-daylight-841)) and no POI label that is a source
+identifier ([#860](#provider-labels-never-show-an-identifier-860)). They use the same vector tile
 source and offline tile cache; only their small style-document caches are kept
 separate so switching cannot serve the wrong palette.
 
@@ -521,8 +522,8 @@ ground. Original's lane edge, `#CFCDCA`, is 1.45:1.
   tints do. Ramps, bridges and tunnels carry the edge of their class.
 - **Original:** a lane's edge, `#CFCDCA`, deepens to `#AEACA9`, the same warm hue
   at L\* 70.5. The orange edges of the larger roads keep the provider's colour.
-  Ground, fills, labels, POI symbols and every other layer are the provider's, as
-  #489 promised.
+  Ground, fills, symbols and every other layer are the provider's, as #489
+  promised, and so are its labels apart from the identifier guard (#860, below).
 - **Both:** the edge is one pixel wider from zoom 14, 0.75–1.1 px a side becoming
   1.25–1.6. Each width table is the provider's own stops plus one pixel, so
   everything below zoom 13 keeps the provider's curve and every zoom from 14 up

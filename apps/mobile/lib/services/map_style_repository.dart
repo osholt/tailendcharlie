@@ -239,8 +239,9 @@ class MapStyleRepository {
         _repaintForRestrainedLightMode(style);
       } else {
         // Original keeps the provider's palette, labels and symbols. Its road
-        // edges are the one exception (#841): they were the thinnest, palest
-        // thing on the map, in this style as much as in Restrained.
+        // edges are an exception (#841): they were the thinnest, palest thing
+        // on the map, in this style as much as in Restrained. POI labels that
+        // would show an identifier are the other (#860), guarded below.
         _strengthenOriginalRoadEdges(style);
       }
     }

@@ -9,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:ride_relay/features/map/route_trail_style.dart';
 import 'package:ride_relay/services/basemap_configuration.dart';
 import 'package:ride_relay/services/map_style_repository.dart';
+import 'package:ride_relay/services/provider_label_guard.dart';
 
 /// Measured cover for #841: roads were hard to pick out in the light map, on
 /// Android and on iOS.
@@ -625,29 +626,56 @@ void main() {
             id.startsWith('tunnel_')) &&
         !(id.contains('service_track') || id.contains('path_pedestrian'));
 
-    test('only road edges differ from the provider, and only in two ways', () {
-      expect(original.keys, provider.keys);
-      var changed = 0;
-      for (final entry in provider.entries) {
-        final id = entry.key;
-        final different = jsonEncode(original[id]) != jsonEncode(entry.value);
+    /// A provider POI layer: the only other thing Original changes is its label,
+    /// which is guarded against identifiers (#860).
+    bool isPoiLabel(Map<String, dynamic> layer) =>
+        layer['source-layer'] == 'poi' &&
+        (layer['layout'] as Map?)?.containsKey('text-field') == true;
 
-        expect(different, isStrengthenedEdge(id), reason: id);
-        if (!different) continue;
-        changed++;
-        final before = entry.value['paint'] as Map;
-        final after = original[id]!['paint'] as Map;
-        for (final key in {...before.keys, ...after.keys}) {
-          if (jsonEncode(before[key]) == jsonEncode(after[key])) continue;
-          expect(
-            ['line-color', 'line-width'],
-            contains(key),
-            reason: '$id changed $key in the Original style',
-          );
+    test(
+      'only road edges and the identifier guard differ from the provider',
+      () {
+        expect(original.keys, provider.keys);
+        var changed = 0;
+        var labels = 0;
+        for (final entry in provider.entries) {
+          final id = entry.key;
+          if (isPoiLabel(entry.value)) {
+            labels++;
+            // The label is wrapped and nothing else about the layer moves.
+            final guarded = Map<String, dynamic>.from(original[id]!);
+            final layout = Map<String, dynamic>.from(guarded['layout'] as Map);
+            final providerLabel = (entry.value['layout'] as Map)['text-field'];
+            expect(
+              ProviderLabelGuard.unwrap(layout['text-field']),
+              providerLabel,
+              reason: '$id label',
+            );
+            layout['text-field'] = providerLabel;
+            guarded['layout'] = layout;
+            expect(jsonEncode(guarded), jsonEncode(entry.value), reason: id);
+            continue;
+          }
+          final different = jsonEncode(original[id]) != jsonEncode(entry.value);
+
+          expect(different, isStrengthenedEdge(id), reason: id);
+          if (!different) continue;
+          changed++;
+          final before = entry.value['paint'] as Map;
+          final after = original[id]!['paint'] as Map;
+          for (final key in {...before.keys, ...after.keys}) {
+            if (jsonEncode(before[key]) == jsonEncode(after[key])) continue;
+            expect(
+              ['line-color', 'line-width'],
+              contains(key),
+              reason: '$id changed $key in the Original style',
+            );
+          }
         }
-      }
-      expect(changed, greaterThanOrEqualTo(18));
-    });
+        expect(changed, greaterThanOrEqualTo(18));
+        expect(labels, greaterThanOrEqualTo(4));
+      },
+    );
 
     test(
       'a lane\'s edge is deepened; the provider\'s orange and pale edges stay',
@@ -780,13 +808,14 @@ void main() {
       }
     });
 
-    test('the Original labels and symbols are the provider\'s', () {
-      // The label guard for provider POIs is a separate change (#860); this one
-      // must leave every symbol layer, POI tiers included, exactly as it was.
+    test('the Original symbols are the provider\'s, labels guarded (#860)', () {
+      // Every symbol layer is exactly as the provider wrote it, except that a POI
+      // layer's label carries the identifier guard (checked in full above).
       var symbols = 0;
       for (final entry in provider.entries) {
         if (entry.value['type'] != 'symbol') continue;
         symbols++;
+        if (isPoiLabel(entry.value)) continue;
         expect(jsonEncode(original[entry.key]), jsonEncode(entry.value));
       }
       expect(symbols, greaterThanOrEqualTo(6));
