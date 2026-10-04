@@ -375,13 +375,39 @@ const Key portraitBottomChromeKey = Key('map-portrait-bottom-chrome');
 /// discoverable escape at all.
 const double portraitRideMenuTopOffset = 12;
 
-/// ETA and the group overview start below the persistent top navigation row.
+/// The largest system text scale the riding chrome follows.
 ///
-/// The row above them carries menu, clock and speed/compass. A fixed offset
-/// keeps those three controls at the top without allowing either header card to
-/// slide underneath them as its contents change.
+/// The Riding display size (Small, Medium, Large) is the rider's control for a
+/// bigger turn arrow, distance and ETA, and it multiplies the system text scale
+/// rather than replacing it. Left uncapped, Large at a 2.0 system scale made the
+/// turn banner alone taller than a phone (#848) - there is no framing that keeps
+/// the rider's marker visible under a band of that size. So the chrome honours
+/// the system setting up to this value, which covers iOS Dynamic Type through
+/// its non-accessibility range and Android's Large and Largest sizes, and holds
+/// there; a rider who wants more asks the app for it by size.
 @visibleForTesting
-const double portraitNavigationHeaderTopOffset = 154;
+const double rideChromeMaximumTextScale = 1.3;
+
+/// The largest text the riding chrome is ever drawn at, as a multiple of the
+/// Small size: the Large riding display size on a phone with default text.
+const double _rideChromeMaximumEffectiveScale = 1.65;
+
+/// How far the system text size is followed at [size] (#848).
+///
+/// The size the rider chose is already the in-app answer to "make it bigger", so
+/// the system setting is followed only as far as it leaves the combined scale at
+/// or under [_rideChromeMaximumEffectiveScale] - and never past
+/// [rideChromeMaximumTextScale]. Small and Medium keep 1.3; Large, which is the
+/// biggest the chrome gets, holds the system scale at 1.0 rather than stacking a
+/// second enlargement on the first.
+@visibleForTesting
+double rideChromeTextScaleCeiling(RidingDisplaySize size) => math.max(
+  1.0,
+  math.min(
+    rideChromeMaximumTextScale,
+    _rideChromeMaximumEffectiveScale / size.scale,
+  ),
+);
 
 /// Turn and TEC panes retain strong contrast while allowing some map context
 /// through them. Progress, actions and the mini-map keep their denser fills.
@@ -1407,6 +1433,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   final GlobalKey _mapViewportKey = GlobalKey();
   final GlobalKey _etaOcclusionKey = GlobalKey();
   final GlobalKey _speedOcclusionKey = GlobalKey();
+  final GlobalKey _clockOcclusionKey = GlobalKey();
   final GlobalKey _miniMapOcclusionKey = GlobalKey();
   String _lastOcclusionLayout = '';
   final GlobalKey _bottomChromeKey = GlobalKey();
@@ -2610,22 +2637,30 @@ class _RideMapScreenState extends State<RideMapScreen>
                   ),
                 ),
                 Positioned.fill(
-                  child: _buildRideChrome(
-                    landscape: landscape,
-                    hideChrome: hideChrome,
-                    markerOverviewActive: markerOverviewActive,
-                    hasGuidance: hasGuidance,
-                    routeStartOfferDistance: routeStartOfferDistance,
-                    showRideMenu: showRideMenu,
-                    showLeaveRide: showLeaveRide,
-                    showFollowMe: showFollowMe,
-                    canShowGroupMiniMap: canShowGroupMiniMap,
-                    groupMiniMapWidth: groupMiniMapWidth,
-                    groupMiniMapHeight: groupMiniMapHeight,
-                    safeLeft: overlayLeft,
-                    safeRight: overlayRight,
-                    safeTop: overlayTop,
-                    safeBottom: overlayBottom,
+                  // The riding chrome follows the system text size only as far as
+                  // [rideChromeTextScaleCeiling]; the rider's own Riding display
+                  // size is the control for going larger than that (#848).
+                  child: MediaQuery.withClampedTextScaling(
+                    maxScaleFactor: rideChromeTextScaleCeiling(
+                      widget.ridingDisplaySize,
+                    ),
+                    child: _buildRideChrome(
+                      landscape: landscape,
+                      hideChrome: hideChrome,
+                      markerOverviewActive: markerOverviewActive,
+                      hasGuidance: hasGuidance,
+                      routeStartOfferDistance: routeStartOfferDistance,
+                      showRideMenu: showRideMenu,
+                      showLeaveRide: showLeaveRide,
+                      showFollowMe: showFollowMe,
+                      canShowGroupMiniMap: canShowGroupMiniMap,
+                      groupMiniMapWidth: groupMiniMapWidth,
+                      groupMiniMapHeight: groupMiniMapHeight,
+                      safeLeft: overlayLeft,
+                      safeRight: overlayRight,
+                      safeTop: overlayTop,
+                      safeBottom: overlayBottom,
+                    ),
                   ),
                 ),
                 // Route entry, and only while the map is still a planning
@@ -2943,6 +2978,10 @@ class _RideMapScreenState extends State<RideMapScreen>
                           progress: progress,
                           distanceUnit: widget.distanceUnit,
                           displaySize: widget.ridingDisplaySize,
+                          // Portrait gives the ETA one row of the bottom band,
+                          // where landscape keeps its card in the left rail
+                          // (#848).
+                          strip: !landscape,
                           // The time is now a consistent map label in both
                           // orientations rather than changing hierarchy with the
                           // ETA card.
@@ -3339,7 +3378,12 @@ class _RideMapScreenState extends State<RideMapScreen>
                 right: safeRight,
                 top: safeTop + 12,
                 child: IgnorePointer(
-                  child: Center(child: RideClock(darkMap: _basemap.dark)),
+                  child: Center(
+                    child: KeyedSubtree(
+                      key: _clockOcclusionKey,
+                      child: RideClock(darkMap: _basemap.dark),
+                    ),
+                  ),
                 ),
               ),
             Positioned(
@@ -3421,10 +3465,40 @@ class _RideMapScreenState extends State<RideMapScreen>
         );
       }
 
-      // Portrait keeps only glove targets in the bottom action run. Speed and
-      // compass are glance surfaces, so they live at the requested top-right
-      // rather than charging the navigation camera for permanent bottom chrome.
+      // Portrait keeps every navigational surface in the one bottom band (#848).
+      // The ETA and the group overview used to float 154 pixels down from the
+      // top, which is the middle of the road ahead on a mounted phone: a tester
+      // reported they covered both the map and the rider's own bike. Speed and
+      // compass stay in the top-right corner as glances, with the menu and the
+      // clock; everything else a rider reads or presses is below the marker.
+      //
+      // The group overview shares the row of targets rather than adding one: the
+      // SOS/LEAVE stack and REPORT leave the trailing half of that row empty, so
+      // the overview costs the band almost no height.
       final actionCluster = hasActions ? safetyCluster : null;
+      final actionRow = actionCluster == null && miniMap == null
+          ? null
+          : Row(
+              key: const Key('map-portrait-action-row'),
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                ?actionCluster,
+                if (miniMap != null)
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      // Scaled down rather than overflowing when a narrow phone
+                      // leaves less than the overview's own width beside the
+                      // targets.
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: miniMap,
+                      ),
+                    ),
+                  ),
+              ],
+            );
       return Stack(
         children: [
           if (rideMenu != null)
@@ -3433,30 +3507,6 @@ class _RideMapScreenState extends State<RideMapScreen>
               top: safeTop + portraitRideMenuTopOffset,
               child: rideMenu,
             ),
-          if (routeProgressPanel != null)
-            Positioned(
-              key: const Key('route-progress-panel-position'),
-              left: safeLeft + 12,
-              // ETA and the group overview form one aligned header below the
-              // persistent menu/clock/speed row.
-              top: safeTop + portraitNavigationHeaderTopOffset,
-              width: math.min(
-                210,
-                (MediaQuery.sizeOf(context).width - safeLeft - safeRight) *
-                    0.54,
-              ),
-              child: routeProgressPanel,
-            ),
-          // The group overview stays paired with ETA below the persistent top
-          // controls. It is a glance rather than a target, and keeping it out of
-          // the bottom band stops charging the camera's forward bias for a
-          // surface nobody acts on.
-          if (miniMap != null)
-            Positioned(
-              right: safeRight + 12,
-              top: safeTop + portraitNavigationHeaderTopOffset,
-              child: miniMap,
-            ),
           if (widget.isNavigating)
             Positioned(
               key: const Key('ride-clock-position'),
@@ -3464,7 +3514,12 @@ class _RideMapScreenState extends State<RideMapScreen>
               right: safeRight,
               top: safeTop + 12,
               child: IgnorePointer(
-                child: Center(child: RideClock(darkMap: _basemap.dark)),
+                child: Center(
+                  child: KeyedSubtree(
+                    key: _clockOcclusionKey,
+                    child: RideClock(darkMap: _basemap.dark),
+                  ),
+                ),
               ),
             ),
           if (speedCluster != null)
@@ -3505,6 +3560,14 @@ class _RideMapScreenState extends State<RideMapScreen>
                     ),
                   ...urgent,
                   ?tecGap,
+                  // The trip summary is the least urgent surface in the band, so
+                  // it is the top of it: a strip, not the card landscape uses
+                  // (#848).
+                  if (routeProgressPanel != null)
+                    KeyedSubtree(
+                      key: const Key('route-progress-panel-position'),
+                      child: routeProgressPanel,
+                    ),
                   // Rare, and its own run: it appears only when the map is off
                   // the rider. It belongs immediately above the turn pane so
                   // returning to follow mode is next to the viewport it affects.
@@ -3513,7 +3576,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                   // The turn banner is the last pane above the permanent
                   // targets, keeping the road ahead clear (#133).
                   ?guidance,
-                  ?actionCluster,
+                  ?actionRow,
                   ?completionSuggestion,
                   ?junctionCard,
                 ],
@@ -4415,6 +4478,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         _landscapeGuidanceKey,
         _etaOcclusionKey,
         _speedOcclusionKey,
+        _clockOcclusionKey,
         _miniMapOcclusionKey,
       ])
         if (key.currentContext?.findRenderObject() case final RenderBox box
