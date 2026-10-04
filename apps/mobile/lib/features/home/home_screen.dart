@@ -164,9 +164,11 @@ class HomeScreen extends StatefulWidget {
   ///
   /// A function of its own so a test can hold it to the one thing it once got
   /// wrong. It was built on OSRM alone, which cannot express a single route
-  /// preference and cannot be told to avoid a road, so a route it planned could
-  /// not be checked and re-planned around a track (#840). It plans through the
-  /// same preference-aware, checked routing as the map does.
+  /// preference, so "Avoid motorways" was dropped on the way to the router and
+  /// a route up the M5 was reviewed under a note saying motorways were excluded
+  /// (#858). It plans through the same preference-aware, checked routing as the
+  /// map does, and a route that could not be checked or re-planned around a
+  /// track could not be either (#840).
   @visibleForTesting
   static DestinationRoutePlanner defaultDestinationPlanner({
     required http.Client client,

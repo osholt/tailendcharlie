@@ -15,6 +15,27 @@ void main() {
   const start = GeoPoint(latitude: 51.747143, longitude: -2.986532);
   const wharf = GeoPoint(latitude: 51.752096, longitude: -2.9971343);
 
+  // A short run on and off the M5, which both routers take by motorway.
+  const motorwayStart = GeoPoint(latitude: 51.5460, longitude: -2.5900);
+  const motorwayEnd = GeoPoint(latitude: 51.6385, longitude: -2.4893);
+
+  Future<DestinationRoutePlan> planMotorway(
+    RecordedRouting routing,
+    RoutePreferences preferences,
+  ) =>
+      HomeScreen.defaultDestinationPlanner(
+        client: routing.client,
+        configuration: planningConfiguration,
+      ).planForReview(
+        origin: motorwayStart,
+        query: 'Falfield',
+        selectedDestination: const DestinationMatch(
+          label: 'Falfield',
+          point: motorwayEnd,
+        ),
+        preferences: preferences,
+      );
+
   Future<DestinationRoutePlan> plan(
     RecordedRouting routing,
     RoutePreferences preferences,
@@ -96,4 +117,61 @@ void main() {
       expect(planned.verification!.isClean, isTrue);
     },
   );
+
+  // Avoid motorways, and what Home did with it (#858).
+  test('Avoid motorways reaches the router that can honour it', () async {
+    final routing = RecordedRouting(
+      valhalla: fixtureResponse('valhalla_m5_avoided.json'),
+      traces: [fixtureResponse('trace_m5_avoided.json')],
+    );
+
+    final planned = await planMotorway(
+      routing,
+      const RoutePreferences(avoidMotorways: true, avoidMajorRoads: true),
+    );
+
+    expect(routing.osrmRequests, isEmpty, reason: 'OSRM would have dropped it');
+    expect(routing.valhallaRequests, hasLength(1));
+    final costing =
+        (routing.valhallaRequests.single['costing_options']!
+                as Map)['motorcycle']!
+            as Map;
+    expect(costing['exclude_highways'], isTrue);
+    expect(costing['use_highways'], 0.08);
+    expect(planned.distanceMeters, closeTo(16930, 1));
+    expect(planned.route.preferences?.avoidMotorways, isTrue);
+  });
+
+  test('the route Becks was shown is caught when it is shown again', () async {
+    // The motorway-routed answer, from a provider that ignored the request.
+    final routing = RecordedRouting(
+      valhalla: fixtureResponse('valhalla_m5_stretch.json'),
+      valhallaExcluding: fixtureResponse('valhalla_no_path.json', 400),
+      traces: [fixtureResponse('trace_m5_stretch.json')],
+    );
+
+    final planned = await planMotorway(
+      routing,
+      const RoutePreferences(avoidMotorways: true),
+    );
+
+    expect(planned.distanceMeters, closeTo(18805, 1));
+    expect(planned.verification!.notices(DistanceUnit.miles), [
+      'Uses 7.8 mi of motorway (M5), although Avoid motorways is on. No '
+          'motorway-free route was found.',
+    ]);
+  });
+
+  test('a rider who asked for nothing is still planned on OSRM', () async {
+    final routing = RecordedRouting(
+      osrm: fixtureResponse('osrm_m5_stretch.json'),
+      traces: [fixtureResponse('trace_m5_stretch.json')],
+    );
+
+    final planned = await planMotorway(routing, RoutePreferences.defaults);
+
+    expect(routing.osrmRequests, hasLength(1));
+    expect(routing.valhallaRequests, isEmpty);
+    expect(planned.verification!.isClean, isTrue);
+  });
 }
