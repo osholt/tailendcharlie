@@ -72,12 +72,16 @@ alternatives a provider actually returns.
 | Any of motorways / major roads / tolls / ferries avoided | Valhalla `motorcycle` costing |
 | Unsurfaced byways **allowed** | Valhalla `motorcycle` costing |
 
-The four avoidances are hard exclusions the OSRM driving profile cannot express.
-Allowing unsurfaced byways is on the list for the opposite reason: the standard
-OSRM car profile does not route `highway=track` at all, so *seeking* byways is
-the case OSRM cannot serve, while avoiding them is the case it already serves.
-That keeps the default request on OSRM instead of putting every route through the
-shared Valhalla instance.
+The four avoidances are exclusions the OSRM driving profile cannot express.
+Allowing unsurfaced byways is on the list because only the motorcycle costing has
+a lever for *seeking* them. The default request stays on OSRM so that every
+ordinary route does not go through the shared Valhalla instance.
+
+The default stays on OSRM **not** because OSRM avoids byways. It does not, and
+this page used to say it did. On 4 October 2026 the public OSRM server routed an
+untagged `highway=track` with gates, because it was shorter than the paved road
+beside it (#840). Whichever engine answers, a preference is a request and not a
+result: see [Checking the route that comes back](#checking-the-route-that-comes-back).
 
 The Valhalla route deliberately carries **no turn instructions**. Valhalla numbers
 its manoeuvre types where OSRM names them, and this app turns a manoeuvre into a
@@ -118,13 +122,69 @@ Avoided is the default because Tail End Charlie coordinates **group** road rides
 A trail rider turns the preference off, in the app or in the planner, and the
 route may then use ways OpenStreetMap tags as unsurfaced or as a track.
 
-What this does **not** claim: an OSRM route with the default preference rests on
-the standard car profile refusing `highway=track` and penalising unpaved
-surfaces, which is weaker than an exclusion. Only the Valhalla path applies
-`exclude_unpaved` as a hard constraint. And a way OpenStreetMap has not tagged
-with a surface at all is unknown, not paved — the same honesty rule the speed
-limit display follows. Surface, width, gates and seasonal restrictions remain the
-rider's own check.
+What this does **not** claim: that either engine honours the preference. OSRM's
+car profile penalises unpaved surfaces and does not refuse `highway=track`, and
+the public Valhalla motorcycle costing was measured on 4 October 2026 to ignore
+`exclude_unpaved` and `use_trails: 0` (the same request routed over a track that
+`auto` costing avoids). The preference is therefore enforced by checking what
+comes back. And a way OpenStreetMap has not tagged with a surface at all is
+unknown, not paved — the same honesty rule the speed limit display follows.
+Surface, width, gates and seasonal restrictions remain the rider's own check.
+
+## Checking the route that comes back
+
+*Mobile app only. The web planner has the same engine rule and does not yet check
+its routes; its status line still words the byway preference as a result.*
+
+A preference is sent to the engine and then **checked**, because neither engine
+can be trusted to have honoured it. Every route a planner produces - a destination
+plan, a reshape, a snapped GPX route, a circular loop - is looked up once with
+Valhalla `trace_attributes` (`shape_match: map_snap`, because the line usually came
+from OSRM over different map data). Each edge it returns carries its way, `use`,
+`surface` and `unpaved`, and is classified:
+
+| Found | Counts as | When |
+| --- | --- | --- |
+| `footway`, `path`, `cycleway`, `bridleway`, `steps`, `pedestrian` | Not a road | Always |
+| `use=track`, or an unpaved surface (parking aisles and drives excepted) | Unsurfaced | Avoid unsurfaced byways is on |
+
+A concern is excluded by position (`exclude_locations`: the middle of each
+offending edge, at most 32) and the trip is asked of Valhalla **once more**. The
+new route replaces the old only if it is checked itself, has at most half as much
+of the offending road in it, and starts and ends within 150 m of where the first
+did. Otherwise the original is kept. A circular loop is checked once, for the loop
+the planner settles on, and is reported but not re-planned: a replacement would
+have to pass the same closed-loop, distance, U-turn and overlap tests as any other
+candidate. (The review then re-snaps it like any route made of route points, and
+that route is checked and re-planned as above.)
+
+Whatever is left is shown on the route review, with its length, and is never
+hidden:
+
+- `Uses 0.4 mi of unsurfaced track, although Avoid unsurfaced byways is on.`
+  followed by `No road route that avoids it was found.` if the re-plan found
+  nothing;
+- `Could not check this route against your road preferences (...), so it may use
+  roads you asked to avoid.` when the lookup failed or could not be trusted;
+- `Only N of M could be checked` when the route is longer than one request can
+  cover.
+
+Limits, measured on the same instance:
+
+- A route over **200 km** is refused whatever the number of points
+  (`Path distance exceeds the max distance limit`). One request covers the first
+  190 km, the rest is reported as unchecked, and a route is not split into more
+  requests: it is a shared public instance and a plan is looked up once.
+- A lookup is the route's geometry simplified to at most 1,500 points, with no gap
+  over 250 m, and takes about 0.3-0.4 s.
+- A matched road covering under half, or over 125%, of the line sent is not
+  believed, and the route is reported as unchecked.
+- A stretch under 20 m is not reported. Not checked: the short legs a ride makes
+  to rejoin its route or reach its start, and service roads with no explicit
+  vehicle access, which `trace_attributes` does not report.
+
+The byway note on a route says what was **asked** ("Avoid unsurfaced byways") and
+never what was achieved; whether it was achieved is the check's to say.
 
 ## Limitations
 

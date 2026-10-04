@@ -62,12 +62,12 @@ void main() {
     );
 
     test('the summary always states which way round the byways are', () {
-      expect(RoutePreferences.defaults.summary, 'Unsurfaced byways avoided.');
+      expect(RoutePreferences.defaults.summary, 'Avoid unsurfaced byways.');
       expect(
         const RoutePreferences(
           bywaySurface: BywaySurfacePreference.allowUnsurfaced,
         ).summary,
-        'Unsurfaced byways allowed.',
+        'Allow unsurfaced byways.',
       );
     });
   });
@@ -220,8 +220,18 @@ void main() {
         'major roads avoided',
         'tolls excluded',
         'ferries excluded',
-        'unsurfaced byways avoided',
+        'avoid unsurfaced byways',
       ],
     );
+  });
+
+  test('the byway note states what was asked and never claims an outcome', () {
+    // It used to read "unsurfaced byways avoided", over a route that went along
+    // a gated track (#840). Whether the request was met is the verification's to
+    // say, not the preference's.
+    for (final preference in BywaySurfacePreference.values) {
+      final notes = RoutePreferences(bywaySurface: preference).appliedNotes;
+      expect(notes.single, isNot(contains('avoided')));
+    }
   });
 }
