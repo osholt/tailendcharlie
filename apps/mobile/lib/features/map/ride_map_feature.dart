@@ -30,7 +30,6 @@ import '../../domain/imported_route.dart';
 import '../../domain/quick_message.dart';
 import '../../domain/recorded_route_store.dart';
 import '../../domain/ride_role.dart';
-import '../../domain/rider_color.dart';
 import '../../domain/route_authority.dart';
 import '../../domain/route_store.dart';
 import '../../internet/plan_directory.dart';
@@ -80,19 +79,24 @@ import '../../services/route_journey_progress.dart';
 import '../../services/route_progress.dart';
 import '../../services/rider_travel_direction.dart';
 import '../../services/route_reshape_planner.dart';
+import '../../services/route_verification.dart';
+import '../../services/verified_road_routing.dart';
 import '../../services/speed_limit.dart';
 import '../../services/stored_route_library.dart';
 import '../../services/trail_direction_arrows.dart';
 import 'destination_route_sheet.dart';
 import 'circular_ride_sheet.dart';
+import 'discovery_layer_visibility.dart';
 import 'discovery_road_sheet.dart';
 import 'hazard_map_symbol.dart';
+import 'leader_broadcast_sheet.dart';
 import 'map_camera_guard.dart';
 import 'maneuver_list_screen.dart';
 import 'maneuver_symbol.dart';
 import 'group_mini_map_framing.dart';
 import 'motorcycle_icon.dart';
 import 'navigation_export_sheet.dart';
+import 'ride_map_palette.dart';
 import 'route_review_screen.dart';
 import 'route_progress_panel.dart';
 import 'route_trail_style.dart';
@@ -375,13 +379,39 @@ const Key portraitBottomChromeKey = Key('map-portrait-bottom-chrome');
 /// discoverable escape at all.
 const double portraitRideMenuTopOffset = 12;
 
-/// ETA and the group overview start below the persistent top navigation row.
+/// The largest system text scale the riding chrome follows.
 ///
-/// The row above them carries menu, clock and speed/compass. A fixed offset
-/// keeps those three controls at the top without allowing either header card to
-/// slide underneath them as its contents change.
+/// The Riding display size (Small, Medium, Large) is the rider's control for a
+/// bigger turn arrow, distance and ETA, and it multiplies the system text scale
+/// rather than replacing it. Left uncapped, Large at a 2.0 system scale made the
+/// whole band taller than the phone (#848) - there is no framing that keeps the
+/// rider's marker visible under a band of that size. So the chrome honours
+/// the system setting up to this value, which covers iOS Dynamic Type through
+/// its non-accessibility range and Android's Large and Largest sizes, and holds
+/// there; a rider who wants more asks the app for it by size.
 @visibleForTesting
-const double portraitNavigationHeaderTopOffset = 154;
+const double rideChromeMaximumTextScale = 1.3;
+
+/// The largest text the riding chrome is ever drawn at, as a multiple of the
+/// Small size: the Large riding display size on a phone with default text.
+const double _rideChromeMaximumEffectiveScale = 1.65;
+
+/// How far the system text size is followed at [size] (#848).
+///
+/// The size the rider chose is already the in-app answer to "make it bigger", so
+/// the system setting is followed only as far as it leaves the combined scale at
+/// or under [_rideChromeMaximumEffectiveScale] - and never past
+/// [rideChromeMaximumTextScale]. Small and Medium keep 1.3; Large, which is the
+/// biggest the chrome gets, holds the system scale at 1.0 rather than stacking a
+/// second enlargement on the first.
+@visibleForTesting
+double rideChromeTextScaleCeiling(RidingDisplaySize size) => math.max(
+  1.0,
+  math.min(
+    rideChromeMaximumTextScale,
+    _rideChromeMaximumEffectiveScale / size.scale,
+  ),
+);
 
 /// Turn and TEC panes retain strong contrast while allowing some map context
 /// through them. Progress, actions and the mini-map keep their denser fills.
@@ -448,6 +478,7 @@ class RideMapFeature extends StatefulWidget {
     this.initialRouteStartConnector,
     this.onRouteStartConnectorChanged,
     this.onReportHazard,
+    this.onLeaderBroadcast,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
@@ -520,6 +551,7 @@ class RideMapFeature extends StatefulWidget {
     ImportedRoute? initialRouteStartConnector,
     ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged,
     Future<void> Function(HazardType type)? onReportHazard,
+    Future<void> Function(QuickMessage message)? onLeaderBroadcast,
     List<MapEmergencyContact> emergencyContacts = const [],
     Future<void> Function()? onEmergencyAlert,
     Future<void> Function(QuickMessage message)? onEmergencyIssue,
@@ -586,6 +618,7 @@ class RideMapFeature extends StatefulWidget {
     onDismissQuickMessageInterrupt: onDismissQuickMessageInterrupt,
     onDismissQuickMessageReceipt: onDismissQuickMessageReceipt,
     onReportHazard: onReportHazard,
+    onLeaderBroadcast: onLeaderBroadcast,
     emergencyContacts: emergencyContacts,
     onEmergencyAlert: onEmergencyAlert,
     onEmergencyIssue: onEmergencyIssue,
@@ -686,6 +719,12 @@ class RideMapFeature extends StatefulWidget {
   final ImportedRoute? initialRouteStartConnector;
   final ValueChanged<ImportedRoute?>? onRouteStartConnectorChanged;
   final Future<void> Function(HazardType type)? onReportHazard;
+
+  /// Sends one of the leader's broadcasts to the group (#854). Non-null only on the
+  /// leader's phone, for a running group ride; the map offers the control exactly
+  /// when this is there, and the shell decides that with
+  /// `leaderBroadcastsAvailable`.
+  final Future<void> Function(QuickMessage message)? onLeaderBroadcast;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
@@ -881,6 +920,7 @@ class _RideMapFeatureState extends State<RideMapFeature> {
         onDismissQuickMessageInterrupt: widget.onDismissQuickMessageInterrupt,
         onDismissQuickMessageReceipt: widget.onDismissQuickMessageReceipt,
         onReportHazard: widget.onReportHazard,
+        onLeaderBroadcast: widget.onLeaderBroadcast,
         emergencyContacts: widget.emergencyContacts,
         onEmergencyAlert: widget.onEmergencyAlert,
         onEmergencyIssue: widget.onEmergencyIssue,
@@ -973,6 +1013,7 @@ class RideMapScreen extends StatefulWidget {
     this.onDismissQuickMessageInterrupt,
     this.onDismissQuickMessageReceipt,
     this.onReportHazard,
+    this.onLeaderBroadcast,
     this.emergencyContacts = const [],
     this.onEmergencyAlert,
     this.onEmergencyIssue,
@@ -1090,6 +1131,12 @@ class RideMapScreen extends StatefulWidget {
   final ValueChanged<String>? onDismissQuickMessageInterrupt;
   final ValueChanged<String>? onDismissQuickMessageReceipt;
   final Future<void> Function(HazardType type)? onReportHazard;
+
+  /// Sends one of the leader's broadcasts to the group (#854). Non-null only on the
+  /// leader's phone, for a running group ride; the map offers the control exactly
+  /// when this is there, and the shell decides that with
+  /// `leaderBroadcastsAvailable`.
+  final Future<void> Function(QuickMessage message)? onLeaderBroadcast;
   final List<MapEmergencyContact> emergencyContacts;
   final Future<void> Function()? onEmergencyAlert;
   final Future<void> Function(QuickMessage message)? onEmergencyIssue;
@@ -1253,6 +1300,14 @@ class _RideMapScreenState extends State<RideMapScreen>
   final Map<int, Offset> _mapPointerOrigins = {};
   late final http.Client _routingClient;
   late final RoadRoutingService _roadRoutingService;
+
+  /// The routing that planning goes through: [_roadRoutingService] with its
+  /// answers checked against the rider's preferences (#840). The same service
+  /// as [_roadRoutingService] when one was injected, so a test's router is used
+  /// exactly as given. Not for the short legs a ride makes to rejoin or reach
+  /// its start, which are not planning decisions.
+  late final RoadRoutingService _planningRoutingService;
+  late final RouteVerifier? _routeVerifier;
   late final Future<DiscoverySuggestionQueue> _suggestionQueue;
   late final DiscoverySuggestionConfiguration _suggestionConfiguration;
   late final DestinationRoutePlanner _defaultDestinationRoutePlanner;
@@ -1373,6 +1428,15 @@ class _RideMapScreenState extends State<RideMapScreen>
   bool _cameraFramingRefreshScheduled = false;
   bool _emergencyAlertSending = false;
   bool _emergencyAlertSent = false;
+  // The one-tap alert to the group (#849): in flight, and just sent. The second
+  // is held for a few seconds so a rider in gloves, who cannot feel the tap, can
+  // see that it took.
+  bool _alertSending = false;
+  bool _alertSent = false;
+  Timer? _alertSentTimer;
+  // The leader's broadcast list is open (#854), so the button cannot stack a
+  // second sheet over it.
+  bool _broadcastSheetOpen = false;
   bool _emergencyActionsOpen = false;
   bool _emergencyActionsDismissed = false;
   Object? _handledChangeRouteRequestToken;
@@ -1658,15 +1722,28 @@ class _RideMapScreenState extends State<RideMapScreen>
             routeUrl: routingConfiguration.motorcycleRoutingUrl,
           ),
         );
+    final routeVerifier = widget.roadRoutingService == null
+        ? RouteVerifier.production(
+            client: _routingClient,
+            configuration: routingConfiguration,
+          )
+        : null;
+    _routeVerifier = routeVerifier;
+    _planningRoutingService = routeVerifier == null
+        ? _roadRoutingService
+        : VerifiedRoadRoutingService(
+            routing: _roadRoutingService,
+            verifier: routeVerifier,
+          );
     _defaultDestinationRoutePlanner = DestinationRoutePlanner(
       searchService: NominatimDestinationSearchService(
         client: _routingClient,
         baseUrl: routingConfiguration.geocodingBaseUrl,
       ),
-      routingService: _roadRoutingService,
+      routingService: _planningRoutingService,
     );
     _defaultRouteGeometryEnricher = RouteGeometryEnricher(
-      routingService: _roadRoutingService,
+      routingService: _planningRoutingService,
     );
     // Valhalla, not OSRM: the configured OSRM demo server caps `/match` at ten
     // trace coordinates, so this path returned 400 for every import ever
@@ -1777,6 +1854,12 @@ class _RideMapScreenState extends State<RideMapScreen>
       widget.enforcementAlert?.addListener(_onEnforcementAlertChanged);
       _onEnforcementAlertChanged();
     }
+    if (oldWidget.isNavigating != widget.isNavigating ||
+        oldWidget.rideStarted != widget.rideStarted) {
+      // The discovery layers are drawn only while the rider is not navigating
+      // (#846), so the native sources have to follow the change.
+      _scheduleMapLibreSync(overlays: true);
+    }
     if (oldWidget.speedLimitDisplay != widget.speedLimitDisplay) {
       if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
       _ownsSpeedLimitDisplay = widget.speedLimitDisplay == null;
@@ -1842,6 +1925,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     _riderStoppedTimer = null;
     _basemapViewLoadWatchdog?.cancel();
     _basemapViewLoadWatchdog = null;
+    _alertSentTimer?.cancel();
     _riderSpeed.dispose();
     _mapBearing.dispose();
     if (_ownsSpeedLimitDisplay) _speedLimitDisplay.dispose();
@@ -2610,22 +2694,30 @@ class _RideMapScreenState extends State<RideMapScreen>
                   ),
                 ),
                 Positioned.fill(
-                  child: _buildRideChrome(
-                    landscape: landscape,
-                    hideChrome: hideChrome,
-                    markerOverviewActive: markerOverviewActive,
-                    hasGuidance: hasGuidance,
-                    routeStartOfferDistance: routeStartOfferDistance,
-                    showRideMenu: showRideMenu,
-                    showLeaveRide: showLeaveRide,
-                    showFollowMe: showFollowMe,
-                    canShowGroupMiniMap: canShowGroupMiniMap,
-                    groupMiniMapWidth: groupMiniMapWidth,
-                    groupMiniMapHeight: groupMiniMapHeight,
-                    safeLeft: overlayLeft,
-                    safeRight: overlayRight,
-                    safeTop: overlayTop,
-                    safeBottom: overlayBottom,
+                  // The riding chrome follows the system text size only as far as
+                  // [rideChromeTextScaleCeiling]; the rider's own Riding display
+                  // size is the control for going larger than that (#848).
+                  child: MediaQuery.withClampedTextScaling(
+                    maxScaleFactor: rideChromeTextScaleCeiling(
+                      widget.ridingDisplaySize,
+                    ),
+                    child: _buildRideChrome(
+                      landscape: landscape,
+                      hideChrome: hideChrome,
+                      markerOverviewActive: markerOverviewActive,
+                      hasGuidance: hasGuidance,
+                      routeStartOfferDistance: routeStartOfferDistance,
+                      showRideMenu: showRideMenu,
+                      showLeaveRide: showLeaveRide,
+                      showFollowMe: showFollowMe,
+                      canShowGroupMiniMap: canShowGroupMiniMap,
+                      groupMiniMapWidth: groupMiniMapWidth,
+                      groupMiniMapHeight: groupMiniMapHeight,
+                      safeLeft: overlayLeft,
+                      safeRight: overlayRight,
+                      safeTop: overlayTop,
+                      safeBottom: overlayBottom,
+                    ),
                   ),
                 ),
                 // Route entry, and only while the map is still a planning
@@ -2943,6 +3035,10 @@ class _RideMapScreenState extends State<RideMapScreen>
                           progress: progress,
                           distanceUnit: widget.distanceUnit,
                           displaySize: widget.ridingDisplaySize,
+                          // Portrait gives the ETA one row of the bottom band,
+                          // where landscape keeps its card in the left rail
+                          // (#848).
+                          strip: !landscape,
                           // The time is now a consistent map label in both
                           // orientations rather than changing hierarchy with the
                           // ETA card.
@@ -3157,13 +3253,28 @@ class _RideMapScreenState extends State<RideMapScreen>
               ),
             )
           : null;
-      // Reporting a camera or a patrol car is a ride action, not a route action,
-      // and it earns a place beside them (#125).
+      // Alerting the group is a ride action, not a route action, and it earns a
+      // place beside them (#125). One tap, and a big one (#849).
       final reportButton = !widget.rideStarted || widget.onReportHazard == null
           ? null
-          : _ReportSightingButton(onPressed: _reportEnforcementSighting);
+          : _ReportSightingButton(
+              onPressed: _alertSending ? null : _raiseAlert,
+              sent: _alertSent,
+            );
+      // The leader's list of one-tap broadcasts (#854): present only for the
+      // leader of a running group ride, and beside REPORT because it is the same
+      // kind of thing - a glove-sized ride action, not a route action.
+      final broadcastButton =
+          !widget.rideStarted || widget.onLeaderBroadcast == null
+          ? null
+          : LeaderBroadcastButton(
+              onPressed: _broadcastSheetOpen ? null : _openLeaderBroadcasts,
+            );
       final hasActions =
-          sosButton != null || leaveButton != null || reportButton != null;
+          sosButton != null ||
+          leaveButton != null ||
+          reportButton != null ||
+          broadcastButton != null;
       // One arrangement per orientation, fixed for every state (#142). #139 used
       // a `Wrap` in landscape, and a `Wrap` decides its runs from its children's
       // measured widths - so the moment SOS said "ALERT SENT" the rail could no
@@ -3180,7 +3291,17 @@ class _RideMapScreenState extends State<RideMapScreen>
       final leaveSubtree = leaveButton == null || actionTargetHeight == null
           ? leaveButton
           : SizedBox(height: actionTargetHeight, child: leaveButton);
-      final reportSubtree = reportButton;
+      final reportSubtree = reportButton == null || broadcastButton == null
+          ? (reportButton ?? broadcastButton)
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                reportButton,
+                const SizedBox(width: 8),
+                broadcastButton,
+              ],
+            );
       final safetyCluster = !hasActions
           ? null
           : landscape
@@ -3306,7 +3427,9 @@ class _RideMapScreenState extends State<RideMapScreen>
         final leftRailBottom =
             safeBottom +
             10 +
-            (miniMap == null && safetyCluster != null ? 184 : 0);
+            (miniMap == null && safetyCluster != null
+                ? _landscapeActionStackReservedHeight
+                : 0);
         return Stack(
           children: [
             if (rideMenu != null)
@@ -3421,10 +3544,40 @@ class _RideMapScreenState extends State<RideMapScreen>
         );
       }
 
-      // Portrait keeps only glove targets in the bottom action run. Speed and
-      // compass are glance surfaces, so they live at the requested top-right
-      // rather than charging the navigation camera for permanent bottom chrome.
+      // Portrait keeps every navigational surface in the one bottom band (#848).
+      // The ETA and the group overview used to float 154 pixels down from the
+      // top, which is the middle of the road ahead on a mounted phone: a tester
+      // reported they covered both the map and the rider's own bike. Speed and
+      // compass stay in the top-right corner as glances, with the menu and the
+      // clock; everything else a rider reads or presses is below the marker.
+      //
+      // The group overview shares the row of targets rather than adding one: the
+      // SOS/LEAVE stack and REPORT leave the trailing half of that row empty, so
+      // the overview costs the band almost no height.
       final actionCluster = hasActions ? safetyCluster : null;
+      final actionRow = actionCluster == null && miniMap == null
+          ? null
+          : Row(
+              key: const Key('map-portrait-action-row'),
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                ?actionCluster,
+                if (miniMap != null)
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      // Scaled down rather than overflowing when a narrow phone
+                      // leaves less than the overview's own width beside the
+                      // targets.
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: miniMap,
+                      ),
+                    ),
+                  ),
+              ],
+            );
       return Stack(
         children: [
           if (rideMenu != null)
@@ -3432,30 +3585,6 @@ class _RideMapScreenState extends State<RideMapScreen>
               left: safeLeft + 12,
               top: safeTop + portraitRideMenuTopOffset,
               child: rideMenu,
-            ),
-          if (routeProgressPanel != null)
-            Positioned(
-              key: const Key('route-progress-panel-position'),
-              left: safeLeft + 12,
-              // ETA and the group overview form one aligned header below the
-              // persistent menu/clock/speed row.
-              top: safeTop + portraitNavigationHeaderTopOffset,
-              width: math.min(
-                210,
-                (MediaQuery.sizeOf(context).width - safeLeft - safeRight) *
-                    0.54,
-              ),
-              child: routeProgressPanel,
-            ),
-          // The group overview stays paired with ETA below the persistent top
-          // controls. It is a glance rather than a target, and keeping it out of
-          // the bottom band stops charging the camera's forward bias for a
-          // surface nobody acts on.
-          if (miniMap != null)
-            Positioned(
-              right: safeRight + 12,
-              top: safeTop + portraitNavigationHeaderTopOffset,
-              child: miniMap,
             ),
           if (widget.isNavigating)
             Positioned(
@@ -3505,6 +3634,14 @@ class _RideMapScreenState extends State<RideMapScreen>
                     ),
                   ...urgent,
                   ?tecGap,
+                  // The trip summary is the least urgent surface in the band, so
+                  // it is the top of it: a strip, not the card landscape uses
+                  // (#848).
+                  if (routeProgressPanel != null)
+                    KeyedSubtree(
+                      key: const Key('route-progress-panel-position'),
+                      child: routeProgressPanel,
+                    ),
                   // Rare, and its own run: it appears only when the map is off
                   // the rider. It belongs immediately above the turn pane so
                   // returning to follow mode is next to the viewport it affects.
@@ -3513,7 +3650,7 @@ class _RideMapScreenState extends State<RideMapScreen>
                   // The turn banner is the last pane above the permanent
                   // targets, keeping the road ahead clear (#133).
                   ?guidance,
-                  ?actionCluster,
+                  ?actionRow,
                   ?completionSuggestion,
                   ?junctionCard,
                 ],
@@ -3603,6 +3740,10 @@ class _RideMapScreenState extends State<RideMapScreen>
               .where((points) => points.length >= 2)
               .toList(growable: false) ??
           const [],
+      leaderPaths: [
+        for (final trace in _visibleRiderTrails)
+          if (trace.kind == RiderTrailKind.leader) trace.points,
+      ],
       currentPosition: _effectivePosition,
       localHeadingDegrees: _localTravelHeading,
       riders: groupRiders,
@@ -3610,6 +3751,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       localMotorcycleStyle: widget.localMotorcycleStyle,
       localRiderSymbol: widget.localRiderSymbol,
       localDisplayName: widget.localDisplayName,
+      localColor: widget.localBadgeColor,
       onTap: widget.onOpenRoster,
       renderer: groupMiniMapRenderer(
         mapLibreEnabled: _basemap.usesMapLibre,
@@ -3799,18 +3941,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         // location recording has a gap; the latter shows where the bike really
         // went, including while navigating without a group ride (#658).
         if (route != null || _visibleRiderTrails.isNotEmpty)
-          PolylineLayer(
-            polylines: [
-              ..._progressGeometry.riddenPaths.map(
-                (path) => _routePolyline(path, RouteTrailStyle.travelled),
-              ),
-              ..._trailPolylines(dashed: false),
-              ..._progressGeometry.remainingPaths.map(
-                (path) => _routePolyline(path, RouteTrailStyle.routeAhead),
-              ),
-              ..._trailPolylines(dashed: true),
-            ],
-          ),
+          PolylineLayer(polylines: _orderedLinePolylines()),
         if (route != null || _visibleRiderTrails.isNotEmpty)
           MarkerLayer(
             key: const Key('trail-direction-arrow-layer'),
@@ -4337,12 +4468,15 @@ class _RideMapScreenState extends State<RideMapScreen>
   /// ride, when the route prompt and LEAVE are the only competing surfaces.
   static const _landscapeSafetyBandFloor = 72.0;
 
-  /// Three 48 px targets, two 8 px gaps, and the map-edge clearance.
+  /// Two 48 px targets, the 96 px alert target, two 8 px gaps, and the map-edge
+  /// clearance.
   ///
   /// Landscape now stacks ALERT, LEAVE and REPORT vertically (#533). Keeping
   /// the old one-row reserve let an interrupt cover the lower two controls and
-  /// absorb their taps.
-  static const _landscapeActionStackReservedHeight = 184.0;
+  /// absorb their taps. REPORT grew from 62 to 96 with the one-tap alert (#849),
+  /// and this follows it rather than restating a number.
+  static const _landscapeActionStackReservedHeight =
+      48 + 8 + 48 + 8 + _ReportSightingButton.side + 10;
 
   /// The bottom band's height as last laid out.
   ///
@@ -5568,7 +5702,7 @@ class _RideMapScreenState extends State<RideMapScreen>
               style: style,
               symbol: overlay.riderSymbol,
               displayName: overlay.riderDisplayName ?? overlay.label,
-              badgeColor: overlay.color,
+              badgeColor: RideMapPalette.riderFill(overlay.color),
               size: 34,
             ),
           );
@@ -5763,74 +5897,32 @@ class _RideMapScreenState extends State<RideMapScreen>
           circleStrokeColor: '#10151C',
         ),
       );
-      // Solid trails are drawn before the planned route so the leader's wider
-      // trail reads as a corridor beneath it rather than hiding it.
       await controller.addGeoJsonSource(
         _riddenRouteSource,
         _riddenRouteGeoJson(),
-      );
-      await controller.addLineLayer(
-        _riddenRouteSource,
-        'ride-relay-route-ridden-border',
-        ml.LineLayerProperties(
-          lineColor: _casingHex,
-          lineWidth: RouteTrailStyle.travelled.casingWidthPixels,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      await controller.addLineLayer(
-        _riddenRouteSource,
-        'ride-relay-route-ridden',
-        ml.LineLayerProperties(
-          lineColor: _hexColor(RouteTrailStyle.travelled.color),
-          lineWidth: RouteTrailStyle.travelled.widthPixels,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
       );
       await controller.addGeoJsonSource(
         _riderTrailSource,
         _riderTrailGeoJson(),
       );
-      await _addTrailLayers(controller, RiderTrailKind.leader);
-      await _addTrailLayers(controller, RiderTrailKind.rider);
       await controller.addGeoJsonSource(
         _remainingRouteSource,
         _remainingRouteGeoJson(),
       );
-      await controller.addLineLayer(
-        _remainingRouteSource,
-        'ride-relay-route-remaining-border',
-        ml.LineLayerProperties(
-          lineColor: _casingHex,
-          lineWidth: RouteTrailStyle.routeAhead.casingWidthPixels,
-          lineDasharray: RouteTrailStyle.routeAhead.maplibreCasingDashArray,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      await controller.addLineLayer(
-        _remainingRouteSource,
-        'ride-relay-route-remaining',
-        ml.LineLayerProperties(
-          lineColor: _hexColor(RouteTrailStyle.routeAhead.color),
-          lineWidth: RouteTrailStyle.routeAhead.widthPixels,
-          lineDasharray: RouteTrailStyle.routeAhead.maplibreDashArray,
-          lineCap: 'round',
-          lineJoin: 'round',
-        ),
-        enableInteraction: false,
-      );
-      // An off-route trail belongs on top of the plan: it is the deviation from
-      // it.
-      await _addTrailLayers(controller, RiderTrailKind.offRoute);
-      // The advisory rejoin route (#102) goes above everything else: it is the
-      // one line the affected rider is being asked to follow right now.
-      await _addTrailLayers(controller, RiderTrailKind.rejoin);
+      // Bottom to top, in the one order the flutter_map renderer reads too: the
+      // route lines, the leader's trail over them, then the rejoin route. Every
+      // rider marker is a symbol layer added below this loop, so it sits over
+      // all of them (#842).
+      for (final line in RouteTrailStyle.lineOrder) {
+        switch (line.trailKind) {
+          case final kind?:
+            await _addTrailLayers(controller, kind);
+          case null when line == RideMapLine.riddenRoute:
+            await _addRiddenRouteLayers(controller);
+          case null:
+            await _addRemainingRouteLayers(controller);
+        }
+      }
       await controller.addGeoJsonSource(
         _trailDirectionArrowSource,
         _trailDirectionArrowGeoJson(),
@@ -5896,7 +5988,10 @@ class _RideMapScreenState extends State<RideMapScreen>
         'ride-relay-position-badge',
         _RideMapScreenState._riderShapeProperties(
           diameter: _localBadgeRadius * 2,
-          color: _hexColor(widget.localBadgeColor),
+          color: _hexColor(RideMapPalette.riderFill(widget.localBadgeColor)),
+          // The same white edge the flutter_map renderer gives the local rider.
+          borderColor: RideMapPalette.localRiderOutlineHex,
+          borderWidth: 3,
         ),
         enableInteraction: false,
       );
@@ -5987,6 +6082,66 @@ class _RideMapScreenState extends State<RideMapScreen>
     }
   }
 
+  /// The planned route the rider has already covered.
+  Future<void> _addRiddenRouteLayers(
+    ml.MapLibreMapController controller,
+  ) async {
+    final style = RideMapPalette.lineStyle(RideMapLine.riddenRoute)!;
+    await controller.addLineLayer(
+      _riddenRouteSource,
+      'ride-relay-route-ridden-border',
+      ml.LineLayerProperties(
+        lineColor: _casingHex,
+        lineWidth: style.casingWidthPixels,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      enableInteraction: false,
+    );
+    await controller.addLineLayer(
+      _riddenRouteSource,
+      'ride-relay-route-ridden',
+      ml.LineLayerProperties(
+        lineColor: _hexColor(style.color),
+        lineWidth: style.widthPixels,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      enableInteraction: false,
+    );
+  }
+
+  /// The planned route that has not been ridden yet.
+  Future<void> _addRemainingRouteLayers(
+    ml.MapLibreMapController controller,
+  ) async {
+    final style = RideMapPalette.lineStyle(RideMapLine.remainingRoute)!;
+    await controller.addLineLayer(
+      _remainingRouteSource,
+      'ride-relay-route-remaining-border',
+      ml.LineLayerProperties(
+        lineColor: _casingHex,
+        lineWidth: style.casingWidthPixels,
+        lineDasharray: style.maplibreCasingDashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      enableInteraction: false,
+    );
+    await controller.addLineLayer(
+      _remainingRouteSource,
+      'ride-relay-route-remaining',
+      ml.LineLayerProperties(
+        lineColor: _hexColor(style.color),
+        lineWidth: style.widthPixels,
+        lineDasharray: style.maplibreDashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+      ),
+      enableInteraction: false,
+    );
+  }
+
   /// Adds one trail kind's casing and line layers.
   ///
   /// Every paint value is a constant per layer, filtered by kind, because
@@ -5997,7 +6152,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     ml.MapLibreMapController controller,
     RiderTrailKind kind,
   ) async {
-    final style = RouteTrailStyle.forTrail(kind);
+    final style = RideMapPalette.lineStyle(RouteTrailStyle.lineForTrail(kind))!;
     final filter = <Object>[
       '==',
       ['get', 'kind'],
@@ -6259,17 +6414,33 @@ class _RideMapScreenState extends State<RideMapScreen>
             : StrokePattern.dashed(segments: style.dashPixels!),
       );
 
-  /// Trail polylines of one pattern, widest first so a wider trail never hides
-  /// a narrower one. MapLibre gets the same ordering from its per-kind layers.
-  Iterable<Polyline> _trailPolylines({required bool dashed}) =>
-      (_visibleRiderTrails
-              .where((trace) => trace.style.isDashed == dashed)
-              .toList()
-            ..sort(
-              (first, second) =>
-                  second.style.widthPixels.compareTo(first.style.widthPixels),
-            ))
-          .map((trace) => _routePolyline(trace.points, trace.style));
+  /// Every route and trail line, bottom first, in
+  /// [RouteTrailStyle.lineOrder] - the order the MapLibre renderer adds its
+  /// layers in too, so the leader's trail is over the route lines on both
+  /// platforms (#842).
+  List<Polyline> _orderedLinePolylines() => [
+    for (final line in RouteTrailStyle.lineOrder)
+      ...switch (line.trailKind) {
+        final kind? => _trailPolylines(kind),
+        null when line == RideMapLine.riddenRoute =>
+          _progressGeometry.riddenPaths.map(
+            (path) => _routePolyline(
+              path,
+              RideMapPalette.lineStyle(RideMapLine.riddenRoute)!,
+            ),
+          ),
+        null => _progressGeometry.remainingPaths.map(
+          (path) => _routePolyline(
+            path,
+            RideMapPalette.lineStyle(RideMapLine.remainingRoute)!,
+          ),
+        ),
+      },
+  ];
+
+  Iterable<Polyline> _trailPolylines(RiderTrailKind kind) => _visibleRiderTrails
+      .where((trace) => trace.kind == kind)
+      .map((trace) => _routePolyline(trace.points, trace.style));
 
   /// Which lines carry direction arrows, in priority order.
   ///
@@ -6297,7 +6468,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           paths: _progressGeometry.remainingPaths,
           reserve: _plannedRouteArrowReserve,
           style: _TrailArrowStyle(
-            color: RouteTrailStyle.routeAhead.color,
+            color: RideMapPalette.lineStyle(RideMapLine.remainingRoute)!.color,
             idPrefix: 'route-ahead',
             semanticLabel: 'Route direction',
           ),
@@ -6360,7 +6531,22 @@ class _RideMapScreenState extends State<RideMapScreen>
   Object? _discoverySelectionKey;
   List<Object> _discoverySelectionCache = const [];
 
+  /// What the map is being used for, which decides whether the discovery layers
+  /// are drawn at all (#846).
+  DiscoveryLayerContext get _discoveryLayerContext => discoveryLayerContextFor(
+    navigating: widget.isNavigating,
+    rideStarted: widget.rideStarted,
+    hasRoute: _route != null,
+  );
+
   List<Object> get _selectedDiscoveries {
+    if (!discoveryLayersShownIn(_discoveryLayerContext)) {
+      // Not drawn while navigating. The saved layer choices are untouched, and
+      // the cached selection is forgotten so it is worked out afresh, rather
+      // than replayed empty, when navigation ends.
+      _discoverySelectionKey = null;
+      return _discoverySelectionCache = const [];
+    }
     final anchors = _discoveryAnchorPoints;
     final key = (
       _discoveryCatalogue,
@@ -6563,7 +6749,7 @@ class _RideMapScreenState extends State<RideMapScreen>
   static ml.SymbolLayerProperties _riderShapeProperties({
     required double diameter,
     required Object color,
-    Object borderColor = '#10151C',
+    Object borderColor = RideMapPalette.otherRiderOutlineHex,
     double borderWidth = 2,
   }) => ml.SymbolLayerProperties(
     iconImage: [
@@ -6655,7 +6841,7 @@ class _RideMapScreenState extends State<RideMapScreen>
             point: overlay.point,
             properties: {
               'label': overlay.label,
-              'color': _hexColor(overlay.color),
+              'color': _hexColor(RideMapPalette.riderFill(overlay.color)),
               'bearing': ?overlay.headingDegrees,
               'hazardSymbol': overlay.hazardSymbol != null,
               'iconImage': _overlayIconImage(overlay),
@@ -6842,6 +7028,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           duration: planned.duration,
           twistinessScore: planned.twistinessScore,
           warnings: planned.warnings,
+          verification: planned.verification,
           canEditStops: true,
           previousRoute: previousCandidate,
         );
@@ -6904,6 +7091,7 @@ class _RideMapScreenState extends State<RideMapScreen>
         );
         final planner = CircularRidePlanner(
           routingService: _roadRoutingService,
+          verifier: _routeVerifier,
         );
         var plan = await planner.generate(preparedRequest);
         if (!_isCircularRideGenerationCurrent(generation)) return;
@@ -6917,6 +7105,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           duration: plan.duration,
           twistinessScore: plan.twistinessScore,
           warnings: _circularRideReviewWarnings(plan),
+          verification: plan.routeVerification,
           canEditStops: true,
           canGenerateAlternative: true,
           onGenerateAlternative: () async {
@@ -6930,6 +7119,7 @@ class _RideMapScreenState extends State<RideMapScreen>
               duration: plan.duration,
               twistinessScore: plan.twistinessScore,
               warnings: _circularRideReviewWarnings(plan),
+              verification: plan.routeVerification,
             );
           },
         );
@@ -7188,6 +7378,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     double? distanceMeters,
     Duration? duration,
     List<String> warnings = const [],
+    RouteVerification? verification,
   }) async {
     // A backstop, not the rider-facing path: every caller that a rider can
     // reach checks the authority first and says so plainly. Reaching this
@@ -7224,6 +7415,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       distanceMeters: distanceMeters,
       duration: duration,
       warnings: warnings,
+      verification: verification,
       previousRoute: comparisonRoute,
       comparisonRoute: comparisonRoute,
     );
@@ -7237,6 +7429,7 @@ class _RideMapScreenState extends State<RideMapScreen>
     Duration? duration,
     double? twistinessScore,
     List<String> warnings = const [],
+    RouteVerification? verification,
     bool canEditStops = false,
     bool canGenerateAlternative = false,
     RouteAlternativeCallback? onGenerateAlternative,
@@ -7274,6 +7467,11 @@ class _RideMapScreenState extends State<RideMapScreen>
       duration: duration,
       twistinessScore: twistinessScore,
       warnings: reviewWarnings,
+      // The geometry that is reviewed is what was checked, so re-snapped
+      // geometry is judged on its own check and not on the plan's (#840).
+      verification: enrichment.changed
+          ? enrichment.verification ?? verification
+          : verification,
       previousRoute: previousRoute ?? _route,
       comparisonRoute: comparisonRoute,
       canEditStops: canEditStops,
@@ -7282,7 +7480,7 @@ class _RideMapScreenState extends State<RideMapScreen>
       showMarkerPlan: widget.markerFeaturesEnabled,
       onMarkerReviewChanged: (review) => markerReview = review,
       onReshapeRoute: (candidate, shapingPoints) => RouteReshapePlanner(
-        routingService: _roadRoutingService,
+        routingService: _planningRoutingService,
       ).reshape(candidate, shapingPoints),
       onRouteChanged: (candidate) => reviewedRoute = candidate,
     );
@@ -8381,60 +8579,65 @@ class _RideMapScreenState extends State<RideMapScreen>
     );
   }
 
-  Future<void> _reportEnforcementSighting() async {
+  /// Alerts the group with one tap (#849): no sheet, no choice, no confirmation.
+  ///
+  /// This used to open a sheet asking whether it was a speed camera or the police.
+  /// It is neither, or either, or something else - the rider has seen something
+  /// the group should look out for, and a rider in gloves on a moving bike does
+  /// not have a second tap to spend on saying what. A stray tap costs a glance on
+  /// everyone else's screen; the alternative cost the warning.
+  Future<void> _raiseAlert() async {
     final report = widget.onReportHazard;
-    if (report == null) return;
-    final type = await showModalBottomSheet<HazardType>(
-      context: context,
-      backgroundColor: const Color(0xFF161D26),
-      showDragHandle: true,
-      // Without this the sheet is capped at nine sixteenths of the screen - 219
-      // pixels on a 390 pixel landscape phone - and two glove-sized targets plus
-      // a title and a cancel do not fit, so the second one fell below the fold
-      // and selecting police needed a scroll (#133). The sheet takes the height
-      // it needs instead of the targets being shrunk to fit a cap.
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(bottom: 14),
-                child: Text(
-                  'Tell the group',
-                  style: TextStyle(
-                    color: Color(0xFFE4E9EF),
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              _ReportSightingOptions(
-                onSpeedCamera: () =>
-                    Navigator.of(sheetContext).pop(HazardType.speedCamera),
-                onPolice: () =>
-                    Navigator.of(sheetContext).pop(HazardType.policeActivity),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(sheetContext).pop(),
-                child: const Text('Cancel'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (type == null || !mounted) return;
+    if (report == null || _alertSending) return;
+    setState(() => _alertSending = true);
     try {
-      await report(type);
-      _showMessage('${type.label} reported to the group.');
+      await report(HazardType.alert);
+      if (!mounted) return;
+      _alertSentTimer?.cancel();
+      setState(() {
+        _alertSending = false;
+        _alertSent = true;
+      });
+      _alertSentTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _alertSent = false);
+      });
+      _showMessage('Alert sent to the group.');
     } on FormatException catch (error) {
-      _showMessage('Report not sent. ${error.message}');
+      if (!mounted) return;
+      setState(() => _alertSending = false);
+      _showMessage('Alert not sent. ${error.message}');
     } on Object {
-      _showMessage('Report not sent. Try again in a moment.');
+      if (!mounted) return;
+      setState(() => _alertSending = false);
+      _showMessage('Alert not sent. Try again in a moment.');
+    }
+  }
+
+  /// Opens the leader's broadcasts and sends the one they tap (#854).
+  ///
+  /// One tap on an option sends it and closes the list: no confirmation, because
+  /// the leader is riding and none of these is an emergency.
+  Future<void> _openLeaderBroadcasts() async {
+    final send = widget.onLeaderBroadcast;
+    if (send == null || _broadcastSheetOpen) return;
+    setState(() => _broadcastSheetOpen = true);
+    final QuickMessage? message;
+    try {
+      message = await showLeaderBroadcastSheet(context);
+    } finally {
+      if (mounted) setState(() => _broadcastSheetOpen = false);
+    }
+    if (message == null || !mounted) return;
+    try {
+      await send(message);
+      if (!mounted) return;
+      _showMessage('${message.label} sent to the group.');
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      _showMessage('Not sent. ${error.message}');
+    } on Object {
+      if (!mounted) return;
+      _showMessage('Not sent. Try again in a moment.');
     }
   }
 
@@ -8598,6 +8801,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           final route = await _reviewAndActivateRoute(
             inAppRoute.route,
             warnings: inAppRoute.reviewNotes,
+            verification: inAppRoute.verification,
           );
           final target = inAppRoute.handoffTarget;
           if (route != null && target != null && mounted) {
@@ -8927,7 +9131,8 @@ class MapOverlayTrace {
   final String label;
   final RiderTrailKind kind;
 
-  RouteLineStyle get style => RouteTrailStyle.forTrail(kind);
+  RouteLineStyle get style =>
+      RideMapPalette.lineStyle(RouteTrailStyle.lineForTrail(kind))!;
 }
 
 /// How one source's arrows are drawn. Carried through the selection untouched.
@@ -9012,6 +9217,74 @@ List<MapOverlayMarker> groupMiniMapRiders(
     .where((marker) => marker.id.startsWith('rider-'))
     .where((marker) => marker.positionFreshness.isTrackedAsContact)
     .toList(growable: false);
+
+/// One rider on the group overview: where they are and how they are drawn.
+///
+/// Built once by [groupMiniMapMarkers] and read by every overview renderer, so
+/// the colours cannot differ between those renderers or from the main map (#844).
+class GroupMiniMapMarker {
+  const GroupMiniMapMarker({
+    required this.id,
+    required this.point,
+    required this.fill,
+    required this.outline,
+    required this.symbol,
+    required this.displayName,
+    required this.motorcycleStyle,
+    required this.isLocal,
+    this.headingDegrees,
+  });
+
+  final String id;
+  final GeoPoint point;
+
+  /// The rider's own identity colour: the same one the main map and the roster
+  /// show for them.
+  final Color fill;
+  final Color outline;
+  final RiderSymbol symbol;
+  final String displayName;
+  final MotorcycleIconStyle motorcycleStyle;
+  final bool isLocal;
+  final double? headingDegrees;
+}
+
+/// Every marker the group overview draws, other riders first and the local
+/// rider on top. Colours come from [RideMapPalette], like the main map's.
+List<GroupMiniMapMarker> groupMiniMapMarkers({
+  required List<MapOverlayMarker> riders,
+  required GeoPoint? localPosition,
+  required Color localColor,
+  required RiderSymbol localSymbol,
+  required String localDisplayName,
+  required MotorcycleIconStyle localMotorcycleStyle,
+  double? localHeadingDegrees,
+}) => [
+  for (final rider in riders)
+    GroupMiniMapMarker(
+      id: rider.id,
+      point: rider.point,
+      fill: RideMapPalette.riderFill(rider.color),
+      outline: RideMapPalette.riderOutline(local: false),
+      symbol: rider.riderSymbol,
+      displayName: rider.riderDisplayName ?? rider.label,
+      motorcycleStyle: rider.motorcycleStyle ?? motorcycleIconStyleDefault,
+      isLocal: false,
+      headingDegrees: rider.headingDegrees,
+    ),
+  if (localPosition != null)
+    GroupMiniMapMarker(
+      id: 'mini-local-rider',
+      point: localPosition,
+      fill: RideMapPalette.riderFill(localColor),
+      outline: RideMapPalette.riderOutline(local: true),
+      symbol: localSymbol,
+      displayName: localDisplayName,
+      motorcycleStyle: localMotorcycleStyle,
+      isLocal: true,
+      headingDegrees: localHeadingDegrees,
+    ),
+];
 
 LatLng _latLng(GeoPoint point) => LatLng(point.latitude, point.longitude);
 
@@ -9583,6 +9856,7 @@ class _GroupMiniMap extends StatefulWidget {
     required this.width,
     required this.height,
     required this.routePaths,
+    required this.leaderPaths,
     required this.currentPosition,
     this.localHeadingDegrees,
     required this.riders,
@@ -9590,6 +9864,7 @@ class _GroupMiniMap extends StatefulWidget {
     required this.localMotorcycleStyle,
     required this.localRiderSymbol,
     required this.localDisplayName,
+    required this.localColor,
     required this.onTap,
     required this.renderer,
     required this.mapStyleUrl,
@@ -9599,6 +9874,9 @@ class _GroupMiniMap extends StatefulWidget {
   final double width;
   final double height;
   final List<List<GeoPoint>> routePaths;
+
+  /// The leader's travelled trail, drawn over the route and under the riders.
+  final List<List<GeoPoint>> leaderPaths;
   final GeoPoint? currentPosition;
   final double? localHeadingDegrees;
   final List<MapOverlayMarker> riders;
@@ -9606,6 +9884,9 @@ class _GroupMiniMap extends StatefulWidget {
   final MotorcycleIconStyle localMotorcycleStyle;
   final RiderSymbol localRiderSymbol;
   final String localDisplayName;
+
+  /// The local rider's own colour, as the main map draws them.
+  final Color localColor;
   final VoidCallback? onTap;
   final GroupMiniMapRenderer renderer;
   final String mapStyleUrl;
@@ -9617,12 +9898,14 @@ class _GroupMiniMap extends StatefulWidget {
 
 typedef _MiniMapSnapshot = ({
   List<List<GeoPoint>> routePaths,
+  List<List<GeoPoint>> leaderPaths,
   GeoPoint? currentPosition,
   List<MapOverlayMarker> riders,
 });
 
 class _GroupMiniMapState extends State<_GroupMiniMap> {
   static const _routeSource = 'ride-relay-mini-route';
+  static const _leaderSource = 'ride-relay-mini-leader';
   static const _riderSource = 'ride-relay-mini-riders';
 
   /// Radius of a rider's badge on the group overview, which is smaller than the
@@ -9655,9 +9938,22 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   /// which could visually detach a rider's dot from its trimmed route line.
   _MiniMapSnapshot _snapshot() => (
     routePaths: widget.routePaths,
+    leaderPaths: widget.leaderPaths,
     currentPosition: widget.currentPosition,
     riders: widget.riders,
   );
+
+  /// Every marker of [snapshot], resolved once for all three renderers.
+  List<GroupMiniMapMarker> _markersFor(_MiniMapSnapshot snapshot) =>
+      groupMiniMapMarkers(
+        riders: snapshot.riders,
+        localPosition: snapshot.currentPosition,
+        localColor: widget.localColor,
+        localSymbol: widget.localRiderSymbol,
+        localDisplayName: widget.localDisplayName,
+        localMotorcycleStyle: widget.localMotorcycleStyle,
+        localHeadingDegrees: widget.localHeadingDegrees,
+      );
 
   @override
   void initState() {
@@ -9813,13 +10109,13 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
               // overview repeats the same licensed map inside that surface, so
               // a second verbose provider banner only obscures group markers.
               if (widget.currentPosition != null)
-                const Positioned(
+                Positioned(
                   left: 6,
                   top: 6,
                   child: _MiniMapBadge(
-                    key: Key('mini-map-you-legend'),
+                    key: const Key('mini-map-you-legend'),
                     label: 'YOU',
-                    dotColor: Color(0xFFFF7A1A),
+                    dotColor: RideMapPalette.riderFill(widget.localColor),
                   ),
                 ),
               if (widget.renderer != GroupMiniMapRenderer.mapLibre)
@@ -9857,12 +10153,9 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       CustomPaint(
         key: const Key('group-mini-map-local-fallback'),
         painter: _GroupMiniMapPainter(
-          localHeadingDegrees: widget.localHeadingDegrees,
           routePaths: visibleRoutePaths,
-          currentPosition: widget.currentPosition,
-          riders: widget.riders,
-          localRiderSymbol: widget.localRiderSymbol,
-          localDisplayName: widget.localDisplayName,
+          leaderPaths: _visibleLeaderPaths(_snapshot()),
+          markers: _markersFor(_snapshot()),
           brightness: Theme.of(context).brightness,
         ),
       );
@@ -9918,6 +10211,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         if (style == null || groupPoints.isEmpty) {
           return _buildLocalOverview(visibleRoutePaths);
         }
+        final visibleLeaderPaths = _visibleLeaderPaths(_snapshot());
         final framing = GroupMiniMapFraming.forPoints(
           groupPoints,
           width: widget.width - _fitHorizontalPadding,
@@ -9961,49 +10255,30 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 ),
                 if (visibleRoutePaths.isNotEmpty)
                   PolylineLayer(
-                    polylines: [
-                      for (final path in visibleRoutePaths)
-                        if (path.length >= 2)
-                          Polyline(
-                            points: path
-                                .map(
-                                  (point) =>
-                                      LatLng(point.latitude, point.longitude),
-                                )
-                                .toList(growable: false),
-                            color: RouteTrailStyle.miniMapRoute.color,
-                            strokeWidth:
-                                RouteTrailStyle.miniMapRoute.widthPixels,
-                            borderColor: RouteTrailStyle.casing,
-                            borderStrokeWidth:
-                                RouteTrailStyle.miniMapRoute.casingWidthPixels -
-                                RouteTrailStyle.miniMapRoute.widthPixels,
-                          ),
-                    ],
+                    polylines: _miniMapPolylines(
+                      visibleRoutePaths,
+                      RideMapPalette.lineStyle(
+                        RideMapLine.remainingRoute,
+                        overview: true,
+                      )!,
+                    ),
+                  ),
+                // The leader's trail goes over the route and under the riders,
+                // the same order as the main map (#842).
+                if (visibleLeaderPaths.isNotEmpty)
+                  PolylineLayer(
+                    polylines: _miniMapPolylines(
+                      visibleLeaderPaths,
+                      RideMapPalette.lineStyle(
+                        RideMapLine.leaderTrail,
+                        overview: true,
+                      )!,
+                    ),
                   ),
                 MarkerLayer(
                   markers: [
-                    for (final rider in widget.riders)
-                      _vectorRiderMarker(
-                        point: rider.point,
-                        headingDegrees: rider.headingDegrees,
-                        color: rider.color,
-                        size: 16,
-                        motorcycleStyle:
-                            rider.motorcycleStyle ?? motorcycleIconStyleDefault,
-                        riderSymbol: rider.riderSymbol,
-                        displayName: rider.riderDisplayName ?? rider.label,
-                      ),
-                    if (widget.currentPosition case final point?)
-                      _vectorRiderMarker(
-                        point: point,
-                        headingDegrees: widget.localHeadingDegrees,
-                        color: const Color(0xFFFF7A1A),
-                        size: 18,
-                        motorcycleStyle: widget.localMotorcycleStyle,
-                        riderSymbol: widget.localRiderSymbol,
-                        displayName: widget.localDisplayName,
-                      ),
+                    for (final marker in _markersFor(_snapshot()))
+                      _vectorRiderMarker(marker),
                   ],
                 ),
               ],
@@ -10016,36 +10291,57 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     );
   }
 
-  Marker _vectorRiderMarker({
-    required GeoPoint point,
-    double? headingDegrees,
-    required Color color,
-    required double size,
-    required MotorcycleIconStyle motorcycleStyle,
-    required RiderSymbol riderSymbol,
-    required String displayName,
-  }) => Marker(
-    point: LatLng(point.latitude, point.longitude),
-    width: size + 4,
-    height: size + 4,
-    child: RiderMarkerBadge(
-      mapMarker: true,
-      headingDegrees: headingDegrees,
-      style: motorcycleStyle,
-      symbol: riderSymbol,
-      displayName: displayName,
-      badgeColor: color,
-      size: size,
-      borderColor: Colors.white,
-      borderWidth: 1,
-    ),
-  );
+  List<Polyline> _miniMapPolylines(
+    List<List<GeoPoint>> paths,
+    RouteLineStyle style,
+  ) => [
+    for (final path in paths)
+      if (path.length >= 2)
+        Polyline(
+          points: path
+              .map((point) => LatLng(point.latitude, point.longitude))
+              .toList(growable: false),
+          color: style.color,
+          strokeWidth: style.widthPixels,
+          borderColor: RouteTrailStyle.casing,
+          borderStrokeWidth: style.fallbackBorderWidthPixels,
+        ),
+  ];
+
+  Marker _vectorRiderMarker(GroupMiniMapMarker marker) {
+    // The local rider's badge is a little larger, as it is on the main map.
+    final size = marker.isLocal ? 18.0 : 16.0;
+    return Marker(
+      point: LatLng(marker.point.latitude, marker.point.longitude),
+      width: size + 4,
+      height: size + 4,
+      child: RiderMarkerBadge(
+        mapMarker: true,
+        headingDegrees: marker.headingDegrees,
+        style: marker.motorcycleStyle,
+        symbol: marker.symbol,
+        displayName: marker.displayName,
+        badgeColor: marker.fill,
+        size: size,
+        borderColor: marker.outline,
+        borderWidth: 1,
+      ),
+    );
+  }
 
   Future<void> _prepareStyle() async {
     final controller = _controller;
     if (controller == null) return;
     _styleReady = false;
     final snapshot = _snapshot();
+    final routeStyle = RideMapPalette.lineStyle(
+      RideMapLine.remainingRoute,
+      overview: true,
+    )!;
+    final leaderStyle = RideMapPalette.lineStyle(
+      RideMapLine.leaderTrail,
+      overview: true,
+    )!;
     try {
       await _registerSymbolImages(controller, snapshot);
       await controller.addGeoJsonSource(_routeSource, _routeGeoJson(snapshot));
@@ -10054,7 +10350,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         'ride-relay-mini-route-border',
         ml.LineLayerProperties(
           lineColor: RouteTrailStyle.casingHex,
-          lineWidth: RouteTrailStyle.miniMapRoute.casingWidthPixels,
+          lineWidth: routeStyle.casingWidthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -10064,8 +10360,35 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         _routeSource,
         'ride-relay-mini-route-line',
         ml.LineLayerProperties(
-          lineColor: _hexColor(RouteTrailStyle.miniMapRoute.color),
-          lineWidth: RouteTrailStyle.miniMapRoute.widthPixels,
+          lineColor: _hexColor(routeStyle.color),
+          lineWidth: routeStyle.widthPixels,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      // Over the route, under the riders: the main map's order (#842).
+      await controller.addGeoJsonSource(
+        _leaderSource,
+        _leaderGeoJson(snapshot),
+      );
+      await controller.addLineLayer(
+        _leaderSource,
+        'ride-relay-mini-leader-border',
+        ml.LineLayerProperties(
+          lineColor: RouteTrailStyle.casingHex,
+          lineWidth: leaderStyle.casingWidthPixels,
+          lineCap: 'round',
+          lineJoin: 'round',
+        ),
+        enableInteraction: false,
+      );
+      await controller.addLineLayer(
+        _leaderSource,
+        'ride-relay-mini-leader-line',
+        ml.LineLayerProperties(
+          lineColor: _hexColor(leaderStyle.color),
+          lineWidth: leaderStyle.widthPixels,
           lineCap: 'round',
           lineJoin: 'round',
         ),
@@ -10078,6 +10401,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         _RideMapScreenState._riderShapeProperties(
           diameter: _miniBadgeRadius * 2,
           color: ['get', 'color'],
+          borderColor: ['get', 'strokeColor'],
         ),
         enableInteraction: false,
       );
@@ -10128,6 +10452,10 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
         await controller.setGeoJsonSource(
           _routeSource,
           _routeGeoJson(snapshot),
+        );
+        await controller.setGeoJsonSource(
+          _leaderSource,
+          _leaderGeoJson(snapshot),
         );
         await controller.setGeoJsonSource(
           _riderSource,
@@ -10197,11 +10525,23 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
   Map<String, dynamic> _routeGeoJson(_MiniMapSnapshot snapshot) =>
       MapGeoJson.lines(_visibleRoutePaths(snapshot), idPrefix: 'mini-route');
 
+  Map<String, dynamic> _leaderGeoJson(_MiniMapSnapshot snapshot) =>
+      MapGeoJson.lines(_visibleLeaderPaths(snapshot), idPrefix: 'mini-leader');
+
+  List<List<GeoPoint>> _visibleRoutePaths(_MiniMapSnapshot snapshot) =>
+      _pathsNearGroup(snapshot, snapshot.routePaths);
+
+  List<List<GeoPoint>> _visibleLeaderPaths(_MiniMapSnapshot snapshot) =>
+      _pathsNearGroup(snapshot, snapshot.leaderPaths);
+
   /// The mini-map follows the group, not the entire ride. Rendering a long
   /// route in a tight group viewport creates clipped, disconnected-looking
   /// lines which can be mistaken for an invalid route. Keep only contiguous
-  /// route segments near the currently visible riders.
-  List<List<GeoPoint>> _visibleRoutePaths(_MiniMapSnapshot snapshot) {
+  /// segments of [paths] near the currently visible riders.
+  List<List<GeoPoint>> _pathsNearGroup(
+    _MiniMapSnapshot snapshot,
+    List<List<GeoPoint>> paths,
+  ) {
     final groupPoints = <GeoPoint?>[
       snapshot.currentPosition,
       ...snapshot.riders.map((rider) => rider.point),
@@ -10229,7 +10569,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     east += longitudePadding;
 
     final visiblePaths = <List<GeoPoint>>[];
-    for (final path in snapshot.routePaths) {
+    for (final path in paths) {
       var segment = <GeoPoint>[];
       for (final point in path) {
         final isVisible =
@@ -10253,38 +10593,19 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
 
   Map<String, dynamic> _riderGeoJson(_MiniMapSnapshot snapshot) =>
       MapGeoJson.points([
-        for (final rider in snapshot.riders)
+        for (final marker in _markersFor(snapshot))
           MapGeoJsonPoint(
-            id: rider.id,
-            point: rider.point,
+            id: marker.id,
+            point: marker.point,
             properties: {
-              'bearing': ?rider.headingDegrees,
-              'color': _hexColor(rider.color),
-              'strokeColor': _hexColor(riderBadgeStrokeColor(rider.color)),
-              'iconImage': rider.riderSymbol.imageName(
-                rider.riderDisplayName ?? rider.label,
-                rider.motorcycleStyle ?? motorcycleIconStyleDefault,
+              'bearing': ?marker.headingDegrees,
+              'color': _hexColor(marker.fill),
+              'strokeColor': _hexColor(marker.outline),
+              'iconImage': marker.symbol.imageName(
+                marker.displayName,
+                marker.motorcycleStyle,
               ),
-              'initialsSymbol':
-                  rider.riderSymbol.kind == RiderSymbolKind.initials,
-            },
-          ),
-        if (snapshot.currentPosition case final point?)
-          MapGeoJsonPoint(
-            id: 'mini-local-rider',
-            point: point,
-            properties: {
-              'bearing': ?widget.localHeadingDegrees,
-              'color': '#FF7A1A',
-              'strokeColor': _hexColor(
-                riderBadgeStrokeColor(const Color(0xFFFF7A1A)),
-              ),
-              'iconImage': widget.localRiderSymbol.imageName(
-                widget.localDisplayName,
-                widget.localMotorcycleStyle,
-              ),
-              'initialsSymbol':
-                  widget.localRiderSymbol.kind == RiderSymbolKind.initials,
+              'initialsSymbol': marker.symbol.kind == RiderSymbolKind.initials,
             },
           ),
       ]);
@@ -10300,28 +10621,17 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
       );
       _registeredSymbolImages.add(riderDirectionShapeImage);
     }
-    final riders =
-        <({RiderSymbol symbol, String displayName, MotorcycleIconStyle style})>[
-          for (final rider in snapshot.riders)
-            (
-              symbol: rider.riderSymbol,
-              displayName: rider.riderDisplayName ?? rider.label,
-              style: rider.motorcycleStyle ?? motorcycleIconStyleDefault,
-            ),
-          if (snapshot.currentPosition != null)
-            (
-              symbol: widget.localRiderSymbol,
-              displayName: widget.localDisplayName,
-              style: widget.localMotorcycleStyle,
-            ),
-        ];
+    final riders = _markersFor(snapshot);
     for (final rider in riders) {
-      final imageName = rider.symbol.imageName(rider.displayName, rider.style);
+      final imageName = rider.symbol.imageName(
+        rider.displayName,
+        rider.motorcycleStyle,
+      );
       if (!_registeredSymbolImages.add(imageName)) continue;
       final raster = await rasterizeRiderSymbolPng(
         symbol: rider.symbol,
         displayName: rider.displayName,
-        motorcycleStyle: rider.style,
+        motorcycleStyle: rider.motorcycleStyle,
       );
       await controller.addImage(imageName, raster.bytes, raster.sdf);
     }
@@ -10480,28 +10790,19 @@ class _MiniMapScaleBar extends StatelessWidget {
 class _GroupMiniMapPainter extends CustomPainter {
   const _GroupMiniMapPainter({
     required this.routePaths,
-    required this.currentPosition,
-    this.localHeadingDegrees,
-    required this.riders,
-    required this.localRiderSymbol,
-    required this.localDisplayName,
+    required this.leaderPaths,
+    required this.markers,
     required this.brightness,
   });
 
   final List<List<GeoPoint>> routePaths;
-  final GeoPoint? currentPosition;
-  final double? localHeadingDegrees;
-  final List<MapOverlayMarker> riders;
-  final RiderSymbol localRiderSymbol;
-  final String localDisplayName;
+  final List<List<GeoPoint>> leaderPaths;
+  final List<GroupMiniMapMarker> markers;
   final Brightness brightness;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final groupPoints = <GeoPoint?>[
-      currentPosition,
-      ...riders.map((rider) => rider.point),
-    ].nonNulls.toList(growable: false);
+    final groupPoints = [for (final marker in markers) marker.point];
     if (groupPoints.isEmpty) return;
 
     var south = groupPoints.first.latitude;
@@ -10546,56 +10847,63 @@ class _GroupMiniMapPainter extends CustomPainter {
       gridPaint,
     );
 
-    for (final route in routePaths.where((path) => path.length >= 2)) {
-      final path = ui.Path()
-        ..moveTo(project(route.first).dx, project(route.first).dy);
-      final stride = math.max(1, route.length ~/ 1200);
-      for (var index = stride; index < route.length; index += stride) {
-        final offset = project(route[index]);
-        path.lineTo(offset.dx, offset.dy);
+    // The route, then the leader's trail over it, then the riders (#842).
+    void drawLines(List<List<GeoPoint>> lines, RouteLineStyle style) {
+      for (final line in lines.where((path) => path.length >= 2)) {
+        final path = ui.Path()
+          ..moveTo(project(line.first).dx, project(line.first).dy);
+        final stride = math.max(1, line.length ~/ 1200);
+        for (var index = stride; index < line.length; index += stride) {
+          final offset = project(line[index]);
+          path.lineTo(offset.dx, offset.dy);
+        }
+        // Opaque colour over a casing rather than a translucent line, matching
+        // the tiled mini-map and the main map's route ahead.
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = RouteTrailStyle.casing
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = style.casingWidthPixels
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round,
+        );
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = style.color
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = style.widthPixels
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round,
+        );
       }
-      // Opaque colour over a casing rather than a translucent line, matching
-      // the tiled mini-map and the main map's route ahead.
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = RouteTrailStyle.casing
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = RouteTrailStyle.miniMapRoute.casingWidthPixels
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = RouteTrailStyle.miniMapRoute.color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = RouteTrailStyle.miniMapRoute.widthPixels
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
-      );
     }
 
-    void drawRider(
-      Offset offset,
-      Color color,
-      double radius,
-      RiderSymbol symbol,
-      String displayName,
-      double? headingDegrees,
-    ) {
+    drawLines(
+      routePaths,
+      RideMapPalette.lineStyle(RideMapLine.remainingRoute, overview: true)!,
+    );
+    drawLines(
+      leaderPaths,
+      RideMapPalette.lineStyle(RideMapLine.leaderTrail, overview: true)!,
+    );
+
+    void drawRider(Offset offset, GroupMiniMapMarker marker) {
+      final radius = marker.isLocal ? 8.0 : 7.0;
+      final symbol = marker.symbol;
       canvas.save();
       canvas.translate(offset.dx - radius, offset.dy - radius);
       RiderMarkerShapePainter(
-        color: color,
-        borderColor: Colors.white,
+        color: marker.fill,
+        borderColor: marker.outline,
         borderWidth: 1,
-        headingDegrees: headingDegrees,
+        headingDegrees: marker.headingDegrees,
       ).paint(canvas, Size.square(radius * 2));
       canvas.restore();
       if (symbol.kind == RiderSymbolKind.motorcycle) return;
       final text = symbol.kind == RiderSymbolKind.initials
-          ? riderInitials(displayName)
+          ? riderInitials(marker.displayName)
           : symbol.emoji!;
       final painter = TextPainter(
         textDirection: TextDirection.ltr,
@@ -10603,7 +10911,11 @@ class _GroupMiniMapPainter extends CustomPainter {
         text: TextSpan(
           text: text,
           style: TextStyle(
-            color: RouteTrailStyle.markerGlyph,
+            // The rider's own ink for initials, as on the main map; an emoji
+            // brings its own colours.
+            color: symbol.kind == RiderSymbolKind.initials
+                ? symbol.initialsInk.color
+                : RideMapPalette.glyphInk,
             fontSize:
                 radius * (symbol.kind == RiderSymbolKind.initials ? 2 : 1.25),
             height: symbol.kind == RiderSymbolKind.initials ? 0.9 : 1,
@@ -10628,40 +10940,10 @@ class _GroupMiniMapPainter extends CustomPainter {
       canvas.restore();
     }
 
-    final dots =
-        <
-          ({
-            GeoPoint point,
-            Color color,
-            double radius,
-            RiderSymbol symbol,
-            String displayName,
-            double? headingDegrees,
-          })
-        >[
-          for (final rider in riders)
-            (
-              point: rider.point,
-              color: rider.color,
-              radius: 7,
-              symbol: rider.riderSymbol,
-              displayName: rider.riderDisplayName ?? rider.label,
-              headingDegrees: rider.headingDegrees,
-            ),
-          if (currentPosition case final point?)
-            (
-              point: point,
-              color: const Color(0xFFFF7A1A),
-              radius: 8,
-              symbol: localRiderSymbol,
-              displayName: localDisplayName,
-              headingDegrees: localHeadingDegrees,
-            ),
-        ];
     final placedOffsets = <Offset>[];
-    for (var index = 0; index < dots.length; index++) {
-      final dot = dots[index];
-      var offset = project(dot.point);
+    for (var index = 0; index < markers.length; index++) {
+      final marker = markers[index];
+      var offset = project(marker.point);
       // Riders can briefly share a synthetic GPS fix at a junction. Separate
       // only overlapping dots in this compact overview so the group count is
       // visible at a glance without changing their actual map positions.
@@ -10678,14 +10960,7 @@ class _GroupMiniMapPainter extends CustomPainter {
         offset.dy.clamp(7.0, size.height - 7.0),
       );
       placedOffsets.add(offset);
-      drawRider(
-        offset,
-        dot.color,
-        dot.radius,
-        dot.symbol,
-        dot.displayName,
-        dot.headingDegrees,
-      );
+      drawRider(offset, marker);
     }
   }
 
@@ -10977,61 +11252,85 @@ class _ActionLabel extends StatelessWidget {
   }
 }
 
-/// Compact map control that opens the enforcement sighting picker.
+/// The map control that alerts the group with one tap (#849).
 ///
-/// Deliberately small: it sits over the map for a whole ride, so it earns only
-/// as much space as a gloved thumb needs. The targets it opens are the large
-/// ones.
+/// 96 px square, in both orientations, up from 62 (#125 had called 62 "a
+/// deliberate glove size"; a tester asked for it bigger). It still sits over the
+/// map for the whole ride, so it is no larger than the pair of targets beside it
+/// is tall in portrait - 56 + 8 + 56 = 120 - which keeps the bottom band the camera
+/// measures exactly as high as it was. Amber on a dark ink, because it must read
+/// through a visor and must not be mistaken for SOS, which is red.
+///
+/// The label stays REPORT: ALERT is already the SOS control's own word, and two
+/// controls side by side with the same name is how the wrong one gets pressed.
+/// What the *group* sees is "Alert".
 class _ReportSightingButton extends StatelessWidget {
-  const _ReportSightingButton({required this.onPressed});
+  const _ReportSightingButton({required this.onPressed, this.sent = false});
 
-  final VoidCallback onPressed;
+  /// Null while an alert is being stored, so a second tap cannot queue behind it.
+  final VoidCallback? onPressed;
 
-  /// The square the target occupies, in every state and both orientations. #142
-  /// takes the width a narrow landscape rail needs out of the two labels, never
-  /// out of this: 62 px is a deliberate glove size, well past the 48 px minimum.
-  static const double side = 62;
+  /// Whether the last tap has just gone through. Same box, different contents:
+  /// the footprint must not move when the state changes (#142).
+  final bool sent;
+
+  /// The square the target occupies, in every state and both orientations.
+  static const double side = 96;
+
+  static const _fill = Color(0xFFFFC857);
+  static const _ink = Color(0xFF1A1200);
 
   @override
-  Widget build(BuildContext context) => Tooltip(
-    message: 'Report a camera or police to the group',
-    child: Material(
-      color: const Color(0xF21C2530),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: Color(0xFF5A6878)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        key: const Key('report-sighting-button'),
-        onTap: onPressed,
-        child: SizedBox(
-          width: side,
-          height: side,
-          child: const Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.add_alert_rounded, size: 26, color: Color(0xFFFFD24A)),
-              SizedBox(height: 2),
-              // The target keeps its 62 pixels at every text size, so the caption
-              // is what gives way rather than the box overflowing: the icon is
-              // what a rider aims at, and the word underneath only names it.
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    'REPORT',
-                    style: TextStyle(
-                      color: Color(0xFFE4E9EF),
-                      fontSize: 9,
-                      height: 1,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.6,
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    enabled: onPressed != null,
+    label: sent ? 'Alert sent to the group' : 'Alert the group',
+    onTap: onPressed,
+    excludeSemantics: true,
+    child: Tooltip(
+      message: 'Alert the group',
+      child: Material(
+        color: sent ? const Color(0xFF6ED89A) : _fill,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: const BorderSide(color: Color(0xFF3A2A00), width: 2),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const Key('report-sighting-button'),
+          onTap: onPressed,
+          child: SizedBox(
+            width: side,
+            height: side,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  sent ? Icons.check_circle_rounded : Icons.add_alert_rounded,
+                  size: 44,
+                  color: _ink,
+                ),
+                const SizedBox(height: 4),
+                // The box keeps its 96 pixels at every text size, so the caption
+                // is what gives way rather than the box overflowing: the icon is
+                // what a rider aims at, and the word underneath only names it.
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      sent ? 'SENT' : 'REPORT',
+                      style: const TextStyle(
+                        color: _ink,
+                        fontSize: 15,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.8,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -11039,121 +11338,40 @@ class _ReportSightingButton extends StatelessWidget {
   );
 }
 
-/// The two report targets, side by side wherever both fit.
+/// The colours and symbol of one warning, by what it warns about.
 ///
-/// Stacked, they needed 176 pixels of a sheet the framework caps at 219 on a
-/// landscape phone, so police fell below the fold and could only be reached by
-/// scrolling - unusable on a bike, and it defeated the two-tap design, which
-/// exists so a stray map tap cannot broadcast a warning to the whole group
-/// (#133). Neither target is shrunk to achieve it: the pair goes side by side
-/// when each half can still hold a full-size target, and stacks otherwise, which
-/// is what keeps the largest accessibility text sizes honest.
-class _ReportSightingOptions extends StatelessWidget {
-  const _ReportSightingOptions({
-    required this.onSpeedCamera,
-    required this.onPolice,
-  });
-
-  final VoidCallback onSpeedCamera;
-  final VoidCallback onPolice;
-
-  /// Width one option needs for its icon, its label at the current text scale,
-  /// and the padding a gloved hand needs around them.
-  static double _minimumOptionWidth(BuildContext context) =>
-      34 + 24 + MediaQuery.textScalerOf(context).scale(22) * 7.2;
-
-  @override
-  Widget build(BuildContext context) {
-    final camera = _ReportSightingOption(
-      optionKey: const Key('report-speed-camera-option'),
-      label: 'SPEED CAMERA',
-      icon: Icons.speed_rounded,
-      color: const Color(0xFF9B1B23),
-      onPressed: onSpeedCamera,
-    );
-    final police = _ReportSightingOption(
-      optionKey: const Key('report-police-option'),
-      label: 'POLICE',
-      icon: Icons.local_police_rounded,
-      color: const Color(0xFF17497F),
-      onPressed: onPolice,
-    );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final available = constraints.maxWidth;
-        final sideBySide =
-            available.isFinite &&
-            (available - 12) / 2 >= _minimumOptionWidth(context);
-        if (!sideBySide) {
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [camera, police],
-          );
-        }
-        return Row(
-          key: const Key('report-options-side-by-side'),
-          // Each option carries its own height, so the row must not try to
-          // stretch to a parent that has none to give.
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: camera),
-            const SizedBox(width: 12),
-            Expanded(child: police),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// One report target, sized for a rider wearing gloves, on a moving bike.
-class _ReportSightingOption extends StatelessWidget {
-  const _ReportSightingOption({
-    required this.optionKey,
-    required this.label,
+/// The alert is amber, which is neither the camera's red nor the police's blue
+/// and is not the red of SOS either (#849): it says "look out" and nothing more
+/// specific. White text on the alert's fill measures 10.3:1.
+class _EnforcementAlertPalette {
+  const _EnforcementAlertPalette({
+    required this.border,
+    required this.fill,
     required this.icon,
-    required this.color,
-    required this.onPressed,
   });
 
-  final Key optionKey;
-  final String label;
+  final Color border;
+  final Color fill;
   final IconData icon;
-  final Color color;
-  final VoidCallback onPressed;
 
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: SizedBox(
-      // Both options must be reachable on a landscape phone without scrolling;
-      // the sheet scrolls as a backstop, but a rider should never have to reach
-      // for it. This height is never traded away to make them fit - see
-      // [_ReportSightingOptions], which changes the arrangement instead.
-      height: 76,
-      child: FilledButton.icon(
-        key: optionKey,
-        onPressed: onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: color,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
+  static _EnforcementAlertPalette of(HazardType type) =>
+      switch (EnforcementAlertKind.forHazard(type)) {
+        EnforcementAlertKind.alert => const _EnforcementAlertPalette(
+          border: Color(0xFFFFB020),
+          fill: Color(0xFF5A3A00),
+          icon: Icons.warning_amber_rounded,
         ),
-        icon: Icon(icon, size: 34),
-        label: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.5,
-          ),
+        EnforcementAlertKind.speedCamera => const _EnforcementAlertPalette(
+          border: Color(0xFFFF3B30),
+          fill: Color(0xFF6E1015),
+          icon: Icons.speed_rounded,
         ),
-      ),
-    ),
-  );
+        EnforcementAlertKind.police => const _EnforcementAlertPalette(
+          border: Color(0xFF4C9AFF),
+          fill: Color(0xFF0F3560),
+          icon: Icons.local_police_rounded,
+        ),
+      };
 }
 
 /// The two-part enforcement warning: a bubble, then a border (#446).
@@ -11214,7 +11432,7 @@ class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
 
   @override
   Widget build(BuildContext context) {
-    final camera = widget.alert.hazard.type == HazardType.speedCamera;
+    final palette = _EnforcementAlertPalette.of(widget.alert.hazard.type);
     final stage = _stage;
     return Stack(
       children: [
@@ -11233,9 +11451,7 @@ class _EnforcementAlertLayerState extends State<_EnforcementAlertLayer> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(enforcementBorderRadius),
                 border: Border.all(
-                  color: camera
-                      ? const Color(0xFFFF3B30)
-                      : const Color(0xFF4C9AFF),
+                  color: palette.border,
                   width: enforcementBorderWidth,
                 ),
               ),
@@ -11279,8 +11495,8 @@ class _EnforcementAlertBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final camera = alert.hazard.type == HazardType.speedCamera;
-    final title = camera ? 'SPEED CAMERA' : 'POLICE';
+    final palette = _EnforcementAlertPalette.of(alert.hazard.type);
+    final title = EnforcementAlertKind.forHazard(alert.hazard.type).title;
     final distance = MeasurementFormatter(
       distanceUnit,
     ).distance(alert.distanceMeters);
@@ -11304,12 +11520,9 @@ class _EnforcementAlertBubble extends StatelessWidget {
           decoration: BoxDecoration(
             // Opaque: anything showing through the words competes with them at
             // the moment the rider has least attention to spare (#107).
-            color: camera ? const Color(0xFF6E1015) : const Color(0xFF0F3560),
+            color: palette.fill,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: camera ? const Color(0xFFFF3B30) : const Color(0xFF4C9AFF),
-              width: 3,
-            ),
+            border: Border.all(color: palette.border, width: 3),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x99000000),
@@ -11324,11 +11537,7 @@ class _EnforcementAlertBubble extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                camera ? Icons.speed_rounded : Icons.local_police_rounded,
-                size: 30,
-                color: Colors.white,
-              ),
+              Icon(palette.icon, size: 30, color: Colors.white),
               const SizedBox(width: 12),
               Flexible(
                 child: Column(
@@ -12025,7 +12234,7 @@ class NavigationGuidanceBanner extends StatelessWidget {
                           ],
                         ),
                       ],
-                      if (!enlarged)
+                      if (!enlarged && guidance.roadLabel.isNotEmpty)
                         Text(
                           guidance.roadLabel,
                           maxLines: 1,
@@ -12162,6 +12371,12 @@ IconData quickMessageIcon(QuickMessage? message) => switch (message) {
   QuickMessage.emergencyStop => Icons.emergency_outlined,
   QuickMessage.allPassed => Icons.done_all_rounded,
   QuickMessage.resolved => Icons.task_alt_rounded,
+  // The leader's broadcasts (#854). Rounded where an older kind has the outlined
+  // glyph of the same thing, so the two are distinct symbols on both phones.
+  QuickMessage.wrongWay => Icons.u_turn_left_rounded,
+  QuickMessage.stoppedForFuel => Icons.local_gas_station_rounded,
+  QuickMessage.pullOver => Icons.local_parking_rounded,
+  QuickMessage.regroupNextStop => Icons.groups_rounded,
   // A kind only a newer build knows. The sender's own label still reads, so the
   // row says what they said with a neutral symbol rather than nothing at all.
   null => Icons.campaign_outlined,
@@ -12792,9 +13007,9 @@ class _CurrentPositionMarker extends StatelessWidget {
     style: style,
     symbol: symbol,
     displayName: displayName,
-    badgeColor: badgeColor,
+    badgeColor: RideMapPalette.riderFill(badgeColor),
     size: 38,
-    borderColor: Colors.white,
+    borderColor: RideMapPalette.localRiderOutline,
     borderWidth: 3,
   );
 }

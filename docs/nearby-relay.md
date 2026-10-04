@@ -113,6 +113,31 @@ plus BLE and Wi-Fi LAN discovery after removing the obsolete SDK cap; before
 that change, Play services aborted both operations as missing
 `ACCESS_WIFI_STATE`.
 
+## Transport evidence (#855)
+
+Whether the direct link carries anything is recorded rather than inferred. A
+`TransportEvidenceLedger` is fed from the three places an update arrives: this
+relay engine, the internet relay worker and the live-presence controller. Each
+reports an arrival **before** its own duplicate check. An event the internet
+delivered first is already held, so the engine's `_queue.contains` skips it; the
+worker's `knownEventIds` does the same in reverse. Recording after either would
+make whichever route is slower invisible, and a good phone signal would then hide
+the direct link entirely.
+
+The ledger keeps counts and arrival times per rider id and per route, which route
+delivered each event id first, how far ahead it was when both did, and the events
+only this link delivered. It never holds a name, a position or a payload. The
+ride roster, the Bluetooth card on the Ride tab, the ended-ride verdict and the
+diagnostics `TRANSPORT` lines all read it.
+
+"Bluetooth" in all of them means this direct link as a whole: Nearby can use local
+Wi-Fi as well as Bluetooth, so the definitive check turns Wi-Fi off. The verdict
+is evidence about one ride and is not a claim about a mesh, which the section
+above still forbids.
+
+How to prove peer-to-peer on a ride and where to record the result:
+[field-test-plan.md, Proving Bluetooth peer-to-peer](field-test-plan.md#proving-bluetooth-peer-to-peer).
+
 ## Hardware release gate
 
 Run the matrix in `field-test-plan.md` on physical devices with mobile data off.
@@ -125,6 +150,14 @@ directions while Wi-Fi is not associated with a common access point. Capture:
 4. A→B→C convergence where A and C never meet;
 5. screen-on, locked, backgrounded and force-quit behaviour; and
 6. four-hour battery impact.
+
+The definitive procedure for the question items 1 and 3 add up to (does an update
+reach another phone over the direct link alone?) is in
+[Proving Bluetooth peer-to-peer](field-test-plan.md#proving-bluetooth-peer-to-peer):
+one phone in airplane mode with Bluetooth switched back on and Wi-Fi off, run for
+each of the four platform pairings, with how to record each run on #268. It does
+not measure reconnection latency, A to B to C convergence, locked-screen behaviour
+or battery, which keep their own steps.
 
 Do not change the capability gate or marketing language until that evidence is
 recorded and the stated pass thresholds are met.

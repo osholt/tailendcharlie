@@ -174,9 +174,11 @@ void main() {
     // into a strip. The top offset is the status bar inset the overlay's own
     // SafeArea leaves.
     expect(overlay.top, lessThan(80));
+    // 0.5 before the ETA strip joined the bottom band (#848): the band is what
+    // the overlay stops short of, and it is a strip taller.
     expect(
       overlay.height,
-      greaterThan(844 * 0.5),
+      greaterThan(844 * 0.4),
       reason:
           'an alert a rider can overlook is the fault this replaced. The band '
           'reserved is the whole bottom chrome rail, deliberately - it is the '

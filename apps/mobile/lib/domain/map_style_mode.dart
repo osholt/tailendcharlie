@@ -6,8 +6,10 @@ enum MapStyleMode { system, light, dark, sunriseSunset }
 /// Which palette to use when the map resolves to daytime/light mode.
 ///
 /// Both choices use the same OpenFreeMap Liberty data. [restrained] applies
-/// Tail End Charlie's quieter road-first repaint; [original] leaves the
-/// provider style unchanged (#489).
+/// Tail End Charlie's quieter road-first repaint; [original] keeps the
+/// provider's palette, labels and symbols (#489), with one exception: its road
+/// outlines are deepened and widened so roads can be picked out in daylight
+/// (#841).
 enum DayMapStyle { restrained, original }
 
 typedef GeoCoordinate = ({double latitude, double longitude});

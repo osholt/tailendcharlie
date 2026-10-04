@@ -91,8 +91,12 @@ import '../../controllers/ride_diagnostics_controller.dart';
 import '../../services/ride_diagnostics_log_writer.dart';
 import '../../services/ride_diagnostics_recorder.dart';
 import '../../services/ride_diagnostics_transition.dart';
+import '../../services/transport_evidence_ledger.dart';
+import '../../services/transport_evidence_presentation.dart';
 import '../../services/ride_summary_exporter.dart';
 import '../../services/enforcement_alert_detector.dart';
+import '../../services/enforcement_alert_presentation.dart';
+import '../../services/leader_broadcast.dart';
 import '../../services/hazard_map_relevance.dart';
 import '../../services/relay_traffic_hazard_provider.dart';
 import '../../services/relay_traffic_reroute_provider.dart';
@@ -100,6 +104,7 @@ import '../../services/rejoin_route_share.dart';
 import '../../services/rider_contact_share.dart';
 import '../../services/road_jurisdiction.dart';
 import '../../services/road_routing.dart';
+import '../../services/verified_road_routing.dart';
 import '../../services/ride_connectivity_summary.dart';
 import '../../services/tec_gap_trend.dart';
 import '../../services/route_rejoin_planner.dart';
@@ -1130,6 +1135,17 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   /// Built lazily rather than in `initState` because it is keyed on the ride id,
   /// and a shell can exist before its session does.
   RideDiagnosticsLogWriter? _diagnosticsWriter;
+
+  /// Completes once the stored log for this ride has been read back and folded
+  /// into [_diagnostics] (#855). The writer waits for it: a recorder that has not
+  /// yet seen the earlier log would replace the whole file with the few entries it
+  /// has.
+  Future<void>? _diagnosticsReady;
+
+  /// Which route delivered each update from the other riders (#855), for the
+  /// roster, the Bluetooth card, the ended-ride verdict and the diagnostics log.
+  /// Null in a solo ride, which has no other riders to hear from.
+  TransportEvidenceLedger? _transportEvidence;
   final _trailRecorder = RiderTrailRecorder();
   final _riderTravelDirections = <String, RiderTravelDirection>{};
   final _publishedEventIds = <String>{};
@@ -1274,7 +1290,13 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     WidgetsBinding.instance.addObserver(this);
     // Headless and test surfaces have no audio to speak through, and must not
     // construct a platform speech engine.
-    if (widget.rideDiagnostics?.isOn ?? false) {
+    if (rideDiagnosticsTransition(
+          switchedOn: widget.rideDiagnostics?.isOn ?? false,
+          hasRecorder: false,
+          isRecording: false,
+          rideEnded: widget.rideController.rideEnded,
+        ) ==
+        RideDiagnosticsTransition.start) {
       _startDiagnostics(rideDiagnosticsStartedNote);
     }
     // Read on every change, not once here: the switch used to be sampled in
@@ -1309,15 +1331,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         client: _carPlayRoutingClient,
         baseUrl: carPlayRouting.geocodingBaseUrl,
       ),
-      routingService: PreferenceAwareRoadRoutingService(
-        osrm: OsrmRoadRoutingService(
-          client: _carPlayRoutingClient,
-          baseUrl: carPlayRouting.routingBaseUrl,
-        ),
-        motorcycle: ValhallaMotorcycleRoutingService(
-          client: _carPlayRoutingClient,
-          routeUrl: carPlayRouting.motorcycleRoutingUrl,
-        ),
+      routingService: buildPlanningRoutingService(
+        client: _carPlayRoutingClient,
+        configuration: carPlayRouting,
       ),
     );
     widget.rideController.addListener(_onRideControllerChanged);
@@ -1550,6 +1566,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         widget.rideController.refreshMembershipFreshness();
         final awareness = _awarenessController;
         if (awareness != null) unawaited(awareness.refreshStaleness());
+        _recordTransportSummaryIfDue();
       });
       _externalHazardTimer = Timer.periodic(const Duration(minutes: 5), (_) {
         final awareness = _awarenessController;
@@ -1641,6 +1658,12 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       if (session != null) {
         final cursorStore = SharedPreferencesInternetCursorStore();
         _internetCursorStore = cursorStore;
+        // Only where there are other riders to hear from (#855). Built before
+        // either route so that both report into the same one.
+        final evidence = groupRide
+            ? TransportEvidenceLedger(localRiderId: session.localRiderId)
+            : null;
+        _transportEvidence = evidence;
         final internetRelayController = InternetRelayController(
           InternetRelayWorker(
             api: HttpInternetRelayClient(
@@ -1649,9 +1672,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             ),
             eventStore: widget.eventStore,
             cursorStore: cursorStore,
+            evidence: evidence,
           ),
         );
         _internetRelayController = internetRelayController;
+        internetRelayController.addListener(_onInternetStatusChanged);
         _internetReceivedEventSubscription = internetRelayController
             .receivedEvents
             .listen(
@@ -1703,6 +1728,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
               configuration: InternetRelayConfiguration.fromEnvironment(),
               client: http.Client(),
             ),
+            evidence: evidence,
           );
           _preStartPresenceController = preStartPresenceController;
           preStartPresenceController.addListener(_onPreStartPresenceChanged);
@@ -1720,9 +1746,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             transport: NativeNearbyTransport(),
             eventStore: widget.eventStore,
             queue: SqliteRelayQueue(),
+            evidence: _transportEvidence,
           ),
         );
         _relayController = relayController;
+        relayController.addListener(_onNearbyStatusChanged);
         _receivedEventSubscription = relayController.receivedEvents.listen(
           (event) => _onReceivedEvent(event, RideTransportEvidence.nearbyRelay),
         );
@@ -1769,7 +1797,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       'traffic-reroute-suppression:'
       '${widget.rideController.session?.rideId ?? 'none'}';
 
-  /// Publishes a rider's own enforcement sighting to the group.
+  /// Publishes a rider's own alert to the group (#849).
   ///
   /// Reported as [HazardSeverity.serious] so it reaches the same advance
   /// warning the provider feed drives; the shorter enforcement expiry in
@@ -3136,7 +3164,39 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       route: route,
     );
     _quickMessageAlerts.value = presented.alerts;
+    _speakLeaderBroadcasts(presented.alerts);
     return presented.bySender;
+  }
+
+  /// Says the leader's broadcasts aloud, once each (#854).
+  ///
+  /// The banner is the persistent half; this is the half for a rider looking at the
+  /// road. Spoken as [SpokenAudioClass.safety], so alerts-only mode keeps it when
+  /// turn-by-turn goes quiet, and a rider who chose silence stays silent. Said once
+  /// per journal event, however many times this runs and however many transports
+  /// delivered it: [SpokenGuidanceController.speakAlert] remembers the key, and
+  /// [leaderBroadcastSpeech] declines anything old enough that a restart rebuilding
+  /// it from the journal would be saying it a second time.
+  ///
+  /// Allowed while the ride is paused, unlike a turn: "regroup at the next stop" is
+  /// most useful when the group has stopped.
+  void _speakLeaderBroadcasts(List<RideQuickMessageAlert> alerts) {
+    final speaker = _spokenGuidance;
+    if (speaker == null || alerts.isEmpty) return;
+    final controller = widget.rideController;
+    for (final broadcast in leaderBroadcastsToSpeak(
+      alerts: alerts,
+      now: DateTime.now(),
+    )) {
+      unawaited(
+        speaker.speakAlert(
+          key: broadcast.key,
+          phrase: broadcast.phrase,
+          enabled: spokenAudioAllows(_spokenAudioMode, SpokenAudioClass.safety),
+          rideActive: controller.rideStarted && !controller.rideEnded,
+        ),
+      );
+    }
   }
 
   /// Acknowledges the presented message *and* every repeat it stands for, so a
@@ -4060,6 +4120,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (_rideEndHandled) return;
     _rideEndHandled = true;
     _diagnostics?.recordNote('ride completed');
+    _recordTransportVerdict();
     await _diagnosticsWriter?.flush();
     _stalenessTimer?.cancel();
     _externalHazardTimer?.cancel();
@@ -4235,6 +4296,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
         distanceUnits: widget.distanceUnits,
         nearbyRelayController: _relayController,
         internetRelayController: _internetRelayController,
+        transportEvidence: _transportEvidence,
         onRemoveRide: _removeEndedRide,
         roadRatings: widget.roadRatings,
         completedRideStore: widget.completedRideStore,
@@ -4509,6 +4571,16 @@ class _ActiveRideShellState extends State<ActiveRideShell>
           _awarenessController == null || !_enforcementReportsAllowed
           ? null
           : _reportHazardFromMap,
+      // The leader's one-tap broadcasts (#854), on the leader's phone only.
+      onLeaderBroadcast:
+          leaderBroadcastsAvailable(
+            isLocalRideLeader: widget.rideController.isLocalRideLeader,
+            rideStarted: widget.rideController.rideStarted,
+            rideEnded: widget.rideController.rideEnded,
+            coordinationMode: widget.rideController.coordinationMode,
+          )
+          ? _sendLeaderBroadcast
+          : null,
       emergencyContacts: _emergencyContacts,
       onEmergencyAlert: _sendEmergencyMapAlert,
       onEmergencyIssue: _sendEmergencyMapIssue,
@@ -4648,7 +4720,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     if (speaker == null || current == null) return;
     if (previous?.hazard.id == current.hazard.id) return;
     final controller = widget.rideController;
-    final camera = current.hazard.type == HazardType.speedCamera;
+    final kind = EnforcementAlertKind.forHazard(current.hazard.type);
     final distance = MeasurementFormatter(
       widget.distanceUnits.value,
     ).distance(current.distanceMeters);
@@ -4658,11 +4730,11 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     unawaited(
       speaker.speakAlert(
         key: 'enforcement:${current.hazard.id}',
-        phrase: [
-          camera ? 'Speed camera' : 'Police',
-          'in $distance',
-          ?limit,
-        ].join(', '),
+        phrase: enforcementSpokenPhrase(
+          kind: kind,
+          distance: distance,
+          limit: limit,
+        ),
         enabled: spokenAudioAllows(_spokenAudioMode, SpokenAudioClass.safety),
         rideActive:
             controller.rideStarted &&
@@ -4988,7 +5060,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     final distance = MeasurementFormatter(
       widget.distanceUnits.value,
     ).distance(guidance.distanceMeters);
-    return '$distance · ${guidance.roadLabel}';
+    final road = guidance.roadLabel;
+    return road.isEmpty ? distance : '$distance · $road';
   }
 
   Color get _localBadgeColor {
@@ -5066,6 +5139,20 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       position: _localQuickMessagePosition,
     );
     await _recordLocalObserverQuickMessage(message);
+  }
+
+  /// Sends one of the leader's broadcasts to the whole group (#854).
+  ///
+  /// Anything short of sent is thrown as a sentence the map shows, so the leader is
+  /// never left believing the group was told. A bounce - the same tap twice - is
+  /// not a failure: the group already has it.
+  Future<void> _sendLeaderBroadcast(QuickMessage message) async {
+    final outcome = await widget.rideController.sendLeaderBroadcast(
+      message,
+      position: _localQuickMessagePosition,
+    );
+    final failure = outcome.failureSentence;
+    if (failure != null) throw FormatException(failure);
   }
 
   Future<void> _sendLocalQuickMessage(QuickMessage message) async {
@@ -5553,12 +5640,83 @@ class _ActiveRideShellState extends State<ActiveRideShell>
   }
 
   void _startDiagnostics(String note) {
-    _diagnostics = RideDiagnosticsRecorder(
+    final recorder = RideDiagnosticsRecorder(
       // Each entry keeps the stored log in step, so a force-quit costs nothing
       // (#456). Coalesced inside the writer, not written once per entry.
       onEntry: _markDiagnosticsDirty,
+      privateTerms: _diagnosticsPrivateTerms,
     );
-    _diagnostics!.recordNote(note);
+    _diagnostics = recorder;
+    // This shell is rebuilt when a rider steps away from a running ride and comes
+    // back, and when the phone relaunches mid-ride, and the log is stored whole
+    // under the ride id. Without reading the earlier log back first, the new
+    // recorder's first write replaced the whole record of the ride so far with
+    // its own few entries, so a long group ride with a café stop in it kept only
+    // the last stretch (#855). The writer waits for this before it writes.
+    _diagnosticsReady = continueRecordingFromStore(
+      recorder: recorder,
+      store: widget.rideDiagnostics?.logStore,
+      rideId: widget.rideController.session?.rideId,
+      isStillCurrent: () => identical(recorder, _diagnostics),
+    );
+    recorder.recordNote(note);
+    // Where the links stand now, so a log switched on mid-ride opens with it.
+    _observeTransportsForDiagnostics();
+  }
+
+  /// Names that must not reach the log: this rider's and everyone else's.
+  Iterable<String> _diagnosticsPrivateTerms() sync* {
+    final session = widget.rideController.session;
+    if (session != null) yield session.displayName;
+    for (final participant in widget.rideController.participants) {
+      yield participant.displayName;
+    }
+  }
+
+  /// The direct link changed. Both controllers notify far more often than
+  /// anything changes (every exchange refreshes a counter), so the recorder
+  /// writes only the transitions (#855).
+  void _onNearbyStatusChanged() {
+    final status = _relayController?.status;
+    if (status == null) return;
+    _transportEvidence?.observeBluetoothPeers(status.peerIds.length);
+    _diagnostics?.observeNearbyStatus(status);
+  }
+
+  /// The ride service's phase moved (#855).
+  void _onInternetStatusChanged() {
+    final status = _internetRelayController?.status;
+    if (status == null) return;
+    _diagnostics?.observeInternetRelay(status.phase);
+  }
+
+  void _observeTransportsForDiagnostics() {
+    _onNearbyStatusChanged();
+    _onInternetStatusChanged();
+  }
+
+  /// A tally of what each route has delivered, about once a minute (#855). Ticked
+  /// from the existing staleness timer; the recorder decides when a minute is up.
+  void _recordTransportSummaryIfDue() {
+    final ledger = _transportEvidence;
+    if (ledger == null) return;
+    _diagnostics?.recordTransportSummaryIfDue(ledger.summary);
+  }
+
+  /// Closes the log with the final tally and the plain-language verdict on
+  /// phone-to-phone sharing, in the words the ended-ride screen shows (#855).
+  void _recordTransportVerdict() {
+    final ledger = _transportEvidence;
+    final recorder = _diagnostics;
+    if (ledger == null || recorder == null) return;
+    recorder.recordTransportSummary(ledger.summary());
+    recorder.recordTransportVerdict(
+      transportVerdictLogText(
+        ledger.verdict(),
+        status: _relayController?.status,
+        rideStartedAt: widget.rideController.rideStartedAt,
+      ),
+    );
   }
 
   /// The switch moved. Recording follows it, whenever it happens (#457).
@@ -5568,6 +5726,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
       switchedOn: widget.rideDiagnostics?.isOn ?? false,
       hasRecorder: recorder != null,
       isRecording: recorder?.isRecording ?? false,
+      rideEnded: widget.rideController.rideEnded,
     )) {
       case RideDiagnosticsTransition.start:
         _startDiagnostics(rideDiagnosticsStartedMidRideNote);
@@ -5600,6 +5759,9 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     return RideDiagnosticsLogWriter(
       store: store,
       rideId: session.rideId,
+      // Nothing is written until the earlier log for this ride has been folded
+      // in, or the first write would replace it (#855).
+      ready: _diagnosticsReady,
       render: () => recorder.render(
         rideCode: session.rideCode,
         appBuild: _diagnosticsBuildLabel,
@@ -5740,6 +5902,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
             ) ??
             true,
         legacyPeerRiderIds: _legacyPeerRiderIds,
+        transportEvidence: _transportEvidence,
+        nearbyRelayController: _relayController,
       ),
     );
   }
@@ -6071,6 +6235,7 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     rideActions: _buildRideActions(),
     onOpenRoster: _openRoster,
     relayController: _relayController,
+    transportEvidence: _transportEvidence,
     markerAssistanceController: _markerAssistanceController,
     internetRelayController: _internetRelayController,
     onSendQuickMessage: _sendLocalQuickMessage,
@@ -6251,6 +6416,8 @@ class _ActiveRideShellState extends State<ActiveRideShell>
     _stopLocationSharing();
     _locationController?.removeListener(_onDeviceLocationChanged);
     _locationController?.dispose();
+    _relayController?.removeListener(_onNearbyStatusChanged);
+    _internetRelayController?.removeListener(_onInternetStatusChanged);
     unawaited(_relayController?.close());
     unawaited(_internetRelayController?.close());
     unawaited(_preStartPresenceController?.close());

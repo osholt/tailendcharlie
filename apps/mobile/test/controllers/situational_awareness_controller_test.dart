@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/situational_awareness_controller.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
@@ -299,21 +301,281 @@ void main() {
     },
   );
 
-  test('riders can report enforcement sightings to the group', () async {
-    for (final type in [HazardType.policeActivity, HazardType.speedCamera]) {
-      final report = await controller.reportHazard(
-        type: type,
-        severity: HazardSeverity.serious,
-        position: const GeoPoint(latitude: 51, longitude: -1),
+  group('the one-tap alert (#849)', () {
+    const here = GeoPoint(latitude: 51, longitude: -1);
+
+    test('is saved with its time, its place and who raised it', () async {
+      now = DateTime.utc(2026, 10, 4, 14, 32, 7);
+
+      final alert = await controller.reportAlert(position: here);
+
+      expect(alert, isNotNull);
+      expect(alert!.type, HazardType.alert);
+      expect(alert.source, HazardSource.rider);
+      expect(alert.reportedAt, now);
+      expect(alert.position, here);
+      expect(alert.reporterId, _session.localRiderId);
+      expect(alert.reporterName, 'Oliver');
+      expect(controller.activeHazards.single.id, alert.id);
+
+      final events = await store.eventsForRide(_session.rideId);
+      expect(events.single.type, RideEventType.hazardReported);
+      expect(events.single.priority, EventPriority.important);
+      expect(events.single.expiresAt, now.add(const Duration(hours: 1)));
+    });
+
+    test('takes its place from the current fix when none is given', () async {
+      await controller.recordLocalLocation(_sample(latitude: 51.0004, at: now));
+
+      final alert = await controller.reportAlert();
+
+      expect(alert!.position.latitude, closeTo(51.0004, 1e-9));
+    });
+
+    test('needs a position, and says so rather than sending nothing', () async {
+      await expectLater(
+        controller.reportAlert(),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('current location'),
+          ),
+        ),
       );
+      expect(await store.eventsForRide(_session.rideId), isEmpty);
+    });
 
-      expect(report, isNotNull);
-      expect(report!.type, type);
-      expect(report.source, HazardSource.rider);
-    }
+    test('expires after an hour, like the shorter enforcement kind', () async {
+      await controller.reportAlert(position: here);
 
-    expect(controller.activeHazards, hasLength(2));
-    expect(await store.eventsForRide(_session.rideId), hasLength(2));
+      now = now.add(const Duration(minutes: 59));
+      expect(controller.activeHazards, hasLength(1));
+
+      now = now.add(const Duration(minutes: 2));
+      await controller.refreshStaleness();
+      expect(controller.activeHazards, isEmpty);
+    });
+
+    test('is never merged into an earlier alert at the same place', () async {
+      // Every alert is its own entry in the ride review, with its own time, so
+      // two sightings at one spot must stay two - unlike a pothole, which two
+      // riders confirm.
+      final first = await controller.reportAlert(position: here);
+      now = now.add(const Duration(minutes: 3));
+      final second = await controller.reportAlert(position: here);
+
+      expect(second!.id, isNot(first!.id));
+      expect(controller.activeHazards, hasLength(2));
+      expect(
+        controller.activeHazards.every((hazard) => hazard.confirmations == 1),
+        isTrue,
+      );
+      expect(await store.eventsForRide(_session.rideId), hasLength(2));
+    });
+
+    test('a double tap inside the cooldown is one alert', () async {
+      final first = await controller.reportAlert(position: here);
+      now = now.add(const Duration(seconds: 2));
+      final bounce = await controller.reportAlert(position: here);
+
+      expect(bounce!.id, first!.id);
+      expect(await store.eventsForRide(_session.rideId), hasLength(1));
+
+      // And it is a window, not a lockout: a real second alert gets through.
+      now = now.add(SituationalAwarenessController.alertCooldown);
+      final next = await controller.reportAlert(position: here);
+      expect(next!.id, isNot(first.id));
+      expect(await store.eventsForRide(_session.rideId), hasLength(2));
+    });
+
+    test('two taps in the same instant still make one alert', () async {
+      // The second tap lands while the first is being written, when the journal
+      // has nothing to find yet.
+      final both = await Future.wait([
+        controller.reportAlert(position: here),
+        controller.reportAlert(position: here),
+      ]);
+
+      expect(both[1]!.id, both[0]!.id);
+      expect(await store.eventsForRide(_session.rideId), hasLength(1));
+    });
+
+    test(
+      'is not dropped while the controller is busy with something else',
+      () async {
+        // `_run` drops a call that arrives during another. The leader's traffic
+        // fetch holds it for a network round trip, and a dropped alert would show
+        // the rider "sent" and warn nobody.
+        final gate = Completer<void>();
+        final slow = SituationalAwarenessController(
+          store,
+          _session,
+          route: const [GeoPoint(latitude: 51, longitude: -1)],
+          externalProviders: [_StalledTrafficProvider(gate.future)],
+          clock: () => now,
+          idFactory: () => 'busy-${nextId++}',
+        );
+        addTearDown(slow.dispose);
+        await slow.initialize();
+        final fetching = slow.refreshExternalHazards();
+        await Future<void>.delayed(Duration.zero);
+        expect(slow.busy, isTrue);
+
+        final alert = await slow.reportAlert(position: here);
+
+        expect(alert, isNotNull);
+        expect(slow.activeHazards.map((hazard) => hazard.id), [alert!.id]);
+        expect(
+          (await store.eventsForRide(
+            _session.rideId,
+          )).where((event) => event.type == RideEventType.hazardReported),
+          hasLength(1),
+        );
+        gate.complete();
+        await fetching;
+      },
+    );
+
+    test('a failed write is thrown, and the retry is not a bounce', () async {
+      final failing = _FailingOnceEventStore();
+      final unlucky = SituationalAwarenessController(
+        failing,
+        _session,
+        route: const [],
+        clock: () => now,
+        idFactory: () => 'retry-${nextId++}',
+      );
+      addTearDown(unlucky.dispose);
+      await unlucky.initialize();
+
+      await expectLater(unlucky.reportAlert(position: here), throwsStateError);
+      expect(unlucky.activeHazards, isEmpty);
+
+      final retried = await unlucky.reportAlert(position: here);
+      expect(retried, isNotNull);
+      expect(unlucky.activeHazards.single.id, retried!.id);
+    });
+
+    test('survives a restart of the journal', () async {
+      final alert = await controller.reportAlert(position: here);
+
+      final restored = _controller(
+        store: store,
+        clock: () => now,
+        idFactory: () => 'restored-${nextId++}',
+      );
+      addTearDown(restored.dispose);
+      await restored.initialize();
+
+      expect(restored.activeHazards.single.id, alert!.id);
+      expect(restored.activeHazards.single.type, HazardType.alert);
+    });
+
+    test(
+      'is disabled in France, where enforcement warnings are not allowed',
+      () async {
+        // It could be a speed camera or the police, so it is held to the same
+        // rule as both.
+        final frenchRules = SituationalAwarenessController(
+          store,
+          _session,
+          route: const [],
+          roadJurisdictions: _franceCatalogue,
+          clock: () => now,
+          idFactory: () => 'france-${nextId++}',
+        );
+        addTearDown(frenchRules.dispose);
+        await frenchRules.initialize();
+        const paris = GeoPoint(latitude: 48.8566, longitude: 2.3522);
+
+        await expectLater(
+          frenchRules.reportAlert(position: paris),
+          throwsA(
+            isA<FormatException>().having(
+              (error) => error.message,
+              'message',
+              contains('disabled in France'),
+            ),
+          ),
+        );
+        expect(await store.eventsForRide(_session.rideId), isEmpty);
+      },
+    );
+
+    test('is stored in France but not presented there', () async {
+      const paris = GeoPoint(latitude: 48.8566, longitude: 2.3522);
+      await controller.reportAlert(position: paris);
+
+      final filtered = SituationalAwarenessController(
+        store,
+        _session,
+        route: const [],
+        roadJurisdictions: _franceCatalogue,
+        clock: () => now,
+        idFactory: () => 'filtered-${nextId++}',
+      );
+      addTearDown(filtered.dispose);
+      await filtered.initialize();
+
+      expect(await store.eventsForRide(_session.rideId), isNotEmpty);
+      expect(filtered.activeHazards, isEmpty);
+    });
+  });
+
+  group('the two kinds an older build raised', () {
+    test('are no longer offered to a rider', () async {
+      for (final type in [HazardType.policeActivity, HazardType.speedCamera]) {
+        await expectLater(
+          controller.reportHazard(
+            type: type,
+            severity: HazardSeverity.serious,
+            position: const GeoPoint(latitude: 51, longitude: -1),
+          ),
+          throwsA(
+            isA<FormatException>().having(
+              (error) => error.message,
+              'message',
+              contains('cannot be reported'),
+            ),
+          ),
+          reason: type.name,
+        );
+      }
+      expect(await store.eventsForRide(_session.rideId), isEmpty);
+    });
+
+    test('are still received, and still hold back in France', () async {
+      for (final type in [HazardType.policeActivity, HazardType.speedCamera]) {
+        await controller.ingestRemoteEvent(
+          _legacyEnforcementEvent(type, id: 'legacy-${type.name}', now: now),
+        );
+      }
+      expect(controller.activeHazards, hasLength(2));
+
+      // Stored in Paris by a phone that was not told otherwise, then read by one
+      // that is: held back, not deleted.
+      final paris = [
+        for (final type in [HazardType.policeActivity, HazardType.speedCamera])
+          _legacyEnforcementEvent(
+            type,
+            id: 'paris-${type.name}',
+            now: now,
+            position: const GeoPoint(latitude: 48.8566, longitude: 2.3522),
+          ),
+      ];
+      final frenchRules = SituationalAwarenessController(
+        store,
+        _session,
+        route: const [],
+        roadJurisdictions: _franceCatalogue,
+        clock: () => now,
+        idFactory: () => 'france-${nextId++}',
+      );
+      addTearDown(frenchRules.dispose);
+      await frenchRules.initialize(restoredEvents: paris);
+      expect(frenchRules.activeHazards, isEmpty);
+    });
   });
 
   test('France disables enforcement alerts but keeps road hazards', () async {
@@ -329,22 +591,20 @@ void main() {
     await frenchRules.initialize();
     const paris = GeoPoint(latitude: 48.8566, longitude: 2.3522);
 
-    for (final type in [HazardType.policeActivity, HazardType.speedCamera]) {
-      await expectLater(
-        frenchRules.reportHazard(
-          type: type,
-          severity: HazardSeverity.serious,
-          position: paris,
+    await expectLater(
+      frenchRules.reportHazard(
+        type: HazardType.alert,
+        severity: HazardSeverity.serious,
+        position: paris,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('disabled in France'),
         ),
-        throwsA(
-          isA<FormatException>().having(
-            (error) => error.message,
-            'message',
-            contains('disabled in France'),
-          ),
-        ),
-      );
-    }
+      ),
+    );
 
     final roadHazard = await frenchRules.reportHazard(
       type: HazardType.debris,
@@ -353,29 +613,6 @@ void main() {
     );
     expect(roadHazard, isNotNull);
     expect(frenchRules.activeHazards.single.type, HazardType.debris);
-  });
-
-  test('French enforcement events stay stored but are not presented', () async {
-    const paris = GeoPoint(latitude: 48.8566, longitude: 2.3522);
-    await controller.reportHazard(
-      type: HazardType.speedCamera,
-      severity: HazardSeverity.serious,
-      position: paris,
-    );
-
-    final filtered = SituationalAwarenessController(
-      store,
-      _session,
-      route: const [],
-      roadJurisdictions: _franceCatalogue,
-      clock: () => now,
-      idFactory: () => 'filtered-${nextId++}',
-    );
-    addTearDown(filtered.dispose);
-    await filtered.initialize();
-
-    expect(await store.eventsForRide(_session.rideId), isNotEmpty);
-    expect(filtered.activeHazards, isEmpty);
   });
 
   test('event replay restores active hazards and acknowledgements', () async {
@@ -862,4 +1099,84 @@ RideEvent _remoteDeviationEvent({
     type: RideEventType.routeDeviationChanged,
     payload: {'alert': alert.toJson()},
   );
+}
+
+/// What an older build wrote when a rider reported a camera or the police: an
+/// ordinary hazard event with no `kind`, signed with the ride secret.
+RideEvent _legacyEnforcementEvent(
+  HazardType type, {
+  required String id,
+  required DateTime now,
+  GeoPoint position = const GeoPoint(latitude: 51, longitude: -1),
+}) {
+  final hazard = HazardReport(
+    id: 'hazard-$id',
+    rideId: _session.rideId,
+    type: type,
+    severity: HazardSeverity.serious,
+    position: position,
+    reportedAt: now,
+    updatedAt: now,
+    expiresAt: now.add(const Duration(hours: 1)),
+    reporterId: 'older-build-rider',
+    reporterName: 'Becks',
+    source: HazardSource.rider,
+  );
+  return SituationEventFactory(
+    session: _session,
+    clock: () => now,
+    idFactory: () => id,
+  ).create(
+    type: RideEventType.hazardReported,
+    payload: {'hazard': hazard.toJson()},
+    priority: EventPriority.important,
+    expiresAt: hazard.expiresAt,
+  );
+}
+
+/// A traffic provider whose fetch does not return until told to, which holds the
+/// controller busy for as long as a real network round trip would.
+class _StalledTrafficProvider implements ExternalHazardProvider {
+  _StalledTrafficProvider(this.gate);
+
+  final Future<void> gate;
+
+  @override
+  String get displayName => 'Live traffic';
+
+  @override
+  String get id => 'tomtom-traffic';
+
+  @override
+  ExternalHazardProviderStatus get status => const ExternalHazardProviderStatus(
+    state: ExternalHazardProviderState.configured,
+    message: 'Configured',
+  );
+
+  @override
+  Future<ExternalHazardFetchResult> fetch(ExternalHazardQuery query) async {
+    await gate;
+    return const ExternalHazardFetchResult(
+      status: ExternalHazardProviderStatus(
+        state: ExternalHazardProviderState.ready,
+        message: 'Ready',
+      ),
+      hazards: [],
+    );
+  }
+}
+
+/// An event store whose first write fails, as a full disk or a locked database
+/// would.
+class _FailingOnceEventStore extends InMemoryEventStore {
+  var _failed = false;
+
+  @override
+  Future<void> append(RideEvent event) async {
+    if (!_failed) {
+      _failed = true;
+      throw StateError('disk is full');
+    }
+    return super.append(event);
+  }
 }

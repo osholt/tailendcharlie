@@ -1300,18 +1300,17 @@ void main() {
       (_) {},
     );
 
+    await report({'type': 'alert'});
+    await report({'type': 'other'});
+    // What an older CarPlay surface offered. The alert replaced both (#849), so a
+    // stale native build cannot put the two-way choice back on the wire.
     await report({'type': 'speedCamera'});
     await report({'type': 'policeActivity'});
-    await report({'type': 'other'});
     await report({'type': 'notARealHazard'});
     await report({'type': 42});
     await report('pothole');
 
-    expect(reports, [
-      HazardType.speedCamera,
-      HazardType.policeActivity,
-      HazardType.other,
-    ]);
+    expect(reports, [HazardType.alert, HazardType.other]);
   });
 
   test('relays a confirmed prepared-ride start request', () async {

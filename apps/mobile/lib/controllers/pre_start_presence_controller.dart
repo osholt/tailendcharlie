@@ -8,6 +8,7 @@ import '../domain/ride_session.dart';
 import '../internet/internet_relay_client.dart';
 import '../relay/live_presence.dart';
 import '../relay/relay_presence.dart';
+import '../services/transport_evidence_ledger.dart';
 
 /// Maintains one short-lived, non-journalled position per rider for the whole
 /// ride.
@@ -27,12 +28,19 @@ class PreStartPresenceController extends ChangeNotifier {
     this.pollInterval = const Duration(seconds: 4),
     this.freshnessPolicy = const PresenceFreshnessPolicy(),
     DateTime Function()? clock,
+    this._evidence,
   }) : _clock = clock ?? DateTime.now;
 
   final PreStartPresenceApi _api;
   final Duration pollInterval;
   final PresenceFreshnessPolicy freshnessPolicy;
   final DateTime Function() _clock;
+
+  /// Where a live position that arrives over either route is reported (#855).
+  /// Only another rider's position that is *newer* than the last one on that
+  /// route is a new update: the internet poll hands the same position back every
+  /// few seconds, and a repeat is not evidence of anything.
+  final TransportEvidenceLedger? _evidence;
   RideSession? _session;
   RiderLocation? _localPosition;
   final Map<String, RiderLocation> _internetLocations = {};
@@ -450,6 +458,13 @@ class PreStartPresenceController extends ChangeNotifier {
       return;
     }
     _internetLocations[location.riderId] = location;
+    // The ledger itself ignores this phone's own rider, which this method is
+    // also handed.
+    _evidence?.recordPresence(
+      transport: EvidenceTransport.internet,
+      riderId: location.riderId,
+      at: _clock(),
+    );
   }
 
   static PresenceAvailability _availabilityFor(InternetRelayException error) {
@@ -490,6 +505,13 @@ class PreStartPresenceController extends ChangeNotifier {
       _nearbyLocations.remove(update.riderId);
     } else {
       _nearbyLocations[update.riderId] = update;
+      // A cleared position is a rider saying they have stopped sharing, not a
+      // position, so only the real ones are counted.
+      _evidence?.recordPresence(
+        transport: EvidenceTransport.bluetooth,
+        riderId: update.riderId,
+        at: _clock(),
+      );
     }
     notifyListeners();
   }

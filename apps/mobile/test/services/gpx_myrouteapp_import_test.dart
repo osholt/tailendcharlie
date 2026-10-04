@@ -53,16 +53,16 @@ void main() {
     final route = importFixture();
 
     // 6 trp:ShapingPoint and 2 trp:ViaPoint in the file. Dropping the redundant
-    // path must not drop what the rider planned with.
-    expect(route.waypoints, hasLength(8));
-    expect(
-      route.waypoints.where((point) => point.symbol == 'Shaping point'),
-      hasLength(6),
-    );
+    // path must not drop what the rider planned with. The via points are the
+    // stops; the shaping points bend the route between them and are never
+    // stops, so they are kept as the route's shaping points (#839).
+    expect(route.waypoints, hasLength(2));
     expect(
       route.waypoints.where((point) => point.symbol == 'Via point'),
       hasLength(2),
     );
+    expect(route.shapingPoints, hasLength(6));
+    expect(route.shapingPoints.map((point) => point.legIndex), everyElement(0));
   });
 
   test('the retained geometry starts and ends where the file does', () {

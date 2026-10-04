@@ -84,6 +84,221 @@ void main() {
     });
   });
 
+  // #855: the stored log is replaced whole, so a rebuilt ride screen's recorder
+  // must have taken up the earlier log before anything is written.
+  group('a log is not replaced before the earlier one has been read back', () {
+    test('nothing is written until the barrier completes', () async {
+      final store = InMemoryRideDiagnosticsLogStore();
+      final recorder = RideDiagnosticsRecorder()..recordNote('first');
+      final barrier = Completer<void>();
+      final writer = RideDiagnosticsLogWriter(
+        store: store,
+        rideId: 'ride-1',
+        render: () => recorder.render(rideCode: 'ABCD'),
+        ready: barrier.future,
+      );
+
+      writer.markDirty();
+      await Future<void>.delayed(Duration.zero);
+      expect(await store.read('ride-1'), isNull, reason: 'still waiting');
+
+      barrier.complete();
+      await writer.flush();
+
+      expect(await store.read('ride-1'), contains('first'));
+    });
+
+    test(
+      'an entry recorded while waiting is written once the barrier opens',
+      () async {
+        final store = InMemoryRideDiagnosticsLogStore();
+        final recorder = RideDiagnosticsRecorder()..recordNote('first');
+        final barrier = Completer<void>();
+        final writer = RideDiagnosticsLogWriter(
+          store: store,
+          rideId: 'ride-1',
+          render: () => recorder.render(rideCode: 'ABCD'),
+          ready: barrier.future,
+        );
+        writer.markDirty();
+        recorder.recordNote('recorded while waiting');
+        writer.markDirty();
+
+        barrier.complete();
+        await writer.flush();
+
+        expect(await store.read('ride-1'), contains('recorded while waiting'));
+        expect(writer.writeCount, 1, reason: 'one write covers both');
+      },
+    );
+
+    test('a barrier that fails does not stop the log being written', () async {
+      final store = InMemoryRideDiagnosticsLogStore();
+      final recorder = RideDiagnosticsRecorder()..recordNote('first');
+      final writer = RideDiagnosticsLogWriter(
+        store: store,
+        rideId: 'ride-1',
+        render: () => recorder.render(rideCode: 'ABCD'),
+        ready: Future<void>.error(StateError('could not read the old log')),
+      );
+
+      await writer.flush();
+
+      expect(await store.read('ride-1'), contains('first'));
+    });
+
+    test('with no barrier it writes at once, as before', () async {
+      final store = InMemoryRideDiagnosticsLogStore();
+      final recorder = RideDiagnosticsRecorder()..recordNote('first');
+      final writer = _writer(store, recorder);
+
+      await writer.flush();
+
+      expect(await store.read('ride-1'), contains('first'));
+    });
+  });
+
+  group('a rebuilt ride screen carries the stored log on', () {
+    DateTime now = DateTime.utc(2026, 10, 4, 10);
+
+    /// One ride screen's worth of recording: a recorder, taken up from whatever is
+    /// stored for the ride, and a writer that waits for that.
+    Future<RideDiagnosticsRecorder> screen(
+      RideDiagnosticsLogStore store, {
+      required String firstNote,
+    }) async {
+      late final RideDiagnosticsLogWriter writer;
+      final recorder = RideDiagnosticsRecorder(
+        clock: () => now,
+        onEntry: () => writer.markDirty(),
+      );
+      final ready = continueRecordingFromStore(
+        recorder: recorder,
+        store: store,
+        rideId: 'ride-1',
+      );
+      writer = RideDiagnosticsLogWriter(
+        store: store,
+        rideId: 'ride-1',
+        ready: ready,
+        render: () => recorder.render(rideCode: '123456'),
+      );
+      recorder.recordNote(firstNote);
+      await ready;
+      await writer.flush();
+      return recorder;
+    }
+
+    test(
+      'a second screen for the same ride does not replace the first\'s log',
+      () async {
+        final store = InMemoryRideDiagnosticsLogStore();
+
+        final first = await screen(store, firstNote: 'recording started');
+        now = now.add(const Duration(minutes: 20));
+        first.recordNote('reached the cafe');
+        await Future<void>.delayed(Duration.zero);
+        expect(await store.read('ride-1'), contains('reached the cafe'));
+
+        // The rider steps away from the running ride and comes back: a new screen.
+        now = now.add(const Duration(minutes: 40));
+        await screen(store, firstNote: 'recording started');
+
+        final stored = (await store.read('ride-1'))!;
+        expect(stored, contains('reached the cafe'));
+        expect(stored, contains('recording continued'));
+        expect(
+          'recording started'.allMatches(stored),
+          hasLength(2),
+          reason: 'one per screen, both kept',
+        );
+      },
+    );
+
+    test('a ride with no earlier log is recorded from scratch', () async {
+      final store = InMemoryRideDiagnosticsLogStore();
+
+      await screen(store, firstNote: 'recording started');
+
+      final stored = (await store.read('ride-1'))!;
+      expect(stored, contains('recording started'));
+      expect(stored, isNot(contains('recording continued')));
+    });
+
+    test('another ride\'s log is left alone', () async {
+      final store = InMemoryRideDiagnosticsLogStore();
+      await store.write(
+        rideId: 'other-ride',
+        text:
+            'Tail End Charlie · ride diagnostics\nRide:  999999\n\n'
+            '2026-10-03T09:00:00.000Z  NOTE       somebody else\'s ride',
+      );
+
+      await screen(store, firstNote: 'recording started');
+
+      expect(await store.read('other-ride'), contains('somebody else\'s ride'));
+      expect(
+        await store.read('ride-1'),
+        isNot(contains('somebody else\'s ride')),
+      );
+    });
+
+    test(
+      'a store that cannot be read says so in the log and carries on',
+      () async {
+        final recorder = RideDiagnosticsRecorder(clock: () => now);
+
+        await continueRecordingFromStore(
+          recorder: recorder,
+          store: _UnreadableStore(),
+          rideId: 'ride-1',
+        );
+
+        expect(recorder.entries.join('\n'), contains('could not be read'));
+      },
+    );
+
+    test(
+      'a recorder that has been replaced meanwhile is not touched',
+      () async {
+        final store = InMemoryRideDiagnosticsLogStore();
+        await store.write(
+          rideId: 'ride-1',
+          text:
+              'Tail End Charlie · ride diagnostics\n\n'
+              '2026-10-04T09:00:00.000Z  NOTE       earlier',
+        );
+        final recorder = RideDiagnosticsRecorder(clock: () => now);
+
+        await continueRecordingFromStore(
+          recorder: recorder,
+          store: store,
+          rideId: 'ride-1',
+          isStillCurrent: () => false,
+        );
+
+        expect(recorder.entries, isEmpty);
+      },
+    );
+
+    test('with no store, or no ride, there is nothing to continue', () async {
+      final recorder = RideDiagnosticsRecorder(clock: () => now);
+
+      await continueRecordingFromStore(
+        recorder: recorder,
+        store: null,
+        rideId: 'ride-1',
+      );
+      await continueRecordingFromStore(
+        recorder: recorder,
+        store: InMemoryRideDiagnosticsLogStore(),
+        rideId: null,
+      );
+
+      expect(recorder.entries, isEmpty);
+    });
+  });
+
   group('a storage failure does not end the ride', () {
     test('the error is kept rather than thrown', () async {
       final recorder = RideDiagnosticsRecorder()..recordNote('first');
@@ -180,6 +395,22 @@ class _FailingStore implements RideDiagnosticsLogStore {
 
   @override
   Future<String?> read(String rideId) async => null;
+
+  @override
+  Future<List<RideDiagnosticsLog>> list() async => const [];
+
+  @override
+  Future<RideDiagnosticsLog?> latest() async => null;
+}
+
+/// A store whose log cannot be read back.
+class _UnreadableStore implements RideDiagnosticsLogStore {
+  @override
+  Future<void> write({required String rideId, required String text}) async {}
+
+  @override
+  Future<String?> read(String rideId) =>
+      Future.error(const FileSystemException('unreadable'));
 
   @override
   Future<List<RideDiagnosticsLog>> list() async => const [];

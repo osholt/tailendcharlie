@@ -8,6 +8,8 @@ import '../domain/completed_ride.dart';
 import '../domain/distance_unit.dart';
 import 'gpx_exporter.dart';
 import 'measurement_formatter.dart';
+import 'ride_alert_log.dart';
+import 'ride_broadcast_log.dart';
 
 abstract interface class CompletedRideSharer {
   Future<void> shareSummary(
@@ -43,6 +45,14 @@ class SystemCompletedRideSharer implements CompletedRideSharer {
       'Distance: $distance',
       'Riders: ${ride.riderCount}',
       'Marker sessions: ${ride.markerSessions.length}',
+      if (ride.alerts.isNotEmpty) ...[
+        'Alerts raised: ${ride.alerts.length}',
+        rideAlertLogText(ride.alerts),
+      ],
+      if (ride.broadcasts.isNotEmpty) ...[
+        'Leader messages: ${ride.broadcasts.length}',
+        rideBroadcastLogText(ride.broadcasts),
+      ],
     ].join('\n');
     await SharePlus.instance.share(
       ShareParams(
@@ -50,6 +60,22 @@ class SystemCompletedRideSharer implements CompletedRideSharer {
         text: text,
         sharePositionOrigin: sharePositionOrigin,
       ),
+    );
+  }
+
+  /// The GPX for [ride]: its recorded trail, with the alerts the group raised
+  /// written in as waypoints (#849).
+  ///
+  /// The alerts are added at the moment of export and are not part of the stored
+  /// route, which is offered back as a route to ride again and must not gain stops.
+  String gpxFor(CompletedRide ride) {
+    final route = ride.traveledRoute;
+    if (route == null) {
+      throw StateError('This ride has no recorded local trail to export.');
+    }
+    return gpxExporter.export(
+      route,
+      alerts: rideAlertGpxWaypoints(ride.alerts),
     );
   }
 
@@ -63,7 +89,7 @@ class SystemCompletedRideSharer implements CompletedRideSharer {
       throw StateError('This ride has no recorded local trail to export.');
     }
     final fileName = gpxExporter.fileName(route);
-    final bytes = Uint8List.fromList(utf8.encode(gpxExporter.export(route)));
+    final bytes = Uint8List.fromList(utf8.encode(gpxFor(ride)));
     await SharePlus.instance.share(
       ShareParams(
         title: 'Export ${ride.title}',

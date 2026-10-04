@@ -1,6 +1,7 @@
 import '../domain/imported_route.dart';
 import 'road_routing.dart';
 import 'route_marker_plan.dart';
+import 'route_verification.dart';
 
 class RouteReshapeResult {
   const RouteReshapeResult({
@@ -8,12 +9,18 @@ class RouteReshapeResult {
     required this.distanceMeters,
     required this.duration,
     this.twistinessScore,
+    this.verification,
   });
 
   final ImportedRoute route;
   final double distanceMeters;
   final Duration duration;
   final double? twistinessScore;
+
+  /// What checking the reshaped route against its preferences found, or null
+  /// when it was not checked. The route changed, so whatever was found about
+  /// the one before it no longer applies (#840).
+  final RouteVerification? verification;
 }
 
 /// Recalculates a route through non-stopping shaping controls.
@@ -29,14 +36,18 @@ class RouteReshapePlanner {
     ImportedRoute route,
     List<RouteShapingPoint> shapingPoints,
   ) async {
-    final controls = routeShapingControls(route, shapingPoints);
-    if (controls.length < 2) {
+    final controls = routeShapingControlPlan(route, shapingPoints);
+    if (controls.points.length < 2) {
       throw const FormatException(
         'This route needs a start and destination before it can be reshaped.',
       );
     }
-    final result = await routingService.routeThrough(
-      controls,
+    // The shaping controls pass through; only the named stops end a leg, so
+    // only they and the destination are arrived at (#839).
+    final result = await routeThroughWithShaping(
+      routingService,
+      controls.points,
+      shapingPointIndexes: controls.shapingPointIndexes,
       preferences: route.preferences,
     );
     final primary = RouteMarkerPlanAnalyzer.primaryRiddenPath(route);
@@ -71,11 +82,19 @@ class RouteReshapePlanner {
       distanceMeters: result.distanceMeters,
       duration: result.duration,
       twistinessScore: result.twistinessScore,
+      verification: result.verification,
     );
   }
 }
 
 List<GeoPoint> routeShapingControls(
+  ImportedRoute route,
+  List<RouteShapingPoint> shapingPoints,
+) => routeShapingControlPlan(route, shapingPoints).points;
+
+/// The controls to route a reshaped route through, and which of them are
+/// shaping points rather than stops (#839).
+({List<GeoPoint> points, Set<int> shapingPointIndexes}) routeShapingControlPlan(
   ImportedRoute route,
   List<RouteShapingPoint> shapingPoints,
 ) {
@@ -87,18 +106,24 @@ List<GeoPoint> routeShapingControls(
           final points when points.length >= 2 => [points.first, points.last],
           _ => const <GeoPoint>[],
         };
-  if (anchors.length < 2) return anchors;
+  if (anchors.length < 2) {
+    return (points: anchors, shapingPointIndexes: const <int>{});
+  }
   final controls = <GeoPoint>[];
+  final shaping = <int>{};
   for (var legIndex = 0; legIndex < anchors.length - 1; legIndex += 1) {
     controls.add(anchors[legIndex]);
-    controls.addAll(
-      shapingPoints
-          .where((point) => point.legIndex == legIndex)
-          .map((point) => point.point),
-    );
+    for (final point in shapingPoints) {
+      if (point.legIndex != legIndex) continue;
+      shaping.add(controls.length);
+      controls.add(point.point);
+    }
   }
   controls.add(anchors.last);
-  return List.unmodifiable(controls);
+  return (
+    points: List.unmodifiable(controls),
+    shapingPointIndexes: Set.unmodifiable(shaping),
+  );
 }
 
 /// Adds [point] to the correct named-stop leg and keeps controls on that leg in
