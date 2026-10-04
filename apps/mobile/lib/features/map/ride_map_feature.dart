@@ -5887,6 +5887,8 @@ class _RideMapScreenState extends State<RideMapScreen>
     final controller = _mapLibreController;
     if (controller == null) return;
     _mapLibreStyleReady = false;
+    // Read before the first await: the layers below size their images by it.
+    final pixelRatio = _nativeMarkerPixelRatio(context);
     try {
       await _registerMarkerImages(controller);
       final heatmapBelowLayerId = heatmapRoadLayerId(widget.mapStyleString);
@@ -6102,9 +6104,15 @@ class _RideMapScreenState extends State<RideMapScreen>
           iconColor: RouteTrailStyle.markerGlyphHex,
           // One image, so the size is settled here rather than per feature —
           // but by the same rule the other rider layers use (#259).
-          iconSize: widget.localRiderSymbol.kind == RiderSymbolKind.initials
-              ? riderInitialsIconSize(badgeDiameter: _localBadgeRadius * 2)
-              : 0.2,
+          iconSize: widget.localRiderSymbol.kind == RiderSymbolKind.motorcycle
+              ? riderGlyphIconSize(
+                  badgeDiameter: _localBadgeRadius * 2,
+                  pixelRatio: pixelRatio,
+                )
+              : riderInitialsIconSize(
+                  badgeDiameter: _localBadgeRadius * 2,
+                  pixelRatio: pixelRatio,
+                ),
           iconRotationAlignment: 'viewport',
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
@@ -6137,7 +6145,7 @@ class _RideMapScreenState extends State<RideMapScreen>
           // As above: the badge carries the colour, the glyph carries the shape,
           // and a dark glyph is the only way the shape survives on a light badge.
           iconColor: RouteTrailStyle.markerGlyphHex,
-          iconSize: _riderIconSize(_riderBadgeRadius * 2, 0.19),
+          iconSize: _riderIconSize(_riderBadgeRadius * 2, pixelRatio),
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
         ),
@@ -6854,15 +6862,26 @@ class _RideMapScreenState extends State<RideMapScreen>
       riderUnknownShapeImage,
     ],
     iconColor: color,
-    iconSize: diameter / 128,
+    iconSize: diameter / riderMarkerShapeUnits,
     iconHaloColor: borderColor,
-    iconHaloWidth: borderWidth,
+    // As much of the outline as the shape's distance field can hold; more is a
+    // solid square behind the marker (#843).
+    iconHaloWidth: riderBadgeHaloWidth(
+      badgeDiameter: diameter,
+      requested: borderWidth,
+    ),
     iconRotate: [
       'coalesce',
       ['get', 'bearing'],
       0,
     ],
     iconRotationAlignment: 'map',
+    // The navigation camera is tilted 51 to 58 degrees, and a symbol that lies
+    // on the map is foreshortened by it into an ellipse, with the glyph (which
+    // faces the camera) standing over it. The badge faces the camera too, so it
+    // is the circle iOS draws; it still turns with the map, so the pointer keeps
+    // the rider's heading on the ground (#843).
+    iconPitchAlignment: 'viewport',
     iconAllowOverlap: true,
     iconIgnorePlacement: true,
   );
@@ -6900,31 +6919,34 @@ class _RideMapScreenState extends State<RideMapScreen>
     true,
   ];
 
-  /// Radius of the coloured badge behind another rider's glyph.
-  static const _riderBadgeRadius = 15.0;
+  /// Radius of the coloured badge behind another rider's glyph: the 34 box the
+  /// flutter_map renderer gives it, so a marker is one size on both platforms.
+  static const _riderBadgeRadius = 17.0;
 
-  /// Radius of the local rider's own badge, which is drawn a little larger.
-  static const _localBadgeRadius = 16.0;
+  /// Radius of the local rider's own badge, which is drawn a little larger: the
+  /// 38 box the flutter_map renderer gives it.
+  static const _localBadgeRadius = 19.0;
 
-  /// `icon-size` for a rider glyph, as an expression that gives initials their
-  /// own size.
+  /// `icon-size` for a rider glyph, as an expression: a bike is one size, and an
+  /// initials or emoji raster - a 128 pixel square mapped onto the badge - is
+  /// another.
   ///
-  /// A bike or an emoji is a pictogram: it sits *inside* the badge, and
-  /// [pictogramIconSize] is the value each layer already had for one, passed
-  /// through untouched so no bike or emoji moves by a pixel. Initials are not a
-  /// pictogram — they are meant to fill the circle — and inheriting the
-  /// pictogram's size is what left them at about three quarters of what the
-  /// symbol picker's preview promised (#259). Theirs is derived from the badge
-  /// instead, by the one rule in `motorcycle_icon.dart`, so the three rider
-  /// layers and the picker cannot answer differently again.
+  /// A bike sits *inside* the badge. Initials are not a pictogram: they are meant
+  /// to fill the circle, and inheriting a bike's size is what left them at about
+  /// three quarters of what the symbol picker's preview promised (#259). Both are
+  /// derived from the badge and from [pixelRatio] - what the native map divides
+  /// every image by, see [_nativeMarkerPixelRatio] - by the rules in
+  /// `motorcycle_icon.dart`, so the three rider layers and the picker cannot
+  /// answer differently again, and a marker is the same size on every density
+  /// (#843).
   static Object _riderIconSize(
     double badgeDiameter,
-    double pictogramIconSize,
+    double pixelRatio,
   ) => <Object>[
     'case',
-    <Object>['get', 'initialsSymbol'],
-    riderInitialsIconSize(badgeDiameter: badgeDiameter),
-    pictogramIconSize,
+    <Object>['get', 'rasterSymbol'],
+    riderInitialsIconSize(badgeDiameter: badgeDiameter, pixelRatio: pixelRatio),
+    riderGlyphIconSize(badgeDiameter: badgeDiameter, pixelRatio: pixelRatio),
   ];
 
   Map<String, dynamic> _overlayGeoJson() => MapGeoJson.points(
@@ -6940,9 +6962,9 @@ class _RideMapScreenState extends State<RideMapScreen>
               'bearing': ?overlay.headingDegrees,
               'hazardSymbol': overlay.hazardSymbol != null,
               'iconImage': _overlayIconImage(overlay),
-              'initialsSymbol':
+              'rasterSymbol':
                   overlay.hazardSymbol == null &&
-                  overlay.riderSymbol.kind == RiderSymbolKind.initials,
+                  overlay.riderSymbol.kind != RiderSymbolKind.motorcycle,
             },
           ),
         ),
@@ -10397,6 +10419,8 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
     if (controller == null) return;
     _styleReady = false;
     final snapshot = _snapshot();
+    // Read before the first await: the symbol layers size their images by it.
+    final pixelRatio = _nativeMarkerPixelRatio(context);
     final routeStyle = RideMapPalette.lineStyle(
       RideMapLine.remainingRoute,
       overview: true,
@@ -10477,7 +10501,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
           // The same rule as the main map, at this map's badge size (#259).
           iconSize: _RideMapScreenState._riderIconSize(
             _miniBadgeRadius * 2,
-            0.09,
+            pixelRatio,
           ),
           iconAllowOverlap: true,
           iconIgnorePlacement: true,
@@ -10668,7 +10692,7 @@ class _GroupMiniMapState extends State<_GroupMiniMap> {
                 marker.displayName,
                 marker.motorcycleStyle,
               ),
-              'initialsSymbol': marker.symbol.kind == RiderSymbolKind.initials,
+              'rasterSymbol': marker.symbol.kind != RiderSymbolKind.motorcycle,
             },
           ),
       ]);
@@ -12138,12 +12162,23 @@ class _RouteStartBanner extends StatelessWidget {
   }
 }
 
-// maplibre_gl decodes iOS addImage bytes using UIScreen.scale; Android uses
-// inDensity=0. Supply matching resolution so a badge keeps its logical size.
+/// How many pixels of a registered image make one logical pixel on the native
+/// map, which is what a marker image must be rasterised at to keep its size.
+///
+/// Both platforms treat an image as a device-density sprite. maplibre_gl decodes
+/// iOS bytes with `UIScreen.scale`, and on Android it decodes them with
+/// `inDensity = 0`, which leaves the bitmap at `Bitmap.getDefaultDensity()` - the
+/// device's density, not 160 - and MapLibre takes `density / 160` as the image's
+/// pixel ratio. This used to answer 1 on Android, on the reading that
+/// `inDensity = 0` meant one to one, so a rider's badge came out `1 / density` of
+/// its size next to a glyph tuned for one phone: a tiny coloured disc under a
+/// black bike, at about half the size of iOS (#843).
+///
+/// The Flutter ratio is the device's own unless the rider has changed Android's
+/// display size, which moves it and not the bitmap default; in that case a marker
+/// is off by the same factor as the rest of the map's text and symbols.
 double _nativeMarkerPixelRatio(BuildContext context) =>
-    !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
-    ? MediaQuery.devicePixelRatioOf(context)
-    : 1;
+    MediaQuery.devicePixelRatioOf(context);
 
 class NavigationGuidanceBanner extends StatelessWidget {
   const NavigationGuidanceBanner({
