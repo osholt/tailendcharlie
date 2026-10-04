@@ -41,6 +41,17 @@ permissions by design.
 Everything here comes from the 4 October ride to Penelope's Cafe and the tester
 chat. Thank you, Becks and Nigel.
 
+### Planning a ride (new)
+
+- **Where to?** opens a single Plan screen. The start is your location, and you
+  can change it, even without a GPS fix. Add named stops, then move or remove
+  them. Drag the line to reshape the route; those points are never listed as
+  stops. Route options and **Solo or Group** are on the same screen.
+- A confirmed route can be edited afterwards: solo, or by the leader for the
+  whole group. Cafés tapped on the map are added as stops along the route.
+- **Ride with others** turns a solo navigation into a group ride without
+  stopping your guidance. **Ride on alone** leaves a group and keeps the route.
+
 ### Navigation
 
 - Joining a dual carriageway and leaving it straight away (for example, out of
@@ -90,7 +101,21 @@ chat. Thank you, Becks and Nigel.
 - The minimap and the main map now use the same rider colours.
 - Road edges are stronger in both light map styles.
 - In portrait, the ETA strip and the group minimap sit in the bottom band with
-  the buttons, so nothing covers the road ahead or your bike.
+  the buttons, so nothing covers the road ahead or your bike. The leader's
+  REPORT and TELL GROUP buttons stack so the minimap stays usable.
+- **Settings → Group minimap** shows or hides the minimap. It is on by default
+  for the leader and Tail End Charlie, and off for everyone else.
+- On Android, other riders appear as coloured discs with their bike or initials,
+  the same as on iPhone. The "squashed flies" are gone.
+- Unnamed EV chargers and parcel lockers are labelled "EV charging" or "Parcel
+  locker", never a code.
+
+### Location sharing
+
+- If a ride is left running after the group has gone home, you are asked whether
+  to keep sharing. Unanswered, sharing pauses once you have stopped moving.
+  An actual ride, a café stop, a marker waiting, or a Tail End Charlie far behind
+  is never interrupted.
 
 ### What to test
 
