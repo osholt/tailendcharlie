@@ -45,13 +45,25 @@ enum RideDiagnosticsTransition {
 /// reachable: no recorder at all is the state a ride starts in with the switch
 /// off, while a stopped recorder holding entries is what switching off mid-ride
 /// leaves behind.
+///
+/// [rideEnded] is true when the ride is already over. A recorder is never *started*
+/// for one (#855): it would begin empty, and the stored log is written whole, so
+/// its first write would replace the log of the ride that just finished with its
+/// own two lines. That is what happened to a group ride's log when the ended-ride
+/// screen came back after the app was relaunched. The ended screen reads the
+/// stored log back instead, which is untouched.
 RideDiagnosticsTransition rideDiagnosticsTransition({
   required bool switchedOn,
   required bool hasRecorder,
   required bool isRecording,
+  bool rideEnded = false,
 }) {
   if (switchedOn) {
-    if (!hasRecorder) return RideDiagnosticsTransition.start;
+    if (!hasRecorder) {
+      return rideEnded
+          ? RideDiagnosticsTransition.nothing
+          : RideDiagnosticsTransition.start;
+    }
     return isRecording
         ? RideDiagnosticsTransition.nothing
         : RideDiagnosticsTransition.resume;

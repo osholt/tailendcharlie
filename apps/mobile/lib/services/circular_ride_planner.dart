@@ -6,6 +6,8 @@ import '../domain/recorded_route_store.dart';
 import 'road_routing.dart';
 import 'circular_route_quality.dart';
 import 'route_twistiness.dart';
+import 'route_verification.dart';
+import 'verified_road_routing.dart';
 
 enum CircularRideDirection {
   north('N', 0),
@@ -161,6 +163,7 @@ class CircularRidePlan {
     this.motorwayAvoidanceRelaxedSections = 0,
     this.standardRoutingFallbackSections = 0,
     this.routeSectionCount = 0,
+    this.routeVerification,
   });
 
   final ImportedRoute route;
@@ -174,6 +177,12 @@ class CircularRidePlan {
   final int motorwayAvoidanceRelaxedSections;
   final int standardRoutingFallbackSections;
   final int routeSectionCount;
+
+  /// What checking the finished loop against the rider's preferences found, or
+  /// null when it was not checked (#840). Reported, never re-planned here: a
+  /// loop is routed as a whole and a replacement has to pass the same closed,
+  /// distance, U-turn and overlap tests as any other candidate.
+  final RouteVerification? routeVerification;
 }
 
 String circularRideMotorwayFallbackWarning({
@@ -219,11 +228,15 @@ String circularRideStandardRoutingFallbackWarning({
 /// changes its handedness and angle, so “another route” makes a materially
 /// different request rather than asking the router the same thing.
 class CircularRidePlanner {
-  const CircularRidePlanner({required this.routingService});
+  const CircularRidePlanner({required this.routingService, this.verifier});
 
   static const maximumCandidateVariants = 6;
 
   final RoadRoutingService routingService;
+
+  /// Checks the one loop the planner settles on. Not every candidate: finding a
+  /// loop can take several requests, and a route is looked up once per plan.
+  final RouteVerifier? verifier;
 
   Future<CircularRidePlan> generate(CircularRideRequest request) async {
     if (!request.distanceMeters.isFinite ||
@@ -280,6 +293,10 @@ class CircularRidePlanner {
           )
         : null;
     final warnings = [?motorwayWarning, ?standardRoutingWarning];
+    final routeVerification = await verifier?.inspect(
+      result.points,
+      candidate.preferences,
+    );
     final now = DateTime.now().toUtc();
     final route = ImportedRoute(
       id: 'circular-${now.microsecondsSinceEpoch}-${selectedRequest.variant}',
@@ -328,6 +345,7 @@ class CircularRidePlanner {
       standardRoutingFallbackSections:
           candidate.standardRoutingFallbackSections,
       routeSectionCount: candidate.routeSectionCount,
+      routeVerification: routeVerification,
     );
   }
 

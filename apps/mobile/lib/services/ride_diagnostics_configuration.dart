@@ -51,4 +51,10 @@ class RideDiagnosticsConfiguration {
 
   /// Past this, a sample is too far from the junction to describe it.
   static const double headingSampleToleranceMeters = 35.0;
+
+  /// How often the tally of what each route delivered is written (#855). A
+  /// minute is short enough to see when the direct link stopped delivering and
+  /// long enough that a three-hour ride adds a couple of hundred lines, not
+  /// thousands.
+  static const Duration transportSummaryInterval = Duration(minutes: 1);
 }

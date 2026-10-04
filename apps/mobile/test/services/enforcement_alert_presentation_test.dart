@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ride_relay/domain/hazard.dart';
 import 'package:ride_relay/services/enforcement_alert_presentation.dart';
 
 void main() {
@@ -115,6 +116,36 @@ void main() {
       // A full-width surface reads as a takeover even when it is short, which is
       // what #418's second attempt still was.
       expect(enforcementBubbleMaxWidth, lessThan(400));
+    });
+  });
+
+  group('what a warning is called (#849)', () {
+    test('the rider alert says "alert", never camera or police', () {
+      final kind = EnforcementAlertKind.forHazard(HazardType.alert);
+
+      expect(kind, EnforcementAlertKind.alert);
+      expect(kind.title, 'ALERT');
+      // Spoken, "alert ahead": said bare, the word is easy to take for the SOS
+      // control's own label.
+      expect(kind.spokenName, 'Alert ahead');
+    });
+
+    test('the two older kinds keep the words they always had', () {
+      final camera = EnforcementAlertKind.forHazard(HazardType.speedCamera);
+      final police = EnforcementAlertKind.forHazard(HazardType.policeActivity);
+
+      expect(camera.title, 'SPEED CAMERA');
+      expect(camera.spokenName, 'Speed camera');
+      expect(police.title, 'POLICE');
+      expect(police.spokenName, 'Police');
+    });
+
+    test('every kind has a distinct title and spoken name', () {
+      final titles = EnforcementAlertKind.values.map((kind) => kind.title);
+      final spoken = EnforcementAlertKind.values.map((kind) => kind.spokenName);
+
+      expect(titles.toSet(), hasLength(EnforcementAlertKind.values.length));
+      expect(spoken.toSet(), hasLength(EnforcementAlertKind.values.length));
     });
   });
 }

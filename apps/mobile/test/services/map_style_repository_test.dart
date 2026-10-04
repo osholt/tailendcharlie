@@ -743,7 +743,11 @@ void main() {
       ]);
       final light = worst(RouteTrailStyle.lightBasemapSurfaces.values);
 
-      expect(light, closeTo(1.00, 0.01));
+      // 1.00 until #841: the leader trail and the old uniform road casing
+      // (#C4C5C1) happened to share a luminance. The casings moved, so the worst
+      // remaining pair is the rejoin breadcrumb against a building (1.12), a
+      // pair that was already in this table, and no bare line got worse.
+      expect(light, closeTo(1.12, 0.01));
       expect(dark, closeTo(1.50, 0.01));
       expect(
         dark,

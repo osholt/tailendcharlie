@@ -14,6 +14,11 @@ class HazardDeduplicator {
     HazardReport incoming,
     Iterable<HazardReport> existing,
   ) {
+    // An alert is a moment, not a place: two riders raising one at the same spot
+    // are two sightings, each with its own time, and the ride review lists every
+    // one so it can be checked against dash-cam footage (#849). Merging them
+    // would also move the first one's `updatedAt` and drop the second's time.
+    if (incoming.type == HazardType.alert) return incoming;
     HazardReport? match;
     var nearestDistance = double.infinity;
     for (final candidate in existing) {

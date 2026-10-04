@@ -15,12 +15,23 @@ class RouteProgressPanel extends StatelessWidget {
     this.showClock = false,
     this.onStop,
     this.displaySize = RidingDisplaySize.small,
+    this.strip = false,
   });
 
   final RouteJourneyProgress progress;
   final DistanceUnit distanceUnit;
   final bool showClock;
   final RidingDisplaySize displaySize;
+
+  /// Lays the summary out as one full-width strip instead of a card (#848).
+  ///
+  /// Portrait gives the ETA a place in the bottom band, where it spans the band
+  /// rather than floating in the middle of the map over the road ahead. A strip
+  /// keeps the figures a rider glances at - time and distance left, and the
+  /// arrival time - on one row and drops the line that only says how far has
+  /// been ridden, which costs a row of band for the least useful number. The
+  /// next stop and the way out of free-roam navigation keep their rows.
+  final bool strip;
 
   /// Stops navigating, where the host offers a way out here (#615).
   ///
@@ -54,6 +65,21 @@ class RouteProgressPanel extends StatelessWidget {
         'next stop $nextName, ${formatter.distance(nextDistance)}'
             '${nextArrival == '—' ? '' : ', ETA $nextArrival'}',
     ].join('. ');
+
+    if (strip) {
+      return Semantics(
+        label: semantics,
+        container: true,
+        child: _buildStrip(
+          formatter: formatter,
+          timeRemaining: timeRemaining,
+          arrival: arrival,
+          nextArrival: nextArrival,
+          scale: scale,
+          enlarged: enlarged,
+        ),
+      );
+    }
 
     return Semantics(
       label: semantics,
@@ -230,7 +256,176 @@ class RouteProgressPanel extends StatelessWidget {
       ),
     );
   }
+
+  /// One row of figures, then the optional next stop and way out (#848).
+  ///
+  /// The figures sit in a [Wrap] rather than a [Row] of fixed siblings: at the
+  /// larger riding sizes the time, the distance and the arrival no longer fit
+  /// side by side on a narrow phone, and the contract in [RidingDisplaySize] is
+  /// that enlarging never hides a figure - so they wrap onto a second line
+  /// instead of being ellipsised.
+  Widget _buildStrip({
+    required MeasurementFormatter formatter,
+    required String timeRemaining,
+    required String arrival,
+    required String nextArrival,
+    required double scale,
+    required bool enlarged,
+  }) {
+    final nextName = progress.nextWaypointName;
+    final nextDistance = progress.nextWaypointDistanceMeters;
+    // With nothing but the destination ahead the next stop *is* the figures in
+    // the first row, so repeating them would spend a row of the band on nothing.
+    // A named stop before the destination is information and keeps its row.
+    final nextIsDestination =
+        nextDistance != null &&
+        (nextDistance - progress.remainingDistanceMeters).abs() <
+            _destinationToleranceMeters;
+    final primaryStyle = TextStyle(
+      color: Colors.white,
+      fontWeight: FontWeight.w700,
+      fontSize: 13 * scale,
+    );
+    final arrivalLabel = progress.awaitingRejoin
+        ? 'ETA after rejoining'
+        : 'ETA $arrival';
+    final remainingDistance =
+        '${formatter.distance(progress.remainingDistanceMeters)} left';
+    return Container(
+      key: const Key('route-progress-panel'),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+      decoration: BoxDecoration(
+        color: const Color(0xE6252E39),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0x665E6B7B)),
+        boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 6)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.route,
+                size: 15 * scale,
+                color: const Color(0xFFFFA04A),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Wrap(
+                  spacing: 10,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    if (enlarged) ...[
+                      Text(
+                        timeRemaining,
+                        key: const Key('eta-remaining-time'),
+                        style: primaryStyle,
+                      ),
+                      Text(
+                        remainingDistance,
+                        key: const Key('eta-remaining-distance'),
+                        style: primaryStyle,
+                      ),
+                    ] else
+                      Text(
+                        '$timeRemaining · $remainingDistance',
+                        key: const Key('eta-remaining-time'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: primaryStyle,
+                      ),
+                    Text(
+                      arrivalLabel,
+                      key: const Key('eta-arrival'),
+                      style: TextStyle(
+                        color: const Color(0xFFF0F4F8),
+                        fontSize: 12 * scale,
+                        height: 1.2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (nextName != null &&
+              nextDistance != null &&
+              !nextIsDestination) ...[
+            const SizedBox(height: 4),
+            Container(height: 1, color: const Color(0x335E6B7B)),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(
+                  Icons.flag_outlined,
+                  size: 14 * scale,
+                  color: const Color(0xFF9FC8FF),
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    nextName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12 * scale,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '${formatter.distance(nextDistance)} · $nextArrival',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      color: const Color(0xFFD7DEE7),
+                      fontSize: 11 * scale,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (onStop != null) ...[
+            const SizedBox(height: 2),
+            Container(height: 1, color: const Color(0x335E6B7B)),
+            ConstrainedBox(
+              constraints: BoxConstraints(minHeight: 32 * scale),
+              child: TextButton.icon(
+                key: const Key('stop-navigating'),
+                onPressed: onStop,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFFFB27A),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+                icon: Icon(Icons.close, size: 15 * scale),
+                label: Text(
+                  'Stop navigating',
+                  style: TextStyle(
+                    fontSize: 12 * scale,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
+
+/// How close the next stop has to be to the remaining distance for it to count
+/// as the destination itself. Twenty-five metres is the order of GPS error on a
+/// stationary phone, so a stop that close to the end is not a separate place.
+const double _destinationToleranceMeters = 25;
 
 String _durationLabel(Duration? duration) {
   if (duration == null) return 'Time —';

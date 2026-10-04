@@ -1132,8 +1132,8 @@ void main() {
         plan.route.preferences,
         const RoutePreferences(style: RouteStyle.twisty, avoidMotorways: true),
       );
-      expect(plan.route.description, contains('motorways excluded'));
-      expect(plan.route.description, contains('unsurfaced byways avoided'));
+      expect(plan.route.description, contains('avoid motorways'));
+      expect(plan.route.description, contains('avoid unsurfaced byways'));
       expect(plan.route.plannedDuration, plan.duration);
       expect(
         plan.warnings,

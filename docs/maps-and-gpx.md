@@ -20,7 +20,8 @@ coarser privacy-oriented z17 contribution cells.
 
 The daytime map has two saved settings: **Restrained** applies Tail End
 Charlie's quieter road-first repaint to OpenFreeMap Liberty, while **Original**
-keeps the provider's daytime colours and labels. They use the same vector tile
+keeps the provider's daytime colours and labels, with deeper and wider road
+outlines ([#841](#road-edges-in-daylight-841)). They use the same vector tile
 source and offline tile cache; only their small style-document caches are kept
 separate so switching cannot serve the wrong palette.
 
@@ -179,18 +180,24 @@ The small glance surfaces have fixed homes:
 
 | corner | portrait | landscape |
 | --- | --- | --- |
-| top leading | ride menu; route progress immediately below | ride menu |
-| top centre | — | current time |
-| top trailing | group overview | speed sign |
-| bottom trailing | — | route progress, recovery, junction card, group overview |
+| top leading | ride menu | ride menu |
+| top centre | current time | current time |
+| top trailing | compass and speed sign | compass and speed sign |
+| bottom | the band: everything else | route progress, recovery, junction card, group overview (left and right rails) |
 
-The portrait route-progress card is at most 210 logical pixels wide (and no more
-than 54% of the safe viewport); landscape reuses the existing 230-pixel right
-rail. The portrait card also carries the current time, while landscape keeps the
-clock in its small top-centre position. These are *glances*, never targets. The
-centre and upper-middle remain empty, and moving the group overview out of the
-portrait bottom band stops the camera's forward bias paying for a surface nobody
-acts on.
+**Portrait keeps every navigational surface in the bottom band (#848).** The route
+progress card and the group overview used to float 154 pixels below the top row,
+which on a mounted phone is the middle of the road ahead; a tester on Android
+reported that together they covered the map and the rider's own bike. They are
+now part of the band the camera frames the marker above, and the only things
+above the marker are the three corner glances in the table. The route progress is
+a one-row strip across the top of the band (`RouteProgressPanel.strip`): time and
+distance left and the arrival time, with the next stop on a row of its own only
+when it is a stop before the destination, and the way out of free-roam navigation
+where there is one. The group overview shares the row of targets, hard against the
+trailing edge, so it costs the band almost no height; on a narrow phone it scales
+down rather than overflow. Landscape is unchanged: its rails already kept both
+clear of the rider.
 
 Route progress is optional in Settings. Distance is projected along the same
 primary route geometry used by navigation. Time remaining and ETA use an
@@ -201,7 +208,8 @@ GPX waypoint ahead along the route; shaping points are not presented as stops,
 and an unnamed final point is labelled Destination.
 
 Everything else is bottom-anchored. Portrait is one band: urgent alerts, the TEC
-gap, then the turn banner, then the targets. Landscape splits into a left rail
+gap, the route progress strip, then the turn banner, then the targets with the
+group overview beside them. Landscape splits into a left rail
 (urgent alerts, TEC gap, turn banner, actions) and a right rail (recovery,
 junction marker card, group overview), leaving the centre column clear. Each rail
 is a single column, so placement stays deterministic and no surface can cover
@@ -283,6 +291,62 @@ after it) and still clamps to the 0.35 floor, because a paused-ride banner, an
 off-course alert, a turn banner with lane guidance and the TEC gap all live at
 once; shortening those belongs to the issues that own them.
 
+#### What bringing the ETA and the overview into the band cost (#848)
+
+The earlier rounds bought the camera look-ahead by moving surfaces *out of* the
+band, and some of that was bought by putting them over the road instead. The
+band is now taller again - by a one-row strip, and by the few pixels the
+overview's rider-count caption stands above the targets - and the road ahead is
+clear. The camera is the same: it measures the band, and the marker sits above it.
+`NavigationCameraPlanner` itself did not change; what changed is that nothing is
+left above the marker for it to miss.
+
+Measured with the Material fonts and the safe areas a phone has (iPhone 15:
+393x852 with 59/34 insets; SE: 375x667 with 20/0), without the development
+basemap's badge. "Rider" has no TEC card, "leader" has one. *Plain* is an
+ordinary turn banner; *rich* is a roundabout with lane guidance and a second turn
+close behind it, which is the tallest the banner gets. "Road ahead" is the space
+between the bottom of the top row and the top of the marker.
+
+| phone, size | banner | rider: band / road ahead | leader: band / road ahead |
+| --- | --- | --- | --- |
+| iPhone 15, Small | plain | 257 / 284 px (33%) | 297 / 244 px (29%) |
+| iPhone 15, Small | rich | 326 / 215 px (25%) | 366 / 175 px (21%) |
+| iPhone 15, Large | plain | 282 / 259 px (30%) | 322 / 219 px (26%) |
+| iPhone 15, Large | rich | 351 / 190 px (22%) | 391 / 150 px (18%) |
+| iPhone SE, Small | plain | 257 / 183 px (27%) | 297 / 143 px (21%) |
+| iPhone SE, Small | rich | 326 / 114 px (17%) | 366 / 87 px (13%) |
+| iPhone SE, Large | rich | 351 / 94 px (14%) | 391 / 62 px (9%) |
+
+The marker is above the band by at least a marker's height and a margin in every
+row, and `portrait_chrome_layout_test.dart` asserts that - for four phones, all
+three sizes, three text scales, rider and leader - along with the stronger
+statement that every navigational surface is below the marker. The worst row,
+a leader on an SE at Large with the richest banner, leaves 62 pixels of road
+ahead; the marker is still uncovered, and the camera gives up look-ahead before
+it gives up the marker.
+
+Before and after, rendered by the widget tests with the Material fonts and each
+phone's safe areas, over the route-only fallback map (so they say nothing about
+the basemap): the marker is pushed to the top of an SE by the floating cards in
+the leader case, and sits clear in the same place after.
+
+![iPhone 15, before and after](images/portrait-band-iphone15.png)
+
+![iPhone SE, before and after](images/portrait-band-iphone-se.png)
+
+![Android 360x800, before and after](images/portrait-band-android.png)
+
+**The chrome stops following the system text size.** The Riding display size
+multiplies the system text scale rather than replacing it, and uncapped, Large at
+a 2.0 system scale made the band 849 pixels tall on an 844-pixel phone: taller
+than the phone, so no framing could keep the marker above it. The chrome now
+follows the system setting up to 1.3 (iOS Dynamic Type's ordinary range, Android's
+Large and Largest), and to a combined 1.65 times the Small size, which is what
+Large already is - so Large holds the system scale at 1.0 and Small and Medium
+keep 1.3. Anyone who wants bigger asks for it by Riding display size.
+`rideChromeTextScaleCeiling` is the one place that says so.
+
 Landscape navigation also shows a compact group overview above the primary
 turn-by-turn map. It uses a second, throttled view of the configured MapLibre
 style, fits the latest known rider locations, distinguishes the local rider,
@@ -347,9 +411,10 @@ and at ride zoom the casing is wider than the whole carriageway. What changed
 adjacency is casing-against-road, which *improved* — 2.50:1 → 4.54:1 over a
 motorway, 1.61:1 → 2.21:1 over a lane. The floor that makes the bare column
 acceptable is the light basemap, which ships and is field-legible: its white and
-cream road fills put the worst of these five lines at 1.04:1, against 1.50:1 on
-the new dark basemap. Daylight is harsher on every one of these colours than
-night now is.
+cream road fills put the worst of these five lines at 1.12:1 (1.00:1 until #841
+re-edged the roads, when the leader trail shared a luminance with the old road
+casing), against 1.50:1 on the new dark basemap. Daylight is harsher on every one
+of these colours than night now is.
 
 ### The full ride-map ink audit
 
@@ -470,6 +535,120 @@ and airport symbol layer are removed. Route geometry remains dominant through
 its near-black casing, which measures above 8:1 against every declared light
 surface. The palette and hierarchy live in
 `MapStyleRepository.lightBasemapPalette` and are held by repository tests.
+
+#### Road edges in daylight (#841)
+
+After the 4 October group ride a tester on Android found roads hard to pick out
+in the light map, and the same was true on iOS in both daytime styles. (The
+Android screenshot attached to #860 draws the provider's POI symbols, which only
+Original draws, so at least that report came from Original.) The cause is the
+road's *edge*, not its fill. No
+palette can separate a white or cream fill from a warm off-white ground: every
+fill measures 1.0–1.2:1 against it. What tells a lane from the field it crosses
+is its casing, and the casing was thin and pale. The provider draws it only
+1.5–2.25 px wider than the road in total — 0.75–1.1 px a side — at the zooms the
+ride camera uses, MapLibre z13.4–14.7 (`NavigationCameraPlanner`). Restrained
+painted every class that casing the same grey, `#C4C5C1`, 1.55:1 against its
+ground. Original's lane edge, `#CFCDCA`, is 1.45:1.
+
+**What changed.** Only the edge, in both styles:
+
+- **Restrained:** each casing takes the colour of its class. They share one
+  lightness, CIE L\* 70.5, and chroma climbs with the class (`#ACADA7` for a lane
+  to `#BBAA8E` for a motorway), so an edge says what it edges the way the fill
+  tints do. Ramps, bridges and tunnels carry the edge of their class.
+- **Original:** a lane's edge, `#CFCDCA`, deepens to `#AEACA9`, the same warm hue
+  at L\* 70.5. The orange edges of the larger roads keep the provider's colour.
+  Ground, fills, labels, POI symbols and every other layer are the provider's, as
+  #489 promised.
+- **Both:** the edge is one pixel wider from zoom 14, 0.75–1.1 px a side becoming
+  1.25–1.6. Each width table is the provider's own stops plus one pixel, so
+  everything below zoom 13 keeps the provider's curve and every zoom from 14 up
+  is exactly one pixel wider.
+- **Not touched:** the ground, every fill, every road *width*, service roads,
+  tracks and paths. #776 widened bright roads on the dark map and field
+  validation found they obscured the route, so the carriageway stays as the
+  provider drew it and only its outline grows.
+
+Measured on the real OpenFreeMap Liberty paint at z14, WCAG 2.1 ratio and CIE L\*
+of the edge against the ground (`#F3F2ED` in Restrained, `#F8F4F0` in Original):
+
+Restrained
+
+| class | fill | edge, before → after | edge : ground | ΔL\* | px a side |
+| --- | --- | --- | --- | --- | --- |
+| lane (minor) | `#FEFDF9` | `#C4C5C1` → `#ACADA7` | 1.55 → **2.02** | 16.1 → **25.0** | 0.75 → **1.25** |
+| tertiary | `#FCF9ED` | `#C4C5C1` → `#AFADA4` | 1.55 → **2.01** | 16.1 → **24.8** | 0.88 → **1.38** |
+| secondary | `#F8F2DD` | `#C4C5C1` → `#B2AC9C` | 1.55 → **2.02** | 16.1 → **25.0** | 0.88 → **1.38** |
+| primary | `#F4E9CF` | `#C4C5C1` → `#B5AC97` | 1.55 → **2.01** | 16.1 → **24.9** | 0.81 → **1.31** |
+| trunk | `#F1E2C2` | `#C4C5C1` → `#B8AB93` | 1.55 → **2.02** | 16.1 → **25.0** | 0.81 → **1.31** |
+| motorway | `#EEDBB6` | `#C4C5C1` → `#BBAA8E` | 1.55 → **2.02** | 16.1 → **25.1** | 0.81 → **1.31** |
+| service, track | `#F7F6F1` | `#C4C5C1`, unchanged | 1.55 | 16.1 | 0.50 |
+
+Original
+
+| class | fill | edge, before → after | edge : ground | ΔL\* | px a side |
+| --- | --- | --- | --- | --- | --- |
+| lane (minor) | `#FFFFFF` | `#CFCDCA` → `#AEACA9` | 1.45 → **2.07** | 13.9 → **26.0** | 0.75 → **1.25** |
+| tertiary, secondary | `#FFEEAA` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.88 → **1.38** |
+| primary, trunk | `#FFEEAA` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.81 → **1.31** |
+| motorway | `#FFCC88` | `#E9AC77`, colour unchanged | 1.80 | 21.5 | 0.81 → **1.31** |
+| service, track | `#FFFFFF` | `#CFCDCA`, unchanged | 1.45 | 13.9 | 0.50 |
+
+The edge width is the same at the other riding zooms: a lane gains half a pixel a
+side at each of z13.85, 14.0, 14.65 and 16 (0.89 → 1.31, 0.75 → 1.25, 0.77 →
+1.27, 0.81 → 1.31), a secondary road 0.86 → 1.28 to 1.13 → 1.63. Against the
+darkest ground a road crosses at riding zoom, a building, a Restrained edge
+rises from 1.27:1 to 1.64–1.65:1 and an Original lane edge from 1.13:1 to 1.61:1.
+`light_basemap_road_edges_test.dart` recomputes every figure here from the
+recorded provider paint (`test/fixtures/openfreemap_liberty_roads.json`), so the
+tables cannot drift from the style.
+
+**The route, and why the edge is not darker.** L\* 70.5 is as dark as an edge can
+be while the route's own near-black casing, `#10151C`, still measures 8:1 against
+it (8.07–8.15:1 across the seven Restrained edges, 8.09:1 for the Original lane).
+A test holds that above 8:1 against every colour either light style paints on a
+road, because the route has to stay the strongest line on the map. A darker edge
+would carry further in glare; it would also start to compete with the route.
+Nothing a route line or a marker is drawn *over* got lighter or darker except
+these edges. The one contrast that moved is the route casing against a road
+casing, from 10.56:1 against the old `#C4C5C1` to about 8.1:1. The worst bare
+pair of route colour and light surface rose from 1.00:1 to 1.12:1, only because
+the leader trail no longer shares a luminance with the road casing.
+
+**What glare does to this** is a model, not a measurement. A phone in direct sun
+adds a roughly constant veiling luminance to every pixel. That compresses any
+*ratio* but leaves a luminance *difference* alone, so the figure to watch is the
+luminance gap between edge and ground, which grows from 0.33 to 0.47 for a
+Restrained lane and from 0.30 to 0.50 for an Original lane. With a veil of half
+the screen's white, the edge's Weber contrast (gap over ground plus veil) rises
+from 0.24 to 0.34 in Restrained (+42%) and from 0.21 to 0.35 in Original (+67%).
+A white fill never could have carried this: it sits within 1.1:1 of the ground
+at any veil.
+
+**What it looks like.** Real OpenFreeMap tiles through the repainted style, in
+the app, on the iOS Simulator (iPhone 15 Pro, iOS 17.5) and the Android emulator
+(Android 14), before and after. Each is a debug build of this change and of the
+commit it branched from, with the simulated location set over a market town. The
+home map opens at zoom 14, which is inside the riding range, with no tilt. The
+lanes that were white threads are outlined, in both styles, on both platforms.
+
+![iOS, Restrained and Original, before and after](images/light-basemap-road-edges-ios.png)
+
+![Android, Restrained and Original, before and after](images/light-basemap-road-edges-android.png)
+
+The frames below are **not** the app. They are the same repainted styles drawn by
+MapLibre GL JS at the ride camera's zoom 14.65 and 51° tilt, with a route line in
+the app's own values (a 6 px `#3DDC84` long-dashed line inside its 10 px
+`#10151C` casing). They are here because the route is the thing the edge must not
+compete with, and it does not: it is still the only dark, saturated line on the
+map.
+
+![Riding tilt with a route, before and after](images/light-basemap-road-edges-route.png)
+
+**Not verified.** No frame here is daylight and none is a mounted phone. The
+field check #841 asks for, a photograph or a tester's confirmation in direct
+sunlight on both platforms, is still owed.
 
 ### The dark basemap
 

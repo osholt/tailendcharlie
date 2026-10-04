@@ -31,6 +31,7 @@ const _tile = HazardMapSymbols.extentPixels;
 
 /// Every symbol a rider can raise, in the order a rider meets them.
 const _kinds = <String, HazardType>{
+  'alert': HazardType.alert,
   'camera': HazardType.speedCamera,
   'police': HazardType.policeActivity,
   'pothole': HazardType.pothole,

@@ -2,10 +2,45 @@ import 'package:xml/xml.dart';
 
 import '../domain/imported_route.dart';
 
+/// The Tail End Charlie GPX extension namespace.
+const gpxTecNamespace = 'https://tailendcharlie.app/gpx/1';
+
+/// The element that marks a `<wpt>` as a rider's alert rather than a place on a
+/// route (#849).
+///
+/// [GpxParser] drops any waypoint carrying it. Every other `<wpt>` in a GPX file
+/// is read back as a route waypoint - a named stop - so a ride's alerts, exported
+/// as waypoints for a map or footage tool, would otherwise become stops the next
+/// time that file was imported as a route.
+const gpxAlertMarkerElement = 'alert';
+
+/// A rider's alert, to be written into a ride's GPX as a waypoint (#849).
+///
+/// Separate from [RouteWaypoint] on purpose. A [RouteWaypoint] is a stop on a
+/// route, and the app reuses a ride's recorded track as a route to ride again;
+/// alerts stored among its waypoints would have been ridden to as stops. They are
+/// handed to the exporter at the moment of export and kept out of the route.
+class GpxAlertWaypoint {
+  const GpxAlertWaypoint({
+    required this.point,
+    required this.name,
+    required this.description,
+  });
+
+  /// Where the rider was, and - in [GeoPoint.recordedAt] - when. GPX `<time>` is
+  /// UTC, as the standard requires.
+  final GeoPoint point;
+  final String name;
+  final String description;
+}
+
 class GpxExporter {
   const GpxExporter();
 
-  String export(ImportedRoute route) {
+  String export(
+    ImportedRoute route, {
+    List<GpxAlertWaypoint> alerts = const [],
+  }) {
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
     builder.element(
@@ -14,8 +49,10 @@ class GpxExporter {
         'version': '1.1',
         'creator': 'Tail End Charlie',
         'xmlns': 'http://www.topografix.com/GPX/1/1',
-        if (route.preferences != null || route.markerReview.isNotEmpty)
-          'xmlns:tec': 'https://tailendcharlie.app/gpx/1',
+        if (route.preferences != null ||
+            route.markerReview.isNotEmpty ||
+            alerts.isNotEmpty)
+          'xmlns:tec': gpxTecNamespace,
       },
       nest: () {
         builder.element(
@@ -86,6 +123,24 @@ class GpxExporter {
               if (waypoint.symbol case final symbol?) {
                 builder.element('sym', nest: symbol);
               }
+            },
+          );
+        }
+        for (final alert in alerts) {
+          builder.element(
+            'wpt',
+            attributes: _coordinates(alert.point),
+            nest: () {
+              _writePointDetails(builder, alert.point);
+              builder.element('name', nest: alert.name);
+              builder.element('desc', nest: alert.description);
+              // A symbol most GPS tools draw as a warning. It is free text in
+              // the standard, so a tool that has no such symbol shows its default.
+              builder.element('sym', nest: 'Danger Area');
+              builder.element(
+                'extensions',
+                nest: () => builder.element('tec:$gpxAlertMarkerElement'),
+              );
             },
           );
         }

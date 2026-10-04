@@ -269,4 +269,176 @@ void main() {
 
     expect(alert!.hazard.id, 'camera');
   });
+
+  // #849: the rider's alert joined the two kinds the detector already knew, and
+  // the migration must have moved the behaviour #112, #135 and #471 built rather
+  // than copied it. So the three are held to the same rules, one test each, and a
+  // rule one of them stopped meeting would fail here by name.
+  group('the alert and the two older kinds warn identically (#849)', () {
+    const kinds = [
+      HazardType.alert,
+      HazardType.speedCamera,
+      HazardType.policeActivity,
+    ];
+
+    HazardReport riderHazard(
+      HazardType type, {
+      required GeoPoint position,
+      DateTime? expiresAt,
+      String id = 'sighting',
+    }) => HazardReport(
+      id: id,
+      rideId: 'ride-1',
+      type: type,
+      severity: HazardSeverity.serious,
+      position: position,
+      reportedAt: now.subtract(const Duration(minutes: 2)),
+      updatedAt: now.subtract(const Duration(minutes: 2)),
+      expiresAt: expiresAt ?? now.add(const Duration(minutes: 20)),
+      reporterId: 'becks',
+      reporterName: 'Becks',
+      source: HazardSource.rider,
+    );
+
+    test('all three are the kinds the detector warns about', () {
+      expect(enforcementHazardTypes, containsAll(kinds));
+      // And nothing else is: a pothole is a road defect, not a warning.
+      expect(enforcementHazardTypes, hasLength(kinds.length));
+    });
+
+    test('arm about thirty seconds out at urban speed', () {
+      const detector = EnforcementAlertDetector();
+      for (final type in kinds) {
+        final within = detector.detect(
+          position: rider,
+          headingDegrees: 0,
+          speedMetersPerSecond: 13.4112,
+          hazards: [riderHazard(type, position: north(390))],
+          now: now,
+        );
+        final beyond = detector.detect(
+          position: rider,
+          headingDegrees: 0,
+          speedMetersPerSecond: 13.4112,
+          hazards: [riderHazard(type, position: north(450))],
+          now: now,
+        );
+
+        expect(within?.hazard.type, type, reason: type.name);
+        expect(beyond, isNull, reason: type.name);
+      }
+    });
+
+    test('arm further out at motorway speed', () {
+      const detector = EnforcementAlertDetector();
+      for (final type in kinds) {
+        expect(
+          detector.detect(
+            position: rider,
+            headingDegrees: 0,
+            speedMetersPerSecond: 31.2928,
+            hazards: [riderHazard(type, position: north(900))],
+            now: now,
+          ),
+          isNotNull,
+          reason: type.name,
+        );
+      }
+    });
+
+    test('stay armed when the rider slows', () {
+      const detector = EnforcementAlertDetector();
+      for (final type in kinds) {
+        final sighting = riderHazard(type, position: north(700));
+        expect(
+          detector.detect(
+            position: rider,
+            headingDegrees: 0,
+            speedMetersPerSecond: 2,
+            activeHazardId: sighting.id,
+            hazards: [sighting],
+            now: now,
+          ),
+          isNotNull,
+          reason: type.name,
+        );
+      }
+    });
+
+    test('stop warning once passed, and never warn about one behind', () {
+      const detector = EnforcementAlertDetector();
+      for (final type in kinds) {
+        expect(
+          detector.detect(
+            position: rider,
+            headingDegrees: 0,
+            speedMetersPerSecond: 13.4,
+            hazards: [riderHazard(type, position: north(-200))],
+            now: now,
+          ),
+          isNull,
+          reason: type.name,
+        );
+      }
+    });
+
+    test('stop warning at their documented expiry', () {
+      const detector = EnforcementAlertDetector();
+      for (final type in kinds) {
+        expect(
+          detector.detect(
+            position: rider,
+            headingDegrees: 0,
+            hazards: [
+              riderHazard(
+                type,
+                position: north(300),
+                expiresAt: now.subtract(const Duration(seconds: 1)),
+              ),
+            ],
+            now: now,
+          ),
+          isNull,
+          reason: type.name,
+        );
+      }
+    });
+
+    test('an alert off the route corridor is still warned about', () {
+      // A rider who has diverted is still the rider the alert is for. 0.004
+      // degrees of longitude here is about 280 m, beyond the 250 m corridor, so
+      // this falls through to the heading test; the alert is still inside the
+      // thirty-second distance, about 340 m away on a bearing 54 degrees off the
+      // rider's heading.
+      const detector = EnforcementAlertDetector();
+      final offRoute = GeoPoint(
+        latitude: 51.5 + 200 / 111320,
+        longitude: -3.176,
+      );
+      final alert = detector.detect(
+        position: rider,
+        headingDegrees: 0,
+        speedMetersPerSecond: 13.4,
+        route: [north(-500), north(500)],
+        hazards: [riderHazard(HazardType.alert, position: offRoute)],
+        now: now,
+      );
+
+      expect(alert, isNotNull);
+      expect(alert!.hazard.type, HazardType.alert);
+    });
+
+    test('a road defect is not a warning', () {
+      const detector = EnforcementAlertDetector();
+      expect(
+        detector.detect(
+          position: rider,
+          headingDegrees: 0,
+          hazards: [riderHazard(HazardType.pothole, position: north(100))],
+          now: now,
+        ),
+        isNull,
+      );
+    });
+  });
 }

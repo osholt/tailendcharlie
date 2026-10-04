@@ -324,6 +324,11 @@ class RouteTrailStyle {
 
   /// Surfaces of the restrained Liberty repaint. Its road fills remain light,
   /// so the casing is what defines a bright route line here.
+  ///
+  /// The two road casings are the darkest edge a road is drawn with (#841): the
+  /// commonest, and the one of the class with the lowest contrast against the
+  /// route's own casing. `map_style_repository_test.dart` holds this table to
+  /// the repository's palette, so it cannot drift from what is rendered.
   static const lightBasemapSurfaces = <String, Color>{
     'background': Color(0xFFF3F2ED),
     'minor road': Color(0xFFFEFDF9),
@@ -332,7 +337,8 @@ class RouteTrailStyle {
     'water': Color(0xFFD8E5EA),
     'park': Color(0xFFE5EADF),
     'building': Color(0xFFDEDCD6),
-    'major casing': Color(0xFFC4C5C1),
+    'minor casing': Color(0xFFACADA7),
+    'motorway casing': Color(0xFFBBAA8E),
   };
 }
 
