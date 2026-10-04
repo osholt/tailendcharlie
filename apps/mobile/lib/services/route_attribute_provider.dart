@@ -102,9 +102,11 @@ class ValhallaRouteAttributeProvider implements RouteAttributeProvider {
   /// edges' `begin_shape_index`/`end_shape_index` point into.
   static const requestedAttributes = [
     'edge.way_id',
+    'edge.names',
     'edge.use',
     'edge.unpaved',
     'edge.surface',
+    'edge.road_class',
     'edge.length',
     'edge.begin_shape_index',
     'edge.end_shape_index',
@@ -206,6 +208,7 @@ class ValhallaRouteAttributeProvider implements RouteAttributeProvider {
       if (raw is! Map || raw['length'] is! num) continue;
       final length = (raw['length'] as num).toDouble() * factor;
       if (!length.isFinite || length < 0) continue;
+      final names = raw['names'];
       edges.add(
         RouteEdge(
           lengthMeters: length,
@@ -215,6 +218,10 @@ class ValhallaRouteAttributeProvider implements RouteAttributeProvider {
           use: raw['use'] as String?,
           unpaved: raw['unpaved'] == true,
           surface: raw['surface'] as String?,
+          roadClass: raw['road_class'] as String?,
+          names: names is List
+              ? List.unmodifiable(names.whereType<String>())
+              : const [],
         ),
       );
     }

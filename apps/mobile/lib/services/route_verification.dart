@@ -24,9 +24,9 @@ import 'measurement_formatter.dart';
 
 /// One stretch of road as the routing graph describes it.
 ///
-/// Only what the classification needs. [use] is Valhalla's vocabulary
-/// (`road`, `track`, `ramp`, `footway`, ...), which is the vocabulary of the
-/// service that is asked.
+/// Only what the classification needs. [roadClass] and [use] are Valhalla's
+/// vocabulary (`motorway`, `trunk`, `primary`, ...; `road`, `track`, `ramp`,
+/// `footway`, ...), which is the vocabulary of the service that is asked.
 class RouteEdge {
   const RouteEdge({
     required this.lengthMeters,
@@ -36,6 +36,8 @@ class RouteEdge {
     this.use,
     this.unpaved = false,
     this.surface,
+    this.roadClass,
+    this.names = const [],
   });
 
   final double lengthMeters;
@@ -47,6 +49,10 @@ class RouteEdge {
   final String? use;
   final bool unpaved;
   final String? surface;
+  final String? roadClass;
+
+  /// Names and references, most specific first (`M5`, then `Severn Bridge`).
+  final List<String> names;
 }
 
 /// Why a stretch of a route is a concern.
@@ -57,6 +63,14 @@ enum RouteConcernKind {
 
   /// A track or an unpaved surface while "avoid unsurfaced byways" is on.
   unsurfaced,
+
+  /// A motorway while "avoid motorways" is on.
+  motorway,
+
+  /// Trunk and primary roads while "avoid major roads" is on. This preference
+  /// is a bias rather than an exclusion - excluding them strands most UK routes
+  /// - so this concern is reported and never re-planned.
+  majorRoad,
 }
 
 class RouteConcern {
@@ -74,8 +88,9 @@ class RouteConcern {
   /// Separate runs of consecutive offending edges.
   final int stretches;
 
-  /// What to call it: the `track`/`road` of an unsurfaced concern, or the
-  /// `footpath`/`cycle path` of a non-road one.
+  /// What to call it: the `track`/`road` of an unsurfaced concern, the
+  /// `footpath`/`cycle path` of a non-road one, or the road references
+  /// (`M5`, `A38`) of a motorway or major-road one.
   final List<String> labels;
 
   /// The middle of each offending edge, in route order.
@@ -83,6 +98,9 @@ class RouteConcern {
   /// This is what a re-plan excludes. A point in the middle of an edge snaps to
   /// that edge and no other; the end of an edge is also the start of the next.
   final List<GeoPoint> locations;
+
+  /// Whether a re-plan should try to avoid it.
+  bool get isHard => kind != RouteConcernKind.majorRoad;
 
   RouteConcern _merged(RouteConcern other) => RouteConcern(
     kind: kind,
@@ -147,9 +165,12 @@ class RouteVerification {
   static const _partialToleranceMeters = 500.0;
   static const _partialToleranceFraction = 0.05;
 
-  bool get hasConcerns => concerns.isNotEmpty;
-  double get concernMeters =>
-      concerns.fold(0.0, (total, concern) => total + concern.lengthMeters);
+  List<RouteConcern> get hardConcerns =>
+      concerns.where((concern) => concern.isHard).toList(growable: false);
+  bool get hasHardConcerns => concerns.any((concern) => concern.isHard);
+  double get hardConcernMeters => concerns
+      .where((concern) => concern.isHard)
+      .fold(0.0, (total, concern) => total + concern.lengthMeters);
 
   /// Whether part of the route was never looked at.
   bool get isPartial =>
@@ -236,6 +257,7 @@ class RouteVerification {
     final places = concern.stretches > 1
         ? ' in ${concern.stretches} places'
         : '';
+    final roads = concern.labels.isEmpty ? '' : ' (${_listed(concern.labels)})';
     final noAlternative = replan == RouteReplanOutcome.failed;
     return switch (concern.kind) {
       RouteConcernKind.nonRoad =>
@@ -245,15 +267,30 @@ class RouteVerification {
         'Uses $distance of unsurfaced ${_joinNouns(concern.labels)}$places, '
             'although Avoid unsurfaced byways is on.'
             '${noAlternative ? ' No road route that avoids it was found.' : ''}',
+      RouteConcernKind.motorway =>
+        'Uses $distance of motorway$roads$places, although Avoid motorways '
+            'is on.${noAlternative ? ' No motorway-free route was found.' : ''}',
+      RouteConcernKind.majorRoad =>
+        'Uses $distance of major roads$roads$places, although Avoid major '
+            'roads is on.',
     };
   }
 
   static List<String> _askedFor(RoutePreferences preferences) => [
     if (preferences.bywaySurface.avoidsUnsurfaced) 'avoid unsurfaced byways',
+    if (preferences.avoidMotorways) 'avoid motorways',
+    if (preferences.avoidMajorRoads) 'avoid major roads',
   ];
 
   static String _joinNouns(List<String> nouns) =>
       nouns.isEmpty ? 'road' : nouns.join(' or ');
+
+  /// The first few road references, so a long route's notice stays a sentence.
+  static String _listed(List<String> labels) => labels.length > _listedMaximum
+      ? '${labels.take(_listedMaximum).join(', ')} and others'
+      : labels.join(', ');
+
+  static const _listedMaximum = 6;
 }
 
 /// Valhalla `use` values that are not a road a motor vehicle can ride, with what
@@ -279,6 +316,10 @@ const _unpavedSurfaces = {'compacted', 'dirt', 'gravel', 'path', 'impassable'};
 /// and is too short to route around in any case.
 const _minimumConcernMeters = 20.0;
 
+/// Major roads are reported only when they are a real part of the route. Almost
+/// every British route crosses a town on an A-road.
+const _minimumMajorRoadMeters = 1000.0;
+
 /// Sorts a route's edges into what the rider asked not to use.
 ///
 /// [shape] is the matched shape the edges index into. Without it the concerns
@@ -298,11 +339,9 @@ List<RouteConcern> classifyRouteEdges(
       if (kind != previous) builder.stretches += 1;
       builder.lengthMeters += edge.lengthMeters;
       builder.note(kind, edge);
-      final midpoint = _edgeMidpoint(
-        shape,
-        edge.beginShapeIndex,
-        edge.endShapeIndex,
-      );
+      final midpoint = kind == RouteConcernKind.majorRoad
+          ? null
+          : _edgeMidpoint(shape, edge.beginShapeIndex, edge.endShapeIndex);
       if (midpoint != null) {
         builder.locations.add(midpoint);
       }
@@ -312,12 +351,17 @@ List<RouteConcern> classifyRouteEdges(
   return [
     for (final kind in RouteConcernKind.values)
       if (builders[kind] case final builder?)
-        if (builder.lengthMeters >= _minimumConcernMeters)
+        if (builder.lengthMeters >=
+            (kind == RouteConcernKind.majorRoad
+                ? _minimumMajorRoadMeters
+                : _minimumConcernMeters))
           RouteConcern(
             kind: kind,
             lengthMeters: builder.lengthMeters,
             stretches: builder.stretches,
-            labels: List.unmodifiable(builder.labels),
+            labels: List.unmodifiable(
+              builder.labels.isNotEmpty ? builder.labels : builder.names,
+            ),
             locations: List.unmodifiable(builder.locations),
           ),
   ];
@@ -333,6 +377,16 @@ RouteConcernKind? _classify(RouteEdge edge, RoutePreferences preferences) {
           _unpavedSurfaces.contains(edge.surface))) {
     return RouteConcernKind.unsurfaced;
   }
+  final roadClass = edge.roadClass;
+  if (preferences.avoidMotorways && roadClass == 'motorway') {
+    return RouteConcernKind.motorway;
+  }
+  if (preferences.avoidMajorRoads &&
+      (roadClass == 'trunk' ||
+          roadClass == 'primary' ||
+          roadClass == 'motorway')) {
+    return RouteConcernKind.majorRoad;
+  }
   return null;
 }
 
@@ -340,17 +394,50 @@ class _ConcernBuilder {
   double lengthMeters = 0;
   int stretches = 0;
 
-  /// What to call it: nouns for a surface or a non-road way.
+  /// What to call it: nouns for a surface or a non-road way, road references
+  /// for a motorway or a major road.
   final labels = <String>[];
+
+  /// Names of road edges that carry no reference, used only when none does.
+  final names = <String>[];
   final locations = <GeoPoint>[];
 
   void note(RouteConcernKind kind, RouteEdge edge) {
-    final label = switch (kind) {
-      RouteConcernKind.nonRoad => _nonRoadUses[edge.use],
-      RouteConcernKind.unsurfaced => edge.use == 'track' ? 'track' : 'road',
-    };
-    if (label != null && !labels.contains(label)) labels.add(label);
+    switch (kind) {
+      case RouteConcernKind.nonRoad:
+        _add(labels, _nonRoadUses[edge.use]);
+      case RouteConcernKind.unsurfaced:
+        _add(labels, edge.use == 'track' ? 'track' : 'road');
+      case RouteConcernKind.motorway || RouteConcernKind.majorRoad:
+        final reference = _reference(edge.names);
+        if (reference != null) {
+          _add(labels, reference);
+        } else if (edge.names.isNotEmpty) {
+          _add(names, edge.names.first);
+        }
+    }
   }
+
+  static void _add(List<String> into, String? value) {
+    if (value != null && !into.contains(value)) into.add(value);
+  }
+}
+
+/// A road reference - `M5`, `A38`, `A404(M)`, `I-95` - as opposed to a name.
+final _referencePattern = RegExp(
+  r'^[A-Z]{1,3}[ -]?\d{1,4}[A-Z]?(\([A-Z]+\))?$',
+);
+
+/// International E-road numbers accompany the national reference of a road
+/// rather than replacing it, so they are not what a rider would call it.
+final _internationalPattern = RegExp(r'^E[ -]?\d{1,3}$');
+
+String? _reference(List<String> names) {
+  final references = names.where(_referencePattern.hasMatch).toList();
+  return references
+          .where((name) => !_internationalPattern.hasMatch(name))
+          .firstOrNull ??
+      references.firstOrNull;
 }
 
 /// The point half way along an edge, measured along the matched shape.
@@ -381,14 +468,14 @@ GeoPoint? _edgeMidpoint(List<GeoPoint> shape, int begin, int end) {
 
 /// Picks at most [cap] of the offending edges' midpoints to exclude.
 ///
-/// A short list is taken whole. A long one is shared out so every concern keeps
-/// a say, then thinned evenly: excluding every few edges along a long lane is
-/// enough to stop a router riding it, because it would have to leave and rejoin
-/// between them.
+/// A short list is taken whole. A long one - a motorway is dozens of edges - is
+/// shared out so every concern keeps a say, then thinned evenly: excluding every
+/// few edges along a motorway is enough to stop a router riding it, because it
+/// would have to leave and rejoin between them.
 List<GeoPoint> selectExclusionLocations(List<RouteConcern> concerns, int cap) {
   final hard = [
     for (final concern in concerns)
-      if (concern.locations.isNotEmpty) concern,
+      if (concern.isHard && concern.locations.isNotEmpty) concern,
   ]..sort((a, b) => a.locations.length.compareTo(b.locations.length));
   final selected = <GeoPoint>[];
   var remaining = cap;

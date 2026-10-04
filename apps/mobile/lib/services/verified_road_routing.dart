@@ -10,22 +10,22 @@ typedef ExclusionReplan =
     Future<RoadRouteResult> Function(List<GeoPoint> excludeLocations);
 
 /// Checks a planned route against what the rider asked for, and re-plans once
-/// when it breaks a preference (#840).
+/// when it breaks a hard preference (#840, #858).
 ///
 /// The routing engines cannot be trusted to have honoured the preferences they
 /// were sent. OSRM's driving profile cannot express them and the public Valhalla
 /// motorcycle costing ignores `exclude_unpaved`, so a canal-side `highway=track`
-/// was routed under "avoid unsurfaced byways". The check does not depend on
-/// which engine answered: it looks the geometry up once, edge by edge, and
-/// compares.
+/// was routed under "avoid unsurfaced byways" and an M5 route was shown under
+/// "avoid motorways". The check does not depend on which engine answered: it
+/// looks the geometry up once, edge by edge, and compares.
 ///
-/// A concern - a track, a footpath - is excluded by position and the route is
-/// asked for again, once. The new route is used only if it is checked and has at
-/// most half as much of the offending road in it, and only if it still starts
-/// and ends where the first one did: an exclusion that moved the destination to
-/// the next paved road is not an answer. Otherwise the original route is kept
-/// and the concern is reported, with its length, for the rider to see on the
-/// review. Nothing here ever hides a violation.
+/// A hard concern - a track, a motorway, a footpath - is excluded by position
+/// and the route is asked for again, once. The new route is used only if it
+/// is checked and has at most half as much of the offending road in it, and only
+/// if it still starts and ends where the first one did: an exclusion that moved
+/// the destination to the next paved road is not an answer. Otherwise the
+/// original route is kept and the concern is reported, with its length, for the
+/// rider to see on the review. Nothing here ever hides a violation.
 class RouteVerifier {
   const RouteVerifier({
     required this.attributes,
@@ -112,7 +112,7 @@ class RouteVerifier {
     ExclusionReplan? replan,
   }) async {
     final first = await inspect(route.points, preferences);
-    if (!first.checked || !first.hasConcerns || replan == null) {
+    if (!first.checked || !first.hasHardConcerns || replan == null) {
       return route.withVerification(first);
     }
     final exclusions = selectExclusionLocations(
@@ -132,11 +132,12 @@ class RouteVerifier {
     }
     final second = await inspect(replanned.points, preferences);
     if (second.checked &&
-        second.concernMeters <= first.concernMeters * requiredImprovement) {
+        second.hardConcernMeters <=
+            first.hardConcernMeters * requiredImprovement) {
       return replanned.withVerification(
         second.copyWith(
           replan: RouteReplanOutcome.adopted,
-          avoided: first.concerns,
+          avoided: first.hardConcerns,
         ),
       );
     }
@@ -267,9 +268,8 @@ class VerifiedRoadRoutingService
 ///
 /// One definition, because every place that built its own is a place that can
 /// forget the preferences. The Home destination search built OSRM alone, which
-/// cannot express any of them and has no way to be told to avoid a road, so a
-/// route it planned could neither honour a preference nor be re-planned around
-/// a track.
+/// cannot express any of them, and so planned Bristol to Stroud up the M5 with
+/// "Avoid motorways" on while the review said motorways were excluded (#858).
 RoadRoutingService buildPlanningRoutingService({
   required http.Client client,
   required RoutingConfiguration configuration,
