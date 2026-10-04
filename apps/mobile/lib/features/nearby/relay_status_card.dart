@@ -9,9 +9,10 @@ import '../../services/transport_evidence_presentation.dart';
 ///
 /// The title is the same ride-level line the roster shows (#855), so the two
 /// cannot disagree. The line under it used to say the link "does not carry ride
-/// events yet", which stopped being true when the relay engine and its durable
-/// queue shipped, and which contradicted the evidence the rest of the app now
-/// shows. It says what has actually been received instead.
+/// events yet". That no longer describes the app, whose relay engine carries
+/// events through a durable queue with acknowledgements, and it contradicted the
+/// evidence the rest of the app now shows. It says what has actually been
+/// received instead.
 class RelayStatusCard extends StatelessWidget {
   const RelayStatusCard({required this.controller, this.evidence, super.key});
 
