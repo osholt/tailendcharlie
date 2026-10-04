@@ -98,7 +98,14 @@ double distanceToRouteMeters(ImportedRoute route, GeoPoint position) {
 /// depend on this class - that mistake is what removed a leader's trail at the
 /// moment they left the plan (#100).
 class RouteProgressTracker {
-  RouteProgressTracker({this.maximumTrackingDistanceMeters = 150});
+  RouteProgressTracker({
+    this.maximumTrackingDistanceMeters = defaultMaximumTrackingDistanceMeters,
+  });
+
+  /// How far from the route a rider can be and still be treated as on it. Named
+  /// so the location-sharing guard (#859) judges "is this rider on their route?"
+  /// by the same distance progress itself stops advancing at.
+  static const defaultMaximumTrackingDistanceMeters = 150.0;
 
   final double maximumTrackingDistanceMeters;
 

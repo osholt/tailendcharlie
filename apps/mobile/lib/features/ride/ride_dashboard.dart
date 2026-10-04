@@ -34,6 +34,7 @@ class RideDashboard extends StatelessWidget {
     this.localObserverAssistanceActive = false,
     this.serviceWarning,
     this.connectivity,
+    this.sharingStatus,
   });
 
   final RideController controller;
@@ -54,6 +55,10 @@ class RideDashboard extends StatelessWidget {
 
   /// The reconciled answer to "is the group seeing where I am".
   final RideConnectivitySummary? connectivity;
+
+  /// Whether this phone is sharing the rider's position, in words, with the one
+  /// action that goes with it (#859). Null for a ride that shares with nobody.
+  final Widget? sharingStatus;
 
   @override
   Widget build(BuildContext context) {
@@ -94,6 +99,10 @@ class RideDashboard extends StatelessWidget {
                 // cards that disagreed left a rider unable to tell whether the
                 // app was working; the channels keep their own detail below.
                 if (!isSolo) ...[
+                  if (sharingStatus case final sharingStatus?) ...[
+                    const SizedBox(height: 14),
+                    sharingStatus,
+                  ],
                   if (connectivity case final connectivity?) ...[
                     const SizedBox(height: 14),
                     _ConnectivitySummaryCard(summary: connectivity),

@@ -547,8 +547,19 @@ class RideController extends ChangeNotifier {
 
   /// A lead-owned group coordination pause. It deliberately does not suppress
   /// GPS evidence: riders can still be found while the group is stopped.
-  bool get ridePaused {
-    if (!rideStarted) return false;
+  bool get ridePaused => _latestPauseEvent()?.type == RideEventType.ridePaused;
+
+  /// When the leader paused the group, or null while the ride is not paused.
+  ///
+  /// The location-sharing guard reads it so that a stop the leader declared is
+  /// not mistaken for a ride everybody has walked away from (#859).
+  DateTime? get ridePausedAt {
+    final latest = _latestPauseEvent();
+    return latest?.type == RideEventType.ridePaused ? latest!.createdAt : null;
+  }
+
+  RideEvent? _latestPauseEvent() {
+    if (!rideStarted) return null;
     RideEvent? latest;
     for (final event in _events) {
       if (event.type != RideEventType.ridePaused &&
@@ -561,7 +572,7 @@ class RideController extends ChangeNotifier {
         latest = event;
       }
     }
-    return latest?.type == RideEventType.ridePaused;
+    return latest;
   }
 
   bool get markerActive {
