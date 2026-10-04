@@ -65,7 +65,9 @@ void main() {
     expect(find.textContaining('1 report'), findsOneWidget);
   });
 
-  testWidgets('offers enforcement report categories', (tester) async {
+  testWidgets('offers the one alert, not a choice of enforcement kinds', (
+    tester,
+  ) async {
     await controller.recordLocalLocation(_sample(51));
     await tester.pumpWidget(_app(controller));
 
@@ -74,8 +76,11 @@ void main() {
     await tester.tap(find.byKey(const Key('hazard-type-field')));
     await tester.pumpAndSettle();
 
-    expect(find.text(HazardType.policeActivity.label), findsOneWidget);
-    expect(find.text(HazardType.speedCamera.label), findsOneWidget);
+    // #849: the alert replaced the choice between a speed camera and the police,
+    // here as on the map. Road hazards are still reported by their own kinds.
+    expect(find.text(HazardType.alert.label), findsOneWidget);
+    expect(find.text(HazardType.policeActivity.label), findsNothing);
+    expect(find.text(HazardType.speedCamera.label), findsNothing);
     expect(find.text(HazardType.debris.label), findsOneWidget);
   });
 

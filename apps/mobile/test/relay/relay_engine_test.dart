@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/domain/geo_point.dart';
+import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/rider_location.dart';
@@ -106,6 +107,88 @@ void main() {
     await engineB.dispose();
     await engineC.dispose();
   });
+
+  // #854: the leader's broadcast is a status message, so over Nearby it
+  // store-forwards like every other. A rider within reach of the leader and of
+  // another rider hears it twice on the air and holds it once.
+  test(
+    'a leader broadcast over Nearby is held once by each rider, however many paths reach them',
+    () async {
+      final transports = {
+        for (final id in ['a', 'b', 'c']) id: FakePeerTransport('peer-$id'),
+      };
+      final stores = {
+        for (final id in ['a', 'b', 'c']) id: InMemoryEventStore(),
+      };
+      final queues = {
+        for (final id in ['a', 'b', 'c']) id: InMemoryRelayQueue(),
+      };
+      var frame = 0;
+      final engines = {
+        for (final id in ['a', 'b', 'c'])
+          id: RelayEngine(
+            transport: transports[id]!,
+            eventStore: stores[id]!,
+            queue: queues[id]!,
+            clock: () => now,
+            idFactory: () => 'frame-${frame++}',
+          ),
+      };
+      for (final id in ['a', 'b', 'c']) {
+        await engines[id]!.start(
+          RelayEngineConfig(
+            rideId: 'ride-1',
+            rideSecret: secret,
+            localDeviceId: 'device-$id',
+            endpointName: id.toUpperCase(),
+          ),
+        );
+      }
+      await _drain();
+      transports['a']!.connect(transports['b']!);
+      transports['a']!.connect(transports['c']!);
+      transports['b']!.connect(transports['c']!);
+      final broadcast = RideEvent(
+        id: 'pull-over-1',
+        rideId: 'ride-1',
+        deviceId: 'device-a',
+        type: RideEventType.statusMessage,
+        priority: QuickMessage.pullOver.priority,
+        createdAt: now,
+        expiresAt: now.add(leaderBroadcastLife),
+        payload: {
+          'message': QuickMessage.pullOver.name,
+          'label': QuickMessage.pullOver.label,
+          'senderDisplayName': 'Oliver',
+        },
+        signature: 'a' * 64,
+      );
+      await stores['a']!.append(broadcast);
+      await engines['a']!.enqueueLocal(broadcast);
+      await _drain();
+      for (final id in ['a', 'b', 'c']) {
+        await engines[id]!.flush();
+      }
+      await _drain();
+      for (final id in ['a', 'b', 'c']) {
+        await engines[id]!.flush();
+      }
+      await _drain();
+
+      for (final id in ['b', 'c']) {
+        expect(
+          (await stores[id]!.eventsForRide(
+            'ride-1',
+          )).where((event) => event.id == 'pull-over-1'),
+          hasLength(1),
+          reason: 'rider $id',
+        );
+      }
+      for (final id in ['a', 'b', 'c']) {
+        await engines[id]!.dispose();
+      }
+    },
+  );
 
   test('rejects frames from a different ride secret', () async {
     final transportA = FakePeerTransport('peer-a');

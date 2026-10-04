@@ -47,10 +47,34 @@ void main() {
       );
     });
 
+    test('a rider alert has its own glyph, on the enforcement plate', () {
+      // #849: neither a camera nor the police, so neither of their symbols - and
+      // not a road defect either, which is a circle. The plate is what says "a
+      // rider warned the group".
+      expect(HazardMapSymbols.glyphFor(HazardType.alert), HazardMapGlyph.alert);
+      final symbol = HazardMapSymbols.forReport(
+        report(type: HazardType.alert),
+        now: reportedAt,
+      );
+      expect(symbol.shape, HazardMapBadgeShape.plate);
+      expect(symbol.isEnforcement, isTrue);
+      expect(symbol.fill, HazardMapSymbols.enforcementFill);
+      expect(
+        symbol.imageName,
+        isNot(
+          HazardMapSymbols.forReport(
+            report(type: HazardType.speedCamera),
+            now: reportedAt,
+          ).imageName,
+        ),
+      );
+    });
+
     test('every other kind the model carries is a road defect', () {
       for (final type in HazardType.values) {
         if (type == HazardType.speedCamera ||
-            type == HazardType.policeActivity) {
+            type == HazardType.policeActivity ||
+            type == HazardType.alert) {
           continue;
         }
         expect(

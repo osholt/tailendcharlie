@@ -270,6 +270,29 @@ class SituationalAwarenessController extends ChangeNotifier {
     });
   }
 
+  /// A second alert from the same rider inside this window is the first one
+  /// pressed twice, not a second sighting.
+  ///
+  /// The alert is one tap on a big target, by design, and a gloved thumb on a
+  /// bumping bike does double-tap. Every alert is logged with its own time for
+  /// checking against dash-cam footage (#849), so a bounce must not become two
+  /// entries a second apart.
+  static const alertCooldown = Duration(seconds: 5);
+
+  /// The newest alert this device has raised, recorded *before* it is stored.
+  ///
+  /// Held here rather than looked up in [_hazards] because a double tap lands
+  /// while the first alert is still being written, when the journal has nothing
+  /// to find yet.
+  HazardReport? _lastOwnAlert;
+
+  /// Raises the one-tap alert at the rider's current position (#849).
+  Future<HazardReport?> reportAlert({GeoPoint? position}) => reportHazard(
+    type: HazardType.alert,
+    severity: HazardSeverity.serious,
+    position: position,
+  );
+
   Future<HazardReport?> reportHazard({
     required HazardType type,
     required HazardSeverity severity,
@@ -286,10 +309,9 @@ class SituationalAwarenessController extends ChangeNotifier {
       );
     }
     if (_isEnforcementHazard(type) && !allowsEnforcementAt(reportPosition)) {
-      throw const FormatException(
-        'Camera and police alerts are disabled in France.',
-      );
+      throw const FormatException('Alerts are disabled in France.');
     }
+    if (type == HazardType.alert) return _publishAlert(reportPosition);
     HazardReport? result;
     await _run(() async {
       final now = _clock();
@@ -323,6 +345,57 @@ class SituationalAwarenessController extends ChangeNotifier {
       await _appendAndApply(event);
     });
     return result;
+  }
+
+  /// Stores one alert and tells the group, outside [_run].
+  ///
+  /// [_run] drops a call that arrives while another is in flight, and location
+  /// fixes, an acknowledgement and the leader's five-minute traffic fetch all
+  /// hold it - the last for as long as a network round trip. That is tolerable
+  /// for a hazard sheet a rider can reopen. It is not for a single tap whose whole
+  /// promise is that the group has been told: a dropped alert would show the
+  /// rider "sent" and warn nobody. Appending an event is safe beside the other
+  /// appends, so the alert does not wait for them, and a failure is thrown to the
+  /// caller instead of becoming a quiet error string.
+  Future<HazardReport> _publishAlert(GeoPoint position) async {
+    final now = _clock();
+    final previous = _lastOwnAlert;
+    if (previous != null) {
+      final age = now.difference(previous.reportedAt);
+      if (!age.isNegative && age < alertCooldown) return previous;
+    }
+    const severity = HazardSeverity.serious;
+    final alert = HazardReport(
+      id: _idFactory(),
+      rideId: _session.rideId,
+      type: HazardType.alert,
+      severity: severity,
+      position: position,
+      reportedAt: now,
+      updatedAt: now,
+      expiresAt: now.add(expiryPolicy.durationFor(HazardType.alert, severity)),
+      reporterId: _session.localRiderId,
+      reporterName: _session.displayName,
+      source: HazardSource.rider,
+    );
+    _lastOwnAlert = alert;
+    try {
+      await _appendAndApply(
+        _eventFactory.create(
+          type: RideEventType.hazardReported,
+          payload: {'hazard': alert.toJson()},
+          priority: _priorityForSeverity(severity),
+          expiresAt: alert.expiresAt,
+        ),
+      );
+    } on Object {
+      // Nothing was stored, so a retry a moment later is a first attempt, not a
+      // bounce of this one.
+      if (identical(_lastOwnAlert, alert)) _lastOwnAlert = previous;
+      rethrow;
+    }
+    notifyListeners();
+    return alert;
   }
 
   Future<void> clearHazard(String hazardId, {String reason = 'cleared'}) async {
@@ -793,5 +866,9 @@ class SituationalAwarenessController extends ChangeNotifier {
   };
 }
 
+/// The kinds a rider may not be warned about in France: the generic alert is one,
+/// because it can be a speed camera or the police just as well as anything else.
 bool _isEnforcementHazard(HazardType type) =>
-    type == HazardType.speedCamera || type == HazardType.policeActivity;
+    type == HazardType.speedCamera ||
+    type == HazardType.policeActivity ||
+    type == HazardType.alert;

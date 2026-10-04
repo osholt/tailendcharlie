@@ -5,12 +5,14 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ride_relay/data/in_memory_event_store.dart';
 import 'package:ride_relay/domain/event_store.dart';
+import 'package:ride_relay/domain/quick_message.dart';
 import 'package:ride_relay/domain/ride_event.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 import 'package:ride_relay/domain/ride_session.dart';
 import 'package:ride_relay/internet/internet_cursor_store.dart';
 import 'package:ride_relay/internet/internet_relay_client.dart';
 import 'package:ride_relay/internet/internet_relay_worker.dart';
+import 'package:ride_relay/services/received_quick_message.dart';
 import 'package:ride_relay/services/ride_event_authenticator.dart';
 
 /// Two simulated devices sharing one relay, over the **real** HTTP client and
@@ -172,6 +174,80 @@ void main() {
 
     expect(await leader.receivedIds(), contains('follower-position-1'));
   });
+
+  // #854. A leader's broadcast is an ordinary status message, so it crosses the
+  // relay like every other event: this proves it arrives, arrives once however
+  // many times either phone polls, and reads as the leader's words.
+  test(
+    'a leader broadcast reaches a follower once, however often they poll',
+    () async {
+      final leader = device('leader', role: RideRole.lead);
+      final follower = device('follower');
+      RideEvent signed(
+        String id,
+        RideEventType type,
+        Map<String, Object?> payload,
+      ) {
+        final unsigned = RideEvent(
+          id: id,
+          rideId: _rideId,
+          deviceId: 'leader',
+          type: type,
+          priority: EventPriority.important,
+          createdAt: relay.now,
+          expiresAt: type == RideEventType.statusMessage
+              ? relay.now.add(leaderBroadcastLife)
+              : null,
+          payload: payload,
+          signature: '',
+        );
+        return RideEvent(
+          id: id,
+          rideId: _rideId,
+          deviceId: 'leader',
+          type: type,
+          priority: unsigned.priority,
+          createdAt: unsigned.createdAt,
+          expiresAt: unsigned.expiresAt,
+          payload: payload,
+          signature: RideEventAuthenticator.sign(unsigned, _secret),
+        );
+      }
+
+      await leader.store.append(
+        signed('leader-created', RideEventType.rideCreated, {'role': 'lead'}),
+      );
+      await leader.store.append(
+        signed('pull-over', RideEventType.statusMessage, {
+          'message': QuickMessage.pullOver.name,
+          'label': QuickMessage.pullOver.label,
+          'senderDisplayName': 'Oliver',
+        }),
+      );
+      await leader.start();
+      await follower.start();
+
+      await leader.poll();
+      for (var poll = 0; poll < 3; poll += 1) {
+        await follower.poll();
+        await leader.poll();
+      }
+
+      final held = (await follower.store.eventsForRide(
+        _rideId,
+      )).where((event) => event.id == 'pull-over').toList();
+      expect(held, hasLength(1));
+      final shown = const ReceivedQuickMessageReducer().fromEvents(
+        rideId: _rideId,
+        inviteSecret: _secret,
+        events: await follower.store.eventsForRide(_rideId),
+        localRiderId: 'follower',
+        now: relay.now,
+      );
+      expect(shown, hasLength(1));
+      expect(shown.single.headline, 'Oliver says pull over');
+    },
+  );
 }
 
 class _Device {

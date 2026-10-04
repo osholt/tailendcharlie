@@ -2,7 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ride_relay/controllers/completed_rides_controller.dart';
 import 'package:ride_relay/domain/completed_ride.dart';
 import 'package:ride_relay/domain/completed_ride_store.dart';
+import 'package:ride_relay/domain/geo_point.dart' as awareness;
 import 'package:ride_relay/domain/imported_route.dart';
+import 'package:ride_relay/domain/ride_alert_record.dart';
 import 'package:ride_relay/domain/ride_role.dart';
 
 void main() {
@@ -68,6 +70,114 @@ void main() {
       expect(restored.deletedAt, isNull);
     },
   );
+
+  group('alerts (#849)', () {
+    final alerts = [
+      RideAlertRecord(
+        id: 'a1',
+        raisedAt: DateTime.utc(2026, 7, 23, 12, 30, 7),
+        position: const awareness.GeoPoint(latitude: 54.15, longitude: -4.48),
+        raisedBy: 'Nigel',
+      ),
+      RideAlertRecord(
+        id: 'a2',
+        raisedAt: DateTime.utc(2026, 7, 23, 13, 5, 41),
+        position: const awareness.GeoPoint(latitude: 54.2, longitude: -4.5),
+        raisedBy: 'Oliver',
+        raisedByLocalRider: true,
+        kind: RideAlertKind.police,
+      ),
+    ];
+
+    test('are saved with the ride and read back whole', () {
+      final ride = _ride().copyWith(alerts: alerts);
+
+      final restored = CompletedRide.fromJson(ride.toJson());
+
+      expect(restored.alerts, alerts);
+      expect(restored.alerts.last.raisedByLocalRider, isTrue);
+      expect(restored.alerts.last.kind, RideAlertKind.police);
+    });
+
+    test('survive the copies the library makes of a ride', () {
+      // Renaming, rating and linking a plan all copy the ride. None of them may
+      // drop the log.
+      final ride = _ride().copyWith(alerts: alerts);
+
+      expect(ride.copyWith(libraryName: 'Renamed').alerts, alerts);
+      expect(ride.copyWith(rating: 4).alerts, alerts);
+      expect(
+        ride.copyWith(libraryStatus: RideLibraryStatus.archived).alerts,
+        alerts,
+      );
+    });
+
+    test('are not among the waypoints of the recorded route', () {
+      // That route is offered back as a route to ride again, and an alert is not
+      // somewhere to ride to.
+      final ride = _ride().copyWith(alerts: alerts);
+
+      expect(ride.traveledRoute?.waypoints, isEmpty);
+      expect(
+        CompletedRide.fromJson(ride.toJson()).traveledRoute?.waypoints,
+        isEmpty,
+      );
+    });
+
+    test('a ride from before alerts existed has none', () {
+      final json = _ride().toJson();
+
+      expect(json.containsKey('alerts'), isFalse);
+      expect(CompletedRide.fromJson(json).alerts, isEmpty);
+    });
+
+    test(
+      'a ride with none writes nothing extra, so older builds read it as before',
+      () {
+        expect(_ride().toJson().containsKey('alerts'), isFalse);
+      },
+    );
+
+    test(
+      'keep the schema version, so the build before this still opens the ride',
+      () {
+        final json = _ride().copyWith(alerts: alerts).toJson();
+
+        expect(json['schemaVersion'], 2);
+        expect(CompletedRide.schemaVersion, 2);
+      },
+    );
+
+    test('one unreadable alert costs that alert, not the ride or the rest', () {
+      final json = _ride().copyWith(alerts: alerts).toJson();
+      json['alerts'] = [
+        'not an object',
+        {
+          'id': 'no-position',
+          'raisedAt': '2026-07-23T12:00:00Z',
+          'raisedBy': 'X',
+        },
+        {
+          'id': 'off-the-globe',
+          'raisedAt': '2026-07-23T12:00:00Z',
+          'raisedBy': 'X',
+          'position': {'latitude': 91, 'longitude': 0},
+        },
+        ...(json['alerts']! as List),
+      ];
+
+      final restored = CompletedRide.fromJson(json);
+
+      expect(restored.alerts, alerts);
+      expect(restored.title, 'Ride 123456');
+    });
+
+    test('a damaged list does not discard the ride', () {
+      final json = _ride().toJson()..['alerts'] = 'not-a-list';
+
+      expect(CompletedRide.fromJson(json).alerts, isEmpty);
+    });
+  });
 }
 
 CompletedRide _ride() => CompletedRide(
