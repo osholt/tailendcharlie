@@ -254,6 +254,33 @@ void main() {
       }
     });
 
+    test('has points long enough to read as a star at 34 pixels, not as a '
+        'pentagon', () {
+      // The first version had points 1.3 times as far from the centre as its
+      // valleys, measured, and on the Android emulator it read as a pentagon
+      // with notches. The version that reads as a star measures 1.5 to 1.6.
+      for (final directional in [false, true]) {
+        final radii = reach(
+          RiderMarkerShapePainter.shape(
+            size,
+            directional: directional,
+            outline: RiderMarkerOutline.star,
+          ),
+        );
+        final points = pointsOf(radii);
+        final valley = radii.reduce(math.min);
+        for (final point in points) {
+          expect(
+            radii[point] / valley,
+            greaterThanOrEqualTo(1.45),
+            reason:
+                'the point at $point degrees (directional: $directional) '
+                'against a valley ${valley.toStringAsFixed(1)} pixels deep',
+          );
+        }
+      }
+    });
+
     test('the star reaches at least as far as the circle it replaces', () {
       final circle = reach(
         RiderMarkerShapePainter.shape(size, directional: false),
