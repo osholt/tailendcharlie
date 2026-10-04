@@ -335,8 +335,34 @@ void main() {
 
         expect(concerns.single.kind, RouteConcernKind.majorRoad);
         expect(concerns.single.labels, contains('M5'));
+        expect(
+          concerns.single.lengthMeters,
+          greaterThan(13000),
+          reason: 'the 12.6 km of motorway is in it, not only the A-road',
+        );
       },
     );
+
+    test('major roads are reported only once they are a real part of the '
+        'route', () {
+      List<RouteConcern> primary(double metres) => classifyRouteEdges(
+        [
+          RouteEdge(
+            lengthMeters: metres,
+            beginShapeIndex: 0,
+            endShapeIndex: 0,
+            use: 'road',
+            roadClass: 'primary',
+            names: const ['A38'],
+          ),
+        ],
+        const [GeoPoint(latitude: 51, longitude: -2)],
+        const RoutePreferences(avoidMajorRoads: true),
+      );
+
+      expect(primary(800), isEmpty, reason: 'a town crossed on an A-road');
+      expect(primary(1200).single.labels, ['A38']);
+    });
 
     test('both preferences give a hard concern and a soft one', () {
       final concerns = classify(
