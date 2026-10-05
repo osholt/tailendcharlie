@@ -100,6 +100,21 @@ FAKE_FLOCK_EXIT=0 FAKE_CURL_EXIT=1 "$subject" && fail "a free lock hid a failed 
 test "$(cat "$test_root/state/consecutive-failures")" = "2" || fail "a free lock stopped the count"
 assert_file_contains "$test_root/systemctl.log" "restart containerd.service"
 
+# A lock file that cannot be opened is never mistaken for a held lock: on the
+# host, fs.protected_regular once made root's open fail and recovery stood down.
+rm -f "$test_root/docker.log" "$test_root/systemctl.log" "$test_root/curl.log"
+printf '0\n' >"$test_root/state/consecutive-failures"
+touch "$test_root/run/deploy.lock"
+chmod 000 "$test_root/run/deploy.lock"
+if test -r "$test_root/run/deploy.lock"; then
+  echo "skipping the unreadable-lock case: running as root"
+else
+  FAKE_FLOCK_EXIT=1 FAKE_CURL_EXIT=1 "$subject" && fail "an unreadable lock hid a failed probe"
+  test "$(cat "$test_root/state/consecutive-failures")" = "1" || fail "an unreadable lock stopped recovery"
+  test -s "$test_root/curl.log" || fail "an unreadable lock stopped the probe"
+fi
+chmod 644 "$test_root/run/deploy.lock"
+
 # A deploy holding the lock past the grace period is treated as hung.
 rm -f "$test_root/docker.log" "$test_root/systemctl.log"
 printf '0\n' >"$test_root/state/consecutive-failures"

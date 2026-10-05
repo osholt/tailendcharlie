@@ -471,8 +471,12 @@ escalates only while readiness remains down:
 3. third failed probe: request a controlled guest reboot.
 
 The guard stands down while a deploy is running (#907). `relay-deploy.sh`
-holds an exclusive `flock` on `/run/lock/tailendcharlie-relay-deploy.lock` for
-its whole run. While another process holds that lock, and for at most 30 minutes
+holds an exclusive `flock` on `deploy.lock` in its state directory
+(`/var/lib/relay-deploy` by default) for its whole run. Not `/run/lock`: with
+Ubuntu's `fs.protected_regular=2`, root may not open another user's file in a
+world-writable sticky directory with `O_CREAT`, and the first version read that
+refusal as a held lock. The guard opens the lock read-only, and a file it
+cannot open never counts as held. While another process holds that lock, and for at most 30 minutes
 (`RELAY_SELF_HEAL_DEPLOY_GRACE_MINUTES`), the guard neither probes nor recovers,
 and leaves its counter alone. Without this, on 5 Oct 2026 a deploy's own container
 recreation looked like an outage: the guard restarted Docker mid-deploy, killing

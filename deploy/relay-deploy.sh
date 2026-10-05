@@ -61,11 +61,12 @@ fi
 # Hold the deploy lock for the whole run. relay-self-heal stands down while it is
 # held, so recreating containers is never mistaken for an outage (#907). The
 # lock also stops two deploys from interleaving. Its modification time bounds
-# how long self-heal waits on a hung deploy.
-deploy_lock="${RELAY_DEPLOY_LOCK:-/run/lock/tailendcharlie-relay-deploy.lock}"
-# Created world-writable so a deploy run once with sudo cannot lock CI's deploy
-# user out of the file; the lock is advisory and carries no data.
-(umask 000 && : >>"$deploy_lock")
+# how long self-heal waits on a hung deploy. It lives in the deploy's own state
+# directory: in a world-writable sticky directory such as /run/lock, Ubuntu's
+# fs.protected_regular=2 refuses root's flock on a file the deploy user owns.
+mkdir -p "$state_dir" 2>/dev/null ||
+  fail "cannot create $state_dir; create it once, owned by $(id -un)"
+deploy_lock="$state_dir/deploy.lock"
 exec 9>>"$deploy_lock"
 flock --nonblock 9 || fail "another relay deploy is already running"
 touch "$deploy_lock"
