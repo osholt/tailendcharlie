@@ -18,7 +18,17 @@ state_dir="${RELAY_SELF_HEAL_STATE_DIR:-/var/lib/relay-self-heal}"
 failure_file="$state_dir/consecutive-failures"
 last_reboot_file="$state_dir/last-reboot-at"
 
+# relay-deploy.sh holds an exclusive lock on this file for its whole run (#907).
+# Its own container recreation must not be mistaken for an outage: on 5 Oct 2026
+# two probes during a deploy escalated to a Docker restart that killed the
+# deploy's smoke test and every container on the host.
+deploy_lock="${RELAY_SELF_HEAL_DEPLOY_LOCK:-/run/lock/tailendcharlie-relay-deploy.lock}"
+# A deploy that holds the lock longer than this is treated as hung, and recovery
+# resumes; normal deploys finish in well under ten minutes.
+deploy_grace_minutes="${RELAY_SELF_HEAL_DEPLOY_GRACE_MINUTES:-30}"
+
 curl_bin="${RELAY_SELF_HEAL_CURL_BIN:-curl}"
+flock_bin="${RELAY_SELF_HEAL_FLOCK_BIN:-flock}"
 docker_bin="${RELAY_SELF_HEAL_DOCKER_BIN:-docker}"
 systemctl_bin="${RELAY_SELF_HEAL_SYSTEMCTL_BIN:-systemctl}"
 timeout_bin="${RELAY_SELF_HEAL_TIMEOUT_BIN:-timeout}"
@@ -44,7 +54,8 @@ for value in \
   "$reboot_threshold" \
   "$reboot_cooldown_seconds" \
   "$command_timeout_seconds" \
-  "$runtime_timeout_seconds"; do
+  "$runtime_timeout_seconds" \
+  "$deploy_grace_minutes"; do
   if ! is_non_negative_integer "$value"; then
     log "invalid numeric configuration: $value"
     exit 2
@@ -70,6 +81,22 @@ if test -z "$domain" || [[ "$domain" == *[!A-Za-z0-9.-]* ]]; then
 fi
 
 install -d -m 0755 "$state_dir"
+
+# True while a deploy holds its lock and has held it for less than the grace
+# period. A lock nobody holds (a finished or crashed deploy) never counts:
+# flock releases with the process.
+deploy_in_progress() {
+  test -e "$deploy_lock" || return 1
+  if "$flock_bin" --nonblock "$deploy_lock" true 2>/dev/null; then
+    return 1
+  fi
+  test -n "$(find "$deploy_lock" -mmin "-$deploy_grace_minutes" 2>/dev/null)"
+}
+
+if deploy_in_progress; then
+  log "a relay deploy is in progress; not probing or recovering"
+  exit 0
+fi
 
 if "$curl_bin" \
   --fail \

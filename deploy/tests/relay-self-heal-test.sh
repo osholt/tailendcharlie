@@ -23,6 +23,11 @@ cat >"$test_root/bin/systemctl" <<EOF
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >>'$test_root/systemctl.log'
 EOF
+cat >"$test_root/bin/flock" <<'EOF'
+#!/usr/bin/env bash
+# 1 means another process (the deploy) holds the lock.
+exit "${FAKE_FLOCK_EXIT:-0}"
+EOF
 cat >"$test_root/bin/timeout" <<'EOF'
 #!/usr/bin/env bash
 shift
@@ -36,6 +41,8 @@ export RELAY_SELF_HEAL_CURL_BIN="$test_root/bin/curl"
 export RELAY_SELF_HEAL_DOCKER_BIN="$test_root/bin/docker"
 export RELAY_SELF_HEAL_SYSTEMCTL_BIN="$test_root/bin/systemctl"
 export RELAY_SELF_HEAL_TIMEOUT_BIN="$test_root/bin/timeout"
+export RELAY_SELF_HEAL_FLOCK_BIN="$test_root/bin/flock"
+export RELAY_SELF_HEAL_DEPLOY_LOCK="$test_root/run/deploy.lock"
 export RELAY_SELF_HEAL_TEST_CURL_LOG="$test_root/curl.log"
 
 fail() {
@@ -77,5 +84,28 @@ test "$before" = "$after" || fail "the reboot cooldown was ignored"
 
 FAKE_CURL_EXIT=0 "$subject"
 test "$(cat "$test_root/state/consecutive-failures")" = "0" || fail "recovery did not reset the failure count"
+
+# A deploy holding the lock: no probe, no counter change, no recovery (#907).
+rm -f "$test_root/docker.log" "$test_root/systemctl.log" "$test_root/curl.log"
+printf '1\n' >"$test_root/state/consecutive-failures"
+touch "$test_root/run/deploy.lock"
+FAKE_FLOCK_EXIT=1 FAKE_CURL_EXIT=1 "$subject" || fail "a deploy in progress was reported as a failure"
+test "$(cat "$test_root/state/consecutive-failures")" = "1" || fail "a deploy in progress changed the failure count"
+test ! -e "$test_root/curl.log" || fail "a deploy in progress was probed"
+test ! -e "$test_root/docker.log" || fail "a deploy in progress triggered stack recovery"
+test ! -e "$test_root/systemctl.log" || fail "a deploy in progress triggered a runtime restart"
+
+# A lock nobody holds (a finished or crashed deploy) never stops recovery.
+FAKE_FLOCK_EXIT=0 FAKE_CURL_EXIT=1 "$subject" && fail "a free lock hid a failed probe"
+test "$(cat "$test_root/state/consecutive-failures")" = "2" || fail "a free lock stopped the count"
+assert_file_contains "$test_root/systemctl.log" "restart containerd.service"
+
+# A deploy holding the lock past the grace period is treated as hung.
+rm -f "$test_root/docker.log" "$test_root/systemctl.log"
+printf '0\n' >"$test_root/state/consecutive-failures"
+touch -t 202001010000 "$test_root/run/deploy.lock"
+FAKE_FLOCK_EXIT=1 FAKE_CURL_EXIT=1 "$subject" && fail "a hung deploy hid a failed probe"
+test "$(cat "$test_root/state/consecutive-failures")" = "1" || fail "a hung deploy stopped recovery"
+assert_file_contains "$test_root/docker.log" "up -d --no-build"
 
 echo "relay-self-heal tests passed"
