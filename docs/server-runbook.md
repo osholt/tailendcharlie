@@ -470,6 +470,24 @@ escalates only while readiness remains down:
    existing stack up;
 3. third failed probe: request a controlled guest reboot.
 
+The guard stands down while a deploy is running (#907). `relay-deploy.sh`
+holds an exclusive `flock` on `/run/lock/tailendcharlie-relay-deploy.lock` for
+its whole run. While another process holds that lock, and for at most 30 minutes
+(`RELAY_SELF_HEAL_DEPLOY_GRACE_MINUTES`), the guard neither probes nor recovers,
+and leaves its counter alone. Without this, on 5 Oct 2026 a deploy's own container
+recreation looked like an outage: the guard restarted Docker mid-deploy, killing
+the smoke test and every container on the host for about two minutes.
+
+Shipping a change to the guard: the push deploys the relay while the *old* guard
+is still installed. Stop the timer first, merge, wait for the deploy, then
+reinstall, which re-enables the timer:
+
+```bash
+ssh oracle-relay 'sudo systemctl stop relay-self-heal.timer'
+# merge; wait for "Relay deploy" to succeed and serverBuildCommit to match
+ssh oracle-relay 'cd /opt/tailendcharlie && sudo deploy/install-relay-self-heal.sh'
+```
+
 The counter lives in `/run`, so a successful probe or a reboot clears the
 escalation. A persistent timestamp prevents another automatic reboot for 30
 minutes. Inspect it with:
