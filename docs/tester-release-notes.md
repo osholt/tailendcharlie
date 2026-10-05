@@ -110,6 +110,8 @@ chat. Thank you, Becks and Nigel.
 - The leader and the Tail End Charlie are drawn as **stars** in their own colour
   on the map and the minimap; everyone else is a circle. CarPlay and Android Auto
   still show circles.
+- On Android, hazard and alert symbols and the route's direction arrows are
+  drawn at full size.
 - Unnamed EV chargers and parcel lockers are labelled "EV charging" or "Parcel
   locker", never a code.
 

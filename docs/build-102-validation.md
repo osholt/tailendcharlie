@@ -66,6 +66,9 @@ results on #268.
   the overview. CarPlay and Android Auto still draw circles.
 - #860: unnamed EV chargers and parcel lockers whose provider name contains an
   identifier get a generic label. The upstream OSM fix is the operator's.
+- #900: Android trail arrows (about 7 dp, iOS 18) and hazard/alert badges
+  (about 15 dp, iOS 44) were sized the same way as #843. Both are fixed, with
+  density tests at 7 pixel ratios.
 
 ## Location sharing (#859)
 
