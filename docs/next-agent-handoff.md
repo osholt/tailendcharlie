@@ -1,6 +1,34 @@
 # Next-agent handoff
 
-Updated: 2026-09-21
+Updated: 2026-10-05
+
+## Build 102 — 4 October ride feedback
+
+#863 tracks the release, which the operator requested on 4 October. The issue
+PRs merged into `claude/build-102`, then into `main` as one combined PR. See
+[build 102 validation](build-102-validation.md) and the tester notes. The scope:
+
+- navigation: #853, #851, #856, #839;
+- routing safety: #840, #858, #852;
+- Bluetooth evidence: #855;
+- map and layout: #842, #846, #844, #843, #845, #900, #841, #860, #848, #850;
+- group communication: #849, #854;
+- sharing after a ride: #859;
+- planning-flow phase 1: #847, with later phases in #891–#899.
+
+The open-beta plan is `docs/open-beta-plan.md` (#861).
+
+Release as for build 101:
+
+1. Merge the combined PR after every protected-main check passes.
+2. Dispatch `relay-deploy.yml` on that commit and verify `serverBuildCommit`.
+   No server code changed in this build, so the push alone does not deploy.
+3. Publish build 102 to TestFlight external testers and Android alpha
+   (`notification_mode=dry-run`).
+
+Record the store evidence on #863. Every issue stays ready for validation until
+it is ridden. #268 needs the airplane-mode Bluetooth check from
+`docs/field-test-plan.md`.
 
 ## Build 101 — circular routes and discovery
 
