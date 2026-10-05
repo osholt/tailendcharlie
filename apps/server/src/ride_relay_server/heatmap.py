@@ -22,6 +22,11 @@ from .service import RelayServiceError
 CANONICAL_ZOOM = 17
 MIN_PUBLIC_ZOOM = 8
 MAX_PUBLIC_CELLS = 5_000
+# A view is answered with the finest published resolution that fits the cell
+# cap, starting this many levels below the viewing zoom. At +8 a cell is about
+# one screen pixel, so coverage follows the roads it was ridden on, as the
+# personal heatmap does, instead of a few tile-sized blobs (#905).
+DETAIL_LEVELS = 8
 MIN_CONTRIBUTORS = 3
 # Bounded launch region covering UK, mainland France and Corsica.
 HEATMAP_WEST = -12.0
@@ -241,25 +246,9 @@ def public_cells(
     today = datetime.now(UTC).date()
     if snapshot is None or snapshot.published_on < today:
         snapshot = rebuild_public_snapshot(session, today=today)
-    resolution = min(CANONICAL_ZOOM, max(MIN_PUBLIC_ZOOM, zoom))
-    minimum_x, minimum_y = tile_for_point(north, west, resolution)
-    maximum_x, maximum_y = tile_for_point(south, east, resolution)
-    rows = list(
-        session.scalars(
-            select(HeatmapPublicCell)
-            .where(
-                HeatmapPublicCell.snapshot_version == snapshot.version,
-                HeatmapPublicCell.z == resolution,
-                HeatmapPublicCell.x >= minimum_x,
-                HeatmapPublicCell.x <= maximum_x,
-                HeatmapPublicCell.y >= minimum_y,
-                HeatmapPublicCell.y <= maximum_y,
-            )
-            .limit(MAX_PUBLIC_CELLS + 1)
-        )
+    resolution, rows = _finest_cells_within_cap(
+        session, snapshot.version, west=west, south=south, east=east, north=north, zoom=zoom
     )
-    if len(rows) > MAX_PUBLIC_CELLS:
-        raise RelayServiceError(400, "Heatmap viewport contains too much coverage")
     return {
         "type": "FeatureCollection",
         "schemaVersion": 1,
@@ -284,6 +273,60 @@ def public_cells(
             for row in rows
         ],
     }
+
+
+def public_resolutions(zoom: int) -> range:
+    """Resolutions that may answer a view at [zoom], finest first (#905).
+
+    Every one of them is already published under the same contributor rule; this
+    chooses only which of them answers. The coarsest is the viewing zoom itself,
+    which is what a view was answered with before. The finest resolution that
+    has coverage in the view and fits the cap answers it: a road whose canonical
+    cells are still suppressed but whose parent is published must not vanish
+    because a finer, empty resolution was tried first.
+    """
+    coarsest = min(CANONICAL_ZOOM, max(MIN_PUBLIC_ZOOM, zoom))
+    finest = min(CANONICAL_ZOOM, max(coarsest, zoom + DETAIL_LEVELS))
+    return range(finest, coarsest - 1, -1)
+
+
+def _finest_cells_within_cap(
+    session: Session,
+    version: str,
+    *,
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+    zoom: int,
+) -> tuple[int, list[HeatmapPublicCell]]:
+    coarsest: tuple[int, list[HeatmapPublicCell]] | None = None
+    for resolution in public_resolutions(zoom):
+        minimum_x, minimum_y = tile_for_point(north, west, resolution)
+        maximum_x, maximum_y = tile_for_point(south, east, resolution)
+        rows = list(
+            session.scalars(
+                select(HeatmapPublicCell)
+                .where(
+                    HeatmapPublicCell.snapshot_version == version,
+                    HeatmapPublicCell.z == resolution,
+                    HeatmapPublicCell.x >= minimum_x,
+                    HeatmapPublicCell.x <= maximum_x,
+                    HeatmapPublicCell.y >= minimum_y,
+                    HeatmapPublicCell.y <= maximum_y,
+                )
+                .limit(MAX_PUBLIC_CELLS + 1)
+            )
+        )
+        if len(rows) > MAX_PUBLIC_CELLS:
+            continue
+        if rows:
+            return resolution, rows
+        coarsest = (resolution, rows)
+    if coarsest is not None:
+        # Nothing published anywhere in view: answer at the viewing zoom, as before.
+        return coarsest
+    raise RelayServiceError(400, "Heatmap viewport contains too much coverage")
 
 
 def cleanup_heatmap(session: Session, *, today: date | None = None) -> tuple[int, int, int]:

@@ -397,3 +397,20 @@ may query this bounded region at public resolution 8. Higher zooms retain the
 Public cells still require three distinct contributors; privacy trimming,
 snapshot publication and contribution quotas are unchanged. Older archived
 French rides can be shared using the existing history contribution control.
+
+## Road-level detail at every zoom (#905)
+
+Answering a view with cells at the **viewing** zoom turned a regional view into
+a few tile-sized cells. Each was drawn with a kernel of 0.8 of its cell, so a
+zoom-9 view of Bristol and Usk showed three orange blobs about 200 px across
+while the snapshot already held 384 published road-scale cells.
+
+`public_cells` now answers with the finest published resolution, trying from
+`zoom + 8` (about one screen pixel per cell) down to the viewing zoom, that both
+has coverage in the view and fits the 5,000-cell cap. A road whose canonical cells
+are still suppressed falls back to its published parent rather than vanishing.
+An empty view is answered at its own zoom, as before. The published snapshot,
+the three-contributor rule, the request bounds and the cap are unchanged; only
+which already-public resolution answers a view changes. Clients size kernels
+from the returned `resolution`, so the global layer follows ridden roads the way
+the personal layer does, with no app update.

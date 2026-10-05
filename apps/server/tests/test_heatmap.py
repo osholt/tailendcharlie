@@ -9,7 +9,13 @@ from datetime import UTC, date, datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from ride_relay_server.heatmap import cleanup_heatmap, rebuild_public_snapshot, tile_for_point
+from ride_relay_server import heatmap
+from ride_relay_server.heatmap import (
+    cleanup_heatmap,
+    public_resolutions,
+    rebuild_public_snapshot,
+    tile_for_point,
+)
 from ride_relay_server.models import (
     HeatmapContributor,
     HeatmapContributorCell,
@@ -337,7 +343,8 @@ def test_country_view_retains_coverage_and_contributor_privacy(client: TestClien
         rebuild_public_snapshot(session, today=datetime.now(UTC).date() + timedelta(days=1))
     response = client.get(url)
     assert response.status_code == 200
-    assert response.json()["resolution"] == 8
+    # The finest resolution with coverage that fits the cap (#905): zoom 6 + 8.
+    assert response.json()["resolution"] == 14
     assert len(response.json()["features"]) == 1
     assert response.json()["features"][0]["properties"]["contributors"] == "3-4"
 
@@ -347,3 +354,124 @@ def test_world_view_remains_bounded(client: TestClient):
         client.get("/api/v1/heatmap/cells?west=-180&south=-80&east=180&north=80&zoom=6").status_code
         == 400
     )
+
+
+def _publish(client: TestClient) -> None:
+    with client.app.state.session_factory() as session:
+        rebuild_public_snapshot(session, today=datetime.now(UTC).date() + timedelta(days=1))
+
+
+def _road(start: tuple[int, int], length: int) -> list[tuple[int, int]]:
+    """Adjacent canonical cells along one row, as a ridden road rasterises."""
+    x, y = start
+    return [(x + step, y) for step in range(length)]
+
+
+def test_resolutions_run_from_one_pixel_cells_down_to_the_viewing_zoom():
+    assert list(public_resolutions(9)) == list(range(17, 8, -1))
+    assert list(public_resolutions(6)) == list(range(14, 7, -1))
+    assert list(public_resolutions(12)) == list(range(17, 11, -1))
+    assert list(public_resolutions(17)) == [17]
+    assert list(public_resolutions(18)) == [17]
+
+
+def test_a_regional_view_is_answered_with_road_level_cells(client: TestClient):
+    """#905: a zoom-9 view used to get one ~30 km cell, drawn as a haze."""
+    road = _road(tile_for_point(51.70, -2.90, 17), 6)
+    lane = tile_for_point(51.60, -2.70, 17)
+    for index in (1, 2, 3):
+        cells = road + ([lane] if index < 3 else [])
+        assert (
+            _contribute(client, _register(client, index), upload=index, cells=cells).status_code
+            == 200
+        )
+    _publish(client)
+
+    response = client.get(
+        "/api/v1/heatmap/cells?west=-3.2&south=51.35&east=-2.3&north=51.85&zoom=9"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["resolution"] == 17
+    # Six road cells, each its own feature; the lane only two riders shared stays hidden.
+    assert {feature["id"] for feature in body["features"]} == {f"17/{x}/{y}" for x, y in road}
+
+
+def test_a_road_suppressed_at_canonical_resolution_falls_back_to_its_published_parent(
+    client: TestClient,
+):
+    # Three riders in three different canonical cells of one zoom-16 parent.
+    parent = tile_for_point(51.70, -2.90, 16)
+    children = [
+        (parent[0] * 2, parent[1] * 2),
+        (parent[0] * 2 + 1, parent[1] * 2),
+        (parent[0] * 2, parent[1] * 2 + 1),
+    ]
+    for index, child in enumerate(children, start=1):
+        assert (
+            _contribute(client, _register(client, index), upload=index, cells=[child]).status_code
+            == 200
+        )
+    _publish(client)
+
+    response = client.get(
+        "/api/v1/heatmap/cells?west=-3.2&south=51.35&east=-2.3&north=51.85&zoom=9"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolution"] == 16
+    assert [feature["id"] for feature in response.json()["features"]] == [
+        f"16/{parent[0]}/{parent[1]}"
+    ]
+
+
+def test_detail_steps_down_until_the_view_fits_the_cap(client: TestClient, monkeypatch):
+    start = tile_for_point(51.70, -2.90, 17)
+    start = (start[0] - start[0] % 4, start[1])  # 5 cells over three z16 parents
+    road = _road(start, 5)
+    for index in (1, 2, 3):
+        assert (
+            _contribute(client, _register(client, index), upload=index, cells=road).status_code
+            == 200
+        )
+    _publish(client)
+    monkeypatch.setattr(heatmap, "MAX_PUBLIC_CELLS", 3)
+
+    response = client.get(
+        "/api/v1/heatmap/cells?west=-3.2&south=51.35&east=-2.3&north=51.85&zoom=9"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolution"] == 16
+    assert len(response.json()["features"]) == 3
+
+
+def test_a_view_too_dense_even_at_its_own_zoom_is_still_refused(client: TestClient, monkeypatch):
+    usk = tile_for_point(51.70, -2.90, 17)
+    frome = tile_for_point(51.23, -2.32, 17)
+    for index in (1, 2, 3):
+        assert (
+            _contribute(
+                client, _register(client, index), upload=index, cells=[usk, frome]
+            ).status_code
+            == 200
+        )
+    _publish(client)
+    monkeypatch.setattr(heatmap, "MAX_PUBLIC_CELLS", 1)
+
+    response = client.get("/api/v1/heatmap/cells?west=-3.2&south=51.1&east=-2.2&north=51.85&zoom=9")
+
+    assert response.status_code == 400
+
+
+def test_an_empty_view_is_still_answered_at_its_own_zoom(client: TestClient):
+    _publish(client)
+
+    response = client.get(
+        "/api/v1/heatmap/cells?west=-3.2&south=51.35&east=-2.3&north=51.85&zoom=9"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolution"] == 9
+    assert response.json()["features"] == []
