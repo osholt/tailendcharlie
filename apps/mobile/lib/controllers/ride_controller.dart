@@ -547,8 +547,19 @@ class RideController extends ChangeNotifier {
 
   /// A lead-owned group coordination pause. It deliberately does not suppress
   /// GPS evidence: riders can still be found while the group is stopped.
-  bool get ridePaused {
-    if (!rideStarted) return false;
+  bool get ridePaused => _latestPauseEvent()?.type == RideEventType.ridePaused;
+
+  /// When the leader paused the group, or null while the ride is not paused.
+  ///
+  /// The location-sharing guard reads it so that a stop the leader declared is
+  /// not mistaken for a ride everybody has walked away from (#859).
+  DateTime? get ridePausedAt {
+    final latest = _latestPauseEvent();
+    return latest?.type == RideEventType.ridePaused ? latest!.createdAt : null;
+  }
+
+  RideEvent? _latestPauseEvent() {
+    if (!rideStarted) return null;
     RideEvent? latest;
     for (final event in _events) {
       if (event.type != RideEventType.ridePaused &&
@@ -561,7 +572,7 @@ class RideController extends ChangeNotifier {
         latest = event;
       }
     }
-    return latest?.type == RideEventType.ridePaused;
+    return latest;
   }
 
   bool get markerActive {
@@ -1557,60 +1568,120 @@ class RideController extends ChangeNotifier {
 
   Future<void> startRide() async {
     if (rideStarted || rideEnded) return;
+    await _run(_recordRideStart);
+  }
+
+  Future<void> _recordRideStart() async {
+    final session = _requireSession();
+    if (session.role != RideRole.lead) {
+      throw const FormatException('Only the ride leader can start the ride.');
+    }
+    await _record(
+      type: RideEventType.rideStarted,
+      priority: EventPriority.important,
+      payload: {
+        'leaderRiderId': session.localRiderId,
+        'leaderDisplayName': session.displayName,
+      },
+    );
+  }
+
+  /// Turns what this rider is doing into a group ride carrying [route] (#847).
+  ///
+  /// One action, recorded as the ordinary events a group ride already has, in
+  /// the order CarPlay already uses: `rideCreated`, then the route revision,
+  /// then — when [startNow] — `rideStarted`. Nothing new reaches the relay.
+  ///
+  /// [startNow] is for a rider who is already riding. Free-roam navigation has
+  /// no lobby to wait in, and putting a moving rider into one would stop their
+  /// guidance in the middle of a road; the ride starts at once instead and
+  /// others join it under way, as a late joiner always could.
+  ///
+  /// From a solo ride, that ride is filed first, as leaving it would file it,
+  /// and the group ride replaces it. A solo ride has nobody to tell. A group
+  /// ride is refused: it already is one.
+  ///
+  /// Like every action here, a failure is reported through [errorMessage]
+  /// rather than thrown, and leaves the rider where they were.
+  Future<void> startGroupRide({
+    required String displayName,
+    MotorcycleIconStyle motorcycleStyle = motorcycleIconStyleDefault,
+    RiderSymbol riderSymbol = riderSymbolDefault,
+    RiderColor riderColor = riderColorDefault,
+    RideCoordinationMode coordinationMode =
+        RideCoordinationMode.secondBikeDropOff,
+    ImportedRoute? route,
+    bool startNow = false,
+    String? rideName,
+  }) async {
     await _run(() async {
-      final session = _requireSession();
-      if (session.role != RideRole.lead) {
-        throw const FormatException('Only the ride leader can start the ride.');
+      if (!coordinationMode.isGroup) {
+        throw const FormatException('Choose how the group will ride.');
       }
-      await _record(
-        type: RideEventType.rideStarted,
-        priority: EventPriority.important,
-        payload: {
-          'leaderRiderId': session.localRiderId,
-          'leaderDisplayName': session.displayName,
-        },
+      final existing = _session;
+      if (existing != null && !rideEnded) {
+        if (this.coordinationMode.isGroup) {
+          throw const FormatException('This is already a group ride.');
+        }
+        // Checked before the solo ride is given up, so a refusal below cannot
+        // cost the rider the ride they are on.
+        _normaliseName(displayName);
+        await _archiveCurrentRideIfComplete(force: true);
+        await _removeRideData();
+      }
+      await _createRide(
+        displayName: displayName,
+        motorcycleStyle: motorcycleStyle,
+        riderSymbol: riderSymbol,
+        riderColor: riderColor,
+        coordinationMode: coordinationMode,
+        rideName: rideName ?? route?.name,
       );
+      if (route != null) await _recordRoutePublication(route);
+      if (startNow) await _recordRideStart();
     });
   }
 
   Future<void> publishRoute(ImportedRoute route) async {
-    await _run(() async {
-      final session = _requireSession();
-      if (!isLocalRideLeader) {
-        throw const FormatException(
-          'Only the ride leader can change the group route.',
-        );
-      }
-      final encoded = const RideRouteEncoder().encode(route);
-      final revisionId = _idFactory();
-      final revisionNumber = _routeState.revisionNumber + 1;
-      for (var index = 0; index < encoded.chunks.length; index += 1) {
-        await _record(
-          type: RideEventType.routeRevisionChunk,
-          priority: EventPriority.important,
-          payload: {
-            'revisionId': revisionId,
-            'revisionNumber': revisionNumber,
-            'leaderRiderId': session.localRiderId,
-            'index': index,
-            'data': encoded.chunks[index],
-          },
-        );
-      }
+    await _run(() => _recordRoutePublication(route));
+  }
+
+  Future<void> _recordRoutePublication(ImportedRoute route) async {
+    final session = _requireSession();
+    if (!isLocalRideLeader) {
+      throw const FormatException(
+        'Only the ride leader can change the group route.',
+      );
+    }
+    final encoded = const RideRouteEncoder().encode(route);
+    final revisionId = _idFactory();
+    final revisionNumber = _routeState.revisionNumber + 1;
+    for (var index = 0; index < encoded.chunks.length; index += 1) {
       await _record(
-        type: RideEventType.routeRevisionPublished,
+        type: RideEventType.routeRevisionChunk,
         priority: EventPriority.important,
         payload: {
           'revisionId': revisionId,
           'revisionNumber': revisionNumber,
           'leaderRiderId': session.localRiderId,
-          'chunkCount': encoded.chunks.length,
-          'compressedBytes': encoded.compressedBytes,
-          'sha256': encoded.sha256Digest,
-          'routeName': route.name,
+          'index': index,
+          'data': encoded.chunks[index],
         },
       );
-    });
+    }
+    await _record(
+      type: RideEventType.routeRevisionPublished,
+      priority: EventPriority.important,
+      payload: {
+        'revisionId': revisionId,
+        'revisionNumber': revisionNumber,
+        'leaderRiderId': session.localRiderId,
+        'chunkCount': encoded.chunks.length,
+        'compressedBytes': encoded.compressedBytes,
+        'sha256': encoded.sha256Digest,
+        'routeName': route.name,
+      },
+    );
   }
 
   Future<void> clearRoute() async {

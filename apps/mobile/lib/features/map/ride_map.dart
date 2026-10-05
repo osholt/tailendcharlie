@@ -21,6 +21,7 @@ export 'ride_map_feature.dart'
         groupMiniMapBackgroundColor,
         groupMiniMapGridColor,
         groupMiniMapMarkers,
+        groupMiniMapVectorMarker,
         groupMiniMapRiders,
         groupMiniMapRenderer,
         heatmapRoadLayerId,

@@ -305,6 +305,170 @@ void main() {
       expect(ledger.riders, isEmpty);
     });
   });
+
+  group('suspending this rider\'s own sharing (#859)', () {
+    test(
+      'withdraws the position from the relay and stops offering new ones',
+      () async {
+        final now = DateTime.utc(2026, 7, 23, 10);
+        final api = _FakePresenceApi([
+          for (var index = 0; index < 8; index += 1)
+            const PreStartPresenceResult(
+              locations: [],
+              ttl: Duration(seconds: 45),
+            ),
+        ]);
+        final controller = PreStartPresenceController(
+          api,
+          pollInterval: const Duration(days: 1),
+          clock: () => now,
+        );
+        addTearDown(controller.close);
+        await controller.start(session);
+        controller.updateLocalPosition(
+          _location(
+            riderId: 'local',
+            displayName: 'Oliver',
+            latitude: 51.2,
+            receivedAt: now,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(api.calls.last.position?.sample.position.latitude, 51.2);
+
+        await controller.suspendLocalSharing();
+
+        expect(controller.localSharingSuspended, isTrue);
+        expect(api.calls.last.clear, isTrue);
+        expect(api.calls.last.position, isNull);
+
+        // A fix that arrives after the pause, from a stream that has not yet
+        // noticed, goes nowhere.
+        final callsBefore = api.calls.length;
+        controller.updateLocalPosition(
+          _location(
+            riderId: 'local',
+            displayName: 'Oliver',
+            latitude: 51.3,
+            receivedAt: now,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        await controller.synchronizeNow();
+
+        expect(
+          api.calls.skip(callsBefore).where((call) => call.position != null),
+          isEmpty,
+        );
+        expect(
+          controller.locations.where((value) => value.riderId == 'local'),
+          isEmpty,
+        );
+      },
+    );
+
+    test('keeps the nearby channel quiet too', () async {
+      final now = DateTime.utc(2026, 7, 23, 10);
+      final api = _FakePresenceApi([
+        for (var index = 0; index < 8; index += 1)
+          const PreStartPresenceResult(
+            locations: [],
+            ttl: Duration(seconds: 45),
+          ),
+      ]);
+      final nearby = _FakePresenceGateway();
+      final controller = PreStartPresenceController(
+        api,
+        pollInterval: const Duration(days: 1),
+        clock: () => now,
+      );
+      addTearDown(controller.close);
+      addTearDown(nearby.close);
+      await controller.start(session);
+      await controller.attachNearby(nearby);
+
+      await controller.suspendLocalSharing();
+      expect(nearby.published.last.clear, isTrue);
+      final published = nearby.published.length;
+
+      controller.updateLocalPosition(
+        _location(
+          riderId: 'local',
+          displayName: 'Oliver',
+          latitude: 51.4,
+          receivedAt: now,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(nearby.published, hasLength(published));
+    });
+
+    test('still hears the rest of the group while suspended', () async {
+      final now = DateTime.utc(2026, 7, 23, 10);
+      final remote = _location(
+        riderId: 'remote',
+        displayName: 'Alex',
+        latitude: 51.1,
+        receivedAt: now,
+      );
+      final api = _FakePresenceApi([
+        const PreStartPresenceResult(locations: [], ttl: Duration(seconds: 45)),
+        const PreStartPresenceResult(locations: [], ttl: Duration(seconds: 45)),
+        PreStartPresenceResult(
+          locations: [remote],
+          ttl: const Duration(seconds: 45),
+        ),
+      ]);
+      final controller = PreStartPresenceController(
+        api,
+        pollInterval: const Duration(days: 1),
+        clock: () => now,
+      );
+      addTearDown(controller.close);
+      await controller.start(session);
+      await controller.suspendLocalSharing();
+
+      await controller.synchronizeNow();
+
+      expect(controller.locations.single.riderId, 'remote');
+      expect(controller.active, isTrue);
+    });
+
+    test('resuming lets the next fix out again', () async {
+      final now = DateTime.utc(2026, 7, 23, 10);
+      final api = _FakePresenceApi([
+        for (var index = 0; index < 8; index += 1)
+          const PreStartPresenceResult(
+            locations: [],
+            ttl: Duration(seconds: 45),
+          ),
+      ]);
+      final controller = PreStartPresenceController(
+        api,
+        pollInterval: const Duration(days: 1),
+        clock: () => now,
+      );
+      addTearDown(controller.close);
+      await controller.start(session);
+      await controller.suspendLocalSharing();
+
+      controller.resumeLocalSharing();
+      controller.updateLocalPosition(
+        _location(
+          riderId: 'local',
+          displayName: 'Oliver',
+          latitude: 51.5,
+          receivedAt: now,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(controller.localSharingSuspended, isFalse);
+      expect(api.calls.last.position?.sample.position.latitude, 51.5);
+      expect(api.calls.last.clear, isFalse);
+    });
+  });
 }
 
 RiderLocation _location({

@@ -218,7 +218,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       ),
       const SizedBox(height: 14),
       const Text(
-        'Lead and Tail End Charlie use reserved role colours during a ride.',
+        'Lead and Tail End Charlie are marked with a star on the map. '
+        'Everyone keeps their own colour.',
         style: TextStyle(color: Color(0xFF7F8A98), fontSize: 12),
       ),
     ],

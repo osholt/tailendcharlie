@@ -78,7 +78,13 @@ Future<vmt.Style> _readFlutterVectorStyle(
   final document = Map<String, dynamic>.from(
     jsonDecode(resolution.style) as Map,
   );
-  MapStyleRepository.applyPresentation(document, configuration);
+  // The resolved document carries the native label guard, whose string search
+  // this renderer's parser cannot run; it is swapped for the portable one.
+  MapStyleRepository.applyPresentation(
+    document,
+    configuration,
+    portableExpressions: true,
+  );
   resolution = MapStyleResolution(
     jsonEncode(document),
     resolution.outcome,

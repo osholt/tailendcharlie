@@ -67,11 +67,24 @@ const _navigationalKeys = [
   'emergency-alert-button',
   'leave-ride-button',
   'report-sighting-button',
+  'leader-broadcast-button',
 ];
 
 /// The three corner glances #125 and #133 allowed above the road: the ride
 /// menu, the clock and the speed sign with its compass.
 const _topRowKeys = ['ride-menu-button', 'ride-clock', 'speed-compass-cluster'];
+
+/// The narrowest the group overview may be drawn in the matrix: 120 of its own
+/// 150 points, a scale of 0.8.
+///
+/// Below that the smallest text in it - the 10 point rider count - is under 8
+/// points on screen, which is the least a phone can show legibly, and it is no
+/// longer the map of the whole group that #850 turns on for the leader. It is also
+/// exactly what a 360 point phone has left once the two columns of targets (110 and
+/// 96 wide with a 10 point gap) have taken their 216 of a 336 point row, so it is
+/// the floor the layout can reach without shrinking a glove-sized target. A 320
+/// point phone, outside the matrix, has 80 and is scaled further.
+const _minimumOverviewWidth = 120.0;
 
 /// How far either side of straight ahead the forward cone opens. The road a
 /// rider reads runs up the middle of the frame and bends within this of it.
@@ -98,6 +111,7 @@ void main() {
               );
               byScale[scale] = layout;
               _expectMarkerAndConeClear(layout, reason: layout.reason);
+              _expectLeaderTargets(layout);
               expect(
                 tester.takeException(),
                 isNull,
@@ -185,27 +199,42 @@ void main() {
   testWidgets('a narrow phone scales the overview down beside the targets', (
     tester,
   ) async {
-    // 320 points leaves 296 for the row, and the targets take 182 of it: less than
-    // the overview's own 150 once a gap is allowed for. It shrinks to fit rather
-    // than overflow the band or sit over REPORT.
-    final layout = await _pump(
-      tester,
-      phone: const _Phone('narrowest', Size(320, 568), top: 20, bottom: 0),
-      display: RidingDisplaySize.small,
-      textScale: 1,
-      leader: false,
-    );
-    final overview = layout.rects['group-mini-map']!;
-    final report = layout.rects['report-sighting-button']!;
-    expect(tester.takeException(), isNull);
-    expect(overview.width, lessThan(150));
-    expect(overview.width, greaterThan(100));
-    // Scaled as a whole - a 150 by 128 overview kept in proportion - not squeezed
-    // narrower with its height left alone, which would crop what it frames.
-    expect(overview.height / overview.width, closeTo(128 / 150, 0.03));
-    expect(overview.left, greaterThanOrEqualTo(report.right));
-    expect(overview.right, closeTo(layout.band.right, 1));
-    _expectMarkerAndConeClear(layout, reason: layout.reason);
+    // The targets take 216 of a row that is 336 on a 360 point phone and 296 on a
+    // 320 point one - REPORT is a 96 point square since #872 - which leaves less
+    // than the overview's own 150. It shrinks to fit rather than overflow the
+    // band or sit over REPORT.
+    for (final (phone, narrowest) in [
+      (_phones[2], 100.0),
+      (const _Phone('narrowest', Size(320, 568), top: 20, bottom: 0), 60.0),
+    ]) {
+      final layout = await _pump(
+        tester,
+        phone: phone,
+        display: RidingDisplaySize.small,
+        textScale: 1,
+        leader: false,
+      );
+      final overview = layout.rects['group-mini-map']!;
+      final report = layout.rects['report-sighting-button']!;
+      expect(tester.takeException(), isNull, reason: '$phone');
+      expect(overview.width, lessThan(150), reason: '$phone');
+      expect(overview.width, greaterThan(narrowest), reason: '$phone');
+      // Scaled as a whole - a 150 by 128 overview kept in proportion - not
+      // squeezed narrower with its height left alone, which would crop what it
+      // frames.
+      expect(
+        overview.height / overview.width,
+        closeTo(128 / 150, 0.03),
+        reason: '$phone',
+      );
+      expect(
+        overview.left,
+        greaterThanOrEqualTo(report.right),
+        reason: '$phone',
+      );
+      expect(overview.right, closeTo(layout.band.right, 1), reason: '$phone');
+      _expectMarkerAndConeClear(layout, reason: layout.reason);
+    }
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -267,6 +296,124 @@ void main() {
         expect(ceiling, lessThanOrEqualTo(previous));
         previous = ceiling;
       }
+    });
+  });
+
+  group('hiding the group mini-map (#850)', () {
+    testWidgets('gives the band and the camera back what it took', (
+      tester,
+    ) async {
+      for (final phone in _phones) {
+        for (final leader in const [false, true]) {
+          final shown = await _pump(
+            tester,
+            phone: phone,
+            display: RidingDisplaySize.small,
+            textScale: 1,
+            leader: leader,
+          );
+          final hidden = await _pump(
+            tester,
+            phone: phone,
+            display: RidingDisplaySize.small,
+            textScale: 1,
+            leader: leader,
+            miniMapVisible: false,
+          );
+
+          expect(shown.rects, contains('group-mini-map'));
+          expect(
+            hidden.rects,
+            isNot(contains('group-mini-map')),
+            reason: 'hidden on ${shown.reason}',
+          );
+          // The band never grows when the overview goes. Where the overview is drawn
+          // full size - 150 wide, which needs a 390 point phone or wider since
+          // REPORT became a 96 point square (#872) - it stands taller than the
+          // targets, so the band comes down by that and the camera, seeing the
+          // shorter band, puts the marker lower. On a narrower phone it has already
+          // been scaled to sit inside the row of targets, costs the band nothing,
+          // and hiding it frees the corner of map but not a pixel of band...
+          final fullSize = shown.rects['group-mini-map']!.width >= 150;
+          expect(
+            hidden.band.height,
+            fullSize
+                ? lessThan(shown.band.height)
+                : lessThanOrEqualTo(shown.band.height),
+            reason:
+                'the band did not give back the overview on ${shown.reason}',
+          );
+          // ...and the camera never keeps the marker higher for it.
+          expect(
+            hidden.rider.top,
+            fullSize
+                ? greaterThan(shown.rider.top)
+                : greaterThanOrEqualTo(shown.rider.top - 0.5),
+            reason:
+                'the camera kept the marker where the overview was on '
+                '${shown.reason}',
+          );
+          // ...and what is left is as clear as before.
+          _expectMarkerAndConeClear(hidden, reason: hidden.reason);
+          for (final key in const [
+            'emergency-alert-button',
+            'leave-ride-button',
+            'report-sighting-button',
+          ]) {
+            expect(hidden.rects[key], shown.rects[key], reason: '$key moved');
+          }
+        }
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('leaves the corner empty map, not a gap in the band', (
+      tester,
+    ) async {
+      final hidden = await _pump(
+        tester,
+        phone: _phones.first,
+        display: RidingDisplaySize.small,
+        textScale: 1,
+        leader: true,
+        miniMapVisible: false,
+      );
+      // With no overview the trailing half of the row of targets is open map: the
+      // band's own surfaces end where the targets do.
+      final report = hidden.rects['report-sighting-button']!;
+      final banner = hidden.rects['navigation-guidance-banner']!;
+      expect(report.right, lessThan(hidden.band.right - 100));
+      expect(banner.bottom, lessThanOrEqualTo(report.top));
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('frees the landscape rail too, and the targets move in', (
+      tester,
+    ) async {
+      Future<Map<String, Rect>> landscape({required bool miniMap}) async {
+        final layout = await _pump(
+          tester,
+          phone: const _Phone('landscape', Size(844, 390), top: 0, bottom: 0),
+          display: RidingDisplaySize.small,
+          textScale: 1,
+          leader: false,
+          miniMapVisible: miniMap,
+        );
+        return layout.rects;
+      }
+
+      final shown = await landscape(miniMap: true);
+      final hidden = await landscape(miniMap: false);
+
+      expect(shown, contains('group-mini-map'));
+      expect(hidden, isNot(contains('group-mini-map')));
+      // The targets sat to the right of the overview and now take its place.
+      expect(
+        hidden['emergency-alert-button']!.left,
+        lessThan(shown['emergency-alert-button']!.left),
+      );
+      expect(hidden['emergency-alert-button']!.left, closeTo(10, 1));
+      await tester.pumpWidget(const SizedBox.shrink());
     });
   });
 
@@ -367,6 +514,60 @@ void _expectMarkerAndConeClear(_Layout layout, {required String reason}) {
   );
 }
 
+/// The row of targets, and the group overview beside it, for this configuration
+/// (#848).
+///
+/// A leader has TELL GROUP as well as REPORT. Side by side they made the row 288
+/// points of targets and left the overview 81 on a 393 point phone, which is the
+/// phone and the rider the overview is on for by default; stacked they are one
+/// 96 wide column exactly as tall as the SOS-over-LEAVE pair, and a leader's row
+/// is two columns and the overview like everyone else's.
+void _expectLeaderTargets(_Layout layout) {
+  final reason = layout.reason;
+  final rects = layout.rects;
+  final sos = rects['emergency-alert-button']!;
+  final leave = rects['leave-ride-button']!;
+  final report = rects['report-sighting-button']!;
+  final tell = rects['leader-broadcast-button'];
+  final overview = rects['group-mini-map']!;
+  final pair = leave.bottom - sos.top;
+
+  // Glove-sized, every one: SOS and LEAVE at least 48 high, REPORT and TELL GROUP
+  // at least 96 wide and 44 high.
+  expect(sos.height, greaterThanOrEqualTo(48), reason: reason);
+  expect(leave.height, greaterThanOrEqualTo(48), reason: reason);
+  expect(report.width, greaterThanOrEqualTo(96), reason: reason);
+  expect(report.height, greaterThanOrEqualTo(44), reason: reason);
+  // The overview is a readable map of the group, however many targets there are.
+  expect(
+    overview.width,
+    greaterThanOrEqualTo(_minimumOverviewWidth - 0.5),
+    reason: '$reason: the overview is squeezed to ${overview.width}',
+  );
+  expect(overview.left, greaterThanOrEqualTo(report.right), reason: reason);
+
+  if (tell == null) {
+    // Nobody but the leader has TELL GROUP, so nobody else's REPORT changes: it
+    // stays the 96 point square #849 made it.
+    expect(report.size, const Size(96, 96), reason: reason);
+    return;
+  }
+  expect(tell.width, greaterThanOrEqualTo(96), reason: reason);
+  expect(tell.height, greaterThanOrEqualTo(44), reason: reason);
+  // One column: REPORT above TELL GROUP, level with SOS and LEAVE, no taller than
+  // the pair beside it so the band the camera measures is no higher.
+  expect(tell.left, closeTo(report.left, 0.01), reason: reason);
+  expect(tell.top, greaterThanOrEqualTo(report.bottom), reason: reason);
+  expect(report.top, closeTo(sos.top, 0.01), reason: reason);
+  expect(tell.bottom, closeTo(leave.bottom, 0.01), reason: reason);
+  expect(
+    tell.bottom - report.top,
+    lessThanOrEqualTo(pair + 0.01),
+    reason: reason,
+  );
+  expect(tell.right, lessThanOrEqualTo(overview.left + 0.5), reason: reason);
+}
+
 /// The triangle of map a rider reads the road ahead in: from the top of the
 /// marker, [_forwardConeHalfAngleDegrees] either side of straight up, to the
 /// bottom of the top row, which is the glance row #125 and #133 left above it.
@@ -427,6 +628,7 @@ Future<_Layout> _pump(
   required RidingDisplaySize display,
   required double textScale,
   required bool leader,
+  bool miniMapVisible = true,
 }) async {
   tester.view.physicalSize = phone.size;
   tester.view.devicePixelRatio = 1;
@@ -548,6 +750,7 @@ Future<_Layout> _pump(
         overlayMarkers: riders,
         leaderStatus: leader ? leaderStatus : null,
         groupRiderCount: 3,
+        showGroupMiniMap: miniMapVisible,
         distanceUnit: DistanceUnit.miles,
         ridingDisplaySize: display,
         speedLimitDisplay: speedLimit,
@@ -555,6 +758,8 @@ Future<_Layout> _pump(
         onEmergencyAlert: () async {},
         onLeaveRide: () async {},
         onReportHazard: (_) async {},
+        // The leader of a running group ride has TELL GROUP as well (#854).
+        onLeaderBroadcast: leader ? (_) async {} : null,
       ),
     ),
   );
@@ -578,7 +783,10 @@ Future<_Layout> _pump(
         '$phone, ${display.name}, text x$textScale, '
         '${leader ? 'leader' : 'rider'}',
     rider: tester.getRect(marker),
-    band: tester.getRect(find.byKey(portraitBottomChromeKey)),
+    // Only portrait has the one band; a landscape layout has rails instead.
+    band: find.byKey(portraitBottomChromeKey).evaluate().isEmpty
+        ? Rect.zero
+        : tester.getRect(find.byKey(portraitBottomChromeKey)),
     rects: rects,
   );
 }

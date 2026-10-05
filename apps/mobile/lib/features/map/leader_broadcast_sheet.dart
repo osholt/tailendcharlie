@@ -12,14 +12,33 @@ import 'ride_map_feature.dart' show quickMessageIcon;
 ///
 /// 64 wide and as tall as REPORT, 96: narrower than REPORT because it shares its
 /// row, and no taller because REPORT already sets the height of that row.
+///
+/// In portrait the leader's REPORT and this stack as one column as tall as the
+/// SOS-over-LEAVE pair beside it (#848): [compact] draws it at [stackedWidth] by
+/// [stackedHeight], REPORT's own width and half the height of the pair, so a
+/// leader's row is two columns of targets and the group overview rather than
+/// three targets wide.
 class LeaderBroadcastButton extends StatelessWidget {
-  const LeaderBroadcastButton({super.key, required this.onPressed});
+  const LeaderBroadcastButton({
+    super.key,
+    required this.onPressed,
+    this.compact = false,
+  });
 
   /// Null while the sheet is already open, so the button cannot stack a second.
   final VoidCallback? onPressed;
 
+  /// The stacked size: [stackedWidth] by [stackedHeight].
+  final bool compact;
+
   static const double width = 64;
   static const double height = 96;
+
+  /// REPORT's width, so the two stack as one column.
+  static const double stackedWidth = 96;
+
+  /// The height of SOS and LEAVE, so the pair is as tall as theirs.
+  static const double stackedHeight = 56;
 
   static const _fill = Color(0xFF1F4E79);
 
@@ -42,23 +61,27 @@ class LeaderBroadcastButton extends StatelessWidget {
         child: InkWell(
           key: const Key('leader-broadcast-button'),
           onTap: onPressed,
-          child: const SizedBox(
-            width: width,
-            height: height,
+          child: SizedBox(
+            width: compact ? stackedWidth : width,
+            height: compact ? stackedHeight : height,
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.campaign_rounded, size: 34, color: Colors.white),
-                SizedBox(height: 4),
+                Icon(
+                  Icons.campaign_rounded,
+                  size: compact ? 26 : 34,
+                  color: Colors.white,
+                ),
+                SizedBox(height: compact ? 2 : 4),
                 // The box keeps its size at every text size, so the caption is
                 // what gives way rather than the box overflowing.
                 Flexible(
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      'TELL\nGROUP',
+                      compact ? 'TELL GROUP' : 'TELL\nGROUP',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 12,
                         height: 1.05,

@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
+import '../../domain/rider_marker_outline.dart';
 import 'ride_map_palette.dart';
 
 /// Rider-selectable bike silhouettes, generated as flat single-colour art
@@ -336,17 +337,81 @@ const double riderSymbolRasterSize = 128;
 /// and visibly not matching the preview a rider chose them from.
 const double riderInitialsBadgeFill = 0.94;
 
-/// `icon-size` for an initials raster drawn on a badge of [badgeDiameter].
+/// The share of a marker badge's box a bike glyph spans, and the share an
+/// emoji's font size is of it. These are the figures [RiderMarkerBadge] has
+/// always drawn the glyph at; the native map reads them from here so a marker on
+/// Android is the size of the same marker on iOS (#843).
+const double riderGlyphBoxFill = 0.62;
+
+/// See [riderGlyphBoxFill].
+const double riderEmojiFontFill = 0.55;
+
+/// Width in pixels of the bike asset the native map's glyph size is worked out
+/// from. The fifteen bikes are 230 to 267 pixels wide, and the default's is the
+/// nearest to their mean, so no style is more than 9% off the size it should be.
+const double riderGlyphRasterWidth = 251;
+
+/// The furthest MapLibre can draw an outline past the edge of a badge shape, in
+/// the shape's own units (`icon-halo-width / icon-size`).
+///
+/// The shape is an SDF: its alpha encodes the distance to the edge, from 1 inside
+/// to 0 six units outside, and the shader draws a halo of `icon-halo-width /
+/// icon-size` of those units by thresholding that alpha. Asked for more than the
+/// field holds, the threshold goes negative and the "outline" is the whole image:
+/// a solid dark square behind every Android rider marker, and a white one behind
+/// the local rider's (#843). The shader's edge softening needs a margin inside
+/// the six, so the limit sits well under it. At the 34 box a rider's badge is
+/// drawn in, this is about one logical pixel - what the flutter_map badge's
+/// two pixel stroke shows outside its edge, the other pixel being inside it.
+const double riderBadgeSdfHaloLimit = 4;
+
+/// The `icon-halo-width` to give a badge shape of [badgeDiameter] asked for
+/// [requested] logical pixels of outline: as much of it as the distance field
+/// can hold.
+double riderBadgeHaloWidth({
+  required double badgeDiameter,
+  required double requested,
+}) => math.min(
+  requested,
+  riderBadgeSdfHaloLimit * badgeDiameter / riderMarkerShapeUnits,
+);
+
+/// The side of the box a badge shape is drawn in, in the units `icon-size` maps
+/// onto the badge's diameter.
+const double riderMarkerShapeUnits = 128;
+
+/// `icon-size` for a bike glyph on a badge of [badgeDiameter], on a native map
+/// that treats every image it is given as [pixelRatio] pixels to a logical pixel.
+///
+/// MapLibre draws an image `width / pixelRatio` logical pixels wide before
+/// `icon-size` is applied, and the plugin's Android build gives every image the
+/// device's density as its pixel ratio (`inDensity = 0` leaves the bitmap at the
+/// device default; it does not mean one to one). The glyph's size was a constant
+/// tuned on one phone, so it was right on that phone and wrong on every other
+/// density, and the badge drawn beside it, rasterised as if the ratio were one,
+/// came out `1 / pixelRatio` of its size - small enough for the glyph to hide it.
+/// Derived from the ratio instead, the glyph comes out at [riderGlyphBoxFill] of
+/// the badge on any density.
+double riderGlyphIconSize({
+  required double badgeDiameter,
+  double pixelRatio = 1,
+}) => badgeDiameter * riderGlyphBoxFill * pixelRatio / riderGlyphRasterWidth;
+
+/// `icon-size` for an initials or emoji raster drawn on a badge of
+/// [badgeDiameter], on a native map that treats every image as [pixelRatio]
+/// pixels to a logical pixel.
 ///
 /// [rasterizeRiderSymbolPng] already insets the glyph by
 /// [riderInitialsBadgeFill] inside its own square, so the raster maps one to
-/// one onto the badge and this is simply the ratio of the two. Derived rather
-/// than tuned, so a change to a badge's radius cannot leave its initials
-/// behind — which is exactly how they got left behind the first time.
+/// one onto the badge and this is simply the ratio of the two - scaled by the
+/// pixel ratio the native map divides the raster by. Derived rather than tuned,
+/// so a change to a badge's radius cannot leave its initials behind — which is
+/// exactly how they got left behind the first time.
 double riderInitialsIconSize({
   required double badgeDiameter,
   double rasterSize = riderSymbolRasterSize,
-}) => badgeDiameter / rasterSize;
+  double pixelRatio = 1,
+}) => badgeDiameter * pixelRatio / rasterSize;
 
 /// A motorcycle glyph standing in for the plain circle/Material icon
 /// previously used for rider map markers, tinted by the caller (role colour)
@@ -392,6 +457,7 @@ class RiderMarkerBadge extends StatelessWidget {
     this.borderColor = RideMapPalette.otherRiderOutline,
     this.borderWidth = 2,
     this.glyphColor = RideMapPalette.glyphInk,
+    this.outline = RiderMarkerOutline.circle,
   });
 
   final MotorcycleIconStyle style;
@@ -408,6 +474,10 @@ class RiderMarkerBadge extends StatelessWidget {
   /// Ink for the motorcycle glyph inside the badge.
   final Color glyphColor;
 
+  /// A star for the leader and the Tail End Charlie, a circle for everyone else.
+  /// Only a map marker takes it; the roster's badge stays a circle (#845).
+  final RiderMarkerOutline outline;
+
   @override
   Widget build(BuildContext context) => CustomPaint(
     painter: mapMarker
@@ -417,6 +487,7 @@ class RiderMarkerBadge extends StatelessWidget {
             borderWidth: borderWidth,
             headingDegrees: headingDegrees,
             mapBearingDegrees: mapBearingDegrees,
+            outline: outline,
           )
         : null,
     child: Container(
@@ -440,7 +511,7 @@ class RiderMarkerBadge extends StatelessWidget {
             // contrast at all - 1.76:1 on the default rider green, 1.53:1 on
             // yellow. See `RouteTrailStyle.markerGlyph` (#133).
             color: glyphColor,
-            size: size * 0.62,
+            size: size * riderGlyphBoxFill,
           ),
           RiderSymbolKind.initials => Padding(
             // The same fill as the raster the native map draws, so the two
@@ -478,7 +549,7 @@ class RiderMarkerBadge extends StatelessWidget {
           RiderSymbolKind.emoji => Text(
             symbol.emoji!,
             maxLines: 1,
-            style: TextStyle(fontSize: size * 0.55, height: 1),
+            style: TextStyle(fontSize: size * riderEmojiFontFill, height: 1),
           ),
         },
       ),
@@ -522,7 +593,7 @@ Future<({Uint8List bytes, bool sdf})> rasterizeRiderSymbolPng({
               color: initials
                   ? symbol.initialsInk.color
                   : const Color(0xFFFFFFFF),
-              fontSize: size * (initials ? 1 : 0.72),
+              fontSize: size * (initials ? 1 : riderEmojiFontFill),
               height: initials ? 0.9 : 1,
               fontWeight: initials ? FontWeight.w900 : FontWeight.normal,
               letterSpacing: initials ? -3 : null,
@@ -579,28 +650,53 @@ List<Shadow> riderInitialsShadows(Color ink, double offset) {
 
 /// Renders an arbitrary Material icon glyph as a PNG, for markers (such as
 /// hazards) that stay on the existing generic-icon style.
-Future<Uint8List> rasterizeIconGlyphPng(IconData icon, {double size = 128}) =>
-    _rasterizePng(
-      size: size,
-      paint: (canvas) {
-        final painter = TextPainter(
-          textDirection: TextDirection.ltr,
-          text: TextSpan(
-            text: String.fromCharCode(icon.codePoint),
-            style: TextStyle(
-              fontSize: size * 0.82,
-              fontFamily: icon.fontFamily,
-              package: icon.fontPackage,
-              color: const Color(0xFFFFFFFF),
-            ),
-          ),
-        )..layout();
-        painter.paint(
-          canvas,
-          Offset((size - painter.width) / 2, (size - painter.height) / 2),
-        );
-      },
+/// The side, in pixels, of the square [rasterizeIconGlyphPng] draws a glyph into.
+const double iconGlyphRasterSize = 128;
+
+/// The share of that square the glyph's em box fills, so a glyph drawn at a
+/// `fontSize` of [iconGlyphRasterSize] times this is the size the Flutter `Icon`
+/// widget draws at the same `size`.
+const double iconGlyphFontShare = 0.82;
+
+/// `icon-size` that draws a glyph rasterised by [rasterizeIconGlyphPng] at
+/// [glyphSize] logical pixels - the `size` an `Icon` widget would be given - on a
+/// native map that treats every image as [pixelRatio] pixels to a logical pixel.
+///
+/// MapLibre draws an image `width / pixelRatio` logical pixels wide before
+/// `icon-size` applies (see `_nativeMarkerPixelRatio` in `ride_map_feature.dart`),
+/// so a constant `icon-size` is right on one density and wrong on every other:
+/// the trail direction arrows' `0.15` was seven logical pixels on a three-pixel
+/// phone where iOS draws eighteen (#900).
+double iconGlyphIconSize({
+  required double glyphSize,
+  double pixelRatio = 1,
+  double rasterSize = iconGlyphRasterSize,
+}) => glyphSize * pixelRatio / (rasterSize * iconGlyphFontShare);
+
+Future<Uint8List> rasterizeIconGlyphPng(
+  IconData icon, {
+  double size = iconGlyphRasterSize,
+}) => _rasterizePng(
+  size: size,
+  paint: (canvas) {
+    final painter = TextPainter(
+      textDirection: TextDirection.ltr,
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontSize: size * iconGlyphFontShare,
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          color: const Color(0xFFFFFFFF),
+        ),
+      ),
+    )..layout();
+    painter.paint(
+      canvas,
+      Offset((size - painter.width) / 2, (size - painter.height) / 2),
     );
+  },
+);
 
 Future<Uint8List> _rasterizePng({
   required double size,
@@ -636,8 +732,46 @@ double? riderTravelHeading({
 
 const riderDirectionShapeImage = 'tec-rider-direction';
 const riderUnknownShapeImage = 'tec-rider-unknown';
+const riderStarDirectionShapeImage = 'tec-rider-star-direction';
+const riderStarUnknownShapeImage = 'tec-rider-star-unknown';
 
-/// Pointed badge for travel; a circle makes no heading claim at rest.
+/// The `icon-image` expression for a rider's badge shape: a star where the
+/// feature's `outline` property says so, a circle otherwise, and the pointed or
+/// the neutral variant of either by whether the feature has a `bearing`.
+const List<Object> riderShapeImageExpression = <Object>[
+  'case',
+  <Object>[
+    '==',
+    <Object>['get', 'outline'],
+    'star',
+  ],
+  <Object>[
+    'case',
+    <Object>['has', 'bearing'],
+    riderStarDirectionShapeImage,
+    riderStarUnknownShapeImage,
+  ],
+  <Object>[
+    'case',
+    <Object>['has', 'bearing'],
+    riderDirectionShapeImage,
+    riderUnknownShapeImage,
+  ],
+];
+
+/// The name the native map registers a badge shape under.
+String riderMarkerShapeImageName({
+  required RiderMarkerOutline outline,
+  required bool directional,
+}) => switch ((outline, directional)) {
+  (RiderMarkerOutline.circle, true) => riderDirectionShapeImage,
+  (RiderMarkerOutline.circle, false) => riderUnknownShapeImage,
+  (RiderMarkerOutline.star, true) => riderStarDirectionShapeImage,
+  (RiderMarkerOutline.star, false) => riderStarUnknownShapeImage,
+};
+
+/// Pointed badge for travel; a circle makes no heading claim at rest. The leader
+/// and the Tail End Charlie are stars instead of circles (#845).
 /// Rotate only the background so initials and emoji always remain upright.
 class RiderMarkerShapePainter extends CustomPainter {
   const RiderMarkerShapePainter({
@@ -646,14 +780,53 @@ class RiderMarkerShapePainter extends CustomPainter {
     this.borderWidth = 2,
     this.headingDegrees,
     this.mapBearingDegrees = 0,
+    this.outline = RiderMarkerOutline.circle,
   });
   final Color color;
   final Color borderColor;
   final double borderWidth;
   final double? headingDegrees;
   final double mapBearingDegrees;
+  final RiderMarkerOutline outline;
 
-  static Path shape(Size size, {required bool directional}) {
+  /// How far out each point of a resting star reaches, as a share of half the
+  /// box. The circle fills 0.8 of it; a star's points are narrow, so these reach
+  /// past the box: a star that were no bigger than the circle would be the less
+  /// conspicuous marker, and at 34 pixels it needs points that are longer than
+  /// the body is wide to read as a star at all rather than as a pentagon.
+  static const starTipShare = 1.06;
+
+  /// How deep the valleys between the points are, which is the radius of the
+  /// body of the star. The bike glyph inside stays upright while a moving star
+  /// turns, so it has to fit at every heading: at 0.66 every bike does, at every
+  /// ten degrees (the test measures it), and at 0.62 a wheel of the scooter
+  /// spills half a pixel.
+  static const starValleyShare = 0.66;
+
+  /// A moving star turns into itself every 72 degrees, so on its own it could
+  /// not say which way the bike is going - the job the pointer's nose does for a
+  /// circle (#777). It leads with one longer point instead: the forward point
+  /// reaches [starNoseShare] and the other four stop at [starMovingTipShare].
+  /// The valleys stay where they are, so the glyph has the same room at every
+  /// heading, and it is still a star at every heading with one point that is
+  /// plainly the front.
+  static const starMovingTipShare = 1.02;
+
+  /// See [starMovingTipShare].
+  static const starNoseShare = 1.26;
+
+  /// How much the corners of the star are rounded, so the outline has no sharp
+  /// joins to bleed. Little, because the points are what makes it a star.
+  static const starCornerShare = 0.06;
+
+  static Path shape(
+    Size size, {
+    required bool directional,
+    RiderMarkerOutline outline = RiderMarkerOutline.circle,
+  }) {
+    if (outline == RiderMarkerOutline.star) {
+      return _star(size, directional: directional);
+    }
     if (!directional) {
       return Path()..addOval(
         Rect.fromLTWH(
@@ -689,6 +862,57 @@ class RiderMarkerShapePainter extends CustomPainter {
       ..close();
   }
 
+  /// A five-pointed star, one point up, in the box the circle and the pointer fill.
+  static Path _star(Size size, {required bool directional}) {
+    final centre = Offset(size.width / 2, size.height / 2);
+    final half = size.shortestSide / 2;
+    // Even indices are points (index 0 is the one pointing up), odd ones the
+    // valleys between them.
+    double reach(int index) {
+      if (!directional) {
+        return index.isOdd ? starValleyShare : starTipShare;
+      }
+      if (index == 0) return starNoseShare;
+      return index.isOdd ? starValleyShare : starMovingTipShare;
+    }
+
+    final vertices = <Offset>[
+      for (var index = 0; index < 10; index++)
+        centre +
+            Offset(
+                  math.cos(-math.pi / 2 + index * math.pi / 5),
+                  math.sin(-math.pi / 2 + index * math.pi / 5),
+                ) *
+                (half * reach(index)),
+    ];
+    return _roundedPolygon(vertices, half * starCornerShare);
+  }
+
+  /// [points] joined by straight edges with each corner cut and rounded by up to
+  /// [radius], never more than half of either edge.
+  static Path _roundedPolygon(List<Offset> points, double radius) {
+    final path = Path();
+    for (var index = 0; index < points.length; index++) {
+      final vertex = points[index];
+      final toPrevious =
+          points[(index + points.length - 1) % points.length] - vertex;
+      final toNext = points[(index + 1) % points.length] - vertex;
+      final cut = math.min(
+        radius,
+        math.min(toPrevious.distance, toNext.distance) / 2,
+      );
+      final entry = vertex + toPrevious / toPrevious.distance * cut;
+      final exit = vertex + toNext / toNext.distance * cut;
+      if (index == 0) {
+        path.moveTo(entry.dx, entry.dy);
+      } else {
+        path.lineTo(entry.dx, entry.dy);
+      }
+      path.quadraticBezierTo(vertex.dx, vertex.dy, exit.dx, exit.dy);
+    }
+    return path..close();
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final heading = headingDegrees;
@@ -698,7 +922,11 @@ class RiderMarkerShapePainter extends CustomPainter {
       canvas.rotate((heading - mapBearingDegrees) * math.pi / 180);
       canvas.translate(-size.width / 2, -size.height / 2);
     }
-    final path = shape(size, directional: heading != null && heading.isFinite);
+    final path = shape(
+      size,
+      directional: heading != null && heading.isFinite,
+      outline: outline,
+    );
     canvas.drawPath(path, Paint()..color = color);
     if (borderWidth > 0) {
       canvas.drawPath(
@@ -706,7 +934,12 @@ class RiderMarkerShapePainter extends CustomPainter {
         Paint()
           ..color = borderColor
           ..style = PaintingStyle.stroke
-          ..strokeWidth = borderWidth,
+          ..strokeWidth = borderWidth
+          // The native map's outline is a halo around a distance field, which is
+          // round at every corner; a mitred star would show spikes it does not.
+          ..strokeJoin = outline == RiderMarkerOutline.star
+              ? StrokeJoin.round
+              : StrokeJoin.miter,
       );
     }
     canvas.restore();
@@ -718,31 +951,40 @@ class RiderMarkerShapePainter extends CustomPainter {
       borderColor != old.borderColor ||
       borderWidth != old.borderWidth ||
       headingDegrees != old.headingDegrees ||
-      mapBearingDegrees != old.mapBearingDegrees;
+      mapBearingDegrees != old.mapBearingDegrees ||
+      outline != old.outline;
 }
 
 // MapLibre colours and outlines SDF images using distance encoded in alpha,
 // not a normal opaque silhouette. Keep an eight-pixel distance band and padding
 // at 1x; the plugin treats iOS images as device-density sprites.
-final _riderShapeRasters = <(bool, double), Future<Uint8List>>{};
+final _riderShapeRasters =
+    <(bool, RiderMarkerOutline, double), Future<Uint8List>>{};
 
 Future<Uint8List> rasterizeRiderMarkerShapePng({
   required bool directional,
+  RiderMarkerOutline outline = RiderMarkerOutline.circle,
   double pixelRatio = 1,
 }) => _riderShapeRasters.putIfAbsent((
   directional,
+  outline,
   pixelRatio,
-), () => _rasterizeRiderShapeSdf(directional, pixelRatio));
-
+), () => _rasterizeRiderShapeSdf(directional, outline, pixelRatio));
 Future<Uint8List> _rasterizeRiderShapeSdf(
   bool directional,
+  RiderMarkerOutline outline,
   double pixelRatio,
 ) async {
-  const side = 144;
+  // A star's points reach past the box the circle fills, the forward one by a
+  // quarter of it, so its raster has more room around the box to keep the whole
+  // distance band.
+  final padding = outline == RiderMarkerOutline.star ? 24.0 : 8.0;
+  final side = (riderMarkerShapeUnits + 2 * padding).round();
   final path = RiderMarkerShapePainter.shape(
     const Size.square(128),
     directional: directional,
-  ).shift(const Offset(8, 8));
+    outline: outline,
+  ).shift(Offset(padding, padding));
   final segments = <(Offset, Offset)>[];
   for (final metric in path.computeMetrics()) {
     var previous = metric.getTangentForOffset(0)!.position;

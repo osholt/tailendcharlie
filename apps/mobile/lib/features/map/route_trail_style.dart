@@ -118,6 +118,17 @@ class RouteTrailStyle {
   /// Opaque casing drawn under every route and trail line.
   static const casing = Color(0xFF10151C);
 
+  /// The size, in logical pixels, of a trail direction arrow on every map: the
+  /// `size` of the `Icon` flutter_map draws, and the size the native map's symbol
+  /// layer is derived to at any density (#900).
+  static const directionArrowSize = 18.0;
+
+  /// How much larger the dark copy under an arrow is drawn than the arrow, which
+  /// is its edge. A layer rather than an `icon-halo`: the arrow's image is a plain
+  /// mask rather than a distance field, so a halo of any width was either nothing
+  /// or, once it passed what the shader allows, a solid square behind the arrow.
+  static const directionArrowCasingScale = 1.25;
+
   /// [casing] as a MapLibre paint string; asserted to match in tests.
   static const casingHex = '#10151C';
 
